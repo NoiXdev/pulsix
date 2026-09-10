@@ -9,11 +9,7 @@ jobs:
         with: { go-version: "1.27" }
       - uses: golangci/golangci-lint-action@v6
         with: { version: latest }
-      - run: go test -race -coverprofile=cover.out ./...
-      - run: |
-          total=$(go tool cover -func=cover.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
-          echo "coverage $total%"
-          awk -v t="$total" 'BEGIN { if (t+0 < 80) { print "coverage below 80%"; exit 1 } }'
+      - run: scripts/coverage-gate.sh
   commits:
     runs-on: ubuntu-latest
     steps:
