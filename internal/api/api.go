@@ -22,6 +22,7 @@ type Deps struct {
 	Sessions *auth.Sessions
 	Auth     AuthService
 	TOTP     *auth.TOTP
+	Passkeys *auth.Passkeys
 	Secure   bool // set Secure on cookies (true behind HTTPS)
 }
 
@@ -60,6 +61,9 @@ func (d Deps) validate() error {
 	}
 	if d.TOTP == nil {
 		missing = append(missing, "TOTP")
+	}
+	if d.Passkeys == nil {
+		missing = append(missing, "Passkeys")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -142,4 +146,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	})
 	registerAuthRoutes(hapi, deps)
 	registerMFARoutes(hapi, deps)
+	registerPasskeyRoutes(hapi, deps)
 }

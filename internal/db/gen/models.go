@@ -71,6 +71,20 @@ type Organization struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Passkey struct {
+	ID             uuid.UUID          `json:"id"`
+	UserID         uuid.UUID          `json:"user_id"`
+	Name           string             `json:"name"`
+	CredentialID   []byte             `json:"credential_id"`
+	PublicKey      []byte             `json:"public_key"`
+	Attestation    string             `json:"attestation"`
+	Transports     []string           `json:"transports"`
+	SignCount      int64              `json:"sign_count"`
+	BackupEligible bool               `json:"backup_eligible"`
+	CreatedAt      time.Time          `json:"created_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+}
+
 type RecoveryCode struct {
 	UserID   uuid.UUID          `json:"user_id"`
 	CodeHash []byte             `json:"code_hash"`
@@ -102,4 +116,12 @@ type User struct {
 	PasswordHash  *string   `json:"password_hash"`
 	InstanceAdmin bool      `json:"instance_admin"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+type WebauthnCeremony struct {
+	ID        uuid.UUID   `json:"id"`
+	Kind      string      `json:"kind"`
+	UserID    pgtype.UUID `json:"user_id"`
+	Data      []byte      `json:"data"`
+	ExpiresAt time.Time   `json:"expires_at"`
 }

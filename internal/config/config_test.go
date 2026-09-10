@@ -28,6 +28,23 @@ func TestLoadValid(t *testing.T) {
 	}
 }
 
+func TestRPIDAndOriginDeriveFromPublicURL(t *testing.T) {
+	cfg, err := config.Load(env(map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test:8443",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RPID(); got != "pulsix.example.test" {
+		t.Errorf("RPID() = %q, want %q (no scheme, no port)", got, "pulsix.example.test")
+	}
+	if got := cfg.Origin(); got != "https://pulsix.example.test:8443" {
+		t.Errorf("Origin() = %q, want %q", got, "https://pulsix.example.test:8443")
+	}
+}
+
 func TestLoadRejectsMissingAndBadValues(t *testing.T) {
 	cases := map[string]map[string]string{
 		"missing db": {"PULSIX_MASTER_KEY": strings.Repeat("ab", 32), "PULSIX_PUBLIC_URL": "https://x"},

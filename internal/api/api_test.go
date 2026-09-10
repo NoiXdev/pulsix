@@ -25,8 +25,21 @@ func (fakeAuthService) Me(context.Context, auth.Principal) (auth.User, error) {
 	return auth.User{}, nil
 }
 
+// testPasskeys builds a *auth.Passkeys with nil store/users/sessions deps,
+// good enough to satisfy api.Deps.validate in tests that never actually
+// drive a passkey ceremony (nil interface values are only a problem once
+// called).
+func testPasskeys(t *testing.T) *auth.Passkeys {
+	t.Helper()
+	pk, err := auth.NewPasskeys(nil, nil, nil, "localhost", "Test", "http://localhost", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pk
+}
+
 func TestHealthz(t *testing.T) {
-	h, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now)})
+	h, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now), Passkeys: testPasskeys(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,5 +74,10 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}}); err == nil {
 		t.Fatal("api.New without TOTP did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+	}); err == nil {
+		t.Fatal("api.New without Passkeys did not return an error")
 	}
 }

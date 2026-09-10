@@ -3,6 +3,7 @@ package apitest
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -54,13 +56,47 @@ func WithAuthWrapper(wrap func(api.AuthService) api.AuthService) Option {
 }
 
 // New builds Deps from the test database and starts an httptest server.
+//
+// The WebAuthn relying party id and origin are derived from the test
+// server's own URL via config.Config.RPID/Origin — the same derivation
+// production uses from PULSIX_PUBLIC_URL — rather than hardcoding a literal
+// origin that cannot be known before the server has a URL. That URL is not
+// known until a listener exists, and building auth.Passkeys is what needs
+// it, so the httptest.Server is created unstarted first (which does bind
+// its listener up front) purely to learn its address; the real handler,
+// built once Deps (including Passkeys) is complete, is only attached to it
+// afterwards, before Start is called.
+//
+// httptest's default listener binds to the loopback IP (127.0.0.1), but
+// go-webauthn (as of v0.18.1) rejects an RPID that is an IP address — it
+// must be a domain string, per the spec. "localhost" resolves to the same
+// loopback address on essentially every system without needing a listener
+// bound to a literal hostname (net.Listen can't bind to "localhost" as
+// such; it always resolves to an IP first), so PublicURL and s.HTTP.URL
+// both use "localhost" with the listener's actual port instead of the
+// address Start() would otherwise report.
 func New(t *testing.T, opts ...Option) *Server {
 	t.Helper()
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(q, time.Now)}
+
+	ts := httptest.NewUnstartedServer(nil)
+	_, port, err := net.SplitHostPort(ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicURL := "http://localhost:" + port
+	cfg := config.Config{PublicURL: publicURL}
+
 	totp := auth.NewTOTP(auth.NewSQLTOTPStore(d.Pool()), crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
-	s.Deps = api.Deps{DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, totp), TOTP: totp}
+	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), s.Sessions, cfg.RPID(), "Pulsix Test", cfg.Origin(), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Deps = api.Deps{
+		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, totp), TOTP: totp, Passkeys: passkeys,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -68,8 +104,11 @@ func New(t *testing.T, opts ...Option) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.HTTP = httptest.NewServer(handler)
-	t.Cleanup(s.HTTP.Close)
+	ts.Config.Handler = handler
+	ts.Start()
+	ts.URL = publicURL
+	t.Cleanup(ts.Close)
+	s.HTTP = ts
 	return s
 }
 

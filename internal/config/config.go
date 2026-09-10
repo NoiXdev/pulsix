@@ -41,3 +41,24 @@ func Load(getenv func(string) string) (Config, error) {
 	copy(cfg.MasterKey[:], key)
 	return cfg, nil
 }
+
+// RPID returns the WebAuthn relying party id derived from PublicURL: the
+// hostname component alone, with no scheme or port. The WebAuthn spec
+// requires rpID to be a registrable domain suffix of (or equal to) the
+// origin the ceremony ran at, and never carries a port.
+//
+// Load already rejects a PublicURL that fails to parse as an absolute URL,
+// so this is only ever called on an already-validated Config; the error
+// from url.Parse is deliberately ignored, same as Origin below.
+func (c Config) RPID() string {
+	u, _ := url.Parse(c.PublicURL)
+	return u.Hostname()
+}
+
+// Origin returns the WebAuthn origin derived from PublicURL: scheme://host,
+// with the port when PublicURL has one and no path — the exact form a
+// browser reports as the ceremony's collected origin.
+func (c Config) Origin() string {
+	u, _ := url.Parse(c.PublicURL)
+	return u.Scheme + "://" + u.Host
+}
