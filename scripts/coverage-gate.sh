@@ -13,10 +13,16 @@
 # below — never silently, always printed as SKIP so the exclusion is
 # visible in CI output.
 #
-# internal/db/gen is sqlc-generated code (see task-4 brief/report): it has
-# no hand-written logic to cover and is exercised indirectly by
-# internal/db's own tests, so it is excluded the same way and for the same
-# reason — never silently, always printed as SKIP.
+# internal/db/gen (sqlc-generated) is NOT excluded, even though it has no
+# test files of its own: the hand-written SQL it carries is exercised by
+# internal/db's tests (rls_test.go, queries_test.go), covering all eight
+# query methods. This script measures per-package self-coverage only, so
+# it cannot see coverage contributed by another package's tests and will
+# report internal/db/gen below its floor regardless — that is a limitation
+# of `go test -cover`'s per-package attribution, not a sign the SQL is
+# untested; see task-4-report.md "Fix round 1" for the cross-package
+# coverage figure and why an -coverpkg-based fix still falls short of the
+# floor on generated boilerplate the task's queries never call.
 #
 # Usage: scripts/coverage-gate.sh
 # Exit status: 0 if every non-excluded package meets its floor, 1 otherwise.
@@ -43,11 +49,6 @@ go test -race -cover ./... 2>&1 | awk -v module="$module" '
 
 		if (pkg ~ ("^" module "/cmd(/|$)")) {
 			printf "SKIP  %-55s (cmd/... entry-point wiring, excluded from gate)\n", pkg
-			next
-		}
-
-		if (pkg == module "/internal/db/gen") {
-			printf "SKIP  %-55s (sqlc-generated code, excluded from gate)\n", pkg
 			next
 		}
 
