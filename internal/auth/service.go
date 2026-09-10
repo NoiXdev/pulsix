@@ -46,6 +46,38 @@ type NoMFA struct{}
 // Enabled always returns false.
 func (NoMFA) Enabled(context.Context, uuid.UUID) (bool, error) { return false, nil }
 
+// AnyEnabled combines several MFAChecker so a second factor is present when
+// any one of them reports one — e.g. a user with only a passkey, no TOTP,
+// must still be treated as having a second factor at password login
+// (Finding 2, fix round 1): otherwise a stolen password alone produced an
+// MFA-complete session, which then satisfied every route gated on
+// requireMFAComplete, including the passkey management routes themselves.
+//
+// It fails closed: an error from any checker propagates immediately,
+// without consulting the remaining checkers, rather than being treated as
+// "not enabled" and possibly masked by a later checker reporting true — a
+// checker outage must never silently downgrade to password-only login, the
+// same reasoning TOTP.Enabled's own doc comment gives for its single
+// checker.
+func AnyEnabled(checkers ...MFAChecker) MFAChecker {
+	return anyEnabledCheckers(checkers)
+}
+
+type anyEnabledCheckers []MFAChecker
+
+func (cs anyEnabledCheckers) Enabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	for _, c := range cs {
+		enabled, err := c.Enabled(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+		if enabled {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // dummyHash is a fixed, pre-computed argon2id PHC string (produced once by
 // HashPassword and pasted here as a literal — never recomputed at init or
 // at request time) used only to burn the same argon2id cost as a real

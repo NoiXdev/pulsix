@@ -94,8 +94,12 @@ func New(t *testing.T, opts ...Option) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A passkey must count as a second factor at password login the same as
+	// TOTP does, not only at the passkey login endpoints — otherwise a
+	// passkey-only account's password alone would produce an MFA-complete
+	// session (Finding 2, fix round 1).
 	s.Deps = api.Deps{
-		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, totp), TOTP: totp, Passkeys: passkeys,
+		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 	}
 	for _, opt := range opts {
 		opt(s)
