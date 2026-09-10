@@ -3,12 +3,24 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/noixdev/pulsix/internal/auth"
 )
+
+// AuthService is what the auth handlers need from the login/session
+// service. *auth.Service satisfies it in production. The indirection lets
+// tests substitute a fake that fails in ways the real service, backed by a
+// working test database, cannot easily be made to fail on demand — for
+// example Finding 1's forced-revoke-failure test.
+type AuthService interface {
+	Login(ctx context.Context, email, password string) (auth.LoginResult, error)
+	Logout(ctx context.Context, p auth.Principal) error
+	Me(ctx context.Context, p auth.Principal) (auth.User, error)
+}
 
 type loginInput struct {
 	Body struct {
@@ -50,7 +62,7 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/login", func(ctx context.Context, in *loginInput) (*loginOutput, error) {
 		res, err := deps.Auth.Login(ctx, in.Body.Email, in.Body.Password)
 		if err != nil {
-			return nil, mapAuthErr(err)
+			return nil, mapAuthErr(ctx, err)
 		}
 		out := &loginOutput{}
 		out.SetCookie = sessionCookie(res.Cookie, deps.Secure)
@@ -59,8 +71,17 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/auth/logout", func(ctx context.Context, _ *struct{}) (*logoutOutput, error) {
-		if p, ok := auth.FromContext(ctx); ok {
-			_ = deps.Auth.Logout(ctx, p)
+		p, err := requireSession(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// Finding 1: propagate the revoke error instead of discarding it.
+		// A client must never see the cookie reported as cleared (200 plus
+		// a Set-Cookie that deletes it) unless the session was actually
+		// revoked server-side — otherwise an already-exfiltrated cookie
+		// silently survives a logout the user believes succeeded.
+		if err := deps.Auth.Logout(ctx, p); err != nil {
+			return nil, mapAuthErr(ctx, err)
 		}
 		clear := sessionCookie("", deps.Secure)
 		clear.MaxAge = -1
@@ -74,7 +95,7 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		}
 		u, err := deps.Auth.Me(ctx, p)
 		if err != nil {
-			return nil, mapAuthErr(err)
+			return nil, mapAuthErr(ctx, err)
 		}
 		out := &meOutput{}
 		out.Body.User.ID, out.Body.User.Email, out.Body.User.DisplayName = u.ID.String(), u.Email, u.DisplayName
@@ -88,7 +109,12 @@ func sessionCookie(value string, secure bool) http.Cookie {
 		SameSite: http.SameSiteLaxMode, MaxAge: int(auth.SessionTTL.Seconds())}
 }
 
-// requireSession returns the principal or a 401.
+// requireSession returns the principal or a 401. It is the right check for
+// /auth/logout, /auth/me, /auth/totp/verify and the passkey login
+// endpoints: routes that a half-authenticated (MFA-pending) session must
+// still be able to reach, since the SPA needs /me to discover that a
+// second factor is pending, and needs logout/verify/passkey-login to still
+// work before that factor is supplied.
 func requireSession(ctx context.Context) (auth.Principal, error) {
 	p, ok := auth.FromContext(ctx)
 	if !ok {
@@ -97,14 +123,36 @@ func requireSession(ctx context.Context) (auth.Principal, error) {
 	return p, nil
 }
 
-// mapAuthErr translates service sentinels to HTTP errors.
-func mapAuthErr(err error) error {
+// requireMFAComplete is the check for everything else: it additionally
+// rejects a session that exists but has not completed a required second
+// factor. Today NoMFA{} makes every session MFA-complete so this behaves
+// like requireSession, but from Task 7 login can create sessions with
+// mfa_complete = false, and any route that isn't in requireSession's
+// exception list above must use this instead or it will silently accept a
+// half-authenticated caller.
+func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
+	p, err := requireSession(ctx)
+	if err != nil {
+		return p, err
+	}
+	if !p.MFAComplete {
+		return p, huma.Error403Forbidden("second factor required")
+	}
+	return p, nil
+}
+
+// mapAuthErr translates service sentinels to HTTP errors. Anything not
+// recognized is an internal detail (a corrupt password hash, a database
+// outage, ...) that must never reach an unauthenticated client: it is
+// logged server-side and replaced with a generic message.
+func mapAuthErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		return huma.Error401Unauthorized("invalid credentials")
 	case errors.Is(err, auth.ErrNotFound):
 		return huma.Error401Unauthorized("login required")
 	default:
-		return err
+		slog.ErrorContext(ctx, "unmapped auth error", "err", err)
+		return huma.Error500InternalServerError("internal error")
 	}
 }
