@@ -1189,6 +1189,61 @@ fs.writeFileSync('EnrollmentSSH.dc.html', shell({
   height: 1100,
 }));
 
+// ================= WORKERS & ZONES =================
+const capBadge = (l, on = true) => `<span style="font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; color: ${on ? T.accent : T.muted}; background: ${on ? T.accent + '14' : T.ink}; border: 1px solid ${on ? T.accent + '33' : T.border}">${l}</span>`;
+const workerRow = (name, st, ver, caps, agents, jobs, checks, load, seen) => `<div style="display: grid; grid-template-columns: 20px 100px 56px 160px 56px 76px 68px minmax(0, 1fr) 70px; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid ${T.border}; font-size: 12px">
+  ${dot(T[st])}<span style="font-family: ${MONO}; font-weight: 600">${name}</span><span style="font-family: ${MONO}; font-size: 11px; color: ${T.muted}">${ver}</span><div style="display: flex; gap: 4px">${caps.map(([c, on]) => capBadge(c, on)).join('')}</div>
+  <span style="font-family: ${MONO}; font-size: 11px">${agents}</span><span style="font-family: ${MONO}; font-size: 11px">${jobs}</span><span style="font-family: ${MONO}; font-size: 11px">${checks}</span>
+  <div style="display: flex; align-items: center; gap: 8px"><div style="flex-grow: 1; height: 6px; border-radius: 999px; background: ${T.border}; overflow: hidden"><div style="width: ${load}%; height: 100%; background: ${load > 80 ? T.warn : T.accentDim}"></div></div><span style="font-family: ${MONO}; font-size: 11px; color: ${T.muted}; width: 32px">${load} %</span></div>
+  <span style="font-size: 11px; color: ${st === 'ok' ? T.muted : T[st]}; text-align: right">${seen}</span>
+</div>`;
+const zoneCard = (id, name, bastion, workers, agentsC, agentsT, hostsM, remote) => `<div style="display: flex; flex-direction: column; background: ${T.surface}; border: 1px solid ${T.border}; border-radius: 10px; overflow: hidden">
+  <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid ${T.border}">
+    ${ic.globe}<div style="display: flex; flex-direction: column; gap: 3px; min-width: 0"><div style="display: flex; align-items: baseline; gap: 10px"><span style="font-family: ${MONO}; font-size: 13px; font-weight: 700">${id}</span><span style="font-size: 11px; color: ${T.muted}">${name}</span></div>
+    <div style="display: flex; gap: 14px; font-size: 11px; color: ${T.muted}; white-space: nowrap"><span><span style="color: ${T.text}; font-family: ${MONO}">${agentsC}/${agentsT}</span> agents</span><span><span style="color: ${T.text}; font-family: ${MONO}">${hostsM}</span> managed</span><span><span style="color: ${T.text}; font-family: ${MONO}">${remote}</span> remote checks</span><span>jump host <span style="color: ${T.text}; font-family: ${MONO}">${bastion}</span></span></div></div>
+    <div style="margin-left: auto; display: flex; gap: 6px; flex-shrink: 0">${btn('Add worker')}<span style="color: ${T.muted}; display: flex; align-items: center">${ic.more}</span></div>
+  </div>
+  <div style="display: grid; grid-template-columns: 20px 100px 56px 160px 56px 76px 68px minmax(0, 1fr) 70px; gap: 10px; padding: 6px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span></span><span>Worker</span><span>Version</span><span>Capabilities</span><span>Agents</span><span>Jobs</span><span>Checks</span><span>Load</span><span>Seen</span></div>
+  ${workers}
+</div>`;
+fs.writeFileSync('Workers.dc.html', shell({
+  active: 'Workers',
+  crumbs: `<span style="color: ${T.text}; font-weight: 600">Workers</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Workers &amp; zones</h1>${pill('1 worker degraded', T.warn)}<span style="font-size: 12px; color: ${T.muted}">4 zones · 5 workers · 126/128 agents connected · 3 jobs running</span></div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Zones', true)}${tab('Registration tokens')}${tab('Certificates')}${tab('Events')}</div>
+        </div>
+        <div style="display: flex; gap: 8px">${btn('Add zone', false, ic.globe)}${btn('Add worker', true, ic.cpu)}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; gap: 14px">
+          ${zoneCard('fra', 'Hetzner Falkenstein · Europe/Berlin', 'bastion.fra', workerRow('fra-1', 'ok', 'v0.4.2', [['ansible', 1], ['checks', 1], ['gateway', 1]], '34', '2 running', '412/min', 62, '3 s') + workerRow('fra-2', 'ok', 'v0.4.2', [['ansible', 1], ['checks', 1], ['gateway', 1]], '30', '—', '398/min', 41, '2 s'), 64, 64, 41, 118)}
+          ${zoneCard('hel', 'Hetzner Helsinki · Europe/Helsinki', 'bastion.hel', workerRow('hel-1', 'warn', 'v0.4.1', [['ansible', 1], ['checks', 1], ['gateway', 1]], '37', '1 running', '240/min', 88, 'high load'), 37, 38, 8, 52)}
+          ${zoneCard('office-berlin', 'Office LAN · behind NAT', '—', workerRow('office-1', 'ok', 'v0.4.2', [['ansible', 0], ['checks', 1], ['gateway', 1]], '18', '—', '96/min', 12, '5 s'), 18, 18, 0, 22)}
+          ${zoneCard('default', 'Built-in worker in the manager container', '—', workerRow('embedded', 'ok', 'v0.4.2', [['ansible', 1], ['checks', 1], ['gateway', 1]], '7', '—', '40/min', 8, '1 s'), 7, 8, 3, 9)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Worker · hel-1', `<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; font-size: 12px">
+            <div style="display: flex; align-items: center; gap: 8px">${pill('degraded', T.warn)}<span style="color: ${T.dim}">CPU 88 % for 25 min · check queue 1 m 40 s behind</span></div>
+            ${[['Host', 'worker-hel-1 · 2 vCPU · 4 GiB'], ['Address', '10.20.0.10 → manager pulsix.acme.io:8443'], ['Certificate', 'serial 0x2c1a · renews in 41 d'], ['Repositories', '4 cached · acme/legacy failing'], ['Ansible runtime', 'core 2.19 · runner 2.4 · 5 collections'], ['Agent connections', '37 · max 500']].map(([k, v]) => `<div style="display: flex; justify-content: space-between; gap: 12px"><span style="color: ${T.muted}">${k}</span><span style="font-family: ${MONO}; font-size: 11px; text-align: right">${v}</span></div>`).join('')}
+            <div style="padding: 8px 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.warn}55; color: ${T.warn}; font-size: 11px">Suggestion: add a second worker to zone hel. Agents and remote checks rebalance automatically.</div>
+            <div style="display: flex; gap: 8px">${btn('Drain')}${btn('Restart')}${btn('Revoke')}</div>
+          </div>`, `${tag('v0.4.1 · update available')}`)}
+          ${card('Add worker to zone hel', `<div style="display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; font-size: 12px">
+            <div style="display: flex; gap: 8px">${chip('Docker', true)}${chip('systemd binary')}${chip('Compose service')}</div>
+            ${codeBlock([`docker run -d --name pulsix-worker --restart unless-stopped \\`, `  -e PULSIX_MANAGER_ADDR=pulsix.acme.io:8443 \\`, `  -e PULSIX_ZONE=hel \\`, `  -e PULSIX_WORKER_TOKEN=<span style="color: ${T.accent}">pxw_8Hq…d2K</span> \\`, `  -p 8443:8443 -v pulsix-worker:/var/lib/pulsix \\`, `  noixdev/pulsix-worker:0.4.2`])}
+            <span style="color: ${T.muted}">Token valid 24 h, single use. The worker connects outbound, receives its certificate and appears here as <span style="color: ${T.ok}">connected</span>. Agents of the zone get the new address on their next config sync.</span>
+          </div>`, `${tag('token expires in 23 h 12 m')}`)}
+          ${card('Recent events', `<div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; font-size: 11px">
+            ${[['11:52', 'hel-1', 'load above 80 % for 20 min', T.warn], ['11:40', 'fra-2', 'took over 3 remote checks from fra-1 (maintenance)', T.dim], ['10:31', 'fra-1', 'job #1432 claimed', T.dim], ['09:12', 'office-1', 'certificate renewed', T.ok], ['Yesterday', 'pi-garage', 'agent reconnected after 9 min', T.dim]].map(([t, w, m, c]) => `<div style="display: flex; gap: 8px"><span style="font-family: ${MONO}; color: ${T.muted}; width: 60px; flex-shrink: 0">${t}</span><span style="font-family: ${MONO}; width: 64px; flex-shrink: 0">${w}</span><span style="color: ${c}">${m}</span></div>`).join('')}
+          </div>`, `${ic.chevronR}`)}
+        </div>
+      </div>`,
+  height: 1100,
+}));
+
 fs.writeFileSync('canvas.json', JSON.stringify({
   pages: [{ id: 'page-1', name: 'Core & monitoring' }, { id: 'page-2', name: 'Admin & Ansible' }],
   artboards: [
@@ -1200,6 +1255,7 @@ fs.writeFileSync('canvas.json', JSON.stringify({
     { file: 'StatusPage.dc.html', x: 1540, y: 2500, w: 1440, h: 1260, title: 'Public status page' },
     { file: 'RuleEditor.dc.html', x: 0, y: 3920, w: 1440, h: 1080, title: 'Rule editor · form + expression + effective rules' },
     { file: 'StatusAdmin.dc.html', x: 1540, y: 3920, w: 1440, h: 1080, title: 'Status page admin' },
+    { file: 'Workers.dc.html', x: 0, y: 6420, w: 1440, h: 1100, title: 'Workers & zones' },
     { file: 'Enrollment.dc.html', x: 0, y: 5160, w: 1440, h: 1000, title: 'Add host · step 2 agent enrollment' },
     { file: 'EnrollmentSSH.dc.html', x: 1540, y: 5160, w: 1440, h: 1100, title: 'Add host · step 3 SSH access (public key, bootstrap, test)' },
 
@@ -1222,6 +1278,7 @@ fs.writeFileSync('canvas.json', JSON.stringify({
     { id: 'rule-note', x: 0, y: 3800, w: 560, text: 'Rule editor: scope, item filter, thresholds with duration and clear value, form ↔ expression, effective rules with precedence, dry run.', page: 'page-1' },
     { id: 'sadmin-note', x: 1540, y: 3800, w: 560, text: 'Status page admin: components mapping, incident composer, maintenance from windows, slug, custom domain, appearance.', page: 'page-1' },
     { id: 'enroll-note', x: 0, y: 5040, w: 560, text: 'Enrollment wizard: capability toggles, one-line install with single-use token per OS, live progress, SSH step only if managed.', page: 'page-1' },
+    { id: 'workers-note', x: 0, y: 6300, w: 560, text: 'Workers & zones: one card per zone with jump-host default, agent/managed/remote-check counts and its workers (capabilities ansible/checks/gateway, agents, jobs, check throughput, load). Worker detail with drain/restart/revoke, add-worker command with single-use token, event log.', page: 'page-1' },
     { id: 'ssh-note', x: 1540, y: 5040, w: 560, text: 'SSH step: credential (Pulsix-generated key, import, password), public key with authorized_keys / cloud-init / Terraform snippets, optional one-time bootstrap with an existing login, connection test from the zone worker with host-key trust-on-first-use and pinning, sudo/Python checks.', page: 'page-1' },
 
     { id: 'setup-note', x: 0, y: -120, w: 560, text: 'First-run wizard (runs once): admin → first org (slug, default zone, timezone) → optional SMTP → forced second-factor enrolment.', page: 'page-2' },

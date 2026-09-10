@@ -35,7 +35,7 @@ Last updated: 2026-09-10
 | 0.9 | Mockup: agent enrollment flow | mockup | |
 | 0.10 | Mockup: status page (public) + status page admin | mockup | |
 | 0.11 | Design spec (architecture, data model, protocols) | spec | `docs/superpowers/specs/2026-09-10-pulsix-architecture-design.md`, in review |
-| 0.13 | Mockups: setup wizard, account security, members/ACL, activity feed, credentials, playbooks/repos, schedules + webhook triggers, SSH access step | mockup | canvas pages "Core & monitoring" and "Admin & Ansible" |
+| 0.13 | Mockups: setup wizard, account security, members/ACL, activity feed, credentials, playbooks/repos, schedules + webhook triggers, SSH access step, workers & zones | mockup | canvas pages "Core & monitoring" and "Admin & Ansible" |
 | 0.12 | Implementation plan v0.1 Core | planned | `docs/superpowers/plans/2026-09-10-v0.1-core.md`; later milestones get their own plans |
 
 ## v0.1 · Core
