@@ -7,9 +7,9 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addMembership = `-- name: AddMembership :exec
@@ -54,10 +54,10 @@ INSERT INTO users (id, email, display_name, password_hash) VALUES ($1, $2, $3, $
 `
 
 type CreateUserParams struct {
-	ID           uuid.UUID   `json:"id"`
-	Email        string      `json:"email"`
-	DisplayName  string      `json:"display_name"`
-	PasswordHash pgtype.Text `json:"password_hash"`
+	ID           uuid.UUID `json:"id"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"display_name"`
+	PasswordHash *string   `json:"password_hash"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
@@ -157,12 +157,12 @@ SELECT m.org_id, m.user_id, m.role, m.created_at, o.slug, o.name FROM org_member
 `
 
 type ListMembershipsForUserRow struct {
-	OrgID     uuid.UUID          `json:"org_id"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Role      OrgRole            `json:"role"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	Slug      string             `json:"slug"`
-	Name      string             `json:"name"`
+	OrgID     uuid.UUID `json:"org_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Role      OrgRole   `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
 }
 
 func (q *Queries) ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error) {

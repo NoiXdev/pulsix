@@ -7,6 +7,7 @@ package gen
 import (
 	"database/sql/driver"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,24 +58,34 @@ func (ns NullOrgRole) Value() (driver.Value, error) {
 }
 
 type OrgMembership struct {
-	OrgID     uuid.UUID          `json:"org_id"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Role      OrgRole            `json:"role"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	OrgID     uuid.UUID `json:"org_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Role      OrgRole   `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Organization struct {
-	ID        uuid.UUID          `json:"id"`
-	Slug      string             `json:"slug"`
-	Name      string             `json:"name"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID        uuid.UUID `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Session struct {
+	ID          uuid.UUID          `json:"id"`
+	UserID      uuid.UUID          `json:"user_id"`
+	SecretHash  []byte             `json:"secret_hash"`
+	MfaComplete bool               `json:"mfa_complete"`
+	CreatedAt   time.Time          `json:"created_at"`
+	ExpiresAt   time.Time          `json:"expires_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type User struct {
-	ID            uuid.UUID          `json:"id"`
-	Email         string             `json:"email"`
-	DisplayName   string             `json:"display_name"`
-	PasswordHash  pgtype.Text        `json:"password_hash"`
-	InstanceAdmin bool               `json:"instance_admin"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ID            uuid.UUID `json:"id"`
+	Email         string    `json:"email"`
+	DisplayName   string    `json:"display_name"`
+	PasswordHash  *string   `json:"password_hash"`
+	InstanceAdmin bool      `json:"instance_admin"`
+	CreatedAt     time.Time `json:"created_at"`
 }
