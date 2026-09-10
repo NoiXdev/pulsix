@@ -44,12 +44,26 @@ func TestHashPasswordProducesUniqueSalts(t *testing.T) {
 
 // TestVerifyPasswordMalformedHash exercises every malformed-hash shape
 // VerifyPassword must reject without panicking, per the task brief's
-// requirement that it "must not panic on a malformed hash string".
+// requirement that it "must not panic on a malformed hash string". hash
+// comes straight from a database row in production, so this table includes
+// shapes that parse structurally but carry parameter values that make
+// golang.org/x/crypto/argon2 panic (a zero-length key, t=0, p=0) or that a
+// hostile/corrupted row could use to force a huge allocation (out-of-range
+// memory), plus a hash claiming an argon2 version this code does not
+// implement.
+//
+// Each case runs in its own subtest with a recover so that a regression
+// that reintroduces a panic is reported as that subtest failing, rather
+// than crashing the whole test binary and hiding the remaining cases.
 func TestVerifyPasswordMalformedHash(t *testing.T) {
 	valid, err := auth.HashPassword("correct horse")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A real salt/hash pair, reused by cases below that only need to
+	// mutate the params or version segment.
+	validParts := strings.Split(valid, "$")
+	salt, key := validParts[4], validParts[5]
 
 	cases := map[string]string{
 		"empty string":        "",
@@ -59,10 +73,21 @@ func TestVerifyPasswordMalformedHash(t *testing.T) {
 		"non-numeric params":  "$argon2id$v=19$m=x,t=3,p=2$c29tZXNhbHQ$c29tZWhhc2g",
 		"corrupt salt base64": "$argon2id$v=19$m=65536,t=3,p=2$not!base64$c29tZWhhc2g",
 		"corrupt hash base64": "$argon2id$v=19$m=65536,t=3,p=2$c29tZXNhbHQ$not!base64",
+		"empty final segment": "$argon2id$v=19$m=65536,t=3,p=2$" + salt + "$",
+		"time zero":           "$argon2id$v=19$m=65536,t=0,p=2$" + salt + "$" + key,
+		"parallelism zero":    "$argon2id$v=19$m=65536,t=3,p=0$" + salt + "$" + key,
+		"memory out of range": "$argon2id$v=19$m=4294967295,t=3,p=2$" + salt + "$" + key,
+		"unsupported version": "$argon2id$v=99$m=65536,t=3,p=2$" + salt + "$" + key,
+		"non-numeric version": "$argon2id$v=x$m=65536,t=3,p=2$" + salt + "$" + key,
 	}
 
 	for name, hash := range cases {
 		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("VerifyPassword panicked for %s: %v", name, r)
+				}
+			}()
 			ok, err := auth.VerifyPassword(hash, "correct horse")
 			if err == nil {
 				t.Fatalf("expected error for %s, got ok=%v", name, ok)
