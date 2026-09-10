@@ -81,7 +81,7 @@ func registerOrgRoutes(hapi huma.API, deps Deps) {
 		// resolve — it is creating one), so unlike every other audited
 		// handler it must fill in the audit carrier's scope itself rather
 		// than getting it for free; see setAuditScope's doc comment.
-		setAuditScope(ctx, org.ID, p.UserID)
+		setAuditScope(ctx, &org.ID, p.UserID)
 		setAuditObject(ctx, org.ID.String(), "created organization "+org.Name)
 		out := &orgOutput{}
 		out.Body.Org = toOrgDTO(org, tenancy.RoleOwner)

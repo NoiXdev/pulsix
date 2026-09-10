@@ -82,7 +82,7 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	// handler to call setAuditScope separately, is what makes the org and
 	// actor on a recorded event impossible to get wrong or forget: there is
 	// no separate step to skip.
-	setAuditScope(ctx, org.ID, p.UserID)
+	setAuditScope(ctx, &org.ID, p.UserID)
 	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role, Org: org}, nil
 }
 

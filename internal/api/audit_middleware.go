@@ -52,8 +52,21 @@ type auditCarrierKey struct{}
 // comment describes.
 type auditCarrier struct {
 	haveScope bool
-	orgID     uuid.UUID
-	userID    uuid.UUID
+	// orgID is a pointer, not a uuid.UUID, so the carrier can express "this
+	// event has no organization" as a real nil rather than the
+	// indistinguishable-from-a-real-id zero value uuid.UUID{} would be.
+	// Task 11 fix round 1, Finding 1: before this change there was no way
+	// to record an event for an instance-level action (deactivating a
+	// user) at all — the carrier could only ever hold a concrete org id,
+	// and auditMiddleware took the address of whatever local copy it had,
+	// which for an unset carrier would silently become a pointer to
+	// uuid.Nil instead of no organization. audit_events.org_id is nullable
+	// precisely so events like this can be recorded (see its migration's
+	// own comment) — see setAuditScope and registerAdminRoutes
+	// (member_handlers.go) for how POST /admin/users/{id}/deactivate now
+	// uses this.
+	orgID  *uuid.UUID
+	userID uuid.UUID
 	// kind is captured by setAuditScope, at the same point it captures
 	// userID, rather than recomputed later from the context auditMiddleware
 	// itself holds. That context was captured *before* next ran (it has to
@@ -88,9 +101,36 @@ func auditCarrierFromContext(ctx context.Context) (*auditCarrier, bool) {
 // even if it tries to, since it happens inside requireOrg, which every
 // org-scoped handler already calls to authorize the request in the first
 // place.
-func setAuditScope(ctx context.Context, orgID, userID uuid.UUID) {
+//
+// orgID is nil for the instance-level actions that have no organization to
+// scope an event to (POST /admin/users/{id}/deactivate, via
+// registerAdminRoutes in member_handlers.go) — every other caller passes
+// the address of a real, already-resolved org id (requireOrg, and org
+// creation in org_handlers.go).
+//
+// kind is always derived from ctx via actorKind, which is correct for
+// every caller except one: POST /invites/accept has no auth.Principal in
+// its context at all (it is intentionally public), so it uses
+// setAuditScopeAs instead to name ActorKindUser explicitly rather than
+// have actorKind silently report ActorKindSystem.
+func setAuditScope(ctx context.Context, orgID *uuid.UUID, userID uuid.UUID) {
+	setAuditScopeAs(ctx, orgID, userID, actorKind(ctx))
+}
+
+// setAuditScopeAs is setAuditScope with the actor kind supplied explicitly
+// instead of derived from ctx via actorKind. It exists for
+// registerInviteAcceptRoute (member_handlers.go): that route runs with no
+// auth.Principal of its own (an invitee proves identity by possessing the
+// invite token, not a session or bearer credential), so actorKind(ctx)
+// would either report ActorKindSystem (no principal at all — wrong, since
+// the invited user themselves squarely performed this action) or, worse,
+// pick up an unrelated principal from a stale session cookie the caller's
+// browser happens to still be carrying (CookieMiddleware runs on every
+// route regardless of whether the route uses it). Naming the kind
+// explicitly sidesteps both.
+func setAuditScopeAs(ctx context.Context, orgID *uuid.UUID, userID uuid.UUID, kind audit.ActorKind) {
 	if c, ok := auditCarrierFromContext(ctx); ok {
-		c.haveScope, c.orgID, c.userID, c.kind = true, orgID, userID, actorKind(ctx)
+		c.haveScope, c.orgID, c.userID, c.kind = true, orgID, userID, kind
 	}
 }
 
@@ -185,9 +225,13 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 		}
 		objType, _ := op.Metadata["auditObject"].(string)
 		userID := carrier.userID
-		orgID := carrier.orgID
 		if err := deps.Audit.Record(reqCtx, audit.Event{
-			OrgID: &orgID, ActorID: &userID, ActorKind: carrier.kind,
+			// carrier.orgID is passed through as-is (nil for an
+			// instance-level action, a real address otherwise) rather than
+			// copied into a local and re-addressed — see auditCarrier's own
+			// doc comment on why that used to be able to silently turn "no
+			// organization" into "organization uuid.Nil".
+			OrgID: carrier.orgID, ActorID: &userID, ActorKind: carrier.kind,
 			Action: ctx.Method() + " " + op.OperationID, ObjectType: objType,
 			ObjectID: carrier.objectID, Summary: carrier.summary,
 		}); err != nil {

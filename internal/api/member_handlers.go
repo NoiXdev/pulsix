@@ -8,6 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -170,22 +171,43 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 // api.go, not the bearer-enabled group: an invite token is not a bearer
 // credential, and this route must stay reachable with no Authorization
 // header and no session cookie.
+//
+// It mutates membership state (AddMembership, possibly CreateUser too) and
+// is audited like every other membership route — Task 11 fix round 1,
+// Finding 3: the original report never mentioned this route at all, and
+// unlike the instance-admin deactivate route (Finding 1) it has a real
+// organization available (AcceptInvite already returns it), so nothing
+// blocks recording it here the same way.
 func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/invites/accept", func(ctx context.Context, in *inviteAcceptInput) (*inviteAcceptOutput, error) {
 		uid, orgID, err := deps.Tenancy.AcceptInvite(ctx, in.Body.Token, in.Body.DisplayName, in.Body.Password)
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		// This route never calls requireOrg (there is no principal to
+		// authorize in the first place — it's how an invitee proves
+		// identity), so it fills the carrier itself, like org creation
+		// does; see setAuditScopeAs's own doc comment for why it names
+		// ActorKindUser explicitly instead of deriving it from ctx.
+		setAuditScopeAs(ctx, &orgID, uid, audit.ActorKindUser)
+		setAuditObject(ctx, uid.String(), "accepted invite and joined the organization")
 		out := &inviteAcceptOutput{}
 		out.Body.UserID, out.Body.OrgID = uid.String(), orgID.String()
 		return out, nil
-	})
+	}, withAudit("acceptInvite", "member"))
 }
 
 // registerAdminRoutes wires the one instance-level (not org-scoped) route
 // this task adds: deactivating a user. It is registered on the root API,
 // not the bearer-enabled group — see requireInstanceAdmin's doc comment for
 // why a bearer token must never reach it.
+//
+// Audited with no organization (Task 11 fix round 1, Finding 1): the
+// original report left this route unwired entirely, reasoning there was no
+// org to scope the event to. audit_events.org_id is nullable precisely for
+// this case, and the carrier can now express it (see auditCarrier's own
+// doc comment) — disabling an account is exactly the kind of high-value
+// forensic action Finding 1 says must not go unrecorded.
 func registerAdminRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/admin/users/{userId}/deactivate", func(ctx context.Context, in *adminDeactivateInput) (*okOutput, error) {
 		p, err := requireInstanceAdmin(ctx)
@@ -199,6 +221,12 @@ func registerAdminRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Tenancy.DeactivateUser(ctx, p.InstanceAdmin, target); err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		// No requireOrg here — there is no organization to resolve one
+		// from — so the carrier's scope is filled in directly, with a nil
+		// org and the administrator (not the deactivated user) as the
+		// actor; target is the object being acted on, set below.
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, target.String(), "deactivated user account")
 		return &okOutput{}, nil
-	})
+	}, withAudit("deactivateUser", "user"))
 }

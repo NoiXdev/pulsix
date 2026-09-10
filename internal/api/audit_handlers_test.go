@@ -401,6 +401,125 @@ func TestRecordingFailureDoesNotBreakRequest(t *testing.T) {
 	}
 }
 
+// TestDeactivateUserRecordsInstanceLevelAuditEvent is Finding 1's test
+// (Task 11 fix round 1): an instance admin deactivating a user is an
+// instance-level action with no organization, and previously produced no
+// audit record at all. It must now show up on GET /me/activity (the
+// admin's own cross-org feed — there is no org to look it up under) with
+// no organization, the administrator as actor, and the deactivated user as
+// the object.
+func TestDeactivateUserRecordsInstanceLevelAuditEvent(t *testing.T) {
+	s := apitest.New(t)
+	target := s.SeedUser("audit-deact-target@example.test", "correct horse battery")
+	admin := s.SeedUser("audit-deact-admin@example.test", "correct horse battery")
+	if _, err := s.DB.Pool().Exec(t.Context(), "UPDATE users SET instance_admin = true WHERE id = $1", admin); err != nil {
+		t.Fatal(err)
+	}
+	adminClient := s.LoginAs(admin)
+
+	resp := requestJSON(t, adminClient, http.MethodPost, s.HTTP.URL+"/api/v1/admin/users/"+target.String()+"/deactivate", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deactivate: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = requestJSON(t, adminClient, http.MethodGet, s.HTTP.URL+"/api/v1/me/activity", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get me/activity: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	activity := decodeActivity(t, resp)
+
+	var ev *eventDTO
+	for i := range activity.Items {
+		if activity.Items[i].Action == "POST deactivateUser" {
+			ev = &activity.Items[i]
+		}
+	}
+	if ev == nil {
+		t.Fatalf("no deactivateUser event in %+v", activity.Items)
+	}
+	if ev.OrgID != nil {
+		t.Fatalf("OrgID = %v, want nil (an instance-level action has no organization)", *ev.OrgID)
+	}
+	if ev.ActorID == nil || *ev.ActorID != admin.String() {
+		t.Fatalf("ActorID = %v, want the administrator %s who performed the deactivation", ev.ActorID, admin)
+	}
+	if ev.ObjectType != "user" || ev.ObjectID != target.String() {
+		t.Fatalf("object = (%q, %q), want (user, %s) — the deactivated user, not the admin", ev.ObjectType, ev.ObjectID, target)
+	}
+}
+
+// TestInviteAcceptRecordsAuditEvent is Finding 3's test (Task 11 fix round
+// 1): POST /invites/accept mutates membership state and, unlike the
+// instance-admin deactivate route, has a real organization available (the
+// invitation's own OrgID) — nothing blocks recording it, and the original
+// report never mentioned this route at all.
+func TestInviteAcceptRecordsAuditEvent(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("audit-invite-owner@example.test", "correct horse battery")
+	s.SeedOrg("audit-invite-org", owner)
+	c := s.LoginAs(owner)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/audit-invite-org/invites", map[string]any{"email": "audit-invitee@example.test", "role": "operator"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	sent := s.Mail.Sent()
+	if len(sent) != 1 {
+		t.Fatalf("mail sent = %+v", sent)
+	}
+	const marker = "/invite/"
+	i := strings.Index(sent[0].Body, marker)
+	if i < 0 {
+		t.Fatalf("invite mail has no token link: %q", sent[0].Body)
+	}
+	token := strings.TrimSpace(sent[0].Body[i+len(marker):])
+	if nl := strings.IndexAny(token, "\n\r"); nl >= 0 {
+		token = token[:nl]
+	}
+
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{
+		"token": token, "display_name": "Audit Invitee", "password": "correct horse battery",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("accept invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var accepted struct {
+		UserID string `json:"user_id"`
+		OrgID  string `json:"org_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+
+	resp = requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/audit-invite-org/activity?limit=50", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get activity: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	activity := decodeActivity(t, resp)
+
+	var ev *eventDTO
+	for i := range activity.Items {
+		if activity.Items[i].Action == "POST acceptInvite" {
+			ev = &activity.Items[i]
+		}
+	}
+	if ev == nil {
+		t.Fatalf("no acceptInvite event in %+v", activity.Items)
+	}
+	if ev.OrgID == nil || *ev.OrgID != accepted.OrgID {
+		t.Fatalf("OrgID = %v, want %s", ev.OrgID, accepted.OrgID)
+	}
+	if ev.ActorID == nil || *ev.ActorID != accepted.UserID {
+		t.Fatalf("ActorID = %v, want the invitee %s who accepted", ev.ActorID, accepted.UserID)
+	}
+	if ev.ActorKind != "user" {
+		t.Fatalf("ActorKind = %q, want %q", ev.ActorKind, "user")
+	}
+	if ev.ObjectType != "member" {
+		t.Fatalf("ObjectType = %q, want %q", ev.ObjectType, "member")
+	}
+}
+
 // TestActivityFeedFiltersByActorAndSince exercises the actor= and since=
 // query parameters end to end: one org, two different actors renaming it at
 // known times, filtered down to one actor and then to "since" the second
