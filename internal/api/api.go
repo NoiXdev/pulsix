@@ -91,11 +91,27 @@ func New(deps Deps) (http.Handler, error) {
 	// reverse-proxy trust boundary is known.
 	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
 	r.Use(auth.CookieMiddleware(deps.Sessions))
-	// Runs after CookieMiddleware so an explicit Authorization header (a
-	// caller unambiguously authenticating as a bearer token) takes
-	// precedence over any cookie also present on the same request, rather
-	// than the other way around.
-	r.Use(auth.BearerMiddleware(deps.Tokens))
+	// auth.BearerMiddleware is deliberately NOT mounted here (Finding 1,
+	// fix round 1). Mounting it on this router — the router every route in
+	// this package attaches to — made a bearer principal (which
+	// Tokens.Resolve always marks MFAComplete: true, by construction) reach
+	// every route mounted below, including the account-security routes
+	// (passkey register/list/delete, TOTP enrol/confirm/delete) that only
+	// gated on requireMFAComplete: a viewer-scoped token could register an
+	// attacker-controlled passkey or plant a TOTP secret on its owner's
+	// account and take it over completely. Those routes now use
+	// requireInteractiveSession (auth_handlers.go), which rejects a token
+	// principal outright — but no route in this package actually reads
+	// TokenScopeFromContext yet either: registerTokenRoutes (the one
+	// consumer TokenScope exists for) is written but not called from
+	// registerRoutes until Task 10 adds the org-membership authorization it
+	// needs to be mounted safely (see token_handlers.go). With nothing here
+	// to resolve a bearer credential for, mounting BearerMiddleware at all
+	// would only be attack surface with no matching benefit — a future
+	// route that forgets requireInteractiveSession would otherwise silently
+	// accept a token the same way the passkey/TOTP routes just did. Task 10
+	// mounts it, scoped to the org-scoped token subtree where TokenScope is
+	// actually consulted, alongside the authorization that makes it safe.
 	r.Use(requireMFAForExplorer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {

@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -28,59 +27,38 @@ func bearerRequest(t *testing.T, s *apitest.Server, path, token string) *http.Re
 	return resp
 }
 
-// TestBearerTokenAuthenticatesMe is the API-level counterpart to
-// auth.TestBearerMiddleware: a real token minted through the service (not
-// mounted behind any route yet — see token_handlers.go's doc comment on why
-// the org-scoped CRUD routes stay unmounted until Task 10) authenticates a
-// completely cookie-less request against an already-mounted route, and
-// counts as MFA-complete the way Tokens.Resolve documents.
+// TestBearerTokenNotYetResolvedOnRealServer documents and guards the
+// current, deliberate state (Finding 1, fix round 1): auth.BearerMiddleware
+// is fully implemented and exercised at the unit level
+// (auth.TestBearerMiddleware), but api.New no longer mounts it on this
+// package's router — see api.go's comment on why: nothing here consults
+// TokenScopeFromContext yet (registerTokenRoutes, the one consumer, stays
+// unmounted until Task 10 adds the org-authorization it needs), so
+// resolving a bearer credential into every other route's context would
+// only be attack surface with no matching benefit. A real, valid,
+// unrevoked token therefore authenticates nothing on the actually-running
+// server today: the Authorization header is never inspected, so the
+// request is treated exactly like one with no credential at all (401, the
+// same as TestBearerTokenCannotAuthenticateWithoutHeader below).
 //
-// This is deliberately not the brief's original handler test shape (owner
-// creates the token through POST /orgs/{org}/tokens): that route needs
-// Task 10's org authorization to exist safely, so it is written but left
-// unmounted (see registerTokenRoutes) rather than exposed without it. What
-// this test can and does exercise for real, end to end, through the actual
-// running server: BearerMiddleware resolving a token minted by the service,
-// an invalid bearer being rejected, and a revoked token being rejected.
-func TestBearerTokenAuthenticatesMe(t *testing.T) {
+// This guards the deferral the way TestOrgTokenRoutesNotYetMounted guards
+// registerTokenRoutes staying unmounted: if BearerMiddleware is mounted
+// again without Task 10's org-scoped authorization in front of it, this
+// test starts failing (401 stops meaning "the header was never resolved")
+// as a signal to revisit the decision.
+func TestBearerTokenNotYetResolvedOnRealServer(t *testing.T) {
 	s := apitest.New(t)
 	uid := s.SeedUser("bearer@example.test", "correct horse battery")
 	org := s.SeedOrg("bearer-org", uid)
 
-	plain, tok, err := s.Deps.Tokens.Create(context.Background(), uid, org, "ci", "operator", nil)
+	plain, _, err := s.Deps.Tokens.Create(context.Background(), uid, org, "ci", "operator", nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	resp := bearerRequest(t, s, "/api/v1/auth/me", plain)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("me with a valid bearer token: status %d, want 200", resp.StatusCode)
-	}
-	var body struct {
-		MFAComplete bool `json:"mfa_complete"`
-		User        struct {
-			Email string `json:"email"`
-		} `json:"user"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatal(err)
-	}
-	if !body.MFAComplete {
-		t.Fatal("bearer-authenticated /me reported mfa_complete = false")
-	}
-	if body.User.Email != "bearer@example.test" {
-		t.Fatalf("me email = %q, want bearer@example.test", body.User.Email)
-	}
-
-	if resp := bearerRequest(t, s, "/api/v1/auth/me", "pxt_not-a-real-token"); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("me with an invalid bearer token: status %d, want 401", resp.StatusCode)
-	}
-
-	if err := s.Deps.Tokens.Revoke(context.Background(), org, tok.ID); err != nil {
-		t.Fatalf("Revoke: %v", err)
-	}
-	if resp := bearerRequest(t, s, "/api/v1/auth/me", plain); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("me with a revoked bearer token: status %d, want 401", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("me with a valid-but-unresolved bearer token: status %d, want 401 (BearerMiddleware is not mounted on the real server yet)", resp.StatusCode)
 	}
 }
 

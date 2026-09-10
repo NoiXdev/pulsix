@@ -70,18 +70,20 @@ type passkeyLoginFinishOutput struct {
 // discoverable-credential login.
 //
 // Gating: register/begin, register/finish, list and delete all change or
-// read the account's second factors, so they require requireMFAComplete —
-// the same reasoning as TOTP's enrol/confirm/disable in mfa_handlers.go: a
+// read the account's second factors, so they require requireInteractiveSession
+// — the same reasoning as TOTP's enrol/confirm/disable in mfa_handlers.go: a
 // session that has not itself completed a second factor must not be able to
 // plant a new passkey (or enumerate/remove existing ones) on the account it
-// rode in on. login/begin and login/finish are the opposite case: they are
-// how an unauthenticated caller signs in with no session at all, so they
-// carry no auth check — matching requireSession's own doc comment, which
-// already lists "the passkey login endpoints" among the routes a
-// half-authenticated or absent session must still be able to reach.
+// rode in on, and — per requireInteractiveSession's own doc comment — an API
+// token must not either, regardless of its scope (Finding 1, fix round 1).
+// login/begin and login/finish are the opposite case: they are how an
+// unauthenticated caller signs in with no session at all, so they carry no
+// auth check — matching requireSession's own doc comment, which already
+// lists "the passkey login endpoints" among the routes a half-authenticated
+// or absent session must still be able to reach.
 func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/passkeys/register/begin", func(ctx context.Context, _ *struct{}) (*passkeyBeginOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +97,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*okOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -110,7 +112,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Get(hapi, "/api/v1/auth/passkeys", func(ctx context.Context, _ *struct{}) (*passkeyListOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +129,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Delete(hapi, "/api/v1/auth/passkeys/{id}", func(ctx context.Context, in *passkeyIDInput) (*okOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}

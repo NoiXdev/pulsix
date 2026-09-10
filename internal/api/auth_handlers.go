@@ -145,6 +145,41 @@ func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
 	return p, nil
 }
 
+// requireInteractiveSession is requireMFAComplete plus one more condition:
+// the principal must not have come from an API token (p.TokenID == nil).
+// It is the gate for every route that manages the account's own
+// credentials — passkey register/list/delete and TOTP enrol/confirm/delete
+// — because an API token is, by construction, always MFA-complete
+// (Tokens.Resolve: "a token is not a browser session with its own
+// second-factor step-up"), so requireMFAComplete alone lets a token —
+// however narrowly scoped, e.g. a viewer-scoped token minted for read-only
+// automation — register an attacker-controlled passkey or plant a TOTP
+// secret on the token owner's account and take it over completely
+// (Finding 1, fix round 1). These routes carry no organization in their
+// path, so Task 10's org-scoped authorization can never close this gap:
+// account-level credential management must reject a token principal
+// outright, regardless of its scope or role.
+//
+// The rejection is 403, the same status requireMFAComplete already uses
+// for "second factor required": the credential is genuine and currently
+// valid, it is simply not the kind of principal this route accepts.
+//
+// requireSession's own exception list — /auth/logout, /auth/me,
+// /auth/totp/verify, and the passkey login endpoints — is deliberately
+// untouched: those either need to remain reachable by a half-authenticated
+// session (verify) or have no reason to reject a token principal (logout,
+// me) or no session at all (passkey login).
+func requireInteractiveSession(ctx context.Context) (auth.Principal, error) {
+	p, err := requireMFAComplete(ctx)
+	if err != nil {
+		return p, err
+	}
+	if p.TokenID != nil {
+		return p, huma.Error403Forbidden("interactive session required")
+	}
+	return p, nil
+}
+
 // mapAuthErr translates service sentinels to HTTP errors. Anything not
 // recognized is an internal detail (a corrupt password hash, a database
 // outage, ...) that must never reach an unauthenticated client: it is

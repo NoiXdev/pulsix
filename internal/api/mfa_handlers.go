@@ -35,20 +35,23 @@ type okOutput struct {
 // registerMFARoutes wires the TOTP enrolment, confirmation, session step-up
 // and disable endpoints.
 //
-// Gating: enrol/confirm/disable use requireMFAComplete because they mutate
-// or remove a second factor for the calling account — a session that has
-// not yet supplied its own second factor must not be able to enrol a new
-// one (that would let a stolen password-only session silently establish an
-// attacker-controlled TOTP secret and lock the real owner out) or delete
+// Gating: enrol/confirm/disable use requireInteractiveSession because they
+// mutate or remove a second factor for the calling account — a session that
+// has not yet supplied its own second factor must not be able to enrol a
+// new one (that would let a stolen password-only session silently establish
+// an attacker-controlled TOTP secret and lock the real owner out) or delete
 // the existing one (which would strip MFA protection without ever having
-// proven possession of it). verify is the one route that must accept a
+// proven possession of it) — and, per requireInteractiveSession's own doc
+// comment, an API token must not be able to do either regardless of its
+// scope either, since it is always MFA-complete by construction (Finding 1,
+// fix round 1). verify is the one route that must accept a
 // half-authenticated (MFA-pending) session, per requireSession's doc
 // comment: it is the second-factor step-up itself, so requiring
 // MFA-complete first would make it unreachable from the state it exists to
-// resolve.
+// resolve — it stays on requireSession, unchanged.
 func registerMFARoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/totp/enrol", func(ctx context.Context, in *codeInput) (*totpEnrolOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +73,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/auth/totp/confirm", func(ctx context.Context, in *codeInput) (*recoveryOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +110,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Delete(hapi, "/api/v1/auth/totp", func(ctx context.Context, in *codeInput) (*okOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInteractiveSession(ctx)
 		if err != nil {
 			return nil, err
 		}
