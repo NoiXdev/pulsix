@@ -150,3 +150,46 @@ func TestTOTPDisableRequiresFreshCodeAndRemovesState(t *testing.T) {
 		t.Fatal("login still requires MFA after Disable")
 	}
 }
+
+// TestTOTPEnrolRequiresFreshCodeOnReEnrolment is the HTTP-level assertion
+// for Finding 2, fix round 1: once TOTP is confirmed, POST
+// /auth/totp/enrol must require a fresh valid code exactly like DELETE
+// /auth/totp does. Before this fix, calling enrol a second time reset
+// confirmed_at with no code at all, so an attacker holding an
+// MFA-complete session could strip the factor either through this
+// endpoint or through disable.
+func TestTOTPEnrolRequiresFreshCodeOnReEnrolment(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("re-enrol@example.test", "correct horse battery")
+	c := s.LoginAs(uid)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", struct{}{})
+	var enrol struct {
+		Secret string `json:"secret"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&enrol)
+	code, _ := totp.GenerateCode(enrol.Secret, time.Now())
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/confirm", map[string]string{"code": code}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm: %d", resp.StatusCode)
+	}
+
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", struct{}{}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("re-enrol without a code: status %d, want 400", resp.StatusCode)
+	}
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", map[string]string{"code": "000000"}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("re-enrol with a wrong code: status %d, want 400", resp.StatusCode)
+	}
+
+	freshCode, _ := totp.GenerateCode(enrol.Secret, time.Now().Add(30*time.Second))
+	resp = postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", map[string]string{"code": freshCode})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("re-enrol with a fresh code: status %d, want 200", resp.StatusCode)
+	}
+	var reEnrol struct {
+		Secret string `json:"secret"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&reEnrol)
+	if reEnrol.Secret == "" || reEnrol.Secret == enrol.Secret {
+		t.Fatalf("re-enrol did not issue a new secret: got %q, original %q", reEnrol.Secret, enrol.Secret)
+	}
+}

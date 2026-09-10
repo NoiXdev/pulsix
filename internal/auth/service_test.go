@@ -50,6 +50,38 @@ type mfaOn struct{}
 
 func (mfaOn) Enabled(context.Context, uuid.UUID) (bool, error) { return true, nil }
 
+// mfaErr simulates an MFAChecker.Enabled that fails, e.g. auth.TOTP.Enabled
+// propagating a database error rather than swallowing it (Finding 1, fix
+// round 1). The seam Finding 4 introduced (MFAChecker as an interface, not
+// a concrete *auth.TOTP) is what makes this fake possible at all.
+type mfaErr struct{ err error }
+
+func (m mfaErr) Enabled(context.Context, uuid.UUID) (bool, error) { return false, m.err }
+
+// TestLoginFailsClosedOnMFACheckError asserts Finding 1's consequence at
+// the Service.Login level: if the MFAChecker cannot even report whether a
+// factor is enrolled, Login must fail rather than fall back to
+// mfaRequired == false and create an MFA-complete session. Before the fix,
+// auth.TOTP.Enabled swallowed every store error into (false, nil), which
+// made this branch unreachable — a statement timeout or a connection
+// reset silently downgraded a TOTP-protected account to password-only
+// login.
+func TestLoginFailsClosedOnMFACheckError(t *testing.T) {
+	hash, _ := auth.HashPassword("correct horse")
+	uid := uuid.Must(uuid.NewV7())
+	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash}}}
+	sess := &fakeSessions{}
+	sentinel := errors.New("mfa store unavailable")
+	svc := auth.NewService(store, sess, mfaErr{err: sentinel})
+
+	if _, err := svc.Login(context.Background(), "a@x", "correct horse"); !errors.Is(err, sentinel) {
+		t.Fatalf("Login err = %v, want to wrap %v", err, sentinel)
+	}
+	if len(sess.created) != 0 {
+		t.Fatalf("a session was created despite the MFA check failing: %+v", sess.created)
+	}
+}
+
 func TestLoginRejectsUnknownUserAndWrongPassword(t *testing.T) {
 	hash, _ := auth.HashPassword("correct horse")
 	uid := uuid.Must(uuid.NewV7())

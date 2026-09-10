@@ -18,7 +18,11 @@ import (
 
 // newTOTPFixture wires a TOTP service against a fresh migrated database and
 // seeds one user, mirroring TestTOTPEnrolVerifyReplay's setup so the
-// property tests below don't repeat it.
+// property tests below don't repeat it. It returns both the raw *gen.Queries
+// (for tests that need to inspect a row directly) and the real
+// auth.SQLTOTPStore-backed service, so these tests keep exercising the
+// actual SQL, per Finding 4's requirement that at least one integration
+// test per behaviour still covers the real store.
 func newTOTPFixture(t *testing.T) (context.Context, *gen.Queries, *auth.TOTP, uuid.UUID) {
 	t.Helper()
 	d := testdb.Open(t)
@@ -29,7 +33,7 @@ func newTOTPFixture(t *testing.T) (context.Context, *gen.Queries, *auth.TOTP, uu
 		t.Fatal(err)
 	}
 	var key [32]byte
-	tp := auth.NewTOTP(q, crypto.NewBox(key), "Pulsix Test", time.Now)
+	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d.Pool()), crypto.NewBox(key), "Pulsix Test", time.Now)
 	return ctx, q, tp, uid
 }
 
@@ -42,7 +46,7 @@ func newTOTPFixture(t *testing.T) (context.Context, *gen.Queries, *auth.TOTP, uu
 func TestTOTPVerifyRejectsUnconfirmedSecret(t *testing.T) {
 	ctx, _, tp, uid := newTOTPFixture(t)
 
-	secret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test")
+	secret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -58,7 +62,7 @@ func TestTOTPVerifyRejectsUnconfirmedSecret(t *testing.T) {
 func TestTOTPConfirmRejectsInvalidCode(t *testing.T) {
 	ctx, _, tp, uid := newTOTPFixture(t)
 
-	if _, _, err := tp.BeginEnrol(ctx, uid, "t@example.test"); err != nil {
+	if _, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", ""); err != nil {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, err := tp.ConfirmEnrol(ctx, uid, "000000"); !errors.Is(err, auth.ErrInvalidTOTPCode) {
@@ -76,7 +80,7 @@ func TestTOTPConfirmRejectsInvalidCode(t *testing.T) {
 func TestTOTPDisableRemovesSecretAndRecoveryCodes(t *testing.T) {
 	ctx, q, tp, uid := newTOTPFixture(t)
 
-	secret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test")
+	secret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -106,30 +110,70 @@ func TestTOTPDisableRemovesSecretAndRecoveryCodes(t *testing.T) {
 	}
 }
 
-// TestTOTPReEnrolResetsConfirmationState asserts that beginning enrolment a
-// second time (e.g. the user restarting a botched setup) invalidates the
-// previous secret rather than layering a new one on top of a still-active
-// old one: UpsertTOTPSecret's ON CONFLICT clause resets confirmed_at and
-// last_used_step, so Enabled must go back to false and the old secret's
-// codes must stop working until the new secret is confirmed.
-func TestTOTPReEnrolResetsConfirmationState(t *testing.T) {
+// TestTOTPBeginEnrolFirstTimeNoCodeRequired asserts the first (Finding 2)
+// case against the real store: an account with no TOTP row at all can
+// begin enrolment without a code.
+func TestTOTPBeginEnrolFirstTimeNoCodeRequired(t *testing.T) {
 	ctx, _, tp, uid := newTOTPFixture(t)
 
-	firstSecret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test")
+	secret, url, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
+	if err != nil || secret == "" || url == "" {
+		t.Fatalf("BeginEnrol(no code, first time) = (%q, %q, %v), want success", secret, url, err)
+	}
+}
+
+// TestTOTPReEnrolWithoutCodeRefused asserts the second (Finding 2) case: once
+// TOTP is confirmed, calling BeginEnrol again without a code must be
+// refused, and must leave the existing confirmed secret completely intact
+// (Enabled still true, the old secret's codes still valid) — not silently
+// reset confirmed_at the way UpsertTOTPSecret's ON CONFLICT clause would on
+// its own. Without this, one unauthenticated-by-possession call would leave
+// the account password-only at the next login, making the fresh-code
+// requirement on Disable cosmetic.
+func TestTOTPReEnrolWithoutCodeRefused(t *testing.T) {
+	ctx, _, tp, uid := newTOTPFixture(t)
+
+	firstSecret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
 	if err != nil {
-		t.Fatalf("begin 1: %v", err)
+		t.Fatalf("begin: %v", err)
 	}
 	firstCode, _ := totp.GenerateCode(firstSecret, time.Now())
 	if _, err := tp.ConfirmEnrol(ctx, uid, firstCode); err != nil {
-		t.Fatalf("confirm 1: %v", err)
-	}
-	if on, _ := tp.Enabled(ctx, uid); !on {
-		t.Fatal("not enabled after first confirmation")
+		t.Fatalf("confirm: %v", err)
 	}
 
-	secondSecret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test")
+	if _, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", ""); !errors.Is(err, auth.ErrInvalidTOTPCode) {
+		t.Fatalf("re-enrol without a code: err = %v, want %v", err, auth.ErrInvalidTOTPCode)
+	}
+
+	if on, err := tp.Enabled(ctx, uid); !on || err != nil {
+		t.Fatalf("Enabled after a refused re-enrolment = (%v, %v), want (true, nil)", on, err)
+	}
+	next, _ := totp.GenerateCode(firstSecret, time.Now().Add(30*time.Second))
+	if ok, err := tp.Verify(ctx, uid, next); !ok || err != nil {
+		t.Fatalf("the original secret must still work after a refused re-enrolment, got (%v, %v)", ok, err)
+	}
+}
+
+// TestTOTPReEnrolWithValidCodeSucceeds asserts the third (Finding 2) case:
+// supplying a fresh, valid code for the existing confirmed secret lets
+// BeginEnrol issue a new one, exactly like Disable's fresh-code check.
+func TestTOTPReEnrolWithValidCodeSucceeds(t *testing.T) {
+	ctx, _, tp, uid := newTOTPFixture(t)
+
+	firstSecret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
 	if err != nil {
-		t.Fatalf("begin 2: %v", err)
+		t.Fatalf("begin: %v", err)
+	}
+	firstCode, _ := totp.GenerateCode(firstSecret, time.Now())
+	if _, err := tp.ConfirmEnrol(ctx, uid, firstCode); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+
+	freshCode, _ := totp.GenerateCode(firstSecret, time.Now().Add(30*time.Second))
+	secondSecret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", freshCode)
+	if err != nil {
+		t.Fatalf("re-enrol with a valid code: %v", err)
 	}
 	if secondSecret == firstSecret {
 		t.Fatal("re-enrolment reused the previous secret")
@@ -146,7 +190,7 @@ func TestTOTPReEnrolResetsConfirmationState(t *testing.T) {
 func TestTOTPSecretStoredSealedNotPlaintext(t *testing.T) {
 	ctx, q, tp, uid := newTOTPFixture(t)
 
-	secret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test")
+	secret, _, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
