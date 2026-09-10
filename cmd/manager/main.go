@@ -52,6 +52,10 @@ func run() int {
 		slog.Error("failed to build application", "err", err)
 		return 1
 	}
+	// a.Close() tears down the database pool. serveWithGracefulShutdown
+	// below must have fully drained in-flight requests before this defer
+	// runs, or a request still executing when the listener closed would
+	// have the pool pulled out from under it.
 	defer a.Close()
 
 	srv := &http.Server{
@@ -60,6 +64,43 @@ func run() int {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	slog.Info("pulsix-manager listening", "addr", cfg.Listen)
+	if err := serveWithGracefulShutdown(ctx, stop, srv, srv.ListenAndServe); err != nil {
+		slog.Error("server stopped", "err", err)
+		return 1
+	}
+	return 0
+}
+
+// serveWithGracefulShutdown runs serve (normally srv.ListenAndServe) until
+// ctx is cancelled, then waits for srv.Shutdown to actually finish draining
+// in-flight requests before returning.
+//
+// serve's own return does not mean that drain has happened: http.Server's
+// ListenAndServe/Serve returns as soon as the listener closes, which
+// Shutdown does immediately, well before the requests it is waiting on have
+// finished — Shutdown itself keeps blocking in the background. Calling
+// serve in the foreground and Shutdown from a goroutine (the shape this
+// function replaces) therefore lets the caller return, and any deferred
+// cleanup run, the moment the listener closes rather than once the drain
+// completes, tearing down whatever the caller cleans up (here, the
+// database pool) out from under a request Shutdown is still waiting on.
+//
+// This function closes that gap: the shutdown goroutine signals its own
+// completion on shutdownDone, and this function does not return until that
+// signal arrives, however serve itself returned. stop is called
+// unconditionally so the shutdown goroutine's <-ctx.Done() always unblocks
+// — including when serve returned for a reason other than ctx firing (e.g.
+// a genuine listen error) — rather than only waiting for a signal that may
+// never come.
+//
+// Extracted out of run() as its own function — rather than run() itself
+// juggling the wait — specifically so the drain ordering can be exercised
+// by a test with a context this package cancels directly, without going
+// through a real OS signal (see TestServeWithGracefulShutdownWaitsForDrain
+// in main_test.go).
+func serveWithGracefulShutdown(ctx context.Context, stop context.CancelFunc, srv *http.Server, serve func() error) error {
+	shutdownDone := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutting down")
@@ -68,12 +109,15 @@ func run() int {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Error("graceful shutdown failed", "err", err)
 		}
+		close(shutdownDone)
 	}()
 
-	slog.Info("pulsix-manager listening", "addr", cfg.Listen)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error("server stopped", "err", err)
-		return 1
+	err := serve()
+	stop()
+	<-shutdownDone
+
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
-	return 0
+	return nil
 }
