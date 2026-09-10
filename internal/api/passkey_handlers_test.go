@@ -77,8 +77,12 @@ func TestPasskeyLoginEndpointsRequireNoSession(t *testing.T) {
 	}
 
 	resp = postJSON(t, anon, s.HTTP.URL+"/api/v1/auth/passkeys/login/finish", map[string]any{"ceremony_id": "00000000-0000-7000-8000-000000000000", "response": map[string]any{}})
-	if resp.StatusCode == http.StatusUnauthorized {
-		t.Fatalf("login/finish rejected an anonymous caller before even looking at the ceremony (%d) — it must reach the service, not requireSession", resp.StatusCode)
+	// A well-formed but unknown ceremony id reaches the service and is
+	// rejected there (404, via mapPasskeyErr), never by requireSession
+	// (401): asserting the exact status, not merely "not 401", so this test
+	// cannot pass on an unrelated 500 (Finding "adjacent", fix round 1).
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("login/finish without a session: %d, want %d — it must reach the service, not requireSession", resp.StatusCode, http.StatusNotFound)
 	}
 }
 
@@ -168,7 +172,11 @@ func TestPasskeyEndpointsRejectMalformedCeremonyID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusUnprocessableEntity && resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("delete with a malformed passkey id: %d", resp.StatusCode)
+	// passkeyIDInput.ID carries no format:"uuid" tag (Finding "adjacent", fix
+	// round 1), so huma's schema layer never intercepts this: the handler's
+	// own uuid.Parse always runs and always produces exactly 400, not a
+	// hedge between huma's 422 and the handler's 400.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("delete with a malformed passkey id: %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 }

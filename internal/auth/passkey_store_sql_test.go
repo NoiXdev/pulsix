@@ -85,6 +85,39 @@ func TestSQLPasskeyStoreCredentials(t *testing.T) {
 	}
 }
 
+// TestSQLPasskeyStoreAddCredentialRejectsDuplicateCredentialID asserts the
+// adjacent fix (fix round 1): a credential id already registered — to this
+// account or another one's — hits the credential_id UNIQUE constraint, and
+// AddCredential must map that to auth.ErrCredentialExists rather than
+// surface the raw unique-violation, which mapAuthErr's default branch would
+// otherwise turn into an unmapped 500.
+func TestSQLPasskeyStoreAddCredentialRejectsDuplicateCredentialID(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := auth.NewSQLPasskeyStore(q)
+
+	uid := seedUser(t, q, "dup-owner@example.test")
+	other := seedUser(t, q, "dup-other@example.test")
+	credID := randomCredentialID(t)
+	cred := auth.Credential{ID: uuid.Must(uuid.NewV7()), CredentialID: credID, PublicKey: []byte("pk"), Attestation: "none"}
+	if err := store.AddCredential(ctx, uid, "Key", cred); err != nil {
+		t.Fatalf("first AddCredential: %v", err)
+	}
+
+	// Same account, same credential id.
+	dup := auth.Credential{ID: uuid.Must(uuid.NewV7()), CredentialID: credID, PublicKey: []byte("pk2"), Attestation: "none"}
+	if err := store.AddCredential(ctx, uid, "Key2", dup); !errors.Is(err, auth.ErrCredentialExists) {
+		t.Fatalf("AddCredential(same owner, dup id) err = %v, want ErrCredentialExists", err)
+	}
+
+	// A different account, same credential id.
+	dup2 := auth.Credential{ID: uuid.Must(uuid.NewV7()), CredentialID: credID, PublicKey: []byte("pk3"), Attestation: "none"}
+	if err := store.AddCredential(ctx, other, "Key3", dup2); !errors.Is(err, auth.ErrCredentialExists) {
+		t.Fatalf("AddCredential(other owner, dup id) err = %v, want ErrCredentialExists", err)
+	}
+}
+
 func TestSQLPasskeyStoreDeleteCredential(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()

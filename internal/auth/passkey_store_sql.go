@@ -7,10 +7,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
+
+// pgUniqueViolation is the Postgres error code for a unique-constraint
+// violation (23505 in the standard error-code table); not imported from a
+// dedicated package since this is the only code this store needs to
+// recognize.
+const pgUniqueViolation = "23505"
 
 // SQLPasskeyStore implements PasskeyStore with sqlc queries.
 type SQLPasskeyStore struct{ q *gen.Queries }
@@ -40,10 +47,23 @@ func (s *SQLPasskeyStore) AddCredential(ctx context.Context, userID uuid.UUID, n
 	if transports == nil {
 		transports = []string{}
 	}
-	return s.q.InsertPasskey(ctx, gen.InsertPasskeyParams{
+	err := s.q.InsertPasskey(ctx, gen.InsertPasskeyParams{
 		ID: c.ID, UserID: userID, Name: name, CredentialID: c.CredentialID, PublicKey: c.PublicKey,
 		Attestation: c.Attestation, Transports: transports, SignCount: int64(c.SignCount), BackupEligible: c.BackupEligible,
 	})
+	if err != nil {
+		// credential_id is UNIQUE: a credential id already registered to any
+		// account (this one or another's) hits that constraint rather than a
+		// coding bug, so it is mapped to a domain sentinel instead of
+		// surfacing as a raw unique-violation, which mapAuthErr would
+		// otherwise turn into an unmapped 500.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return ErrCredentialExists
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *SQLPasskeyStore) UpdateCredentialCounter(ctx context.Context, credentialID []byte, counter uint32) error {

@@ -46,8 +46,12 @@ type passkeyListOutput struct {
 	}
 }
 
+// ID deliberately has no format:"uuid" tag, for the same reason
+// passkeyRegisterFinishInput.CeremonyID doesn't: with the tag, huma rejects
+// a malformed value at the schema layer with 422 before the handler ever
+// runs, making the handler's own uuid.Parse and its 400 response dead code.
 type passkeyIDInput struct {
-	ID string `path:"id" format:"uuid"`
+	ID string `path:"id"`
 }
 
 type passkeyLoginFinishInput struct {
@@ -172,8 +176,12 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 // failed assertion) and every other error still go through mapAuthErr
 // unchanged.
 func mapPasskeyErr(ctx context.Context, err error) error {
-	if errors.Is(err, auth.ErrNotFound) {
+	switch {
+	case errors.Is(err, auth.ErrNotFound):
 		return huma.Error404NotFound("not found")
+	case errors.Is(err, auth.ErrCredentialExists):
+		return huma.Error409Conflict("credential already registered")
+	default:
+		return mapAuthErr(ctx, err)
 	}
-	return mapAuthErr(ctx, err)
 }

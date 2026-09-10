@@ -110,11 +110,15 @@ func sessionCookie(value string, secure bool) http.Cookie {
 }
 
 // requireSession returns the principal or a 401. It is the right check for
-// /auth/logout, /auth/me, /auth/totp/verify and the passkey login
-// endpoints: routes that a half-authenticated (MFA-pending) session must
-// still be able to reach, since the SPA needs /me to discover that a
-// second factor is pending, and needs logout/verify/passkey-login to still
-// work before that factor is supplied.
+// /auth/logout, /auth/me and /auth/totp/verify: routes that a
+// half-authenticated (MFA-pending) session must still be able to reach,
+// since the SPA needs /me to discover that a second factor is pending, and
+// needs logout/verify to still work before that factor is supplied.
+//
+// The passkey login endpoints (registerPasskeyRoutes in
+// passkey_handlers.go) use no gate at all, not this one: they are how an
+// unauthenticated caller signs in in the first place, so there is no
+// session yet for requireSession to check.
 func requireSession(ctx context.Context) (auth.Principal, error) {
 	p, ok := auth.FromContext(ctx)
 	if !ok {
