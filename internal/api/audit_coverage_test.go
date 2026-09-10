@@ -23,40 +23,66 @@ import (
 // the safety net: silence is now only possible with a reviewed, committed
 // reason.
 //
-// Every entry below is a Task 5-8 (authentication / own-account credential
-// management) route, not a Task 9-11 (organization / instance) resource
-// mutation. They fall into two groups:
+// Residual gap: entries are keyed by method + path, which is the only
+// stable handle the router exposes at this enumeration point (see
+// registeredMutatingOps below — it walks huma's own OpenAPI path table,
+// not anything more specific to a particular handler function). If a route
+// were ever removed and a *different* route later registered at the same
+// method and path, the stale allowlist entry would silently cover the new
+// route too, and TestAuditAllowlistHasNoStaleEntries cannot catch that
+// case — from its point of view the key still resolves to a real,
+// unaudited operation, so nothing looks wrong. This has not happened and
+// is not expected to (paths are not reused casually in this codebase), but
+// it is a real, understood limitation of a method+path-keyed list, not an
+// airtight guarantee — a reviewer adding a route at a path that used to
+// mean something else should search this file explicitly rather than
+// trust the test suite to catch it.
 //
-//   - /auth/login, /auth/logout end or begin a session. There is no
-//     organization or object being changed for an audit event to describe,
-//     and — unlike a deliberate instance-admin action such as deactivating
-//     a user — a login/logout happens on essentially every visit, so
-//     recording it here would flood the org/instance activity trail this
-//     task built with routine traffic no admin reading that feed is
-//     looking for.
-//   - /auth/totp/*, /auth/passkeys/* enrol, confirm, verify, disable,
-//     register and delete a *second factor on the caller's own account*.
-//     They carry no organization (these routes exist entirely outside the
-//     org-scoped subtree), and predate this task by several tasks (5-8).
-//     A credential-security audit trail is a real thing worth having, but
-//     it is a different, self-scoped design question (does a step-up
-//     verify belong in an org activity feed at all? what does "the org"
-//     even mean for an account with memberships in several?) that neither
-//     this task's brief nor the review that flagged Findings 1-3 raised.
-//     Left here deliberately rather than wired under time pressure.
+// Task 11 fix round 1 allowlisted all eleven Task 5-8 authentication /
+// own-account credential routes as one group, reasoning that none of them
+// have an organization to scope an event to. Task 11 fix round 2's
+// re-review judged that grouping too coarse: "no organization" is true of
+// all eleven, but that alone doesn't mean none of them belong in the
+// account-security trail GET /me/activity exists to surface — four of
+// them are real account-security state changes an owner needs to see
+// after a compromise, and now record instance-level events (org_id = nil,
+// the same mechanism POST /admin/users/{id}/deactivate uses) instead of
+// being allowlisted: POST /auth/totp/confirm, DELETE /auth/totp, POST
+// /auth/passkeys/register/finish, DELETE /auth/passkeys/{id} — see
+// mfa_handlers.go and passkey_handlers.go for their withAudit calls. The
+// remaining seven below stay allowlisted, each for a reason specific to
+// that route, not the "no organization" blanket reason alone.
 var auditAllowlist = map[string]string{
-	"POST /api/v1/auth/login":  "authenticates a session; no organization or object to attribute an event to, and recording every login would flood the activity trail with routine traffic (see file-level comment above)",
-	"POST /api/v1/auth/logout": "ends a session; same reasoning as login",
+	// Routine, high-volume authentication traffic: neither carries an
+	// organization or a mutated object worth recording, and every session
+	// currently signed in is already visible in the session list — a
+	// GET /me/sessions-style view, not this activity trail. Recording
+	// every login/logout/step-up here would flood the account-security
+	// trail this task cares about with noise no reader is looking for.
+	"POST /api/v1/auth/login":       "routine, high-volume session start; no organization or object, and the session list already covers who is signed in",
+	"POST /api/v1/auth/logout":      "routine, high-volume session end; no organization or object, and the session list already covers who is signed in",
+	"POST /api/v1/auth/totp/verify": "routine, high-volume session step-up (a second-factor check on an already-existing session, not a change to the factor itself); no organization or object, and the session list already covers who is signed in",
 
-	"POST /api/v1/auth/totp/enrol":               "own-account MFA setup (Task 7), no organization; see file-level comment above",
-	"POST /api/v1/auth/totp/confirm":             "own-account MFA setup (Task 7), no organization; see file-level comment above",
-	"POST /api/v1/auth/totp/verify":              "own-account MFA step-up (Task 7), no organization; see file-level comment above",
-	"DELETE /api/v1/auth/totp":                   "own-account MFA removal (Task 7), no organization; see file-level comment above",
-	"POST /api/v1/auth/passkeys/register/begin":  "own-account passkey setup (Task 8), no organization; see file-level comment above",
-	"POST /api/v1/auth/passkeys/register/finish": "own-account passkey setup (Task 8), no organization; see file-level comment above",
-	"DELETE /api/v1/auth/passkeys/{id}":          "own-account passkey removal (Task 8), no organization; see file-level comment above",
-	"POST /api/v1/auth/passkeys/login/begin":     "unauthenticated passkey login ceremony (Task 8), no organization or actor yet; see file-level comment above",
-	"POST /api/v1/auth/passkeys/login/finish":    "unauthenticated passkey login ceremony (Task 8), no organization; see file-level comment above",
+	// Ceremony *begin* steps commit no credential: BeginEnrol/BeginRegistration
+	// only hand the browser a challenge and stash server-side ceremony
+	// state. Nothing has actually changed about the account's second
+	// factors until the matching *finish* step succeeds — and that finish
+	// step is exactly what now records the event (POST /auth/totp/confirm,
+	// POST /auth/passkeys/register/finish). Recording the begin step too
+	// would produce a misleading "started but maybe never happened" entry
+	// for every abandoned ceremony (browser closed, user declined the
+	// platform prompt, etc.).
+	"POST /api/v1/auth/totp/enrol":              "ceremony begin step; commits no credential — nothing has happened until POST /auth/totp/confirm succeeds, which is what records the event",
+	"POST /api/v1/auth/passkeys/register/begin": "ceremony begin step; commits no credential — nothing has happened until POST /auth/passkeys/register/finish succeeds, which is what records the event",
+
+	// The passkey equivalent of a login: no auth.Principal exists yet when
+	// these run (that's the entire point of a passwordless,
+	// discoverable-credential login — see registerPasskeyRoutes's own
+	// gating comment), so there is no actor to attribute an event to any
+	// more than there is for POST /auth/login itself, which is allowlisted
+	// for the same underlying reason above.
+	"POST /api/v1/auth/passkeys/login/begin":  "passkey login ceremony begin; no organization, and no actor is established until the ceremony completes",
+	"POST /api/v1/auth/passkeys/login/finish": "passkey login ceremony finish; the passkey equivalent of POST /auth/login — no organization, and completing it only ever establishes a session, the same routine event login already is",
 }
 
 // registeredMutatingOps builds the full route table the same way api.New

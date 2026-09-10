@@ -81,10 +81,18 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
+		// Instance-level event, same mechanism as POST
+		// /admin/users/{id}/deactivate (Task 11 fix round 1, Finding 1): a
+		// second factor has no organization, but this is exactly the kind
+		// of account-security state change a user needs to see on
+		// GET /me/activity after a compromise, so it is no longer
+		// allowlisted (Task 11 fix round 2).
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, p.UserID.String(), "enabled two-factor authentication (TOTP)")
 		out := &recoveryOutput{}
 		out.Body.RecoveryCodes = codes
 		return out, nil
-	})
+	}, withAudit("confirmTOTP", "totp"))
 
 	huma.Post(hapi, "/api/v1/auth/totp/verify", func(ctx context.Context, in *codeInput) (*okOutput, error) {
 		p, err := requireSession(ctx)
@@ -124,6 +132,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err := deps.TOTP.Disable(ctx, p.UserID); err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
+		// Instance-level event, same mechanism as confirm above: removing a
+		// second factor is one of the highest-value forensic signals in the
+		// account-security trail, so it must surface on GET /me/activity.
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, p.UserID.String(), "disabled two-factor authentication (TOTP)")
 		return &okOutput{}, nil
-	})
+	}, withAudit("disableTOTP", "totp"))
 }

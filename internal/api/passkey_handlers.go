@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -108,8 +109,20 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Passkeys.FinishRegistration(ctx, p.UserID, cid, in.Body.Name, in.Body.Response); err != nil {
 			return nil, mapPasskeyErr(ctx, err)
 		}
+		// Instance-level event, same mechanism as POST
+		// /admin/users/{id}/deactivate (Task 11 fix round 1, Finding 1) and
+		// TOTP confirm/disable (mfa_handlers.go): this is the step that
+		// actually attaches a new credential to the account, so it belongs
+		// on GET /me/activity like every other account-security change.
+		// FinishRegistration does not return the new credential's id (it
+		// assigns one internally but only persists it), so the object is
+		// identified by account rather than by credential row; the
+		// human-readable name the caller supplied carries the specific
+		// credential detail instead.
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, p.UserID.String(), fmt.Sprintf("registered passkey %q", in.Body.Name))
 		return &okOutput{}, nil
-	})
+	}, withAudit("finishPasskeyRegistration", "passkey"))
 
 	huma.Get(hapi, "/api/v1/auth/passkeys", func(ctx context.Context, _ *struct{}) (*passkeyListOutput, error) {
 		p, err := requireInteractiveSession(ctx)
@@ -140,8 +153,15 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Passkeys.Delete(ctx, p.UserID, id); err != nil {
 			return nil, mapPasskeyErr(ctx, err)
 		}
+		// Instance-level event, same mechanism as the other three routes
+		// above: removing a passkey is a real account-security state
+		// change, and — unlike register/finish — the credential's own id
+		// is already in hand from the path, so the object identifies the
+		// specific credential removed, not just the account.
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, id.String(), "removed passkey")
 		return &okOutput{}, nil
-	})
+	}, withAudit("deletePasskey", "passkey"))
 
 	huma.Post(hapi, "/api/v1/auth/passkeys/login/begin", func(ctx context.Context, _ *struct{}) (*passkeyBeginOutput, error) {
 		opts, cid, err := deps.Passkeys.BeginLogin(ctx)
