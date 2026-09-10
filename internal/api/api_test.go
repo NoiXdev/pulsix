@@ -39,7 +39,10 @@ func testPasskeys(t *testing.T) *auth.Passkeys {
 }
 
 func TestHealthz(t *testing.T) {
-	h, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now), Passkeys: testPasskeys(t)})
+	h, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,5 +82,10 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 	}); err == nil {
 		t.Fatal("api.New without Passkeys did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now), Passkeys: testPasskeys(t),
+	}); err == nil {
+		t.Fatal("api.New without Tokens did not return an error")
 	}
 }

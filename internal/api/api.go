@@ -23,6 +23,7 @@ type Deps struct {
 	Auth     AuthService
 	TOTP     *auth.TOTP
 	Passkeys *auth.Passkeys
+	Tokens   *auth.Tokens
 	Secure   bool // set Secure on cookies (true behind HTTPS)
 }
 
@@ -65,6 +66,9 @@ func (d Deps) validate() error {
 	if d.Passkeys == nil {
 		missing = append(missing, "Passkeys")
 	}
+	if d.Tokens == nil {
+		missing = append(missing, "Tokens")
+	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
 	}
@@ -87,6 +91,11 @@ func New(deps Deps) (http.Handler, error) {
 	// reverse-proxy trust boundary is known.
 	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
 	r.Use(auth.CookieMiddleware(deps.Sessions))
+	// Runs after CookieMiddleware so an explicit Authorization header (a
+	// caller unambiguously authenticating as a bearer token) takes
+	// precedence over any cookie also present on the same request, rather
+	// than the other way around.
+	r.Use(auth.BearerMiddleware(deps.Tokens))
 	r.Use(requireMFAForExplorer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {

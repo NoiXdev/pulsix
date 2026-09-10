@@ -100,6 +100,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// session (Finding 2, fix round 1).
 	s.Deps = api.Deps{
 		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
+		Tokens: auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
 	}
 	for _, opt := range opts {
 		opt(s)
