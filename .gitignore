@@ -2,3 +2,5 @@ bin/
 web/node_modules/
 web/dist/
 .env
+.idea/
+.vscode/
