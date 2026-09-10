@@ -3,15 +3,25 @@ package auth
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 )
+
+// ErrCredentialExists is returned when a credential id presented at
+// registration is already bound to an account (its own or another one's).
+// The unique constraint on passkeys.credential_id is what actually enforces
+// this; SQLPasskeyStore.AddCredential maps the resulting unique-violation to
+// this sentinel so the transport layer can answer 409 instead of a mapped
+// 500 (Finding "adjacent", fix round 1).
+var ErrCredentialExists = errors.New("credential already registered")
 
 // CeremonyTTL bounds the time between begin and finish for both
 // registration and login ceremonies.
@@ -283,7 +293,7 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 			}
 			return nil, err
 		}
-		if !bytes.Equal(userHandle, userID[:]) {
+		if userHandleMismatch(userHandle, userID) {
 			return nil, errors.New("user handle does not match credential owner")
 		}
 		u, err := p.loadUser(ctx, userID)
@@ -306,6 +316,23 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 	if !ok {
 		return "", fmt.Errorf("unexpected user type %T from ValidatePasskeyLogin", user)
 	}
+	// go-webauthn does not fail a login when the signature counter regresses
+	// or repeats: Authenticator.UpdateCounter (called inside
+	// ValidatePasskeyLogin, above) only sets CloneWarning and leaves
+	// SignCount unchanged in that case, then validation still reports
+	// success. Left unchecked, an assertion from a cloned or rolled-back
+	// authenticator would produce a normal MFA-complete session with no
+	// trace anywhere. Reject it here with the same generic error a failed
+	// assertion produces, log the event so an operator can find it, and —
+	// deliberately — skip UpdateCredentialCounter below, so the stored
+	// counter still reflects the last legitimate use rather than being
+	// overwritten with the (unchanged) value UpdateCounter left in cred
+	// (Finding 1, fix round 1).
+	if cred.Authenticator.CloneWarning {
+		slog.ErrorContext(ctx, "passkey clone signal: signature counter did not advance",
+			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID))
+		return "", ErrInvalidCredentials
+	}
 	if err := p.store.UpdateCredentialCounter(ctx, cred.ID, cred.Authenticator.SignCount); err != nil {
 		return "", err
 	}
@@ -316,9 +343,47 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 	return cookie, nil
 }
 
+// userHandleMismatch is a package-level indirection (mirroring
+// verifyPassword's indirection in service.go) over the local, explicit
+// check that FinishLogin's DiscoverableUserHandler uses to enforce that an
+// authenticator-reported user handle actually matches the credential's
+// resolved owner — without it, a credential's rawID together with a forged
+// userHandle could be replayed to sign in as an arbitrary account.
+//
+// go-webauthn's own validateLogin independently re-checks the identical
+// property once the handler returns, so through FinishLogin's public API
+// alone the two checks are indistinguishable: removing this one still
+// leaves a forged assertion rejected by the library's Step 2 check, and
+// FinishLogin folds every rejection into the same generic
+// ErrInvalidCredentials regardless of which layer caught it. The
+// indirection lets a white-box test substitute a spy and observe that this
+// call site specifically runs (TestLocalUserHandleCheckReallyRuns);
+// TestUserHandleMismatchDetectsForgedHandle separately proves the
+// comparison's own logic. See TestFinishLoginRejectsUserHandleMismatch in
+// passkey_test.go for the black-box regression test this replaces as the
+// sole evidence for this property (Finding 4, fix round 1).
+var userHandleMismatch = func(userHandle []byte, owner uuid.UUID) bool {
+	return !bytes.Equal(userHandle, owner[:])
+}
+
 // List returns the user's passkeys for the settings page.
 func (p *Passkeys) List(ctx context.Context, userID uuid.UUID) ([]Credential, error) {
 	return p.store.ListCredentials(ctx, userID)
+}
+
+// Enabled reports whether userID has at least one registered passkey, so
+// *Passkeys satisfies MFAChecker: a passkey must count as a completed second
+// factor at password login, the same as a confirmed TOTP secret, not only
+// at the passkey login endpoints (Finding 2, fix round 1). It fails closed,
+// the same as TOTP.Enabled: a store error propagates rather than being
+// swallowed into (false, nil), which would otherwise let a database hiccup
+// silently downgrade a passkey-protected account to password-only login.
+func (p *Passkeys) Enabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	creds, err := p.store.ListCredentials(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return len(creds) > 0, nil
 }
 
 // Delete removes one of userID's passkeys, returning ErrNotFound if id does

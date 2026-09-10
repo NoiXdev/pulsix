@@ -76,12 +76,22 @@ type memPasskeyStore struct {
 	// these tests (which never calls AddCredential — see the comment above).
 	findUserID *uuid.UUID
 	findErr    error
+
+	// updateCounterCalls records every UpdateCredentialCounter invocation,
+	// so a test can assert the stored counter was left untouched — the
+	// clone-signal path (Finding 1, fix round 1) must not call this at all.
+	updateCounterCalls []updateCounterCall
 }
 
 type addCredentialCall struct {
 	userID uuid.UUID
 	name   string
 	cred   auth.Credential
+}
+
+type updateCounterCall struct {
+	credentialID []byte
+	counter      uint32
 }
 
 func newMemPasskeyStore(now func() time.Time) *memPasskeyStore {
@@ -98,7 +108,10 @@ func (m *memPasskeyStore) AddCredential(_ context.Context, userID uuid.UUID, nam
 	m.addCalls = append(m.addCalls, addCredentialCall{userID: userID, name: name, cred: c})
 	return nil
 }
-func (m *memPasskeyStore) UpdateCredentialCounter(context.Context, []byte, uint32) error { return nil }
+func (m *memPasskeyStore) UpdateCredentialCounter(_ context.Context, credentialID []byte, counter uint32) error {
+	m.updateCounterCalls = append(m.updateCounterCalls, updateCounterCall{credentialID: credentialID, counter: counter})
+	return nil
+}
 func (m *memPasskeyStore) DeleteCredential(_ context.Context, userID, id uuid.UUID) error {
 	m.deleteArgs = []uuid.UUID{userID, id}
 	return m.deleteErr
@@ -145,13 +158,28 @@ const (
 // noted in the task-8 brief.
 func newPasskeys(t *testing.T, store auth.PasskeyStore, now func() time.Time) (*auth.Passkeys, uuid.UUID) {
 	t.Helper()
+	pk, uid, _ := newPasskeysTwoUsers(t, store, now)
+	return pk, uid
+}
+
+// newPasskeysTwoUsers is newPasskeys plus a second seeded user ("other"),
+// for tests that must prove a check rejects a real, resolvable user who
+// simply isn't the right one — not a user the store happens to fail to
+// resolve for an unrelated reason (see
+// TestFinishRegistrationRejectsAnotherUsersCeremony's comment).
+func newPasskeysTwoUsers(t *testing.T, store auth.PasskeyStore, now func() time.Time) (*auth.Passkeys, uuid.UUID, uuid.UUID) {
+	t.Helper()
 	uid := uuid.Must(uuid.NewV7())
-	users := &fakeStore{users: map[string]auth.User{"p@x": {ID: uid, Email: "p@x", DisplayName: "P"}}}
+	other := uuid.Must(uuid.NewV7())
+	users := &fakeStore{users: map[string]auth.User{
+		"p@x": {ID: uid, Email: "p@x", DisplayName: "P"},
+		"o@x": {ID: other, Email: "o@x", DisplayName: "O"},
+	}}
 	pk, err := auth.NewPasskeys(store, users, &fakeSessions{}, testRPID, "Pulsix Test", testOrigin, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pk, uid
+	return pk, uid, other
 }
 
 func TestBeginRegistrationStoresCeremonyAndReturnsOptions(t *testing.T) {
@@ -197,19 +225,31 @@ func TestBeginRegistrationRejectsUnknownUser(t *testing.T) {
 	}
 }
 
+// TestFinishRegistrationRejectsExpiredCeremony uses a real, verifiable "none"
+// attestation response (buildNoneAttestationResponse, from
+// passkey_registration_success_test.go) rather than json.RawMessage(`{}`):
+// a bogus body fails at go-webauthn's own parse step regardless of expiry,
+// so a test built on one would still turn red with the expiry check itself
+// deleted — see this file's package comment. With a body that actually
+// parses and verifies, expiry is the only thing left that can reject the
+// call (Finding 3, fix round 1; discrimination evidence recorded in the
+// task-8 fix report).
 func TestFinishRegistrationRejectsExpiredCeremony(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
 	store := newMemPasskeyStore(clock)
 	pk, uid := newPasskeys(t, store, clock)
-	_, cid, err := pk.BeginRegistration(context.Background(), uid)
+	opts, cid, err := pk.BeginRegistration(context.Background(), uid)
 	if err != nil {
 		t.Fatal(err)
 	}
+	response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, []byte("expired-ceremony-cred"))
 	now = now.Add(10 * time.Minute) // past the 5 minute ceremony TTL
-	err = pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", json.RawMessage(`{}`))
-	if err == nil {
+	if err := pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", response); err == nil {
 		t.Fatal("expired ceremony accepted")
+	}
+	if len(store.addCalls) != 0 {
+		t.Fatal("AddCredential was called despite the ceremony having expired")
 	}
 }
 
@@ -224,51 +264,114 @@ func TestFinishRegistrationRejectsUnknownCeremony(t *testing.T) {
 	}
 }
 
+// TestFinishRegistrationRejectsAnotherUsersCeremony isolates this
+// codebase's own ceremony-ownership binding (the userID PutCeremony
+// recorded in PasskeyStore) from go-webauthn's own, independent check of
+// essentially the same property: CreateCredential compares the User it is
+// given against the UserID embedded inside the session data it captured at
+// BeginRegistration (webauthn/registration.go, "if
+// !bytes.Equal(user.WebAuthnID(), session.UserID)"). Simply finishing a
+// registration begun for uid with a caller-supplied userID of other is
+// caught by *that* check too — loadUser(ctx, other) feeds go-webauthn a
+// user whose WebAuthnID no longer matches the embedded session — so
+// deleting only this codebase's own check would still leave such a test
+// red, for the wrong reason (confirmed by actually running that
+// experiment first; see the task-8 fix report).
+//
+// To isolate this package's own check, the exact session bytes
+// BeginRegistration produced for uid (still embedding uid as
+// session.UserID) are re-stored under a fresh ceremony id, but associated
+// with other in the store's own record — decoupling the two normally-
+// coupled facts. Finishing that ceremony as uid then satisfies
+// go-webauthn's embedded-session check (uid == uid) but not this
+// package's own ceremony-ownership check (other != uid): only the local
+// check can still reject the call (Finding 3, fix round 1; discrimination
+// evidence in the task-8 fix report).
 func TestFinishRegistrationRejectsAnotherUsersCeremony(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
 	store := newMemPasskeyStore(clock)
-	pk, uid := newPasskeys(t, store, clock)
-	_, cid, err := pk.BeginRegistration(context.Background(), uid)
+	pk, uid, other := newPasskeysTwoUsers(t, store, clock)
+	opts, cid, err := pk.BeginRegistration(context.Background(), uid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := uuid.Must(uuid.NewV7())
-	err = pk.FinishRegistration(context.Background(), other, cid, "YubiKey", json.RawMessage(`{}`))
-	if err == nil {
-		t.Fatal("a different user's session finished this ceremony")
+	rebound := uuid.Must(uuid.NewV7())
+	if err := store.PutCeremony(context.Background(), rebound, "register", &other, store.ceremonies[cid].data, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, []byte("another-users-cred"))
+	if err := pk.FinishRegistration(context.Background(), uid, rebound, "YubiKey", response); err == nil {
+		t.Fatal("a ceremony this package's store recorded for another user was finished as uid")
+	}
+	if len(store.addCalls) != 0 {
+		t.Fatal("AddCredential was called despite the ceremony belonging to another user")
 	}
 }
 
+// TestFinishRegistrationRejectsLoginCeremony isolates the kind check the
+// same way TestFinishRegistrationRejectsAnotherUsersCeremony isolates the
+// ownership check, and for the same reason: finishing with a ceremony id
+// that was actually begun by BeginLogin also changes the ceremony's
+// *owner* (BeginLogin always records a nil userID, since the user isn't
+// known yet) and the *embedded session data* (a login session has no
+// UserID for go-webauthn's own CreateCredential check to match against
+// either) — so a naive version of this test would be rejected by the
+// ownership check, or by go-webauthn itself, even with the kind check
+// deleted, and would not actually be exercising it.
+//
+// To isolate the kind check alone, a real registration ceremony's exact
+// session bytes (still embedding uid, so go-webauthn's own check is
+// satisfied) are re-stored under a fresh id with owner uid unchanged (so
+// this package's own ownership check is also satisfied) but kind flipped
+// to "login" — the one property that differs from a genuine registration
+// ceremony. Only the kind check can still reject it (Finding 3, fix round
+// 1; discrimination evidence in the task-8 fix report).
 func TestFinishRegistrationRejectsLoginCeremony(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
 	store := newMemPasskeyStore(clock)
 	pk, uid := newPasskeys(t, store, clock)
-	_, cid, err := pk.BeginLogin(context.Background())
+	opts, cid, err := pk.BeginRegistration(context.Background(), uid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", json.RawMessage(`{}`))
-	if err == nil {
-		t.Fatal("a login ceremony finished registration")
+	rebound := uuid.Must(uuid.NewV7())
+	if err := store.PutCeremony(context.Background(), rebound, "login", &uid, store.ceremonies[cid].data, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, []byte("login-ceremony-cred"))
+	if err := pk.FinishRegistration(context.Background(), uid, rebound, "YubiKey", response); err == nil {
+		t.Fatal("a ceremony stored as kind \"login\" finished registration")
+	}
+	if len(store.addCalls) != 0 {
+		t.Fatal("AddCredential was called despite the ceremony being a login ceremony")
 	}
 }
 
+// TestCeremonyIsSingleUse drives a real, verifiable response through a
+// first, successful FinishRegistration, then retries the identical call:
+// only the ceremony having been consumed can reject the retry, since the
+// response itself is unchanged and would otherwise still verify (Finding 3,
+// fix round 1; discrimination evidence in the task-8 fix report).
 func TestCeremonyIsSingleUse(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
 	store := newMemPasskeyStore(clock)
 	pk, uid := newPasskeys(t, store, clock)
-	_, cid, err := pk.BeginRegistration(context.Background(), uid)
+	opts, cid, err := pk.BeginRegistration(context.Background(), uid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// First finish fails on the bogus response body, but it must still have
-	// consumed the ceremony: a retry with the same id must not find it.
-	_ = pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", json.RawMessage(`{}`))
-	if err := pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", json.RawMessage(`{}`)); err == nil {
+	response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, []byte("single-use-cred"))
+	if err := pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", response); err != nil {
+		t.Fatalf("first finish: %v", err)
+	}
+	if err := pk.FinishRegistration(context.Background(), uid, cid, "YubiKey", response); err == nil {
 		t.Fatal("ceremony was reusable")
+	}
+	if len(store.addCalls) != 1 {
+		t.Fatalf("AddCredential called %d times, want 1", len(store.addCalls))
 	}
 }
 
@@ -528,12 +631,23 @@ func TestFinishLoginRejectsUnknownCredential(t *testing.T) {
 	}
 }
 
-// TestFinishLoginRejectsUserHandleMismatch is the security property the
-// task is explicitly judged on: an assertion whose authenticator-reported
-// user handle does not match the credential's actual owner must be
-// rejected, even though FindUserByCredentialID itself resolved a real user.
-// Without this check, a credential's rawID together with an attacker-chosen
-// userHandle could be replayed to sign in as an arbitrary account.
+// TestFinishLoginRejectsUserHandleMismatch is the black-box regression test
+// for the security property the task is explicitly judged on: an assertion
+// whose authenticator-reported user handle does not match the credential's
+// actual owner must be rejected, even though FindUserByCredentialID itself
+// resolved a real user. Without this check, a credential's rawID together
+// with an attacker-chosen userHandle could be replayed to sign in as an
+// arbitrary account.
+//
+// It does NOT, on its own, discriminate this codebase's own check from
+// go-webauthn's independent re-check of the identical property
+// (validateLogin's own Step 2): removing only the local check here still
+// leaves this test red, because the library catches the mismatch on its
+// own and FinishLogin folds either rejection into the same generic
+// ErrInvalidCredentials (Finding 4, fix round 1). TestUserHandleMismatchDetectsForgedHandle
+// and TestLocalUserHandleCheckReallyRuns (passkey_userhandle_test.go,
+// package auth) isolate this codebase's own check specifically; this test
+// remains a valid, valuable regression test of the end-to-end behavior.
 func TestFinishLoginRejectsUserHandleMismatch(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
