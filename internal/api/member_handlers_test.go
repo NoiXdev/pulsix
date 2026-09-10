@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -179,6 +180,42 @@ func TestChangeRoleAndRemoveMember(t *testing.T) {
 	}
 }
 
+// TestBearerTokenRoleCapAppliesToOwnershipOperations is Finding 1's
+// end-to-end regression test (Task 10 fix round 1): requireOrg computes
+// Scope.Role as the lower of the caller's real membership role and the
+// bearer token's own scoped role, but the service used to re-derive the
+// actor's role from the store — silently discarding that cap — to decide
+// its owner-only rules. An org owner who mints an admin-scoped token (a
+// realistic CI-credential scenario) must not be able to use that token to
+// promote another member to owner or to remove an existing owner, even
+// though the token owner's real membership is owner and an admin-scoped
+// token otherwise passes the PermMembersManage floor (admin) both routes
+// gate on.
+func TestBearerTokenRoleCapAppliesToOwnershipOperations(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("role-cap-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("role-cap-org", owner)
+	secondOwner := s.SeedUser("role-cap-owner2@example.test", "correct horse battery")
+	s.AddMember(org, secondOwner, tenancy.RoleOwner)
+	target := s.SeedUser("role-cap-target@example.test", "correct horse battery")
+	s.AddMember(org, target, tenancy.RoleAdmin)
+
+	plain, _, err := s.Deps.Tokens.Create(context.Background(), owner, org, "ci", "admin", nil)
+	if err != nil {
+		t.Fatalf("Create token: %v", err)
+	}
+
+	resp := bearerRequestJSON(t, s, http.MethodPatch, "/api/v1/orgs/role-cap-org/members/"+target.String(), plain, map[string]any{"role": "owner"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("admin-capped token promoting to owner: status %d, want 403, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = bearerRequest(t, s, http.MethodDelete, "/api/v1/orgs/role-cap-org/members/"+secondOwner.String(), plain)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("admin-capped token removing an owner: status %d, want 403, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
 func TestChangeRoleMalformedUserID(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("malformed-owner@example.test", "correct horse battery")
@@ -194,10 +231,19 @@ func TestChangeRoleMalformedUserID(t *testing.T) {
 // TestDeactivateUserIsInstanceAdminOnly proves the admin route rejects a
 // non-instance-admin caller and, when it succeeds, actually ends the
 // user's access rather than only flagging the row: an already-issued
-// session cookie stops working immediately after deactivation.
+// session cookie stops working immediately after deactivation, and — the
+// gap Finding 2 (Task 10 fix round 1) found, which the pre-fix version of
+// this test could not catch because it only ever reused the old cookie —
+// a fresh login with the same, still-correct password no longer succeeds
+// either. The passkey entry point is closed by the same disabled_at check
+// but is exercised at the unit level instead, in
+// internal/auth/passkey_clone_test.go's TestFinishLoginRejectsDisabledUser:
+// driving a real WebAuthn assertion through this HTTP server needs a
+// virtual authenticator, which lands with Task 15.
 func TestDeactivateUserIsInstanceAdminOnly(t *testing.T) {
 	s := apitest.New(t)
-	target := s.SeedUser("deactivate-target@example.test", "correct horse battery")
+	const targetPassword = "correct horse battery"
+	target := s.SeedUser("deactivate-target@example.test", targetPassword)
 	targetClient := s.LoginAs(target)
 
 	regular := s.SeedUser("deactivate-regular@example.test", "correct horse battery")
@@ -220,5 +266,15 @@ func TestDeactivateUserIsInstanceAdminOnly(t *testing.T) {
 	resp = requestJSON(t, targetClient, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("deactivated user's session: status %d, want 401 (session must be revoked, not just flagged)", resp.StatusCode)
+	}
+
+	// A fresh login with the same, still-correct password must also fail —
+	// otherwise deactivation would only end the current session and the
+	// user could immediately reauthenticate.
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{
+		"email": "deactivate-target@example.test", "password": targetPassword,
+	})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("fresh login for a deactivated user: status %d, want 401", resp.StatusCode)
 	}
 }

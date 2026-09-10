@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -17,6 +19,30 @@ func bearerRequest(t *testing.T, s *apitest.Server, method, path, token string) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// bearerRequestJSON is bearerRequest plus a JSON body, for the bearer-token
+// tests that need to PATCH/POST a payload (e.g. member_handlers_test.go's
+// role-cap regression test) rather than just GET/DELETE.
+func bearerRequestJSON(t *testing.T, s *apitest.Server, method, path, token string, body any) *http.Response {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(method, s.HTTP.URL+path, bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

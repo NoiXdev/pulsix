@@ -107,16 +107,15 @@ func registerOrgRoutes(hapi huma.API, deps Deps) {
 // consult auth.TokenScopeFromContext by way of requireOrg.
 func registerOrgScopedRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}", func(ctx context.Context, in *orgGetInput) (*orgOutput, error) {
+		// requireOrg already resolved the slug to look up membership and cap
+		// the role; scope.Org carries that same row, so there is no need to
+		// resolve it a second time here (adjacent fix, Task 10 fix round 1).
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermHostsRead)
 		if err != nil {
 			return nil, err
 		}
-		org, err := deps.Tenancy.GetOrgBySlug(ctx, in.Org)
-		if err != nil {
-			return nil, mapTenancyErr(ctx, err)
-		}
 		out := &orgOutput{}
-		out.Body.Org = toOrgDTO(org, scope.Role)
+		out.Body.Org = toOrgDTO(scope.Org, scope.Role)
 		return out, nil
 	})
 

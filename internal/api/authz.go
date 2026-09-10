@@ -13,11 +13,15 @@ import (
 )
 
 // Scope is the authorized (org, user, effective role) for one org-scoped
-// request, resolved by requireOrg.
+// request, resolved by requireOrg. Org carries the already-resolved
+// organization row itself, not just its id, so a handler that needs the
+// org's other fields (e.g. GET /orgs/{org} returning its name) never has to
+// resolve the same slug a second time (adjacent fix, Task 10 fix round 1).
 type Scope struct {
 	OrgID  uuid.UUID
 	UserID uuid.UUID
 	Role   tenancy.Role
+	Org    tenancy.Org
 }
 
 // requireOrg resolves the org named by orgSlug and checks that the calling
@@ -30,9 +34,12 @@ type Scope struct {
 //     (the same rule requireMFAComplete applies everywhere else; a bearer
 //     token principal is always MFA-complete by construction, see
 //     auth.Tokens.Resolve, so this only ever rejects a pending session).
-//  3. The org does not exist → 404 (never distinguished from "exists but
-//     you're not authorized to know that" — see mapTenancyErr).
-//  4. The principal is not a member of the org → 403.
+//  3. The org does not exist → 404.
+//  4. The principal is not a member of the org → 403. This is deliberately
+//     distinguished from step 3's 404 (an unknown slug and "you're a member
+//     of an org that exists but not this one" read differently), following
+//     the brief's own step order — an org slug is not treated as a secret
+//     an outsider must be kept from confirming exists.
 //  5. A bearer token is present (auth.TokenScopeFromContext) and its scope
 //     names a *different* org than the one being accessed → 403. A token
 //     can never be used to reach an org it wasn't minted for, regardless of
@@ -68,7 +75,7 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	if !tenancy.Allows(role, perm) {
 		return Scope{}, huma.Error403Forbidden("insufficient role")
 	}
-	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role}, nil
+	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role, Org: org}, nil
 }
 
 // requireInstanceAdmin gates instance-level routes that are not scoped to
