@@ -38,7 +38,7 @@ backlog: `docs/BACKLOG.md`, brand: `brand/`.
 
 ## Git
 
-- Conventional Commits, footer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+- Conventional Commits, footer `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Commit or push only when the user asks. Repo is private until v1.0.
 - Migrations are additive only.
 
