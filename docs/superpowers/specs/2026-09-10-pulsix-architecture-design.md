@@ -456,6 +456,14 @@ deploy/compose, deploy/systemd, deploy/install.sh
 docs/                                        BACKLOG.md, specs, ADRs, user docs
 ```
 
+Versioning: **one version for everything.** Manager, worker and agent share the
+module's version; a single tag `vX.Y.Z` on `main` produces both images and every agent
+binary in one release. Compatibility: the manager accepts workers and agents of the
+same minor version and the previous one (`v0.4.x` talks to `v0.3.x`), so upgrades roll
+manager → workers → agents (agent self-update from v0.3 later item); older components
+are rejected and shown as "update required" in the GUI. No per-component tags, no
+separate agent repository.
+
 Conventions: Go 1.25, `golangci-lint`, `sqlc` for queries, `goose` migrations,
 Conventional Commits with a CI gate, Pint-equivalent formatting via `gofmt`/`prettier`,
 tests with Go's testing package (integration tests against a Postgres container) and

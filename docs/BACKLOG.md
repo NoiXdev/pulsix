@@ -170,7 +170,7 @@ Last updated: 2026-09-10
 | 7.2 | Backup and restore | planned | |
 | 7.3 | Upgrade path and migrations policy | planned | |
 | 7.4 | Documentation site | planned | |
-| 7.5 | Docker images on Docker Hub (noixdev/pulsix-*) and Harbor | planned | |
+| 7.5 | Docker images on Docker Hub (noixdev/pulsix-*) and Harbor, agent binaries on GitHub releases, all from one `vX.Y.Z` tag | planned | single version for manager, worker, agent |
 | 7.6 | Make repo public, landing page on noix.dev | planned | repo is private until then; no tech stack in public copy |
 
 ## Decisions (short)
@@ -180,6 +180,7 @@ Last updated: 2026-09-10
 - Host capabilities `managed` (Ansible via SSH) and `monitored` (agent and/or remote checks) are independent.
 - Inventory groups (Ansible, schema builder) and monitoring groups (tag selectors, alerting) are separate concepts.
 - Agent config is hybrid: checks from GUI, secrets local only.
+- One version and one tag for manager, worker and agent; manager accepts same and previous minor version.
 - Check engine layered like Checkmk/Zabbix: plugins in code, definitions and rules as data, inheritance plugin → org → group → host → item, discovery, custom checks in Nagios or JSON format.
 - Status colours (ok/warn/crit/unknown) are reserved for states; cyan is the action colour.
 - GitHub repo `NoiXdev/pulsix` starts **private**; goes public with the v1.0 launch.
