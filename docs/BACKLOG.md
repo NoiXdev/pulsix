@@ -35,7 +35,7 @@ Last updated: 2026-09-10
 | 0.9 | Mockup: agent enrollment flow | mockup | |
 | 0.10 | Mockup: status page (public) + status page admin | mockup | |
 | 0.11 | Design spec (architecture, data model, protocols) | spec | `docs/superpowers/specs/2026-09-10-pulsix-architecture-design.md`, in review |
-| 0.13 | Mockups: setup wizard, account security, members/ACL, activity feed, credentials, playbooks/repos, schedules + webhook triggers, SSH access step, workers & zones | mockup | canvas pages "Core & monitoring" and "Admin & Ansible" |
+| 0.13 | Mockups: setup wizard, account security, members/ACL, activity feed, credentials, playbooks/repos, schedules + webhook triggers, SSH access step, workers & zones, synthetic web/port check, monitoring group hierarchy | mockup | canvas pages "Core & monitoring" and "Admin & Ansible" |
 | 0.12 | Implementation plan v0.1 Core | planned | `docs/superpowers/plans/2026-09-10-v0.1-core.md`; later milestones get their own plans |
 
 ## v0.1 · Core
@@ -113,7 +113,10 @@ Last updated: 2026-09-10
 | 3.10 | Database checks: PostgreSQL, MySQL/MariaDB, Redis | planned | |
 | 3.11 | Web server checks: nginx, Apache, Caddy status endpoints, PHP-FPM | planned | |
 | 3.12 | Container checks: Docker containers and their state | planned | |
-| 3.13 | Remote checks from worker: ICMP, TCP, HTTP(S) content, TLS expiry, DNS | planned | for hosts with or without agent |
+| 3.13 | Synthetic checks: ICMP, TCP (with banner match), HTTP(S), TLS, DNS, SNMP | planned | for hosts with or without agent |
+| 3.13a | Probes per synthetic check: manager, zone workers, agent groups as vantage points; per-probe results and metrics; fail policy any/majority/all with second-probe confirmation | planned | probe ships in every agent binary, no extra install |
+| 3.13b | Web assertions: status, response time with DNS/TCP/TLS/TTFB/transfer breakdown, body contains and not contains, regex, HTML selector, JSON path, header, redirect count, content size, TLS expiry and issuer; severity per assertion; failed assertions shown on the alert | planned | |
+| 3.13c | Agent config pull every 60 s in addition to push, config version per agent shown in the GUI | planned | a missed push heals itself |
 | 3.14 | Time series ingest (gRPC stream), TimescaleDB hypertables, downsampling | planned | |
 | 3.15 | Retention per org (30/90/365 d) | planned | |
 | 3.16 | Graphs per host and per check (uPlot), fleet overview | planned | |
@@ -124,7 +127,9 @@ Last updated: 2026-09-10
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 4.1 | Monitoring groups: tag selector (`role=db AND env=prod`) + manual members | planned | separate from inventory groups |
+| 4.1 | Monitoring groups: tag selector (`role=db AND env=prod`) + manual members + exclusions | planned | separate from inventory groups |
+| 4.1a | Nested monitoring groups: optional parent, membership mode within-parent or independent, priority; hosts stay many-to-many | planned | |
+| 4.1b | Inheritance semantics: rules override (deepest wins, priority breaks ties, ambiguous ties flagged), check templates / routes / maintenance add up; effective-rules and route-union view per host | planned | |
 | 4.2 | Check templates attached to monitoring groups | planned | |
 | 4.3 | Alert rules: thresholds, duration, severity, per host / group | planned | |
 | 4.4 | Notification schedules: time windows, weekdays, on-call rotation | planned | |

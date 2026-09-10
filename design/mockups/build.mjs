@@ -1244,6 +1244,173 @@ fs.writeFileSync('Workers.dc.html', shell({
   height: 1100,
 }));
 
+// ================= SYNTHETIC / WEB + PORT MONITORING =================
+seed = 11;
+const rtFra = series(96, 30, 6); const rtHel = series(96, 48, 8); const rtOffice = series(96, 62, 14); spike(rtOffice, 66, 25, 6);
+const assertRow = (type, op, value, sev, note) => `<div style="display: grid; grid-template-columns: 150px 130px minmax(0, 1fr) 76px 24px; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid ${T.border}">
+  <div style="display: flex; align-items: center; height: 30px; padding: 0 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.border}; font-size: 12px; justify-content: space-between">${type}${ic.chevron}</div>
+  <div style="display: flex; align-items: center; height: 30px; padding: 0 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.border}; font-size: 12px; justify-content: space-between; font-family: ${MONO}">${op}${ic.chevron}</div>
+  <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><div style="display: flex; align-items: center; height: 30px; padding: 0 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.border}; font-size: 12px; font-family: ${MONO}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${value}</div>${note ? `<span style="font-size: 10px; color: ${T.muted}">${note}</span>` : ''}</div>
+  <div>${pill(sev, T[sev === 'crit' ? 'crit' : 'warn'])}</div><span style="color: ${T.muted}">${ic.more}</span>
+</div>`;
+const probeRow = (kind, name, detail, on, state, val) => `<div style="display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid ${T.border}">
+  <div style="width: 30px; height: 18px; border-radius: 999px; background: ${on ? T.accent : T.border}; position: relative; flex-shrink: 0"><div style="position: absolute; top: 2px; ${on ? 'right: 2px' : 'left: 2px'}; width: 14px; height: 14px; border-radius: 50%; background: ${on ? T.ink : T.dim}"></div></div>
+  <span style="display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; background: ${T.ink}; color: ${on ? T.accent : T.muted}">${kind === 'manager' ? mark(14) : kind === 'worker' ? ic.cpu : ic.server}</span>
+  <div style="display: flex; flex-direction: column; min-width: 0; flex-grow: 1"><span style="font-size: 12px; font-weight: 600; ${on ? '' : `color: ${T.muted}`}">${name}</span><span style="font-size: 11px; color: ${T.muted}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${detail}</span></div>
+  ${on ? `<div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0">${dot(T[state], 6)}<span style="font-family: ${MONO}; font-size: 11px; color: ${T[state] === T.ok ? T.dim : T[state]}">${val}</span></div>` : `<span style="font-size: 11px; color: ${T.muted}">off</span>`}
+</div>`;
+const wf = [['DNS', 8, '#A78BFA'], ['TCP', 14, T.accentDim], ['TLS', 31, T.accent], ['TTFB', 62, T.ok], ['Transfer', 27, T.warn]];
+const wfTotal = wf.reduce((a, [, v]) => a + v, 0);
+const waterfall = `<div style="display: flex; flex-direction: column; gap: 8px; padding: 14px 16px">
+  <div style="display: flex; height: 22px; border-radius: 5px; overflow: hidden; border: 1px solid ${T.border}">${wf.map(([l, v, c]) => `<div style="width: ${(v / wfTotal * 100).toFixed(1)}%; background: ${c}22; border-right: 1px solid ${T.border}; display: flex; align-items: center; justify-content: center"><span style="font-size: 9px; font-weight: 600; color: ${c}">${l}</span></div>`).join('')}</div>
+  <div style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: ${T.muted}">${wf.map(([l, v, c]) => `<span style="display: flex; align-items: center; gap: 5px">${dot(c, 6)}${l} <span style="font-family: ${MONO}; color: ${T.text}">${v} ms</span></span>`).join('')}<span style="margin-left: auto; font-family: ${MONO}; color: ${T.text}">total ${wfTotal} ms</span></div>
+</div>`;
+const otherChecks = [
+  ['ok', 'http', 'api.acme.io/health', 'JSON $.status = ok · 3 probes', '38 ms'],
+  ['ok', 'tls', 'acme.io:443', 'expires in 64 d · chain ok', '64 d'],
+  ['warn', 'tls', 'api.acme.io:443', 'expires in 12 d', '12 d'],
+  ['ok', 'tcp', 'db-02.fra:5432', 'connect · from worker fra-1', '2 ms'],
+  ['ok', 'tcp', 'mail-01.hel:25', 'banner matches ^220 ', '31 ms'],
+  ['crit', 'http', 'shop.acme.io/checkout', 'status 503 from 2 of 3 probes', '—'],
+  ['ok', 'dns', 'acme.io A', 'answer 116.203.14.72', '4 ms'],
+];
+fs.writeFileSync('WebCheck.dc.html', shell({
+  active: 'Monitoring',
+  crumbs: `<span>Monitoring</span>${ic.chevronR}<span>Synthetic checks</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600; font-family: ${MONO}">acme.io homepage</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">acme.io homepage</h1>${pill('ok from 4 probes', T.ok)}${tag('http')}<span style="font-size: 12px; color: ${T.muted}">every 60 s · attached to monitoring group prod-web · 7 assertions</span></div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Request', true)}${tab('Assertions')}${tab('Probes')}${tab('Results')}${tab('History')}</div>
+        </div>
+        <div style="display: flex; gap: 8px">${btn('Run now', false, ic.play)}${btn('Save', true, ic.check)}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Request', `<div style="display: flex; flex-direction: column; gap: 12px; padding: 16px">
+            <div style="display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px; gap: 10px">${select('Method', 'GET')}${input('URL', 'https://acme.io/')}${select('Interval', '60 s')}</div>
+            <div style="display: flex; flex-direction: column; gap: 5px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Headers</span>
+              <div style="display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.border}; font-family: ${MONO}; font-size: 11px">
+                <div style="display: flex; gap: 8px"><span style="color: ${T.muted}; width: 130px">User-Agent</span><span>Pulsix/0.4.2 (+https://pulsix.acme.io)</span></div>
+                <div style="display: flex; gap: 8px"><span style="color: ${T.muted}; width: 130px">Authorization</span><span>Bearer <span style="color: ${T.accentDim}">{{ secret.acme_status_token }}</span></span></div>
+                <span style="color: ${T.accentDim}; font-family: Inter, sans-serif; font-size: 11px">+ add header</span>
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px">
+              ${toggle('Follow redirects', true, 'max 5 · record the chain')}${toggle('Verify TLS certificate', true, 'chain, hostname and expiry')}
+              ${toggle('Send If-None-Match', false, 'treat 304 as ok')}${toggle('Prefer IPv6, fall back to IPv4', true)}
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">${input('Timeout', '10 s')}${input('Max body read', '512 KiB')}${select('HTTP version', 'auto (h2 → h1.1)')}</div>
+          </div>`, `${tag('GET https://acme.io/')}`)}
+          ${card('Assertions', `<div style="display: flex; flex-direction: column">
+            <div style="display: grid; grid-template-columns: 150px 130px minmax(0, 1fr) 76px 24px; gap: 10px; padding: 8px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span>Subject</span><span>Operator</span><span>Expected</span><span>Severity</span><span></span></div>
+            ${assertRow('Status code', 'equals', '200', 'crit', '')}
+            ${assertRow('Response time', 'less than', '800 ms', 'warn', 'total, including TLS handshake')}
+            ${assertRow('Response time', 'less than', '2000 ms', 'crit', '')}
+            ${assertRow('Body text', 'contains', 'Willkommen bei Acme', 'crit', 'case sensitive · after gzip decode')}
+            ${assertRow('Body text', 'not contains', 'Database error', 'crit', '')}
+            ${assertRow('HTML selector', 'exists', 'form#login input[name=email]', 'warn', 'parsed with the HTML5 parser')}
+            ${assertRow('JSON path', 'equals', '$.status  →  "ok"', 'crit', 'used by api.acme.io/health')}
+            ${assertRow('Header', 'matches', 'content-type ~ ^text/html', 'warn', '')}
+            ${assertRow('TLS expiry', 'at least', '21 days', 'warn', 'certificate for acme.io')}
+            <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; font-size: 12px; color: ${T.muted}">${chip('+ Add assertion')}<span>Failed assertions are listed on the alert with the actual value. Subjects: status, response time, body text, regex, HTML selector, JSON path, header, redirect count, content size, TLS expiry, TLS issuer.</span></div>
+          </div>`, `<span>9 assertions · 2 warning · 5 critical</span>`)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Probes · where this runs', `<div style="display: flex; flex-direction: column">
+            ${probeRow('manager', 'Manager', 'built-in probe · public internet', true, 'ok', '41 ms')}
+            ${probeRow('worker', 'Zone worker fra-1', 'Hetzner Falkenstein', true, 'ok', '30 ms')}
+            ${probeRow('worker', 'Zone worker hel-1', 'Hetzner Helsinki', true, 'ok', '48 ms')}
+            ${probeRow('agent', 'Agent group · office-berlin', '3 of 18 agents · office LAN', true, 'warn', '312 ms')}
+            ${probeRow('agent', 'Agent group · customer-a', '4 agents · customer network', false, 'ok', '')}
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; font-size: 12px">
+              <span style="color: ${T.muted}">Every agent contains the probe. Nothing extra to install; pick which agents act as a vantage point.</span>
+              <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Raise an alert when</span>${seg(['any probe fails', 'majority', 'all probes'], 'majority')}</div>
+              ${toggle('Confirm with a second probe before alerting', true, 'avoids false alarms from one location')}
+            </div>
+          </div>`, `<span>4 active</span>`)}
+          ${card('Response time by probe · 24 h', `<div style="padding: 14px 16px 8px">${chart({ w: 330, h: 96, lines: [{ data: rtOffice, color: T.warn }, { data: rtHel, color: T.accentDim }, { data: rtFra, color: T.accent, fill: true }], max: 100, unit: '0 ms', grid: 2, labels: ['-24h', '-12h', 'now'] })}
+            <div style="display: flex; gap: 12px; font-size: 11px; color: ${T.muted}; padding-top: 6px"><span style="display: flex; align-items: center; gap: 5px">${dot(T.accent, 6)} fra</span><span style="display: flex; align-items: center; gap: 5px">${dot(T.accentDim, 6)} hel</span><span style="display: flex; align-items: center; gap: 5px">${dot(T.warn, 6)} office</span><span style="margin-left: auto">p95 312 ms</span></div>
+          </div>`, `<span>per probe</span>`)}
+          ${card('Waterfall · last run from fra-1', waterfall, `${tag('200 OK · 41 KiB')}`)}
+          ${card('Other synthetic checks', `<div style="display: flex; flex-direction: column">${otherChecks.map(([s, k, t, d, v]) => `<div style="display: grid; grid-template-columns: 16px 42px minmax(0, 1fr) 60px; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid ${T.border}">${dot(T[s], 6)}${tag(k)}<div style="display: flex; flex-direction: column; min-width: 0"><span style="font-family: ${MONO}; font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${t}</span><span style="font-size: 10px; color: ${T.muted}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${d}</span></div><span style="font-family: ${MONO}; font-size: 11px; color: ${T[s] === T.ok ? T.muted : T[s]}; text-align: right">${v}</span></div>`).join('')}</div>`, `${btn('New check')}`)}
+          ${card('Config sync', `<div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; font-size: 12px; color: ${T.dim}; line-height: 1.5">
+            <span>Changes are pushed to probes immediately and every agent re-fetches its full configuration every <span style="font-family: ${MONO}; color: ${T.text}">60 s</span>, so a missed push heals itself.</span>
+            <div style="display: flex; align-items: center; gap: 8px">${dot(T.ok, 6)}<span style="font-family: ${MONO}; font-size: 11px">config v412</span><span style="color: ${T.muted}">· 126 of 126 agents current</span></div>
+          </div>`, ``)}
+        </div>
+      </div>`,
+  height: 1560,
+}));
+
+// ================= MONITORING GROUP HIERARCHY =================
+const gRow = (depth, name, sel, hosts, prio, sel2, state) => `<div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px 8px ${16 + depth * 22}px; border-bottom: 1px solid ${T.border}; ${sel2 ? `background: ${T.ink}; box-shadow: inset 2px 0 0 ${T.accent}` : ''}">
+  ${depth ? `<span style="color: ${T.border}; font-family: ${MONO}; font-size: 11px; flex-shrink: 0">└</span>` : ''}
+  ${dot(T[state], 8)}<div style="display: flex; flex-direction: column; min-width: 0; flex-grow: 1"><span style="font-family: ${MONO}; font-size: 12px; font-weight: ${sel2 ? 700 : 600}">${name}</span><span style="font-size: 10px; color: ${T.muted}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${sel}</span></div>
+  <span style="font-size: 10px; color: ${T.muted}; font-family: ${MONO}; flex-shrink: 0">p${prio}</span><span style="font-size: 11px; color: ${T.dim}; font-family: ${MONO}; width: 34px; text-align: right; flex-shrink: 0">${hosts}</span>
+</div>`;
+const memberChip = (g, prio, own) => `<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; border: 1px solid ${own ? T.accent + '55' : T.border}; background: ${T.ink}">${ic.layers}<span style="font-family: ${MONO}; font-size: 11px; font-weight: 600; flex-grow: 1">${g}</span><span style="font-size: 10px; color: ${T.muted}; font-family: ${MONO}">p${prio}</span><span style="font-size: 10px; color: ${own ? T.accent : T.muted}">${own ? 'selector' : 'inherited'}</span></div>`;
+const effRule = (check, from, cond, wins) => `<div style="display: grid; grid-template-columns: 120px 130px minmax(0, 1fr) 22px; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid ${T.border}; font-size: 11px; ${wins ? '' : 'opacity: 0.45'}">
+  <span style="font-weight: 600">${check}</span><span style="font-family: ${MONO}; color: ${wins ? T.accent : T.muted}">${from}</span><span style="font-family: ${MONO}; color: ${T.dim}">${cond}</span><span>${wins ? `<span style="color: ${T.ok}">${ic.check}</span>` : ''}</span>
+</div>`;
+fs.writeFileSync('MonitoringGroups.dc.html', shell({
+  active: 'Monitoring',
+  crumbs: `<span>Monitoring</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Groups</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Monitoring groups</h1><span style="font-size: 13px; color: ${T.muted}">Nested for inheritance, many-to-many for hosts. A host can be in any number of groups; rules override, notifications add up.</span></div>
+        <div style="display: flex; gap: 8px">${btn('Preview selector', false, ic.search)}${btn('New group', true, ic.layers)}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: 380px minmax(0, 1fr) 400px; gap: 16px; flex-grow: 1; min-height: 0">
+        ${card('Hierarchy', `<div style="display: flex; flex-direction: column">
+          ${gRow(0, 'production', 'env = prod', 96, 100, false, 'warn')}
+          ${gRow(1, 'prod-databases', 'role = db', 7, 200, false, 'crit')}
+          ${gRow(1, 'prod-web', 'role = web', 24, 200, true, 'ok')}
+          ${gRow(2, 'prod-web-edge', 'tier = edge', 4, 300, false, 'ok')}
+          ${gRow(1, 'prod-cache', 'role = cache', 5, 200, false, 'ok')}
+          ${gRow(0, 'customers', 'manual members only', 20, 100, false, 'ok')}
+          ${gRow(1, 'customer-a', 'customer = a', 12, 150, false, 'ok')}
+          ${gRow(1, 'customer-b', 'customer = b', 8, 150, false, 'ok')}
+          ${gRow(0, 'office-berlin', 'zone = office-berlin', 18, 100, false, 'warn')}
+          ${gRow(0, 'iot-devices', 'role = iot', 6, 50, false, 'unknown')}
+          <div style="padding: 10px 16px; font-size: 11px; color: ${T.muted}">Depth is for inheritance, not for exclusivity. <span style="font-family: ${MONO}">p</span> is the priority used when two groups at the same depth define the same rule.</div>
+        </div>`, `<span>10 groups · 4 roots</span>`)}
+        <div style="display: flex; flex-direction: column; gap: 16px; min-height: 0">
+          ${card('prod-web', `<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px">${select('Parent group', 'production')}${input('Priority', '200')}</div>
+            <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Membership</span>${seg(['Within parent members', 'Independent selector'], 'Within parent members')}<span style="font-size: 11px; color: ${T.muted}">Within parent: the selector is applied to the 96 hosts of <span style="font-family: ${MONO}; color: ${T.text}">production</span>. Independent: applied to all hosts of the organization.</span></div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">${rule('role', '=', 'web')}<span style="font-size: 11px; font-weight: 600; color: ${T.muted}">AND</span>${rule('zone', 'in', 'fra, hel')}${chip('+ condition')}</div>
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: ${T.muted}">${ic.check}<span>24 hosts · 22 by selector · 2 added manually · 1 excluded</span></div>
+          </div>`, `${tag('monitoring group')}`)}
+          ${card('Configuration', `<div style="display: flex; flex-direction: column">
+            <div style="display: grid; grid-template-columns: 150px 90px 90px minmax(0, 1fr); gap: 10px; padding: 8px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span>What</span><span>Inherited</span><span>Own</span><span>Effect on members</span></div>
+            ${[['Check templates', '3', '2', 'union · parent templates run too', T.text], ['Alert rules', '2', '4', 'override · deeper group wins per check', T.accent], ['Notification routes', '1', '2', 'union · every route notifies, per channel deduplicated', T.ok], ['Maintenance windows', '1', '0', 'union · a parent window silences children', T.text], ['Status page component', '—', '1', 'own · shown as "Website & customer portal"', T.text]].map(([w, i, o, e, c]) => `<div style="display: grid; grid-template-columns: 150px 90px 90px minmax(0, 1fr); align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid ${T.border}; font-size: 12px"><span style="font-weight: 600">${w}</span><span style="font-family: ${MONO}; color: ${T.muted}">${i}</span><span style="font-family: ${MONO}">${o}</span><span style="font-size: 11px; color: ${c === T.text ? T.muted : c}">${e}</span></div>`).join('')}
+            <div style="padding: 10px 16px; font-size: 11px; color: ${T.muted}">Rules are the only setting that overrides. Everything else adds up, so a host never loses a notification by joining another group.</div>
+          </div>`, `<span>inherited from production</span>`)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px; min-height: 0">
+          ${card('Host · web-03.fra', `<div style="display: flex; flex-direction: column; gap: 8px; padding: 14px 16px">
+            <span style="font-size: 11px; color: ${T.muted}">Member of 4 monitoring groups</span>
+            ${memberChip('production', 100, true)}${memberChip('prod-web', 200, true)}${memberChip('prod-web-edge', 300, true)}${memberChip('office-hours-paging', 120, false)}
+            <span style="font-size: 11px; color: ${T.muted}; margin-top: 2px">Membership is many-to-many and re-evaluated whenever tags change.</span>
+          </div>`, `${select('', 'web-03.fra', '150px')}`)}
+          ${card('Effective rule · CPU load', `<div style="display: flex; flex-direction: column">
+            ${effRule('CPU load', 'host override', '—', false)}
+            ${effRule('CPU load', 'prod-web-edge', '≥ 4.0 for 5m → warn', true)}
+            ${effRule('CPU load', 'prod-web', '≥ 6.0 for 5m → warn', false)}
+            ${effRule('CPU load', 'production', '≥ 8.0 for 10m → warn', false)}
+            ${effRule('CPU load', 'org default', '≥ 8.0 for 10m → warn', false)}
+            <div style="padding: 10px 16px; font-size: 11px; color: ${T.muted}">Deepest group wins. Two groups at the same depth are decided by priority, and an unresolvable tie is flagged here instead of being picked silently.</div>
+          </div>`, `${tag('winner: prod-web-edge')}`)}
+          ${card('Notifications for this host', `<div style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; font-size: 11px">
+            ${[['prod-web-edge', 'crit → pagerduty web-oncall', T.crit], ['prod-web', 'warn+ → slack #ops-web', T.warn], ['production', 'crit → email ops@acme.io', T.crit], ['office-hours-paging', 'warn+ Mon–Fri 08–18 → telegram Tim', T.warn]].map(([g, r, c]) => `<div style="display: flex; align-items: center; gap: 8px">${dot(c, 6)}<span style="font-family: ${MONO}; width: 130px; flex-shrink: 0">${g}</span><span style="color: ${T.dim}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${r}</span></div>`).join('')}
+            <span style="color: ${T.muted}; margin-top: 4px">4 routes, 4 channels, deduplicated per alert. A critical alert reaches PagerDuty and e-mail once each.</span>
+          </div>`, `<span>union</span>`)}
+        </div>
+      </div>`,
+  height: 1180,
+}));
+
 fs.writeFileSync('canvas.json', JSON.stringify({
   pages: [{ id: 'page-1', name: 'Core & monitoring' }, { id: 'page-2', name: 'Admin & Ansible' }],
   artboards: [
@@ -1256,6 +1423,8 @@ fs.writeFileSync('canvas.json', JSON.stringify({
     { file: 'RuleEditor.dc.html', x: 0, y: 3920, w: 1440, h: 1080, title: 'Rule editor · form + expression + effective rules' },
     { file: 'StatusAdmin.dc.html', x: 1540, y: 3920, w: 1440, h: 1080, title: 'Status page admin' },
     { file: 'Workers.dc.html', x: 0, y: 6420, w: 1440, h: 1100, title: 'Workers & zones' },
+    { file: 'WebCheck.dc.html', x: 1540, y: 6420, w: 1440, h: 1560, title: 'Synthetic check · web and port monitoring' },
+    { file: 'MonitoringGroups.dc.html', x: 0, y: 8000, w: 1440, h: 1180, title: 'Monitoring groups · nesting and multi-membership' },
     { file: 'Enrollment.dc.html', x: 0, y: 5160, w: 1440, h: 1000, title: 'Add host · step 2 agent enrollment' },
     { file: 'EnrollmentSSH.dc.html', x: 1540, y: 5160, w: 1440, h: 1100, title: 'Add host · step 3 SSH access (public key, bootstrap, test)' },
 
@@ -1278,6 +1447,8 @@ fs.writeFileSync('canvas.json', JSON.stringify({
     { id: 'rule-note', x: 0, y: 3800, w: 560, text: 'Rule editor: scope, item filter, thresholds with duration and clear value, form ↔ expression, effective rules with precedence, dry run.', page: 'page-1' },
     { id: 'sadmin-note', x: 1540, y: 3800, w: 560, text: 'Status page admin: components mapping, incident composer, maintenance from windows, slug, custom domain, appearance.', page: 'page-1' },
     { id: 'enroll-note', x: 0, y: 5040, w: 560, text: 'Enrollment wizard: capability toggles, one-line install with single-use token per OS, live progress, SSH step only if managed.', page: 'page-1' },
+    { id: 'web-note', x: 1540, y: 6300, w: 560, text: 'Synthetic check: request with headers and secret refs, assertions (status, response time, body text, regex, HTML selector, JSON path, header, TLS expiry) each with its own severity, probes (manager, zone workers, agent groups) with a fail policy, response time per probe, waterfall, and the config-sync note.', page: 'page-1' },
+    { id: 'groups-note', x: 0, y: 7880, w: 560, text: 'Monitoring groups: nested for inheritance and many-to-many for hosts. Rules override (deepest group wins, priority breaks ties, unresolvable ties flagged); check templates, routes and maintenance add up. Right column shows one host with all its groups, the winning rule and the union of its notification routes.', page: 'page-1' },
     { id: 'workers-note', x: 0, y: 6300, w: 560, text: 'Workers & zones: one card per zone with jump-host default, agent/managed/remote-check counts and its workers (capabilities ansible/checks/gateway, agents, jobs, check throughput, load). Worker detail with drain/restart/revoke, add-worker command with single-use token, event log.', page: 'page-1' },
     { id: 'ssh-note', x: 1540, y: 5040, w: 560, text: 'SSH step: credential (Pulsix-generated key, import, password), public key with authorized_keys / cloud-init / Terraform snippets, optional one-time bootstrap with an existing login, connection test from the zone worker with host-key trust-on-first-use and pinning, sudo/Python checks.', page: 'page-1' },
 

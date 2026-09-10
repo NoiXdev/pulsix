@@ -110,10 +110,12 @@ playbook_id, limit, extra_vars, credential_id, schedule)`, `jobs(template_id, st
 zone_id, worker_id, started, finished, stats jsonb)`, `job_events(job_id, seq, host,
 task, payload jsonb)` (hypertable, compressed after 7 d).
 
-Monitoring: `monitoring_groups(org_id, name, selector jsonb, status_page_display)`,
-`monitoring_group_members(group_id, host_id, source selector|manual)`, `check_definitions
-(org_id, plugin, params jsonb, interval, binding {org|group|host}, enabled, origin
-seed|user)`, `check_items(host_id, definition_id, item_key, discovered_at, ignored)`,
+Monitoring: `monitoring_groups(org_id, parent_id, name, selector jsonb, membership_mode
+within_parent|independent, priority int default 100, status_page_display)`,
+`monitoring_group_members(group_id, host_id, source selector|manual|excluded)`,
+`check_definitions(org_id, plugin, params jsonb, interval, binding {org|group|host},
+probes jsonb, enabled, origin seed|user)`, `check_probe_results(item_id, probe_id,
+state, last_value, at)`, `check_items(host_id, definition_id, item_key, discovered_at, ignored)`,
 `rules(org_id, scope {org|group|host|item}, conditions jsonb, expression, severity,
 for_duration)`, `check_states(item_id, state, since, last_value, flapping)`, `metrics
 (time, item_id, name, value)` (hypertable, continuous aggregates 1 m / 5 m / 1 h).
@@ -277,6 +279,12 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
 
   Secrets never leave the host. The agent reports secret **names** in its status so the
   GUI can flag a check that references a missing secret.
+- Configuration reaches the agent two ways: the worker pushes changes over the open
+  stream, and the agent re-fetches its complete configuration every 60 s (configurable
+  30-600 s) and applies the diff, so a missed push heals itself. Each configuration
+  carries a version; the GUI shows how many agents are on the current one.
+- Every agent binary contains the **probe** for synthetic checks (HTTP, TCP, TLS, DNS,
+  ICMP), so any monitored host can serve as a vantage point with no extra install.
 - Facts: OS, kernel, CPU, memory, disks, interfaces, IPs, virtualization, agent version.
   Reported at start and every 6 h; selected facts become auto tags (`os=…`, `arch=…`,
   `virt=…`).
@@ -299,10 +307,28 @@ Layered like Checkmk rulesets and Zabbix templates.
    (`Linux base`, `Windows base`, `macOS base`, `PostgreSQL`, `MySQL`, `Web server`,
    `Docker host`, `Endpoint`) as data with `origin = seed`; orgs can disable, copy or
    edit them. Agents receive the resolved definitions for their host.
-3. **Discovery.** Plugins that enumerate items (mounts, units, interfaces, containers,
+3. **Probes (where a check runs).** Host-local plugins always run on the host's own
+   agent. Synthetic plugins (`http`, `tcp`, `tls`, `dns`, `icmp`, `snmp`) carry a list
+   of **probes** instead: the **manager** (built-in), one or more **zone workers**,
+   and/or an **agent group** (a monitoring group whose agents act as vantage points).
+   Every probe reports its own result and metrics, so latency and availability are
+   visible per location. A **fail policy** per check decides when the check as a whole
+   is bad: `any probe`, `majority`, or `all probes`, with an optional confirmation step
+   that requires a second probe to agree before an alert opens.
+4. **Web and port assertions.** An HTTP check defines a request (method, URL, headers
+   with `{{ secret.<name> }}` references, body, redirect handling, timeout, TLS
+   verification, HTTP version, maximum body read) and a list of **assertions**, each
+   with its own severity: status code, response time (total, with a DNS / TCP / TLS /
+   TTFB / transfer breakdown stored as metrics), body text contains or not contains,
+   regex, HTML selector exists or matches (HTML5 parser), JSON path compare, response
+   header compare, redirect count, content size, TLS days until expiry, TLS issuer.
+   TLS validation covers chain, hostname and expiry. A `tcp` check verifies the
+   connection and optionally matches a banner. Failed assertions appear on the alert
+   with the value that was actually seen.
+5. **Discovery.** Plugins that enumerate items (mounts, units, interfaces, containers,
    databases) report them; each becomes a `check_item` under the definition. New items
    inherit rules, can be ignored, and can carry item-level overrides.
-4. **Rules.** A rule maps metrics to a state:
+6. **Rules.** A rule maps metrics to a state:
 
    ```
    scope: org | group(selector) | host | item(key)
@@ -315,13 +341,16 @@ Layered like Checkmk rulesets and Zabbix templates.
    Both modes compile into the same expression AST. Evaluation happens in the manager
    (workers and agents ship raw values), on every incoming sample plus a periodic sweep
    for `for_duration` and missing data. Precedence: item > host > group > org > plugin
-   default; the first matching rule per severity wins; the GUI shows the **effective
+   default; among groups the deepest one wins, a tie between groups at the same depth
+   is broken by the group's `priority` (higher wins), and an unresolvable tie is
+   reported in the effective-rules view instead of being decided silently; the first
+   matching rule per severity wins; the GUI shows the **effective
    rules** per item with the source of each. Hysteresis: a rule can define a clear value
    (`>= 90` triggers, `< 85` clears); flapping is detected from state changes per 30 min
    and suppresses notifications while showing the flapping flag.
-5. **States.** `ok`, `warn`, `crit`, `unknown` (no data within 3 × interval or plugin
+7. **States.** `ok`, `warn`, `crit`, `unknown` (no data within 3 × interval or plugin
    error). Host state is the maximum of its item states; group state likewise.
-6. **Custom checks.** The `script` plugin runs a local command and parses either the
+8. **Custom checks.** The `script` plugin runs a local command and parses either the
    Nagios plugin protocol (exit code 0/1/2/3 → ok/warn/crit/unknown, optional perfdata)
    or a JSON document (`{"items": [{"key": …, "state": …, "metrics": {…}}]}`). Scripts are
    configured in the GUI (path, args, timeout, secret references) or in the local
@@ -343,9 +372,18 @@ Layered like Checkmk rulesets and Zabbix templates.
 ## 11. Alerting
 
 - **Monitoring groups**: membership = tag selector (`key = value`, `key in (…)`,
-  `key exists`, combined with AND; OR by creating another group) plus manual members.
-  Re-evaluated when tags change. A group carries check definitions, rules, routes,
-  maintenance windows and the status page mapping.
+  `key exists`, combined with AND; OR by creating another group) plus manual members
+  and explicit exclusions. Re-evaluated when tags change. A group carries check
+  definitions, rules, routes, maintenance windows and the status page mapping.
+- Groups are **many-to-many**: a host belongs to any number of them. They may also be
+  **nested** through an optional parent, which serves inheritance rather than
+  exclusivity. A child's `membership_mode` is `within_parent` (the selector is applied
+  to the parent's members, the usual case) or `independent` (applied to every host of
+  the organization). Inheritance differs by kind on purpose: **alert rules override**
+  (deepest group wins, `priority` breaks ties), while **check definitions, notification
+  routes and maintenance windows add up** across every group a host belongs to, with
+  notifications deduplicated per channel and alert. A host therefore never loses a
+  notification by joining another group.
 - **Alerts** open when an item enters `warn` or `crit` after `for_duration`, close on
   `ok`, and record every state change. Acknowledge (with note), snooze (until time or
   until state changes), silence (host, group, or item, with duration).
