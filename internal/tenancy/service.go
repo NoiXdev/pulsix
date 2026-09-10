@@ -241,7 +241,17 @@ func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password
 	sum := sha256.Sum256([]byte(token))
 	inv, err := s.store.TakeInvite(ctx, sum[:], s.now())
 	if err != nil {
-		return uuid.Nil, uuid.Nil, ErrNotFound
+		if errors.Is(err, ErrNotFound) {
+			// TakeInvite's contract already folds "unknown token", "already
+			// accepted" and "expired" into ErrNotFound (see Store.TakeInvite),
+			// so this is a genuine no-such-invite, not a store failure.
+			return uuid.Nil, uuid.Nil, ErrNotFound
+		}
+		// A database outage here must not present as "no such invite": that
+		// would turn a store failure into a silent 404 the same way the
+		// review flagged for every other method in this file. Adjacent fix,
+		// Task 10 fix round 1.
+		return uuid.Nil, uuid.Nil, fmt.Errorf("take invite: %w", err)
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
@@ -269,19 +279,26 @@ func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password
 	return u.ID, inv.OrgID, nil
 }
 
-// ChangeRole sets target's role in orgID. Only an existing owner may grant
-// or revoke the owner role, and the organization must always keep at least
-// one owner: demoting the last owner fails with ErrLastOwner.
-func (s *Service) ChangeRole(ctx context.Context, orgID, actor, target uuid.UUID, role Role) error {
+// ChangeRole sets target's role in orgID. actorRole is the caller's already
+// -authorized effective role — api.requireOrg computes it as the lower of
+// the caller's real membership role and any bearer token's own scoped role,
+// and it is what actually decides the owner-only rules below. It must never
+// be re-derived from the store here: a token minted at, say, admin can
+// authenticate as its owner (an org owner) and would resolve to RoleOwner
+// on a fresh store lookup, silently discarding the cap requireOrg computed
+// and letting an admin-scoped token grant or revoke ownership (Finding 1,
+// Task 10 fix round 1) — exactly the bypass api/authz.go's own doc comment
+// says a token must never be able to produce.
+//
+// Only an actor with RoleOwner may grant or revoke the owner role, and the
+// organization must always keep at least one owner: demoting the last
+// owner fails with ErrLastOwner, enforced atomically by the store itself
+// (see Store.UpdateMembershipRole) so two concurrent demotions of the same
+// two owners can never both succeed (Finding 3, Task 10 fix round 1) — this
+// no longer calls CountOwners at all.
+func (s *Service) ChangeRole(ctx context.Context, orgID uuid.UUID, actorRole Role, actor, target uuid.UUID, role Role) error {
 	if !Valid(role) {
 		return ErrForbidden
-	}
-	actorRole, err := s.store.GetMembership(ctx, orgID, actor)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotMember
-		}
-		return err
 	}
 	current, err := s.store.GetMembership(ctx, orgID, target)
 	if err != nil {
@@ -290,46 +307,42 @@ func (s *Service) ChangeRole(ctx context.Context, orgID, actor, target uuid.UUID
 	if (role == RoleOwner || current == RoleOwner) && actorRole != RoleOwner {
 		return ErrForbidden
 	}
-	if current == RoleOwner && role != RoleOwner {
-		n, err := s.store.CountOwners(ctx, orgID)
-		if err != nil {
-			return err
-		}
-		if n <= 1 {
+	if err := s.store.UpdateMembershipRole(ctx, orgID, target, role); err != nil {
+		if errors.Is(err, ErrNotFound) && current == RoleOwner && role != RoleOwner {
+			// GetMembership above just confirmed target exists, so the only
+			// way the guarded UPDATE can have matched no row is its own
+			// atomic last-owner check.
 			return ErrLastOwner
-		}
-	}
-	return s.store.UpdateMembershipRole(ctx, orgID, target, role)
-}
-
-// RemoveMember removes target from orgID, with the same last-owner guard as
-// ChangeRole: removing the only remaining owner fails with ErrLastOwner, and
-// only an owner may remove another owner.
-func (s *Service) RemoveMember(ctx context.Context, orgID, actor, target uuid.UUID) error {
-	actorRole, err := s.store.GetMembership(ctx, orgID, actor)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotMember
 		}
 		return err
 	}
+	return nil
+}
+
+// RemoveMember removes target from orgID, with the same actor-role and
+// last-owner handling as ChangeRole: actorRole is the caller's already-
+// capped effective role, never re-derived from the store; removing the
+// only remaining owner fails with ErrLastOwner, enforced atomically by the
+// store (Store.DeleteMembership); and only an actor with RoleOwner may
+// remove another owner.
+func (s *Service) RemoveMember(ctx context.Context, orgID uuid.UUID, actorRole Role, actor, target uuid.UUID) error {
 	current, err := s.store.GetMembership(ctx, orgID, target)
 	if err != nil {
 		return err // ErrNotFound when target genuinely isn't a member; propagated unchanged otherwise
 	}
-	if current == RoleOwner {
-		if actorRole != RoleOwner {
-			return ErrForbidden
-		}
-		n, err := s.store.CountOwners(ctx, orgID)
-		if err != nil {
-			return err
-		}
-		if n <= 1 {
+	if current == RoleOwner && actorRole != RoleOwner {
+		return ErrForbidden
+	}
+	if err := s.store.DeleteMembership(ctx, orgID, target); err != nil {
+		if errors.Is(err, ErrNotFound) && current == RoleOwner {
+			// Same reasoning as ChangeRole above: existence was just
+			// confirmed, so a guarded delete matching no row means the
+			// atomic last-owner check refused it.
 			return ErrLastOwner
 		}
+		return err
 	}
-	return s.store.DeleteMembership(ctx, orgID, target)
+	return nil
 }
 
 // DeactivateUser disables target's account instance-wide and ends its

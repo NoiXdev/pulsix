@@ -9,11 +9,51 @@ SELECT u.id AS user_id, u.email, u.display_name, m.role, u.disabled_at, m.create
 FROM org_memberships m JOIN users u ON u.id = m.user_id
 WHERE m.org_id = $1 ORDER BY m.created_at;
 
--- name: UpdateMembershipRole :exec
-UPDATE org_memberships SET role = $3 WHERE org_id = $1 AND user_id = $2;
+-- name: UpdateMembershipRole :execrows
+-- Sets user_id's role in org_id, but refuses (0 rows affected, mapped to
+-- ErrNotFound by the caller) to move a member away from 'owner' when doing
+-- so would leave the organization with no owner. The last-owner guard used
+-- to be a separate CountOwners call sandwiched between a read and this
+-- write — three round trips wide open to a race where two concurrent
+-- demotions of two different owners each observe "two owners" and both
+-- commit, leaving zero. Folding the count into this statement's own WHERE
+-- closes that: the nested "FOR UPDATE" subquery takes a row lock on every
+-- current owner of the org before counting them, so two such statements
+-- running concurrently serialize against each other (the second blocks
+-- until the first commits, then re-reads the now-current owner count)
+-- instead of both reading the pre-update count. count(*) cannot itself
+-- carry FOR UPDATE (Postgres rejects locking clauses on aggregates), hence
+-- the extra wrapping subquery. DeleteMembership below uses the identical
+-- pattern.
+UPDATE org_memberships AS m
+SET role = $3
+WHERE m.org_id = $1 AND m.user_id = $2
+  AND (
+    m.role != 'owner'
+    -- $3's type must be pinned to org_role explicitly here: left as a bare
+    -- comparison against the unknown-typed literal 'owner', Postgres
+    -- resolves the parameter's type as text (its default for "unknown"),
+    -- which then conflicts with the org_role SET target above and the
+    -- whole statement fails to prepare ("column role is of type org_role
+    -- but expression is of type text").
+    OR $3 = 'owner'::org_role
+    OR (SELECT count(*) FROM (
+          SELECT 1 FROM org_memberships AS om WHERE om.org_id = $1 AND om.role = 'owner' FOR UPDATE
+        ) AS locked_owners) > 1
+  );
 
 -- name: DeleteMembership :execrows
-DELETE FROM org_memberships WHERE org_id = $1 AND user_id = $2;
+-- Removes user_id from org_id, refusing (0 rows affected) to remove the
+-- organization's last owner. Same atomic FOR-UPDATE-locked guard as
+-- UpdateMembershipRole above.
+DELETE FROM org_memberships AS m
+WHERE m.org_id = $1 AND m.user_id = $2
+  AND (
+    m.role != 'owner'
+    OR (SELECT count(*) FROM (
+          SELECT 1 FROM org_memberships AS om WHERE om.org_id = $1 AND om.role = 'owner' FOR UPDATE
+        ) AS locked_owners) > 1
+  );
 
 -- name: CountOwners :one
 SELECT count(*) FROM org_memberships WHERE org_id = $1 AND role = 'owner';

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,6 +155,143 @@ func TestSQLStoreCountOwners(t *testing.T) {
 	n, err := store.CountOwners(ctx, org.ID)
 	if err != nil || n != 2 {
 		t.Fatalf("CountOwners = %d, %v, want 2", n, err)
+	}
+}
+
+// TestSQLStoreUpdateMembershipRoleBlocksLastOwnerDemotion and
+// TestSQLStoreDeleteMembershipBlocksLastOwnerRemoval are the single-caller
+// half of Finding 3's fix (Task 10 fix round 1): the atomic guard baked
+// into the query itself (tenancy_users.sql) refuses to move the sole owner
+// off the owner role, or to remove them, reporting ErrNotFound (0 rows
+// affected — the same sentinel a missing row would produce; ChangeRole and
+// RemoveMember are what reinterpret it as ErrLastOwner, tested at the
+// service level). See TestSQLStoreConcurrentDemotionOfBothOwnersLeavesOneOwner
+// below for the concurrency half this guard exists for.
+func TestSQLStoreUpdateMembershipRoleBlocksLastOwnerDemotion(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(q)
+
+	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "guard-demote", Name: "Guard"}
+	if err := store.CreateOrg(ctx, org); err != nil {
+		t.Fatal(err)
+	}
+	owner := seedUser(t, q, "guard-demote-owner@example.test")
+	if err := store.AddMembership(ctx, org.ID, owner, tenancy.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.UpdateMembershipRole(ctx, org.ID, owner, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("demote sole owner: %v, want ErrNotFound (atomic guard refused it)", err)
+	}
+	role, err := store.GetMembership(ctx, org.ID, owner)
+	if err != nil || role != tenancy.RoleOwner {
+		t.Fatalf("role after blocked demotion = %s, %v, want unchanged owner", role, err)
+	}
+
+	// Granting owner (never demoting away from it) and demoting a non-owner
+	// must both still work — the guard is scoped exactly to "the last owner
+	// loses the owner role", not to every write on an owner's row.
+	other := seedUser(t, q, "guard-demote-other@example.test")
+	if err := store.AddMembership(ctx, org.ID, other, tenancy.RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateMembershipRole(ctx, org.ID, other, tenancy.RoleOwner); err != nil {
+		t.Fatalf("grant owner to a second member: %v", err)
+	}
+	if err := store.UpdateMembershipRole(ctx, org.ID, owner, tenancy.RoleAdmin); err != nil {
+		t.Fatalf("demote the original owner now that a second owner exists: %v", err)
+	}
+}
+
+func TestSQLStoreDeleteMembershipBlocksLastOwnerRemoval(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(q)
+
+	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "guard-remove", Name: "Guard"}
+	if err := store.CreateOrg(ctx, org); err != nil {
+		t.Fatal(err)
+	}
+	owner := seedUser(t, q, "guard-remove-owner@example.test")
+	if err := store.AddMembership(ctx, org.ID, owner, tenancy.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.DeleteMembership(ctx, org.ID, owner); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("remove sole owner: %v, want ErrNotFound (atomic guard refused it)", err)
+	}
+	if role, err := store.GetMembership(ctx, org.ID, owner); err != nil || role != tenancy.RoleOwner {
+		t.Fatalf("membership after blocked removal = %s, %v, want unchanged owner", role, err)
+	}
+}
+
+// TestSQLStoreConcurrentDemotionOfBothOwnersLeavesOneOwner is Finding 3's
+// concurrency regression test (Task 10 fix round 1): the old guard
+// (GetMembership, then a separate CountOwners, then UpdateMembershipRole —
+// three round trips with no lock tying them together) let two concurrent
+// demotions of an org's two owners each observe "two owners" and both
+// commit, leaving the organization with none — unrecoverable through the
+// API, since only an owner may grant the owner role. The fix folds the
+// count into the UPDATE's own WHERE clause behind a row lock (see
+// tenancy_users.sql's comment on UpdateMembershipRole), so exactly one of
+// two truly concurrent demotions must succeed and the organization must
+// still have an owner afterward. This only exercises the real SQL store —
+// a Go map has no meaningful concurrent-transaction semantics to test this
+// property against (see the fake's own doc comment in service_test.go).
+func TestSQLStoreConcurrentDemotionOfBothOwnersLeavesOneOwner(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(q)
+	svc := tenancy.NewService(store, &fakeMailer{}, testPublicURL, time.Now)
+
+	owner1 := seedUser(t, q, "conc-owner1@example.test")
+	owner2 := seedUser(t, q, "conc-owner2@example.test")
+	org, err := svc.CreateOrg(ctx, owner1, "conc-last-owner", "Conc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddMembership(ctx, org.ID, owner2, tenancy.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	start := make(chan struct{})
+	for i, actor := range []uuid.UUID{owner1, owner2} {
+		wg.Add(1)
+		go func(i int, actor uuid.UUID) {
+			defer wg.Done()
+			<-start
+			errs[i] = svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, actor, actor, tenancy.RoleAdmin)
+		}(i, actor)
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded, lastOwner := 0, 0
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			succeeded++
+		case errors.Is(e, tenancy.ErrLastOwner):
+			lastOwner++
+		default:
+			t.Fatalf("unexpected error from a concurrent demotion: %v", e)
+		}
+	}
+	if succeeded != 1 || lastOwner != 1 {
+		t.Fatalf("succeeded=%d refused-as-last-owner=%d (errs=%v), want exactly one of each", succeeded, lastOwner, errs)
+	}
+	n, err := store.CountOwners(ctx, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("CountOwners after concurrent demotion = %d, want 1", n)
 	}
 }
 

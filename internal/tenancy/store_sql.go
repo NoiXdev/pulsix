@@ -97,13 +97,28 @@ func (s *SQLStore) AddMembership(ctx context.Context, orgID, userID uuid.UUID, r
 	return s.q.AddMembership(ctx, gen.AddMembershipParams{OrgID: orgID, UserID: userID, Role: gen.OrgRole(role)})
 }
 
+// UpdateMembershipRole returns ErrNotFound when no row was affected — either
+// because no matching membership existed, or because the query's own
+// atomic last-owner guard refused the change (see tenancy_users.sql). The
+// service (ChangeRole) is the one that knows which of those two it is,
+// since it already looked the target's current membership up before
+// calling this; the store itself makes no attempt to tell them apart.
 func (s *SQLStore) UpdateMembershipRole(ctx context.Context, orgID, userID uuid.UUID, role Role) error {
-	return s.q.UpdateMembershipRole(ctx, gen.UpdateMembershipRoleParams{OrgID: orgID, UserID: userID, Role: gen.OrgRole(role)})
+	n, err := s.q.UpdateMembershipRole(ctx, gen.UpdateMembershipRoleParams{OrgID: orgID, UserID: userID, Role: gen.OrgRole(role)})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteMembership returns ErrNotFound when no matching row existed, so a
 // caller can never mistake "nothing happened" for success — the same
-// guarantee SQLTokenStore.Revoke gives.
+// guarantee SQLTokenStore.Revoke gives. As with UpdateMembershipRole above,
+// this also covers the query's own atomic last-owner guard refusing the
+// delete (see tenancy_users.sql); RemoveMember is what tells the two apart.
 func (s *SQLStore) DeleteMembership(ctx context.Context, orgID, userID uuid.UUID) error {
 	n, err := s.q.DeleteMembership(ctx, gen.DeleteMembershipParams{OrgID: orgID, UserID: userID})
 	if err != nil {

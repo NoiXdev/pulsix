@@ -138,7 +138,7 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid user id")
 		}
-		if err := deps.Tenancy.ChangeRole(ctx, scope.OrgID, scope.UserID, target, tenancy.Role(in.Body.Role)); err != nil {
+		if err := deps.Tenancy.ChangeRole(ctx, scope.OrgID, scope.Role, scope.UserID, target, tenancy.Role(in.Body.Role)); err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
 		return &okOutput{}, nil
@@ -153,7 +153,7 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid user id")
 		}
-		if err := deps.Tenancy.RemoveMember(ctx, scope.OrgID, scope.UserID, target); err != nil {
+		if err := deps.Tenancy.RemoveMember(ctx, scope.OrgID, scope.Role, scope.UserID, target); err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
 		return &okOutput{}, nil

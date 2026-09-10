@@ -14,6 +14,7 @@ import (
 
 const addMembership = `-- name: AddMembership :exec
 INSERT INTO org_memberships (org_id, user_id, role) VALUES ($1, $2, $3)
+ON CONFLICT (org_id, user_id) DO NOTHING
 `
 
 type AddMembershipParams struct {
@@ -22,6 +23,12 @@ type AddMembershipParams struct {
 	Role   OrgRole   `json:"role"`
 }
 
+// ON CONFLICT DO NOTHING mirrors the (org_id, user_id) primary key: accepting
+// an invitation for an address that is already a member must join
+// gracefully (the existing membership and role are left exactly as they
+// were), not surface a unique-violation as an unmapped 500 after
+// TakeInvite has already burned the invite (Finding 5, Task 10 fix round
+// 1). The in-memory fake in service_test.go mirrors this exact semantic.
 func (q *Queries) AddMembership(ctx context.Context, arg AddMembershipParams) error {
 	_, err := q.db.Exec(ctx, addMembership, arg.OrgID, arg.UserID, arg.Role)
 	return err

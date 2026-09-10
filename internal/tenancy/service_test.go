@@ -132,28 +132,84 @@ func (f *fakeStore) GetMembership(_ context.Context, orgID, userID uuid.UUID) (t
 	return role, nil
 }
 
+// AddMembership mirrors the real table's "INSERT ... ON CONFLICT (org_id,
+// user_id) DO NOTHING" (Finding 5, Task 10 fix round 1): a membership that
+// already exists is left exactly as it was, not silently upserted to the
+// role just passed in. Before this fix the fake upserted unconditionally,
+// which is exactly why the real duplicate-membership bug (accepting an
+// invite for an address that is already a member burning the invite before
+// failing with an unmapped unique-violation 500) had no test coverage —
+// every fake-store-backed test that exercised the path would have quietly
+// "succeeded" by overwriting the role.
 func (f *fakeStore) AddMembership(_ context.Context, orgID, userID uuid.UUID, role tenancy.Role) error {
 	if err := f.take("AddMembership"); err != nil {
 		return err
 	}
-	f.memberships[[2]uuid.UUID{orgID, userID}] = role
+	key := [2]uuid.UUID{orgID, userID}
+	if _, exists := f.memberships[key]; exists {
+		return nil
+	}
+	f.memberships[key] = role
 	return nil
 }
 
+// UpdateMembershipRole mirrors the real, atomic guarded UPDATE
+// (tenancy_users.sql, Finding 3 / Task 10 fix round 1): it refuses — with
+// ErrNotFound, the same sentinel a 0-rows-affected UPDATE maps to — to move
+// the org's last owner away from the owner role. Unlike the real store, a
+// Go map cannot race with itself, so this cannot exercise the concurrency
+// half of the fix (see store_sql_test.go's
+// TestSQLStoreConcurrentDemotionOfBothOwnersLeavesOneOwner for that); it
+// exists so ChangeRole's own reinterpretation of a guarded ErrNotFound as
+// ErrLastOwner has something to observe against a fake store at all.
 func (f *fakeStore) UpdateMembershipRole(_ context.Context, orgID, userID uuid.UUID, role tenancy.Role) error {
 	if err := f.take("UpdateMembershipRole"); err != nil {
 		return err
 	}
-	f.memberships[[2]uuid.UUID{orgID, userID}] = role
+	key := [2]uuid.UUID{orgID, userID}
+	current, ok := f.memberships[key]
+	if !ok {
+		return tenancy.ErrNotFound
+	}
+	if current == tenancy.RoleOwner && role != tenancy.RoleOwner && f.countOwners(orgID) <= 1 {
+		return tenancy.ErrNotFound
+	}
+	f.memberships[key] = role
 	return nil
 }
 
+// DeleteMembership mirrors the real store the same way UpdateMembershipRole
+// does: ErrNotFound both for a membership that never existed and for one
+// the atomic last-owner guard refused to remove.
 func (f *fakeStore) DeleteMembership(_ context.Context, orgID, userID uuid.UUID) error {
 	if err := f.take("DeleteMembership"); err != nil {
 		return err
 	}
-	delete(f.memberships, [2]uuid.UUID{orgID, userID})
+	key := [2]uuid.UUID{orgID, userID}
+	current, ok := f.memberships[key]
+	if !ok {
+		return tenancy.ErrNotFound
+	}
+	if current == tenancy.RoleOwner && f.countOwners(orgID) <= 1 {
+		return tenancy.ErrNotFound
+	}
+	delete(f.memberships, key)
 	return nil
+}
+
+// countOwners is the guard logic UpdateMembershipRole/DeleteMembership
+// share, factored out from the public CountOwners method below (which also
+// goes through f.take and so cannot be called internally without
+// consuming an injected failure meant for the caller's own CountOwners
+// test, if any).
+func (f *fakeStore) countOwners(orgID uuid.UUID) int {
+	n := 0
+	for key, role := range f.memberships {
+		if key[0] == orgID && role == tenancy.RoleOwner {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeStore) CountOwners(_ context.Context, orgID uuid.UUID) (int, error) {
@@ -359,6 +415,52 @@ func TestAcceptInviteExistingAccountKeepsPassword(t *testing.T) {
 	}
 }
 
+// TestAcceptInviteAsExistingMember is Finding 5's regression test (Task 10
+// fix round 1): the real org_memberships table has no ON CONFLICT-free
+// insert path — a plain INSERT on the (org_id, user_id) primary key — so
+// accepting an invitation for an address that already belongs to a member
+// of that same org must not burn the invite (TakeInvite already marks it
+// accepted before AddMembership ever runs) and then blow up as an unmapped
+// 500. Acceptance must succeed, add no duplicate row, and leave the
+// existing membership's role exactly as it was — the invited role is not
+// silently applied, since accepting an invite is not the same operation as
+// ChangeRole. fakeStore.AddMembership's ON-CONFLICT-DO-NOTHING semantics
+// (mirroring the real table) are what make this test meaningful: before
+// that fix the fake upserted and this scenario always "passed" by luck.
+func TestAcceptInviteAsExistingMember(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	mail := &fakeMailer{}
+	svc := tenancy.NewService(st, mail, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	existing := st.addUser("already-a-member@x", true)
+	st.addMember(org.ID, existing, tenancy.RoleViewer)
+
+	inv, err := svc.Invite(ctx, org.ID, owner, "already-a-member@x", tenancy.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, gotOrg, err := svc.AcceptInvite(ctx, inv.Token, "Ignored Name", "correct horse battery")
+	if err != nil {
+		t.Fatalf("accept as existing member: %v", err)
+	}
+	if uid != existing || gotOrg != org.ID {
+		t.Fatalf("accept resolved the wrong user/org: got %s/%s, want %s/%s", uid, gotOrg, existing, org.ID)
+	}
+	role, err := svc.MembershipOf(ctx, org.ID, existing)
+	if err != nil || role != tenancy.RoleViewer {
+		t.Fatalf("existing member's role changed: role=%s err=%v, want unchanged viewer", role, err)
+	}
+	members, err := svc.ListMembers(ctx, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 2 { // owner + existing, no duplicate row
+		t.Fatalf("members after accept = %d, want 2 (no duplicate membership)", len(members))
+	}
+}
+
 func TestAcceptInviteUnknownTokenNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := tenancy.NewService(newFakeStore(), &fakeMailer{}, testPublicURL, time.Now)
@@ -421,10 +523,10 @@ func TestLastOwnerCannotBeDemotedOrRemoved(t *testing.T) {
 	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 	owner := st.addUser("owner@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-	if err := svc.ChangeRole(ctx, org.ID, owner, owner, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrLastOwner) {
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, owner, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrLastOwner) {
 		t.Fatalf("demote: %v", err)
 	}
-	if err := svc.RemoveMember(ctx, org.ID, owner, owner); !errors.Is(err, tenancy.ErrLastOwner) {
+	if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, owner); !errors.Is(err, tenancy.ErrLastOwner) {
 		t.Fatalf("remove: %v", err)
 	}
 }
@@ -437,10 +539,10 @@ func TestOnlyOwnerCanGrantOwner(t *testing.T) {
 	admin := st.addUser("admin@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 	st.addMember(org.ID, admin, tenancy.RoleAdmin)
-	if err := svc.ChangeRole(ctx, org.ID, admin, admin, tenancy.RoleOwner); !errors.Is(err, tenancy.ErrForbidden) {
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleAdmin, admin, admin, tenancy.RoleOwner); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Fatalf("admin self-promote: %v", err)
 	}
-	if err := svc.ChangeRole(ctx, org.ID, owner, admin, tenancy.RoleOwner); err != nil {
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, admin, tenancy.RoleOwner); err != nil {
 		t.Fatalf("owner promote: %v", err)
 	}
 }
@@ -455,10 +557,10 @@ func TestOnlyOwnerCanRemoveOwner(t *testing.T) {
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 	st.addMember(org.ID, secondOwner, tenancy.RoleOwner)
 	st.addMember(org.ID, admin, tenancy.RoleAdmin)
-	if err := svc.RemoveMember(ctx, org.ID, admin, secondOwner); !errors.Is(err, tenancy.ErrForbidden) {
+	if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleAdmin, admin, secondOwner); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Fatalf("admin removes owner: %v, want ErrForbidden", err)
 	}
-	if err := svc.RemoveMember(ctx, org.ID, owner, secondOwner); err != nil {
+	if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, secondOwner); err != nil {
 		t.Fatalf("owner removes owner: %v", err)
 	}
 }
@@ -471,7 +573,7 @@ func TestRemoveNonOwnerMember(t *testing.T) {
 	viewer := st.addUser("viewer@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 	st.addMember(org.ID, viewer, tenancy.RoleViewer)
-	if err := svc.RemoveMember(ctx, org.ID, owner, viewer); err != nil {
+	if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, viewer); err != nil {
 		t.Fatalf("remove viewer: %v", err)
 	}
 	if _, err := svc.MembershipOf(ctx, org.ID, viewer); !errors.Is(err, tenancy.ErrNotMember) {
@@ -479,15 +581,51 @@ func TestRemoveNonOwnerMember(t *testing.T) {
 	}
 }
 
-func TestChangeRoleActorNotMember(t *testing.T) {
+// TestChangeRoleUsesSuppliedActorRoleNotStoreMembership is Finding 1's core
+// regression test (Task 10 fix round 1): ChangeRole must decide the
+// owner-only rules from the actorRole the caller supplies — the effective
+// role api.requireOrg already computed as the lower of the caller's real
+// membership and any bearer token's own scope — never by re-reading the
+// actor's membership from the store itself. owner here really is an owner
+// in the store (as a real admin-scoped bearer token minted by an owner
+// would resolve if re-looked-up), so a store-derived decision would
+// incorrectly allow this; only trusting the supplied actorRole refuses it.
+func TestChangeRoleUsesSuppliedActorRoleNotStoreMembership(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
 	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 	owner := st.addUser("owner@x", true)
-	outsider := st.addUser("outsider@x", true)
+	target := st.addUser("target@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-	if err := svc.ChangeRole(ctx, org.ID, outsider, owner, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrNotMember) {
-		t.Fatalf("non-member actor: %v, want ErrNotMember", err)
+	st.addMember(org.ID, target, tenancy.RoleViewer)
+
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleAdmin, owner, target, tenancy.RoleOwner); !errors.Is(err, tenancy.ErrForbidden) {
+		t.Fatalf("admin-capped actorRole granting owner: %v, want ErrForbidden", err)
+	}
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, target, tenancy.RoleOwner); err != nil {
+		t.Fatalf("uncapped owner actorRole granting owner: %v", err)
+	}
+}
+
+// TestRemoveMemberUsesSuppliedActorRoleNotStoreMembership is
+// TestChangeRoleUsesSuppliedActorRoleNotStoreMembership's RemoveMember
+// counterpart: removing an existing owner must be refused when the
+// supplied actorRole is capped below owner, even though owner's real store
+// membership is owner.
+func TestRemoveMemberUsesSuppliedActorRoleNotStoreMembership(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	secondOwner := st.addUser("owner2@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	st.addMember(org.ID, secondOwner, tenancy.RoleOwner)
+
+	if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleAdmin, owner, secondOwner); !errors.Is(err, tenancy.ErrForbidden) {
+		t.Fatalf("admin-capped actorRole removing an owner: %v, want ErrForbidden", err)
+	}
+	if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, secondOwner); err != nil {
+		t.Fatalf("uncapped owner actorRole removing an owner: %v", err)
 	}
 }
 
@@ -498,7 +636,7 @@ func TestChangeRoleTargetNotFound(t *testing.T) {
 	owner := st.addUser("owner@x", true)
 	stranger := st.addUser("stranger@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-	if err := svc.ChangeRole(ctx, org.ID, owner, stranger, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrNotFound) {
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, stranger, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("unknown target: %v, want ErrNotFound", err)
 	}
 }
@@ -509,7 +647,7 @@ func TestChangeRoleRejectsUnknownRole(t *testing.T) {
 	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 	owner := st.addUser("owner@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-	if err := svc.ChangeRole(ctx, org.ID, owner, owner, tenancy.Role("superuser")); !errors.Is(err, tenancy.ErrForbidden) {
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, owner, tenancy.Role("superuser")); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Fatalf("bogus role: %v, want ErrForbidden", err)
 	}
 }
@@ -526,7 +664,7 @@ func TestChangeRoleNonOwnerDemotion(t *testing.T) {
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 	st.addMember(org.ID, admin, tenancy.RoleAdmin)
 	st.addMember(org.ID, operator, tenancy.RoleOperator)
-	if err := svc.ChangeRole(ctx, org.ID, admin, operator, tenancy.RoleViewer); err != nil {
+	if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleAdmin, admin, operator, tenancy.RoleViewer); err != nil {
 		t.Fatalf("admin demotes operator: %v", err)
 	}
 	role, err := svc.MembershipOf(ctx, org.ID, operator)
@@ -669,62 +807,30 @@ func TestStoreFailuresPropagate(t *testing.T) {
 	boom := errors.New("boom")
 	ctx := context.Background()
 
-	t.Run("GetMembership actor lookup", func(t *testing.T) {
-		// A genuine store failure looking up the actor's membership (not a
-		// clean "no such row") must propagate as-is, the same fail-closed
-		// contract MembershipOf gives: only ErrNotFound becomes the domain
-		// sentinel (ErrNotMember here), never any other error.
+	t.Run("GetMembership target lookup", func(t *testing.T) {
+		// A genuine store failure looking up the target's membership (not a
+		// clean "no such row") must propagate as-is. Finding 1's fix (Task
+		// 10 fix round 1) removed the actor's own GetMembership lookup
+		// entirely — actorRole is supplied by the caller now — so this is
+		// the sole remaining GetMembership call in ChangeRole.
 		st := newFakeStore()
 		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 		owner := st.addUser("owner@x", true)
 		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 		st.failNext["GetMembership"] = boom
-		if err := svc.ChangeRole(ctx, org.ID, owner, owner, tenancy.RoleAdmin); !errors.Is(err, boom) {
-			t.Fatalf("ChangeRole actor lookup failure: %v, want %v", err, boom)
+		if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, owner, tenancy.RoleAdmin); !errors.Is(err, boom) {
+			t.Fatalf("ChangeRole target lookup failure: %v, want %v", err, boom)
 		}
 	})
 
-	t.Run("ChangeRole actor not member (ErrNotFound folds to ErrNotMember)", func(t *testing.T) {
-		st := newFakeStore()
-		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
-		owner := st.addUser("owner@x", true)
-		outsider := st.addUser("outsider@x", true)
-		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-		if err := svc.ChangeRole(ctx, org.ID, outsider, owner, tenancy.RoleAdmin); !errors.Is(err, tenancy.ErrNotMember) {
-			t.Fatalf("ChangeRole non-member actor: %v, want ErrNotMember", err)
-		}
-	})
-
-	t.Run("RemoveMember actor lookup", func(t *testing.T) {
+	t.Run("RemoveMember target lookup", func(t *testing.T) {
 		st := newFakeStore()
 		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 		owner := st.addUser("owner@x", true)
 		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 		st.failNext["GetMembership"] = boom
-		if err := svc.RemoveMember(ctx, org.ID, owner, owner); !errors.Is(err, boom) {
-			t.Fatalf("RemoveMember actor lookup failure: %v, want %v", err, boom)
-		}
-	})
-
-	t.Run("CountOwners", func(t *testing.T) {
-		st := newFakeStore()
-		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
-		owner := st.addUser("owner@x", true)
-		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-		st.failNext["CountOwners"] = boom
-		if err := svc.ChangeRole(ctx, org.ID, owner, owner, tenancy.RoleAdmin); !errors.Is(err, boom) {
-			t.Fatalf("ChangeRole CountOwners failure: %v, want %v", err, boom)
-		}
-	})
-
-	t.Run("CountOwners via RemoveMember", func(t *testing.T) {
-		st := newFakeStore()
-		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
-		owner := st.addUser("owner@x", true)
-		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-		st.failNext["CountOwners"] = boom
-		if err := svc.RemoveMember(ctx, org.ID, owner, owner); !errors.Is(err, boom) {
-			t.Fatalf("RemoveMember CountOwners failure: %v, want %v", err, boom)
+		if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, owner); !errors.Is(err, boom) {
+			t.Fatalf("RemoveMember target lookup failure: %v, want %v", err, boom)
 		}
 	})
 
@@ -736,8 +842,30 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 		st.addMember(org.ID, admin, tenancy.RoleAdmin)
 		st.failNext["UpdateMembershipRole"] = boom
-		if err := svc.ChangeRole(ctx, org.ID, owner, admin, tenancy.RoleViewer); !errors.Is(err, boom) {
+		if err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, admin, tenancy.RoleViewer); !errors.Is(err, boom) {
 			t.Fatalf("UpdateMembershipRole failure: %v, want %v", err, boom)
+		}
+	})
+
+	t.Run("UpdateMembershipRole ErrNotFound for a non-owner target is not reinterpreted as ErrLastOwner", func(t *testing.T) {
+		// The atomic-guard reinterpretation in ChangeRole must be scoped
+		// exactly to "was demoting the org's only owner" — an ErrNotFound
+		// from a genuinely vanished, never-an-owner target (e.g. removed by
+		// a concurrent request) must surface as ErrNotFound, not get
+		// mislabeled ErrLastOwner.
+		st := newFakeStore()
+		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+		owner := st.addUser("owner@x", true)
+		admin := st.addUser("admin@x", true)
+		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+		st.addMember(org.ID, admin, tenancy.RoleAdmin)
+		st.failNext["UpdateMembershipRole"] = tenancy.ErrNotFound
+		err := svc.ChangeRole(ctx, org.ID, tenancy.RoleOwner, owner, admin, tenancy.RoleViewer)
+		if !errors.Is(err, tenancy.ErrNotFound) {
+			t.Fatalf("non-owner target racing to ErrNotFound: %v, want ErrNotFound", err)
+		}
+		if errors.Is(err, tenancy.ErrLastOwner) {
+			t.Fatalf("non-owner target's ErrNotFound was reinterpreted as ErrLastOwner: %v", err)
 		}
 	})
 
@@ -749,8 +877,25 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 		st.addMember(org.ID, admin, tenancy.RoleAdmin)
 		st.failNext["DeleteMembership"] = boom
-		if err := svc.RemoveMember(ctx, org.ID, owner, admin); !errors.Is(err, boom) {
+		if err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, admin); !errors.Is(err, boom) {
 			t.Fatalf("DeleteMembership failure: %v, want %v", err, boom)
+		}
+	})
+
+	t.Run("DeleteMembership ErrNotFound for a non-owner target is not reinterpreted as ErrLastOwner", func(t *testing.T) {
+		st := newFakeStore()
+		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+		owner := st.addUser("owner@x", true)
+		admin := st.addUser("admin@x", true)
+		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+		st.addMember(org.ID, admin, tenancy.RoleAdmin)
+		st.failNext["DeleteMembership"] = tenancy.ErrNotFound
+		err := svc.RemoveMember(ctx, org.ID, tenancy.RoleOwner, owner, admin)
+		if !errors.Is(err, tenancy.ErrNotFound) {
+			t.Fatalf("non-owner target racing to ErrNotFound: %v, want ErrNotFound", err)
+		}
+		if errors.Is(err, tenancy.ErrLastOwner) {
+			t.Fatalf("non-owner target's ErrNotFound was reinterpreted as ErrLastOwner: %v", err)
 		}
 	})
 
@@ -773,6 +918,27 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		st.failNext["InsertInvite"] = boom
 		if _, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer); !errors.Is(err, boom) {
 			t.Fatalf("Invite InsertInvite failure: %v, want %v", err, boom)
+		}
+	})
+
+	t.Run("AcceptInvite TakeInvite generic failure", func(t *testing.T) {
+		// Adjacent fix, Task 10 fix round 1: AcceptInvite used to fold every
+		// TakeInvite error into ErrNotFound, turning a database outage into
+		// a silent 404 indistinguishable from "no such invite". Only a
+		// genuine ErrNotFound (unknown/expired/already-used token) may
+		// become the domain sentinel; anything else must propagate.
+		st := newFakeStore()
+		mail := &fakeMailer{}
+		svc := tenancy.NewService(st, mail, testPublicURL, time.Now)
+		owner := st.addUser("owner@x", true)
+		org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+		inv, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.failNext["TakeInvite"] = boom
+		if _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+			t.Fatalf("AcceptInvite TakeInvite failure: %v, want %v", err, boom)
 		}
 	})
 
