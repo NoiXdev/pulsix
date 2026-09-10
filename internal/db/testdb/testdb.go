@@ -32,29 +32,47 @@ func start() {
 	url, errC = c.ConnectionString(ctx, "sslmode=disable")
 }
 
-// Open returns a migrated DB. All tables are truncated when the test ends.
+// appRole is the least-privilege PostgreSQL role the returned *db.DB queries
+// through, matching how the manager connects in production. Using it here
+// instead of the container's bootstrap superuser is what makes row-level
+// security policies actually apply: superusers and the schema owner are
+// exempt from RLS regardless of FORCE ROW LEVEL SECURITY.
+const appRole = "pulsix_app"
+
+// Open returns a migrated DB, connected as the pulsix_app role so that
+// row-level security policies apply to it. All tables are truncated when the
+// test ends.
 func Open(t *testing.T) *db.DB {
 	t.Helper()
 	once.Do(start)
 	fatalOnErr(t, errC)
 
 	ctx := context.Background()
-	d, err := db.Open(ctx, url)
+
+	// Migrations need DDL privileges (creating tables, extensions and the
+	// pulsix_app role itself), so they run through the bootstrap superuser
+	// connection. That connection is kept open only for the post-test
+	// truncate, since pulsix_app is deliberately not granted TRUNCATE.
+	admin, err := db.Open(ctx, url)
 	fatalOnErr(t, err)
 
-	err = d.Migrate(ctx)
+	err = admin.Migrate(ctx)
+	fatalOnErr(t, err)
+
+	d, err := db.OpenAsRole(ctx, url, appRole)
 	fatalOnErr(t, err)
 
 	t.Cleanup(func() {
 		// A failing truncate must be loud: silently leaving rows behind makes
 		// the next test fail somewhere unrelated.
-		if _, err := d.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
+		if _, err := admin.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
 			FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version' LOOP
 				EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
 			END LOOP; END $$;`); err != nil {
 			t.Errorf("truncate tables after test: %v", err)
 		}
 		d.Close()
+		admin.Close()
 	})
 	return d
 }

@@ -31,6 +31,24 @@ func TestOpenFailsWhenUnreachable(t *testing.T) {
 	}
 }
 
+func TestOpenAsRoleRejectsInvalidURL(t *testing.T) {
+	_, err := db.OpenAsRole(context.Background(), "://not a url", "pulsix_app")
+	if err == nil {
+		t.Fatal("expected an error for a malformed connection URL")
+	}
+}
+
+func TestOpenAsRoleFailsWhenUnreachable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Port 1 is a valid DSN but refuses connections, exercising the ping
+	// failure path without needing a running container.
+	_, err := db.OpenAsRole(ctx, "postgres://user:pass@127.0.0.1:1/db?sslmode=disable&connect_timeout=1", "pulsix_app")
+	if err == nil {
+		t.Fatal("expected a ping error for an unreachable host")
+	}
+}
+
 func TestMigrateFailsWithCanceledContext(t *testing.T) {
 	d := testdb.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -35,6 +35,34 @@ func Open(ctx context.Context, url string) (*DB, error) {
 	return &DB{pool: pool}, nil
 }
 
+// OpenAsRole connects like Open, but every connection in the returned pool
+// switches to postgresRole via SET ROLE immediately after connecting.
+//
+// This is how callers get a connection that is actually subject to row-level
+// security. The login role encoded in url may be the schema owner or a
+// superuser — both are exempt from RLS policies regardless of FORCE ROW
+// LEVEL SECURITY — while the role it switches into (pulsix_app) is neither,
+// so policies apply to it as designed. Migrations, which need DDL privileges
+// pulsix_app does not have, must run through Open instead.
+func OpenAsRole(ctx context.Context, url, postgresRole string) (*DB, error) {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse pool config: %w", err)
+	}
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, "SET ROLE "+(pgx.Identifier{postgresRole}).Sanitize())
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("ping: %w", err)
+	}
+	return &DB{pool: pool}, nil
+}
+
 // Pool exposes the underlying pool for sqlc-generated code.
 func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 

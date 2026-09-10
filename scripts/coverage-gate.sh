@@ -13,6 +13,11 @@
 # below — never silently, always printed as SKIP so the exclusion is
 # visible in CI output.
 #
+# internal/db/gen is sqlc-generated code (see task-4 brief/report): it has
+# no hand-written logic to cover and is exercised indirectly by
+# internal/db's own tests, so it is excluded the same way and for the same
+# reason — never silently, always printed as SKIP.
+#
 # Usage: scripts/coverage-gate.sh
 # Exit status: 0 if every non-excluded package meets its floor, 1 otherwise.
 
@@ -38,6 +43,11 @@ go test -race -cover ./... 2>&1 | awk -v module="$module" '
 
 		if (pkg ~ ("^" module "/cmd(/|$)")) {
 			printf "SKIP  %-55s (cmd/... entry-point wiring, excluded from gate)\n", pkg
+			next
+		}
+
+		if (pkg == module "/internal/db/gen") {
+			printf "SKIP  %-55s (sqlc-generated code, excluded from gate)\n", pkg
 			next
 		}
 
