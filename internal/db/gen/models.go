@@ -70,6 +70,19 @@ type ApiToken struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type AuditEvent struct {
+	ID         uuid.UUID   `json:"id"`
+	OrgID      pgtype.UUID `json:"org_id"`
+	ActorID    pgtype.UUID `json:"actor_id"`
+	ActorKind  string      `json:"actor_kind"`
+	Action     string      `json:"action"`
+	ObjectType string      `json:"object_type"`
+	ObjectID   string      `json:"object_id"`
+	Summary    string      `json:"summary"`
+	Meta       []byte      `json:"meta"`
+	At         time.Time   `json:"at"`
+}
+
 type Invite struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`

@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -26,6 +27,7 @@ type Deps struct {
 	Passkeys *auth.Passkeys
 	Tokens   *auth.Tokens
 	Tenancy  *tenancy.Service
+	Audit    *audit.Recorder
 	Secure   bool // set Secure on cookies (true behind HTTPS)
 }
 
@@ -73,6 +75,9 @@ func (d Deps) validate() error {
 	}
 	if d.Tenancy == nil {
 		missing = append(missing, "Tenancy")
+	}
+	if d.Audit == nil {
+		missing = append(missing, "Audit")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -170,6 +175,13 @@ func requireMFAForExplorer(next http.Handler) http.Handler {
 
 // registerRoutes is extended by later tasks (one register* call per resource).
 func registerRoutes(hapi huma.API, deps Deps) {
+	// Mounted before any operation is registered, on the root API rather
+	// than any one group, so it wraps every operation added below — see
+	// auditMiddleware's own doc comment for why that global mount is
+	// deliberate and safe (it is a no-op for any operation withAudit did
+	// not mark).
+	hapi.UseMiddleware(auditMiddleware(deps))
+
 	huma.Get(hapi, "/api/v1/health", func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
 		out := &healthOutput{}
 		out.Body.Status = "ok"
@@ -181,6 +193,11 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
 	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all
 	registerAdminRoutes(hapi, deps)       // POST /admin/users/{id}/deactivate — instance admin, session only
+	// GET /me/activity spans every org the caller belongs to, so — like
+	// registerOrgRoutes above — it takes no org in its path and accepts no
+	// bearer credential: a token is scoped to the one org it was minted
+	// for, not to "everything its owner can see".
+	registerMyActivityRoute(hapi, deps)
 
 	// Everything below takes an org in its path and resolves it through
 	// requireOrg, which consults auth.TokenScopeFromContext — this is the
@@ -194,4 +211,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerOrgScopedRoutes(orgScoped, deps) // GET/PATCH /orgs/{org}
 	registerMemberRoutes(orgScoped, deps)    // members + invites, all /orgs/{org}/...
 	registerTokenRoutes(orgScoped, deps)     // /orgs/{org}/tokens...
+	registerAuditRoutes(orgScoped, deps)     // GET /orgs/{org}/activity
 }

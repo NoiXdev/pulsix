@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -19,6 +20,14 @@ import (
 // called), mirroring testPasskeys below.
 func testTenancy() *tenancy.Service {
 	return tenancy.NewService(nil, nil, "http://localhost", time.Now)
+}
+
+// testAudit builds an *audit.Recorder with a nil store, good enough to
+// satisfy api.Deps.validate in tests that never actually record or list an
+// event (nil interface values are only a problem once called), mirroring
+// testTenancy and testPasskeys above.
+func testAudit() *audit.Recorder {
+	return audit.NewRecorder(nil, time.Now)
 }
 
 // fakeAuthService satisfies api.AuthService without touching a database, so
@@ -50,7 +59,7 @@ func testPasskeys(t *testing.T) *auth.Passkeys {
 func TestHealthz(t *testing.T) {
 	h, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,5 +111,11 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now),
 	}); err == nil {
 		t.Fatal("api.New without Tenancy did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(),
+	}); err == nil {
+		t.Fatal("api.New without Audit did not return an error")
 	}
 }

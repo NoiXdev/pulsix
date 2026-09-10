@@ -124,10 +124,11 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		setAuditObject(ctx, inv.ID.String(), "invited "+inv.Email+" as "+string(inv.Role))
 		out := &inviteCreateOutput{}
 		out.Body.Email, out.Body.Role, out.Body.ExpiresAt = inv.Email, string(inv.Role), inv.ExpiresAt
 		return out, nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated })
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createInvite", "invite"))
 
 	huma.Patch(hapi, "/api/v1/orgs/{org}/members/{userId}", func(ctx context.Context, in *memberRoleInput) (*okOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
@@ -141,8 +142,9 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Tenancy.ChangeRole(ctx, scope.OrgID, scope.Role, scope.UserID, target, tenancy.Role(in.Body.Role)); err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		setAuditObject(ctx, target.String(), "changed member role to "+in.Body.Role)
 		return &okOutput{}, nil
-	})
+	}, withAudit("changeMemberRole", "member"))
 
 	huma.Delete(hapi, "/api/v1/orgs/{org}/members/{userId}", func(ctx context.Context, in *memberRemoveInput) (*okOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
@@ -156,8 +158,9 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Tenancy.RemoveMember(ctx, scope.OrgID, scope.Role, scope.UserID, target); err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		setAuditObject(ctx, target.String(), "removed member")
 		return &okOutput{}, nil
-	})
+	}, withAudit("removeMember", "member"))
 }
 
 // registerInviteAcceptRoute wires POST /invites/accept: the one route in

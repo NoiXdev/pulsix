@@ -77,10 +77,16 @@ func registerOrgRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		// This route never calls requireOrg (there is no existing org to
+		// resolve — it is creating one), so unlike every other audited
+		// handler it must fill in the audit carrier's scope itself rather
+		// than getting it for free; see setAuditScope's doc comment.
+		setAuditScope(ctx, org.ID, p.UserID)
+		setAuditObject(ctx, org.ID.String(), "created organization "+org.Name)
 		out := &orgOutput{}
 		out.Body.Org = toOrgDTO(org, tenancy.RoleOwner)
 		return out, nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated })
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createOrganization", "organization"))
 
 	huma.Get(hapi, "/api/v1/orgs", func(ctx context.Context, _ *struct{}) (*orgListOutput, error) {
 		p, err := requireMFAComplete(ctx)
@@ -128,10 +134,11 @@ func registerOrgScopedRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
+		setAuditObject(ctx, org.ID.String(), "renamed organization to "+org.Name)
 		out := &orgOutput{}
 		out.Body.Org = toOrgDTO(org, scope.Role)
 		return out, nil
-	})
+	}, withAudit("updateOrganization", "organization"))
 }
 
 func toOrgDTO(o tenancy.Org, role tenancy.Role) orgDTO {

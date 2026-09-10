@@ -3,6 +3,7 @@ package apitest
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/crypto"
@@ -86,6 +88,27 @@ func WithAuthWrapper(wrap func(api.AuthService) api.AuthService) Option {
 	return func(s *Server) { s.Deps.Auth = wrap(s.Deps.Auth) }
 }
 
+// failingAuditStore always fails Insert while forwarding List/ListForActor
+// to a real store, so a test can drive the API normally (its reads keep
+// working) while every Record call fails.
+type failingAuditStore struct{ audit.Store }
+
+func (failingAuditStore) Insert(context.Context, audit.Event) error {
+	return errors.New("simulated audit store failure")
+}
+
+// WithFailingAudit replaces Deps.Audit with a recorder whose store always
+// fails to Insert. It exists for
+// TestRecordingFailureDoesNotBreakRequest (audit_handlers_test.go), the one
+// test in this codebase for the tradeoff auditMiddleware's own doc comment
+// describes: a mutating request's own effect and response must not depend
+// on whether recording that it happened succeeds.
+func WithFailingAudit() Option {
+	return func(s *Server) {
+		s.Deps.Audit = audit.NewRecorder(failingAuditStore{Store: audit.NewSQLStore(s.Q)}, time.Now)
+	}
+}
+
 // New builds Deps from the test database and starts an httptest server.
 //
 // The WebAuthn relying party id and origin are derived from the test
@@ -133,6 +156,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
 		Tenancy: tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now),
+		Audit:   audit.NewRecorder(audit.NewSQLStore(q), time.Now),
 	}
 	for _, opt := range opts {
 		opt(s)

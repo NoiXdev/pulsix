@@ -75,6 +75,14 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	if !tenancy.Allows(role, perm) {
 		return Scope{}, huma.Error403Forbidden("insufficient role")
 	}
+	// Fills in the request's audit carrier, if it has one (only operations
+	// registered with withAudit do — see audit_middleware.go). Every
+	// org-scoped mutating handler calls requireOrg to authorize itself in
+	// the first place, so wiring this in here, rather than asking each
+	// handler to call setAuditScope separately, is what makes the org and
+	// actor on a recorded event impossible to get wrong or forget: there is
+	// no separate step to skip.
+	setAuditScope(ctx, org.ID, p.UserID)
 	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role, Org: org}, nil
 }
 

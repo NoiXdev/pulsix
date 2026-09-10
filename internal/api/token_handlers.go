@@ -101,11 +101,12 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapTokenErr(ctx, err)
 		}
+		setAuditObject(ctx, tok.ID.String(), "created API token "+tok.Name+" ("+tok.Role+")")
 		out := &orgTokenCreateOutput{}
 		out.Body.Token, out.Body.ID, out.Body.Name, out.Body.Role = plain, tok.ID.String(), tok.Name, tok.Role
 		out.Body.ExpiresAt, out.Body.CreatedAt = tok.ExpiresAt, tok.CreatedAt
 		return out, nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated })
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createToken", "token"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/tokens", func(ctx context.Context, in *orgTokenListInput) (*orgTokenListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
@@ -139,8 +140,9 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Tokens.Revoke(ctx, scope.OrgID, id); err != nil {
 			return nil, mapTokenErr(ctx, err)
 		}
+		setAuditObject(ctx, id.String(), "revoked API token")
 		return &okOutput{}, nil
-	})
+	}, withAudit("revokeToken", "token"))
 }
 
 // mapTokenErr is mapAuthErr plus one override, exactly like mapPasskeyErr:
