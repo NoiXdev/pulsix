@@ -58,8 +58,12 @@ const maxSlugLength = 40
 
 // slugPattern is the wizard's slug rule: lowercase letters and digits,
 // optionally with single hyphens in the middle, 1-40 characters, never
-// starting or ending with a hyphen.
-var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$`)
+// starting or ending with a hyphen. The optional group's inner quantifier
+// is {0,38}, not {1,38}: with {1,38} a two-character slug like "hq" would
+// be rejected (the group, when present, would need at least 3 characters)
+// while POST /orgs accepts it — the same instance would then refuse as a
+// first organization a slug the operator can create minutes later.
+var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
 
 // Input is what the wizard needs to complete first-run setup.
 type Input struct {
@@ -104,10 +108,19 @@ type Result struct {
 	UserID uuid.UUID
 	OrgID  uuid.UUID
 	// Cookie is a ready-to-set session cookie value, opened with
-	// mfaComplete = false: the newly created administrator has no second
-	// factor enrolled yet, so the SPA must send them straight into TOTP or
-	// passkey enrolment before anything else works (every other route is
-	// gated on requireMFAComplete).
+	// mfaComplete = true: the newly created administrator has no second
+	// factor enrolled yet, but that is exactly the state auth.Service.Login
+	// already treats as MFA-complete for any factor-less account (Login
+	// passes !mfaRequired, and mfaRequired is false with nothing enrolled).
+	// Every credential-enrolment route (POST /auth/totp/enrol, POST
+	// /auth/passkeys/register/begin, ...) sits behind
+	// requireInteractiveSession, which itself requires MFA-complete — a
+	// pending session opened here could never reach them, and the
+	// administrator's only escape would be to log out and back in, at which
+	// point Login would hand them an MFA-complete session anyway. Opening
+	// the session as MFA-complete from the start matches the system's own
+	// semantics instead of contradicting them. Status.AdminMFAEnrolled is
+	// the lever the SPA uses to still insist on enrolment.
 	Cookie string
 }
 
@@ -255,8 +268,8 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 		return Result{}, err
 	}
 
-	// mfaComplete = false: see Result.Cookie's own doc comment.
-	_, cookie, err := s.sessions.Create(ctx, res.UserID, false)
+	// mfaComplete = true: see Result.Cookie's own doc comment.
+	_, cookie, err := s.sessions.Create(ctx, res.UserID, true)
 	if err != nil {
 		return Result{}, fmt.Errorf("open admin session: %w", err)
 	}

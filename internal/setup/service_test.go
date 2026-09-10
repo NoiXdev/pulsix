@@ -173,16 +173,18 @@ func cloneSettings(m map[string][]byte) map[string][]byte {
 }
 
 // fakeSessions is a setup.SessionStore that always succeeds. It panics if
-// asked for an MFA-complete session: Complete must always open one with
-// mfaComplete = false, since the freshly created administrator has no
-// second factor enrolled yet (see Result.Cookie's own doc comment) — a
-// mistake here would otherwise only surface as a real session silently
-// skipping required MFA enrolment.
+// asked for a session that is not MFA-complete: Complete must always open
+// one with mfaComplete = true, matching what auth.Service.Login gives any
+// account with no second factor enrolled (see Result.Cookie's own doc
+// comment) — a pending session here would 403 at every credential-enrolment
+// route (they all sit behind requireInteractiveSession), so a mistake would
+// otherwise only surface as the wizard handing the administrator a session
+// that cannot reach the very pages it hands off to.
 type fakeSessions struct{}
 
 func (f *fakeSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
-	if mfaComplete {
-		panic("setup.Complete must never open an MFA-complete session: the admin has no second factor enrolled yet")
+	if !mfaComplete {
+		panic("setup.Complete must always open an MFA-complete session: see Result.Cookie's own doc comment")
 	}
 	return uuid.Must(uuid.NewV7()), "cookie-for-" + userID.String(), nil
 }
@@ -225,20 +227,17 @@ func TestCompleteValidatesInput(t *testing.T) {
 }
 
 // TestCompleteSlugBoundaries checks the slug pattern's edges directly,
-// rather than relying only on the "bad slug" case above: a single
-// character must be accepted (the pattern's optional middle group), and a
-// leading or trailing hyphen must not be.
+// rather than relying only on the "bad slug" case above: a single character
+// must be accepted (the pattern's optional middle group is entirely
+// absent), a two-character slug must also be accepted (the optional
+// group's inner quantifier is {0,38}, not {1,38} — see slugPattern's own
+// doc comment for why the gap mattered: POST /orgs already accepts a
+// two-character slug like "hq"), and a leading or trailing hyphen must
+// still be rejected.
 func TestCompleteSlugBoundaries(t *testing.T) {
 	for slug, wantValid := range map[string]bool{
-		"a": true,
-		// "ac" is deliberately false: the brief's pattern
-		// ^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$ requires the optional
-		// group, when present, to itself be at least 3 characters (1 body
-		// + 1 tail, with {1,38} demanding at least one of the former) —
-		// so exactly 1 or 3+ characters validate, never exactly 2. This is
-		// a property of the literal regex the brief specifies, not a
-		// mistake in this implementation.
-		"ac":                    false,
+		"a":                     true,
+		"ac":                    true,
 		"acm":                   true,
 		"acme-corp":             true,
 		"acme123":               true,
