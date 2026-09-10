@@ -718,7 +718,479 @@ fs.writeFileSync('StatusAdmin.dc.html', shell({
   height: 1080,
 }));
 
+// ================= MEMBERS / ACL =================
+const roleBadge = (r) => { const c = { owner: T.accent, admin: '#A78BFA', operator: T.ok, viewer: T.dim }[r]; return `<span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: ${c}; background: ${c}1A; border: 1px solid ${c}33">${r}</span>`; };
+const avatar = (ini, bg = T.accentDim) => `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${bg}; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: ${T.ink}; flex-shrink: 0">${ini}</div>`;
+const memberRows = [
+  ['TR', 'Tim R.', 'tim@acme.io', 'owner', 'passkey · TOTP', '2 min ago', 'active'],
+  ['DG', 'Daniel G.', 'daniel@acme.io', 'owner', 'passkey', '1 h ago', 'active'],
+  ['SK', 'Sara K.', 'sara@acme.io', 'admin', 'TOTP', 'yesterday', 'active'],
+  ['MB', 'Marc B.', 'marc@acme.io', 'operator', 'TOTP', '3 d ago', 'active'],
+  ['CI', 'ci-deploy', 'token · created by TR', 'operator', '—', '12 min ago', 'token'],
+  ['JL', 'Jana L.', 'jana@acme.io', 'viewer', 'passkey', '2 w ago', 'active'],
+  ['??', 'ops@acme.io', 'invited by SK · expires in 5 d', 'operator', '—', '—', 'invited'],
+  ['PK', 'Peter K.', 'peter@acme.io', 'viewer', 'TOTP', '3 mo ago', 'disabled'],
+];
+const perms = [['View hosts, groups, jobs, alerts', [1, 1, 1, 1]], ['Change hosts, groups, variables', [0, 1, 1, 1]], ['Run playbooks, acknowledge alerts', [0, 1, 1, 1]], ['Manage members and tokens', [0, 0, 1, 1]], ['Manage channels, status pages, settings', [0, 0, 1, 1]], ['Grant or revoke owner', [0, 0, 0, 1]], ['Delete organization', [0, 0, 0, 1]]];
+const permCell = (on) => on ? `<span style="color: ${T.ok}">${ic.check}</span>` : `<span style="color: ${T.border}">—</span>`;
+fs.writeFileSync('Members.dc.html', shell({
+  active: 'Settings',
+  crumbs: `<span>Settings</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Members</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Members</h1><span style="font-size: 12px; color: ${T.muted}">7 members · 1 token · 1 pending invitation</span></div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Members', true)}${tab('Invitations')}${tab('API tokens')}${tab('Roles')}</div>
+        </div>
+        <div style="display: flex; gap: 8px">${btn('Create token', false, ic.key)}${btn('Invite member', true, ic.user)}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          <div style="display: flex; flex-direction: column; background: ${T.surface}; border: 1px solid ${T.border}; border-radius: 10px; overflow: hidden">
+            <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 110px 120px 110px 90px 32px; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}; font-size: 11px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span></span><span>Member</span><span>Role</span><span>Second factor</span><span>Last active</span><span>Status</span><span></span></div>
+            ${memberRows.map(([ini, name, mail, role, mfa, last, st]) => `<div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 110px 120px 110px 90px 32px; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}; ${st === 'disabled' ? 'opacity: 0.5' : ''}">
+              ${avatar(ini, st === 'token' ? T.border : st === 'invited' ? T.border : T.accentDim)}<div style="display: flex; flex-direction: column; min-width: 0"><span style="font-weight: 600; ${st === 'token' ? `font-family: ${MONO}; font-size: 12px` : ''}">${name}</span><span style="font-size: 11px; color: ${T.muted}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${mail}</span></div>
+              <div style="display: flex; align-items: center; gap: 4px">${roleBadge(role)}${st === 'active' ? `<span style="color: ${T.muted}">${ic.chevron}</span>` : ''}</div><span style="font-size: 12px; color: ${T.dim}">${mfa}</span><span style="font-size: 12px; color: ${T.muted}">${last}</span>
+              <span>${st === 'active' ? pill('active', T.ok) : st === 'token' ? tag('token') : st === 'invited' ? pill('invited', T.warn) : pill('disabled', T.muted)}</span><span style="color: ${T.muted}">${ic.more}</span>
+            </div>`).join('')}
+          </div>
+          ${card('Invite member', `<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px">${input('E-mail address', 'new.colleague@acme.io', '100%', false)}${select('Role', 'operator')}</div>
+            <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: ${T.muted}">
+              <div style="display: flex; align-items: center; gap: 8px">${ic.check}<span>Invitation link valid for 7 days, sent by e-mail. If mail is not configured the link is shown here.</span></div>
+              <div style="display: flex; align-items: center; gap: 8px">${ic.check}<span>The invitee sets a password and must enrol a second factor before entering the organization.</span></div>
+              <div style="display: flex; align-items: center; gap: 8px">${ic.check}<span>Owner role cannot be granted by invitation; promote after joining.</span></div>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 8px">${btn('Cancel')}${btn('Send invitation', true)}</div>
+          </div>`, `<span>dialog preview</span>`)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Role matrix', `<div style="display: flex; flex-direction: column">
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px 44px 44px; gap: 6px; padding: 8px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span>Permission</span><span style="text-align: center">view</span><span style="text-align: center">oper</span><span style="text-align: center">adm</span><span style="text-align: center">own</span></div>
+            ${perms.map(([l, v]) => `<div style="display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px 44px 44px; align-items: center; gap: 6px; padding: 8px 16px; border-bottom: 1px solid ${T.border}; font-size: 12px"><span>${l}</span>${v.map(x => `<span style="display: flex; justify-content: center">${permCell(x)}</span>`).join('')}</div>`).join('')}
+            <div style="padding: 10px 16px; font-size: 11px; color: ${T.muted}">Roles are fixed in this version. API tokens are capped at their creator's role.</div>
+          </div>`, ``)}
+          ${card('Change role · Marc B.', `<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px">
+            ${['viewer', 'operator', 'admin', 'owner'].map(r => `<div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; border: 1px solid ${r === 'operator' ? T.accent : T.border}; ${r === 'owner' ? 'opacity: 0.45' : ''}"><div style="width: 14px; height: 14px; border-radius: 50%; border: 2px solid ${r === 'operator' ? T.accent : T.border}; background: ${r === 'operator' ? T.accent : 'transparent'}"></div>${roleBadge(r)}<span style="font-size: 11px; color: ${T.muted}; margin-left: auto">${r === 'owner' ? 'owners only' : ''}</span></div>`).join('')}
+            <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 4px"><span style="font-size: 11px; color: ${T.crit}">Remove from organization</span><div style="display: flex; gap: 8px">${btn('Cancel')}${btn('Save', true)}</div></div>
+          </div>`, `<span>as admin</span>`)}
+        </div>
+      </div>`,
+  height: 1140,
+}));
+
+// ================= ACTIVITY FEED =================
+const feed = [
+  ['today', [
+    ['12:04', 'TR', 'Tim R.', 'ran playbook', 'deploy-web.yml #1432', 'job', 'limit group:webserver · 1 host failed', T.crit],
+    ['11:52', 'SK', 'Sara K.', 'acknowledged alert', 'db-02.fra · Disk usage', 'alert', '"pg_dump running, cleaning up after"', T.warn],
+    ['11:40', 'SK', 'Sara K.', 'invited', 'ops@acme.io', 'member', 'role operator', T.text],
+    ['10:31', 'TR', 'Tim R.', 'changed variables on', 'web-03.fra', 'host', 'vhosts[1].ssl: false → true', T.text],
+    ['10:15', 'CI', 'ci-deploy (token)', 'created host', 'web-05.fra', 'host', 'zone fra · managed · monitored', T.text],
+    ['09:41', 'system', 'Pulsix', 'opened alert', 'mail-01.hel · Service postfix', 'alert', 'critical · notified pagerduty db-oncall', T.crit],
+    ['09:02', 'DG', 'Daniel G.', 'changed rule', 'Disk usage · prod-databases', 'rule', 'crit threshold 95 % → 90 %', T.text],
+  ]],
+  ['yesterday', [
+    ['17:20', 'MB', 'Marc B.', 'assigned', 'db-03.fra', 'group', 'to inventory group postgres · 3 host vars set', T.text],
+    ['16:05', 'TR', 'Tim R.', 'created API token', 'ci-deploy', 'token', 'role operator · expires in 90 d', T.text],
+    ['15:48', 'SK', 'Sara K.', 'scheduled maintenance', 'PostgreSQL 17 minor upgrade', 'maintenance', 'Sat 13 Sep 02:00–04:00 · public on status.acme.io', T.text],
+    ['14:10', 'DG', 'Daniel G.', 'changed role of', 'Jana L.', 'member', 'operator → viewer', T.text],
+    ['09:30', 'system', 'Pulsix', 'enrolled agent', 'mac-studio-dg', 'host', 'v0.4.2 · zone office-berlin', T.text],
+  ]],
+];
+const objIcon = (k) => ({ job: ic.play, alert: ic.bell, member: ic.user, host: ic.server, rule: ic.activity, group: ic.layers, token: ic.key, maintenance: ic.clock }[k] || ic.more);
+const feedHtml = feed.map(([day, items]) => `<div style="display: flex; flex-direction: column">
+  <div style="padding: 10px 16px; font-size: 11px; font-weight: 600; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.08em; background: ${T.ink}; border-bottom: 1px solid ${T.border}">${day}</div>
+  ${items.map(([t, ini, who, verb, obj, kind, detail, c]) => `<div style="display: grid; grid-template-columns: 48px 28px minmax(0, 1fr) 110px; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}">
+    <span style="font-family: ${MONO}; font-size: 11px; color: ${T.muted}">${t}</span>
+    ${ini === 'system' ? `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${T.border}; display: flex; align-items: center; justify-content: center">${mark(16)}</div>` : avatar(ini, ini === 'CI' ? T.border : T.accentDim)}
+    <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><div style="font-size: 13px"><span style="font-weight: 600">${who}</span> <span style="color: ${T.dim}">${verb}</span> <span style="font-family: ${MONO}; font-size: 12px; color: ${c}">${obj}</span></div><span style="font-size: 11px; color: ${T.muted}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${detail}</span></div>
+    <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: ${T.muted}; justify-content: flex-end">${objIcon(kind)}<span>${kind}</span></div>
+  </div>`).join('')}
+</div>`).join('');
+fs.writeFileSync('Activity.dc.html', shell({
+  active: 'Settings',
+  crumbs: `<span>Acme Hosting</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Activity</span>`,
+  content: `
+      <div style="display: flex; align-items: center; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Activity</h1><span style="font-size: 13px; color: ${T.muted}">Every change in this organization, by people, tokens and Pulsix itself</span></div>
+        <div style="display: flex; gap: 8px">${btn('Export CSV')}</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div style="display: flex; align-items: center; gap: 8px; width: 260px; height: 30px; padding: 0 10px; border-radius: 6px; background: ${T.surface}; border: 1px solid ${T.border}; color: ${T.muted}; font-size: 12px">${ic.search}<span>Search summaries…</span></div>
+        <div style="width: 1px; height: 20px; background: ${T.border}; margin: 0 4px"></div>
+        ${chip('Actor: anyone', false, ic.user)}${chip('Object: all')}${chip('host', true)}${chip('alert', true)}${chip('member')}${chip('job')}
+        <div style="width: 1px; height: 20px; background: ${T.border}; margin: 0 4px"></div>
+        ${chip('Last 7 days', true, ic.clock)}
+        <span style="margin-left: auto; font-size: 12px; color: ${T.muted}">12 of 1 284 events</span>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; background: ${T.surface}; border: 1px solid ${T.border}; border-radius: 10px; overflow: hidden">${feedHtml}<div style="display: flex; justify-content: center; padding: 12px; font-size: 12px; color: ${T.accentDim}">Load older</div></div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Event · 10:31 today', `<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; font-size: 12px">
+            <div style="display: flex; align-items: center; gap: 10px">${avatar('TR')}<div style="display: flex; flex-direction: column"><span style="font-weight: 600">Tim R.</span><span style="color: ${T.muted}">session · passkey · 84.16.x.x</span></div></div>
+            <div style="display: flex; flex-direction: column; gap: 4px"><span style="color: ${T.muted}">Action</span><span style="font-family: ${MONO}">PATCH updateHostVariables</span></div>
+            <div style="display: flex; flex-direction: column; gap: 4px"><span style="color: ${T.muted}">Object</span><span style="font-family: ${MONO}; color: ${T.accent}">host · web-03.fra</span></div>
+            <div style="display: flex; flex-direction: column; gap: 4px"><span style="color: ${T.muted}">Change</span>
+              <div style="padding: 8px 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.border}; font-family: ${MONO}; font-size: 11px; line-height: 1.6"><div style="color: ${T.crit}">- vhosts[1].ssl: false</div><div style="color: ${T.ok}">+ vhosts[1].ssl: true</div></div>
+            </div>
+            <div style="display: flex; gap: 8px; padding-top: 4px">${btn('Open host')}${btn('Copy event id')}</div>
+          </div>`, `${tag('evt_01j7…')}`)}
+          ${card('Actors · 7 days', `<div style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; font-size: 12px">
+            ${[['TR', 'Tim R.', 412], ['SK', 'Sara K.', 188], ['system', 'Pulsix', 431], ['CI', 'ci-deploy', 96], ['DG', 'Daniel G.', 71]].map(([i, n, c]) => `<div style="display: flex; align-items: center; gap: 10px">${i === 'system' ? `<div style="width: 22px; height: 22px; border-radius: 50%; background: ${T.border}; display: flex; align-items: center; justify-content: center">${mark(13)}</div>` : `<div style="width: 22px; height: 22px; border-radius: 50%; background: ${i === 'CI' ? T.border : T.accentDim}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: ${T.ink}">${i}</div>`}<span style="flex-grow: 1">${n}</span><span style="font-family: ${MONO}; color: ${T.muted}">${c}</span></div>`).join('')}
+          </div>`, ``)}
+        </div>
+      </div>`,
+  height: 1140,
+}));
+
+// ================= SETUP WIZARD =================
+const wizStep = (n, l, sub, state) => `<div style="display: flex; align-items: flex-start; gap: 12px"><div style="width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; ${state === 'done' ? `background: ${T.ok}; color: ${T.ink}` : state === 'active' ? `background: ${T.accent}; color: ${T.ink}` : `border: 1px solid ${T.border}; color: ${T.muted}`}">${state === 'done' ? ic.check : n}</div><div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; font-weight: ${state === 'active' ? 600 : 500}; color: ${state === 'todo' ? T.muted : T.text}">${l}</span><span style="font-size: 11px; color: ${T.muted}">${sub}</span></div></div>`;
+const setup = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: ${T.accent}; } a:hover { color: ${T.accentDim}; }
+  </style>
+</helmet>
+<div style="width: 1440px; height: 900px; background: ${T.ink}; color: ${T.text}; display: flex; overflow: hidden; font-size: 13px">
+  <div style="width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 28px; padding: 48px 40px; background: ${T.surface}; border-right: 1px solid ${T.border}">
+    <div style="display: flex; align-items: center; gap: 12px">${mark(36)}<span style="font-family: ${MONO}; font-weight: 800; font-size: 26px; letter-spacing: -0.045em">pulsi<span style="color: ${T.accent}">x</span></span></div>
+    <div style="display: flex; flex-direction: column; gap: 6px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Set up this installation</h1><span style="font-size: 13px; color: ${T.muted}; line-height: 1.5">Runs once. Afterwards this page is gone and everything happens inside the organization.</span></div>
+    <div style="display: flex; flex-direction: column; gap: 18px">
+      ${wizStep(1, 'Instance administrator', 'root@acme.io', 'done')}
+      ${wizStep(2, 'First organization', 'name and URL slug', 'active')}
+      ${wizStep(3, 'Outgoing mail', 'optional, can be set later', 'todo')}
+      ${wizStep(4, 'Second factor', 'authenticator app or passkey', 'todo')}
+    </div>
+    <div style="margin-top: auto; display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: ${T.muted}"><span>Instance pulsix.acme.io · v0.1.0</span><span>Database connected · schema up to date</span></div>
+  </div>
+  <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; padding: 48px">
+    <div style="width: 560px; display: flex; flex-direction: column; gap: 22px">
+      <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 11px; font-weight: 600; letter-spacing: 0.12em; color: ${T.accent}">STEP 2 OF 4</span><h2 style="margin: 0; font-size: 22px; font-weight: 600">Create the first organization</h2><span style="font-size: 13px; color: ${T.muted}; line-height: 1.5">An organization holds hosts, inventory, monitoring and members. You can create more later from the instance administration page.</span></div>
+      <div style="display: flex; flex-direction: column; gap: 14px; padding: 20px; background: ${T.surface}; border: 1px solid ${T.border}; border-radius: 12px">
+        ${input('Organization name', 'Acme Hosting', '100%', false)}
+        <div style="display: flex; flex-direction: column; gap: 5px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">URL slug</span><div style="display: flex; align-items: center; height: 32px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.accent}; font-size: 12px; font-family: ${MONO}; overflow: hidden"><span style="padding: 0 10px; color: ${T.muted}; border-right: 1px solid ${T.border}; height: 100%; display: flex; align-items: center">pulsix.acme.io/o/</span><span style="padding: 0 10px">acme</span></div><span style="font-size: 11px; color: ${T.muted}">Lowercase letters, digits and dashes. Cannot be changed later.</span></div>
+        <div style="display: flex; flex-direction: column; gap: 5px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Default zone</span>${box('default · built-in worker in this container')}<span style="font-size: 11px; color: ${T.muted}">Hosts start in this zone. Add zones and workers for other networks under Workers.</span></div>
+        <div style="display: flex; flex-direction: column; gap: 5px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Timezone</span>${box('Europe/Berlin')}</div>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between">${btn('Back')}<div style="display: flex; align-items: center; gap: 12px"><span style="font-size: 12px; color: ${T.muted}">root@acme.io becomes owner</span>${btn('Continue', true)}</div></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
+`;
+fs.writeFileSync('SetupWizard.dc.html', setup);
+
+// ================= ACCOUNT SECURITY =================
+const qr = `<div style="width: 132px; height: 132px; display: grid; grid-template-columns: repeat(11, 1fr); gap: 2px; padding: 8px; background: #F6F4EF; border-radius: 8px; flex-shrink: 0">${Array.from({ length: 121 }, (_, i) => { const r = Math.floor(i / 11), c = i % 11; const corner = (r < 3 && c < 3) || (r < 3 && c > 7) || (r > 7 && c < 3); const on = corner ? !(r === 1 && c === 1) && !(r === 1 && c === 9) && !(r === 9 && c === 1) : ((i * 7 + r * 3) % 5 < 2); return `<div style="background: ${on ? T.ink : 'transparent'}; border-radius: 1px"></div>`; }).join('')}</div>`;
+fs.writeFileSync('AccountSecurity.dc.html', shell({
+  active: 'Settings',
+  crumbs: `<span>Account</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Security</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Security</h1>${pill('second factor active', T.ok)}</div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Profile')}${tab('Security', true)}${tab('Sessions')}${tab('Activity')}</div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Passkeys', `<div style="display: flex; flex-direction: column">
+            ${[['MacBook Pro · Touch ID', 'platform · synced', 'used 2 min ago'], ['YubiKey 5C', 'security key', 'used 3 d ago'], ['1Password', 'password manager · synced', 'added 2 w ago']].map(([n, k, u]) => `<div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}">${ic.key}<div style="display: flex; flex-direction: column; flex-grow: 1"><span style="font-weight: 600">${n}</span><span style="font-size: 11px; color: ${T.muted}">${k}</span></div><span style="font-size: 11px; color: ${T.muted}">${u}</span><span style="font-size: 11px; color: ${T.crit}; margin-left: 8px">remove</span></div>`).join('')}
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; font-size: 12px; color: ${T.muted}"><span>Passkeys sign you in without a password and count as your second factor.</span>${btn('Add passkey', true, ic.key)}</div>
+          </div>`, `<span>3 registered</span>`)}
+          ${card('Password', `<div style="display: flex; flex-direction: column; gap: 12px; padding: 16px">
+            ${input('Current password', '••••••••••••••••')}${input('New password', '')}${input('Repeat new password', '')}
+            <div style="display: flex; justify-content: space-between; align-items: center"><span style="font-size: 11px; color: ${T.muted}">At least 12 characters. Changing it logs out other sessions.</span>${btn('Change password')}</div>
+          </div>`, ``)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Authenticator app', `<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+            <div style="display: flex; gap: 16px">${qr}<div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: ${T.dim}; line-height: 1.5"><span>Scan with any TOTP app (1Password, Bitwarden, Google Authenticator, Aegis), then enter the six-digit code to confirm.</span><span style="font-family: ${MONO}; font-size: 11px; color: ${T.muted}; word-break: break-all">JBSWY3DPEHPK3PXP JBSWY3DPEHPK3PXP</span></div></div>
+            <div style="display: flex; align-items: flex-end; gap: 10px">${input('Code', '4 8 2 _ _ _', '160px')}${btn('Confirm', true)}</div>
+          </div>`, `${pill('enrolling', T.warn)}`)}
+          ${card('Recovery codes', `<div style="display: flex; flex-direction: column; gap: 10px; padding: 16px">
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 12px; border-radius: 8px; background: ${T.ink}; border: 1px solid ${T.border}; font-family: ${MONO}; font-size: 12px">${['k7p2q-m4x9r-b3ntv', 'w8ha4-c2vzs-p9lmk', 'r3dfg-x7q2n-h5tyb', 'm9zxc-v4b2n-q8wer', 'p2lkj-h6gfd-s4aqw', 'z5xcv-b8nm3-k7jhg', 't4rfe-d9swq-a2zxc', 'y6uij-k3hgf-d8sae'].map(c => `<span>${c}</span>`).join('')}</div>
+            <div style="display: flex; justify-content: space-between; align-items: center"><span style="font-size: 11px; color: ${T.muted}">Shown once. Each code works one time.</span><div style="display: flex; gap: 8px">${btn('Copy')}${btn('Download')}</div></div>
+          </div>`, `<span>8 unused</span>`)}
+          ${card('Sessions', `<div style="display: flex; flex-direction: column">
+            ${[['This browser · macOS · Safari', 'passkey · 84.16.x.x', 'now', true], ['iPhone · Safari', 'password + TOTP · 84.16.x.x', '3 h ago', false], ['Linux · Firefox', 'password + TOTP · 10.0.x.x', '2 d ago', false]].map(([d, h, w, cur]) => `<div style="display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid ${T.border}; font-size: 12px">${dot(cur ? T.ok : T.muted, 6)}<div style="display: flex; flex-direction: column; flex-grow: 1"><span style="font-weight: 600">${d}</span><span style="font-size: 11px; color: ${T.muted}">${h}</span></div><span style="color: ${T.muted}">${w}</span>${cur ? '' : `<span style="color: ${T.crit}; margin-left: 8px">end</span>`}</div>`).join('')}
+            <div style="display: flex; justify-content: flex-end; padding: 10px 16px">${btn('Log out everywhere')}</div>
+          </div>`, ``)}
+        </div>
+      </div>`,
+  height: 1140,
+}));
+
+// ================= PLAYBOOKS / REPOSITORIES =================
+const repos = [
+  ['acme/infra', 'git@github.com:acme/infra.git', 'main', 'a41c9e2', '3 min ago', 'ok', 14, 'deploy-key acme-infra'],
+  ['acme/k3s-cluster', 'https://gitlab.acme.io/ops/k3s.git', 'release/1.31', '9f0b12d', '1 h ago', 'ok', 6, 'token gitlab-ops'],
+  ['community/hardening', 'https://github.com/dev-sec/ansible-collection-hardening', 'master', 'c7e21aa', '2 d ago', 'ok', 3, 'public'],
+  ['acme/legacy', 'git@bitbucket.org:acme/legacy-playbooks.git', 'master', '—', 'failed 12 min ago', 'crit', 0, 'deploy-key legacy'],
+];
+const repoRow = (r, sel) => `<div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 8px; border: 1px solid ${sel ? T.accent : T.border}; background: ${sel ? T.ink : 'transparent'}">
+  <div style="display: flex; align-items: center; gap: 8px">${ic.git}<span style="font-family: ${MONO}; font-size: 12px; font-weight: 600; flex-grow: 1">${r[0]}</span>${dot(T[r[5]], 6)}<span style="font-size: 11px; color: ${T.muted}">${r[6]} playbooks</span></div>
+  <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: ${T.muted}; padding-left: 24px"><span style="font-family: ${MONO}">${r[2]} @ ${r[3]}</span><span>·</span><span style="color: ${r[5] === 'crit' ? T.crit : T.muted}">synced ${r[4]}</span></div>
+</div>`;
+const pbRows = [
+  ['deploy-web.yml', 'playbooks/', 'Deploy web tier (nginx, php-fpm, release)', 3, '12 min ago · ok'],
+  ['patch-all.yml', 'playbooks/', 'OS updates with reboot window', 1, '52 min ago · failed'],
+  ['issue-certs.yml', 'playbooks/', 'Request or renew TLS certificates', 1, '2 d ago · ok'],
+  ['rotate-logs.yml', 'playbooks/maintenance/', 'Logrotate + journald vacuum', 1, '2 h ago · ok'],
+  ['add-monitor-user.yml', 'playbooks/db/', 'Create the monitoring role on database hosts', 1, '5 h ago · ok'],
+  ['pg-failover.yml', 'playbooks/db/', 'Promote replica, repoint pgbouncer', 0, 'never'],
+  ['bootstrap.yml', 'playbooks/', 'First-boot hardening + pulsix agent', 1, '1 d ago · ok'],
+];
+fs.writeFileSync('Playbooks.dc.html', shell({
+  active: 'Playbooks',
+  crumbs: `<span style="color: ${T.text}; font-weight: 600">Playbooks</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Playbooks</h1><span style="font-size: 12px; color: ${T.muted}">4 repositories · 23 playbooks · 9 job templates · 2 editor playbooks</span></div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Repositories', true)}${tab('Job templates')}${tab('Editor')}${tab('Schedules')}</div>
+        </div>
+        <div style="display: flex; gap: 8px">${btn('Sync all', false, ic.git)}${btn('Add repository', true, ic.git)}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Repositories', `<div style="display: flex; flex-direction: column; gap: 8px; padding: 12px">${repos.map((r, i) => repoRow(r, i === 0)).join('')}</div>`, `<span>per organization</span>`)}
+          ${card('Sync error · acme/legacy', `<div style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; font-size: 12px">
+            <div style="padding: 8px 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.crit}55; font-family: ${MONO}; font-size: 11px; color: ${T.crit}">Permission denied (publickey). Deploy key "legacy" rejected by bitbucket.org</div>
+            <div style="display: flex; gap: 8px">${btn('Open credential', false, ic.key)}${btn('Retry sync')}</div>
+          </div>`, `${pill('failed', T.crit)}`)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('acme/infra', `<div style="display: flex; flex-direction: column">
+            <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; border-bottom: 1px solid ${T.border}; font-size: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px"><span style="color: ${T.muted}">Remote</span><span style="font-family: ${MONO}; font-size: 11px">git@github.com:acme/infra.git</span></div>
+              <div style="display: flex; flex-direction: column; gap: 2px"><span style="color: ${T.muted}">Branch · subpath</span><span style="font-family: ${MONO}; font-size: 11px">main · /</span></div>
+              <div style="display: flex; flex-direction: column; gap: 2px"><span style="color: ${T.muted}">Credential</span><span style="font-family: ${MONO}; font-size: 11px">deploy-key acme-infra</span></div>
+              <div style="display: flex; flex-direction: column; gap: 2px"><span style="color: ${T.muted}">requirements.yml</span><span style="font-family: ${MONO}; font-size: 11px">5 collections · 2 roles · installed</span></div>
+            </div>
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 90px 150px 110px; gap: 12px; padding: 8px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span>Playbook</span><span>Description</span><span>Templates</span><span>Last run</span><span></span></div>
+            ${pbRows.map(([f, dir, d, n, last]) => `<div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 90px 150px 110px; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}">
+              <div style="display: flex; flex-direction: column; min-width: 0"><span style="font-family: ${MONO}; font-size: 12px; font-weight: 600">${f}</span><span style="font-size: 11px; color: ${T.muted}; font-family: ${MONO}">${dir}</span></div>
+              <span style="font-size: 12px; color: ${T.dim}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${d}</span>
+              <span style="font-size: 12px; color: ${n ? T.text : T.muted}">${n ? n + ' template' + (n > 1 ? 's' : '') : '—'}</span>
+              <span style="font-size: 11px; color: ${last.includes('failed') ? T.crit : T.muted}; font-family: ${MONO}">${last}</span>
+              <div style="display: flex; justify-content: flex-end; gap: 6px">${btn('Run')}${btn('Template')}</div>
+            </div>`).join('')}
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px; font-size: 11px; color: ${T.muted}"><span>Playbooks are discovered from the repository (any <span style="font-family: ${MONO}">*.yml</span> with a play). Description comes from the first comment line.</span><span style="margin-left: auto">webhook: <span style="font-family: ${MONO}">/api/v1/hooks/git/9c1f…</span> · auto-sync on push</span></div>
+          </div>`, `${pill('synced', T.ok)}${tag('a41c9e2')}${btn('Sync now')}`)}
+        </div>
+      </div>`,
+  height: 1100,
+}));
+
+// ================= SCHEDULER =================
+const scheds = [
+  ['ok', 'Nightly OS patching', 'patch-all.yml', 'zone:hel', '0 3 * * 2,4', 'Tue, Thu 03:00', 'in 14 h', 'last: failed 1 host', T.crit, 'on failure → slack #ops, pagerduty (crit)'],
+  ['ok', 'Log rotation', 'rotate-logs.yml', 'all', '0 */6 * * *', 'every 6 h', 'in 2 h 12', 'last: ok · 1 m 03 s', T.ok, 'on failure → email ops@'],
+  ['ok', 'TLS renewal', 'issue-certs.yml', 'group:webserver', '0 4 1 * *', 'monthly, 1st 04:00', 'in 20 d', 'last: ok · 0 changed', T.ok, 'on change → slack #ops'],
+  ['paused', 'DB monitor user', 'add-monitor-user.yml', 'group:postgres', '@weekly', 'Sun 00:00', 'paused', 'last: ok · 5 d ago', T.muted, 'always → email dba@'],
+  ['ok', 'Agent bootstrap sweep', 'bootstrap.yml', 'tag:bootstrap=pending', '*/30 * * * *', 'every 30 min', 'in 7 min', 'last: ok · 0 hosts', T.ok, 'on change → activity only'],
+];
+const hours = ['00', '03', '06', '09', '12', '15', '18', '21'];
+const days = ['Mon 8', 'Tue 9', 'Wed 10', 'Thu 11', 'Fri 12', 'Sat 13', 'Sun 14'];
+const cal = `<div style="display: grid; grid-template-columns: 44px repeat(7, minmax(0, 1fr)); gap: 4px; padding: 12px 16px; font-size: 10px; color: ${T.muted}">
+  <span></span>${days.map((d, i) => `<span style="text-align: center; font-weight: 600; color: ${i === 2 ? T.accent : T.muted}">${d}</span>`).join('')}
+  ${hours.map((h, hi) => `<span style="font-family: ${MONO}">${h}:00</span>` + days.map((_, di) => {
+    const ev = [];
+    if (hi === 1 && (di === 1 || di === 3)) ev.push(['Nightly OS patching', T.warn]);
+    if (hi % 2 === 0) ev.push(['Log rotation', T.dim]);
+    if (hi === 1 && di === 5) ev.push(['Maintenance · PostgreSQL', '#A78BFA']);
+    if (di === 2 && hi === 4) ev.push(['deploy-web (manual)', T.accent]);
+    return `<div style="min-height: 26px; border-radius: 4px; background: ${T.ink}; border: 1px solid ${T.border}; display: flex; flex-direction: column; gap: 2px; padding: 2px">${ev.map(([l, c]) => `<div style="font-size: 9px; padding: 1px 4px; border-radius: 3px; background: ${c}22; color: ${c}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${l}</div>`).join('')}</div>`;
+  }).join('')).join('')}
+</div>`;
+fs.writeFileSync('Scheduler.dc.html', shell({
+  active: 'Playbooks',
+  crumbs: `<span>Playbooks</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Schedules</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Schedules</h1><span style="font-size: 12px; color: ${T.muted}">5 schedules · 4 active · next run in 7 min · timezone Europe/Berlin</span></div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Repositories')}${tab('Job templates')}${tab('Editor')}${tab('Schedules', true)}</div>
+        </div>
+        <div style="display: flex; gap: 8px">${btn('Pause all')}${btn('New schedule', true, ic.clock)}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          <div style="display: flex; flex-direction: column; background: ${T.surface}; border: 1px solid ${T.border}; border-radius: 10px; overflow: hidden">
+            <div style="display: grid; grid-template-columns: 20px minmax(0, 1fr) 118px 78px 118px 150px 24px; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span></span><span>Schedule</span><span>Cron</span><span>Next</span><span>Last</span><span>Notify</span><span></span></div>
+            ${scheds.map(([s, n, pb, lim, cron, human, next, last, lc, notify]) => `<div style="display: grid; grid-template-columns: 20px minmax(0, 1fr) 118px 78px 118px 150px 24px; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}; ${s === 'paused' ? 'opacity: 0.55' : ''}">
+              ${dot(s === 'paused' ? T.muted : lc)}<div style="display: flex; flex-direction: column; min-width: 0"><span style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">${n}</span><span style="font-size: 11px; color: ${T.muted}; font-family: ${MONO}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">${pb} · ${lim}</span></div>
+              <div style="display: flex; flex-direction: column; min-width: 0"><span style="font-family: ${MONO}; font-size: 11px; white-space: nowrap">${cron}</span><span style="font-size: 11px; color: ${T.muted}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">${human}</span></div>
+              <span style="font-size: 11px; color: ${s === 'paused' ? T.muted : T.accent}; white-space: nowrap">${next}</span><span style="font-size: 11px; color: ${lc}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${last}</span>
+              <span style="font-size: 11px; color: ${T.muted}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${notify}</span><span style="color: ${T.muted}">${ic.more}</span>
+            </div>`).join('')}
+          </div>
+          ${card('Week · 8–14 Sep', cal, `${chip('Week', true)}${chip('Month')}${chip('List')}<span style="display: flex; align-items: center; gap: 6px">${dot('#A78BFA', 6)} maintenance</span>`)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Schedule · Nightly OS patching', `<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 10px">${select('Job template', 'patch-all · zone:hel')}${input('Timezone', 'Europe/Berlin', '100%', false)}</div>
+            <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">When</span>${seg(['Simple', 'Cron'], 'Cron')}<div style="display: flex; align-items: center; gap: 10px">${box('0 3 * * 2,4', '150px')}<span style="font-size: 12px; color: ${T.dim}">Tuesday and Thursday at 03:00 · next 5: 11 Sep, 16 Sep, 18 Sep, 23 Sep, 25 Sep</span></div></div>
+            <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Guards</span>${toggle('Skip when a run of this template is still active', true)}${toggle('Skip during maintenance windows on the targets', true)}${toggle('Catch up a missed run after downtime', false, 'otherwise the next regular run happens')}</div>
+            <div style="display: flex; flex-direction: column; gap: 8px"><span style="font-size: 11px; color: ${T.muted}; font-weight: 500">Notifications</span>
+              <div style="display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; background: ${T.ink}; border: 1px solid ${T.border}; font-size: 12px">
+                <div style="display: flex; align-items: center; gap: 8px">${pill('on failure', T.crit)}<span style="color: ${T.muted}">→</span>${tag('slack #ops')}${tag('pagerduty db-oncall')}</div>
+                <div style="display: flex; align-items: center; gap: 8px">${pill('on change', T.warn)}<span style="color: ${T.muted}">→</span>${tag('slack #ops')}</div>
+                <div style="display: flex; align-items: center; gap: 8px">${pill('on success', T.ok)}<span style="color: ${T.muted}">→</span><span style="font-size: 11px; color: ${T.muted}">activity feed only</span></div>
+                <div style="display: flex; align-items: center; gap: 8px">${pill('skipped / missed', T.muted)}<span style="color: ${T.muted}">→</span>${tag('email ops@acme.io')}</div>
+                <span style="font-size: 11px; color: ${T.accentDim}">+ add rule</span>
+              </div>
+              <span style="font-size: 11px; color: ${T.muted}">Every run is recorded in the activity feed with its result and a link to the log. Weekly digest of all scheduled runs → email ops@acme.io, Mondays 08:00.</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center">${btn('Run now')}<div style="display: flex; gap: 8px">${btn('Pause')}${btn('Save', true, ic.check)}</div></div>
+          </div>`, `${pill('active', T.ok)}`)}
+          ${card('Triggers · patch-all', `<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; font-size: 12px">
+            <div style="display: flex; align-items: center; gap: 8px">${ic.user}<span style="flex-grow: 1">Manual · Run button, API <span style="font-family: ${MONO}">POST /jobs</span></span>${toggle('', true)}</div>
+            <div style="display: flex; align-items: center; gap: 8px">${ic.clock}<span style="flex-grow: 1">Schedule · Nightly OS patching</span>${toggle('', true)}</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 8px; background: ${T.ink}; border: 1px solid ${T.accent}55">
+              <div style="display: flex; align-items: center; gap: 8px">${ic.code}<span style="font-weight: 600; flex-grow: 1">Incoming webhook</span>${toggle('', true)}</div>
+              <div style="display: flex; align-items: center; gap: 8px; font-family: ${MONO}; font-size: 11px; padding: 6px 8px; border-radius: 6px; background: ${T.surface}; border: 1px solid ${T.border}"><span style="color: ${T.muted}">POST</span><span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">https://pulsix.acme.io/api/v1/hooks/jobs/7d2f…c91a</span><span style="color: ${T.accentDim}; font-family: Inter, sans-serif">copy</span></div>
+              <div style="display: flex; flex-direction: column; gap: 4px; color: ${T.muted}">
+                <span>Auth: <span style="font-family: ${MONO}; color: ${T.text}">X-Pulsix-Signature</span> (HMAC-SHA256 with the hook secret) or <span style="font-family: ${MONO}; color: ${T.text}">?token=</span></span>
+                <span>Allowed sources: <span style="font-family: ${MONO}; color: ${T.text}">140.82.112.0/20, 10.0.0.0/8</span></span>
+                <span>Payload → extra vars: <span style="font-family: ${MONO}; color: ${T.text}">$.ref → release</span>, <span style="font-family: ${MONO}; color: ${T.text}">$.hosts[*] → limit</span></span>
+                <span>Rate limit 1 run / 5 min · queue if a run is active · last call 12 min ago from GitHub Actions</span>
+              </div>
+              <div style="display: flex; gap: 8px">${btn('Rotate secret')}${btn('Test call')}</div>
+            </div>
+          </div>`, `<span>per job template</span>`)}
+          ${card('Recent runs of this schedule', `<div style="display: flex; flex-direction: column">
+            ${[['crit', '#1428', 'Tue 9 Sep 03:00', '4 m 12 s', '1 failed · k3s-02.hel'], ['ok', '#1401', 'Thu 4 Sep 03:00', '3 m 40 s', '12 changed'], ['ok', '#1377', 'Tue 2 Sep 03:00', '3 m 51 s', '9 changed'], ['unknown', '—', 'Thu 28 Aug 03:00', '—', 'skipped · maintenance window']].map(([s, id, t, d, r]) => `<div style="display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid ${T.border}; font-size: 12px">${dot(T[s], 6)}<span style="font-family: ${MONO}; color: ${T.accent}; width: 44px">${id}</span><span style="flex-grow: 1; color: ${T.dim}">${t}</span><span style="font-family: ${MONO}; color: ${T.muted}">${d}</span><span style="color: ${s === 'crit' ? T.crit : T.muted}; width: 150px; text-align: right">${r}</span></div>`).join('')}
+          </div>`, `${ic.chevronR}`)}
+        </div>
+      </div>`,
+  height: 1460,
+}));
+
+// ================= CREDENTIALS & SECRETS =================
+const credRows = [
+  ['key', 'acme-deploy', 'SSH key · ed25519', 'ansible@ · 41 hosts · 3 templates', 'TR · 3 mo ago', 'ok'],
+  ['key', 'hel-bootstrap', 'SSH key · ed25519', 'root@ · 8 hosts', 'DG · 2 mo ago', 'ok'],
+  ['key', 'homelab-key', 'SSH key · rsa-4096', 'pi@ · 1 host', 'TR · 1 y ago', 'warn'],
+  ['password', 'office-fs-admin', 'SSH password', 'Administrator@ · 1 host (win)', 'SK · 5 d ago', 'ok'],
+  ['git', 'acme-infra', 'Git deploy key', 'repo acme/infra', 'TR · 3 mo ago', 'ok'],
+  ['git', 'gitlab-ops', 'Git token', 'repo acme/k3s-cluster · expires in 23 d', 'DG · 11 mo ago', 'warn'],
+  ['git', 'legacy', 'Git deploy key', 'repo acme/legacy · rejected by remote', 'TR · 2 y ago', 'crit'],
+  ['channel', 'slack #ops', 'Slack bot token', 'channel · 6 routes', 'SK · 4 mo ago', 'ok'],
+  ['channel', 'pagerduty db-oncall', 'PagerDuty integration key', 'channel · 2 routes', 'SK · 4 mo ago', 'ok'],
+  ['channel', 'telegram Tim', 'Telegram bot + chat id', 'channel · 1 route', 'TR · 1 mo ago', 'ok'],
+];
+const credIcon = (k) => ({ key: ic.key, password: ic.key, git: ic.git, channel: ic.bell }[k]);
+fs.writeFileSync('Credentials.dc.html', shell({
+  active: 'Settings',
+  crumbs: `<span>Settings</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Credentials &amp; secrets</span>`,
+  content: `
+      <div style="display: flex; align-items: flex-start; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Credentials &amp; secrets</h1><span style="font-size: 12px; color: ${T.muted}">10 credentials · 2 jump hosts · encrypted with the instance master key · values are never shown again</span></div>
+          <div style="display: flex; gap: 24px; border-bottom: 1px solid ${T.border}">${tab('Credentials', true)}${tab('Jump hosts')}${tab('API tokens')}${tab('Agent secrets (names)')}</div>
+        </div>
+        <div style="display: flex; gap: 8px">${btn('Rotate…')}${btn('Add credential', true, ic.key)}</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div style="display: flex; align-items: center; gap: 8px; width: 240px; height: 30px; padding: 0 10px; border-radius: 6px; background: ${T.surface}; border: 1px solid ${T.border}; color: ${T.muted}; font-size: 12px">${ic.search}<span>Filter…</span></div>
+        <div style="width: 1px; height: 20px; background: ${T.border}; margin: 0 4px"></div>
+        ${chip('SSH', true, ic.key)}${chip('Git', true, ic.git)}${chip('Channels', true, ic.bell)}${chip('Expiring')}${chip('Unused')}
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; background: ${T.surface}; border: 1px solid ${T.border}; border-radius: 10px; overflow: hidden">
+          <div style="display: grid; grid-template-columns: 28px 170px 170px minmax(0, 1fr) 130px 32px; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}; font-size: 10px; color: ${T.muted}; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600"><span></span><span>Name</span><span>Kind</span><span>Used by</span><span>Created</span><span></span></div>
+          ${credRows.map(([k, n, kind, used, by, st]) => `<div style="display: grid; grid-template-columns: 28px 170px 170px minmax(0, 1fr) 130px 32px; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid ${T.border}">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; background: ${T.ink}; color: ${T[st] === T.ok ? T.dim : T[st]}">${credIcon(k)}</span>
+            <span style="font-family: ${MONO}; font-size: 12px; font-weight: 600">${n}</span><span style="font-size: 12px; color: ${T.dim}">${kind}</span>
+            <span style="font-size: 12px; color: ${st === 'ok' ? T.dim : T[st]}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">${used}</span><span style="font-size: 11px; color: ${T.muted}">${by}</span><span style="color: ${T.muted}">${ic.more}</span>
+          </div>`).join('')}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Jump hosts', `<div style="display: flex; flex-direction: column">
+            ${[['bastion.fra', 'bastion.acme.io:22 · jump@ · key acme-deploy', 'default for zone fra · 41 hosts'], ['bastion.hel', '10.20.0.2:2222 · ops@ · key hel-bootstrap', 'default for zone hel · via bastion.fra']].map(([n, c, u]) => `<div style="display: flex; flex-direction: column; gap: 3px; padding: 10px 16px; border-bottom: 1px solid ${T.border}"><div style="display: flex; align-items: center; gap: 8px">${ic.server}<span style="font-family: ${MONO}; font-size: 12px; font-weight: 600; flex-grow: 1">${n}</span>${dot(T.ok, 6)}</div><span style="font-size: 11px; color: ${T.dim}; font-family: ${MONO}; padding-left: 24px">${c}</span><span style="font-size: 11px; color: ${T.muted}; padding-left: 24px">${u}</span></div>`).join('')}
+            <div style="padding: 10px 16px; font-size: 11px; color: ${T.muted}">Resolution: host → inventory group → zone default. Chains are rendered as ProxyJump.</div>
+          </div>`, `${btn('Add jump host')}`)}
+          ${card('Rotate · acme-deploy', `<div style="display: flex; flex-direction: column; gap: 12px; padding: 16px; font-size: 12px">
+            <div style="display: flex; flex-direction: column; gap: 6px; color: ${T.dim}; line-height: 1.5"><span>Generates a new ed25519 key, keeps the old one until the rollout succeeds, then revokes it.</span></div>
+            <div style="display: flex; flex-direction: column; gap: 6px">${toggle('Roll out the new public key with the pulsix.ssh-key role', true, 'job template rotate-ssh-key · 41 hosts')}${toggle('Notify on completion', true, 'slack #ops')}</div>
+            <div style="display: flex; justify-content: flex-end; gap: 8px">${btn('Cancel')}${btn('Start rotation', true)}</div>
+          </div>`, `${tag('41 hosts')}`)}
+          ${card('Agent secrets reported by hosts', `<div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; font-size: 12px">
+            ${[['pg_main', '7 hosts', T.ok], ['mysql_shop', '3 hosts', T.ok], ['nginx_status', '12 hosts · 1 check references a missing secret on web-05.fra', T.warn]].map(([n, u, c]) => `<div style="display: flex; align-items: center; gap: 8px">${dot(c, 6)}<span style="font-family: ${MONO}">${n}</span><span style="color: ${c === T.warn ? T.warn : T.muted}; margin-left: auto; text-align: right">${u}</span></div>`).join('')}
+            <span style="color: ${T.muted}; margin-top: 4px">Names only. Values live in each host's agent.yaml.</span>
+          </div>`, ``)}
+        </div>
+      </div>`,
+  height: 1100,
+}));
+
+// ================= ENROLLMENT · SSH STEP =================
+const PUBKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGx3v9Qm2kQ0f4zJb8Vt1uYcR7pXhN5sWa2eKq9LdT0c pulsix:acme:acme-deploy';
+const testRow = (state, label, detail) => `<div style="display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 12px">${state === 'ok' ? `<span style="color: ${T.ok}">${ic.check}</span>` : state === 'wait' ? `<span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid ${T.accent}; border-top-color: transparent; margin: 0 2px"></span>` : state === 'ask' ? `<span style="color: ${T.warn}">${ic.key}</span>` : `<span style="width: 14px; height: 14px; border-radius: 50%; border: 1px solid ${T.border}"></span>`}<span style="font-weight: 500; color: ${state === 'todo' ? T.muted : T.text}">${label}</span><span style="color: ${T.muted}; margin-left: auto; font-family: ${MONO}; font-size: 11px; text-align: right">${detail}</span></div>`;
+fs.writeFileSync('EnrollmentSSH.dc.html', shell({
+  active: 'Hosts',
+  crumbs: `<span>Hosts</span>${ic.chevronR}<span style="color: ${T.text}; font-weight: 600">Add host</span>`,
+  content: `
+      <div style="display: flex; align-items: center; justify-content: space-between">
+        <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 20px; font-weight: 600">Add host · mail-02.hel</h1><span style="font-size: 13px; color: ${T.muted}">Managed via SSH: Pulsix needs a login on the host. Nothing is stored on the host except a public key.</span></div>
+        <div style="display: flex; align-items: center; gap: 28px">${step(1, 'Basics', 'done')}<span style="width: 40px; height: 1px; background: ${T.border}"></span>${step(2, 'Install agent', 'done')}<span style="width: 40px; height: 1px; background: ${T.border}"></span>${step(3, 'SSH access', 'active')}<span style="width: 40px; height: 1px; background: ${T.border}"></span>${step(4, 'Done', 'todo')}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; flex-grow: 1; min-height: 0">
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Connection', `<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+            <div style="display: grid; grid-template-columns: 140px 90px minmax(0, 1fr) minmax(0, 1fr); gap: 12px">${input('SSH user', 'ansible')}${input('Port', '22')}${select('Credential', 'acme-deploy · ed25519')}${select('Jump host', 'zone default · bastion.hel')}</div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px">${chip('Use existing credential', true, ic.key)}${chip('Generate new key for this host')}${chip('Import private key')}${chip('Password')}</div>
+            ${toggle('Privilege escalation (become) with sudo', true, 'passwordless sudo expected; a become password can be set on the credential')}
+          </div>`, `${tag('managed')}`)}
+          ${card('Authorize the public key on the host', `<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+            <div style="font-size: 12px; color: ${T.dim}">Run one of these on <span style="font-family: ${MONO}; color: ${T.text}">mail-02.hel</span> as the target user. The private key never leaves Pulsix.</div>
+            <div style="display: flex; gap: 8px">${chip('authorized_keys', true)}${chip('cloud-init')}${chip('Terraform (hcloud)')}${chip('Ansible bootstrap')}</div>
+            ${codeBlock([`mkdir -p ~/.ssh && chmod 700 ~/.ssh`, `echo '<span style="color: ${T.accent}">${PUBKEY}</span>' >> ~/.ssh/authorized_keys`, `chmod 600 ~/.ssh/authorized_keys`])}
+            <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: ${T.muted}"><span>Fingerprint <span style="font-family: ${MONO}; color: ${T.text}">SHA256:Q2m8…7VfA</span> · comment identifies the organization and credential so admins can find stray keys later.</span></div>
+          </div>`, `${btn('Copy public key', false, ic.key)}`)}
+          ${card('Or let Pulsix install the key', `<div style="display: flex; flex-direction: column; gap: 12px; padding: 16px; font-size: 12px">
+            <div style="color: ${T.dim}; line-height: 1.5">If you already have a working login (for example the root password from your hosting provider), Pulsix connects once with it, installs the public key above, creates the <span style="font-family: ${MONO}; color: ${T.text}">ansible</span> user with sudo, and then forgets the bootstrap credential.</div>
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 150px; gap: 12px; align-items: end">${input('Bootstrap user', 'root')}${input('Bootstrap password (used once)', '••••••••••••')}${btn('Run bootstrap', true, ic.play)}</div>
+            <span style="font-size: 11px; color: ${T.muted}">Runs the built-in <span style="font-family: ${MONO}">pulsix.bootstrap</span> playbook from worker hel-1 · logged like any job, without the password.</span>
+          </div>`, `<span>optional</span>`)}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          ${card('Test connection', `<div style="display: flex; flex-direction: column; padding: 8px 16px">
+            ${testRow('ok', 'Worker hel-1 reaches mail-02.hel:22', 'via bastion.hel · 24 ms')}
+            ${testRow('ask', 'Host key fingerprint', 'SHA256:9k3P…tZ1Q')}
+            <div style="display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px 24px; padding: 10px; border-radius: 6px; background: ${T.ink}; border: 1px solid ${T.warn}55; font-size: 11px"><span style="color: ${T.dim}">First contact. Compare with <span style="font-family: ${MONO}; color: ${T.text}">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</span> on the host, then trust it. Pulsix pins the key; a later change raises a critical alert.</span><div style="display: flex; gap: 8px">${btn('Trust and continue', true)}${btn('Reject')}</div></div>
+            ${testRow('todo', 'Login as ansible with acme-deploy', '')}
+            ${testRow('todo', 'sudo without password', '')}
+            ${testRow('todo', 'Python for Ansible', '')}
+            ${testRow('todo', 'Gather facts', '')}
+          </div>`, `<span style="display: flex; align-items: center; gap: 6px">${dot(T.warn, 6)} waiting for you</span>`)}
+          ${card('Last successful test', `<div style="display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; font-size: 12px; color: ${T.muted}"><span>Never. After a successful test the host shows <span style="color: ${T.ok}">SSH ok</span> in the list; Pulsix re-tests daily and after credential rotation.</span></div>`, ``)}
+          ${card('What the ansible user needs', `<div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; font-size: 12px; color: ${T.dim}; line-height: 1.5">
+            <span>A login shell, the public key in <span style="font-family: ${MONO}; color: ${T.text}">authorized_keys</span>, passwordless sudo (or a become password on the credential), and Python 3.</span>
+            <span>Windows hosts use OpenSSH Server or WinRM; pick the connection type on the credential.</span>
+          </div>`, ``)}
+          <div style="display: flex; justify-content: space-between; align-items: center">${btn('Back')}<div style="display: flex; gap: 8px">${btn('Skip for now')}${btn('Continue', true)}</div></div>
+        </div>
+      </div>`,
+  height: 1100,
+}));
+
 fs.writeFileSync('canvas.json', JSON.stringify({
+  pages: [{ id: 'page-1', name: 'Core & monitoring' }, { id: 'page-2', name: 'Admin & Ansible' }],
   artboards: [
     { file: 'Main.dc.html', x: 0, y: 0, w: 1440, h: 960, title: 'Dashboard' },
     { file: 'HostDetail.dc.html', x: 1540, y: 0, w: 1440, h: 1080, title: 'Host detail · db-02.fra' },
@@ -726,23 +1198,41 @@ fs.writeFileSync('canvas.json', JSON.stringify({
     { file: 'SchemaBuilder.dc.html', x: 1540, y: 1260, w: 1440, h: 1080, title: 'Inventory group · variable schema builder' },
     { file: 'MonitoringGroup.dc.html', x: 0, y: 2500, w: 1440, h: 1180, title: 'Monitoring group · selector, rules, routing' },
     { file: 'StatusPage.dc.html', x: 1540, y: 2500, w: 1440, h: 1260, title: 'Public status page' },
-    { file: 'JobRun.dc.html', x: 0, y: 3920, w: 1440, h: 1180, title: 'Ansible job · live run' },
-    { file: 'Enrollment.dc.html', x: 1540, y: 3920, w: 1440, h: 1000, title: 'Add host · agent enrollment' },
-    { file: 'RuleEditor.dc.html', x: 0, y: 5260, w: 1440, h: 1080, title: 'Rule editor · form + expression + effective rules' },
-    { file: 'StatusAdmin.dc.html', x: 1540, y: 5260, w: 1440, h: 1080, title: 'Status page admin' },
+    { file: 'RuleEditor.dc.html', x: 0, y: 3920, w: 1440, h: 1080, title: 'Rule editor · form + expression + effective rules' },
+    { file: 'StatusAdmin.dc.html', x: 1540, y: 3920, w: 1440, h: 1080, title: 'Status page admin' },
+    { file: 'Enrollment.dc.html', x: 0, y: 5160, w: 1440, h: 1000, title: 'Add host · step 2 agent enrollment' },
+    { file: 'EnrollmentSSH.dc.html', x: 1540, y: 5160, w: 1440, h: 1100, title: 'Add host · step 3 SSH access (public key, bootstrap, test)' },
+
+    { file: 'SetupWizard.dc.html', x: 0, y: 0, w: 1440, h: 900, title: 'First-run setup wizard', page: 'page-2' },
+    { file: 'AccountSecurity.dc.html', x: 1540, y: 0, w: 1440, h: 1140, title: 'Account · security (TOTP, passkeys, sessions)', page: 'page-2' },
+    { file: 'Members.dc.html', x: 0, y: 1300, w: 1440, h: 1140, title: 'Members · roles (ACL), invitations, tokens', page: 'page-2' },
+    { file: 'Activity.dc.html', x: 1540, y: 1300, w: 1440, h: 1140, title: 'Activity feed', page: 'page-2' },
+    { file: 'Credentials.dc.html', x: 0, y: 2600, w: 1440, h: 1100, title: 'Credentials, jump hosts, agent secrets', page: 'page-2' },
+    { file: 'Playbooks.dc.html', x: 1540, y: 2600, w: 1440, h: 1100, title: 'Playbooks · repositories per org', page: 'page-2' },
+    { file: 'Scheduler.dc.html', x: 0, y: 3860, w: 1440, h: 1460, title: 'Schedules · cron, calendar, notifications, webhook triggers', page: 'page-2' },
+    { file: 'JobRun.dc.html', x: 1540, y: 3860, w: 1440, h: 1180, title: 'Ansible job · live run', page: 'page-2' },
   ],
   annotations: [
-    { id: 'shell-note', x: 0, y: -170, w: 520, text: 'App shell: 232 px sidebar with org switcher, top bar with ⌘K search, zone filter, notifications.\nDark-first, tokens from brand/tokens.css. Status colours only for states, cyan for actions and selection.' },
-    { id: 'host-note', x: 1540, y: -130, w: 520, text: 'Host detail: header with status + group tags, tab bar, 4 metric cards, check table (agent vs. remote source), facts, groups with host vars, local agent secrets (names only).' },
-    { id: 'cap-note', x: 0, y: 1130, w: 560, text: 'Managed (Ansible via SSH) and Monitored (agent and/or remote checks) are independent per host. Rows show all four combinations: both, Ansible-only (k3s), remote-only (switch, endpoint), agent-only (Windows, macOS).' },
-    { id: 'schema-note', x: 1540, y: 1130, w: 560, text: 'Schema builder: field list → field editor → generated assignment form. Scope group = set once on the group, scope host = asked on assignment (host_vars). Repeater with sub-schema.' },
-    { id: 'mon-note', x: 0, y: 2380, w: 560, text: 'Monitoring group: membership by tag selector + manual hosts. Carries check templates, alert rules (warn/crit), notification routing by schedule, escalation, maintenance and the status-page toggle.' },
-    { id: 'status-note', x: 1540, y: 2380, w: 560, text: 'Public status page, light theme, customer branding. Components are aggregated groups/hosts with display names; no hostnames, no metrics. Incidents with timeline, scheduled maintenance, subscribe.' },
-    { id: 'job-note', x: 0, y: 3800, w: 560, text: 'Job run: streamed ansible-runner events, per-host ok/changed/failed, failed task card with a hint that links back to host vars, timeline of queue → claim → inventory snapshot → play.' },
-    { id: 'enroll-note', x: 1540, y: 3800, w: 560, text: 'Enrollment wizard: basics with both capability toggles, one-line install with a single-use token per OS, live progress (connected → cert issued → facts → default checks → first metrics), SSH step only if managed.' },
-    { id: 'rule-note', x: 0, y: 5140, w: 560, text: 'Rule editor: scope (org / group / host / item), item filter and tag conditions, thresholds with duration and clear value (hysteresis), form ↔ expression toggle, effective-rules panel showing precedence, dry run against 24 h.' },
-    { id: 'sadmin-note', x: 1540, y: 5140, w: 560, text: 'Status page admin: components map public names to monitoring groups, hosts or single checks; incident composer with subscriber notification; maintenance from windows; slug, custom domain, appearance.' },
+    { id: 'shell-note', x: 0, y: -170, w: 520, text: 'App shell: 232 px sidebar with org switcher, top bar with ⌘K search, zone filter, notifications.\nDark-first, tokens from brand/tokens.css. Status colours only for states, cyan for actions and selection.', page: 'page-1' },
+    { id: 'host-note', x: 1540, y: -130, w: 520, text: 'Host detail: header with status + group tags, tab bar, 4 metric cards, check table (agent vs. remote source), facts, groups with host vars, jump host, local agent secrets (names only).', page: 'page-1' },
+    { id: 'cap-note', x: 0, y: 1130, w: 560, text: 'Managed (Ansible via SSH) and Monitored (agent and/or remote checks) are independent per host. Rows show all four combinations.', page: 'page-1' },
+    { id: 'schema-note', x: 1540, y: 1130, w: 560, text: 'Schema builder: field list → field editor → generated assignment form. Scope group = set once, scope host = asked on assignment. Repeater with sub-schema.', page: 'page-1' },
+    { id: 'mon-note', x: 0, y: 2380, w: 560, text: 'Monitoring group: tag selector + manual hosts; check templates, alert rules, routing by schedule, escalation, maintenance with visibility, status-page toggle.', page: 'page-1' },
+    { id: 'status-note', x: 1540, y: 2380, w: 560, text: 'Public status page: aggregated components with display names; no hostnames, no metrics. Incidents, scheduled maintenance, subscribe.', page: 'page-1' },
+    { id: 'rule-note', x: 0, y: 3800, w: 560, text: 'Rule editor: scope, item filter, thresholds with duration and clear value, form ↔ expression, effective rules with precedence, dry run.', page: 'page-1' },
+    { id: 'sadmin-note', x: 1540, y: 3800, w: 560, text: 'Status page admin: components mapping, incident composer, maintenance from windows, slug, custom domain, appearance.', page: 'page-1' },
+    { id: 'enroll-note', x: 0, y: 5040, w: 560, text: 'Enrollment wizard: capability toggles, one-line install with single-use token per OS, live progress, SSH step only if managed.', page: 'page-1' },
+    { id: 'ssh-note', x: 1540, y: 5040, w: 560, text: 'SSH step: credential (Pulsix-generated key, import, password), public key with authorized_keys / cloud-init / Terraform snippets, optional one-time bootstrap with an existing login, connection test from the zone worker with host-key trust-on-first-use and pinning, sudo/Python checks.', page: 'page-1' },
+
+    { id: 'setup-note', x: 0, y: -120, w: 560, text: 'First-run wizard (runs once): admin → first org (slug, default zone, timezone) → optional SMTP → forced second-factor enrolment.', page: 'page-2' },
+    { id: 'security-note', x: 1540, y: -120, w: 560, text: 'Account security: passkeys, TOTP enrolment with QR + confirm, recovery codes shown once, password change, sessions.', page: 'page-2' },
+    { id: 'members-note', x: 0, y: 1180, w: 560, text: 'Members = ACL: people, API tokens and invitations in one list; fixed role matrix viewer / operator / admin / owner; invite dialog; role change with owner-only guard.', page: 'page-2' },
+    { id: 'activity-note', x: 1540, y: 1180, w: 560, text: 'Activity feed from the audit log: grouped by day, actor (person, token, Pulsix), verb, object, detail; filters; event detail with before/after diff. Scheduled runs land here too.', page: 'page-2' },
+    { id: 'cred-note', x: 0, y: 2480, w: 560, text: 'Credentials & secrets: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and rotation; jump hosts with inheritance; agent secret names.', page: 'page-2' },
+    { id: 'pb-note', x: 1540, y: 2480, w: 560, text: 'Playbooks: several Git repositories per org (deploy key or token, branch, subpath, requirements.yml, webhook auto-sync), discovered playbooks with templates and last run; sync errors surfaced.', page: 'page-2' },
+    { id: 'sched-note', x: 0, y: 3740, w: 560, text: 'Schedules: cron or simple mode with next runs, guards (overlap, maintenance, catch-up), per-schedule notification rules (failure / change / success / skipped → channels), weekly calendar incl. maintenance, run history; every run goes to the activity feed. Triggers per job template: manual, schedule, incoming webhook (HMAC or token, IP allowlist, payload → extra vars mapping, rate limit).', page: 'page-2' },
+    { id: 'job-note', x: 1540, y: 3740, w: 560, text: 'Job run: streamed events, per-host results, failed task card with hint, timeline.', page: 'page-2' },
   ],
-  launch: { view: 'canvas' },
+  launch: { view: 'canvas', page: 'page-2' },
 }, null, 2));
-console.log('built all 10');
+console.log('built all 17');
