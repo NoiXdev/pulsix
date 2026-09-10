@@ -35,7 +35,8 @@ Last updated: 2026-09-10
 | 0.9 | Mockup: agent enrollment flow | mockup | |
 | 0.10 | Mockup: status page (public) + status page admin | mockup | |
 | 0.11 | Design spec (architecture, data model, protocols) | spec | `docs/superpowers/specs/2026-09-10-pulsix-architecture-design.md`, in review |
-| 0.12 | Implementation plan | idea | after spec approval |
+| 0.13 | Mockups: setup wizard, account security, members/ACL, activity feed, credentials, playbooks/repos, schedules + webhook triggers, SSH access step | mockup | canvas pages "Core & monitoring" and "Admin & Ansible" |
+| 0.12 | Implementation plan v0.1 Core | planned | `docs/superpowers/plans/2026-09-10-v0.1-core.md`; later milestones get their own plans |
 
 ## v0.1 · Core
 
@@ -57,6 +58,10 @@ Last updated: 2026-09-10
 | 1.12 | SPA shell: sidebar, org switcher, ⌘K search, zone filter, notifications | planned | |
 | 1.13 | Docker Compose single-node install (manager, worker, db) | planned | `docker compose up` |
 | 1.14 | Light theme | idea | dark-first, light later |
+| 1.15 | Rate limiting on auth endpoints (login, TOTP verify, passkey finish, invite accept) | planned | before v0.1 release |
+| 1.16 | User management: invitations by e-mail, roles (owner/admin/operator/viewer), remove, instance-admin deactivate | planned | plan v0.1 Task 10 |
+| 1.17 | Activity feed per org and per user from the audit log, filters by actor/object | planned | plan v0.1 Task 11 |
+| 1.18 | First-run setup wizard: instance admin, first org, SMTP, forced second-factor enrolment | planned | plan v0.1 Task 12 |
 
 ## v0.2 · Inventory & Ansible
 
@@ -68,15 +73,19 @@ Last updated: 2026-09-10
 | 2.4 | Host-to-group assignment form generated from schema, validation | planned | |
 | 2.5 | Host override of group values (optional per field) | planned | |
 | 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | planned | |
-| 2.7 | SSH credentials per host / per group (key, password), encrypted at rest | planned | never leaves worker unencrypted |
+| 2.7 | Credentials & secrets page: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and key rotation via playbook | planned | never leaves worker unencrypted |
 | 2.7a | SSH jump hosts (bastions): org-level objects, chainable, inherited zone → group → host, rendered as ProxyJump | planned | |
-| 2.8 | Git repos per org (SSH key / token), pull before run, `requirements.yml` install | planned | main path for playbooks |
+| 2.7b | SSH onboarding: Pulsix-generated or imported keys with visible public key + snippets (authorized_keys, cloud-init, Terraform), one-time bootstrap playbook with an existing login, connection test from the worker with host-key TOFU + pinning, sudo/Python checks, daily re-test | planned | mockup: enrollment step 3 |
+| 2.8 | Several Git repos per org (deploy key / token, branch, subpath), pull before run, `requirements.yml` install, push webhook for auto-sync, sync errors surfaced | planned | main path for playbooks |
 | 2.9 | Ad-hoc playbook editor in GUI | planned | small playbooks, stored in DB |
 | 2.10 | Job templates: playbook, inventory scope, limit, extra vars, credentials | planned | |
 | 2.11 | Worker: registers to manager, pulls jobs from Postgres queue, runs ansible-runner | planned | |
 | 2.12 | Run view: live log stream, per-host result, retry failed hosts | planned | |
 | 2.12a | E2E: playbook from Git fixture against SSH container via bastion, schema → inventory golden file | planned | milestone gate |
-| 2.13 | Schedules for job templates (cron) | planned | |
+| 2.13 | Schedules for job templates: cron or simple mode, timezone, guards (overlap, maintenance, catch-up), pause | planned | |
+| 2.13a | Schedule notifications: rules per schedule (failure / change / success / skipped → channels), weekly digest; every run in the activity feed | planned | |
+| 2.13b | Incoming webhook trigger per job template: URL + HMAC or token, IP allowlist, payload → extra vars mapping, rate limit | planned | |
+| 2.13c | Calendar view of scheduled runs and maintenance windows | planned | |
 | 2.14 | Ad-hoc command on hosts (`ansible -m shell`) | idea | |
 
 ## v0.3 · Agent & monitoring
