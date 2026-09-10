@@ -78,6 +78,15 @@ func (m *memTokenStore) Revoke(_ context.Context, orgID, id uuid.UUID) error {
 	if m.revokeErr != nil {
 		return m.revokeErr
 	}
+	// A token already marked revoked must report ErrNotFound on a second
+	// Revoke, matching SQLTokenStore.Revoke's WHERE ... revoked_at IS NULL
+	// clause (see TestSQLTokenStoreGetByHashExcludesRevoked's "second
+	// Revoke" assertion) — without this check the fake would silently
+	// accept a double revoke as success, a behavior the real store does
+	// not have (fix round 1, adjacent item).
+	if m.revoke[id] {
+		return auth.ErrNotFound
+	}
 	for _, tok := range m.byHash {
 		if tok.ID == id && tok.OrgID == orgID {
 			m.revoke[id] = true
@@ -167,19 +176,57 @@ func TestTokenCreateNeverReturnsThePlaintextAgain(t *testing.T) {
 }
 
 // TestTokenResolveRejectsMalformedInput asserts Resolve never panics on
-// hostile input and rejects every shape that is not a genuine token.
+// hostile input and rejects every shape that is not a genuine token — while
+// a real, valid token minted in the same store still resolves. Running
+// this against an empty store would make every rejection trivially true
+// for the wrong reason (nothing to find, not "the input was rejected"): an
+// implementation that skipped the prefix/decode checks entirely and just
+// hashed whatever it was given would still pass, since none of the
+// malformed inputs happen to hash to a real row either. Seeding one real
+// token first, and asserting it still resolves at the end, proves Resolve
+// is actually doing the rejecting (Finding 4, fix round 1).
 func TestTokenResolveRejectsMalformedInput(t *testing.T) {
-	tk := auth.NewTokens(newMemTokenStore(), time.Now)
+	store := newMemTokenStore()
+	tk := auth.NewTokens(store, time.Now)
+	valid, _, err := tk.Create(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), "ci", "viewer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, plain := range []string{
 		"",
 		"pxt_",
 		"pxt_not-valid-base64!!!",
 		"nonsense",
 		"pxt_" + strings.Repeat("a", 4096), // oversized, still decodes but won't match
+		valid[:len(valid)-1],               // truncated by one character
 	} {
 		if _, _, err := tk.Resolve(context.Background(), plain); err == nil {
 			t.Fatalf("Resolve(%q) succeeded, want rejection", plain)
 		}
+	}
+	if _, _, err := tk.Resolve(context.Background(), valid); err != nil {
+		t.Fatalf("Resolve(valid) = %v, want success — the malformed cases above must be rejected for their own sake, not because the store is empty", err)
+	}
+}
+
+// TestTokenRevokeTwiceReturnsNotFound asserts the fake matches
+// SQLTokenStore.Revoke's behavior on a token already revoked: ErrNotFound,
+// not a silent second success (see memTokenStore.Revoke's fix-round-1
+// comment, and TestSQLTokenStoreGetByHashExcludesRevoked's "second Revoke"
+// assertion for the real store's own proof of this).
+func TestTokenRevokeTwiceReturnsNotFound(t *testing.T) {
+	store := newMemTokenStore()
+	tk := auth.NewTokens(store, time.Now)
+	org := uuid.Must(uuid.NewV7())
+	_, tok, err := tk.Create(context.Background(), uuid.Must(uuid.NewV7()), org, "ci", "viewer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tk.Revoke(context.Background(), org, tok.ID); err != nil {
+		t.Fatalf("first Revoke: %v", err)
+	}
+	if err := tk.Revoke(context.Background(), org, tok.ID); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("second Revoke err = %v, want %v", err, auth.ErrNotFound)
 	}
 }
 

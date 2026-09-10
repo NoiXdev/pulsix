@@ -125,9 +125,7 @@ func (t *Tokens) Create(ctx context.Context, userID, orgID uuid.UUID, name, role
 // check against secret_hash (a unique, effectively-random 256-bit digest)
 // is the entire comparison, done once, and an attacker cannot use its
 // timing to learn anything about which digest is "closer" to correct the
-// way they could against a byte-by-byte secret comparison. This is the same
-// hash-indexed-lookup design GitHub and Stripe use for their own API
-// tokens.
+// way they could against a byte-by-byte secret comparison.
 //
 // A malformed or truncated plain (wrong prefix, invalid base64, wrong
 // length) is rejected by the prefix check and the decode step below,

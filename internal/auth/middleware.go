@@ -69,10 +69,15 @@ func TokenScopeFromContext(ctx context.Context) (TokenScope, bool) {
 func BearerMiddleware(t *Tokens) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-				p, scope, err := t.Resolve(r.Context(), strings.TrimPrefix(h, "Bearer "))
+			if cred, ok := bearerCredential(r.Header.Get("Authorization")); ok {
+				p, scope, err := t.Resolve(r.Context(), cred)
 				if err != nil {
-					http.Error(w, `{"title":"Unauthorized","status":401}`, http.StatusUnauthorized)
+					// Written by hand rather than http.Error: http.Error
+					// unconditionally sets Content-Type to text/plain,
+					// which would silently mislabel this JSON body.
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = w.Write([]byte(`{"title":"Unauthorized","status":401}`))
 					return
 				}
 				ctx := WithPrincipal(r.Context(), p)
@@ -81,4 +86,20 @@ func BearerMiddleware(t *Tokens) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// bearerCredential extracts the credential from an Authorization header
+// whose scheme is "Bearer". Per RFC 7235 §2.1, the scheme token is
+// case-insensitive ("bearer", "BEARER", "Bearer" are all the same scheme),
+// so the comparison uses strings.EqualFold rather than a literal prefix
+// match; the credential itself is returned untouched (it is not a scheme
+// token and is not case-insensitive). ok is false for any other scheme, an
+// empty header, or a header with no space separating scheme from
+// credential.
+func bearerCredential(header string) (string, bool) {
+	scheme, cred, found := strings.Cut(header, " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	return cred, true
 }
