@@ -13,6 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const confirmTOTP = `-- name: ConfirmTOTP :exec
+UPDATE totp_secrets SET confirmed_at = now() WHERE user_id = $1
+`
+
+func (q *Queries) ConfirmTOTP(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, confirmTOTP, userID)
+	return err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at) VALUES ($1, $2, $3, $4, $5)
 `
@@ -33,6 +42,15 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.MfaComplete,
 		arg.ExpiresAt,
 	)
+	return err
+}
+
+const deleteTOTP = `-- name: DeleteTOTP :exec
+DELETE FROM totp_secrets WHERE user_id = $1
+`
+
+func (q *Queries) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteTOTP, userID)
 	return err
 }
 
@@ -68,12 +86,52 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (GetSessionRow, 
 	return i, err
 }
 
+const getTOTPSecret = `-- name: GetTOTPSecret :one
+SELECT user_id, secret_sealed, confirmed_at, last_used_step, created_at FROM totp_secrets WHERE user_id = $1
+`
+
+func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TotpSecret, error) {
+	row := q.db.QueryRow(ctx, getTOTPSecret, userID)
+	var i TotpSecret
+	err := row.Scan(
+		&i.UserID,
+		&i.SecretSealed,
+		&i.ConfirmedAt,
+		&i.LastUsedStep,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertRecoveryCode = `-- name: InsertRecoveryCode :exec
+INSERT INTO recovery_codes (user_id, code_hash) VALUES ($1, $2)
+`
+
+type InsertRecoveryCodeParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	CodeHash []byte    `json:"code_hash"`
+}
+
+func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error {
+	_, err := q.db.Exec(ctx, insertRecoveryCode, arg.UserID, arg.CodeHash)
+	return err
+}
+
 const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :exec
 UPDATE sessions SET mfa_complete = true WHERE id = $1
 `
 
 func (q *Queries) MarkSessionMFAComplete(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markSessionMFAComplete, id)
+	return err
+}
+
+const replaceRecoveryCodes = `-- name: ReplaceRecoveryCodes :exec
+DELETE FROM recovery_codes WHERE user_id = $1
+`
+
+func (q *Queries) ReplaceRecoveryCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, replaceRecoveryCodes, userID)
 	return err
 }
 
@@ -84,4 +142,53 @@ UPDATE sessions SET revoked_at = now() WHERE id = $1
 func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeSession, id)
 	return err
+}
+
+const setTOTPLastStep = `-- name: SetTOTPLastStep :execrows
+UPDATE totp_secrets SET last_used_step = $2 WHERE user_id = $1 AND last_used_step < $2
+`
+
+type SetTOTPLastStepParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	LastUsedStep int64     `json:"last_used_step"`
+}
+
+func (q *Queries) SetTOTPLastStep(ctx context.Context, arg SetTOTPLastStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTOTPLastStep, arg.UserID, arg.LastUsedStep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const upsertTOTPSecret = `-- name: UpsertTOTPSecret :exec
+INSERT INTO totp_secrets (user_id, secret_sealed) VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE SET secret_sealed = EXCLUDED.secret_sealed, confirmed_at = NULL, last_used_step = 0
+`
+
+type UpsertTOTPSecretParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	SecretSealed []byte    `json:"secret_sealed"`
+}
+
+func (q *Queries) UpsertTOTPSecret(ctx context.Context, arg UpsertTOTPSecretParams) error {
+	_, err := q.db.Exec(ctx, upsertTOTPSecret, arg.UserID, arg.SecretSealed)
+	return err
+}
+
+const useRecoveryCode = `-- name: UseRecoveryCode :execrows
+UPDATE recovery_codes SET used_at = now() WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
+`
+
+type UseRecoveryCodeParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	CodeHash []byte    `json:"code_hash"`
+}
+
+func (q *Queries) UseRecoveryCode(ctx context.Context, arg UseRecoveryCodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, useRecoveryCode, arg.UserID, arg.CodeHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

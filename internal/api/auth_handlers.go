@@ -151,6 +151,8 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error401Unauthorized("invalid credentials")
 	case errors.Is(err, auth.ErrNotFound):
 		return huma.Error401Unauthorized("login required")
+	case errors.Is(err, auth.ErrInvalidTOTPCode):
+		return huma.Error400BadRequest("invalid code")
 	default:
 		slog.ErrorContext(ctx, "unmapped auth error", "err", err)
 		return huma.Error500InternalServerError("internal error")

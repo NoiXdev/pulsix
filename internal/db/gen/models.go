@@ -71,6 +71,12 @@ type Organization struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type RecoveryCode struct {
+	UserID   uuid.UUID          `json:"user_id"`
+	CodeHash []byte             `json:"code_hash"`
+	UsedAt   pgtype.Timestamptz `json:"used_at"`
+}
+
 type Session struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      uuid.UUID          `json:"user_id"`
@@ -79,6 +85,14 @@ type Session struct {
 	CreatedAt   time.Time          `json:"created_at"`
 	ExpiresAt   time.Time          `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type TotpSecret struct {
+	UserID       uuid.UUID          `json:"user_id"`
+	SecretSealed []byte             `json:"secret_sealed"`
+	ConfirmedAt  pgtype.Timestamptz `json:"confirmed_at"`
+	LastUsedStep int64              `json:"last_used_step"`
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 type User struct {

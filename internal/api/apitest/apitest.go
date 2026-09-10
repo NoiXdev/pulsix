@@ -14,10 +14,15 @@ import (
 
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 )
+
+// testMasterKey is a fixed, non-secret key used only to seal TOTP secrets in
+// tests. Never used outside apitest.
+var testMasterKey = [32]byte{'p', 'u', 'l', 's', 'i', 'x', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y'}
 
 // Server is a running API plus helpers.
 type Server struct {
@@ -54,7 +59,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(q, time.Now)}
-	s.Deps = api.Deps{DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.NoMFA{})}
+	totp := auth.NewTOTP(q, crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
+	s.Deps = api.Deps{DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, totp), TOTP: totp}
 	for _, opt := range opts {
 		opt(s)
 	}

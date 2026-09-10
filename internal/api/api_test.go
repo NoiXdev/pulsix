@@ -26,7 +26,7 @@ func (fakeAuthService) Me(context.Context, auth.Principal) (auth.User, error) {
 }
 
 func TestHealthz(t *testing.T) {
-	h, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}})
+	h, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,5 +58,8 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{Auth: fakeAuthService{}}); err == nil {
 		t.Fatal("api.New without Sessions did not return an error")
+	}
+	if _, err := api.New(api.Deps{Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}}); err == nil {
+		t.Fatal("api.New without TOTP did not return an error")
 	}
 }
