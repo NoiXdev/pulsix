@@ -46,10 +46,14 @@ func Open(t *testing.T) *db.DB {
 	fatalOnErr(t, err)
 
 	t.Cleanup(func() {
-		_, _ = d.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
+		// A failing truncate must be loud: silently leaving rows behind makes
+		// the next test fail somewhere unrelated.
+		if _, err := d.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
 			FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version' LOOP
 				EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
-			END LOOP; END $$;`)
+			END LOOP; END $$;`); err != nil {
+			t.Errorf("truncate tables after test: %v", err)
+		}
 		d.Close()
 	})
 	return d
