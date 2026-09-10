@@ -1,6 +1,6 @@
 module github.com/noixdev/pulsix
 
-go 1.25.0
+go 1.27
 
 require (
 	github.com/danielgtaylor/huma/v2 v2.39.1
