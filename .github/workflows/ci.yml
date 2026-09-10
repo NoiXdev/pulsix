@@ -1,0 +1,22 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+      - uses: golangci/golangci-lint-action@v6
+        with: { version: latest }
+      - run: go test -race -coverprofile=cover.out ./...
+      - run: |
+          total=$(go tool cover -func=cover.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
+          echo "coverage $total%"
+          awk -v t="$total" 'BEGIN { if (t+0 < 80) { print "coverage below 80%"; exit 1 } }'
+  commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: webiny/action-conventional-commits@v1.3.0
