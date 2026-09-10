@@ -13,16 +13,17 @@
 # below — never silently, always printed as SKIP so the exclusion is
 # visible in CI output.
 #
-# internal/db/gen (sqlc-generated) is NOT excluded, even though it has no
-# test files of its own: the hand-written SQL it carries is exercised by
-# internal/db's tests (rls_test.go, queries_test.go), covering all eight
-# query methods. This script measures per-package self-coverage only, so
-# it cannot see coverage contributed by another package's tests and will
-# report internal/db/gen below its floor regardless — that is a limitation
-# of `go test -cover`'s per-package attribution, not a sign the SQL is
-# untested; see task-4-report.md "Fix round 1" for the cross-package
-# coverage figure and why an -coverpkg-based fix still falls short of the
-# floor on generated boilerplate the task's queries never call.
+# Machine-generated packages (sqlc, protoc, mockgen, ...) are excluded
+# too, but the exclusion is EARNED BY EVIDENCE IN THE FILES, never
+# granted by package path: a package counts as generated only when it
+# has at least one non-test .go file and every non-test .go file in it
+# carries a "Code generated ... DO NOT EDIT." header before its package
+# clause, per Go's own convention (https://go.dev/s/generatedcode). Drop
+# a single hand-written file into a generated directory without that
+# header and the whole package falls back under the normal floor on the
+# next run — see task-4-report.md "Fix round 2" for why internal/db/gen
+# qualifies today and for the guard being exercised against a planted
+# hand-written file.
 #
 # Usage: scripts/coverage-gate.sh
 # Exit status: 0 if every non-excluded package meets its floor, 1 otherwise.
@@ -31,11 +32,45 @@ set -euo pipefail
 
 module=$(go list -m)
 
-go test -race -cover ./... 2>&1 | awk -v module="$module" '
+# Find packages that are wholly machine-generated, by inspecting their own
+# files rather than trusting their path. A package qualifies only if it has
+# at least one non-test .go file and every such file has a
+# "Code generated ... DO NOT EDIT." line somewhere before its package
+# clause.
+generated_pkgs=()
+while IFS=$'\t' read -r import_path dir; do
+	has_source_file=0
+	all_generated=1
+	for f in "$dir"/*.go; do
+		[ -e "$f" ] || continue
+		case "$f" in
+			*_test.go) continue ;;
+		esac
+		has_source_file=1
+		if ! sed -n '1,/^package /p' "$f" | grep -qE '^// Code generated .* DO NOT EDIT\.$'; then
+			all_generated=0
+			break
+		fi
+	done
+	if [ "$has_source_file" -eq 1 ] && [ "$all_generated" -eq 1 ]; then
+		generated_pkgs+=("$import_path")
+	fi
+done < <(go list -f $'{{.ImportPath}}\t{{.Dir}}' ./...)
+
+generated_list=""
+if [ "${#generated_pkgs[@]}" -gt 0 ]; then
+	generated_list=$(printf '%s\n' "${generated_pkgs[@]}")
+fi
+
+go test -race -cover ./... 2>&1 | awk -v module="$module" -v generated="$generated_list" '
 	BEGIN {
 		FS = "\t"
 		default_floor = 80
 		fail = 0
+		n = split(generated, gen_arr, "\n")
+		for (i = 1; i <= n; i++) {
+			if (gen_arr[i] != "") generated_set[gen_arr[i]] = 1
+		}
 	}
 
 	# Only lines shaped like "<result>\t<package>\t<duration>\t<coverage>"
@@ -49,6 +84,11 @@ go test -race -cover ./... 2>&1 | awk -v module="$module" '
 
 		if (pkg ~ ("^" module "/cmd(/|$)")) {
 			printf "SKIP  %-55s (cmd/... entry-point wiring, excluded from gate)\n", pkg
+			next
+		}
+
+		if (pkg in generated_set) {
+			printf "SKIP  %-55s (machine-generated, DO NOT EDIT header on every file, excluded from gate)\n", pkg
 			next
 		}
 
