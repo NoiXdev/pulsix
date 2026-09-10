@@ -47,7 +47,7 @@ type okOutput struct {
 // MFA-complete first would make it unreachable from the state it exists to
 // resolve.
 func registerMFARoutes(hapi huma.API, deps Deps) {
-	huma.Post(hapi, "/api/v1/auth/totp/enrol", func(ctx context.Context, _ *struct{}) (*totpEnrolOutput, error) {
+	huma.Post(hapi, "/api/v1/auth/totp/enrol", func(ctx context.Context, in *codeInput) (*totpEnrolOutput, error) {
 		p, err := requireMFAComplete(ctx)
 		if err != nil {
 			return nil, err
@@ -56,7 +56,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
-		secret, url, err := deps.TOTP.BeginEnrol(ctx, p.UserID, u.Email)
+		// in.Body.Code is only checked when the account already has a
+		// confirmed secret (BeginEnrol requires a fresh code in that case,
+		// so a stolen MFA-complete session can't silently plant a new
+		// secret over an existing one); first-time enrolment ignores it.
+		secret, url, err := deps.TOTP.BeginEnrol(ctx, p.UserID, u.Email, in.Body.Code)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}

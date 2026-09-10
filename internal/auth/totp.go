@@ -15,7 +15,6 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/noixdev/pulsix/internal/crypto"
-	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
 // totpStep is the TOTP time-step size (RFC 6238 default, and what
@@ -26,18 +25,67 @@ const totpStep = 30 * time.Second
 // still accepted, tolerating small clock drift between client and server.
 const totpSkewSteps = 1
 
-// ErrInvalidTOTPCode is returned by ConfirmEnrol when the supplied code does
-// not validate. It is a distinct sentinel (rather than a generic error) so
-// the transport layer can tell "the user typed the wrong code" (400 -
-// mapped explicitly) apart from a failed recovery-code write or other
-// internal error after the code itself checked out (500, logged): both are
-// non-nil errors from the same call, but only one of them is safe to
-// describe to the client as "invalid code".
+// ErrInvalidTOTPCode is returned when a caller-supplied code does not
+// validate: ConfirmEnrol's first code, a re-enrolment's fresh-code check,
+// or Verify/VerifyRecovery's caller (via the transport layer) failing the
+// same way. It is a distinct sentinel (rather than a generic error) so the
+// transport layer can tell "the user typed the wrong code" (400 - mapped
+// explicitly) apart from an internal error after the code itself checked
+// out (500, logged): both are non-nil errors from the same call, but only
+// one of them is safe to describe to the client as "invalid code".
 var ErrInvalidTOTPCode = errors.New("invalid totp code")
+
+// ErrNoTOTPSecret is returned by a TOTPStore's GetTOTPSecret when the user
+// has no totp_secrets row at all. It is a distinct sentinel from the
+// package's general ErrNotFound (rather than reusing it) so that "no user"
+// and "no TOTP secret" can never be confused if a future caller starts
+// checking one where it meant the other.
+var ErrNoTOTPSecret = errors.New("no totp secret")
+
+// TOTPSecretRow is the store-level view of one totp_secrets row: just
+// enough for the service to validate a code and decide whether the factor
+// is active. It deliberately does not expose last_used_step — claiming a
+// step is the store's job (SetTOTPLastStep), never the service reading a
+// value and writing it back non-atomically.
+type TOTPSecretRow struct {
+	SecretSealed []byte
+	Confirmed    bool
+}
+
+// TOTPStore is what the TOTP service needs from persistence, mirroring how
+// Store decouples Service from generated SQL: the service must never
+// import gen or pgx directly, and a fake implementation lets tests drive
+// every error branch without a database (see totp_store_sql.go for the
+// sqlc-backed implementation, and totp_unit_test.go for the fakes).
+//
+// ConfirmEnrol is one method, not three (mark confirmed, replace recovery
+// codes, insert each one), because those writes must be atomic: a failure
+// partway through must never leave confirmed_at set with no usable
+// recovery codes. The SQL adapter runs it as a single transaction.
+type TOTPStore interface {
+	UpsertTOTPSecret(ctx context.Context, userID uuid.UUID, secretSealed []byte) error
+	// GetTOTPSecret returns ErrNoTOTPSecret if the user has no row, and
+	// must not swallow any other error into that same "absent" result:
+	// callers rely on being able to tell "not enrolled" apart from "the
+	// store failed to tell us" (see Enabled and verifyAndConsume below).
+	GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TOTPSecretRow, error)
+	// SetTOTPLastStep claims step for userID and reports whether it did:
+	// false (with a nil error) means the step was already claimed, by
+	// this call or a concurrent one — a replay, not a failure.
+	SetTOTPLastStep(ctx context.Context, userID uuid.UUID, step int64) (bool, error)
+	// ConfirmEnrol atomically marks the secret confirmed and replaces the
+	// user's recovery codes with recoveryCodeHashes.
+	ConfirmEnrol(ctx context.Context, userID uuid.UUID, recoveryCodeHashes [][]byte) error
+	ReplaceRecoveryCodes(ctx context.Context, userID uuid.UUID) error
+	DeleteTOTP(ctx context.Context, userID uuid.UUID) error
+	// UseRecoveryCode reports whether it consumed an unused recovery code
+	// matching codeHash.
+	UseRecoveryCode(ctx context.Context, userID uuid.UUID, codeHash []byte) (bool, error)
+}
 
 // TOTP manages time-based one-time passwords and recovery codes.
 type TOTP struct {
-	q      *gen.Queries
+	store  TOTPStore
 	box    *crypto.Box
 	issuer string
 	now    func() time.Time
@@ -47,12 +95,38 @@ type TOTP struct {
 // the clock used to compute and validate the 30 s step, injected the same
 // way as auth.NewSessions so replay-window behaviour can be driven
 // deterministically from tests instead of only through wall-clock timing.
-func NewTOTP(q *gen.Queries, box *crypto.Box, issuer string, now func() time.Time) *TOTP {
-	return &TOTP{q: q, box: box, issuer: issuer, now: now}
+func NewTOTP(store TOTPStore, box *crypto.Box, issuer string, now func() time.Time) *TOTP {
+	return &TOTP{store: store, box: box, issuer: issuer, now: now}
 }
 
 // BeginEnrol creates an unconfirmed secret and returns it for the QR code.
-func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email string) (string, string, error) {
+//
+// If the account already has a *confirmed* secret, code must be a fresh,
+// valid code for that existing secret: without this, one unauthenticated
+// call would silently reset confirmed_at (UpsertTOTPSecret's ON CONFLICT
+// clause) and leave the account password-only at the next login, making
+// the fresh-code requirement on Disable cosmetic — an attacker holding an
+// MFA-complete session could strip the factor either way. A first-time
+// enrolment (no row yet) or resuming an abandoned, never-confirmed
+// enrolment needs no code: there is no active factor yet to prove
+// possession of.
+func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email, code string) (string, string, error) {
+	row, err := t.store.GetTOTPSecret(ctx, userID)
+	switch {
+	case errors.Is(err, ErrNoTOTPSecret):
+		// No existing factor: nothing to prove possession of.
+	case err != nil:
+		return "", "", err
+	case row.Confirmed:
+		ok, verr := t.verifyAndConsume(ctx, userID, code, true)
+		if verr != nil {
+			return "", "", verr
+		}
+		if !ok {
+			return "", "", ErrInvalidTOTPCode
+		}
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{Issuer: t.issuer, AccountName: email, Algorithm: otp.AlgorithmSHA1})
 	if err != nil {
 		return "", "", err
@@ -61,13 +135,16 @@ func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email string) (
 	if err != nil {
 		return "", "", err
 	}
-	if err := t.q.UpsertTOTPSecret(ctx, gen.UpsertTOTPSecretParams{UserID: userID, SecretSealed: sealed}); err != nil {
+	if err := t.store.UpsertTOTPSecret(ctx, userID, sealed); err != nil {
 		return "", "", err
 	}
 	return key.Secret(), key.URL(), nil
 }
 
-// ConfirmEnrol validates the first code, activates TOTP and issues 8 recovery codes.
+// ConfirmEnrol validates the first code, activates TOTP and issues 8
+// recovery codes. Activation and the recovery codes are written by a
+// single TOTPStore.ConfirmEnrol call so a failure partway through never
+// leaves a confirmed factor with no usable recovery codes.
 func (t *TOTP) ConfirmEnrol(ctx context.Context, userID uuid.UUID, code string) ([]string, error) {
 	ok, err := t.verifyAndConsume(ctx, userID, code, false)
 	if err != nil {
@@ -76,13 +153,8 @@ func (t *TOTP) ConfirmEnrol(ctx context.Context, userID uuid.UUID, code string) 
 	if !ok {
 		return nil, ErrInvalidTOTPCode
 	}
-	if err := t.q.ConfirmTOTP(ctx, userID); err != nil {
-		return nil, err
-	}
-	if err := t.q.ReplaceRecoveryCodes(ctx, userID); err != nil {
-		return nil, err
-	}
 	codes := make([]string, 8)
+	hashes := make([][]byte, 8)
 	for i := range codes {
 		raw := make([]byte, 10)
 		if _, err := rand.Read(raw); err != nil {
@@ -91,9 +163,10 @@ func (t *TOTP) ConfirmEnrol(ctx context.Context, userID uuid.UUID, code string) 
 		c := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw))
 		codes[i] = c[:5] + "-" + c[5:10] + "-" + c[10:15]
 		sum := sha256.Sum256([]byte(codes[i]))
-		if err := t.q.InsertRecoveryCode(ctx, gen.InsertRecoveryCodeParams{UserID: userID, CodeHash: sum[:]}); err != nil {
-			return nil, err
-		}
+		hashes[i] = sum[:]
+	}
+	if err := t.store.ConfirmEnrol(ctx, userID, hashes); err != nil {
+		return nil, err
 	}
 	return codes, nil
 }
@@ -108,7 +181,16 @@ func (t *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string) (bool,
 // SetTOTPLastStep's conditional UPDATE. requireConfirmed gates whether an
 // unconfirmed (still-enrolling) secret may be used: ConfirmEnrol needs to
 // validate the very first code before confirmed_at is set, but Verify (the
-// login/step-up/disable path) must never accept an unconfirmed secret.
+// login/step-up/disable/re-enrolment path) must never accept an
+// unconfirmed secret.
+//
+// GetTOTPSecret's error is handled deliberately, not swallowed: only
+// ErrNoTOTPSecret ("this user has never enrolled") means "no code can
+// possibly be valid", so that alone becomes (false, nil). Any other error
+// (a timeout, a connection reset, ...) is propagated as an error rather
+// than folded into the same "code rejected" result — the caller (Login, in
+// particular) must fail closed on a database outage rather than silently
+// treat it as "MFA not required".
 //
 // It deliberately does not use totp.Validate: that helper tolerates a
 // totpSkewSteps window of clock drift by checking neighbouring steps
@@ -120,11 +202,14 @@ func (t *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string) (bool,
 // once that step becomes current. So this checks each candidate step
 // itself and records precisely the one the code matched.
 func (t *TOTP) verifyAndConsume(ctx context.Context, userID uuid.UUID, code string, requireConfirmed bool) (bool, error) {
-	row, err := t.q.GetTOTPSecret(ctx, userID)
-	if err != nil {
+	row, err := t.store.GetTOTPSecret(ctx, userID)
+	if errors.Is(err, ErrNoTOTPSecret) {
 		return false, nil
 	}
-	if requireConfirmed && !row.ConfirmedAt.Valid {
+	if err != nil {
+		return false, err
+	}
+	if requireConfirmed && !row.Confirmed {
 		return false, nil
 	}
 	secret, err := t.box.Open(row.SecretSealed)
@@ -138,11 +223,11 @@ func (t *TOTP) verifyAndConsume(ctx context.Context, userID uuid.UUID, code stri
 	if !ok {
 		return false, nil
 	}
-	n, err := t.q.SetTOTPLastStep(ctx, gen.SetTOTPLastStepParams{UserID: userID, LastUsedStep: step})
+	n, err := t.store.SetTOTPLastStep(ctx, userID, step)
 	if err != nil {
 		return false, err
 	}
-	return n == 1, nil // 0 rows means this step was already consumed (or an older one)
+	return n, nil // false means this step was already consumed (or an older one)
 }
 
 // matchStep reports the step (Unix time / 30s) that code validates against,
@@ -180,23 +265,32 @@ func dedupSteps(a, b int64) []int64 {
 // VerifyRecovery consumes one recovery code.
 func (t *TOTP) VerifyRecovery(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(code))))
-	n, err := t.q.UseRecoveryCode(ctx, gen.UseRecoveryCodeParams{UserID: userID, CodeHash: sum[:]})
-	return n == 1, err
+	return t.store.UseRecoveryCode(ctx, userID, sum[:])
 }
 
 // Enabled reports whether the user has a confirmed TOTP secret.
+//
+// It fails closed: only ErrNoTOTPSecret ("this user never enrolled") is
+// treated as "not enabled". Any other store error (a statement timeout, a
+// dropped connection, ...) is propagated rather than swallowed into
+// (false, nil) — swallowing it here would let a database hiccup silently
+// downgrade a TOTP-protected login to password-only, because Login treats
+// mfaRequired == false as "create an MFA-complete session".
 func (t *TOTP) Enabled(ctx context.Context, userID uuid.UUID) (bool, error) {
-	row, err := t.q.GetTOTPSecret(ctx, userID)
-	if err != nil {
+	row, err := t.store.GetTOTPSecret(ctx, userID)
+	if errors.Is(err, ErrNoTOTPSecret) {
 		return false, nil
 	}
-	return row.ConfirmedAt.Valid, nil
+	if err != nil {
+		return false, err
+	}
+	return row.Confirmed, nil
 }
 
 // Disable removes the secret and recovery codes.
 func (t *TOTP) Disable(ctx context.Context, userID uuid.UUID) error {
-	if err := t.q.ReplaceRecoveryCodes(ctx, userID); err != nil {
+	if err := t.store.ReplaceRecoveryCodes(ctx, userID); err != nil {
 		return err
 	}
-	return t.q.DeleteTOTP(ctx, userID)
+	return t.store.DeleteTOTP(ctx, userID)
 }

@@ -59,7 +59,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(q, time.Now)}
-	totp := auth.NewTOTP(q, crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
+	totp := auth.NewTOTP(auth.NewSQLTOTPStore(d.Pool()), crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
 	s.Deps = api.Deps{DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, totp), TOTP: totp}
 	for _, opt := range opts {
 		opt(s)
