@@ -104,11 +104,19 @@ func deliver(settings SMTPSettings, to, subject, body string) error {
 	}
 
 	if settings.Username != "" {
-		if ok, _ := c.Extension("AUTH"); ok {
-			auth := smtp.PlainAuth("", settings.Username, settings.Password, settings.Host)
-			if err := c.Auth(auth); err != nil {
-				return fmt.Errorf("authenticate: %w", err)
-			}
+		ok, _ := c.Extension("AUTH")
+		if !ok {
+			// An operator who configured a username expects it to actually
+			// be used. Silently falling through to an unauthenticated
+			// conversation would either have the server reject the message
+			// anyway (masking the real problem as a Mail/Rcpt/Data error)
+			// or, worse, have it accept mail the operator believed required
+			// a credential — fail loudly here instead.
+			return errors.New("smtp: server does not support AUTH but credentials were provided")
+		}
+		auth := smtp.PlainAuth("", settings.Username, settings.Password, settings.Host)
+		if err := c.Auth(auth); err != nil {
+			return fmt.Errorf("authenticate: %w", err)
 		}
 	}
 

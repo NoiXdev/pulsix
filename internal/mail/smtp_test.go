@@ -89,11 +89,14 @@ func (s *testSession) Logout() error { return nil }
 
 // startTestServer starts an in-process SMTP server on 127.0.0.1:0 (an
 // ephemeral port), the same approach apitest.New uses for the HTTP API,
-// and returns the host and port to connect to. AllowInsecureAuth is
-// required: the server offers no TLS at all (this package's own deliver
-// only advertises STARTTLS when a *tls.Config is set, and none is here),
-// so without it go-smtp refuses to advertise AUTH entirely.
-func startTestServer(t *testing.T, backend *testBackend) (host string, port int) {
+// and returns the host and port to connect to. allowInsecureAuth controls
+// go-smtp's own AllowInsecureAuth: the server offers no TLS at all (this
+// package's own deliver only advertises STARTTLS when a *tls.Config is
+// set, and none is here), so with it false go-smtp refuses to advertise
+// AUTH at all — which is exactly the "server does not support AUTH"
+// scenario TestSendFailsWhenCredentialsProvidedButServerDoesNotAdvertiseAUTH
+// needs, without having to fake a non-authenticating backend.
+func startTestServer(t *testing.T, backend *testBackend, allowInsecureAuth bool) (host string, port int) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -101,7 +104,7 @@ func startTestServer(t *testing.T, backend *testBackend) (host string, port int)
 	}
 	srv := gosmtp.NewServer(backend)
 	srv.Domain = "localhost"
-	srv.AllowInsecureAuth = true
+	srv.AllowInsecureAuth = allowInsecureAuth
 	go func() {
 		_ = srv.Serve(ln)
 	}()
@@ -120,7 +123,7 @@ func startTestServer(t *testing.T, backend *testBackend) (host string, port int)
 
 func TestSendDeliversRecipientSubjectAndBody(t *testing.T) {
 	backend := &testBackend{username: "pulsix", password: "correct horse"}
-	host, port := startTestServer(t, backend)
+	host, port := startTestServer(t, backend, true)
 
 	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
 		return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "correct horse", From: "pulsix@example.test"}, nil
@@ -150,7 +153,7 @@ func TestSendDeliversRecipientSubjectAndBody(t *testing.T) {
 
 func TestTestWithWrongPasswordFails(t *testing.T) {
 	backend := &testBackend{username: "pulsix", password: "correct horse"}
-	host, port := startTestServer(t, backend)
+	host, port := startTestServer(t, backend, true)
 
 	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
 		return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "wrong password", From: "pulsix@example.test"}, nil
@@ -181,7 +184,7 @@ func TestSendFailsWhenNotConfigured(t *testing.T) {
 
 func TestSendRequiringStartTLSFailsWhenServerDoesNotOfferIt(t *testing.T) {
 	backend := &testBackend{username: "pulsix", password: "correct horse"}
-	host, port := startTestServer(t, backend)
+	host, port := startTestServer(t, backend, true)
 
 	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
 		return mail.SMTPSettings{Host: host, Port: port, From: "pulsix@example.test", StartTLS: true}, nil
@@ -214,5 +217,31 @@ func TestDiscardAlwaysSucceedsAndSendsNothing(t *testing.T) {
 	var d mail.Discard
 	if err := d.Send(context.Background(), "dest@example.test", "s", "b"); err != nil {
 		t.Fatalf("Discard.Send: %v", err)
+	}
+}
+
+// TestSendFailsWhenCredentialsProvidedButServerDoesNotAdvertiseAUTH is a
+// regression test for the "also fix" item in Task 12 fix round 1: deliver
+// used to silently fall through to an unauthenticated SMTP conversation
+// when a username was configured but the server did not advertise AUTH.
+// An operator who supplied credentials expects them to be used — falling
+// back silently either masks a real misconfiguration or, worse, lets mail
+// go out unauthenticated when the operator believed a credential was
+// required. Starting the server with allowInsecureAuth=false is what makes
+// go-smtp itself refuse to advertise AUTH over a connection with no TLS
+// (see startTestServer's own doc comment) — a realistic stand-in for a
+// production server that requires STARTTLS before AUTH.
+func TestSendFailsWhenCredentialsProvidedButServerDoesNotAdvertiseAUTH(t *testing.T) {
+	backend := &testBackend{username: "pulsix", password: "correct horse"}
+	host, port := startTestServer(t, backend, false)
+
+	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "correct horse", From: "pulsix@example.test"}, nil
+	})
+	if err := m.Send(context.Background(), "dest@example.test", "s", "b"); err == nil {
+		t.Fatal("Send with credentials but no AUTH advertised: got nil error, want one")
+	}
+	if len(backend.recorded()) != 0 {
+		t.Fatal("a message must not be delivered unauthenticated when credentials were configured")
 	}
 }
