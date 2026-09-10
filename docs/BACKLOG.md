@@ -59,6 +59,7 @@ Last updated: 2026-09-10
 | 1.13 | Docker Compose single-node install (manager, worker, db) | planned | `docker compose up` |
 | 1.14 | Light theme | idea | dark-first, light later |
 | 1.15 | Rate limiting on auth endpoints (login, TOTP verify, passkey finish, invite accept) | planned | before v0.1 release |
+| 1.19 | Account recovery when the second factor is lost: a recovery code must also authorise re-enrolling or disabling TOTP, otherwise the only way back is an administrator reset | planned | found during v0.1 Task 7 review |
 | 1.16 | User management: invitations by e-mail, roles (owner/admin/operator/viewer), remove, instance-admin deactivate | planned | plan v0.1 Task 10 |
 | 1.17 | Activity feed per org and per user from the audit log, filters by actor/object | planned | plan v0.1 Task 11 |
 | 1.18 | First-run setup wizard: instance admin, first org, SMTP, forced second-factor enrolment | planned | plan v0.1 Task 12 |
