@@ -4,17 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-// User is the service-level view of a user row.
+// User is the service-level view of a user row. DisabledAt is non-nil once
+// an instance admin has deactivated the account (tenancy.Service.DeactivateUser)
+// — Login checks it below, and auth.Passkeys.FinishLogin checks the same
+// field on its own copy of User (Finding 2, Task 10 fix round 1).
 type User struct {
 	ID            uuid.UUID
 	Email         string
 	DisplayName   string
 	PasswordHash  *string
 	InstanceAdmin bool
+	DisabledAt    *time.Time
 }
 
 // Sentinel errors mapped to HTTP status by the transport layer.
@@ -113,6 +118,27 @@ type LoginResult struct {
 }
 
 // Login verifies the password and opens a session.
+//
+// A disabled account (u.DisabledAt != nil, set by
+// tenancy.Service.DeactivateUser) is refused here with the same
+// ErrInvalidCredentials a wrong password gets, not a distinct error: a
+// dedicated "account disabled" response would let a caller use the login
+// endpoint to probe which addresses belong to disabled accounts, the same
+// account-enumeration concern dummyHash already exists to close for
+// "account doesn't exist" and "account has no password". The check runs
+// only after a successful password verification (never before, and never
+// skipped for a wrong password) specifically so a disabled account's login
+// attempt costs exactly the same argon2id verification time as any other
+// outcome and reveals nothing through response timing either (Finding 2,
+// Task 10 fix round 1).
+//
+// This is deliberately not the only place deactivation is enforced:
+// Sessions.Lookup and Tokens.Resolve both refuse a disabled user's row at
+// the query level too (see auth.sql's GetSession and tokens.sql's
+// GetAPITokenByHash), so an already-issued session or bearer token stops
+// working immediately as well, and so does any future entry point that
+// resolves a principal through either of those — not only the ones that
+// call Login or FinishLogin to mint a fresh credential.
 func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {
 	u, err := s.store.GetUserByEmail(ctx, email)
 	if err != nil || u.PasswordHash == nil {
@@ -127,6 +153,9 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 		return LoginResult{}, fmt.Errorf("verify password: %w", err)
 	}
 	if !ok {
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	if u.DisabledAt != nil {
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	mfaRequired, err := s.mfa.Enabled(ctx, u.ID)

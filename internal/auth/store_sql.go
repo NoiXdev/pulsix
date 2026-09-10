@@ -27,7 +27,10 @@ func (s *SQLStore) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) 
 }
 
 func toUser(r gen.User) User {
-	return User{ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, PasswordHash: r.PasswordHash, InstanceAdmin: r.InstanceAdmin}
+	return User{
+		ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, PasswordHash: r.PasswordHash, InstanceAdmin: r.InstanceAdmin,
+		DisabledAt: fromPgTimestamptz(r.DisabledAt),
+	}
 }
 
 func mapErr(err error) error {

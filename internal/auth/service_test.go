@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -79,6 +80,29 @@ func TestLoginFailsClosedOnMFACheckError(t *testing.T) {
 	}
 	if len(sess.created) != 0 {
 		t.Fatalf("a session was created despite the MFA check failing: %+v", sess.created)
+	}
+}
+
+// TestLoginRejectsDisabledUser is Finding 2's password-login regression
+// test (Task 10 fix round 1): a disabled account with an otherwise-correct
+// password must not be able to log back in and mint a fresh session — the
+// exact gap the review found (DeactivateUser revoked sessions and tokens,
+// but nothing read disabled_at, so the same password just opened a new
+// one). The response is the same ErrInvalidCredentials a wrong password
+// produces, not a distinct error, so login cannot be used to probe which
+// accounts are disabled.
+func TestLoginRejectsDisabledUser(t *testing.T) {
+	hash, _ := auth.HashPassword("correct horse")
+	uid := uuid.Must(uuid.NewV7())
+	now := time.Now()
+	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash, DisabledAt: &now}}}
+	sess := &fakeSessions{}
+	svc := auth.NewService(store, sess, auth.NoMFA{})
+	if _, err := svc.Login(context.Background(), "a@x", "correct horse"); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("Login(disabled user, correct password) err = %v, want ErrInvalidCredentials", err)
+	}
+	if len(sess.created) != 0 {
+		t.Fatalf("a session was created for a disabled user: %+v", sess.created)
 	}
 }
 

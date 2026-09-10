@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -142,6 +143,37 @@ func TestSQLTokenStoreGetByHashExcludesExpired(t *testing.T) {
 // revoke a token through an org it does not belong to — the same isolation
 // RLS enforces at the row-visibility level, asserted here at the
 // application query's own WHERE clause.
+// TestSQLTokenStoreGetByHashExcludesDisabledUser is the query-level
+// backstop half of Finding 2's fix for bearer tokens (Task 10 fix round
+// 1): GetAPITokenByHash's own WHERE clause now excludes a token whose
+// owning user is disabled (tokens.sql), so a token stops resolving the
+// instant its owner is disabled, not only through DeactivateUser's
+// explicit RevokeTokensForUser call.
+func TestSQLTokenStoreGetByHashExcludesDisabledUser(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := seedUser(t, q, "disabled-token-owner@example.test")
+	org := seedOrg(t, q, "disabled-token-org")
+	store := auth.NewSQLTokenStore(q)
+
+	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "operator"}
+	hash := hashOf("disabled-owner-secret")
+	if err := store.Insert(ctx, tok, hash); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if _, _, err := store.GetByHash(ctx, hash, time.Now()); err != nil {
+		t.Fatalf("GetByHash before disabling: %v", err)
+	}
+
+	if err := q.DisableUser(ctx, gen.DisableUserParams{ID: uid, DisabledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.GetByHash(ctx, hash, time.Now()); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("GetByHash(disabled owner) err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSQLTokenStoreRevokeIsScopedToOrg(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()

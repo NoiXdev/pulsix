@@ -316,6 +316,16 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 	if !ok {
 		return "", fmt.Errorf("unexpected user type %T from ValidatePasskeyLogin", user)
 	}
+	if found.u.DisabledAt != nil {
+		// Deactivation must end access at every entry point, not just
+		// password login (Finding 2, Task 10 fix round 1): a disabled
+		// account's passkey must not open a fresh session either, even
+		// though the assertion itself verifies correctly against the
+		// stored credential. Checked before touching the counter at all,
+		// so a disabled account's passkey use leaves no
+		// UpdateCredentialCounter call behind.
+		return "", ErrInvalidCredentials
+	}
 	// go-webauthn does not fail a login when the signature counter regresses
 	// or repeats: Authenticator.UpdateCounter (called inside
 	// ValidatePasskeyLogin, above) only sets CloneWarning and leaves

@@ -56,7 +56,7 @@ func (q *Queries) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 
 const getSession = `-- name: GetSession :one
 SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, u.instance_admin FROM sessions s JOIN users u ON u.id = s.user_id
-WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL
 `
 
 type GetSessionRow struct {
@@ -70,6 +70,12 @@ type GetSessionRow struct {
 	InstanceAdmin bool               `json:"instance_admin"`
 }
 
+// u.disabled_at IS NULL is the backstop for deactivation (Finding 2, Task
+// 10 fix round 1): DeactivateUser also revokes the user's sessions
+// explicitly, but this clause is what makes it impossible for any current
+// or future caller of Sessions.Lookup to forget the check — a disabled
+// user's session simply stops resolving here, the same way an expired or
+// revoked one already does.
 func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (GetSessionRow, error) {
 	row := q.db.QueryRow(ctx, getSession, id)
 	var i GetSessionRow

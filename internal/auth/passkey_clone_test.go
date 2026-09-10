@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
 )
@@ -147,6 +148,56 @@ func TestFinishLoginSucceedsAndAdvancesCounterWithRealSignature(t *testing.T) {
 	}
 	if len(store.updateCounterCalls) != 1 || store.updateCounterCalls[0].counter != storedCounter+1 {
 		t.Fatalf("updateCounterCalls = %+v, want one call advancing to %d", store.updateCounterCalls, storedCounter+1)
+	}
+}
+
+// TestFinishLoginRejectsDisabledUser is Finding 2's passkey-login
+// regression test (Task 10 fix round 1): a genuinely, correctly signed
+// assertion — proving possession of the credential — must still be refused
+// once the owning account is disabled, the same way Login refuses a
+// disabled user's correct password. It uses the same real-ECDSA-signature
+// helper TestFinishLoginSucceedsAndAdvancesCounterWithRealSignature does,
+// so the rejection is provably about DisabledAt and not an incidental
+// signature-verification failure a hand-built (unsigned) assertion could
+// not distinguish from.
+func TestFinishLoginRejectsDisabledUser(t *testing.T) {
+	now := time.Now()
+	clock := func() time.Time { return now }
+	store := newMemPasskeyStore(clock)
+	uid := uuid.Must(uuid.NewV7())
+	disabledAt := now
+	users := &fakeStore{users: map[string]auth.User{
+		"disabled@x": {ID: uid, Email: "disabled@x", DisplayName: "Disabled", DisabledAt: &disabledAt},
+	}}
+	pk, err := auth.NewPasskeys(store, users, &fakeSessions{}, testRPID, "Pulsix Test", testOrigin, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.findUserID = &uid
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credID := []byte("disabled-user-credential-id")
+	const storedCounter = uint32(5)
+	store.listResult = []auth.Credential{{CredentialID: credID, PublicKey: buildCOSEPublicKey(t, &priv.PublicKey), SignCount: storedCounter}}
+
+	opts, cid, err := pk.BeginLogin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := buildSignedAssertionResponse(t, opts, testRPID, testOrigin, credID, uid[:], storedCounter+1, priv)
+
+	cookie, err := pk.FinishLogin(context.Background(), cid, response)
+	if !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("FinishLogin(disabled user) err = %v, want ErrInvalidCredentials", err)
+	}
+	if cookie != "" {
+		t.Fatalf("FinishLogin returned a session cookie for a disabled user: %q", cookie)
+	}
+	if len(store.updateCounterCalls) != 0 {
+		t.Fatalf("UpdateCredentialCounter called %+v, want no calls for a disabled user", store.updateCounterCalls)
 	}
 }
 

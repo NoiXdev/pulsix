@@ -9,9 +9,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 -- the caller-supplied clock (see auth.Tokens' injected clock), not the
 -- database's own now(), so expiry is evaluated against the same time the
 -- rest of Resolve reasons about.
+-- u.disabled_at IS NULL is the same deactivation backstop GetSession
+-- carries in auth.sql (Finding 2, Task 10 fix round 1): a bearer token
+-- minted by a since-disabled user must stop resolving here too, not just
+-- get revoked at deactivation time.
 SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, u.instance_admin
 FROM api_tokens t JOIN users u ON u.id = t.user_id
-WHERE t.secret_hash = $1 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > sqlc.arg(now)::timestamptz);
+WHERE t.secret_hash = $1 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > sqlc.arg(now)::timestamptz) AND u.disabled_at IS NULL;
 
 -- name: ListAPITokensForOrg :many
 -- Columns are named explicitly for the same reason as GetAPITokenByHash

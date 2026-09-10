@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -63,6 +64,38 @@ func TestSessionMarkMFAComplete(t *testing.T) {
 	p, err = s.Lookup(ctx, cookie)
 	if err != nil || !p.MFAComplete {
 		t.Fatalf("after MarkMFAComplete: %+v, %v", p, err)
+	}
+}
+
+// TestSessionLookupRejectsDisabledUser is the query-level backstop half of
+// Finding 2's fix (Task 10 fix round 1): GetSession's own WHERE clause now
+// excludes a disabled user's row (auth.sql), so a session stops resolving
+// the instant the owning account is disabled — even one this test never
+// explicitly revokes — not only through DeactivateUser's explicit
+// RevokeSessionsForUser call. This is the backstop that makes it
+// impossible for a future caller of Sessions.Lookup to forget the check.
+func TestSessionLookupRejectsDisabledUser(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateUser(ctx, gen.CreateUserParams{ID: uid, Email: "disabled-session@example.test", DisplayName: "D"}); err != nil {
+		t.Fatal(err)
+	}
+	s := auth.NewSessions(q, time.Now)
+	_, cookie, err := s.Create(ctx, uid, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, cookie); err != nil {
+		t.Fatalf("lookup before disabling: %v", err)
+	}
+
+	if err := q.DisableUser(ctx, gen.DisableUserParams{ID: uid, DisabledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, cookie); err == nil {
+		t.Fatal("session for a disabled user was accepted")
 	}
 }
 
