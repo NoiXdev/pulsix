@@ -31,10 +31,18 @@ type Principal struct {
 }
 
 // Sessions stores cookie sessions as id + hashed secret.
-type Sessions struct{ q *gen.Queries }
+type Sessions struct {
+	q   *gen.Queries
+	now func() time.Time
+}
 
-// NewSessions builds the session store.
-func NewSessions(q *gen.Queries) *Sessions { return &Sessions{q: q} }
+// NewSessions builds the session store. now is the clock used to compute
+// ExpiresAt; pass time.Now in production and an injectable clock in tests so
+// expiry can be driven through the public API instead of only through the
+// SQL layer's own "expires_at > now()" clause.
+func NewSessions(q *gen.Queries, now func() time.Time) *Sessions {
+	return &Sessions{q: q, now: now}
+}
 
 // Create inserts a session and returns the cookie value "<id>.<secret>".
 func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
@@ -46,7 +54,7 @@ func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete boo
 	sum := sha256.Sum256(secret)
 	err := s.q.CreateSession(ctx, gen.CreateSessionParams{
 		ID: id, UserID: userID, SecretHash: sum[:], MfaComplete: mfaComplete,
-		ExpiresAt: time.Now().Add(SessionTTL),
+		ExpiresAt: s.now().Add(SessionTTL),
 	})
 	if err != nil {
 		return uuid.Nil, "", err
