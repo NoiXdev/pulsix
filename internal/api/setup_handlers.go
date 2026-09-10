@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 )
@@ -30,7 +31,7 @@ type setupCompleteInput struct {
 		// comment for the rule); it cannot be shared as a named constant
 		// because a struct tag must be a literal, the same constraint
 		// orgCreateInput's own Slug field notes.
-		OrgSlug string `json:"org_slug" minLength:"1" maxLength:"40" pattern:"^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$"`
+		OrgSlug string `json:"org_slug" minLength:"1" maxLength:"40" pattern:"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"`
 		OrgName string `json:"org_name" minLength:"1"`
 		// SMTP is optional: the wizard can be completed with mail
 		// configured later, through PUT /admin/settings/smtp.
@@ -60,7 +61,20 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 			return nil, mapSetupErr(ctx, err)
 		}
 		out := &setupStatusOutput{}
-		out.Body.Completed, out.Body.AdminMFAEnrolled, out.Body.Version = st.Completed, st.AdminMFAEnrolled, st.Version
+		out.Body.Completed, out.Body.Version = st.Completed, st.Version
+		// Completed and Version stay public unconditionally — the SPA calls
+		// this route on load, before it has any session, to decide whether
+		// to redirect into the wizard. AdminMFAEnrolled is different: it
+		// exposes whether the instance administrator has a second factor,
+		// which is sensitive enough that an unauthenticated caller must not
+		// learn it for free. Gate it behind the mere presence of a session
+		// (not a fully MFA-complete or instance-admin one — the wizard's own
+		// freshly opened session, and any other logged-in caller, both
+		// qualify; only a caller with no session at all is denied the
+		// field).
+		if _, ok := auth.FromContext(ctx); ok {
+			out.Body.AdminMFAEnrolled = st.AdminMFAEnrolled
+		}
 		return out, nil
 	})
 
@@ -192,6 +206,15 @@ func registerSMTPSettingsRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		if err := deps.Mailer.Test(ctx, in.Body.To); err != nil {
+			if errors.Is(err, setup.ErrNotFound) {
+				// SMTP was never configured: Mailer.Test fails at loading
+				// settings (setup.LoadSMTP returns ErrNotFound), before it
+				// ever dials anything. That is a state conflict on this
+				// instance — there is nothing to test yet — not a failure
+				// to reach an upstream server, so 409 reads better than
+				// 502 here.
+				return nil, huma.Error409Conflict("smtp is not configured")
+			}
 			// The whole point of a "test" action is to surface the SMTP
 			// server's actual response (a rejected login, an unreachable
 			// host, ...) rather than a generic failure — see this route's
