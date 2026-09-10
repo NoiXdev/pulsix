@@ -1,0 +1,17 @@
+/* Pulsix brand tokens · dark-first */
+:root {
+  --px-ink: #0E1117;
+  --px-surface: #161B26;
+  --px-border: #1E2336;
+  --px-text: #F2F4F8;
+  --px-muted: #6B7280;
+  --px-paper: #F6F4EF;
+  --px-accent: #00E5FF;
+  --px-accent-dim: #009CB2;
+  --px-ok: #34D399;
+  --px-warn: #FBBF24;
+  --px-crit: #F87171;
+  --px-unknown: #6B7280;
+  --px-font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+  --px-font-sans: Inter, system-ui, sans-serif;
+}
