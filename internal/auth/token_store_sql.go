@@ -33,8 +33,15 @@ func (s *SQLTokenStore) Insert(ctx context.Context, t Token, secretHash []byte) 
 // row scan failure that is not "no rows" is a genuine infrastructure
 // problem that must propagate, not be folded into "unknown token" (see
 // TokenStore.GetByHash and Resolve's fail-closed handling of this error).
-func (s *SQLTokenStore) GetByHash(ctx context.Context, secretHash []byte, _ time.Time) (Token, bool, error) {
-	row, err := s.q.GetAPITokenByHash(ctx, secretHash)
+//
+// now is passed into the query itself (tokens.sql's expires_at > $2), not
+// discarded in favor of the database's own now(): the interface's contract
+// is "usable as of now", and the caller's injected clock is what "now"
+// means throughout Tokens — the in-memory fake honours it the same way
+// (see token_test.go's TestTokenExpiry and this file's
+// TestSQLTokenStoreGetByHashUsesInjectedNow).
+func (s *SQLTokenStore) GetByHash(ctx context.Context, secretHash []byte, now time.Time) (Token, bool, error) {
+	row, err := s.q.GetAPITokenByHash(ctx, gen.GetAPITokenByHashParams{SecretHash: secretHash, Now: now})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Token{}, false, ErrNotFound

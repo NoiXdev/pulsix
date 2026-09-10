@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -218,5 +219,89 @@ func TestSQLTokenStoreTouchLastUsed(t *testing.T) {
 	}
 	if got.LastUsedAt == nil || !got.LastUsedAt.Equal(at) {
 		t.Fatalf("LastUsedAt = %v, want %v", got.LastUsedAt, at)
+	}
+}
+
+// TestSQLTokenStoreGetByHashUsesInjectedNow proves GetByHash evaluates
+// expiry against the now argument it is given, not the database's own
+// now() (Finding 3, fix round 1): a token expiring one hour from the real
+// wall clock is looked up once with a real "now" (still valid) and once
+// with a caller-supplied "now" two hours in the future (must be rejected).
+// If the query still used the database's now() instead of $2, the second
+// lookup would wrongly succeed — the database's real clock has not moved,
+// only the argument this test passes has — so this fails if that
+// regresses, the same way TestTokenExpiry proves the property for the
+// in-memory fake's injected clock.
+func TestSQLTokenStoreGetByHashUsesInjectedNow(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := seedUser(t, q, "clock-token@example.test")
+	org := seedOrg(t, q, "clock-token-org")
+	store := auth.NewSQLTokenStore(q)
+	exp := time.Now().Add(time.Hour)
+	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer", ExpiresAt: &exp}
+	hash := hashOf("clock-driven")
+	if err := store.Insert(ctx, tok, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := store.GetByHash(ctx, hash, time.Now()); err != nil {
+		t.Fatalf("GetByHash with the real now: %v (token expires an hour from now, should still be usable)", err)
+	}
+
+	future := time.Now().Add(2 * time.Hour)
+	if _, _, err := store.GetByHash(ctx, hash, future); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("GetByHash with an injected future now: err = %v, want ErrNotFound (the database's own now() has not moved, so this only fails correctly if the injected clock is actually used)", err)
+	}
+}
+
+// TestAPITokensAreIsolatedPerOrgByRLS mirrors db_test.TestMembershipsAreIsolatedPerOrg:
+// it exercises the org_isolation RLS policy directly, via d.WithOrg (which
+// sets the pulsix.org_id setting org_isolation's USING clause reads),
+// rather than through SQLTokenStore/gen.Queries the way every other test in
+// this file does. testdb.Open connects as pulsix_app without ever setting
+// pulsix.org_id, so those tests only ever exercise the org_isolation_bypass
+// policy (current_setting('pulsix.org_id', true) IS NULL) — replacing
+// org_isolation's USING clause with USING (true) would not fail a single
+// one of them. This test would (Finding 2, fix round 1).
+func TestAPITokensAreIsolatedPerOrgByRLS(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := seedUser(t, q, "rls-token@example.test")
+	orgA := seedOrg(t, q, "rls-token-org-a")
+	orgB := seedOrg(t, q, "rls-token-org-b")
+	store := auth.NewSQLTokenStore(q)
+	tokA := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: orgA, Name: "a", Role: "viewer"}
+	if err := store.Insert(ctx, tokA, hashOf("rls-a")); err != nil {
+		t.Fatal(err)
+	}
+	tokB := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: orgB, Name: "b", Role: "viewer"}
+	if err := store.Insert(ctx, tokB, hashOf("rls-b")); err != nil {
+		t.Fatal(err)
+	}
+
+	var seen []uuid.UUID
+	err := d.WithOrg(ctx, orgA, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT org_id FROM api_tokens`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			seen = append(seen, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != orgA {
+		t.Fatalf("RLS leak: saw %v, want only [%s]", seen, orgA)
 	}
 }

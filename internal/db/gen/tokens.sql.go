@@ -14,9 +14,15 @@ import (
 )
 
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
-SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.secret_hash, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, u.instance_admin FROM api_tokens t JOIN users u ON u.id = t.user_id
-WHERE t.secret_hash = $1 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now())
+SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, u.instance_admin
+FROM api_tokens t JOIN users u ON u.id = t.user_id
+WHERE t.secret_hash = $1 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > $2::timestamptz)
 `
+
+type GetAPITokenByHashParams struct {
+	SecretHash []byte    `json:"secret_hash"`
+	Now        time.Time `json:"now"`
+}
 
 type GetAPITokenByHashRow struct {
 	ID            uuid.UUID          `json:"id"`
@@ -24,7 +30,6 @@ type GetAPITokenByHashRow struct {
 	OrgID         uuid.UUID          `json:"org_id"`
 	Name          string             `json:"name"`
 	Role          OrgRole            `json:"role"`
-	SecretHash    []byte             `json:"secret_hash"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -32,8 +37,14 @@ type GetAPITokenByHashRow struct {
 	InstanceAdmin bool               `json:"instance_admin"`
 }
 
-func (q *Queries) GetAPITokenByHash(ctx context.Context, secretHash []byte) (GetAPITokenByHashRow, error) {
-	row := q.db.QueryRow(ctx, getAPITokenByHash, secretHash)
+// Columns are named explicitly (not t.*) so secret_hash is never scanned
+// into Go here: the generated row struct would otherwise carry a
+// json:"secret_hash" field one careless marshal away from a leak. now is
+// the caller-supplied clock (see auth.Tokens' injected clock), not the
+// database's own now(), so expiry is evaluated against the same time the
+// rest of Resolve reasons about.
+func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashParams) (GetAPITokenByHashRow, error) {
+	row := q.db.QueryRow(ctx, getAPITokenByHash, arg.SecretHash, arg.Now)
 	var i GetAPITokenByHashRow
 	err := row.Scan(
 		&i.ID,
@@ -41,7 +52,6 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, secretHash []byte) (Get
 		&i.OrgID,
 		&i.Name,
 		&i.Role,
-		&i.SecretHash,
 		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
@@ -80,25 +90,39 @@ func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) 
 }
 
 const listAPITokensForOrg = `-- name: ListAPITokensForOrg :many
-SELECT id, user_id, org_id, name, role, secret_hash, expires_at, last_used_at, revoked_at, created_at FROM api_tokens WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at
+SELECT id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at
+FROM api_tokens WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at
 `
 
-func (q *Queries) ListAPITokensForOrg(ctx context.Context, orgID uuid.UUID) ([]ApiToken, error) {
+type ListAPITokensForOrgRow struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Name       string             `json:"name"`
+	Role       OrgRole            `json:"role"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
+// Columns are named explicitly for the same reason as GetAPITokenByHash
+// above: secret_hash must never be scanned into a Go struct here.
+func (q *Queries) ListAPITokensForOrg(ctx context.Context, orgID uuid.UUID) ([]ListAPITokensForOrgRow, error) {
 	rows, err := q.db.Query(ctx, listAPITokensForOrg, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ApiToken
+	var items []ListAPITokensForOrgRow
 	for rows.Next() {
-		var i ApiToken
+		var i ListAPITokensForOrgRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
 			&i.OrgID,
 			&i.Name,
 			&i.Role,
-			&i.SecretHash,
 			&i.ExpiresAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
