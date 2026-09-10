@@ -1,0 +1,355 @@
+package tenancy
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/auth"
+)
+
+// Sentinel errors mapped to HTTP status by the transport layer.
+var (
+	ErrNotFound  = errors.New("not found")
+	ErrNotMember = errors.New("not a member")
+	ErrForbidden = errors.New("forbidden")
+	ErrLastOwner = errors.New("organization needs at least one owner")
+	ErrSlugTaken = errors.New("slug already in use")
+)
+
+// InviteTTL is how long an invitation link works.
+const InviteTTL = 7 * 24 * time.Hour
+
+// inviteSecretBytes is the raw entropy carried by an invite token, the same
+// width Sessions.Create and Tokens.Create use for their own secrets.
+const inviteSecretBytes = 24
+
+// Org is an organization.
+type Org struct {
+	ID        uuid.UUID
+	Slug      string
+	Name      string
+	CreatedAt time.Time
+}
+
+// OrgMembership is one of a user's org memberships, joined with the org's
+// own slug and name so ListOrgsForUser needs no second round trip.
+type OrgMembership struct {
+	OrgID     uuid.UUID
+	Slug      string
+	Name      string
+	Role      Role
+	CreatedAt time.Time
+}
+
+// Member is one org's view of one of its members, for the member-list route.
+type Member struct {
+	UserID      uuid.UUID
+	Email       string
+	DisplayName string
+	Role        Role
+	DisabledAt  *time.Time
+	CreatedAt   time.Time
+}
+
+// User is the tenancy-service view of a user row — just enough to drive
+// invite acceptance, not the full auth.User.
+type User struct {
+	ID           uuid.UUID
+	Email        string
+	DisplayName  string
+	PasswordHash *string
+}
+
+// Invite carries the invitation. Token is the plaintext link secret and is
+// only ever populated by Invite itself — nothing reads it back out of
+// storage, since only its SHA-256 hash is ever persisted (see
+// Store.InsertInvite).
+type Invite struct {
+	ID        uuid.UUID
+	OrgID     uuid.UUID
+	Email     string
+	Role      Role
+	InvitedBy uuid.UUID
+	ExpiresAt time.Time
+	Token     string
+}
+
+// Store is the persistence contract for tenancy. Every method that can find
+// nothing returns ErrNotFound — never a swallowed error — so callers can
+// fail closed the same way auth.Store and auth.TokenStore do.
+type Store interface {
+	CreateOrg(ctx context.Context, o Org) error
+	GetOrgBySlug(ctx context.Context, slug string) (Org, error)
+	GetOrgByID(ctx context.Context, id uuid.UUID) (Org, error)
+	UpdateOrg(ctx context.Context, o Org) error
+	ListOrgsForUser(ctx context.Context, userID uuid.UUID) ([]OrgMembership, error)
+	GetMembership(ctx context.Context, orgID, userID uuid.UUID) (Role, error)
+	AddMembership(ctx context.Context, orgID, userID uuid.UUID, role Role) error
+	UpdateMembershipRole(ctx context.Context, orgID, userID uuid.UUID, role Role) error
+	DeleteMembership(ctx context.Context, orgID, userID uuid.UUID) error
+	CountOwners(ctx context.Context, orgID uuid.UUID) (int, error)
+	ListMembers(ctx context.Context, orgID uuid.UUID) ([]Member, error)
+	GetUserByEmail(ctx context.Context, email string) (User, error)
+	CreateUser(ctx context.Context, u User) error
+	SetUserPasswordAndName(ctx context.Context, id uuid.UUID, hash, name string) error
+	DisableUser(ctx context.Context, id uuid.UUID, at time.Time) error
+	RevokeSessionsForUser(ctx context.Context, id uuid.UUID) error
+	RevokeTokensForUser(ctx context.Context, id uuid.UUID) error
+	InsertInvite(ctx context.Context, inv Invite, tokenHash []byte) error
+	// TakeInvite atomically finds an invite that is unaccepted and
+	// unexpired as of now and marks it accepted, returning ErrNotFound if
+	// no such invite exists — whether because the token is unknown,
+	// expired, or already used. It must be atomic (find-and-mark in one
+	// step) so two concurrent accepts of the same token can never both
+	// succeed.
+	TakeInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error)
+}
+
+// Mailer sends transactional mail. Tests use a recording fake; production
+// wires an SMTP-backed implementation in Task 12.
+type Mailer interface {
+	Send(ctx context.Context, to, subject, body string) error
+}
+
+// Service implements organizations, memberships, roles and invitations.
+type Service struct {
+	store     Store
+	mailer    Mailer
+	publicURL string
+	now       func() time.Time
+}
+
+// NewService wires the store, mailer, public URL (used to build the
+// invitation link) and clock.
+func NewService(store Store, mailer Mailer, publicURL string, now func() time.Time) *Service {
+	return &Service{store: store, mailer: mailer, publicURL: publicURL, now: now}
+}
+
+// CreateOrg creates an organization and makes ownerID its sole owner. It is
+// deliberately a single, self-contained step — store.CreateOrg followed by
+// one AddMembership call — so a later task can add a post-creation hook
+// (provisioning the org's default zone) as one more step here without
+// restructuring the method or its error handling.
+func (s *Service) CreateOrg(ctx context.Context, ownerID uuid.UUID, slug, name string) (Org, error) {
+	org := Org{ID: uuid.Must(uuid.NewV7()), Slug: slug, Name: name, CreatedAt: s.now()}
+	if err := s.store.CreateOrg(ctx, org); err != nil {
+		return Org{}, fmt.Errorf("create org: %w", err)
+	}
+	if err := s.store.AddMembership(ctx, org.ID, ownerID, RoleOwner); err != nil {
+		return Org{}, fmt.Errorf("add owner membership: %w", err)
+	}
+	return org, nil
+}
+
+// ListOrgsForUser lists every organization userID belongs to.
+func (s *Service) ListOrgsForUser(ctx context.Context, userID uuid.UUID) ([]OrgMembership, error) {
+	return s.store.ListOrgsForUser(ctx, userID)
+}
+
+// GetOrgBySlug looks up an organization by its slug.
+func (s *Service) GetOrgBySlug(ctx context.Context, slug string) (Org, error) {
+	return s.store.GetOrgBySlug(ctx, slug)
+}
+
+// UpdateOrg renames orgID. The slug is immutable — it appears in URLs and
+// API token scopes, so changing it would silently break both.
+func (s *Service) UpdateOrg(ctx context.Context, orgID uuid.UUID, name string) (Org, error) {
+	org, err := s.store.GetOrgByID(ctx, orgID)
+	if err != nil {
+		return Org{}, err
+	}
+	org.Name = name
+	if err := s.store.UpdateOrg(ctx, org); err != nil {
+		return Org{}, fmt.Errorf("update org: %w", err)
+	}
+	return org, nil
+}
+
+// MembershipOf returns userID's role in orgID, or ErrNotMember if they do
+// not belong to it.
+func (s *Service) MembershipOf(ctx context.Context, orgID, userID uuid.UUID) (Role, error) {
+	role, err := s.store.GetMembership(ctx, orgID, userID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return "", ErrNotMember
+		}
+		return "", err
+	}
+	return role, nil
+}
+
+// ListMembers lists every member of orgID.
+func (s *Service) ListMembers(ctx context.Context, orgID uuid.UUID) ([]Member, error) {
+	return s.store.ListMembers(ctx, orgID)
+}
+
+// Invite creates an invitation for email to join orgID as role and e-mails
+// the acceptance link. The owner role can never be granted by invite — only
+// ChangeRole, and only by an existing owner, can create a second owner.
+func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email string, role Role) (Invite, error) {
+	if !Valid(role) || role == RoleOwner {
+		return Invite{}, fmt.Errorf("invite role %q: %w", role, ErrForbidden)
+	}
+	secret := make([]byte, inviteSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return Invite{}, err
+	}
+	token := base64.RawURLEncoding.EncodeToString(secret)
+	sum := sha256.Sum256([]byte(token))
+	inv := Invite{
+		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Email: strings.ToLower(email), Role: role,
+		InvitedBy: byUserID, ExpiresAt: s.now().Add(InviteTTL), Token: token,
+	}
+	if err := s.store.InsertInvite(ctx, inv, sum[:]); err != nil {
+		return Invite{}, fmt.Errorf("insert invite: %w", err)
+	}
+	org, err := s.store.GetOrgByID(ctx, orgID)
+	if err != nil {
+		return Invite{}, err
+	}
+	body := fmt.Sprintf("You have been invited to %s on Pulsix as %s.\n\nAccept: %s/invite/%s\n\nThe link expires in 7 days.",
+		org.Name, role, s.publicURL, token)
+	if err := s.mailer.Send(ctx, inv.Email, "Invitation to "+org.Name, body); err != nil {
+		return Invite{}, fmt.Errorf("send invite mail: %w", err)
+	}
+	return inv, nil
+}
+
+// AcceptInvite redeems token, creating or reusing the invited user, and
+// joins them to the invite's org with the invite's role.
+//
+// The invited address might already belong to a registered account with its
+// own password. The invite token only proves control of that mailbox at the
+// moment the invite was accepted — it is not proof of that account's
+// password — so acceptance must never let whoever holds the token overwrite
+// an existing account's credentials: that would turn "I can read this
+// inbox" into "I now control this account", for any account whose owner an
+// org admin (accidentally or otherwise) invites by email. Only a user row
+// created by a *previous*, never-accepted invite (PasswordHash == nil, no
+// one has ever logged into it) has its password and display name set here;
+// an account that already has a password keeps it, and keeps its existing
+// display name, unchanged.
+func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password string) (uuid.UUID, uuid.UUID, error) {
+	sum := sha256.Sum256([]byte(token))
+	inv, err := s.store.TakeInvite(ctx, sum[:], s.now())
+	if err != nil {
+		return uuid.Nil, uuid.Nil, ErrNotFound
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("hash password: %w", err)
+	}
+	u, err := s.store.GetUserByEmail(ctx, inv.Email)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		u = User{ID: uuid.Must(uuid.NewV7()), Email: inv.Email, DisplayName: displayName, PasswordHash: &hash}
+		if err := s.store.CreateUser(ctx, u); err != nil {
+			return uuid.Nil, uuid.Nil, fmt.Errorf("create invited user: %w", err)
+		}
+	case err != nil:
+		return uuid.Nil, uuid.Nil, err
+	default:
+		if u.PasswordHash == nil {
+			if err := s.store.SetUserPasswordAndName(ctx, u.ID, hash, displayName); err != nil {
+				return uuid.Nil, uuid.Nil, fmt.Errorf("set invited user credentials: %w", err)
+			}
+		}
+	}
+	if err := s.store.AddMembership(ctx, inv.OrgID, u.ID, inv.Role); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("add membership: %w", err)
+	}
+	return u.ID, inv.OrgID, nil
+}
+
+// ChangeRole sets target's role in orgID. Only an existing owner may grant
+// or revoke the owner role, and the organization must always keep at least
+// one owner: demoting the last owner fails with ErrLastOwner.
+func (s *Service) ChangeRole(ctx context.Context, orgID, actor, target uuid.UUID, role Role) error {
+	if !Valid(role) {
+		return ErrForbidden
+	}
+	actorRole, err := s.store.GetMembership(ctx, orgID, actor)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotMember
+		}
+		return err
+	}
+	current, err := s.store.GetMembership(ctx, orgID, target)
+	if err != nil {
+		return err // ErrNotFound when target genuinely isn't a member; propagated unchanged otherwise
+	}
+	if (role == RoleOwner || current == RoleOwner) && actorRole != RoleOwner {
+		return ErrForbidden
+	}
+	if current == RoleOwner && role != RoleOwner {
+		n, err := s.store.CountOwners(ctx, orgID)
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrLastOwner
+		}
+	}
+	return s.store.UpdateMembershipRole(ctx, orgID, target, role)
+}
+
+// RemoveMember removes target from orgID, with the same last-owner guard as
+// ChangeRole: removing the only remaining owner fails with ErrLastOwner, and
+// only an owner may remove another owner.
+func (s *Service) RemoveMember(ctx context.Context, orgID, actor, target uuid.UUID) error {
+	actorRole, err := s.store.GetMembership(ctx, orgID, actor)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotMember
+		}
+		return err
+	}
+	current, err := s.store.GetMembership(ctx, orgID, target)
+	if err != nil {
+		return err // ErrNotFound when target genuinely isn't a member; propagated unchanged otherwise
+	}
+	if current == RoleOwner {
+		if actorRole != RoleOwner {
+			return ErrForbidden
+		}
+		n, err := s.store.CountOwners(ctx, orgID)
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrLastOwner
+		}
+	}
+	return s.store.DeleteMembership(ctx, orgID, target)
+}
+
+// DeactivateUser disables target's account instance-wide and ends its
+// access immediately: sessions and API tokens are revoked, not merely
+// flagged for later. actorIsInstanceAdmin is supplied by the handler from
+// the caller's auth.Principal — the tenancy package has no notion of
+// instance-level roles of its own, only org membership, so it cannot look
+// this up itself.
+func (s *Service) DeactivateUser(ctx context.Context, actorIsInstanceAdmin bool, target uuid.UUID) error {
+	if !actorIsInstanceAdmin {
+		return ErrForbidden
+	}
+	if err := s.store.DisableUser(ctx, target, s.now()); err != nil {
+		return fmt.Errorf("disable user: %w", err)
+	}
+	if err := s.store.RevokeSessionsForUser(ctx, target); err != nil {
+		return fmt.Errorf("revoke sessions: %w", err)
+	}
+	if err := s.store.RevokeTokensForUser(ctx, target); err != nil {
+		return fmt.Errorf("revoke tokens: %w", err)
+	}
+	return nil
+}

@@ -10,13 +10,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 type orgTokenCreateInput struct {
-	// Org deliberately has no format:"uuid" tag, for the same reason
-	// passkeyIDInput's ID doesn't: with the tag, huma rejects a malformed
-	// value at the schema layer with 422 before the handler's own
-	// uuid.Parse and 400 response ever run.
+	// Org is the organization's slug, exactly like every other org-scoped
+	// route's {org} path parameter (org_handlers.go, member_handlers.go) —
+	// not a raw id. requireOrg resolves it.
 	Org  string `path:"org"`
 	Body struct {
 		Name string `json:"name" minLength:"1"`
@@ -77,39 +77,27 @@ type orgTokenIDInput struct {
 // registerTokenRoutes wires org-scoped API token management: create (which
 // returns the plaintext once), list (metadata only) and revoke.
 //
-// It is written here, in Task 9, but deliberately called by nothing —
-// registerRoutes in api.go does not invoke it, so none of these three
-// routes are reachable on the running server yet. All three take an org id
-// straight from the path and, today, gate only on requireMFAComplete: there
-// is no check anywhere in this package yet that the calling principal is
-// even a *member* of that org, let alone holds a role in it senior enough
-// to mint, list or revoke its tokens. That check — comparing the caller's
-// org_memberships role against what the operation requires, and (for
-// Create) capping the new token's role at the caller's own — is Task 10's
-// job: it is the same org-authorization layer every other org-scoped
-// resource these routes will eventually sit alongside also needs, so
-// duplicating a one-off version of it here would both pre-empt that design
-// and leave three routes reachable by any authenticated caller for *any*
-// org id. Task 10 mounts these three operations (adding its authorization
-// in front of them) once that layer exists.
+// Written in Task 9 but left unmounted, because none of the three checked
+// anything beyond requireMFAComplete: there was no check that the caller
+// was even a member of the org in the path, let alone senior enough in it
+// to mint, list or revoke its tokens. Task 10 adds that check — requireOrg,
+// gating on tenancy.PermTokensManage — and mounts these on the bearer-
+// enabled *huma.Group in api.go (all three consult
+// auth.TokenScopeFromContext by way of requireOrg, which is exactly the
+// subtree that group exists for).
 //
-// Until then, the handlers themselves — argument parsing, the "shown once"
-// plaintext contract, the metadata-only list shape, revoke's not-found
-// mapping — are exercised directly against a standalone huma test harness
-// with a hand-injected principal, deliberately bypassing both this
-// function's absence from registerRoutes and any org-membership check, so
-// the test proves nothing about authorization; see token_handlers_test.go.
+// Create additionally caps the minted token's role at the caller's own
+// effective role (tenancy.Lower(scope.Role, requested)): a token can never
+// be more privileged than the principal that created it, the same
+// never-widen rule requireOrg itself applies to an existing token's scope.
 func registerTokenRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/orgs/{org}/tokens", func(ctx context.Context, in *orgTokenCreateInput) (*orgTokenCreateOutput, error) {
-		if _, err := requireMFAComplete(ctx); err != nil {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
+		if err != nil {
 			return nil, err
 		}
-		orgID, err := uuid.Parse(in.Org)
-		if err != nil {
-			return nil, huma.Error400BadRequest("invalid org id")
-		}
-		p, _ := auth.FromContext(ctx) // requireMFAComplete above already guarantees this is set.
-		plain, tok, err := deps.Tokens.Create(ctx, p.UserID, orgID, in.Body.Name, in.Body.Role, in.Body.ExpiresAt)
+		role := tenancy.Lower(scope.Role, tenancy.Role(in.Body.Role))
+		plain, tok, err := deps.Tokens.Create(ctx, scope.UserID, scope.OrgID, in.Body.Name, string(role), in.Body.ExpiresAt)
 		if err != nil {
 			return nil, mapTokenErr(ctx, err)
 		}
@@ -120,14 +108,11 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated })
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/tokens", func(ctx context.Context, in *orgTokenListInput) (*orgTokenListOutput, error) {
-		if _, err := requireMFAComplete(ctx); err != nil {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
+		if err != nil {
 			return nil, err
 		}
-		orgID, err := uuid.Parse(in.Org)
-		if err != nil {
-			return nil, huma.Error400BadRequest("invalid org id")
-		}
-		toks, err := deps.Tokens.List(ctx, orgID)
+		toks, err := deps.Tokens.List(ctx, scope.OrgID)
 		if err != nil {
 			return nil, mapTokenErr(ctx, err)
 		}
@@ -143,18 +128,15 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Delete(hapi, "/api/v1/orgs/{org}/tokens/{id}", func(ctx context.Context, in *orgTokenIDInput) (*okOutput, error) {
-		if _, err := requireMFAComplete(ctx); err != nil {
-			return nil, err
-		}
-		orgID, err := uuid.Parse(in.Org)
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
 		if err != nil {
-			return nil, huma.Error400BadRequest("invalid org id")
+			return nil, err
 		}
 		id, err := uuid.Parse(in.ID)
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid token id")
 		}
-		if err := deps.Tokens.Revoke(ctx, orgID, id); err != nil {
+		if err := deps.Tokens.Revoke(ctx, scope.OrgID, id); err != nil {
 			return nil, mapTokenErr(ctx, err)
 		}
 		return &okOutput{}, nil

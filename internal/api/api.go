@@ -14,6 +14,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 // Deps carries everything the handlers need. Handlers call services only.
@@ -24,6 +25,7 @@ type Deps struct {
 	TOTP     *auth.TOTP
 	Passkeys *auth.Passkeys
 	Tokens   *auth.Tokens
+	Tenancy  *tenancy.Service
 	Secure   bool // set Secure on cookies (true behind HTTPS)
 }
 
@@ -69,6 +71,9 @@ func (d Deps) validate() error {
 	if d.Tokens == nil {
 		missing = append(missing, "Tokens")
 	}
+	if d.Tenancy == nil {
+		missing = append(missing, "Tenancy")
+	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
 	}
@@ -91,27 +96,28 @@ func New(deps Deps) (http.Handler, error) {
 	// reverse-proxy trust boundary is known.
 	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
 	r.Use(auth.CookieMiddleware(deps.Sessions))
-	// auth.BearerMiddleware is deliberately NOT mounted here (Finding 1,
-	// fix round 1). Mounting it on this router — the router every route in
-	// this package attaches to — made a bearer principal (which
-	// Tokens.Resolve always marks MFAComplete: true, by construction) reach
-	// every route mounted below, including the account-security routes
-	// (passkey register/list/delete, TOTP enrol/confirm/delete) that only
-	// gated on requireMFAComplete: a viewer-scoped token could register an
-	// attacker-controlled passkey or plant a TOTP secret on its owner's
-	// account and take it over completely. Those routes now use
-	// requireInteractiveSession (auth_handlers.go), which rejects a token
-	// principal outright — but no route in this package actually reads
-	// TokenScopeFromContext yet either: registerTokenRoutes (the one
-	// consumer TokenScope exists for) is written but not called from
-	// registerRoutes until Task 10 adds the org-membership authorization it
-	// needs to be mounted safely (see token_handlers.go). With nothing here
-	// to resolve a bearer credential for, mounting BearerMiddleware at all
-	// would only be attack surface with no matching benefit — a future
-	// route that forgets requireInteractiveSession would otherwise silently
-	// accept a token the same way the passkey/TOTP routes just did. Task 10
-	// mounts it, scoped to the org-scoped token subtree where TokenScope is
-	// actually consulted, alongside the authorization that makes it safe.
+	// auth.BearerMiddleware is deliberately NOT mounted here (Finding 1, fix
+	// round 1; carried forward from Task 9). Mounting it on this router —
+	// the router every route in this package attaches to — would make a
+	// bearer principal (which Tokens.Resolve always marks MFAComplete:
+	// true, by construction) reach every route mounted below, including the
+	// account-security routes (passkey register/list/delete, TOTP
+	// enrol/confirm/delete) that only gate on requireMFAComplete: a
+	// viewer-scoped token could register an attacker-controlled passkey or
+	// plant a TOTP secret on its owner's account and take it over
+	// completely. Those routes use requireInteractiveSession
+	// (auth_handlers.go), which rejects a token principal outright, so they
+	// stay safe regardless — but nothing about this router-level mount
+	// would be scoped to only the routes that actually need a bearer
+	// credential.
+	//
+	// Task 10 mounts BearerMiddleware instead on a *huma.Group scoped to
+	// exactly the org-scoped routes that consult
+	// auth.TokenScopeFromContext (via requireOrg, authz.go) — organizations,
+	// members, invites and tokens under /api/v1/orgs/{org}/... — see
+	// registerRoutes below and bearerAuthMiddleware (org_handlers.go) for
+	// how a *huma.Group achieves per-operation scoping without a second chi
+	// router.
 	r.Use(requireMFAForExplorer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -172,4 +178,20 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerAuthRoutes(hapi, deps)
 	registerMFARoutes(hapi, deps)
 	registerPasskeyRoutes(hapi, deps)
+	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
+	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all
+	registerAdminRoutes(hapi, deps)       // POST /admin/users/{id}/deactivate — instance admin, session only
+
+	// Everything below takes an org in its path and resolves it through
+	// requireOrg, which consults auth.TokenScopeFromContext — this is the
+	// "subtree that actually consults TokenScope" BearerMiddleware is
+	// scoped to (see New's comment on why it is not mounted on the root
+	// router). huma.Group.UseMiddleware wraps each operation registered on
+	// the group individually, so this scoping holds per-operation without a
+	// second chi router or a duplicate OpenAPI document.
+	orgScoped := huma.NewGroup(hapi)
+	orgScoped.UseMiddleware(bearerAuthMiddleware(deps.Tokens))
+	registerOrgScopedRoutes(orgScoped, deps) // GET/PATCH /orgs/{org}
+	registerMemberRoutes(orgScoped, deps)    // members + invites, all /orgs/{org}/...
+	registerTokenRoutes(orgScoped, deps)     // /orgs/{org}/tokens...
 }

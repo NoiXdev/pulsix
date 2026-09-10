@@ -46,6 +46,13 @@ func ctxWithTokenPrincipal(userID uuid.UUID) context.Context {
 	return auth.WithPrincipal(context.Background(), auth.Principal{UserID: userID, MFAComplete: true, TokenID: &tokenID})
 }
 
+// ctxWithPrincipal builds a context carrying a cookie-session-shaped
+// principal (no TokenID): standing in for whatever CookieMiddleware would
+// have put in the request context for a real session cookie.
+func ctxWithPrincipal(userID uuid.UUID, mfaComplete bool) context.Context {
+	return auth.WithPrincipal(context.Background(), auth.Principal{UserID: userID, MFAComplete: mfaComplete})
+}
+
 // doOptional calls DoCtx, omitting the body argument entirely when body is
 // nil (a GET/DELETE with no body), since humatest.DoCtx treats a passed-in
 // untyped nil differently from no variadic argument at all.

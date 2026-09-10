@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 func TestServerHelpers(t *testing.T) {
@@ -32,6 +33,13 @@ func TestServerHelpers(t *testing.T) {
 	orgID := s.SeedOrg("helper-org", userID)
 	if orgID == uuid.Nil {
 		t.Fatal("SeedOrg returned a nil UUID")
+	}
+
+	other := s.SeedUser("helper-member@example.test", "correct horse battery")
+	s.AddMember(orgID, other, tenancy.RoleViewer)
+	role, err := s.Deps.Tenancy.MembershipOf(context.Background(), orgID, other)
+	if err != nil || role != tenancy.RoleViewer {
+		t.Fatalf("AddMember did not add a viewer membership: role=%s err=%v", role, err)
 	}
 
 	client := s.Client()
@@ -93,3 +101,28 @@ type failingLogoutAuth struct {
 }
 
 func (f failingLogoutAuth) Logout(context.Context, auth.Principal) error { return f.err }
+
+// TestMailerRecordsSentMessages exercises Mailer.Send/Sent directly — the
+// path every invite-mail test in internal/api drives indirectly through
+// tenancy.Service.Invite, but (per this file's own package-level comment)
+// that only credits the api package's own coverage, not apitest's.
+func TestMailerRecordsSentMessages(t *testing.T) {
+	m := &apitest.Mailer{}
+	if got := m.Sent(); len(got) != 0 {
+		t.Fatalf("Sent() before any Send = %+v, want empty", got)
+	}
+	if err := m.Send(context.Background(), "to@example.test", "subject", "body"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	sent := m.Sent()
+	if len(sent) != 1 || sent[0] != (apitest.SentMail{To: "to@example.test", Subject: "subject", Body: "body"}) {
+		t.Fatalf("Sent() = %+v", sent)
+	}
+	// Sent returns a copy: mutating it must not affect the recorder's own
+	// state, matching the same defensive-copy contract a caller would
+	// expect from any accessor over shared, mutex-guarded state.
+	sent[0].To = "mutated"
+	if again := m.Sent(); again[0].To != "to@example.test" {
+		t.Fatalf("Sent() leaked its internal slice: %+v", again)
+	}
+}

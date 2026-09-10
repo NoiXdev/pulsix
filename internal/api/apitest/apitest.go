@@ -8,6 +8,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,7 +21,36 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
+
+// SentMail is one message captured by Mailer.
+type SentMail struct{ To, Subject, Body string }
+
+// Mailer is a recording tenancy.Mailer used in place of the real SMTP
+// sender Task 12 wires in production. It is safe for concurrent use since
+// the httptest server may serve requests on more than one goroutine.
+type Mailer struct {
+	mu   sync.Mutex
+	sent []SentMail
+}
+
+// Send records the message and always succeeds.
+func (m *Mailer) Send(_ context.Context, to, subject, body string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, SentMail{To: to, Subject: subject, Body: body})
+	return nil
+}
+
+// Sent returns every message recorded so far, oldest first.
+func (m *Mailer) Sent() []SentMail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]SentMail, len(m.sent))
+	copy(out, m.sent)
+	return out
+}
 
 // testMasterKey is a fixed, non-secret key used only to seal TOTP secrets in
 // tests. Never used outside apitest.
@@ -32,6 +62,7 @@ type Server struct {
 	DB       *db.DB
 	Q        *gen.Queries
 	Sessions *auth.Sessions
+	Mail     *Mailer
 	Deps     api.Deps
 	HTTP     *httptest.Server
 }
@@ -79,7 +110,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	t.Helper()
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(q, time.Now)}
+	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(q, time.Now), Mail: &Mailer{}}
 
 	ts := httptest.NewUnstartedServer(nil)
 	_, port, err := net.SplitHostPort(ts.Listener.Addr().String())
@@ -100,7 +131,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	// session (Finding 2, fix round 1).
 	s.Deps = api.Deps{
 		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
-		Tokens: auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
+		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
+		Tenancy: tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -149,6 +181,17 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	return id
+}
+
+// AddMember adds userID to orgID with role, without going through the
+// tenancy service or any invite flow — for tests that need a member at a
+// specific role (not the owner SeedOrg already creates) with no interest in
+// exercising ChangeRole/Invite themselves.
+func (s *Server) AddMember(orgID, userID uuid.UUID, role tenancy.Role) {
+	s.T.Helper()
+	if err := s.Q.AddMembership(context.Background(), gen.AddMembershipParams{OrgID: orgID, UserID: userID, Role: gen.OrgRole(role)}); err != nil {
+		s.T.Fatal(err)
+	}
 }
 
 // LoginAs returns a client whose jar holds a fully authenticated

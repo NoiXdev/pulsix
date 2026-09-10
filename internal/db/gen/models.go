@@ -70,6 +70,18 @@ type ApiToken struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type Invite struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Email      string             `json:"email"`
+	Role       OrgRole            `json:"role"`
+	TokenHash  []byte             `json:"token_hash"`
+	InvitedBy  uuid.UUID          `json:"invited_by"`
+	ExpiresAt  time.Time          `json:"expires_at"`
+	AcceptedAt pgtype.Timestamptz `json:"accepted_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
 type OrgMembership struct {
 	OrgID     uuid.UUID `json:"org_id"`
 	UserID    uuid.UUID `json:"user_id"`
@@ -123,12 +135,13 @@ type TotpSecret struct {
 }
 
 type User struct {
-	ID            uuid.UUID `json:"id"`
-	Email         string    `json:"email"`
-	DisplayName   string    `json:"display_name"`
-	PasswordHash  *string   `json:"password_hash"`
-	InstanceAdmin bool      `json:"instance_admin"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            uuid.UUID          `json:"id"`
+	Email         string             `json:"email"`
+	DisplayName   string             `json:"display_name"`
+	PasswordHash  *string            `json:"password_hash"`
+	InstanceAdmin bool               `json:"instance_admin"`
+	CreatedAt     time.Time          `json:"created_at"`
+	DisabledAt    pgtype.Timestamptz `json:"disabled_at"`
 }
 
 type WebauthnCeremony struct {

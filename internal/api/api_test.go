@@ -10,7 +10,16 @@ import (
 
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
+
+// testTenancy builds a *tenancy.Service with a nil store, good enough to
+// satisfy api.Deps.validate in tests that never actually drive an
+// organization operation (nil interface values are only a problem once
+// called), mirroring testPasskeys below.
+func testTenancy() *tenancy.Service {
+	return tenancy.NewService(nil, nil, "http://localhost", time.Now)
+}
 
 // fakeAuthService satisfies api.AuthService without touching a database, so
 // tests that only exercise routing (not the auth flow itself) don't need a
@@ -41,7 +50,7 @@ func testPasskeys(t *testing.T) *auth.Passkeys {
 func TestHealthz(t *testing.T) {
 	h, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,5 +96,11 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now), Passkeys: testPasskeys(t),
 	}); err == nil {
 		t.Fatal("api.New without Tokens did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now),
+	}); err == nil {
+		t.Fatal("api.New without Tenancy did not return an error")
 	}
 }
