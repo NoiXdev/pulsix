@@ -87,7 +87,7 @@ install works without a separate worker.
 
 ## 4. Data model (core)
 
-Relational, PostgreSQL 17 with the TimescaleDB extension. Only the important tables;
+Relational, PostgreSQL 18 with the TimescaleDB extension. Only the important tables;
 naming is `snake_case`, IDs are UUIDv7.
 
 Tenancy and auth: `organizations`, `users`, `org_memberships(role)`, `passkeys`,
@@ -494,6 +494,11 @@ deploy/compose, deploy/systemd, deploy/install.sh
 docs/                                        BACKLOG.md, specs, ADRs, user docs
 ```
 
+Dependency policy: every dependency runs on its newest stable release, or the active
+LTS line where the project publishes one; deprecated APIs are never introduced and are
+replaced when a library deprecates them. Versions named in this document are the state
+at the time of writing, not a pin.
+
 Versioning: **one version for everything.** Manager, worker and agent share the
 module's version; a single tag `vX.Y.Z` on `main` produces both images and every agent
 binary in one release. Compatibility: the manager accepts workers and agents of the
@@ -502,7 +507,7 @@ manager → workers → agents (agent self-update from v0.3 later item); older c
 are rejected and shown as "update required" in the GUI. No per-component tags, no
 separate agent repository.
 
-Conventions: Go 1.25, `golangci-lint`, `sqlc` for queries, `goose` migrations,
+Conventions: Go 1.27, `golangci-lint`, `sqlc` for queries, `goose` migrations,
 Conventional Commits with a CI gate, Pint-equivalent formatting via `gofmt`/`prettier`,
 tests with Go's testing package (integration tests against a Postgres container) and
 Vitest/Playwright for the SPA.
