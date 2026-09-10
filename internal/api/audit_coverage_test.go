@@ -83,6 +83,14 @@ var auditAllowlist = map[string]string{
 	// for the same underlying reason above.
 	"POST /api/v1/auth/passkeys/login/begin":  "passkey login ceremony begin; no organization, and no actor is established until the ceremony completes",
 	"POST /api/v1/auth/passkeys/login/finish": "passkey login ceremony finish; the passkey equivalent of POST /auth/login — no organization, and completing it only ever establishes a session, the same routine event login already is",
+
+	// Task 12: sends a one-off message through whatever SMTP settings are
+	// currently stored, to let an administrator confirm they work. It
+	// persists nothing — PUT /admin/settings/smtp (audited) is the route
+	// that actually changes stored configuration — so there is no object
+	// mutation here to record, the same reasoning that keeps
+	// POST /auth/totp/verify off the audit trail above.
+	"POST /api/v1/admin/settings/smtp/test": "sends a one-off test message through the currently stored SMTP settings; persists nothing, so there is no object mutation to record",
 }
 
 // registeredMutatingOps builds the full route table the same way api.New

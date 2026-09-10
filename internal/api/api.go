@@ -15,6 +15,8 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -28,7 +30,15 @@ type Deps struct {
 	Tokens   *auth.Tokens
 	Tenancy  *tenancy.Service
 	Audit    *audit.Recorder
-	Secure   bool // set Secure on cookies (true behind HTTPS)
+	Setup    *setup.Service
+	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
+	// interface tenancy.Service is built with: only this package's own
+	// POST /admin/settings/smtp/test handler needs it, to run a live
+	// Test() against whatever settings are currently stored, so its own
+	// error (not just tenancy.Service's Send) is what the wizard's SMTP
+	// test surfaces.
+	Mailer *mail.SMTP
+	Secure bool // set Secure on cookies (true behind HTTPS)
 }
 
 // scalarVersion and scalarIntegrity pin the third-party script the API
@@ -78,6 +88,12 @@ func (d Deps) validate() error {
 	}
 	if d.Audit == nil {
 		missing = append(missing, "Audit")
+	}
+	if d.Setup == nil {
+		missing = append(missing, "Setup")
+	}
+	if d.Mailer == nil {
+		missing = append(missing, "Mailer")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -190,9 +206,11 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerAuthRoutes(hapi, deps)
 	registerMFARoutes(hapi, deps)
 	registerPasskeyRoutes(hapi, deps)
-	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
-	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all
-	registerAdminRoutes(hapi, deps)       // POST /admin/users/{id}/deactivate — instance admin, session only
+	registerOrgRoutes(hapi, deps)          // POST/GET /orgs — no org in the path, no bearer credential accepted
+	registerInviteAcceptRoute(hapi, deps)  // POST /invites/accept — public, no principal at all
+	registerAdminRoutes(hapi, deps)        // POST /admin/users/{id}/deactivate — instance admin, session only
+	registerSetupRoutes(hapi, deps)        // GET /setup/status, POST /setup/complete — public
+	registerSMTPSettingsRoutes(hapi, deps) // /admin/settings/smtp... — instance admin, session only
 	// GET /me/activity spans every org the caller belongs to, so — like
 	// registerOrgRoutes above — it takes no org in its path and accepts no
 	// bearer credential: a token is scoped to the one org it was minted

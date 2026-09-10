@@ -23,6 +23,8 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -152,11 +154,19 @@ func New(t *testing.T, opts ...Option) *Server {
 	// TOTP does, not only at the passkey login endpoints — otherwise a
 	// passkey-only account's password alone would produce an MFA-complete
 	// session (Finding 2, fix round 1).
+	setupSvc := setup.NewService(setup.NewSQLStore(d.Pool()), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
 	s.Deps = api.Deps{
 		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
 		Tenancy: tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now),
 		Audit:   audit.NewRecorder(audit.NewSQLStore(q), time.Now),
+		Setup:   setupSvc,
+		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
+		// exercises whatever a test actually stored through
+		// PUT /admin/settings/smtp — no separate fake needed, since the
+		// real *mail.SMTP simply fails to dial when nothing is configured
+		// (or the test's own tests want that failure).
+		Mailer: mail.NewSMTP(setupSvc.LoadSMTP),
 	}
 	for _, opt := range opts {
 		opt(s)

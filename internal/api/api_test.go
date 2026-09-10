@@ -11,6 +11,9 @@ import (
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/crypto"
+	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -28,6 +31,20 @@ func testTenancy() *tenancy.Service {
 // testTenancy and testPasskeys above.
 func testAudit() *audit.Recorder {
 	return audit.NewRecorder(nil, time.Now)
+}
+
+// testSetup builds a *setup.Service with nil store/sessions deps, good
+// enough to satisfy api.Deps.validate in tests that never actually run the
+// wizard (nil interface values are only a problem once called), mirroring
+// testTenancy and testAudit above.
+func testSetup() *setup.Service {
+	return setup.NewService(nil, nil, crypto.NewBox([32]byte{}), time.Now)
+}
+
+// testMailer builds a *mail.SMTP whose loader never actually runs in tests
+// that only exercise routing.
+func testMailer() *mail.SMTP {
+	return mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) { return mail.SMTPSettings{}, nil })
 }
 
 // fakeAuthService satisfies api.AuthService without touching a database, so
@@ -60,6 +77,7 @@ func TestHealthz(t *testing.T) {
 	h, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+		Setup: testSetup(), Mailer: testMailer(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -117,5 +135,17 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(),
 	}); err == nil {
 		t.Fatal("api.New without Audit did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+	}); err == nil {
+		t.Fatal("api.New without Setup did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+	}); err == nil {
+		t.Fatal("api.New without Mailer did not return an error")
 	}
 }

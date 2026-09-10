@@ -63,18 +63,57 @@ func Open(t *testing.T) *db.DB {
 	fatalOnErr(t, err)
 
 	t.Cleanup(func() {
-		// A failing truncate must be loud: silently leaving rows behind makes
-		// the next test fail somewhere unrelated.
-		if _, err := admin.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
-			FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version' LOOP
-				EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
-			END LOOP; END $$;`); err != nil {
-			t.Errorf("truncate tables after test: %v", err)
-		}
+		truncateAll(ctx, t, admin)
 		d.Close()
 		admin.Close()
 	})
 	return d
+}
+
+// URL returns the raw connection string for the shared test database,
+// already migrated, for tests that need to open their own *db.DB against a
+// role Open's own pulsix_app-scoped *db.DB cannot express — namely
+// internal/app's two-pool wiring test and the negative test asserting
+// app.Build refuses to start when connected as a role that can bypass row-
+// level security (Open always connects as pulsix_app, which by design
+// never can). The connection this string opens is the bootstrap superuser
+// Open uses internally for migrations, not pulsix_app.
+//
+// All tables are truncated when the test ends, the same as Open — a caller
+// of URL is expected to open and close its own *db.DB(s) against it during
+// the test, not hold one past t's cleanup.
+func URL(t *testing.T) string {
+	t.Helper()
+	once.Do(start)
+	fatalOnErr(t, errC)
+
+	ctx := context.Background()
+	admin, err := db.Open(ctx, url)
+	fatalOnErr(t, err)
+	if err := admin.Migrate(ctx); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		truncateAll(ctx, t, admin)
+		admin.Close()
+	})
+	return url
+}
+
+// truncateAll empties every table (except goose's own bookkeeping table)
+// through admin, the bootstrap superuser connection — pulsix_app is
+// deliberately not granted TRUNCATE. Shared by Open and URL's cleanup.
+func truncateAll(ctx context.Context, t *testing.T, admin *db.DB) {
+	t.Helper()
+	// A failing truncate must be loud: silently leaving rows behind makes
+	// the next test fail somewhere unrelated.
+	if _, err := admin.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
+		FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version' LOOP
+			EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
+		END LOOP; END $$;`); err != nil {
+		t.Errorf("truncate tables after test: %v", err)
+	}
 }
 
 // fataler is the subset of *testing.T that fatalOnErr needs. It exists so

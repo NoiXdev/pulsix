@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 )
 
@@ -11,6 +12,43 @@ func TestOpenReturnsMigratedDB(t *testing.T) {
 	d := testdb.Open(t)
 	if err := d.Pool().Ping(context.Background()); err != nil {
 		t.Fatalf("ping: %v", err)
+	}
+}
+
+// TestURLReturnsMigratedConnectionString covers URL directly (rather than
+// only through its actual consumers, internal/app and internal/setup, whose
+// own coverage numbers do not count toward this package's): the string it
+// returns must open a connection that has already been migrated, and — the
+// property internal/app's own RLS-guard test relies on — that connection
+// must be the bootstrap superuser, not pulsix_app.
+func TestURLReturnsMigratedConnectionString(t *testing.T) {
+	ctx := context.Background()
+	url := testdb.URL(t)
+
+	d, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var exists bool
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'organizations')`,
+	).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("URL's connection string is not already migrated")
+	}
+
+	var isSuperuser bool
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT rolsuper FROM pg_roles WHERE rolname = current_user`,
+	).Scan(&isSuperuser); err != nil {
+		t.Fatal(err)
+	}
+	if !isSuperuser {
+		t.Fatal("URL's connection string must authenticate as the bootstrap superuser, not pulsix_app")
 	}
 }
 

@@ -83,6 +83,12 @@ type AuditEvent struct {
 	At         time.Time   `json:"at"`
 }
 
+type InstanceSetting struct {
+	Key       string    `json:"key"`
+	Value     []byte    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Invite struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`
