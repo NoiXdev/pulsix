@@ -7,15 +7,17 @@ import (
 	"os"
 
 	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/config"
 )
 
 func main() {
-	addr := os.Getenv("PULSIX_LISTEN")
-	if addr == "" {
-		addr = ":8080"
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		slog.Error("configuration error", "err", err)
+		os.Exit(1)
 	}
-	slog.Info("pulsix-manager listening", "addr", addr)
-	if err := http.ListenAndServe(addr, api.New(api.Deps{})); err != nil {
+	slog.Info("pulsix-manager listening", "addr", cfg.Listen)
+	if err := http.ListenAndServe(cfg.Listen, api.New(api.Deps{})); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
