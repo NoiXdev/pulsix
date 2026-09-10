@@ -46,6 +46,22 @@ type NoMFA struct{}
 // Enabled always returns false.
 func (NoMFA) Enabled(context.Context, uuid.UUID) (bool, error) { return false, nil }
 
+// dummyHash is a fixed, pre-computed argon2id PHC string (produced once by
+// HashPassword and pasted here as a literal — never recomputed at init or
+// at request time) used only to burn the same argon2id cost as a real
+// verification when the account being logged into doesn't exist or has no
+// password set. Without this, GetUserByEmail's fast miss (an index lookup)
+// versus VerifyPassword's ~100ms hit on a real account leaks account
+// existence through response timing even though the status code and body
+// are identical.
+const dummyHash = "$argon2id$v=19$m=65536,t=3,p=2$FgFA3V8EY11Cbdml3GComQ$RSomihcBPginroKnLtdpkmg16uKCzPaskdOYWE1B7L4"
+
+// verifyPassword is a package-level indirection over VerifyPassword so
+// white-box tests (package auth) can substitute a spy to observe that the
+// dummy-hash path was actually taken, without relying on flaky wall-clock
+// timing assertions.
+var verifyPassword = VerifyPassword
+
 // Service implements login, logout and "who am I".
 type Service struct {
 	store    Store
@@ -68,9 +84,13 @@ type LoginResult struct {
 func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {
 	u, err := s.store.GetUserByEmail(ctx, email)
 	if err != nil || u.PasswordHash == nil {
+		// Spend the same argon2id cost a real verification would, so a
+		// missing account (or one without a password) takes the same time
+		// as a wrong-password hit on a real one.
+		_, _ = verifyPassword(dummyHash, password)
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	ok, err := VerifyPassword(*u.PasswordHash, password)
+	ok, err := verifyPassword(*u.PasswordHash, password)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("verify password: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -34,7 +35,7 @@ func TestCookieMiddleware(t *testing.T) {
 	if _, err := q.CreateUser(ctx, gen.CreateUserParams{ID: uid, Email: "mw@example.test", DisplayName: "MW"}); err != nil {
 		t.Fatal(err)
 	}
-	s := auth.NewSessions(q)
+	s := auth.NewSessions(q, time.Now)
 	_, cookie, err := s.Create(ctx, uid, true)
 	if err != nil {
 		t.Fatal(err)
@@ -85,20 +86,4 @@ func TestCookieMiddleware(t *testing.T) {
 			t.Fatalf("status = %d, want 200 (middleware must not reject)", rec.Code)
 		}
 	})
-}
-
-func TestSetCookieAndClearCookie(t *testing.T) {
-	rec := httptest.NewRecorder()
-	auth.SetCookie(rec, "abc", true)
-	set := rec.Result().Cookies()
-	if len(set) != 1 || set[0].Name != auth.CookieName || set[0].Value != "abc" || !set[0].Secure || !set[0].HttpOnly {
-		t.Fatalf("SetCookie produced %+v", set)
-	}
-
-	rec = httptest.NewRecorder()
-	auth.ClearCookie(rec)
-	cleared := rec.Result().Cookies()
-	if len(cleared) != 1 || cleared[0].Name != auth.CookieName || cleared[0].MaxAge >= 0 {
-		t.Fatalf("ClearCookie produced %+v", cleared)
-	}
 }

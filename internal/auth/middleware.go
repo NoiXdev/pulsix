@@ -34,16 +34,3 @@ func CookieMiddleware(s *Sessions) func(http.Handler) http.Handler {
 		})
 	}
 }
-
-// SetCookie writes the session cookie.
-func SetCookie(w http.ResponseWriter, value string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name: CookieName, Value: value, Path: "/", HttpOnly: true, Secure: secure,
-		SameSite: http.SameSiteLaxMode, MaxAge: int(SessionTTL.Seconds()),
-	})
-}
-
-// ClearCookie removes the session cookie.
-func ClearCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
-}
