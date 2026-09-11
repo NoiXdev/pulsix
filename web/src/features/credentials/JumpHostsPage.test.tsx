@@ -114,4 +114,19 @@ describe('JumpHostsPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete bastion-a' }));
     expect(await screen.findByText(/still used by a zone/)).toBeInTheDocument();
   });
+
+  it('reports a failed zone default save as a toast', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base,
+      'PUT /api/v1/orgs/acme/zones/z1/bastion': () =>
+        new Response(JSON.stringify({ status: 500, detail: 'the zone could not be updated' }), {
+          status: 500, headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderPage();
+    const select = await screen.findByLabelText(/Primary/);
+    await user.selectOptions(select, 'b1');
+    expect(await screen.findByText('the zone could not be updated')).toBeInTheDocument();
+  });
 });

@@ -5,6 +5,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCredential, useDeleteCredential, useUpdateCredential } from '../../api/hooks/useCredentials.ts';
 import { kindLabel, usageLabel } from './labels.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
@@ -13,18 +14,36 @@ import type { Credential } from '../../api/types.ts';
 /** CredentialDialog shows one credential: its public key and snippets, its
  * metadata for editing, a way to replace its secret, and delete.
  *
- * The loading guard lives here, and the actual form is a separate
+ * The loading/error guard lives here, and the actual form is a separate
  * component (CredentialForm, mirroring HostSshCard/HostSshForm) that takes
  * `credential: Credential` as a required prop — TypeScript's control-flow
  * narrowing of `detail.data?.credential` does not reach into closures
  * defined later in the same function body (save/rotateKey/onDelete would
  * each need a `c!` non-null assertion otherwise), and this split avoids
- * that without disabling any lint rule. */
+ * that without disabling any lint rule.
+ *
+ * A failed detail fetch (403/404/500, ...) goes through `useQueryGuard` —
+ * the same single place every other page in the app renders a failed
+ * query through (ui/QueryState.tsx's doc comment, "Important 7") — rather
+ * than being swallowed by the `!c` check below, which used to render
+ * `QueryLoading` forever on an error because `detail.data` never arrives.
+ * The guard element is rendered inside this dialog's own title/Close/Escape
+ * chrome instead of replacing it, so a failed load can still be dismissed
+ * like any other dialog. */
 export function CredentialDialog({ org, id, onClose }: { org: string; id: string; onClose: () => void }) {
   const detail = useCredential(org, id);
   const update = useUpdateCredential(org, id);
   const remove = useDeleteCredential(org);
   const c = detail.data?.credential;
+
+  const guard = useQueryGuard(detail);
+  if (guard) {
+    return (
+      <Dialog open onClose={onClose} title="Credential">
+        {guard}
+      </Dialog>
+    );
+  }
 
   if (!c) {
     return (

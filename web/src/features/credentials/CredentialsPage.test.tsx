@@ -123,4 +123,34 @@ describe('CredentialsPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('still used');
   });
+
+  it('shows a failed credential load inside the dialog instead of staying on Loading', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
+      'GET /api/v1/orgs/acme/credentials/c1': () =>
+        new Response(JSON.stringify({ status: 404, detail: 'credential not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Credential' });
+    expect(await within(dialog).findByText(/not found/i)).toBeInTheDocument();
+    expect(within(dialog).queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it('shows a 500 credential load failure with its detail message inside the dialog', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
+      'GET /api/v1/orgs/acme/credentials/c1': () =>
+        new Response(JSON.stringify({ status: 500, detail: 'the vault is unreachable' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Credential' });
+    expect(await within(dialog).findByText(/the vault is unreachable/)).toBeInTheDocument();
+    expect(within(dialog).queryByText('Loading…')).not.toBeInTheDocument();
+  });
 });
