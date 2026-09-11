@@ -5,6 +5,7 @@ import { useOrgActivity } from '../../api/hooks/useActivity.ts';
 import { useMembers } from '../../api/hooks/useMembers.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 
 const OBJECT_TYPES = ['host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite'];
 
@@ -43,7 +44,10 @@ export function ActivityPage() {
   const activityGuard = useQueryGuard(activity);
   if (activityGuard) return activityGuard;
 
-  const grouped = groupByDay(activity.data?.items ?? []);
+  // The feed is paginated (useOrgActivity follows next_cursor page by
+  // page); grouping runs over every loaded page, so a day split across a
+  // page boundary still renders as one group.
+  const grouped = groupByDay(activity.data?.pages.flatMap((page) => page.items ?? []) ?? []);
 
   return (
     <>
@@ -104,6 +108,9 @@ export function ActivityPage() {
           </div>
         ))}
       </div>
+      {activity.hasNextPage && (
+        <LoadMoreButton onClick={() => void activity.fetchNextPage()} loading={activity.isFetchingNextPage} />
+      )}
     </>
   );
 }

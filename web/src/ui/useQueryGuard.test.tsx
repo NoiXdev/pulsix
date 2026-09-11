@@ -1,7 +1,8 @@
 import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from './toast.tsx';
 import { ApiError } from '../api/client.ts';
@@ -105,6 +106,55 @@ describe('useQueryGuard', () => {
     await qc.refetchQueries({ queryKey: ['thing'] });
 
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+  });
+
+  it('accepts an infinite query: a failed "load more" page keeps the loaded pages and toasts once', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function InfiniteHarness() {
+      const query = useInfiniteQuery({
+        queryKey: ['paged-thing'],
+        initialPageParam: 0,
+        queryFn: ({ pageParam }) =>
+          pageParam === 0
+            ? Promise.resolve({ value: 'page one', next: 1 })
+            : Promise.reject(new ApiError(500, { detail: 'boom' })),
+        getNextPageParam: (last) => last.next,
+        retry: false,
+      });
+      const guard = useQueryGuard(query);
+      if (guard) return guard;
+      return (
+        <div>
+          <div>PAGES: {query.data?.pages.map((p) => p.value).join(', ')}</div>
+          <button type="button" onClick={() => void query.fetchNextPage()}>
+            next
+          </button>
+        </div>
+      );
+    }
+
+    const rootRoute = createRootRoute();
+    const testRoute = createRoute({ getParentRoute: () => rootRoute, path: '/test', component: InfiniteHarness });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([testRoute]),
+      history: createMemoryHistory({ initialEntries: ['/test'] }),
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('PAGES: page one');
+    await user.click(screen.getByRole('button', { name: 'next' }));
+
+    const toasts = await screen.findAllByRole('status');
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toHaveTextContent('Could not load more — showing what is already loaded.');
+    expect(screen.getByText('PAGES: page one')).toBeInTheDocument();
   });
 
   it('never raises a background-refetch toast for a query that is disabled (options.enabled: false)', async () => {

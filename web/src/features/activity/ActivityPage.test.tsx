@@ -89,3 +89,67 @@ describe('ActivityPage actor names', () => {
     expect(lastActorParam).toBe('u1');
   });
 });
+
+/** I1: the feed used to issue one cursor-less request, silently ending at
+ * the API's default page size. */
+describe('ActivityPage pagination', () => {
+  const FIRST = { id: 'e1', at: '2026-03-01T10:00:00Z', actor_kind: 'system', actor_id: null, action: 'reconciled', object_type: 'zone', summary: 'first page event' };
+  const SECOND = { id: 'e2', at: '2026-02-27T10:00:00Z', actor_kind: 'system', actor_id: null, action: 'reconciled', object_type: 'zone', summary: 'second page event' };
+
+  it('loads the next page through "Load more", sending the cursor, and hides the control on the last page', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const requests: Array<{ cursor: string | null; limit: string | null }> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme/activity': (req: MockRequest) => {
+        const cursor = req.search.get('cursor');
+        requests.push({ cursor, limit: req.search.get('limit') });
+        if (cursor === 'older') return { items: [SECOND], next_cursor: '' };
+        return { items: [FIRST], next_cursor: 'older' };
+      },
+    });
+
+    renderPage(qc);
+
+    expect(await screen.findByText('first page event')).toBeInTheDocument();
+    expect(screen.queryByText('second page event')).not.toBeInTheDocument();
+    expect(requests).toEqual([{ cursor: null, limit: '50' }]);
+
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+
+    expect(await screen.findByText('second page event')).toBeInTheDocument();
+    expect(screen.getByText('first page event')).toBeInTheDocument();
+    expect(requests[1]).toEqual({ cursor: 'older', limit: '50' });
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('starts over from the first page when the object-type filter changes', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const requests: Array<{ cursor: string | null; objectType: string | null }> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme/activity': (req: MockRequest) => {
+        const cursor = req.search.get('cursor');
+        const objectType = req.search.get('object_type');
+        requests.push({ cursor, objectType });
+        if (objectType === 'host') return { items: [], next_cursor: '' };
+        if (cursor === 'older') return { items: [SECOND], next_cursor: '' };
+        return { items: [FIRST], next_cursor: 'older' };
+      },
+    });
+
+    renderPage(qc);
+
+    await user.click(await screen.findByRole('button', { name: 'Load more' }));
+    await screen.findByText('second page event');
+
+    await user.click(screen.getByRole('button', { name: 'host' }));
+
+    expect(await screen.findByText('No activity recorded yet.')).toBeInTheDocument();
+    expect(requests.at(-1)).toEqual({ cursor: null, objectType: 'host' });
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+});
+

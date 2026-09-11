@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -12,6 +12,16 @@ const HOSTS = {
   hosts: [
     { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '203.0.113.4', managed: true, monitored: false, last_seen_at: '2026-03-01T00:00:00Z', facts: {} },
   ],
+};
+const SECOND_PAGE_HOST = {
+  id: 'h2',
+  name: 'db-01.fra',
+  zone_id: 'z1',
+  address: '203.0.113.9',
+  managed: false,
+  monitored: true,
+  last_seen_at: '2026-03-01T00:00:00Z',
+  facts: {},
 };
 
 function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
@@ -118,5 +128,84 @@ describe('HostsListPage', () => {
 
     expect(await screen.findByText('web-04.fra')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'clear' })).toBeInTheDocument();
+  });
+
+  it('loads the next page through "Load more", sending the cursor, and hides the control on the last page (I1)', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const requests: Array<{ cursor: string | null; limit: string | null }> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        const cursor = req.search.get('cursor');
+        requests.push({ cursor, limit: req.search.get('limit') });
+        if (cursor === 'page-2') return { hosts: [SECOND_PAGE_HOST], next_cursor: '' };
+        return { hosts: HOSTS.hosts, next_cursor: 'page-2' };
+      },
+      'GET /api/v1/orgs/acme/zones': ZONES,
+    });
+
+    renderPage(qc);
+
+    await screen.findByText('web-04.fra');
+    // A partial list is not presented as the total.
+    expect(screen.getByText('1 hosts loaded, more available')).toBeInTheDocument();
+    expect(requests).toEqual([{ cursor: null, limit: '50' }]);
+
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+
+    expect(await screen.findByText('db-01.fra')).toBeInTheDocument();
+    expect(screen.getByText('web-04.fra')).toBeInTheDocument();
+    expect(requests[1]).toEqual({ cursor: 'page-2', limit: '50' });
+    expect(screen.getByText('2 hosts')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('starts over from the first page when a filter changes', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const requests: Array<{ cursor: string | null; managed: string | null }> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        const cursor = req.search.get('cursor');
+        const managed = req.search.get('managed');
+        requests.push({ cursor, managed });
+        if (managed === 'true') return { hosts: HOSTS.hosts, next_cursor: '' };
+        if (cursor === 'page-2') return { hosts: [SECOND_PAGE_HOST], next_cursor: '' };
+        return { hosts: HOSTS.hosts, next_cursor: 'page-2' };
+      },
+      'GET /api/v1/orgs/acme/zones': ZONES,
+    });
+
+    renderPage(qc);
+
+    await user.click(await screen.findByRole('button', { name: 'Load more' }));
+    await screen.findByText('db-01.fra');
+
+    await user.click(screen.getByRole('button', { name: 'Managed' }));
+
+    await waitFor(() => expect(screen.queryByText('db-01.fra')).not.toBeInTheDocument());
+    expect(screen.getByText('web-04.fra')).toBeInTheDocument();
+    expect(requests.at(-1)).toEqual({ cursor: null, managed: 'true' });
+    expect(screen.getByText('1 host')).toBeInTheDocument();
+  });
+
+  it('hides "Load more" while the tag selector drives the list', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': { hosts: HOSTS.hosts, next_cursor: 'page-2' },
+      'GET /api/v1/orgs/acme/zones': ZONES,
+      'POST /api/v1/orgs/acme/hosts/query': { hosts: [SECOND_PAGE_HOST] },
+    });
+
+    renderPage(qc);
+
+    await screen.findByRole('button', { name: 'Load more' });
+    await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
+    await user.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(await screen.findByText('db-01.fra')).toBeInTheDocument();
+    expect(screen.queryByText('web-04.fra')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 });

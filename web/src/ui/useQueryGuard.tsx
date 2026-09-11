@@ -1,9 +1,15 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import type { UseQueryResult } from '@tanstack/react-query';
+import type { UseInfiniteQueryResult, UseQueryResult } from '@tanstack/react-query';
 import { errorStatus } from '../lib/apiError.ts';
 import { useToast } from './toastContext.ts';
 import { QueryError } from './QueryState.tsx';
+
+/** GuardedQuery is what useQueryGuard accepts: a plain `useQuery` result or
+ * a paginated `useInfiniteQuery` one (the hosts list, the activity feed).
+ * Both expose the same `data`/`isError`/`error`/`errorUpdatedAt` fields
+ * the guard decides on. */
+export type GuardedQuery<TData, TError> = UseQueryResult<TData, TError> | UseInfiniteQueryResult<TData, TError>;
 
 /**
  * useQueryGuard is the single place that decides what a failed query does
@@ -35,6 +41,8 @@ import { QueryError } from './QueryState.tsx';
  * - A 401 on a background refresh is the one exception: the session is
  *   gone and every further action on the page will fail too, so this
  *   redirects to /login itself — one place, not one per page.
+ * - For an infinite query, a failed "Load more" page fetch is a background
+ *   failure like any other: the loaded pages stay and one toast says so.
  *
  * Usage (replaces the old `if (query.isError) return <QueryError .../>`):
  *
@@ -53,13 +61,14 @@ import { QueryError } from './QueryState.tsx';
  * flag rather than a conditional call.
  */
 export function useQueryGuard<TData, TError>(
-  query: UseQueryResult<TData, TError>,
+  query: GuardedQuery<TData, TError>,
   options?: { enabled?: boolean },
 ): ReactNode | null {
   const enabled = options?.enabled ?? true;
   const navigate = useNavigate();
   const toast = useToast();
   const hasData = query.data !== undefined;
+  const nextPageFailed = 'isFetchNextPageError' in query && query.isFetchNextPageError;
   // Tracks the errorUpdatedAt of the last background failure this hook
   // has already reacted to, so the toast/redirect below fires once per
   // failed fetch, not once per render.
@@ -74,8 +83,13 @@ export function useQueryGuard<TData, TError>(
       void navigate({ to: '/login', search: { step: undefined } });
       return;
     }
-    toast.show('Could not refresh this page — showing the last loaded data.', 'destructive');
-  }, [enabled, query.isError, hasData, query.errorUpdatedAt, query.error, navigate, toast]);
+    toast.show(
+      nextPageFailed
+        ? 'Could not load more — showing what is already loaded.'
+        : 'Could not refresh this page — showing the last loaded data.',
+      'destructive',
+    );
+  }, [enabled, query.isError, hasData, nextPageFailed, query.errorUpdatedAt, query.error, navigate, toast]);
 
   if (enabled && query.isError && !hasData) {
     return <QueryError error={query.error} />;

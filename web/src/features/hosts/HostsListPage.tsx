@@ -9,6 +9,7 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useCreateHost, useCreateZone, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
@@ -68,7 +69,10 @@ export function HostsListPage() {
     }
   }
 
-  const displayedHosts = selectorActive ? (hostQuery.data?.hosts ?? []) : (hosts.data?.hosts ?? []);
+  // The plain list is paginated (useHosts follows next_cursor page by
+  // page), so what is loaded is the concatenation of every fetched page.
+  const listedHosts = hosts.data?.pages.flatMap((page) => page.hosts ?? []) ?? [];
+  const displayedHosts = selectorActive ? (hostQuery.data?.hosts ?? []) : listedHosts;
   const zoneSlugById = new Map((zones.data?.zones ?? []).map((z) => [z.id, z.slug]));
 
   const hostsGuard = useQueryGuard(hosts, { enabled: !selectorActive });
@@ -80,7 +84,7 @@ export function HostsListPage() {
         <div className="flex flex-col gap-0.5">
           <h1 className="text-xl font-semibold">Hosts</h1>
           <span className="text-[13px] text-muted-foreground">
-            {hosts.data ? `${(hosts.data.hosts ?? []).length} hosts loaded` : 'Loading…'}
+            {hosts.data ? hostCountLabel(listedHosts.length, hosts.hasNextPage) : 'Loading…'}
           </span>
         </div>
         <div className="flex gap-2">
@@ -159,6 +163,9 @@ export function HostsListPage() {
           <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} />
         ))}
       </Card>
+      {!selectorActive && hosts.hasNextPage && (
+        <LoadMoreButton onClick={() => void hosts.fetchNextPage()} loading={hosts.isFetchingNextPage} />
+      )}
 
       <Dialog open={addZoneOpen} onClose={() => setAddZoneOpen(false)} title="Add zone">
         <form
@@ -260,6 +267,14 @@ export function HostsListPage() {
       </Dialog>
     </>
   );
+}
+
+/** hostCountLabel never presents a partial list as the total: while more
+ * pages exist it says how many are loaded so far, next to the Load more
+ * control; only a fully loaded list states a plain count. */
+function hostCountLabel(loaded: number, more: boolean): string {
+  if (more) return `${loaded} hosts loaded, more available`;
+  return `${loaded} ${loaded === 1 ? 'host' : 'hosts'}`;
 }
 
 function FilterChip({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
