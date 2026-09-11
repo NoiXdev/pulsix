@@ -184,7 +184,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		out := &zoneCreateOutput{}
 		out.Body.Zone = toZoneDTO(z)
 		return out, nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createZone", "host"))
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createZone", "zone"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/zones", func(ctx context.Context, in *zoneListInput) (*zoneListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermHostsRead)
@@ -355,7 +355,12 @@ func parseHostListFilter(zoneStr, managedStr, monitoredStr, query string) (hosts
 // mapHostsErr converts hosts package errors to HTTP errors, the same shape
 // mapTenancyErr and mapTokenErr give their own packages' sentinels:
 // anything not recognized is logged server-side and replaced with a
-// generic 500 rather than ever reaching the client.
+// generic 500 rather than ever reaching the client. hosts.ErrInvalidCursor
+// is the one error a caller can actually cause via a tampered or malformed
+// ?cursor= value — the same 400 mapAuditErr already gives audit.ErrInvalidCursor
+// for the identical case on the activity feed (Task 13 fix round 1, finding
+// 1: this case was previously missing, so a garbage cursor fell through to
+// the default branch and answered 500).
 func mapHostsErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, hosts.ErrInvalidInput):
@@ -364,6 +369,8 @@ func mapHostsErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, hosts.ErrNameTaken):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, hosts.ErrInvalidCursor):
+		return huma.Error400BadRequest("invalid cursor")
 	default:
 		slog.ErrorContext(ctx, "unmapped hosts error", "err", err)
 		return huma.Error500InternalServerError("internal error")

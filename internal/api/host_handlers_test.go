@@ -382,6 +382,62 @@ func TestActivityFeedShowsCreateHost(t *testing.T) {
 	}
 }
 
+// TestListHostsRejectsMalformedCursor drives a garbage ?cursor= value
+// through the real GET /hosts route and asserts it answers 400, not 500 —
+// hosts.ErrInvalidCursor was not mapped in mapHostsErr before Task 13 fix
+// round 1, finding 1, so this exact request fell through to the default
+// branch and answered 500 (logged server-side as "unmapped hosts error").
+// Mirrors TestActivityFeedRejectsMalformedQuery's cursor case
+// (audit_handlers_test.go), which already covered the identical case for
+// the activity feed.
+func TestListHostsRejectsMalformedCursor(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("host-badcursor-owner@example.test", "correct horse battery")
+	s.SeedOrg("host-badcursor-org", owner)
+	c := s.LoginAs(owner)
+
+	resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/host-badcursor-org/hosts?cursor=not-a-valid-cursor", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed cursor: status %d, want 400, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestActivityFeedShowsCreateZone proves POST /zones is audited with
+// object_type "zone", not "host" — Task 13 fix round 1's adjacent fix.
+// TestActivityFeedShowsCreateHost (above) already covers createHost's own
+// object type; this is its zone counterpart, the case the original bug
+// actually affected.
+func TestActivityFeedShowsCreateZone(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("zone-audit-owner@example.test", "correct horse battery")
+	s.SeedOrg("zone-audit-org", owner)
+	c := s.LoginAs(owner)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/zone-audit-org/zones", map[string]any{"slug": "fra", "name": "Falkenstein"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create zone: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	zone := decodeZone(t, resp)
+
+	resp = requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/zone-audit-org/activity", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get activity: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	activity := decodeActivity(t, resp)
+	var found bool
+	for _, ev := range activity.Items {
+		if ev.Action == "POST createZone" {
+			found = true
+			if ev.ObjectType != "zone" || ev.ObjectID != zone.ID {
+				t.Fatalf("event = %+v, want object_type=zone object_id=%s", ev, zone.ID)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("activity = %+v, want a POST createZone event", activity.Items)
+	}
+}
+
 // TestListHostsFiltersAndPagination drives GET /hosts through the real
 // router with zone/managed/monitored/q filters and a small page size, so
 // keyset pagination is exercised across the HTTP boundary too (the store's
