@@ -20,6 +20,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/grouptree"
+	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/sshconf"
 )
@@ -34,6 +35,9 @@ var (
 	ErrHasChildren      = errors.New("group has child groups")
 	ErrRevisionMismatch = errors.New("revision does not match")
 	ErrNotManaged       = errors.New("host is not managed")
+	// ErrUnrenderable means the stored inventory cannot be rendered; the
+	// wrapping error names the group or host and the reason, never a secret.
+	ErrUnrenderable = render.ErrUnrenderable
 )
 
 // MaxGroupDepth is the number of levels a group tree may have.

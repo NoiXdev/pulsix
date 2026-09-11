@@ -33,6 +33,11 @@ const (
 // ErrUnknownGroup means Scope.GroupID names no group of the input.
 var ErrUnknownGroup = errors.New("render: unknown group")
 
+// ErrUnrenderable means the stored inventory cannot be rendered as it is (a
+// jump host chain that is broken, a group tree with a cycle). The wrapping
+// error names the host or group and the reason; neither is secret.
+var ErrUnrenderable = errors.New("the inventory cannot be rendered")
+
 // Group is one inventory group, vars decoded.
 type Group struct {
 	ID        uuid.UUID
@@ -112,8 +117,9 @@ type renderer struct {
 	warnings []Warning
 }
 
-// Render renders in. It fails, rather than guessing, when a host's jump host
-// cannot be resolved: a job must never take a different route than shown.
+// Render renders in. It fails with ErrUnrenderable, rather than guessing,
+// when a host's jump host cannot be resolved: a job must never take a
+// different route than shown.
 func Render(in Input) (Inventory, error) {
 	r := renderer{in: in, groups: make(map[uuid.UUID]Group, len(in.Groups)), hosts: make(map[uuid.UUID]Host, len(in.Hosts))}
 	nodes := make([]grouptree.Node, len(in.Groups))
@@ -362,7 +368,7 @@ func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection
 	}
 	hops, source, err := r.resolveBastion(h, ssh, ms)
 	if err != nil {
-		return nil, Connection{}, fmt.Errorf("host %s: %w", h.Name, err)
+		return nil, Connection{}, fmt.Errorf("%w: host %s: %w", ErrUnrenderable, h.Name, err)
 	}
 	conn := Connection{HostID: h.ID, CredentialID: ssh.CredentialID, BastionSource: source}
 	if len(hops) > 0 {

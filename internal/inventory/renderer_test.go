@@ -115,3 +115,25 @@ func TestHostPreview(t *testing.T) {
 }
 
 func ptrUUID(id uuid.UUID) *uuid.UUID { return &id }
+
+// TestRenderFailureIsUnrenderable pins the sentinel the API maps to 409: a
+// jump host chain that became cyclic behind the service's back makes every
+// render fail with inventory.ErrUnrenderable naming the host.
+func TestRenderFailureIsUnrenderable(t *testing.T) {
+	f, _, _ := rendererFixture(t)
+	a, b := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	ssh := fakeSSH{
+		hostSSH: []sshconf.HostSSH{{HostID: f.web01, OrgID: f.org, Port: 22, BastionMode: sshconf.ModeExplicit, BastionID: &a}},
+		bastions: []sshconf.Bastion{
+			{ID: a, OrgID: f.org, Name: "a", Address: "a.example", Port: 22, Username: "ops", ViaBastionID: &b},
+			{ID: b, OrgID: f.org, Name: "b", Address: "b.example", Port: 22, Username: "ops", ViaBastionID: &a},
+		},
+	}
+	r := inventory.NewRenderer(f.store, f.store.hosts, ssh, fakeCreds{}, testBox())
+	if _, err := r.Preview(ctx, f.org, render.Scope{}); !errors.Is(err, inventory.ErrUnrenderable) || !strings.Contains(err.Error(), "web-01") {
+		t.Fatalf("Preview: %v", err)
+	}
+	if _, err := r.HostPreview(ctx, f.org, f.web01); !errors.Is(err, inventory.ErrUnrenderable) {
+		t.Fatalf("HostPreview: %v", err)
+	}
+}

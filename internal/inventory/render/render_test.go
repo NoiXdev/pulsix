@@ -306,13 +306,14 @@ func TestRenderScopesWarnAboutUnmanagedMembersInScope(t *testing.T) {
 func TestRenderFailsClosedOnBrokenJumpHosts(t *testing.T) {
 	in := fixture()
 	in.SSH[hWeb02] = sshconf.HostSSH{HostID: hWeb02, Port: 22, BastionMode: sshconf.ModeExplicit, BastionID: ptr(uuid.Must(uuid.NewV7()))}
-	if _, err := render.Render(in); !errors.Is(err, sshconf.ErrInvalidInput) {
+	_, err := render.Render(in)
+	if !errors.Is(err, sshconf.ErrInvalidInput) || !errors.Is(err, render.ErrUnrenderable) || !strings.Contains(err.Error(), "host web-02") {
 		t.Errorf("explicit unknown bastion: %v", err)
 	}
 	in = fixture()
 	in.SSH[hWeb02] = sshconf.HostSSH{HostID: hWeb02, Port: 22, BastionMode: sshconf.ModeExplicit}
-	if _, err := render.Render(in); err == nil {
-		t.Error("explicit mode without a bastion must fail")
+	if _, err := render.Render(in); !errors.Is(err, render.ErrUnrenderable) || !strings.Contains(err.Error(), "host web-02") {
+		t.Errorf("explicit mode without a bastion must fail as unrenderable: %v", err)
 	}
 }
 

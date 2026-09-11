@@ -331,6 +331,10 @@ func mapInventoryErr(ctx context.Context, err error, location string) error {
 		return huma.Error409Conflict("the group still has child groups; move or delete them first")
 	case errors.Is(err, inventory.ErrNotManaged):
 		return huma.Error409Conflict("only managed hosts can join inventory groups")
+	case errors.Is(err, inventory.ErrUnrenderable):
+		// The message names the group or host and the reason; the renderer
+		// never puts a value, let alone a secret, into it.
+		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, inventory.ErrRevisionMismatch):
 		return huma.Error412PreconditionFailed("this changed since you loaded it; reload and apply your change again")
 	default:

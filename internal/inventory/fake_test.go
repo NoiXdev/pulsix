@@ -214,8 +214,12 @@ type fakeSSH struct {
 	zones    map[uuid.UUID]uuid.UUID
 }
 
-func (f fakeSSH) ListHostSSH(context.Context, uuid.UUID) ([]sshconf.HostSSH, error) { return f.hostSSH, nil }
-func (f fakeSSH) ListBastions(context.Context, uuid.UUID) ([]sshconf.Bastion, error) { return f.bastions, nil }
+func (f fakeSSH) ListHostSSH(context.Context, uuid.UUID) ([]sshconf.HostSSH, error) {
+	return f.hostSSH, nil
+}
+func (f fakeSSH) ListBastions(context.Context, uuid.UUID) ([]sshconf.Bastion, error) {
+	return f.bastions, nil
+}
 func (f fakeSSH) ZoneBastions(context.Context, uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
 	return f.zones, nil
 }
