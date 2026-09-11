@@ -23,6 +23,22 @@ export interface SchemaBuilderProps {
 const SELECT =
   'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:border-primary focus-visible:outline-none';
 
+function newKey(): string {
+  return Math.random().toString(36).slice(2);
+}
+
+/** moveField/removeField (fieldEditor.ts) operate on SchemaField[]; the
+ * parallel array of stable keys needs the same splice, generically. */
+function moveItem<T>(items: readonly T[], from: number, to: number): T[] {
+  const next = [...items];
+  next.splice(to, 0, next.splice(from, 1)[0]);
+  return next;
+}
+
+function removeItem<T>(items: readonly T[], index: number): T[] {
+  return items.filter((_, i) => i !== index);
+}
+
 /**
  * SchemaBuilder edits a group's variable schema (SchemaBuilder mockup):
  * the field list on the left, the selected field's editor in the middle,
@@ -33,8 +49,24 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
   const fields = value.fields;
   const index = Math.min(selected, fields.length - 1);
   const field = index >= 0 ? fields[index] : undefined;
-  const setFields = (next: SchemaField[]) => onChange({ fields: next });
   const idBase = `sb-${pathPrefix.replace(/[^a-zA-Z0-9]/g, '-') || 'top'}`;
+
+  // Stable per-field keys, parallel to `fields`, that move with their field
+  // on add/move/delete instead of following the field's index. This lets
+  // <FieldEditor> be keyed by field identity: moving the selected field
+  // (which changes its index, and so the "Move up"/"Move down" button just
+  // pressed) does not remount its editor and drop keyboard focus, while
+  // selecting a *different* field still mounts a fresh editor (needed so
+  // OptionsField, which seeds its text from props, never carries one
+  // field's local state into another). A length mismatch — the field list
+  // was replaced from outside, e.g. the parent resetting the draft — falls
+  // back to index keys for this render; the next add/move/delete resyncs.
+  const [keys, setKeys] = useState<string[]>(() => fields.map(newKey));
+  const stable = keys.length === fields.length ? keys : fields.map((_, i) => `i${i}`);
+  const setFields = (next: SchemaField[], nextKeys: string[]) => {
+    setKeys(nextKeys);
+    onChange({ fields: next });
+  };
 
   // Problems about this field list itself, not about any one field: "" at
   // the top level (e.g. too many fields), or the sub-schema's own path when
@@ -78,7 +110,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
           variant="ghost"
           className="self-start"
           onClick={() => {
-            setFields([...fields, newField(fields)]);
+            setFields([...fields, newField(fields)], [...stable, newKey()]);
             setSelected(fields.length);
           }}
         >
@@ -88,12 +120,12 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
 
       {field ? (
         <FieldEditor
-          // Keyed by schema path so selecting a different field (or moving
-          // one to a new index) always mounts a fresh editor: sub-components
-          // that seed local state from props (OptionsField's textarea text)
-          // must not carry a previous field's state into the newly selected
-          // one.
-          key={fieldPath(pathPrefix, index)}
+          // Keyed by the field's stable identity, not its index or path: a
+          // different field (selected, or landing at this index because
+          // another field was deleted) always gets a fresh editor, but
+          // moving the selected field keeps the same key — and so the same
+          // mounted editor and DOM focus — because the key travels with it.
+          key={stable[index]}
           field={field}
           path={fieldPath(pathPrefix, index)}
           idBase={`${idBase}-${index}`}
@@ -101,13 +133,13 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
           problems={problems}
           canMoveUp={index > 0}
           canMoveDown={index < fields.length - 1}
-          onChange={(f) => setFields(replaceField(fields, index, f))}
+          onChange={(f) => setFields(replaceField(fields, index, f), stable)}
           onMove={(dir) => {
-            setFields(moveField(fields, index, index + dir));
+            setFields(moveField(fields, index, index + dir), moveItem(stable, index, index + dir));
             setSelected(index + dir);
           }}
           onRemove={() => {
-            setFields(removeField(fields, index));
+            setFields(removeField(fields, index), removeItem(stable, index));
             setSelected(Math.max(0, index - 1));
           }}
         />

@@ -74,6 +74,27 @@ describe('SchemaBuilder', () => {
     expect(schemaNow().fields.map((f) => f.name)).toEqual(['b']);
   });
 
+  it('keeps the field editor and its focus when the selected field moves', async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initial={{
+          fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }, { name: 'c', type: 'string' }],
+        }}
+      />,
+    );
+    const moveDown = within(editor('a')).getByRole('button', { name: 'Move down' });
+    moveDown.focus();
+    await user.click(moveDown);
+    // Same button instance, still focused: the editor did not remount.
+    expect(document.activeElement).toBe(moveDown);
+    expect(schemaNow().fields.map((f) => f.name)).toEqual(['b', 'a', 'c']);
+
+    await user.click(moveDown);
+    expect(document.activeElement).toBe(moveDown);
+    expect(schemaNow().fields.map((f) => f.name)).toEqual(['b', 'c', 'a']);
+  });
+
   it('marks fields with server problems and shows the message at the attribute', () => {
     render(
       <Harness
