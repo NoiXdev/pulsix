@@ -13,21 +13,30 @@ import (
 // bastion reached through another lists that one before itself. It fails on
 // an unknown id, a cycle, or a chain longer than MaxChain.
 func Chain(all map[uuid.UUID]Bastion, id uuid.UUID) ([]Bastion, error) {
+	hops, problem := chain(all, id)
+	if problem != "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, problem)
+	}
+	return hops, nil
+}
+
+// chain is Chain with the reason there is no valid chain as plain text.
+func chain(all map[uuid.UUID]Bastion, id uuid.UUID) ([]Bastion, string) {
 	var rev []Bastion
 	seen := make(map[uuid.UUID]bool)
 	cur := id
 	for {
 		if seen[cur] {
-			return nil, fmt.Errorf("%w: the jump host chain contains a cycle", ErrInvalidInput)
+			return nil, "the jump host chain contains a cycle"
 		}
 		seen[cur] = true
 		b, ok := all[cur]
 		if !ok {
-			return nil, fmt.Errorf("%w: jump host %s does not exist", ErrInvalidInput, cur)
+			return nil, fmt.Sprintf("jump host %s does not exist", cur)
 		}
 		rev = append(rev, b)
 		if len(rev) > MaxChain {
-			return nil, fmt.Errorf("%w: jump host chains are limited to %d hops", ErrInvalidInput, MaxChain)
+			return nil, fmt.Sprintf("jump host chains are limited to %d hops", MaxChain)
 		}
 		if b.ViaBastionID == nil {
 			break
@@ -35,7 +44,7 @@ func Chain(all map[uuid.UUID]Bastion, id uuid.UUID) ([]Bastion, error) {
 		cur = *b.ViaBastionID
 	}
 	slices.Reverse(rev)
-	return rev, nil
+	return rev, ""
 }
 
 // ProxyJump renders hops as the value of ssh's ProxyJump option

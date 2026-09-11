@@ -155,7 +155,8 @@ func (s *Service) ListBastions(ctx context.Context, orgID uuid.UUID) ([]Bastion,
 	return s.store.ListBastions(ctx, orgID)
 }
 
-// UpdateBastion fully replaces a jump host, rejecting chains that would
+// UpdateBastion fully replaces a jump host, rejecting the change when its
+// own chain, or the chain of any other jump host of the organization, would
 // become cyclic or too long.
 func (s *Service) UpdateBastion(ctx context.Context, orgID, id uuid.UUID, in BastionInput) (Bastion, error) {
 	if _, err := s.store.GetBastion(ctx, orgID, id); err != nil {
@@ -276,8 +277,20 @@ func (s *Service) checkBastion(ctx context.Context, b Bastion) error {
 		m[x.ID] = x
 	}
 	m[b.ID] = b
-	_, err = Chain(m, b.ID)
-	return err
+	if _, err := Chain(m, b.ID); err != nil {
+		return err
+	}
+	// The change also moves every jump host reached through this one: none
+	// of their chains may become cyclic or too long either.
+	for _, x := range all {
+		if x.ID == b.ID {
+			continue
+		}
+		if _, problem := chain(m, x.ID); problem != "" {
+			return fmt.Errorf("%w: this change breaks the chain of jump host %s: %s", ErrInvalidInput, x.Name, problem)
+		}
+	}
+	return nil
 }
 
 func (s *Service) checkCredential(ctx context.Context, orgID uuid.UUID, id *uuid.UUID) error {

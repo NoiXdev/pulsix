@@ -324,3 +324,34 @@ func TestHostSSH(t *testing.T) {
 		t.Fatalf("ListHostSSH = %v, %v", list, err)
 	}
 }
+
+// TestUpdateBastionRejectsBreakingAnotherChain pins that a jump host update
+// is checked against every chain of the organization, not only its own: B
+// may go via C (B's chain is 4 hops), but A goes via B and would then be 5.
+func TestUpdateBastionRejectsBreakingAnotherChain(t *testing.T) {
+	f := newFixture()
+	mk := func(name string, via *uuid.UUID) sshconf.Bastion {
+		t.Helper()
+		b, err := f.svc.CreateBastion(ctx, f.org, sshconf.BastionInput{Name: name, Address: name + ".example", Username: "ops", ViaBastionID: via})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	e := mk("e", nil)
+	d := mk("d", &e.ID)
+	c := mk("c", &d.ID)
+	b := mk("b", nil)
+	mk("a", &b.ID)
+
+	_, err := f.svc.UpdateBastion(ctx, f.org, b.ID, sshconf.BastionInput{Name: "b", Address: "b.example", Username: "ops", ViaBastionID: &c.ID})
+	if !errors.Is(err, sshconf.ErrInvalidInput) || !strings.Contains(err.Error(), "jump host a") || !strings.Contains(err.Error(), "4 hops") {
+		t.Fatalf("an update that pushes another chain past the limit: %v", err)
+	}
+	if got := f.store.bastions[b.ID]; got.ViaBastionID != nil {
+		t.Fatalf("the rejected update was stored: %+v", got)
+	}
+	if _, err := f.svc.UpdateBastion(ctx, f.org, b.ID, sshconf.BastionInput{Name: "b", Address: "b.example", Username: "ops", ViaBastionID: &d.ID}); err != nil {
+		t.Fatalf("A's chain stays at 4 hops via D: %v", err)
+	}
+}
