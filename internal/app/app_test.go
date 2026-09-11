@@ -7,9 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/hosts"
 )
 
 // testConfig builds a valid config.Config against the shared test
@@ -49,6 +53,47 @@ func TestBuildWithTestDatabase(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"completed":false`) {
 		t.Fatalf("setup status on a fresh database = %s, want completed:false", rec.Body.String())
+	}
+}
+
+// TestBuildReconcilesZonelessOrganizations is Task 13 fix round 1's finding
+// 3 test. An organization is seeded directly into the organizations table
+// through a plain admin connection — bypassing tenancy.Service.CreateOrg
+// entirely, so its OrgCreatedHook never runs — which is exactly the state a
+// post-commit hook failure leaves an organization in: it exists, but has no
+// "default" zone, and (per the finding) retrying org creation cannot repair
+// it because the slug is already taken. Build's startup reconciliation pass
+// (hostsSvc.ReconcileDefaultZones, wired in Build itself) must find and fix
+// it without Build failing.
+func TestBuildReconcilesZonelessOrganizations(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+
+	admin, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	q := gen.New(admin.Pool())
+	org, err := q.CreateOrganization(ctx, gen.CreateOrganizationParams{
+		ID: uuid.Must(uuid.NewV7()), Slug: "reconcile-zoneless-org", Name: "Zoneless Org",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build must not fail because of a zoneless organization: %v", err)
+	}
+	defer a.Close()
+
+	zones, err := q.ListZonesForOrg(ctx, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(zones) != 1 || zones[0].Slug != hosts.DefaultZoneSlug {
+		t.Fatalf("zones for the zoneless org after Build = %+v, want exactly one default zone", zones)
 	}
 }
 

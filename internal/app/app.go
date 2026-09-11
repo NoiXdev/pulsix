@@ -10,6 +10,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -116,6 +117,33 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// inside either one's transaction.
 	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
+
+	// The hook above closes most of the gap, but not all of it: it runs
+	// after the organization's own insert has already committed, so a
+	// failure there — a crash, a dropped connection, hostsSvc's own store
+	// erroring — leaves a real organization with no default zone, and a
+	// caller cannot repair it merely by retrying org creation (the slug is
+	// already taken, so that retry fails before the hook is ever reached
+	// again). This reconciliation pass is what actually closes it: it finds
+	// every such organization and gives it its zone, healing on the very
+	// next restart what the hook alone cannot. It runs here, decoupled from
+	// tenancy just like the hook itself is (see tenancy.OrgCreatedHook's own
+	// doc comment) — hostsSvc.ReconcileDefaultZones only ever reads the
+	// hosts/zones and organizations tables directly, never importing
+	// tenancy.
+	//
+	// A failure here must never stop the manager from starting for a
+	// reason unrelated to the database being reachable: by this point
+	// appDB has already been opened and queried successfully (assertCannotBypassRLS,
+	// just above), so the database is known reachable, and any error this
+	// pass reports is necessarily something narrower — one or more
+	// organizations that still could not be repaired. That is logged, not
+	// escalated into a startup failure; the next restart tries again.
+	if repaired, err := hostsSvc.ReconcileDefaultZones(ctx); err != nil {
+		slog.ErrorContext(ctx, "reconcile default zones: some organizations could not be repaired", "repaired", repaired, "err", err)
+	} else if repaired > 0 {
+		slog.InfoContext(ctx, "reconciled organizations that were missing their default zone", "repaired", repaired)
+	}
 
 	handler, err := api.New(api.Deps{
 		DB: appDB, Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
