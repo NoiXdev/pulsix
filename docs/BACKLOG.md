@@ -129,6 +129,9 @@ Items the v0.2a final whole-branch review deferred to the v0.2b plan. Recorded 2
 | 2.17 | Credential metadata reads without the sealed secret column; a separate secret read for the worker | planned | |
 | 2.18 | Host SSH card read-only for viewers | planned | |
 | 2.19 | Cross-org and malformed-id API tests for every inventory write route | planned | |
+| 2.20 | Assign-host picker: stop auto-loading further pages after a failed page load and show the error; show an error state when the first page fails | planned | a persistent error on page 2+ while every loaded host is already a member refetches about once a second |
+| 2.21 | Group and membership reads mask every non-empty value of a secret field, not only sealed ones | planned | after a string → secret schema change the old plain value is shown until the next save seals it |
+| 2.22 | Snapshot: clearer message when a container field changed type above a secret sub-field; decide whether a stray sealed value outside the job's scope should fail a scoped snapshot | planned | decide in the v0.2b plan; the snapshot fails closed today |
 
 ## v0.3 · Agent & monitoring
 
