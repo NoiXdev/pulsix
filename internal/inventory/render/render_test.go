@@ -256,6 +256,53 @@ func TestRenderScopes(t *testing.T) {
 	}
 }
 
+// TestRenderScopesWarnAboutUnmanagedMembersInScope proves the unmanaged-
+// member warning fires whenever the host would otherwise be in the rendered
+// scope, not only for a whole-organization render: switch-01 is a member of
+// dbserver only, so a group scope must warn exactly when it contains
+// dbserver, and a host scope must warn exactly when it names switch-01.
+func TestRenderScopesWarnAboutUnmanagedMembersInScope(t *testing.T) {
+	in := fixture()
+	in.Scope = render.Scope{GroupID: ptr(gDbserver)}
+	inv, err := render.Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(inv, "switch-01", "not managed") {
+		t.Errorf("group scope containing switch-01's group must warn: %+v", inv.Warnings)
+	}
+
+	in = fixture()
+	in.Scope = render.Scope{GroupID: ptr(gProduction)}
+	inv, err = render.Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasWarning(inv, "switch-01", "not managed") {
+		t.Errorf("group scope not containing switch-01's group must stay silent: %+v", inv.Warnings)
+	}
+
+	in = fixture()
+	in.Scope = render.Scope{HostIDs: []uuid.UUID{hSwitch}}
+	inv, err = render.Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(inv, "switch-01", "not managed") {
+		t.Errorf("host scope naming switch-01 must warn: %+v", inv.Warnings)
+	}
+
+	in = fixture()
+	in.Scope = render.Scope{HostIDs: []uuid.UUID{hDb02}}
+	inv, err = render.Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasWarning(inv, "switch-01", "not managed") {
+		t.Errorf("host scope not naming switch-01 must stay silent: %+v", inv.Warnings)
+	}
+}
+
 func TestRenderFailsClosedOnBrokenJumpHosts(t *testing.T) {
 	in := fixture()
 	in.SSH[hWeb02] = sshconf.HostSSH{HostID: hWeb02, Port: 22, BastionMode: sshconf.ModeExplicit, BastionID: ptr(uuid.Must(uuid.NewV7()))}

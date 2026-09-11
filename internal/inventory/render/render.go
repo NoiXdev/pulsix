@@ -252,13 +252,41 @@ func (r *renderer) selectHosts() (map[uuid.UUID]bool, error) {
 func (r *renderer) membershipsByHost(sel map[uuid.UUID]bool) map[uuid.UUID][]Membership {
 	out := map[uuid.UUID][]Membership{}
 	warned := map[uuid.UUID]bool{}
+
+	// subtree, when Scope.GroupID is set, is that group and its
+	// descendants — the same set selectHosts intersects managed hosts
+	// against. hostWant, when Scope.HostIDs is set, is that set. A
+	// membership is "in scope" — and so worth warning about, even though
+	// its unmanaged host is never rendered — exactly when it would have
+	// survived selectHosts's filtering had its host been managed.
+	var subtree map[uuid.UUID]bool
+	if g := r.in.Scope.GroupID; g != nil {
+		subtree = map[uuid.UUID]bool{*g: true}
+		for _, d := range r.tree.Descendants(*g) {
+			subtree[d] = true
+		}
+	}
+	hostWant := map[uuid.UUID]bool{}
+	for _, id := range r.in.Scope.HostIDs {
+		hostWant[id] = true
+	}
+	inScope := func(m Membership) bool {
+		if subtree != nil && !subtree[m.GroupID] {
+			return false
+		}
+		if len(hostWant) > 0 && !hostWant[m.HostID] {
+			return false
+		}
+		return true
+	}
+
 	for _, m := range r.in.Memberships {
 		h, ok := r.hosts[m.HostID]
 		if _, known := r.groups[m.GroupID]; !ok || !known {
 			continue
 		}
 		if !h.Managed {
-			if r.wholeOrg() && !warned[h.ID] {
+			if inScope(m) && !warned[h.ID] {
 				warned[h.ID] = true
 				r.warnings = append(r.warnings, Warning{Host: h.Name, Message: "is a member of inventory groups but not managed; skipped"})
 			}

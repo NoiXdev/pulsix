@@ -325,10 +325,6 @@ func TestSQLStoreListHostsFilters(t *testing.T) {
 	}
 }
 
-// TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone proves
-// PatchCapabilities' nil-means-unchanged contract against the real
-// database: setting only monitored must not disturb managed, sequentially
-// (the concurrency case below is TestSQLStorePatchCapabilitiesConcurrent).
 // TestSQLStoreListAllHostsSortedAndScoped proves ListAllHosts returns every
 // host of one organization sorted by name, created out of name order, and
 // never a host belonging to another organization — the contract the
@@ -360,6 +356,10 @@ func TestSQLStoreListAllHostsSortedAndScoped(t *testing.T) {
 	}
 }
 
+// TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone proves
+// PatchCapabilities' nil-means-unchanged contract against the real
+// database: setting only monitored must not disturb managed, sequentially
+// (the concurrency case below is TestSQLStorePatchCapabilitiesConcurrent).
 func TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())

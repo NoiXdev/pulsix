@@ -27,6 +27,12 @@ func rendererFixture(t *testing.T) (fixture, *inventory.Renderer, inventory.Grou
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	// svc.Assign rejects an unmanaged host (inventory.ErrNotManaged, see
+	// TestAssignValidatesAndSeals in members_test.go), so switch-01's
+	// membership is written straight into the fake store — it mirrors a
+	// host that lost its Managed capability after being assigned, which is
+	// exactly the case the unmanaged-member warning exists for.
+	f.store.members[memberKey{g.ID, f.switch01}] = inventory.Membership{OrgID: f.org, GroupID: g.ID, HostID: f.switch01, Revision: 1}
 	key := uuid.Must(uuid.NewV7())
 	ssh := fakeSSH{
 		hostSSH:  []sshconf.HostSSH{{HostID: f.web01, OrgID: f.org, Port: 22, CredentialID: &key, BastionMode: sshconf.ModeInherit}},
@@ -92,9 +98,16 @@ func TestHostPreview(t *testing.T) {
 	if hp.Connection == nil || hp.Connection.BastionSource != render.SourceNone || hp.Vars["ansible_host"] != "web-01" {
 		t.Fatalf("HostPreview = %+v", hp)
 	}
+	// switch-01 is a member of the webserver group (see rendererFixture)
+	// but not managed, so HostPreview's Scope{HostIDs: [switch-01]} puts it
+	// squarely in scope: it must carry the unmanaged-member warning, same
+	// as any other scoped render that would otherwise include it.
 	unmanaged, err := r.HostPreview(ctx, f.org, f.switch01)
 	if err != nil || unmanaged.Connection != nil || len(unmanaged.Vars) != 0 {
 		t.Fatalf("an unmanaged host has no preview: %+v, %v", unmanaged, err)
+	}
+	if len(unmanaged.Warnings) != 1 || unmanaged.Warnings[0].Host != "switch-01" || !strings.Contains(unmanaged.Warnings[0].Message, "not managed") {
+		t.Fatalf("an unmanaged host in scope must carry the warning: %+v", unmanaged.Warnings)
 	}
 	if _, err := r.HostPreview(ctx, f.org, uuid.Must(uuid.NewV7())); !errors.Is(err, inventory.ErrNotFound) {
 		t.Fatalf("unknown host: %v", err)
