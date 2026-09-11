@@ -65,4 +65,9 @@ export const ADMIN_STORAGE_STATE = path.join(stateDir, 'admin-storage-state.json
 /** The admin's TOTP secret, captured from the enrolment screen during
  * setup.spec — login.spec needs it to compute a real 6-digit code. */
 export const TOTP_STATE_PATH = path.join(stateDir, 'totp-secret.json');
+/** The last TOTP time step this suite has already asked the server to
+ * accept for the admin's secret — see otp.ts's nextTotpCode, which reads
+ * and updates this file so two submissions computed independently, close
+ * together in wall-clock time, never reserve the same step. */
+export const TOTP_STEP_STATE_PATH = path.join(stateDir, 'totp-step.json');
 export const MANAGER_LOG_PATH = path.join(stateDir, 'manager.log');

@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { ADMIN, ADMIN_STORAGE_STATE, ORG, SMTP, TOTP_STATE_PATH } from './env.ts';
-import { generateTotpCode } from './otp.ts';
+import { ADMIN, ADMIN_STORAGE_STATE, ORG, SMTP, TOTP_STATE_PATH, TOTP_STEP_STATE_PATH } from './env.ts';
+import { nextTotpCode } from './otp.ts';
 
 /**
  * setup.spec is the one journey every other spec depends on: it is what
@@ -79,7 +79,7 @@ test('a fresh instance redirects to /setup, the wizard creates the instance, and
   mkdirSync(path.dirname(TOTP_STATE_PATH), { recursive: true });
   writeFileSync(TOTP_STATE_PATH, JSON.stringify({ secret: secret.trim() }));
 
-  await page.getByPlaceholder('482913').fill(generateTotpCode(secret.trim()));
+  await page.getByPlaceholder('482913').fill(await nextTotpCode(secret.trim(), TOTP_STEP_STATE_PATH));
   await page.getByRole('button', { name: 'Confirm' }).click();
 
   await expect(page.getByText('Recovery codes — shown once.')).toBeVisible();
