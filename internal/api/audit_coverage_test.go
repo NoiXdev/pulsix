@@ -91,6 +91,13 @@ var auditAllowlist = map[string]string{
 	// mutation here to record, the same reasoning that keeps
 	// POST /auth/totp/verify off the audit trail above.
 	"POST /api/v1/admin/settings/smtp/test": "sends a one-off test message through the currently stored SMTP settings; persists nothing, so there is no object mutation to record",
+
+	// Task 14: a read — it lists hosts matching a selector, exactly like
+	// GET /orgs/{org}/hosts with a filter — that only uses POST because its
+	// filter (an arbitrary selector expression) belongs in a request body,
+	// not a query string. No object is mutated, so there is nothing for an
+	// audit event to attribute.
+	"POST /api/v1/orgs/{org}/hosts/query": "a read (lists hosts matching a selector) that uses POST only because the filter is a request body, not query params; persists nothing, so there is no object mutation to record",
 }
 
 // registeredMutatingOps builds the full route table the same way api.New

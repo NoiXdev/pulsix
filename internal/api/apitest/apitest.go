@@ -157,7 +157,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// session (Finding 2, fix round 1).
 	setupSvc := setup.NewService(setup.NewSQLStore(d.Pool()), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now)
-	hostsSvc := hosts.NewService(hosts.NewSQLStore(q), time.Now)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(q, d.Pool()), time.Now)
 	// Every organization gets its "default" zone through this hook,
 	// whichever of the two ways it was created — POST /orgs
 	// (tenancy.Service.CreateOrg) or the first-run wizard

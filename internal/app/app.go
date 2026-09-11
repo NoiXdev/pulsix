@@ -105,7 +105,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	mailer := mail.NewSMTP(setupSvc.LoadSMTP)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(q), mailer, cfg.PublicURL, time.Now)
 	auditRec := audit.NewRecorder(audit.NewSQLStore(q), time.Now)
-	hostsSvc := hosts.NewService(hosts.NewSQLStore(q), time.Now)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(q, appDB.Pool()), time.Now)
 	// Every organization gets its "default" zone the moment it is created,
 	// through whichever of the two paths created it — POST /orgs
 	// (tenancy.Service.CreateOrg) or the first-run wizard

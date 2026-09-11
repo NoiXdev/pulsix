@@ -97,6 +97,14 @@ type Host struct {
 	UpdatedAt  time.Time          `json:"updated_at"`
 }
 
+type HostTag struct {
+	HostID uuid.UUID `json:"host_id"`
+	OrgID  uuid.UUID `json:"org_id"`
+	Key    string    `json:"key"`
+	Value  string    `json:"value"`
+	Source string    `json:"source"`
+}
+
 type InstanceSetting struct {
 	Key       string    `json:"key"`
 	Value     []byte    `json:"value"`

@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/hosts/selector"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer, the same
@@ -153,6 +155,32 @@ type Store interface {
 	// organization a post-commit OrgCreatedHook failure left zoneless (see
 	// OrgCreatedHook's own doc comment in package tenancy).
 	OrgsWithoutDefaultZone(ctx context.Context) ([]uuid.UUID, error)
+
+	// ListHostTags returns every tag (both "manual" and "fact" sources)
+	// recorded for the host identified by (orgID, hostID). It does not
+	// itself check the host exists — Service.ListTags does that first via
+	// GetHost, the same "resolve and check ownership before touching the
+	// child resource" shape CreateHost's own zone check follows.
+	ListHostTags(ctx context.Context, orgID, hostID uuid.UUID) ([]Tag, error)
+	// ReplaceManualTags replaces every "manual" tag on the host identified
+	// by (orgID, hostID) with tags, leaving every "fact" tag on that host
+	// untouched. Every element of tags must already carry
+	// Source == TagSourceManual — Service.SetTags is what enforces that,
+	// and what validates the tags themselves, before this is ever called.
+	ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag) error
+	// ListTagKeyValueCounts returns, for orgID, every distinct (key, value)
+	// pair recorded on any of its hosts (either source) and how many hosts
+	// carry it, ordered by key then value — Service.ListTagKeys groups
+	// this flat list into []KeyValues, relying on that ordering to know
+	// when one key's values end and the next begins.
+	ListTagKeyValueCounts(ctx context.Context, orgID uuid.UUID) ([]TagValueCount, error)
+	// QueryHosts returns every host in orgID whose merged tags (a "manual"
+	// tag overriding a "fact" tag on the same key, the same precedence
+	// Service.SetTags' own doc comment describes) match sel, ordered by
+	// (name, id) ascending like ListHosts. See selector.Selector.SQL's own
+	// doc comment for how the SQL-backed implementation produces that
+	// merged view from host_tags' raw, per-source rows.
+	QueryHosts(ctx context.Context, orgID uuid.UUID, sel selector.Selector) ([]Host, error)
 }
 
 // DefaultListLimit and MaxListLimit bound ListHosts' page size, the same

@@ -23,6 +23,11 @@ var ctx = context.Background()
 type fakeHostStore struct {
 	zones map[uuid.UUID]hosts.Zone
 	list  map[uuid.UUID]hosts.Host
+	// tags holds every tag (both sources) recorded per host, keyed by host
+	// id — used by the tag-related fakeHostStore methods in tags_test.go
+	// (same package, a different file: Go lets a type's methods live
+	// anywhere in the package it is declared in).
+	tags map[uuid.UUID][]hosts.Tag
 
 	// failNext, when set, makes the named method's next call return this
 	// error instead of doing its normal thing — used to prove a genuine
@@ -43,7 +48,10 @@ type fakeHostStore struct {
 }
 
 func newFakeHostStore() *fakeHostStore {
-	return &fakeHostStore{zones: map[uuid.UUID]hosts.Zone{}, list: map[uuid.UUID]hosts.Host{}, failNext: map[string]error{}}
+	return &fakeHostStore{
+		zones: map[uuid.UUID]hosts.Zone{}, list: map[uuid.UUID]hosts.Host{},
+		tags: map[uuid.UUID][]hosts.Tag{}, failNext: map[string]error{},
+	}
 }
 
 func (f *fakeHostStore) take(method string) error {

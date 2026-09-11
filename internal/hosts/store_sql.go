@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
@@ -18,10 +19,19 @@ import (
 // and audit.SQLStore's seam: the service never imports gen or pgx
 // directly, so it can be driven from the in-memory fake in
 // service_test.go as well as the real database.
-type SQLStore struct{ q *gen.Queries }
+//
+// pool is used only by QueryHosts (tags_store_sql.go): every other method
+// goes through q, the ordinary sqlc-generated path, but QueryHosts' WHERE
+// clause is built at runtime from a selector.Selector, which sqlc's
+// static-query generation has no way to express — see QueryHosts' own doc
+// comment.
+type SQLStore struct {
+	q    *gen.Queries
+	pool *pgxpool.Pool
+}
 
-// NewSQLStore wraps the generated queries.
-func NewSQLStore(q *gen.Queries) *SQLStore { return &SQLStore{q: q} }
+// NewSQLStore wraps the generated queries and the pool they run against.
+func NewSQLStore(q *gen.Queries, pool *pgxpool.Pool) *SQLStore { return &SQLStore{q: q, pool: pool} }
 
 // uniqueViolationCode is the PostgreSQL error code for a unique constraint
 // violation — zones' (org_id, slug) and hosts' (org_id, name), here.
