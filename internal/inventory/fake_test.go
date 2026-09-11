@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -195,3 +196,30 @@ func (f fakeBastions) GetBastion(_ context.Context, orgID, id uuid.UUID) (sshcon
 	}
 	return b, nil
 }
+
+func (f fakeHosts) ListAllHosts(_ context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
+	var out []hosts.Host
+	for _, h := range f {
+		if h.OrgID == orgID {
+			out = append(out, h)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+type fakeSSH struct {
+	hostSSH  []sshconf.HostSSH
+	bastions []sshconf.Bastion
+	zones    map[uuid.UUID]uuid.UUID
+}
+
+func (f fakeSSH) ListHostSSH(context.Context, uuid.UUID) ([]sshconf.HostSSH, error) { return f.hostSSH, nil }
+func (f fakeSSH) ListBastions(context.Context, uuid.UUID) ([]sshconf.Bastion, error) { return f.bastions, nil }
+func (f fakeSSH) ZoneBastions(context.Context, uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	return f.zones, nil
+}
+
+type fakeCreds []credentials.Credential
+
+func (f fakeCreds) List(context.Context, uuid.UUID) ([]credentials.Credential, error) { return f, nil }

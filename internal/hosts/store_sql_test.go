@@ -329,6 +329,37 @@ func TestSQLStoreListHostsFilters(t *testing.T) {
 // PatchCapabilities' nil-means-unchanged contract against the real
 // database: setting only monitored must not disturb managed, sequentially
 // (the concurrency case below is TestSQLStorePatchCapabilitiesConcurrent).
+// TestSQLStoreListAllHostsSortedAndScoped proves ListAllHosts returns every
+// host of one organization sorted by name, created out of name order, and
+// never a host belonging to another organization — the contract the
+// inventory renderer (internal/inventory/render) relies on.
+func TestSQLStoreListAllHostsSortedAndScoped(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hosts-list-all-org")
+	other := seedOrg(t, q, "hosts-list-all-org-2")
+	zone := seedZone(t, store, org, "fra")
+	otherZone := seedZone(t, store, other, "fra")
+
+	for _, name := range []string{"c-host", "a-host", "b-host"} {
+		if err := store.CreateHost(ctx, hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.CreateHost(ctx, hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: other, ZoneID: otherZone.ID, Name: "z-host"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.ListAllHosts(ctx, org)
+	if err != nil {
+		t.Fatalf("ListAllHosts: %v", err)
+	}
+	if len(got) != 3 || got[0].Name != "a-host" || got[1].Name != "b-host" || got[2].Name != "c-host" {
+		t.Fatalf("ListAllHosts = %+v, want [a-host b-host c-host]", got)
+	}
+}
+
 func TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())

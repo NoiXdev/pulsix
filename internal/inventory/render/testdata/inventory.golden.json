@@ -1,0 +1,162 @@
+{
+  "inventory": {
+    "_meta": {
+      "hostvars": {
+        "db-01": {
+          "ansible_host": "db-01",
+          "ansible_ssh_common_args": "-o ProxyJump=jump@zone-jump.example:22",
+          "db_role": "primary"
+        },
+        "db-02": {
+          "ansible_host": "db-02",
+          "ansible_ssh_common_args": "-o ProxyJump=ops@bastion-a.example:22,ops@bastion-b.example:2222",
+          "db_role": "witness"
+        },
+        "lonely": {
+          "ansible_host": "lonely",
+          "ansible_user": "ubuntu"
+        },
+        "web-01": {
+          "ansible_host": "10.0.0.11",
+          "ansible_port": 2222,
+          "ansible_ssh_common_args": "-o ProxyJump=ops@bastion-a.example:22",
+          "ansible_user": "deploy",
+          "php_default": "8.4",
+          "pulsix_facts": {
+            "os": "debian"
+          },
+          "vhosts": [
+            {
+              "basic_auth": {
+                "password": "********",
+                "user": "u"
+              },
+              "domain": "acme.io",
+              "ssl": true
+            }
+          ]
+        },
+        "web-02": {
+          "ansible_host": "web-02",
+          "vhosts": [
+            {
+              "domain": "shop.acme.io",
+              "ssl": false
+            }
+          ]
+        },
+        "web-03": {
+          "ansible_host": "web-03",
+          "ansible_ssh_common_args": "-o ProxyJump=jump@zone-jump.example:22",
+          "db_role": "primary"
+        }
+      }
+    },
+    "all": {
+      "children": [
+        "dbserver",
+        "dmz",
+        "edge",
+        "production",
+        "ungrouped"
+      ]
+    },
+    "dbserver": {
+      "hosts": [
+        "db-01",
+        "db-02"
+      ]
+    },
+    "dmz": {
+      "hosts": [
+        "web-03"
+      ]
+    },
+    "edge": {
+      "hosts": [
+        "db-02",
+        "web-03"
+      ]
+    },
+    "production": {
+      "children": [
+        "webserver"
+      ],
+      "vars": {
+        "env": "prod"
+      }
+    },
+    "ungrouped": {
+      "hosts": [
+        "lonely"
+      ]
+    },
+    "webserver": {
+      "hosts": [
+        "web-01",
+        "web-02"
+      ],
+      "vars": {
+        "max_upload_mb": 64,
+        "php_default": "8.3"
+      }
+    }
+  },
+  "connections": {
+    "db-01": {
+      "host_id": "00000000-0000-7000-8000-000000000043",
+      "bastions": [
+        "00000000-0000-7000-8000-000000000003"
+      ],
+      "bastion_source": "zone"
+    },
+    "db-02": {
+      "host_id": "00000000-0000-7000-8000-000000000044",
+      "bastions": [
+        "00000000-0000-7000-8000-000000000001",
+        "00000000-0000-7000-8000-000000000002"
+      ],
+      "bastion_source": "group:edge"
+    },
+    "lonely": {
+      "host_id": "00000000-0000-7000-8000-000000000045",
+      "credential_id": "00000000-0000-7000-8000-000000000021",
+      "bastion_source": "none"
+    },
+    "web-01": {
+      "host_id": "00000000-0000-7000-8000-000000000040",
+      "credential_id": "00000000-0000-7000-8000-000000000020",
+      "bastions": [
+        "00000000-0000-7000-8000-000000000001"
+      ],
+      "bastion_source": "group:production"
+    },
+    "web-02": {
+      "host_id": "00000000-0000-7000-8000-000000000041",
+      "bastion_source": "none"
+    },
+    "web-03": {
+      "host_id": "00000000-0000-7000-8000-000000000042",
+      "bastions": [
+        "00000000-0000-7000-8000-000000000003"
+      ],
+      "bastion_source": "group:dmz"
+    }
+  },
+  "warnings": [
+    {
+      "host": "db-02",
+      "group": "edge",
+      "message": "db_role is set by groups dbserver and edge; edge wins"
+    },
+    {
+      "host": "switch-01",
+      "message": "is a member of inventory groups but not managed; skipped"
+    },
+    {
+      "host": "web-03",
+      "group": "edge",
+      "message": "groups dmz and edge set different jump hosts; dmz wins"
+    }
+  ]
+}

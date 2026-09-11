@@ -184,6 +184,10 @@ type Store interface {
 	// doc comment for how the SQL-backed implementation produces that
 	// merged view from host_tags' raw, per-source rows.
 	QueryHosts(ctx context.Context, orgID uuid.UUID, sel selector.Selector) ([]Host, error)
+
+	// ListAllHosts returns every host of orgID ordered by name, unpaginated,
+	// for the inventory renderer.
+	ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error)
 }
 
 // DefaultListLimit and MaxListLimit bound ListHosts' page size, the same
@@ -367,6 +371,11 @@ func (s *Service) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter, 
 // reported exactly like one that does not exist at all (ErrNotFound).
 func (s *Service) DeleteHost(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.store.DeleteHost(ctx, orgID, id)
+}
+
+// ListAllHosts returns every host of orgID ordered by name.
+func (s *Service) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
+	return s.store.ListAllHosts(ctx, orgID)
 }
 
 // EncodeCursor and DecodeCursor are the one keyset-cursor format both Store

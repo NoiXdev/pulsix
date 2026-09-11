@@ -196,6 +196,25 @@ func (s *SQLStore) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter,
 	return hosts, next, nil
 }
 
+// ListAllHosts returns every host of orgID ordered by name, unpaginated, for
+// the inventory renderer (see ListAllHosts's own comment,
+// internal/db/queries/hosts.sql).
+func (s *SQLStore) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
+	rows, err := s.q.ListAllHosts(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Host, len(rows))
+	for i, r := range rows {
+		h, err := fromHostRow(r)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = h
+	}
+	return out, nil
+}
+
 func fromHostRow(r gen.Host) (Host, error) {
 	var facts map[string]any
 	if len(r.Facts) > 0 {

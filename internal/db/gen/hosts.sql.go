@@ -163,6 +163,45 @@ func (q *Queries) GetZone(ctx context.Context, arg GetZoneParams) (Zone, error) 
 	return i, err
 }
 
+const listAllHosts = `-- name: ListAllHosts :many
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts WHERE org_id = $1 ORDER BY name
+`
+
+// Every host of the organization, for the inventory renderer. Unpaginated on
+// purpose: an inventory is rendered whole (spec §13 sizes an installation at
+// 10 000 hosts).
+func (q *Queries) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listAllHosts, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Host
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Name,
+			&i.Address,
+			&i.Managed,
+			&i.Monitored,
+			&i.Facts,
+			&i.LastSeenAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHosts = `-- name: ListHosts :many
 SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts
 WHERE org_id = $1

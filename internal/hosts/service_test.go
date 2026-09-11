@@ -246,6 +246,23 @@ func (f *fakeHostStore) ListHosts(_ context.Context, orgID uuid.UUID, filt hosts
 	return matched, next, nil
 }
 
+// ListAllHosts returns every host of orgID sorted by name, unpaginated —
+// the fake's counterpart to the real store's ORDER BY name query, used by
+// TestListAllHostsSortedAndScoped and by the renderer's own tests.
+func (f *fakeHostStore) ListAllHosts(_ context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
+	if err := f.take("ListAllHosts"); err != nil {
+		return nil, err
+	}
+	var out []hosts.Host
+	for _, h := range f.list {
+		if h.OrgID == orgID {
+			out = append(out, h)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 func TestCreateHostValidatesNameAndZone(t *testing.T) {
 	st := newFakeHostStore()
 	svc := hosts.NewService(st, time.Now)
@@ -614,5 +631,34 @@ func TestReconcileDefaultZonesPropagatesListError(t *testing.T) {
 	st.failNext["OrgsWithoutDefaultZone"] = boom
 	if _, err := svc.ReconcileDefaultZones(ctx); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want wrapped %v", err, boom)
+	}
+}
+
+// TestListAllHostsSortedAndScoped proves Service.ListAllHosts passes
+// through to the store and that the store returns hosts sorted by name,
+// scoped to the given organization — the contract the inventory renderer
+// (internal/inventory/render) relies on.
+func TestListAllHostsSortedAndScoped(t *testing.T) {
+	st := newFakeHostStore()
+	svc := hosts.NewService(st, time.Now)
+	org := uuid.Must(uuid.NewV7())
+	other := uuid.Must(uuid.NewV7())
+	zone, _ := svc.CreateZone(ctx, org, "fra", "F")
+	otherZone, _ := svc.CreateZone(ctx, other, "fra", "F")
+	for _, name := range []string{"c", "a", "b"} {
+		if _, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: name, ZoneID: zone.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.CreateHost(ctx, other, hosts.HostInput{Name: "z", ZoneID: otherZone.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.ListAllHosts(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Name != "a" || got[1].Name != "b" || got[2].Name != "c" {
+		t.Fatalf("ListAllHosts = %+v, want [a b c]", got)
 	}
 }

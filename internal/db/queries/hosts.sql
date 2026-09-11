@@ -82,6 +82,12 @@ WHERE org_id = sqlc.arg(org_id)
 ORDER BY name ASC, id ASC
 LIMIT sqlc.arg(row_limit);
 
+-- name: ListAllHosts :many
+-- Every host of the organization, for the inventory renderer. Unpaginated on
+-- purpose: an inventory is rendered whole (spec §13 sizes an installation at
+-- 10 000 hosts).
+SELECT * FROM hosts WHERE org_id = $1 ORDER BY name;
+
 -- name: OrgsWithoutDefaultZone :many
 -- Used only by the startup reconciliation pass (internal/app.Build, via
 -- hosts.Service.ReconcileDefaultZones): every organization that has no
