@@ -4,6 +4,7 @@ web/dist/
 web/coverage/
 web/test-results/
 web/playwright-report/
+web/.tmp/
 .env
 .idea/
 .vscode/

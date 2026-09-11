@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "api:gen": "go run ../cmd/manager openapi > /tmp/pulsix-openapi.json && openapi-typescript /tmp/pulsix-openapi.json -o src/api/schema.d.ts"
+    "api:gen": "bash scripts/api-gen.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "5.9.1",

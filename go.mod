@@ -2,6 +2,22 @@ module github.com/noixdev/pulsix
 
 go 1.27
 
+// web/node_modules is a large npm tree that never contains Go packages of
+// ours, but some transitive npm dependency (e.g. flatted, pulled in by a
+// dev-tool) ships a stray .go file. Without this, `go build ./...` /
+// `go test ./...` / scripts/coverage-gate.sh — all run from the repo root
+// — would walk into it once `npm install` has populated
+// web/node_modules and treat that file as one of this module's own
+// packages. `web/` used to carry its own go.mod as a module-boundary
+// workaround, but that also stopped `go run ../cmd/manager` from
+// resolving when invoked from web/ (as web/package.json's `api:gen`
+// script does), breaking client generation. The ignore directive (Go
+// 1.25+) excludes the directory from package loading without creating a
+// second module.
+ignore (
+	./web/node_modules
+)
+
 require (
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
