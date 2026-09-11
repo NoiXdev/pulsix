@@ -1,0 +1,82 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/*
+ * shadcn-shaped CSS variables, mapped onto the Pulsix brand tokens
+ * (brand/tokens.css, copied verbatim into ./tokens.css) rather than
+ * re-derived — Pulsix is dark-first by design (brand/README.md), so there
+ * is deliberately no light-theme override block here: :root always holds
+ * the dark palette.
+ */
+:root {
+  --background: var(--px-ink);
+  --foreground: var(--px-text);
+  --card: var(--px-surface);
+  --card-foreground: var(--px-text);
+  --popover: var(--px-surface);
+  --popover-foreground: var(--px-text);
+  --primary: var(--px-accent);
+  --primary-foreground: var(--px-ink);
+  --secondary: var(--px-surface);
+  --secondary-foreground: var(--px-text);
+  --muted: var(--px-surface);
+  --muted-foreground: var(--px-muted);
+  --accent: var(--px-surface);
+  --accent-foreground: var(--px-text);
+  --destructive: var(--px-crit);
+  --destructive-foreground: var(--px-ink);
+  --border: var(--px-border);
+  --input: var(--px-border);
+  --ring: var(--px-accent);
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Monitoring state colours — reserved for states, never decoration; see
+     brand/README.md. Not aliased onto any shadcn slot above so a component
+     has to reach for `text-ok`/`bg-crit`/etc. deliberately. */
+  --color-ok: var(--px-ok);
+  --color-warn: var(--px-warn);
+  --color-crit: var(--px-crit);
+  --color-unknown: var(--px-unknown);
+  --color-accent-dim: var(--px-accent-dim);
+
+  --font-sans: var(--px-font-sans);
+  --font-mono: var(--px-font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: var(--border);
+}

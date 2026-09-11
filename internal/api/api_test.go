@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +164,62 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 		Mailer: testMailer(),
 	}); err == nil {
 		t.Fatal("api.New without Hosts did not return an error")
+	}
+}
+
+// testDeps returns a fully-wired (if inert) Deps, exactly like
+// TestHealthz's, for tests below that need a real api.New handler rather
+// than probing Deps.validate.
+func testDeps(t *testing.T) api.Deps {
+	t.Helper()
+	return api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(),
+	}
+}
+
+// TestNotFoundServesSPA covers Task 15's embedding contract: a request
+// that does not match any registered API route — every client-side SPA
+// route, since the router only knows about /healthz, /api/explorer and the
+// huma-registered /api/v1/... operations — falls through to chi's
+// NotFound handler, which api.New wires to web.Handler(). That handler's
+// own tests (internal/web/embed_test.go) cover its fallback logic in
+// detail; this test only checks that api.New actually mounts it, using the
+// placeholder internal/web/dist/index.html committed for exactly this
+// (see that file's own comment).
+func TestNotFoundServesSPA(t *testing.T) {
+	h, err := api.New(testDeps(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/o/acme/hosts", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /o/acme/hosts: status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "<html") {
+		t.Errorf("GET /o/acme/hosts: body does not look like the SPA index page: %q", rec.Body.String())
+	}
+}
+
+// TestNotFoundAPIPathStays404 is the other half: an unmatched /api/...
+// path must still 404, not silently fall back to the SPA's index page —
+// web.Handler enforces this itself (see internal/web/embed_test.go), and
+// this test confirms api.New's NotFound wiring does not bypass it.
+func TestNotFoundAPIPathStays404(t *testing.T) {
+	h, err := api.New(testDeps(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/does-not-exist", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/does-not-exist: status = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "<html") {
+		t.Errorf("GET /api/v1/does-not-exist: 404 body looks like the SPA index page, not a real 404: %q", rec.Body.String())
 	}
 }

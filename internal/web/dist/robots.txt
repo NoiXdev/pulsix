@@ -1,0 +1,3 @@
+# placeholder static asset — see index.html in this directory
+User-agent: *
+Disallow: /api/

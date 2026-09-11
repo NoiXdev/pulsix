@@ -26,7 +26,21 @@ const shutdownTimeout = 10 * time.Second
 // deeper in the function, per this repo's golangci-lint (gocritic
 // exitAfterDefer).
 func main() {
-	os.Exit(run())
+	os.Exit(dispatch(os.Args[1:]))
+}
+
+// dispatch routes to the "openapi" subcommand (writes the OpenAPI document
+// to stdout and exits, no server or database involved — see
+// api.Document's doc comment) or, for any other argument list, starts the
+// manager server as before. Kept as its own function, separate from run(),
+// so run()'s existing shape (and main_test.go's coverage of
+// serveWithGracefulShutdown, which calls into what run() wires up) stays
+// untouched by this addition.
+func dispatch(args []string) int {
+	if len(args) > 0 && args[0] == "openapi" {
+		return runOpenAPI(os.Stdout)
+	}
+	return run()
 }
 
 func run() int {

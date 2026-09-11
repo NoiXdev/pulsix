@@ -19,6 +19,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/web"
 )
 
 // Deps carries everything the handlers need. Handlers call services only.
@@ -165,6 +166,15 @@ func New(deps Deps) (http.Handler, error) {
 	cfg.DocsPath = "" // explorer is mounted above, served by Scalar instead of huma's default docs
 	hapi := humachi.New(r, cfg)
 	registerRoutes(hapi, deps)
+
+	// Anything chi did not match above — every SPA route (/, /login,
+	// /o/{org}/hosts, ...) and any /api/... path that is not a real
+	// endpoint — falls through to the built frontend. web.Handler serves
+	// the matching static asset when one exists, the SPA's index.html as a
+	// history-mode fallback otherwise, and still 404s an unmatched
+	// /api/... path itself rather than ever handing back the index page
+	// for it (see its own doc comment).
+	r.NotFound(web.Handler().ServeHTTP)
 	return r, nil
 }
 

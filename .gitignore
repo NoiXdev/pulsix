@@ -1,6 +1,18 @@
 bin/
 web/node_modules/
 web/dist/
+web/coverage/
+web/test-results/
+web/playwright-report/
 .env
 .idea/
 .vscode/
+
+# internal/web/dist holds the *committed placeholder* index.html (and
+# robots.txt) that let `go build`/`go test` work without a frontend build
+# (see internal/web/dist/index.html's own comment) — everything else here
+# is `make web-build`'s real output (web/dist copied in before `go build`
+# embeds it) and must never be committed alongside it.
+internal/web/dist/*
+!internal/web/dist/index.html
+!internal/web/dist/robots.txt
