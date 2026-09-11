@@ -26,6 +26,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -201,6 +202,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 	credsSvc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox(testMasterKey), time.Now, rand.Reader)
 	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	inventorySvc := inventory.NewService(invStore, hostsSvc, sshSvc, crypto.NewBox(testMasterKey))
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, crypto.NewBox(testMasterKey))
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
@@ -216,6 +220,8 @@ func New(t *testing.T, opts ...Option) *Server {
 		Hosts:       hostsSvc,
 		Credentials: credsSvc,
 		SSH:         sshSvc,
+		Inventory:   inventorySvc,
+		Renderer:    renderer,
 	}
 	for _, opt := range opts {
 		opt(s)

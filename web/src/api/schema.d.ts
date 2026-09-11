@@ -526,6 +526,40 @@ export interface paths {
         patch: operations["setHostCapabilities"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/hosts/{id}/inventory/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID inventory groups */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-inventory-groups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/inventory/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID inventory preview */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-inventory-preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts/{id}/ssh": {
         parameters: {
             query?: never;
@@ -555,6 +589,129 @@ export interface paths {
         get: operations["get-api-v1-orgs-by-org-hosts-by-id-tags"];
         /** Put API v1 orgs by org hosts by ID tags */
         put: operations["setHostTags"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org inventory groups */
+        get: operations["get-api-v1-orgs-by-org-inventory-groups"];
+        put?: never;
+        /** Post API v1 orgs by org inventory groups */
+        post: operations["createInventoryGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org inventory groups by ID */
+        get: operations["get-api-v1-orgs-by-org-inventory-groups-by-id"];
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org inventory groups by ID */
+        delete: operations["deleteInventoryGroup"];
+        options?: never;
+        head?: never;
+        /** Patch API v1 orgs by org inventory groups by ID */
+        patch: operations["updateInventoryGroup"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org inventory groups by ID members */
+        get: operations["get-api-v1-orgs-by-org-inventory-groups-by-id-members"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/members/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org inventory groups by ID members by host */
+        put: operations["assignInventoryHost"];
+        post?: never;
+        /** Delete API v1 orgs by org inventory groups by ID members by host */
+        delete: operations["unassignInventoryHost"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org inventory groups by ID schema */
+        put: operations["setInventoryGroupSchema"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/vars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org inventory groups by ID vars */
+        put: operations["setInventoryGroupVars"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org inventory preview */
+        get: operations["get-api-v1-orgs-by-org-inventory-preview"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -805,6 +962,12 @@ export interface components {
             code?: string;
             recovery_code?: string;
         };
+        Connection: {
+            bastion_source: string;
+            bastions?: string[] | null;
+            credential_id?: string;
+            host_id: string;
+        };
         Cookie: {
             Domain: string;
             /** Format: date-time */
@@ -974,6 +1137,141 @@ export interface components {
             org_id?: string;
             summary: string;
         };
+        Field: {
+            default?: unknown;
+            description?: string;
+            fields?: components["schemas"]["Field"][] | null;
+            item?: components["schemas"]["Field"];
+            label?: string;
+            /** Format: double */
+            max?: number;
+            /** Format: int64 */
+            max_items?: number;
+            /** Format: double */
+            min?: number;
+            /** Format: int64 */
+            min_items?: number;
+            name: string;
+            options?: string[] | null;
+            overridable?: boolean;
+            pattern?: string;
+            required?: boolean;
+            scope?: string;
+            type: string;
+        };
+        GroupCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupCreateInputBody.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            name: string;
+            parent_id?: string;
+        };
+        GroupDTO: {
+            bastion_id?: string;
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            id: string;
+            name: string;
+            /** @description Stored keys the schema no longer declares; the next save drops them */
+            orphaned: string[] | null;
+            parent_id?: string;
+            problems: components["schemas"]["ProblemDTO"][] | null;
+            /** Format: int64 */
+            revision: number;
+            schema: components["schemas"]["Schema"];
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Group-scoped values; secrets read as {"$secret": "set"} */
+            vars: {
+                [key: string]: unknown;
+            };
+        };
+        GroupListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupListOutputBody.json
+             */
+            readonly $schema?: string;
+            groups: components["schemas"]["GroupSummaryDTO"][] | null;
+        };
+        GroupOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupOutputBody.json
+             */
+            readonly $schema?: string;
+            group: components["schemas"]["GroupDTO"];
+        };
+        GroupSchemaInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupSchemaInputBody.json
+             */
+            readonly $schema?: string;
+            schema: components["schemas"]["Schema"];
+        };
+        GroupSchemaOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupSchemaOutputBody.json
+             */
+            readonly $schema?: string;
+            group: components["schemas"]["GroupDTO"];
+            /** Format: int64 */
+            incomplete_members: number;
+        };
+        GroupSummaryDTO: {
+            bastion_id?: string;
+            /** @description The group's own values satisfy its schema */
+            complete: boolean;
+            description: string;
+            /** Format: int64 */
+            group_fields: number;
+            /** Format: int64 */
+            host_fields: number;
+            id: string;
+            /** Format: int64 */
+            members: number;
+            name: string;
+            parent_id?: string;
+            /** Format: int64 */
+            revision: number;
+        };
+        GroupUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Omit to clear the group's jump host */
+            bastion_id?: string;
+            description?: string;
+            name: string;
+            /** @description Omit to make the group a root */
+            parent_id?: string;
+        };
+        GroupVarsInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/GroupVarsInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Group-scoped values. Secrets: a string sets a new value, {"$secret": "keep", "from": "<path>"} keeps the stored one */
+            vars: {
+                [key: string]: unknown;
+            };
+        };
         HealthOutputBody: {
             /**
              * Format: uri
@@ -1027,6 +1325,15 @@ export interface components {
             readonly $schema?: string;
             host: components["schemas"]["HostDTO"];
         };
+        HostGroupsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostGroupsOutputBody.json
+             */
+            readonly $schema?: string;
+            groups: components["schemas"]["InventoryMemberDTO"][] | null;
+        };
         HostInputBody: {
             /**
              * Format: uri
@@ -1049,6 +1356,19 @@ export interface components {
             readonly $schema?: string;
             hosts: components["schemas"]["HostDTO"][] | null;
             next_cursor: string;
+        };
+        HostPreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostPreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            connection?: components["schemas"]["Connection"];
+            vars: {
+                [key: string]: unknown;
+            };
+            warnings: components["schemas"]["Warning"][] | null;
         };
         HostQueryInputBody: {
             /**
@@ -1116,6 +1436,50 @@ export interface components {
              */
             readonly $schema?: string;
             tags: components["schemas"]["TagDTO"][] | null;
+        };
+        InventoryMemberDTO: {
+            complete: boolean;
+            group_id: string;
+            group_name: string;
+            host_id: string;
+            host_name: string;
+            orphaned: string[] | null;
+            problems: components["schemas"]["ProblemDTO"][] | null;
+            /** Format: int64 */
+            revision: number;
+            vars: {
+                [key: string]: unknown;
+            };
+        };
+        InventoryMemberListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/InventoryMemberListOutputBody.json
+             */
+            readonly $schema?: string;
+            members: components["schemas"]["InventoryMemberDTO"][] | null;
+        };
+        InventoryMemberOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/InventoryMemberOutputBody.json
+             */
+            readonly $schema?: string;
+            member: components["schemas"]["InventoryMemberDTO"];
+        };
+        InventoryMemberPutInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/InventoryMemberPutInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Host-scoped values and overrides. Secrets as for group values */
+            vars: {
+                [key: string]: unknown;
+            };
         };
         InviteAcceptInputBody: {
             /**
@@ -1388,6 +1752,25 @@ export interface components {
             name: string;
             response: unknown;
         };
+        PreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            connections: {
+                [key: string]: components["schemas"]["Connection"];
+            };
+            inventory: {
+                [key: string]: unknown;
+            };
+            warnings: components["schemas"]["Warning"][] | null;
+        };
+        ProblemDTO: {
+            message: string;
+            path: string;
+        };
         RecoveryOutputBody: {
             /**
              * Format: uri
@@ -1396,6 +1779,9 @@ export interface components {
              */
             readonly $schema?: string;
             recovery_codes: string[] | null;
+        };
+        Schema: {
+            fields: components["schemas"]["Field"][] | null;
         };
         SetupCompleteInputBody: {
             /**
@@ -1522,6 +1908,11 @@ export interface components {
             /** Format: int64 */
             count: number;
             value: string;
+        };
+        Warning: {
+            group?: string;
+            host?: string;
+            message: string;
         };
         ZoneBastionInputBody: {
             /**
@@ -2946,6 +3337,70 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-hosts-by-id-inventory-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostGroupsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-hosts-by-id-inventory-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostPreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-hosts-by-id-ssh": {
         parameters: {
             query?: never;
@@ -3069,6 +3524,398 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostTagsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-inventory-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createInventoryGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-inventory-groups-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteInventoryGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateInventoryGroup: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The group's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-inventory-groups-by-id-members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryMemberListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    assignInventoryHost: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The membership's ETag; optional */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InventoryMemberPutInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryMemberOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    unassignInventoryHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setInventoryGroupSchema: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The group's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupSchemaInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupSchemaOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setInventoryGroupVars: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The group's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupVarsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-inventory-preview": {
+        parameters: {
+            query?: {
+                /** @description Render only the members of this group and its descendants */
+                group?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewOutputBody"];
                 };
             };
             /** @description Error */

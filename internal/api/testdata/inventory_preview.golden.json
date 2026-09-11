@@ -1,0 +1,44 @@
+{
+  "_meta": {
+    "hostvars": {
+      "web-01": {
+        "ansible_host": "10.0.0.11",
+        "ansible_port": 2200,
+        "ansible_ssh_common_args": "-o ProxyJump=ops@bastion.fra.example:2222",
+        "ansible_user": "ansible",
+        "vhosts": [
+          {
+            "basic_auth": {
+              "password": "********",
+              "user": "u"
+            },
+            "domain": "acme.io"
+          },
+          {
+            "domain": "shop.acme.io"
+          }
+        ]
+      }
+    }
+  },
+  "all": {
+    "children": [
+      "production"
+    ]
+  },
+  "production": {
+    "children": [
+      "webserver"
+    ]
+  },
+  "webserver": {
+    "hosts": [
+      "web-01"
+    ],
+    "vars": {
+      "db_password": "********",
+      "env": "prod",
+      "php_default": "8.3"
+    }
+  }
+}

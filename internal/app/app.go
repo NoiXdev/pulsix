@@ -25,6 +25,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -157,11 +158,15 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 
 	credsSvc := credentials.NewService(credentials.NewSQLStore(appDB), box, time.Now, rand.Reader)
 	sshSvc := sshconf.NewService(sshconf.NewSQLStore(appDB), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(appDB)
+	inventorySvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Credentials: credsSvc, SSH: sshSvc,
+		Inventory: inventorySvc, Renderer: renderer,
 		Version: cfg.Version,
 	})
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -41,6 +42,13 @@ type Deps struct {
 	// SSH stores jump hosts, zone defaults and host SSH settings; see
 	// registerSSHRoutes.
 	SSH *sshconf.Service
+	// Inventory manages inventory groups, their schemas, values and
+	// memberships; see registerInventoryRoutes / registerInventoryMemberRoutes.
+	Inventory *inventory.Service
+	// Renderer turns Inventory's stored state into an Ansible dynamic
+	// inventory (masked for the preview endpoints); see
+	// registerInventoryMemberRoutes.
+	Renderer *inventory.Renderer
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -120,6 +128,12 @@ func (d Deps) validate() error {
 	}
 	if d.SSH == nil {
 		missing = append(missing, "SSH")
+	}
+	if d.Inventory == nil {
+		missing = append(missing, "Inventory")
+	}
+	if d.Renderer == nil {
+		missing = append(missing, "Renderer")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -275,12 +289,14 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	orgScoped := huma.NewGroup(hapi)
 	orgScoped.UseMiddleware(bearerAuthMiddleware(deps.Tokens))
 	orgScoped.UseMiddleware(orgScopeMiddleware(deps))
-	registerOrgScopedRoutes(orgScoped, deps)  // GET/PATCH /orgs/{org}
-	registerMemberRoutes(orgScoped, deps)     // members + invites, all /orgs/{org}/...
-	registerTokenRoutes(orgScoped, deps)      // /orgs/{org}/tokens...
-	registerAuditRoutes(orgScoped, deps)      // GET /orgs/{org}/activity
-	registerHostRoutes(orgScoped, deps)       // zones + hosts, all /orgs/{org}/...
-	registerTagRoutes(orgScoped, deps)        // host tags + the tag selector, all /orgs/{org}/...
-	registerCredentialRoutes(orgScoped, deps) // /orgs/{org}/credentials...
-	registerSSHRoutes(orgScoped, deps)        // /orgs/{org}/bastions..., zone default, host SSH
+	registerOrgScopedRoutes(orgScoped, deps)       // GET/PATCH /orgs/{org}
+	registerMemberRoutes(orgScoped, deps)          // members + invites, all /orgs/{org}/...
+	registerTokenRoutes(orgScoped, deps)           // /orgs/{org}/tokens...
+	registerAuditRoutes(orgScoped, deps)           // GET /orgs/{org}/activity
+	registerHostRoutes(orgScoped, deps)            // zones + hosts, all /orgs/{org}/...
+	registerTagRoutes(orgScoped, deps)             // host tags + the tag selector, all /orgs/{org}/...
+	registerCredentialRoutes(orgScoped, deps)      // /orgs/{org}/credentials...
+	registerSSHRoutes(orgScoped, deps)             // /orgs/{org}/bastions..., zone default, host SSH
+	registerInventoryRoutes(orgScoped, deps)       // /orgs/{org}/inventory/groups...
+	registerInventoryMemberRoutes(orgScoped, deps) // memberships, host inventory, previews
 }
