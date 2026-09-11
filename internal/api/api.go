@@ -205,6 +205,7 @@ func New(deps Deps) (http.Handler, error) {
 	cfg := huma.DefaultConfig("Pulsix API", "0.1.0")
 	cfg.OpenAPIPath = "/api/openapi"
 	cfg.DocsPath = "" // explorer is mounted above, served by Scalar instead of huma's default docs
+	cfg.Transformers = append(cfg.Transformers, redactErrorValues)
 	hapi := humachi.New(r, cfg)
 	registerRoutes(hapi, deps)
 
