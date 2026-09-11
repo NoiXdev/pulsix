@@ -54,8 +54,12 @@ export function MembersTab({ org, group }: { org: string; group: InventoryGroup 
                 aria-label={`Remove ${m.host_name}`}
                 onClick={async () => {
                   if (!confirm(`Remove ${m.host_name} from ${group.name}? Its values for this group are deleted.`)) return;
-                  await unassign.mutateAsync(m.host_id);
-                  toast.show(`${m.host_name} removed from ${group.name}`);
+                  try {
+                    await unassign.mutateAsync(m.host_id);
+                    toast.show(`${m.host_name} removed from ${group.name}`);
+                  } catch (err) {
+                    toast.show(err instanceof Error ? err.message : 'Removing the host failed', 'destructive');
+                  }
                 }}
               >
                 Remove

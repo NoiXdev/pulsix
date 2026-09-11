@@ -26,6 +26,11 @@ const GROUP = {
 
 const GROUPS = { groups: [{ id: 'g1', name: 'webserver', description: '', parent_id: null, members: 1, group_fields: 3, host_fields: 1, complete: true, revision: 3 }] };
 
+const MEMBER = {
+  group_id: 'g1', group_name: 'webserver', host_id: 'h1', host_name: 'web-01',
+  vars: { domain: 'shop.acme.io' }, complete: true, problems: [], orphaned: [], revision: 7,
+};
+
 function renderAt(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
@@ -190,5 +195,43 @@ describe('GroupDetailPage', () => {
     expect(patched?.body).toEqual({ name: 'webserver', bastion_id: 'b1' });
     await user.click(screen.getByRole('button', { name: 'Delete group' }));
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
+  });
+
+  it('opens the edit dialog prefilled and sends If-Match with the member revision on save', async () => {
+    const user = userEvent.setup();
+    let put: MockRequest | undefined;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [MEMBER] },
+      'PUT /api/v1/orgs/acme/inventory/groups/g1/members/h1': (req: MockRequest) => {
+        put = req;
+        return { member: { ...MEMBER, revision: 8 } };
+      },
+    });
+    renderAt('/o/acme/groups/g1?tab=members');
+    await user.click(await screen.findByRole('button', { name: 'Edit values of web-01' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });
+    expect(within(dialog).getByLabelText('domain')).toHaveValue('shop.acme.io');
+    await user.click(within(dialog).getByRole('button', { name: 'Save values' }));
+    await screen.findByText('Values of web-01 saved');
+    expect(put?.headers.get('If-Match')).toBe('"7"');
+  });
+
+  it('reports a failed member removal instead of rejecting silently', async () => {
+    const user = userEvent.setup();
+    const originalConfirm = window.confirm;
+    window.confirm = () => true;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [MEMBER] },
+      'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () =>
+        new Response(JSON.stringify({ detail: 'host no longer exists' }), { status: 404 }),
+    });
+    renderAt('/o/acme/groups/g1?tab=members');
+    await user.click(await screen.findByRole('button', { name: 'Remove web-01' }));
+
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent('host no longer exists');
+    window.confirm = originalConfirm;
   });
 });
