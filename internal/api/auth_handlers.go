@@ -49,7 +49,19 @@ type meOutput struct {
 			Email       string `json:"email"`
 			DisplayName string `json:"display_name"`
 		} `json:"user"`
-		MFAComplete   bool `json:"mfa_complete"`
+		MFAComplete bool `json:"mfa_complete"`
+		// TOTPConfirmed distinguishes "this account has a confirmed TOTP
+		// factor" from MFAComplete, which the SPA must not treat as a
+		// synonym for "has a second factor": a session with none enrolled
+		// at all still comes back MFAComplete: true (Login only requires a
+		// step-up when a factor exists to step up to — see
+		// auth.Service.Login), so a freshly created administrator the
+		// setup wizard just told to enrol would otherwise see a
+		// contradictory "second factor active" (task-15a-report.md,
+		// finding "Important 4"). Combined client-side with whether
+		// GET /auth/passkeys returns any credential, this tells the
+		// account security page whether a real factor exists.
+		TOTPConfirmed bool `json:"totp_confirmed"`
 		InstanceAdmin bool `json:"instance_admin"`
 	}
 }
@@ -97,9 +109,14 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
+		totpConfirmed, err := deps.TOTP.Enabled(ctx, p.UserID)
+		if err != nil {
+			return nil, err
+		}
 		out := &meOutput{}
 		out.Body.User.ID, out.Body.User.Email, out.Body.User.DisplayName = u.ID.String(), u.Email, u.DisplayName
 		out.Body.MFAComplete, out.Body.InstanceAdmin = p.MFAComplete, p.InstanceAdmin
+		out.Body.TOTPConfirmed = totpConfirmed
 		return out, nil
 	})
 }

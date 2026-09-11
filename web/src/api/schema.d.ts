@@ -890,6 +890,7 @@ export interface components {
             readonly $schema?: string;
             instance_admin: boolean;
             mfa_complete: boolean;
+            totp_confirmed: boolean;
             user: components["schemas"]["UserStruct"];
         };
         MemberDTO: {

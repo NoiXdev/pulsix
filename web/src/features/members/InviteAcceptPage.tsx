@@ -5,7 +5,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { acceptInvite } from '../../api/hooks/useMembers.ts';
-import { useInvalidateMe } from '../../api/hooks/useMe.ts';
+import { useRefetchMe } from '../../api/hooks/useMe.ts';
 
 /** InviteAcceptPage — no dedicated mockup exists for this screen (like
  * /login); it follows the same split-brand-panel-free, centered-card
@@ -13,7 +13,7 @@ import { useInvalidateMe } from '../../api/hooks/useMe.ts';
 export function InviteAcceptPage() {
   const { token } = useParams({ strict: false }) as { token: string };
   const navigate = useNavigate();
-  const invalidateMe = useInvalidateMe();
+  const refetchMe = useRefetchMe();
 
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -26,7 +26,7 @@ export function InviteAcceptPage() {
         <div className="flex items-center gap-3">
           <PulsixMark size={32} />
           <span className="font-mono text-2xl font-extrabold tracking-tight">
-            pulsi<span className="text-accent">x</span>
+            pulsi<span className="text-brand">x</span>
           </span>
         </div>
         <form
@@ -37,7 +37,7 @@ export function InviteAcceptPage() {
             setError(null);
             try {
               await acceptInvite({ token, display_name: displayName, password });
-              await invalidateMe();
+              await refetchMe();
               await navigate({ to: '/' });
             } catch (err) {
               setError(err instanceof Error ? err.message : 'failed to accept invitation');

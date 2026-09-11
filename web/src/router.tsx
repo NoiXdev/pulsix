@@ -52,23 +52,52 @@ const orgIndexRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/',
   beforeLoad: ({ params }) => {
-    throw redirect({ to: '/o/$org/hosts', params: { org: params.org } });
+    throw redirect({ to: '/o/$org/hosts', params: { org: params.org }, search: { q: undefined } });
   },
 });
 
-const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: HostsListPage });
+const hostsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/hosts',
+  // ⌘K search (ui/shell.tsx) navigates here with ?q=..., wired to the
+  // /orgs/{org}/hosts?q= filter the API already supports (finding
+  // "Important 6": the search box used to be a static span).
+  validateSearch: (search: Record<string, unknown>) => ({
+    q: typeof search.q === 'string' ? search.q : undefined,
+  }),
+  component: HostsListPage,
+});
 const hostDetailRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/hosts/$id',
   component: HostDetailPage,
 });
-const membersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/members', component: MembersPage });
-const activityRoute = createRoute({ getParentRoute: () => orgRoute, path: '/activity', component: ActivityPage });
-const tokensRoute = createRoute({
-  getParentRoute: () => orgRoute,
-  path: '/settings/tokens',
-  component: TokensPage,
+
+/**
+ * settingsRoute is the layout route for Members, Activity and API tokens —
+ * finding "Important 6": the mockup (Members.dc.html, Activity.dc.html)
+ * files all three under one "Settings" section (gear icon, single nav
+ * entry) with breadcrumbs like "Settings › Members", not as separate
+ * top-level nav items. Nesting them under one real route both matches
+ * that IA and lets the shell's Settings nav link mark itself active via
+ * the router's own activeProps (matching any descendant of /settings)
+ * instead of hand-rolled pathname string matching.
+ */
+const settingsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings' });
+const settingsIndexRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$org/settings/members', params: { org: params.org } });
+  },
 });
+const membersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/members', component: MembersPage });
+const activityRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/activity',
+  component: ActivityPage,
+});
+const tokensRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/tokens', component: TokensPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -76,7 +105,12 @@ const routeTree = rootRoute.addChildren([
   loginRoute,
   inviteRoute,
   accountSecurityRoute,
-  orgRoute.addChildren([orgIndexRoute, hostsRoute, hostDetailRoute, membersRoute, activityRoute, tokensRoute]),
+  orgRoute.addChildren([
+    orgIndexRoute,
+    hostsRoute,
+    hostDetailRoute,
+    settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute]),
+  ]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

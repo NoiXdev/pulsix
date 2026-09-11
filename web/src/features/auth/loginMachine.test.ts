@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api/client.ts';
 import { beginLogin, initialLoginState, submitPassword, submitTotp } from './loginMachine.ts';
 
@@ -55,7 +55,7 @@ describe('loginMachine', () => {
 
 describe('loginMachine totp step', () => {
   it('goes totp -> done on a valid code', async () => {
-    const result = await submitTotp(async () => ({}), '482913');
+    const result = await submitTotp(async () => ({}), { code: '482913' });
     expect(result).toEqual({ step: 'done' });
   });
 
@@ -64,8 +64,31 @@ describe('loginMachine totp step', () => {
       throw new ApiError(401, { detail: 'invalid code' });
     };
 
-    const result = await submitTotp(verify, '000000');
+    const result = await submitTotp(verify, { code: '000000' });
 
     expect(result).toEqual({ step: 'totp', error: 'invalid code' });
+  });
+
+  // Important 5 (task-15a-report.md fix round 1): the recovery-code path
+  // — the backend's POST /auth/totp/verify has always accepted a
+  // recovery_code as an alternative to a 6-digit code, but the login page
+  // never offered a way to use one, so the recovery codes the app hands
+  // out on enrolment could never actually be used to sign in.
+  it('goes totp -> done on a valid recovery code', async () => {
+    const verify = vi.fn(async () => ({}));
+    const result = await submitTotp(verify, { recoveryCode: 'r3cov-3ry-c0d3' });
+
+    expect(result).toEqual({ step: 'done' });
+    expect(verify).toHaveBeenCalledExactlyOnceWith({ recoveryCode: 'r3cov-3ry-c0d3' });
+  });
+
+  it('an invalid recovery code stays on totp with its own inline error, distinct from a bad 6-digit code', async () => {
+    const verify = async (): Promise<unknown> => {
+      throw new ApiError(400, { detail: 'invalid recovery code' });
+    };
+
+    const result = await submitTotp(verify, { recoveryCode: 'already-used' });
+
+    expect(result).toEqual({ step: 'totp', error: 'invalid recovery code' });
   });
 });

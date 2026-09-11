@@ -27,24 +27,9 @@ export const setupOrgSlugSchema = z
 
 export const hostNameSchema = z.string().min(1, 'required').max(254, 'must be 254 characters or fewer');
 
-export const tagKeySchema = z
-  .string()
-  .min(1, 'required')
-  .max(64, 'must be 64 characters or fewer')
-  .regex(/^[a-z0-9][a-z0-9_.-]*$/, 'lowercase letters, digits, "_", "." and "-" only');
-
 export const passwordSchema = z.string().min(12, 'at least 12 characters');
 
 export const emailSchema = z.string().min(3).email('enter a valid email address');
-
-export const setupSchema = z.object({
-  admin_email: emailSchema,
-  admin_password: passwordSchema,
-  admin_name: z.string().min(1, 'required'),
-  org_slug: setupOrgSlugSchema,
-  org_name: z.string().min(1, 'required'),
-});
-export type SetupFormValues = z.infer<typeof setupSchema>;
 
 export const smtpSchema = z.object({
   host: z.string().min(1, 'required'),

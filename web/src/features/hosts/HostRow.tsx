@@ -16,24 +16,36 @@ function timeAgo(iso?: string | null): string {
   return `${Math.floor(seconds / 86400)} d`;
 }
 
-export function HostRow({ org, host, columns }: { org: string; host: Host; columns: string }) {
+export function HostRow({
+  org,
+  host,
+  columns,
+  zoneName,
+}: {
+  org: string;
+  host: Host;
+  columns: string;
+  /** The host's zone slug, resolved by the caller (HostsListPage, which
+   * already loads the org's zones for the "Add host" dialog) — cheap fix,
+   * task-15a-report.md fix round 1: this used to show a raw UUID prefix. */
+  zoneName?: string;
+}) {
   const tags = useHostTags(org, host.id);
   const setCapabilities = useSetHostCapabilities(org, host.id);
 
   return (
     <GridRow columns={columns}>
-      <span
-        className="h-2 w-2 rounded-full"
-        style={{ background: host.last_seen_at ? 'var(--px-ok)' : 'var(--px-unknown)' }}
-      />
+      {/* Always "unknown": there is no monitoring backend yet in v0.1, so
+         last_seen_at cannot honestly claim "ok" — cheap fix. */}
+      <span className="h-2 w-2 rounded-full" style={{ background: 'var(--px-unknown)' }} title="unknown" />
       <Link
         to="/o/$org/hosts/$id"
         params={{ org, id: host.id }}
-        className="truncate font-mono text-xs font-semibold text-foreground hover:text-accent"
+        className="truncate font-mono text-xs font-semibold text-foreground hover:text-brand"
       >
         {host.name}
       </Link>
-      <span className="truncate font-mono text-xs text-muted-foreground">{host.zone_id.slice(0, 8)}</span>
+      <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
       <div className="flex flex-wrap gap-1">
         {(tags.data?.tags ?? []).map((t) => (
           <Tag key={t.key}>

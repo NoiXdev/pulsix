@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
+import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
 
 /**
  * RootRedirect resolves the four startup states the task brief names,
@@ -16,6 +17,12 @@ import { useOrgs } from '../api/hooks/useOrgs.ts';
  * It calls useSetupStatus and useMe directly (not a router loader) so the
  * same TanStack Query cache both hooks share is what every other page
  * reads from too — no separate fetch path to keep in sync.
+ *
+ * Finding "Important 7" (task-15a-report.md fix round 1): a signed-in
+ * user who belongs to zero organizations used to wait on "Loading…"
+ * forever — `orgs.data` resolves, `firstOrg` is undefined, and the effect
+ * below simply had nothing further to do. That state now renders a
+ * friendly message instead of hanging.
  */
 export function RootRedirect() {
   const navigate = useNavigate();
@@ -44,13 +51,21 @@ export function RootRedirect() {
     if (!orgs.data) return;
     const firstOrg = orgs.data.orgs?.[0];
     if (firstOrg) {
-      void navigate({ to: '/o/$org/hosts', params: { org: firstOrg.slug } });
+      void navigate({ to: '/o/$org/hosts', params: { org: firstOrg.slug }, search: { q: undefined } });
     }
   }, [navigate, setupStatus.data, me.data, me.isError, orgs.data]);
 
-  return (
-    <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
-      Loading…
-    </div>
-  );
+  if (setupStatus.isError) return <QueryError error={setupStatus.error} />;
+  if (me.data?.mfa_complete) {
+    if (orgs.isError) return <QueryError error={orgs.error} />;
+    if (orgs.data && !orgs.data.orgs?.length) {
+      return (
+        <QueryError
+          error={new Error('This account does not belong to any organization yet. Ask an administrator to invite you.')}
+        />
+      );
+    }
+  }
+
+  return <QueryLoading />;
 }

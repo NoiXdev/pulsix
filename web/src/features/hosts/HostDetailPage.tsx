@@ -4,6 +4,7 @@ import { Server, Terminal, Trash2 } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Tag } from '../../ui/badge.tsx';
+import { QueryError, QueryLoading } from '../../ui/QueryState.tsx';
 import { useDeleteHost, useHost, useSetHostCapabilities } from '../../api/hooks/useHosts.ts';
 import { useHostTags, useSetHostTags } from '../../api/hooks/useTags.ts';
 import { parseTagChip } from './selectorInput.ts';
@@ -31,9 +32,8 @@ export function HostDetailPage() {
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState<string | null>(null);
 
-  if (!host.data) {
-    return <div className="text-sm text-muted-foreground">Loading…</div>;
-  }
+  if (host.isError) return <QueryError error={host.error} />;
+  if (!host.data) return <QueryLoading />;
   const h = host.data.host;
 
   async function addTag(e: FormEvent) {
@@ -59,10 +59,11 @@ export function HostDetailPage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span
-            className="h-2.5 w-2.5 rounded-full"
-            style={{ background: h.last_seen_at ? 'var(--px-ok)' : 'var(--px-unknown)' }}
-          />
+          {/* Always "unknown": there is no monitoring backend yet in v0.1,
+             so last_seen_at (set once on host creation, regardless of any
+             real health signal) cannot honestly claim "ok" — cheap fix,
+             task-15a-report.md fix round 1. */}
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: 'var(--px-unknown)' }} title="unknown" />
           <h1 className="font-mono text-xl font-bold">{h.name}</h1>
           <Tag>{h.address || 'no address'}</Tag>
         </div>
@@ -70,9 +71,13 @@ export function HostDetailPage() {
           variant="destructive"
           onClick={async () => {
             if (!confirm(`Delete host ${h.name}? This cannot be undone.`)) return;
-            await deleteHost.mutateAsync(h.id);
-            toast.show(`Host ${h.name} deleted`);
-            await navigate({ to: '/o/$org/hosts', params: { org } });
+            try {
+              await deleteHost.mutateAsync(h.id);
+              toast.show(`Host ${h.name} deleted`);
+              await navigate({ to: '/o/$org/hosts', params: { org }, search: { q: undefined } });
+            } catch (err) {
+              toast.show(err instanceof Error ? err.message : 'failed to delete host', 'destructive');
+            }
           }}
         >
           <Trash2 size={14} /> Delete host

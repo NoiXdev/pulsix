@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
+import { User } from 'lucide-react';
 import { useOrgActivity } from '../../api/hooks/useActivity.ts';
+import { useMembers } from '../../api/hooks/useMembers.ts';
+import { QueryError } from '../../ui/QueryState.tsx';
+import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 
 const OBJECT_TYPES = ['host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite'];
+
+const ACTOR_KIND_LABEL: Record<string, string> = { token: 'API token', system: 'Pulsix' };
 
 /**
  * ActivityPage follows design/mockups/build.mjs's ACTIVITY FEED artboard's
@@ -11,25 +17,60 @@ const OBJECT_TYPES = ['host', 'member', 'token', 'zone', 'organization', 'setup'
  * diff, per-actor totals) the audit API does not expose — see
  * task-15a-report.md — so this page keeps the feed itself and the filter
  * bar, which the API does support in full (actor, object_type, since).
+ *
+ * Two fixes from that report's fix round 1: the feed used to show
+ * `actor_kind · <uuid prefix>` for every event, and there was no actor
+ * filter even though the API supports one (finding "Important 6"). Actor
+ * names are now resolved against the members list this page already
+ * loads — matching this org's own shape, since the API's `actor` filter
+ * is a member's user id, not free text.
  */
 export function ActivityPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const [objectType, setObjectType] = useState<string>('');
+  const [actorId, setActorId] = useState<string>('');
 
-  const activity = useOrgActivity(org, { objectType: objectType || undefined });
+  const activity = useOrgActivity(org, { objectType: objectType || undefined, actor: actorId || undefined });
+  const members = useMembers(org);
+
+  const memberNames = new Map((members.data?.members ?? []).map((m) => [m.user_id, m.display_name]));
+
+  function actorLabel(actorKind: string, actorId?: string | null): string {
+    if (actorKind === 'user' && actorId) return memberNames.get(actorId) ?? `user · ${actorId.slice(0, 8)}`;
+    return ACTOR_KIND_LABEL[actorKind] ?? actorKind;
+  }
+
+  if (activity.isError) return <QueryError error={activity.error} />;
 
   const grouped = groupByDay(activity.data?.items ?? []);
 
   return (
     <>
-      <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold">Activity</h1>
-        <span className="text-[13px] text-muted-foreground">
-          Every change in this organization, by people, tokens and Pulsix itself
-        </span>
+        <SettingsTabs org={org} />
       </div>
+      <span className="text-[13px] text-muted-foreground">
+        Every change in this organization, by people, tokens and Pulsix itself
+      </span>
 
       <div className="flex flex-wrap items-center gap-2">
+        <div className="flex h-[30px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
+          <User size={13} />
+          <select
+            aria-label="Filter by actor"
+            value={actorId}
+            onChange={(e) => setActorId(e.target.value)}
+            className="bg-transparent text-foreground outline-none"
+          >
+            <option value="">Actor: anyone</option>
+            {(members.data?.members ?? []).map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {m.display_name}
+              </option>
+            ))}
+          </select>
+        </div>
         <Chip label="all" on={objectType === ''} onClick={() => setObjectType('')} />
         {OBJECT_TYPES.map((t) => (
           <Chip key={t} label={t} on={objectType === t} onClick={() => setObjectType(t)} />
@@ -54,10 +95,7 @@ export function ActivityPage() {
                 </span>
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate text-[13px]">{e.summary}</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {e.actor_kind}
-                    {e.actor_id ? ` · ${e.actor_id.slice(0, 8)}` : ''}
-                  </span>
+                  <span className="text-[11px] text-muted-foreground">{actorLabel(e.actor_kind, e.actor_id)}</span>
                 </div>
                 <span className="text-right text-[11px] text-muted-foreground">{e.object_type}</span>
               </div>
@@ -76,7 +114,7 @@ function Chip({ label, on, onClick }: { label: string; on: boolean; onClick: () 
       onClick={onClick}
       className={
         on
-          ? 'flex h-[30px] items-center rounded-md border border-accent/40 bg-accent/10 px-3 text-xs font-medium text-accent'
+          ? 'flex h-[30px] items-center rounded-md border border-brand/40 bg-brand/10 px-3 text-xs font-medium text-brand'
           : 'flex h-[30px] items-center rounded-md border border-border bg-card px-3 text-xs font-medium text-muted-foreground'
       }
     >

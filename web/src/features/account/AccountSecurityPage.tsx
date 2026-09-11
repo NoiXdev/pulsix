@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { KeyRound, Trash2 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -19,6 +20,26 @@ import { registerPasskey } from '../auth/passkeys.ts';
  * beyond login/logout/me, TOTP and passkeys), so those two cards are left
  * out rather than wired to endpoints that do not exist; see
  * task-15a-report.md.
+ *
+ * Two fixes from that report's fix round 1 live here:
+ *
+ *  - Critical: the TOTP secret/otpauth_url and the recovery codes used to
+ *    live in `mutation.data` with no gcTime override, so the mutation
+ *    cache kept them readable (via queryClient.getMutationCache()) for
+ *    five minutes after this page unmounted, even though the component's
+ *    own state had already been cleared. useEnrolTotp/useConfirmTotp now
+ *    set gcTime: 0, and every place that consumes their result also calls
+ *    `.reset()` once the secret is no longer needed — as soon as the QR
+ *    code is replaced by the confirm step, and as soon as the recovery
+ *    codes are explicitly dismissed below (there was previously no
+ *    dismissal for them at all).
+ *  - Important 4: the header pill used to read `me.data.mfa_complete`,
+ *    but the backend treats an account with *no* factor enrolled at all
+ *    as MFA-complete (Login only requires a step-up when there is
+ *    something to step up to) — so a freshly created administrator the
+ *    setup wizard just told to enrol a factor saw a green "second factor
+ *    active" immediately. The status below is derived instead from
+ *    whether TOTP is actually confirmed or at least one passkey exists.
  */
 export function AccountSecurityPage() {
   const toast = useToast();
@@ -33,11 +54,14 @@ export function AccountSecurityPage() {
   const [code, setCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
 
+  const hasPasskey = (passkeys.data?.passkeys ?? []).length > 0;
+  const hasSecondFactor = me.data?.totp_confirmed === true || hasPasskey;
+
   return (
     <>
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold">Security</h1>
-        {me.data?.mfa_complete ? (
+        {hasSecondFactor ? (
           <Pill tone="ok">second factor active</Pill>
         ) : (
           <Pill tone="warn">second factor required</Pill>
@@ -62,8 +86,12 @@ export function AccountSecurityPage() {
                   aria-label={`remove ${p.name}`}
                   className="text-destructive"
                   onClick={async () => {
-                    await deletePasskey.mutateAsync(p.id);
-                    toast.show(`Passkey ${p.name} removed`);
+                    try {
+                      await deletePasskey.mutateAsync(p.id);
+                      toast.show(`Passkey ${p.name} removed`);
+                    } catch (err) {
+                      toast.show(err instanceof Error ? err.message : 'failed to remove passkey', 'destructive');
+                    }
                   }}
                 >
                   <Trash2 size={14} />
@@ -107,8 +135,12 @@ export function AccountSecurityPage() {
               <Button
                 variant="primary"
                 onClick={async () => {
-                  const res = await enrolTotp.mutateAsync(undefined);
-                  setEnrolling({ secret: res.secret, otpauth_url: res.otpauth_url });
+                  try {
+                    const res = await enrolTotp.mutateAsync(undefined);
+                    setEnrolling({ secret: res.secret, otpauth_url: res.otpauth_url });
+                  } catch (err) {
+                    toast.show(err instanceof Error ? err.message : 'failed to start enrolment', 'destructive');
+                  }
                 }}
               >
                 Enrol authenticator app
@@ -123,6 +155,10 @@ export function AccountSecurityPage() {
                     const res = await confirmTotp.mutateAsync(code);
                     setRecoveryCodes(res.recovery_codes);
                     setEnrolling(null);
+                    // The secret is consumed the moment confirmation
+                    // succeeds — clear it from the mutation cache right
+                    // away rather than waiting for gcTime (Critical fix).
+                    enrolTotp.reset();
                   } catch (err) {
                     toast.show(err instanceof Error ? err.message : 'invalid code', 'destructive');
                   }
@@ -131,6 +167,14 @@ export function AccountSecurityPage() {
                 <p className="text-[11px] text-muted-foreground">
                   Scan with any TOTP app, or enter the secret manually, then confirm with a 6-digit code.
                 </p>
+                <QRCodeSVG
+                  value={enrolling.otpauth_url}
+                  size={132}
+                  fgColor="#0E1117"
+                  bgColor="#F6F4EF"
+                  className="self-start rounded-md p-2"
+                  style={{ background: 'var(--px-paper)' }}
+                />
                 <code className="break-all rounded-md border border-border bg-background p-2 font-mono text-[11px]">
                   {enrolling.secret}
                 </code>
@@ -158,6 +202,20 @@ export function AccountSecurityPage() {
                     <span key={c}>{c}</span>
                   ))}
                 </div>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setRecoveryCodes(null);
+                    setCode('');
+                    // Critical fix: the recovery codes were never
+                    // dismissable at all before this, and even clearing
+                    // this component's own state does not clear
+                    // TanStack Query's mutation cache — reset() does.
+                    confirmTotp.reset();
+                  }}
+                >
+                  I have saved these
+                </Button>
               </div>
             )}
           </div>

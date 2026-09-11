@@ -11,6 +11,8 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { QueryError } from '../../ui/QueryState.tsx';
+import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
 
 const tokenFormSchema = z.object({
@@ -34,19 +36,22 @@ export function TokensPage() {
 
   const form = useForm<TokenFormValues>({ resolver: zodResolver(tokenFormSchema), defaultValues: { name: '', role: 'viewer' } });
 
+  if (tokens.isError) return <QueryError error={tokens.error} />;
+
   return (
     <>
       <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold">API tokens</h1>
-          <span className="text-[13px] text-muted-foreground">
-            {tokens.data ? `${(tokens.data.tokens ?? []).length} tokens` : 'Loading…'}
-          </span>
+          <SettingsTabs org={org} />
         </div>
         <Button variant="primary" onClick={() => setCreateOpen(true)}>
           <KeyRound size={15} /> Create token
         </Button>
       </div>
+      <span className="text-[13px] text-muted-foreground">
+        {tokens.data ? `${(tokens.data.tokens ?? []).length} tokens` : 'Loading…'}
+      </span>
 
       <Card>
         <GridHeader columns={COLUMNS}>
@@ -71,8 +76,12 @@ export function TokensPage() {
               className="text-[11px] text-destructive"
               onClick={async () => {
                 if (!confirm(`Revoke token ${t.name}?`)) return;
-                await revokeToken.mutateAsync(t.id);
-                toast.show(`Token ${t.name} revoked`);
+                try {
+                  await revokeToken.mutateAsync(t.id);
+                  toast.show(`Token ${t.name} revoked`);
+                } catch (err) {
+                  toast.show(err instanceof Error ? err.message : 'failed to revoke token', 'destructive');
+                }
               }}
             >
               revoke
@@ -89,6 +98,7 @@ export function TokensPage() {
         onClose={() => {
           setCreateOpen(false);
           setJustCreated(null);
+          createToken.reset();
           form.reset();
         }}
         title="Create token"
@@ -112,6 +122,7 @@ export function TokensPage() {
                 onClick={() => {
                   setCreateOpen(false);
                   setJustCreated(null);
+                  createToken.reset();
                   form.reset();
                 }}
               >
@@ -132,15 +143,19 @@ export function TokensPage() {
             })}
           >
             <div className="flex flex-col gap-1.5">
-              <Label>Name</Label>
-              <Input {...form.register('name')} placeholder="ci-deploy" />
+              <Label htmlFor="token_name">Name</Label>
+              <Input id="token_name" {...form.register('name')} placeholder="ci-deploy" />
               {form.formState.errors.name && (
                 <span className="text-[11px] text-destructive">{form.formState.errors.name.message}</span>
               )}
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label>Role</Label>
-              <select {...form.register('role')} className="h-8 rounded-md border border-border bg-background px-2.5 text-xs">
+              <Label htmlFor="token_role">Role</Label>
+              <select
+                id="token_role"
+                {...form.register('role')}
+                className="h-8 rounded-md border border-border bg-background px-2.5 text-xs"
+              >
                 <option value="viewer">viewer</option>
                 <option value="operator">operator</option>
                 <option value="admin">admin</option>

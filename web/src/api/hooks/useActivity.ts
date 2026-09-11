@@ -29,16 +29,3 @@ export function useOrgActivity(org: string, filter: ActivityFilter = {}) {
   });
 }
 
-export function useMyActivity(filter: ActivityFilter = {}) {
-  return useQuery({
-    queryKey: ['my-activity', filter],
-    queryFn: () =>
-      unwrap(
-        api.GET('/api/v1/me/activity', {
-          params: {
-            query: { object_type: filter.objectType ?? '', since: filter.since ?? '', cursor: filter.cursor ?? '' },
-          },
-        }),
-      ),
-  });
-}

@@ -33,7 +33,7 @@ export function CapabilityCell({ kind, on, detail, onChange }: CapabilityCellPro
   if (on) {
     return (
       <div className="flex items-center gap-2 min-w-0">
-        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
+        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand">
           <Icon size={13} />
         </span>
         <span className="truncate text-xs font-semibold">
@@ -53,7 +53,7 @@ export function CapabilityCell({ kind, on, detail, onChange }: CapabilityCellPro
         <Icon size={13} />
       </span>
       <span className="text-xs">
-        off <span className="text-accent-dim">· enable</span>
+        off <span className="text-brand-dim">· enable</span>
       </span>
     </button>
   );

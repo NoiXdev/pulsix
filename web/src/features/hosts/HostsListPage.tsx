@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useParams } from '@tanstack/react-router';
+import { useParams, useSearch } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Globe, Search, Server } from 'lucide-react';
@@ -8,6 +8,7 @@ import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { QueryError } from '../../ui/QueryState.tsx';
 import { useCreateHost, useCreateZone, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
@@ -18,9 +19,24 @@ const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 210px 210px 70px 24px';
 
 export function HostsListPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  // ?q= comes from the shell's ⌘K search box (ui/shell.tsx) navigating
+  // here — finding "Important 6". Synced into local filter state on
+  // mount and whenever it changes, since navigating to this same route
+  // with a new search value does not remount the component.
+  const routeSearch = useSearch({ strict: false }) as { q?: string };
   const toast = useToast();
 
-  const [filter, setFilter] = useState<HostListFilter>({});
+  const [filter, setFilter] = useState<HostListFilter>({ q: routeSearch.q ?? '' });
+  // Adjust local state during render rather than in an effect (React's own
+  // guidance for "state that should reset when a prop changes" —
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes):
+  // an effect-then-setState round trip here would render once with the
+  // stale filter before catching up a tick later.
+  const [syncedQ, setSyncedQ] = useState(routeSearch.q);
+  if (routeSearch.q !== syncedQ) {
+    setSyncedQ(routeSearch.q);
+    setFilter((f) => ({ ...f, q: routeSearch.q ?? '' }));
+  }
   const [addOpen, setAddOpen] = useState(false);
   const [addZoneOpen, setAddZoneOpen] = useState(false);
   const [selectorText, setSelectorText] = useState('');
@@ -53,6 +69,9 @@ export function HostsListPage() {
   }
 
   const displayedHosts = selectorActive ? (hostQuery.data?.hosts ?? []) : (hosts.data?.hosts ?? []);
+  const zoneSlugById = new Map((zones.data?.zones ?? []).map((z) => [z.id, z.slug]));
+
+  if (hosts.isError && !selectorActive) return <QueryError error={hosts.error} />;
 
   return (
     <>
@@ -104,7 +123,7 @@ export function HostsListPage() {
           {selectorActive && (
             <button
               type="button"
-              className="text-[11px] text-accent-dim"
+              className="text-[11px] text-brand-dim"
               onClick={() => {
                 setSelectorActive(false);
                 setSelectorText('');
@@ -136,7 +155,7 @@ export function HostsListPage() {
           </GridRow>
         )}
         {displayedHosts.map((h) => (
-          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} />
+          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} />
         ))}
       </Card>
 
@@ -155,15 +174,15 @@ export function HostsListPage() {
           })}
         >
           <div className="flex flex-col gap-1.5">
-            <Label>Name</Label>
-            <Input {...zoneForm.register('name')} />
+            <Label htmlFor="zone_name">Name</Label>
+            <Input id="zone_name" {...zoneForm.register('name')} />
             {zoneForm.formState.errors.name && (
               <span className="text-[11px] text-destructive">{zoneForm.formState.errors.name.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Slug</Label>
-            <Input {...zoneForm.register('slug')} />
+            <Label htmlFor="zone_slug">Slug</Label>
+            <Input id="zone_slug" {...zoneForm.register('slug')} />
             {zoneForm.formState.errors.slug && (
               <span className="text-[11px] text-destructive">{zoneForm.formState.errors.slug.message}</span>
             )}
@@ -194,15 +213,16 @@ export function HostsListPage() {
           })}
         >
           <div className="flex flex-col gap-1.5">
-            <Label>Name</Label>
-            <Input {...hostForm.register('name')} placeholder="web-04.fra" />
+            <Label htmlFor="host_name">Name</Label>
+            <Input id="host_name" {...hostForm.register('name')} placeholder="web-04.fra" />
             {hostForm.formState.errors.name && (
               <span className="text-[11px] text-destructive">{hostForm.formState.errors.name.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Zone</Label>
+            <Label htmlFor="host_zone">Zone</Label>
             <select
+              id="host_zone"
               {...hostForm.register('zone_id')}
               className="h-8 rounded-md border border-border bg-background px-2.5 text-xs text-foreground"
             >
@@ -218,8 +238,8 @@ export function HostsListPage() {
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Address</Label>
-            <Input {...hostForm.register('address')} placeholder="203.0.113.4 or hostname" />
+            <Label htmlFor="host_address">Address</Label>
+            <Input id="host_address" {...hostForm.register('address')} placeholder="203.0.113.4 or hostname" />
           </div>
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" {...hostForm.register('managed')} /> Managed (Ansible via SSH)
@@ -248,7 +268,7 @@ function FilterChip({ label, on, onClick }: { label: string; on: boolean; onClic
       onClick={onClick}
       className={
         on
-          ? 'flex h-[30px] items-center rounded-md border border-accent/40 bg-accent/10 px-3 text-xs font-medium text-accent'
+          ? 'flex h-[30px] items-center rounded-md border border-brand/40 bg-brand/10 px-3 text-xs font-medium text-brand'
           : 'flex h-[30px] items-center rounded-md border border-border bg-card px-3 text-xs font-medium text-muted-foreground'
       }
     >

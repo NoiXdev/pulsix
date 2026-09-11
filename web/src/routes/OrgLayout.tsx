@@ -1,39 +1,65 @@
-import { Outlet, useParams, useRouterState } from '@tanstack/react-router';
-import { AppShell, type NavKey } from '../ui/shell.tsx';
-import { useOrg } from '../api/hooks/useOrgs.ts';
-import { useMe } from '../api/hooks/useMe.ts';
-
-const NAV_BY_PREFIX: Array<[string, NavKey]> = [
-  ['/settings/tokens', 'tokens'],
-  ['/hosts', 'hosts'],
-  ['/members', 'members'],
-  ['/activity', 'activity'],
-];
+import { ChevronRight } from 'lucide-react';
+import { Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
+import { AppShell } from '../ui/shell.tsx';
+import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
+import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
+import { useInvalidateMe, useMe } from '../api/hooks/useMe.ts';
+import { logout } from '../api/hooks/useAuth.ts';
+import { crumbLabels } from '../lib/breadcrumbs.ts';
 
 /** OrgLayout is the route-connected wrapper around the pure AppShell
- * component (src/ui/shell.tsx): it resolves the current org and user from
- * the API and figures out which nav item is active from the URL, then
- * renders every /o/$org/* child route inside the shell via <Outlet/>. */
+ * component (src/ui/shell.tsx): it resolves the current org, the user's
+ * full org list (for the switcher) and the user from the API, derives the
+ * breadcrumb trail from the real URL, and renders every /o/$org/* child
+ * route inside the shell via <Outlet/>.
+ *
+ * Error handling (finding "Important 7"): org/me/orgs used to have no
+ * error branch at all, so any failure — including a 401 from a session
+ * that had already expired — left the page on "Loading…" forever. Now a
+ * query error renders through the shared QueryError component instead. */
 export function OrgLayout() {
   const { org: orgSlug } = useParams({ strict: false }) as { org: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const navigate = useNavigate();
+  const invalidateMe = useInvalidateMe();
+
   const org = useOrg(orgSlug);
   const me = useMe({ enabled: true });
+  const orgs = useOrgs({ enabled: true });
 
-  const active = NAV_BY_PREFIX.find(([suffix]) => pathname.includes(suffix))?.[1] ?? null;
+  if (org.isError) return <QueryError error={org.error} />;
+  if (me.isError) return <QueryError error={me.error} />;
+  if (orgs.isError) return <QueryError error={orgs.error} />;
+  if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 
-  if (!org.data || !me.data) {
-    return <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">Loading…</div>;
-  }
+  const crumbs = crumbLabels(pathname, orgSlug);
 
   return (
     <AppShell
       org={{ slug: orgSlug, name: org.data.org.name }}
-      active={active}
-      crumbs={<span className="font-semibold text-foreground capitalize">{active ?? org.data.org.name}</span>}
+      orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
+      onSelectOrg={(slug) => {
+        if (slug === orgSlug) return;
+        void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } });
+      }}
+      crumbs={
+        <>
+          {crumbs.map((label, i) => (
+            <span key={i} className="flex items-center gap-2">
+              {i > 0 && <ChevronRight size={13} className="text-border" />}
+              <span className={i === crumbs.length - 1 ? 'font-semibold text-foreground' : undefined}>{label}</span>
+            </span>
+          ))}
+        </>
+      }
       user={{
         displayName: me.data.user.display_name,
         subtitle: `${org.data.org.role.charAt(0).toUpperCase()}${org.data.org.role.slice(1)}`,
+      }}
+      onLogout={async () => {
+        await logout();
+        await invalidateMe();
+        await navigate({ to: '/login', search: { step: undefined } });
       }}
     >
       <Outlet />

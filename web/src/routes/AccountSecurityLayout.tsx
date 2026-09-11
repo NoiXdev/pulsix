@@ -1,6 +1,10 @@
+import { useNavigate } from '@tanstack/react-router';
 import { AppShell } from '../ui/shell.tsx';
-import { useMe } from '../api/hooks/useMe.ts';
+import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
+import { useInvalidateMe, useMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
+import { usePasskeys } from '../api/hooks/usePasskeys.ts';
+import { logout } from '../api/hooks/useAuth.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 
 /**
@@ -13,19 +17,31 @@ import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx
  * OrgLayout, no route param names an org here.
  */
 export function AccountSecurityLayout() {
+  const navigate = useNavigate();
+  const invalidateMe = useInvalidateMe();
   const me = useMe({ enabled: true });
   const orgs = useOrgs({ enabled: true });
+  const passkeys = usePasskeys();
+
+  if (me.isError) return <QueryError error={me.error} />;
+  if (orgs.isError) return <QueryError error={orgs.error} />;
 
   const firstOrg = orgs.data?.orgs?.[0];
-
-  if (!me.data || !firstOrg) {
-    return <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">Loading…</div>;
+  if (!me.data || !orgs.data) return <QueryLoading />;
+  if (!firstOrg) {
+    return <QueryError error={new Error('This account does not belong to any organization yet.')} />;
   }
+
+  // Same derivation as AccountSecurityPage's own header pill (Important
+  // 4): mfa_complete alone cannot tell "no factor at all" apart from "a
+  // real factor, confirmed".
+  const hasSecondFactor = me.data.totp_confirmed === true || (passkeys.data?.passkeys ?? []).length > 0;
 
   return (
     <AppShell
       org={{ slug: firstOrg.slug, name: firstOrg.name }}
-      active={null}
+      orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
+      onSelectOrg={(slug) => void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } })}
       crumbs={
         <>
           <span>Account</span>
@@ -35,7 +51,12 @@ export function AccountSecurityLayout() {
       }
       user={{
         displayName: me.data.user.display_name,
-        subtitle: me.data.mfa_complete ? 'Second factor active' : 'Second factor required',
+        subtitle: hasSecondFactor ? 'Second factor active' : 'Second factor required',
+      }}
+      onLogout={async () => {
+        await logout();
+        await invalidateMe();
+        await navigate({ to: '/login', search: { step: undefined } });
       }}
     >
       <AccountSecurityPage />

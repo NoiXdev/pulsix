@@ -7,8 +7,12 @@ export async function login(email: string, password: string) {
   return unwrap(api.POST('/api/v1/auth/login', { body: { email, password } }));
 }
 
-export async function verifyTotp(code: string) {
-  return unwrap(api.POST('/api/v1/auth/totp/verify', { body: { code } }));
+/** Mirrors loginMachine.ts's VerifyInput: either a 6-digit authenticator
+ * code or a one-time recovery code (finding "Important 5" — the backend's
+ * codeInput has always accepted either). */
+export async function verifyTotp(input: { code: string } | { recoveryCode: string }) {
+  const body = 'recoveryCode' in input ? { recovery_code: input.recoveryCode } : { code: input.code };
+  return unwrap(api.POST('/api/v1/auth/totp/verify', { body }));
 }
 
 export async function logout() {

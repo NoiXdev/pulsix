@@ -10,6 +10,10 @@ import { ApiError } from '../../api/client.ts';
  *   idle --beginLogin()--> password --submitPassword()--> totp   (mfa_required: true)
  *                              ^                       \-> done  (mfa_required: false)
  *                              \--- 401: stays on password, with an error
+ *
+ *   totp --submitTotp({code})--------> done
+ *   totp --submitTotp({recoveryCode})-> done
+ *        \--- invalid: stays on totp, with an error
  */
 export type LoginStep = 'idle' | 'password' | 'totp' | 'done';
 
@@ -50,21 +54,31 @@ export async function submitPassword(login: LoginFn, email: string, password: st
   }
 }
 
-/** VerifyFn is the totp step's counterpart to LoginFn — usually
- * `(code) => unwrap(api.POST('/api/v1/auth/totp/verify', ...))`, resolving
- * (with no particular body) once the session is MFA-complete. */
-export type VerifyFn = (code: string) => Promise<unknown>;
+/** VerifyInput is either a 6-digit authenticator code or one of the
+ * one-time recovery codes the app hands out on TOTP enrolment — finding
+ * "Important 5" (task-15a-report.md fix round 1): the backend's
+ * POST /auth/totp/verify has always accepted either (internal/api's
+ * codeInput has both a Code and a RecoveryCode field), but the login page
+ * only ever offered the 6-digit form, so the recovery codes it hands out
+ * elsewhere in the app could never actually be used to log in. */
+export type VerifyInput = { code: string } | { recoveryCode: string };
 
-/** submitTotp drives the totp -> done transition. Like submitPassword, an
- * invalid code resolves back to the same step with an inline error rather
- * than throwing. */
-export async function submitTotp(verify: VerifyFn, code: string): Promise<LoginState> {
+/** VerifyFn is the totp step's counterpart to LoginFn — usually
+ * `(input) => unwrap(api.POST('/api/v1/auth/totp/verify', ...))`, resolving
+ * (with no particular body) once the session is MFA-complete. */
+export type VerifyFn = (input: VerifyInput) => Promise<unknown>;
+
+/** submitTotp drives the totp -> done transition, for either a code or a
+ * recovery code. Like submitPassword, an invalid one resolves back to the
+ * same step with an inline error rather than throwing. */
+export async function submitTotp(verify: VerifyFn, input: VerifyInput): Promise<LoginState> {
   try {
-    await verify(code);
+    await verify(input);
     return { step: 'done' };
   } catch (err) {
     if (err instanceof ApiError && (err.status === 401 || err.status === 400)) {
-      return { step: 'totp', error: 'invalid code' };
+      const message = 'recoveryCode' in input ? 'invalid recovery code' : 'invalid code';
+      return { step: 'totp', error: message };
     }
     throw err;
   }

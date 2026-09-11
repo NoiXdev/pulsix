@@ -1,0 +1,113 @@
+import { describe, expect, it } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { SetupWizardPage } from './SetupWizardPage.tsx';
+
+function renderWizard() {
+  const rootRoute = createRootRoute();
+  const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <div>ROOT</div> });
+  const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizardPage });
+  const securityRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/account/security',
+    component: () => <div>ACCOUNT SECURITY PAGE</div>,
+  });
+  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, securityRoute]);
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/setup'] }) });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+}
+
+/**
+ * Important 2 (task-15a-report.md fix round 1): the SMTP step validated
+ * its zod schema (host required, a valid "from" address, ...) even with
+ * SMTP switched off and its fields unrendered, so "Continue" silently did
+ * nothing and a first installation could never complete without mail.
+ */
+describe('SetupWizardPage — completing the wizard with SMTP off', () => {
+  it('reaches the final step and completes setup with smtp omitted from the request', async () => {
+    const user = userEvent.setup();
+    let completeBody: unknown;
+    mockApi({
+      'GET /api/v1/setup/status': { completed: false },
+      'POST /api/v1/setup/complete': (req: MockRequest) => {
+        completeBody = req.body;
+        return {};
+      },
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'root@acme.io', display_name: 'Root' },
+        mfa_complete: false,
+        totp_confirmed: false,
+        instance_admin: true,
+      },
+    });
+
+    renderWizard();
+
+    await user.type(await screen.findByLabelText('Name'), 'Root Admin');
+    await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await user.type(await screen.findByLabelText('Organization name'), 'Acme Hosting');
+    await user.type(screen.getByLabelText('URL slug'), 'acme');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    // The SMTP step: leave "Configure SMTP now" unchecked and continue.
+    // Before the fix, this silently failed the hidden schema's
+    // validation and never advanced past this point.
+    await screen.findByRole('heading', { name: 'Outgoing mail' });
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText('Enrol a second factor now')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Create administrator & continue' }));
+
+    expect(await screen.findByText('ACCOUNT SECURITY PAGE')).toBeInTheDocument();
+    expect(completeBody).toMatchObject({ admin_email: 'root@acme.io', org_slug: 'acme' });
+    // smtp: undefined is dropped by JSON serialization the same way the
+    // real request body would be — the key must be entirely absent, not
+    // present with some empty/default value the hidden fields left behind.
+    expect(completeBody).not.toHaveProperty('smtp');
+  });
+
+  it('validates SMTP fields normally once "Configure SMTP now" is checked', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/setup/status': { completed: false } });
+    renderWizard();
+
+    await user.type(await screen.findByLabelText('Name'), 'Root Admin');
+    await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await user.type(await screen.findByLabelText('Organization name'), 'Acme Hosting');
+    await user.type(screen.getByLabelText('URL slug'), 'acme');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await user.click(await screen.findByLabelText('Configure SMTP now'));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    // Still on the SMTP step: the (now-visible, now-required) host field
+    // is empty and should fail validation, unlike the "off" case above.
+    expect(await screen.findByText('required')).toBeInTheDocument();
+    expect(screen.queryByText('Enrol a second factor now')).not.toBeInTheDocument();
+  });
+});
+
+describe('SetupWizardPage guard (cheap fix)', () => {
+  it('redirects away from /setup when the instance is already set up', async () => {
+    mockApi({ 'GET /api/v1/setup/status': { completed: true } });
+    renderWizard();
+
+    await screen.findByText('ROOT');
+  });
+});

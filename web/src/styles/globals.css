@@ -59,7 +59,18 @@
   --color-warn: var(--px-warn);
   --color-crit: var(--px-crit);
   --color-unknown: var(--px-unknown);
-  --color-accent-dim: var(--px-accent-dim);
+
+  /* Pulsix cyan — the colour of actions and selection (brand/README.md),
+     kept separate from shadcn's own `--accent`/`--color-accent` slot
+     above. shadcn's `accent` is a neutral hover/highlight surface
+     (mapped to --px-surface, a dark grey); anything that means "Pulsix
+     cyan" — the wordmark's x, an active filter chip, a capability's "on"
+     icon, a link hover, the wizard's active step — must reach for
+     `text-brand`/`bg-brand`/`border-brand`/`ring-brand` instead of
+     `*-accent`, or it renders as surface grey (finding "Important 1",
+     task-15a-report.md fix round 1). */
+  --color-brand: var(--px-accent);
+  --color-brand-dim: var(--px-accent-dim);
 
   --font-sans: var(--px-font-sans);
   --font-mono: var(--px-font-mono);

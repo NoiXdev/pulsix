@@ -74,6 +74,51 @@ func TestTOTPGatesTheSession(t *testing.T) {
 	}
 }
 
+// TestMeReportsTOTPConfirmed covers fix round 1's Important 4: /auth/me's
+// mfa_complete alone cannot tell the SPA whether a real second factor
+// exists (a session with none enrolled at all is still mfa_complete —
+// Login only steps up when there is something to step up to), so the SPA
+// needs a separate, honest signal. totp_confirmed must be false before
+// enrolment and true immediately after ConfirmEnrol, using the same
+// session throughout.
+func TestMeReportsTOTPConfirmed(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("totp-confirmed@example.test", "correct horse battery")
+	c := s.LoginAs(uid)
+
+	me, _ := c.Get(s.HTTP.URL + "/api/v1/auth/me")
+	var meBody struct {
+		TOTPConfirmed bool `json:"totp_confirmed"`
+	}
+	_ = json.NewDecoder(me.Body).Decode(&meBody)
+	if meBody.TOTPConfirmed {
+		t.Fatal("totp_confirmed = true before any enrolment")
+	}
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", struct{}{})
+	var enrol struct {
+		Secret string `json:"secret"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&enrol)
+
+	me, _ = c.Get(s.HTTP.URL + "/api/v1/auth/me")
+	_ = json.NewDecoder(me.Body).Decode(&meBody)
+	if meBody.TOTPConfirmed {
+		t.Fatal("totp_confirmed = true before confirmation (unconfirmed secret must not count)")
+	}
+
+	code, _ := totp.GenerateCode(enrol.Secret, time.Now())
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/confirm", map[string]string{"code": code}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm: %d", resp.StatusCode)
+	}
+
+	me, _ = c.Get(s.HTTP.URL + "/api/v1/auth/me")
+	_ = json.NewDecoder(me.Body).Decode(&meBody)
+	if !meBody.TOTPConfirmed {
+		t.Fatal("totp_confirmed = false after confirmation")
+	}
+}
+
 // TestTOTPConfirmRejectsWrongCode asserts that confirming with a code that
 // does not validate against the freshly enrolled secret is rejected (400),
 // and that enrolment is not left half-activated by the attempt.

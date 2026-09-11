@@ -22,14 +22,6 @@ export function useSetHostTags(org: string, hostId: string) {
   });
 }
 
-export function useOrgTagKeys(org: string) {
-  return useQuery({
-    queryKey: ['tag-keys', org],
-    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/tags', { params: { path: { org } } })),
-    enabled: !!org,
-  });
-}
-
 /** useHostQuery runs the tag-selector query box (design's HOST LIST filter
  * bar): a syntactically invalid expression surfaces through the mutation's
  * `error`, letting the query box show the parser's own message inline

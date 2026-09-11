@@ -10,6 +10,8 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { QueryError } from '../../ui/QueryState.tsx';
+import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { inviteFormSchema, type InviteFormValues } from '../../lib/schemas.ts';
 
@@ -42,19 +44,22 @@ export function MembersPage() {
     defaultValues: { email: '', role: 'operator' },
   });
 
+  if (members.isError) return <QueryError error={members.error} />;
+
   return (
     <>
       <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold">Members</h1>
-          <span className="text-[13px] text-muted-foreground">
-            {members.data ? `${(members.data.members ?? []).length} members` : 'Loading…'}
-          </span>
+          <SettingsTabs org={org} />
         </div>
         <Button variant="primary" onClick={() => setInviteOpen(true)}>
           <UserPlus size={15} /> Invite member
         </Button>
       </div>
+      <span className="text-[13px] text-muted-foreground">
+        {members.data ? `${(members.data.members ?? []).length} members` : 'Loading…'}
+      </span>
 
       <Card>
         <GridHeader columns={COLUMNS}>
@@ -67,7 +72,7 @@ export function MembersPage() {
         </GridHeader>
         {(members.data?.members ?? []).map((m) => (
           <GridRow key={m.user_id} columns={COLUMNS}>
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-dim text-[11px] font-bold text-background">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-dim text-[11px] font-bold text-background">
               {m.display_name
                 .split(' ')
                 .slice(0, 2)
@@ -94,8 +99,12 @@ export function MembersPage() {
               className="text-[11px] text-destructive"
               onClick={async () => {
                 if (!confirm(`Remove ${m.display_name} from the organization?`)) return;
-                await removeMember.mutateAsync(m.user_id);
-                toast.show(`${m.display_name} removed`);
+                try {
+                  await removeMember.mutateAsync(m.user_id);
+                  toast.show(`${m.display_name} removed`);
+                } catch (err) {
+                  toast.show(err instanceof Error ? err.message : 'failed to remove member', 'destructive');
+                }
               }}
             >
               remove
@@ -119,15 +128,16 @@ export function MembersPage() {
           })}
         >
           <div className="flex flex-col gap-1.5">
-            <Label>E-mail address</Label>
-            <Input type="email" {...inviteForm.register('email')} placeholder="new.colleague@acme.io" />
+            <Label htmlFor="invite_email">E-mail address</Label>
+            <Input id="invite_email" type="email" {...inviteForm.register('email')} placeholder="new.colleague@acme.io" />
             {inviteForm.formState.errors.email && (
               <span className="text-[11px] text-destructive">{inviteForm.formState.errors.email.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Role</Label>
+            <Label htmlFor="invite_role">Role</Label>
             <select
+              id="invite_role"
               {...inviteForm.register('role')}
               className="h-8 rounded-md border border-border bg-background px-2.5 text-xs"
             >
@@ -163,9 +173,13 @@ export function MembersPage() {
                 key={r}
                 type="button"
                 onClick={async () => {
-                  await changeRole.mutateAsync({ userId: roleTarget.userId, role: r });
-                  toast.show(`Role updated to ${r}`);
-                  setRoleTarget(null);
+                  try {
+                    await changeRole.mutateAsync({ userId: roleTarget.userId, role: r });
+                    toast.show(`Role updated to ${r}`);
+                    setRoleTarget(null);
+                  } catch (err) {
+                    toast.show(err instanceof Error ? err.message : 'failed to change role', 'destructive');
+                  }
                 }}
                 className={
                   r === roleTarget.role
