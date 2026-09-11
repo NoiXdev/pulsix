@@ -208,10 +208,12 @@ func checkAttributes(p *problems, path string, f Field) {
 		p.add(path+".max", "must not be less than min")
 	}
 	if f.Type == TypeString {
-		for _, b := range []*float64{f.Min, f.Max} {
-			if b != nil && (*b < 0 || *b != math.Trunc(*b)) {
-				p.add(path+".min", "string lengths must be whole numbers ≥ 0")
-				break
+		for _, bound := range []struct {
+			attr string
+			v    *float64
+		}{{".min", f.Min}, {".max", f.Max}} {
+			if b := bound.v; b != nil && (*b < 0 || *b != math.Trunc(*b)) {
+				p.add(path+bound.attr, "string lengths must be whole numbers ≥ 0")
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package schema_test
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,5 +166,37 @@ func TestScopeHelpers(t *testing.T) {
 	}
 	if (schema.Field{}).EffectiveScope() != schema.ScopeGroup {
 		t.Error("an unset scope must mean group")
+	}
+}
+
+// TestCheckStringLengthBoundsReportAtTheirAttribute pins that an invalid
+// string min or max is reported at that attribute, each on its own.
+func TestCheckStringLengthBoundsReportAtTheirAttribute(t *testing.T) {
+	cases := []struct {
+		name     string
+		min, max *float64
+		want     []string // paths with a "whole numbers" problem
+	}{
+		{"fractional max", nil, ptr(2.5), []string{"fields[0].max"}},
+		{"negative max", nil, ptr(-1.0), []string{"fields[0].max"}},
+		{"fractional min", ptr(0.5), nil, []string{"fields[0].min"}},
+		{"both invalid", ptr(-1.0), ptr(1.5), []string{"fields[0].min", "fields[0].max"}},
+		{"both valid", ptr(1.0), ptr(8.0), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := schema.Schema{Fields: []schema.Field{{Name: "s", Type: schema.TypeString, Min: c.min, Max: c.max}}}.Check()
+			var got []string
+			if err != nil {
+				for _, p := range problemsOf(t, err) {
+					if strings.Contains(p.Message, "whole numbers") {
+						got = append(got, p.Path)
+					}
+				}
+			}
+			if !slices.Equal(got, c.want) {
+				t.Fatalf("whole-number problems at %v, want %v", got, c.want)
+			}
+		})
 	}
 }
