@@ -3,7 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { User } from 'lucide-react';
 import { useOrgActivity } from '../../api/hooks/useActivity.ts';
 import { useMembers } from '../../api/hooks/useMembers.ts';
-import { QueryError } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 
 const OBJECT_TYPES = ['host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite'];
@@ -40,7 +40,8 @@ export function ActivityPage() {
     return ACTOR_KIND_LABEL[actorKind] ?? actorKind;
   }
 
-  if (activity.isError) return <QueryError error={activity.error} />;
+  const activityGuard = useQueryGuard(activity);
+  if (activityGuard) return activityGuard;
 
   const grouped = groupByDay(activity.data?.items ?? []);
 

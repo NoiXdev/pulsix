@@ -9,9 +9,15 @@ import { TokensPage } from './TokensPage.tsx';
 
 function renderPage(qc: QueryClient) {
   const rootRoute = createRootRoute();
+  const loginRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/login',
+    validateSearch: (s: Record<string, unknown>) => ({ step: typeof s.step === 'string' ? s.step : undefined }),
+    component: () => <div>LOGIN PAGE</div>,
+  });
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const tokensRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/tokens', component: TokensPage });
-  const routeTree = rootRoute.addChildren([orgRoute.addChildren([tokensRoute])]);
+  const routeTree = rootRoute.addChildren([loginRoute, orgRoute.addChildren([tokensRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/o/acme/settings/tokens'] }) });
 
   return render(
@@ -95,5 +101,62 @@ describe('TokensPage error handling (cheap fix)', () => {
     expect(toast).toHaveTextContent('token already revoked');
 
     window.confirm = originalConfirm;
+  });
+});
+
+/**
+ * Fix round 2 (task-15a-report.md): the previous round's own
+ * `if (tokens.isError) return <QueryError .../>` regressed every wired
+ * page, this one included — TanStack Query leaves `data` in place on a
+ * background refetch failure (a transient 500, a window-focus refetch,
+ * ...) but still flips `isError`, so the old check tore the page down on
+ * a transient hiccup instead of quietly keeping the last good list up.
+ * These two tests exercise the real page through `useQueryGuard`
+ * (ui/useQueryGuard.tsx), not just the hook in isolation.
+ */
+describe('TokensPage background refetch error handling (fix round 2)', () => {
+  it('keeps showing the already-loaded tokens and raises exactly one toast when a background refetch fails', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let call = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': () => {
+        call += 1;
+        if (call === 1) return { tokens: [{ id: 'tok1', name: 'ci-deploy', role: 'viewer', last_used_at: null, expires_at: null }] };
+        return new Response(JSON.stringify({ detail: 'internal error' }), { status: 500 });
+      },
+    });
+
+    renderPage(qc);
+    await screen.findByText('ci-deploy');
+
+    await qc.refetchQueries();
+
+    // Still on the tokens page with the last-loaded row, not the
+    // full-page error — this is exactly what regressed.
+    expect(await screen.findByText('ci-deploy')).toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+
+    const toasts = await screen.findAllByRole('status');
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toHaveTextContent('Could not refresh this page');
+  });
+
+  it('redirects to /login when a background refetch comes back 401, without tearing the page down first', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let call = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': () => {
+        call += 1;
+        if (call === 1) return { tokens: [{ id: 'tok1', name: 'ci-deploy', role: 'viewer', last_used_at: null, expires_at: null }] };
+        return new Response(JSON.stringify({ detail: 'session expired' }), { status: 401 });
+      },
+    });
+
+    renderPage(qc);
+    await screen.findByText('ci-deploy');
+
+    await qc.refetchQueries();
+
+    expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
   });
 });

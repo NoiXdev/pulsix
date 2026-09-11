@@ -4,7 +4,8 @@ import { Server, Terminal, Trash2 } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Tag } from '../../ui/badge.tsx';
-import { QueryError, QueryLoading } from '../../ui/QueryState.tsx';
+import { QueryLoading } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useDeleteHost, useHost, useSetHostCapabilities } from '../../api/hooks/useHosts.ts';
 import { useHostTags, useSetHostTags } from '../../api/hooks/useTags.ts';
 import { parseTagChip } from './selectorInput.ts';
@@ -32,7 +33,8 @@ export function HostDetailPage() {
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState<string | null>(null);
 
-  if (host.isError) return <QueryError error={host.error} />;
+  const hostGuard = useQueryGuard(host);
+  if (hostGuard) return hostGuard;
   if (!host.data) return <QueryLoading />;
   const h = host.data.host;
 

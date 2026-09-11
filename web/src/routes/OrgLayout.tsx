@@ -1,7 +1,8 @@
 import { ChevronRight } from 'lucide-react';
 import { Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { AppShell } from '../ui/shell.tsx';
-import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
+import { QueryLoading } from '../ui/QueryState.tsx';
+import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useInvalidateMe, useMe } from '../api/hooks/useMe.ts';
 import { logout } from '../api/hooks/useAuth.ts';
@@ -16,7 +17,10 @@ import { crumbLabels } from '../lib/breadcrumbs.ts';
  * Error handling (finding "Important 7"): org/me/orgs used to have no
  * error branch at all, so any failure — including a 401 from a session
  * that had already expired — left the page on "Loading…" forever. Now a
- * query error renders through the shared QueryError component instead. */
+ * first-load failure renders through the shared QueryError component via
+ * useQueryGuard; a background refetch failure (data already present)
+ * keeps this page up and only toasts (fix round 2 — see
+ * ui/useQueryGuard.tsx). */
 export function OrgLayout() {
   const { org: orgSlug } = useParams({ strict: false }) as { org: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -27,9 +31,12 @@ export function OrgLayout() {
   const me = useMe({ enabled: true });
   const orgs = useOrgs({ enabled: true });
 
-  if (org.isError) return <QueryError error={org.error} />;
-  if (me.isError) return <QueryError error={me.error} />;
-  if (orgs.isError) return <QueryError error={orgs.error} />;
+  const orgGuard = useQueryGuard(org);
+  const meGuard = useQueryGuard(me);
+  const orgsGuard = useQueryGuard(orgs);
+  if (orgGuard) return orgGuard;
+  if (meGuard) return meGuard;
+  if (orgsGuard) return orgsGuard;
   if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 
   const crumbs = crumbLabels(pathname, orgSlug);

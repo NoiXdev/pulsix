@@ -11,7 +11,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { QueryError } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
 
@@ -36,7 +36,8 @@ export function TokensPage() {
 
   const form = useForm<TokenFormValues>({ resolver: zodResolver(tokenFormSchema), defaultValues: { name: '', role: 'viewer' } });
 
-  if (tokens.isError) return <QueryError error={tokens.error} />;
+  const tokensGuard = useQueryGuard(tokens);
+  if (tokensGuard) return tokensGuard;
 
   return (
     <>

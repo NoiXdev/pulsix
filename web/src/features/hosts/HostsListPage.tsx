@@ -8,7 +8,7 @@ import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
-import { QueryError } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCreateHost, useCreateZone, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
@@ -71,7 +71,8 @@ export function HostsListPage() {
   const displayedHosts = selectorActive ? (hostQuery.data?.hosts ?? []) : (hosts.data?.hosts ?? []);
   const zoneSlugById = new Map((zones.data?.zones ?? []).map((z) => [z.id, z.slug]));
 
-  if (hosts.isError && !selectorActive) return <QueryError error={hosts.error} />;
+  const hostsGuard = useQueryGuard(hosts, { enabled: !selectorActive });
+  if (hostsGuard) return hostsGuard;
 
   return (
     <>

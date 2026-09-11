@@ -10,7 +10,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { QueryError } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { inviteFormSchema, type InviteFormValues } from '../../lib/schemas.ts';
@@ -44,7 +44,8 @@ export function MembersPage() {
     defaultValues: { email: '', role: 'operator' },
   });
 
-  if (members.isError) return <QueryError error={members.error} />;
+  const membersGuard = useQueryGuard(members);
+  if (membersGuard) return membersGuard;
 
   return (
     <>

@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router';
 import { AppShell } from '../ui/shell.tsx';
 import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
+import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useInvalidateMe, useMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { usePasskeys } from '../api/hooks/usePasskeys.ts';
@@ -23,8 +24,10 @@ export function AccountSecurityLayout() {
   const orgs = useOrgs({ enabled: true });
   const passkeys = usePasskeys();
 
-  if (me.isError) return <QueryError error={me.error} />;
-  if (orgs.isError) return <QueryError error={orgs.error} />;
+  const meGuard = useQueryGuard(me);
+  const orgsGuard = useQueryGuard(orgs);
+  if (meGuard) return meGuard;
+  if (orgsGuard) return orgsGuard;
 
   const firstOrg = orgs.data?.orgs?.[0];
   if (!me.data || !orgs.data) return <QueryLoading />;
