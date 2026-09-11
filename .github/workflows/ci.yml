@@ -82,16 +82,27 @@ jobs:
       # file keep their existing pinned versions untouched (out of scope
       # for this change, see task-16-report.md).
       - uses: actions/checkout@v7.0.1
+      # github.sha is on GitHub's documented list of expressions that are
+      # always a plain, safe value (a 40-hex-char commit SHA it computes
+      # itself), so this isn't exploitable — but it is still routed
+      # through an env var rather than interpolated straight into `run:`,
+      # to match the pattern used everywhere else an expression reaches a
+      # shell step in this repo (see release.yml's version-derivation
+      # step) rather than relying on that distinction holding forever.
       - name: Build the manager image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -f deploy/docker/Dockerfile.manager \
-            -t noixdev/pulsix-manager:${{ github.sha }} \
-            --build-arg VERSION=${{ github.sha }} .
+            -t "noixdev/pulsix-manager:$IMAGE_TAG" \
+            --build-arg VERSION="$IMAGE_TAG" .
       - name: Run the release smoke test against it
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           PULSIX_MASTER_KEY="$(openssl rand -hex 32)"
           export PULSIX_MASTER_KEY
-          export PULSIX_VERSION="${{ github.sha }}"
+          export PULSIX_VERSION="$IMAGE_TAG"
           export DB_PASSWORD="ci-smoke-test"
           export PULSIX_PUBLIC_URL="http://localhost:8080"
           scripts/smoke.sh

@@ -19,5 +19,13 @@ web/test-results/
 web/playwright-report/
 web/.tmp/
 *.md
-.env
-.env.*
+# Recursive: a slash-free pattern here is anchored to the context root and
+# is NOT recursive, so ".env"/".env.*" alone would miss
+# deploy/compose/.env — exactly the file the operator README tells people
+# to create (cp .env.example .env) and that holds DB_PASSWORD and
+# PULSIX_MASTER_KEY in plaintext. "**/" makes these match at any depth.
+# The Dockerfile never reads .env.example, so it stays excluded too (it
+# already matched "**/.env.*"); there is nothing in this build that needs
+# any .env* file inside the image build context.
+**/.env
+**/.env.*
