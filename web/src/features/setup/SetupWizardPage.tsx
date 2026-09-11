@@ -10,6 +10,7 @@ import { Label } from '../../ui/label.tsx';
 import { emailSchema, passwordSchema, setupOrgSlugSchema, smtpSchema, type SmtpFormValues } from '../../lib/schemas.ts';
 import { completeSetup, refetchSetupStatus, useSetupStatus } from '../../api/hooks/useSetupStatus.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
+import { useResetSession } from '../../api/session.ts';
 import { useQueryClient } from '@tanstack/react-query';
 
 type StepKey = 'admin' | 'org' | 'smtp' | 'mfa';
@@ -41,6 +42,7 @@ export function SetupWizardPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const refetchMe = useRefetchMe();
+  const resetSession = useResetSession();
   const setupStatus = useSetupStatus();
   const [step, setStep] = useState<StepKey>('admin');
   const [admin, setAdmin] = useState<AdminValues | null>(null);
@@ -82,12 +84,15 @@ export function SetupWizardPage() {
         org_name: org.org_name,
         smtp: smtpEnabled && smtp ? smtp : undefined,
       });
-      // Important 3's fix, this query's own shape (task-15a-report.md fix
-      // round 1's own note on completeSetup): refetch and await both
+      // The response set a session cookie for a new principal: start from
+      // an empty cache (api/session.ts), then refetch and await both
       // ['me'] and ['setup-status'] before navigating away, so neither is
-      // left stale in the cache for RootRedirect to bounce off of later.
+      // left stale for RootRedirect to bounce off of later (Important 3,
+      // task-15a-report.md fix round 1). The new administrator has no
+      // second factor yet, so the session can only enrol one.
+      resetSession();
       await Promise.all([refetchMe(), refetchSetupStatus(qc)]);
-      await navigate({ to: '/account/security' });
+      await navigate({ to: '/account/enrol' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'failed to complete setup');
     } finally {
@@ -266,8 +271,8 @@ export function SetupWizardPage() {
             <div className="flex flex-col gap-4">
               <h2 className="text-xl font-semibold">Enrol a second factor now</h2>
               <p className="text-muted-foreground">
-                The instance administrator account is created next. You will land on the security page to add an
-                authenticator app or a passkey immediately — this account has no second factor until you do.
+                The instance administrator account is created next. You will be asked to add an authenticator app or
+                a passkey right away — every account needs a second factor before it can do anything else.
               </p>
               {error && <p className="text-xs text-destructive">{error}</p>}
               <div className="flex justify-between">

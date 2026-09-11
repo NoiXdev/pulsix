@@ -264,6 +264,22 @@ func (s *Server) AddMember(orgID, userID uuid.UUID, role tenancy.Role) {
 	}
 }
 
+// SeedPasskey attaches a stored passkey row named name to userID, without
+// running a WebAuthn ceremony — for tests that only need the account to
+// have a second factor (a passkey counts as one wherever TOTP does, see
+// auth.SecondFactors), not a credential that can actually sign in. It
+// returns the passkey's id.
+func (s *Server) SeedPasskey(userID uuid.UUID, name string) uuid.UUID {
+	s.T.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := s.DB.Pool().Exec(context.Background(),
+		`INSERT INTO passkeys (id, user_id, name, credential_id, public_key, attestation) VALUES ($1, $2, $3, $4, $5, 'none')`,
+		id, userID, name, []byte("seeded-"+id.String()), []byte("seeded-public-key")); err != nil {
+		s.T.Fatal(err)
+	}
+	return id
+}
+
 // LoginAs returns a client whose jar holds a fully authenticated
 // (MFA-complete) session cookie.
 func (s *Server) LoginAs(userID uuid.UUID) *http.Client {

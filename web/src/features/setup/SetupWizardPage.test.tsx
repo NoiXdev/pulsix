@@ -12,8 +12,8 @@ function renderWizard() {
   const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizardPage });
   const securityRoute = createRoute({
     getParentRoute: () => rootRoute,
-    path: '/account/security',
-    component: () => <div>ACCOUNT SECURITY PAGE</div>,
+    path: '/account/enrol',
+    component: () => <div>ENROLMENT PAGE</div>,
   });
   const routeTree = rootRoute.addChildren([indexRoute, setupRoute, securityRoute]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/setup'] }) });
@@ -71,7 +71,7 @@ describe('SetupWizardPage — completing the wizard with SMTP off', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create administrator & continue' }));
 
-    expect(await screen.findByText('ACCOUNT SECURITY PAGE')).toBeInTheDocument();
+    expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
     expect(completeBody).toMatchObject({ admin_email: 'root@acme.io', org_slug: 'acme' });
     // smtp: undefined is dropped by JSON serialization the same way the
     // real request body would be — the key must be entirely absent, not

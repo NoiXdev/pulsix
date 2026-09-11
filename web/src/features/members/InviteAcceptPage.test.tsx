@@ -12,8 +12,8 @@ function renderPage(qc: QueryClient) {
   const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <div>ROOT</div> });
   const accountSecurityRoute = createRoute({
     getParentRoute: () => rootRoute,
-    path: '/account/security',
-    component: () => <div>ACCOUNT SECURITY</div>,
+    path: '/account/enrol',
+    component: () => <div>ENROLMENT</div>,
   });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -65,7 +65,7 @@ describe('InviteAcceptPage', () => {
     renderPage(qc);
     await fillAndSubmit(user);
 
-    expect(await screen.findByText('ACCOUNT SECURITY')).toBeInTheDocument();
+    expect(await screen.findByText('ENROLMENT')).toBeInTheDocument();
     expect(accepted).toMatchObject({ token: 'tok_abc123', display_name: 'Ops User' });
   });
 

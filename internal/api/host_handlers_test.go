@@ -565,8 +565,9 @@ func TestDeleteHostScopedToOrg(t *testing.T) {
 // explicitly — the wizard creates an organization too, and it must not be
 // left without its zone either. It reuses the same client c throughout
 // (mirroring TestSetupStatusCompleteFlow, setup_handlers_test.go): the
-// wizard's own response sets an MFA-complete session cookie in c's jar, so
-// no separate viewer account is needed to read the new org's zones back.
+// wizard's own response sets a session cookie in c's jar, which becomes
+// MFA-complete once the administrator enrols TOTP, so no separate viewer
+// account is needed to read the new org's zones back.
 func TestFirstRunWizardProvisionsDefaultZone(t *testing.T) {
 	s := apitest.New(t)
 	c := s.Client()
@@ -576,6 +577,7 @@ func TestFirstRunWizardProvisionsDefaultZone(t *testing.T) {
 		t.Fatalf("complete setup: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 
+	enrolAndConfirmTOTP(t, s, c)
 	resp = requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/wizard-org/zones", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list zones: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))

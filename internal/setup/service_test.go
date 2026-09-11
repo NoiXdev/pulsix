@@ -173,18 +173,17 @@ func cloneSettings(m map[string][]byte) map[string][]byte {
 }
 
 // fakeSessions is a setup.SessionStore that always succeeds. It panics if
-// asked for a session that is not MFA-complete: Complete must always open
-// one with mfaComplete = true, matching what auth.Service.Login gives any
-// account with no second factor enrolled (see Result.Cookie's own doc
-// comment) — a pending session here would 403 at every credential-enrolment
-// route (they all sit behind requireInteractiveSession), so a mistake would
-// otherwise only surface as the wizard handing the administrator a session
-// that cannot reach the very pages it hands off to.
+// asked for an MFA-complete session: a second factor is mandatory and the
+// wizard's administrator has none yet, so Complete must always open one with
+// mfaComplete = false — pending enrolment, exactly like auth.Service.Login
+// for any account without a factor (see Result.Cookie's own doc comment).
+// Handing out a complete session here would let the administrator skip
+// enrolment entirely.
 type fakeSessions struct{}
 
 func (f *fakeSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
-	if !mfaComplete {
-		panic("setup.Complete must always open an MFA-complete session: see Result.Cookie's own doc comment")
+	if mfaComplete {
+		panic("setup.Complete must never open an MFA-complete session: see Result.Cookie's own doc comment")
 	}
 	return uuid.Must(uuid.NewV7()), "cookie-for-" + userID.String(), nil
 }

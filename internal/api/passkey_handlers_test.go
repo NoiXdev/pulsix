@@ -87,12 +87,14 @@ func TestPasskeyLoginEndpointsRequireNoSession(t *testing.T) {
 }
 
 // TestPasskeyMutationsRequireMFAComplete asserts the other gating choice: a
-// session that has not completed a required second factor must not be able
-// to register, list or delete passkeys — those mutate/inspect the account's
-// second factors.
+// session whose account has a second factor it has not verified yet must
+// not be able to register, list or delete passkeys — those mutate/inspect
+// the account's second factors. (An account with no factor at all may
+// register one: TestEnrolmentSessionCanOnlyEnrol.)
 func TestPasskeyMutationsRequireMFAComplete(t *testing.T) {
 	s := apitest.New(t)
 	uid := s.SeedUser("pending@example.test", "correct horse battery")
+	s.SeedPasskey(uid, "existing key")
 	c := s.LoginAsPending(uid)
 
 	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/passkeys/register/begin", struct{}{}); resp.StatusCode != http.StatusForbidden {

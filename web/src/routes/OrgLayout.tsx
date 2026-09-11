@@ -8,6 +8,7 @@ import { useMe } from '../api/hooks/useMe.ts';
 import { logout } from '../api/hooks/useAuth.ts';
 import { useResetSession } from '../api/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
+import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 
 /** OrgLayout is the route-connected wrapper around the pure AppShell
  * component (src/ui/shell.tsx): it resolves the current org, the user's
@@ -29,15 +30,22 @@ export function OrgLayout() {
   const navigate = useNavigate();
   const resetSession = useResetSession();
 
-  const org = useOrg(orgSlug);
   const me = useMe({ enabled: true });
-  const orgs = useOrgs({ enabled: true });
+  // A session that is not MFA-complete is refused every organization
+  // route, so these wait until /auth/me says it is complete and the
+  // session is sent on to enrolment or verification instead (below).
+  const complete = me.data?.mfa_complete === true;
+  const org = useOrg(orgSlug, { enabled: complete });
+  const orgs = useOrgs({ enabled: complete });
 
-  const orgGuard = useQueryGuard(org);
   const meGuard = useQueryGuard(me);
+  const orgGuard = useQueryGuard(org);
   const orgsGuard = useQueryGuard(orgs);
-  if (orgGuard) return orgGuard;
   if (meGuard) return meGuard;
+  if (me.data && !me.data.mfa_complete) {
+    return <PendingSessionRedirect state={me.data.mfa_enrolment_required ? 'enrol' : 'verify'} />;
+  }
+  if (orgGuard) return orgGuard;
   if (orgsGuard) return orgsGuard;
   if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 

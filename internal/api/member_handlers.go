@@ -195,10 +195,10 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 // (task-15b-report.md's "Product bug #2", reported but deliberately left
 // unfixed by that round): the invite token is a single-use credential for
 // a *new* account, so when accepting it just gave the address its first
-// password, the response opens a session — MFA-complete, exactly like
+// password, the response opens a session — not MFA-complete, exactly like
 // Login treats an account with no second factor enrolled yet (see
-// auth.Service.Login) — and the SPA continues straight to second-factor
-// enrolment. When the address already belonged to an account with its own
+// auth.Service.Login): it can reach only the enrolment routes until it
+// enrols one — and the SPA continues straight to second-factor enrolment. When the address already belonged to an account with its own
 // password, accepting only adds the membership; that account's holder
 // still has to sign in with their own credentials and second factor, so an
 // intercepted invitation for an existing address gains its holder nothing.
@@ -221,9 +221,13 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 		out := &inviteAcceptOutput{}
 		out.Body.UserID, out.Body.OrgID = uid.String(), orgID.String()
 		if newAccount {
-			_, cookie, err := deps.Sessions.Create(ctx, uid, true)
+			// Not MFA-complete: the new account has no second factor yet,
+			// so this session can reach only the enrolment routes until it
+			// enrols one (requireEnrolmentSession), exactly like a password
+			// login to a factor-less account.
+			_, cookie, err := deps.Sessions.Create(ctx, uid, false)
 			if err != nil {
-				return nil, fmt.Errorf("open session for accepted invite: %w", err)
+				return nil, mapAuthErr(ctx, fmt.Errorf("open session for accepted invite: %w", err))
 			}
 			c := sessionCookie(cookie, deps.Secure)
 			out.SetCookie = &c

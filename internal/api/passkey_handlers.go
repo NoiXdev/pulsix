@@ -70,13 +70,16 @@ type passkeyLoginFinishOutput struct {
 // registerPasskeyRoutes wires passkey registration, listing, deletion and
 // discoverable-credential login.
 //
-// Gating: register/begin, register/finish, list and delete all change or
-// read the account's second factors, so they require requireInteractiveSession
-// — the same reasoning as TOTP's enrol/confirm/disable in mfa_handlers.go: a
-// session that has not itself completed a second factor must not be able to
-// plant a new passkey (or enumerate/remove existing ones) on the account it
-// rode in on, and — per requireInteractiveSession's own doc comment — an API
-// token must not either, regardless of its scope (Finding 1, fix round 1).
+// Gating: register/begin, register/finish and list use
+// requireEnrolmentSession — the same reasoning as TOTP's enrol/confirm in
+// mfa_handlers.go: an MFA-complete session may add a passkey, and so may a
+// pending session whose account has no second factor yet (finishing the
+// registration completes it), but a pending session whose account already
+// has a factor must not plant a new passkey on the account it rode in on.
+// Delete uses requireInteractiveSession and refuses to remove the account's
+// last second factor. Per requireInteractiveSession's own doc comment, an API
+// token can do none of this, regardless of its scope (Finding 1, fix round
+// 1).
 // login/begin and login/finish are the opposite case: they are how an
 // unauthenticated caller signs in with no session at all, so they carry no
 // auth check — matching requireSession's own doc comment, which already
@@ -84,7 +87,7 @@ type passkeyLoginFinishOutput struct {
 // or absent session must still be able to reach.
 func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/passkeys/register/begin", func(ctx context.Context, _ *struct{}) (*passkeyBeginOutput, error) {
-		p, err := requireInteractiveSession(ctx)
+		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
 		}
@@ -98,7 +101,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*okOutput, error) {
-		p, err := requireInteractiveSession(ctx)
+		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
 		}
@@ -108,6 +111,11 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		}
 		if err := deps.Passkeys.FinishRegistration(ctx, p.UserID, cid, in.Body.Name, in.Body.Response); err != nil {
 			return nil, mapPasskeyErr(ctx, err)
+		}
+		// The account now has a second factor: a session that was pending
+		// only for want of one is complete from here on.
+		if err := completeEnrolment(ctx, deps, p); err != nil {
+			return nil, err
 		}
 		// Instance-level event, same mechanism as POST
 		// /admin/users/{id}/deactivate (Task 11 fix round 1, Finding 1) and
@@ -125,7 +133,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("finishPasskeyRegistration", "passkey"))
 
 	huma.Get(hapi, "/api/v1/auth/passkeys", func(ctx context.Context, _ *struct{}) (*passkeyListOutput, error) {
-		p, err := requireInteractiveSession(ctx)
+		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
 		}
@@ -150,7 +158,9 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid passkey id")
 		}
-		if err := deps.Passkeys.Delete(ctx, p.UserID, id); err != nil {
+		// Refused with 409 when this passkey is the account's last second
+		// factor.
+		if err := secondFactors(deps).DeletePasskey(ctx, p.UserID, id); err != nil {
 			return nil, mapPasskeyErr(ctx, err)
 		}
 		// Instance-level event, same mechanism as the other three routes

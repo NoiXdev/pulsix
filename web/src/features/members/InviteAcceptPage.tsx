@@ -6,6 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { acceptInvite } from '../../api/hooks/useMembers.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
+import { useResetSession } from '../../api/session.ts';
 
 function InviteAcceptShell({ children }: { children: ReactNode }) {
   return (
@@ -44,6 +45,7 @@ export function InviteAcceptPage() {
   const { token } = useParams({ strict: false }) as { token: string };
   const navigate = useNavigate();
   const refetchMe = useRefetchMe();
+  const resetSession = useResetSession();
 
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -84,8 +86,12 @@ export function InviteAcceptPage() {
             return;
           }
           try {
+            // A new account's session: start from an empty cache
+            // (api/session.ts) and continue to second-factor enrolment,
+            // the only thing it may do until it has one.
+            resetSession();
             await refetchMe();
-            await navigate({ to: '/account/security' });
+            await navigate({ to: '/account/enrol' });
           } catch {
             setJoinedExistingAccount(true);
             setBusy(false);

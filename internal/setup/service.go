@@ -108,19 +108,13 @@ type Result struct {
 	UserID uuid.UUID
 	OrgID  uuid.UUID
 	// Cookie is a ready-to-set session cookie value, opened with
-	// mfaComplete = true: the newly created administrator has no second
-	// factor enrolled yet, but that is exactly the state auth.Service.Login
-	// already treats as MFA-complete for any factor-less account (Login
-	// passes !mfaRequired, and mfaRequired is false with nothing enrolled).
-	// Every credential-enrolment route (POST /auth/totp/enrol, POST
-	// /auth/passkeys/register/begin, ...) sits behind
-	// requireInteractiveSession, which itself requires MFA-complete — a
-	// pending session opened here could never reach them, and the
-	// administrator's only escape would be to log out and back in, at which
-	// point Login would hand them an MFA-complete session anyway. Opening
-	// the session as MFA-complete from the start matches the system's own
-	// semantics instead of contradicting them. Status.AdminMFAEnrolled is
-	// the lever the SPA uses to still insist on enrolment.
+	// mfaComplete = false: a second factor is mandatory and the newly
+	// created administrator has none yet, so — exactly like
+	// auth.Service.Login for any account without a factor — the session
+	// can reach only the enrolment routes (the API's
+	// requireEnrolmentSession), plus /auth/me and logout, and becomes
+	// MFA-complete the moment a TOTP secret is confirmed or a passkey
+	// registered. The SPA takes it straight to enrolment.
 	Cookie string
 }
 
@@ -305,8 +299,8 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 		}
 	}
 
-	// mfaComplete = true: see Result.Cookie's own doc comment.
-	_, cookie, err := s.sessions.Create(ctx, res.UserID, true)
+	// mfaComplete = false: see Result.Cookie's own doc comment.
+	_, cookie, err := s.sessions.Create(ctx, res.UserID, false)
 	if err != nil {
 		return Result{}, fmt.Errorf("open admin session: %w", err)
 	}

@@ -134,16 +134,18 @@ func TestTOTPConfirmRejectsWrongCode(t *testing.T) {
 }
 
 // TestTOTPMutatingRoutesRequireMFAComplete asserts that enrol, confirm and
-// disable all reject a session whose second factor is still outstanding
-// (mfa_complete = false), per the task's gating rule: only logout, me,
-// totp/verify and passkey login may be reached from that state. Without
-// this, a session obtained only via password (e.g. a stolen cookie before
-// its owner completes TOTP) could enrol a brand-new factor for the account
-// or rip out an existing one, neither of which requires ever proving
-// possession of a second factor.
+// disable all reject a session whose account has a second factor it has
+// not verified yet (mfa_complete = false): only logout, me, totp/verify and
+// passkey login may be reached from that state. Without this, a session
+// obtained only via password (e.g. a stolen cookie before its owner
+// completes TOTP) could enrol a brand-new factor for the account or rip out
+// an existing one, neither of which requires ever proving possession of a
+// second factor. (An account with no factor at all is the other pending
+// state, covered by TestEnrolmentSessionCanOnlyEnrol.)
 func TestTOTPMutatingRoutesRequireMFAComplete(t *testing.T) {
 	s := apitest.New(t)
 	uid := s.SeedUser("pending-mfa@example.test", "correct horse battery")
+	s.SeedPasskey(uid, "existing key")
 	pending := s.LoginAsPending(uid)
 
 	if resp := postJSON(t, pending, s.HTTP.URL+"/api/v1/auth/totp/enrol", struct{}{}); resp.StatusCode != http.StatusForbidden {
@@ -176,6 +178,9 @@ func TestTOTPDisableRequiresFreshCodeAndRemovesState(t *testing.T) {
 	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/confirm", map[string]string{"code": code}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("confirm: %d", resp.StatusCode)
 	}
+	// A second factor is mandatory: TOTP can be disabled only while the
+	// account keeps another one (TestTOTPDisableRefusesTheLastFactor).
+	s.SeedPasskey(uid, "fallback key")
 
 	if resp := deleteJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp", map[string]string{"code": "000000"}); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("disable with a wrong code: status %d, want 401", resp.StatusCode)
@@ -186,13 +191,13 @@ func TestTOTPDisableRequiresFreshCodeAndRemovesState(t *testing.T) {
 		t.Fatalf("disable with a fresh code: status %d, want 200", resp.StatusCode)
 	}
 
-	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]string{"email": "disable-mfa@example.test", "password": "correct horse battery"})
-	var login struct {
-		MFARequired bool `json:"mfa_required"`
+	resp = requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil)
+	var me struct {
+		TOTPConfirmed bool `json:"totp_confirmed"`
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&login)
-	if login.MFARequired {
-		t.Fatal("login still requires MFA after Disable")
+	_ = json.NewDecoder(resp.Body).Decode(&me)
+	if me.TOTPConfirmed {
+		t.Fatal("TOTP still confirmed after Disable")
 	}
 }
 

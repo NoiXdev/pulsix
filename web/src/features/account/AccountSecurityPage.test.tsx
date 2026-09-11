@@ -42,12 +42,12 @@ describe('AccountSecurityPage status pill (Important 4)', () => {
     expect(screen.queryByText('second factor active')).not.toBeInTheDocument();
   });
 
-  it('does not show "active" merely because mfa_complete is true with no factor enrolled (the backend bug this finding is about)', async () => {
+  it('does not show "active" merely because mfa_complete is true with no factor enrolled', async () => {
     mockApi({
       'GET /api/v1/auth/me': {
         user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
-        // A backend that treats "no factor at all" as MFA-complete —
-        // exactly the trap Important 4 describes.
+        // mfa_complete describes the session, not the account: the pill
+        // must read the account's factors, never this flag (Important 4).
         mfa_complete: true,
         totp_confirmed: false,
         instance_admin: true,

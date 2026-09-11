@@ -898,6 +898,7 @@ export interface components {
              * @example https://example.com/schemas/LoginOutputBody.json
              */
             readonly $schema?: string;
+            mfa_enrolment_required: boolean;
             mfa_required: boolean;
         };
         MeOutputBody: {
@@ -909,6 +910,7 @@ export interface components {
             readonly $schema?: string;
             instance_admin: boolean;
             mfa_complete: boolean;
+            mfa_enrolment_required: boolean;
             totp_confirmed: boolean;
             user: components["schemas"]["UserStruct"];
         };

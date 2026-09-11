@@ -125,6 +125,9 @@ func TestTOTPDisableRecordsCorrectActor(t *testing.T) {
 
 	enrolAndConfirmTOTP(t, s, cA)
 	secretB := enrolAndConfirmTOTP(t, s, cB)
+	// A second factor is mandatory, so TOTP can only be disabled while the
+	// account keeps another one.
+	s.SeedPasskey(uidB, "B's fallback key")
 
 	// A never disables. Only B does, using a fresh code (a later time step
 	// than the one already spent confirming) — the same
@@ -245,6 +248,9 @@ func TestPasskeyDeleteRecordsCorrectActor(t *testing.T) {
 
 	registerPasskeyForTest(t, s, cA, "A's Key", []byte("audit-passkey-delete-a-cred"))
 	idB := registerPasskeyForTest(t, s, cB, "B's Key", []byte("audit-passkey-delete-b-cred"))
+	// A second factor is mandatory, so a passkey can only be removed while
+	// the account keeps another one.
+	s.SeedPasskey(uidB, "B's fallback key")
 
 	del, err := http.NewRequest(http.MethodDelete, s.HTTP.URL+"/api/v1/auth/passkeys/"+idB, nil)
 	if err != nil {

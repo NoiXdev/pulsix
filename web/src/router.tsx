@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/
 import { RootRedirect } from './routes/RootRedirect.tsx';
 import { OrgLayout } from './routes/OrgLayout.tsx';
 import { AccountSecurityLayout } from './routes/AccountSecurityLayout.tsx';
+import { EnrolmentLayout } from './routes/EnrolmentLayout.tsx';
 import { LoginPage } from './features/auth/LoginPage.tsx';
 import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
@@ -44,6 +45,15 @@ const accountSecurityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/security',
   component: AccountSecurityLayout,
+});
+
+// /account/enrol is where a session whose account has no second factor yet
+// is sent (a second factor is mandatory): it renders without the app shell,
+// since such a session cannot load organizations.
+const enrolRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/account/enrol',
+  component: EnrolmentLayout,
 });
 
 const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org', component: OrgLayout });
@@ -105,6 +115,7 @@ const routeTree = rootRoute.addChildren([
   loginRoute,
   inviteRoute,
   accountSecurityRoute,
+  enrolRoute,
   orgRoute.addChildren([
     orgIndexRoute,
     hostsRoute,

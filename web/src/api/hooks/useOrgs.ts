@@ -11,10 +11,10 @@ export function useOrgs(opts: { enabled?: boolean } = {}) {
   });
 }
 
-export function useOrg(slug: string) {
+export function useOrg(slug: string, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['org', slug],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}', { params: { path: { org: slug } } })),
-    enabled: !!slug,
+    enabled: !!slug && (opts.enabled ?? true),
   });
 }

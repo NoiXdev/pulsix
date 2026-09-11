@@ -8,6 +8,7 @@ import { usePasskeys } from '../api/hooks/usePasskeys.ts';
 import { logout } from '../api/hooks/useAuth.ts';
 import { useResetSession } from '../api/session.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
+import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 
 /**
  * AccountSecurityLayout renders /account/security inside the same
@@ -22,12 +23,17 @@ export function AccountSecurityLayout() {
   const navigate = useNavigate();
   const resetSession = useResetSession();
   const me = useMe({ enabled: true });
-  const orgs = useOrgs({ enabled: true });
+  // GET /orgs is refused to a session that is not MFA-complete; such a
+  // session is sent on to enrolment or verification instead (below).
+  const orgs = useOrgs({ enabled: me.data?.mfa_complete === true });
   const passkeys = usePasskeys();
 
   const meGuard = useQueryGuard(me);
   const orgsGuard = useQueryGuard(orgs);
   if (meGuard) return meGuard;
+  if (me.data && !me.data.mfa_complete) {
+    return <PendingSessionRedirect state={me.data.mfa_enrolment_required ? 'enrol' : 'verify'} />;
+  }
   if (orgsGuard) return orgsGuard;
 
   const firstOrg = orgs.data?.orgs?.[0];

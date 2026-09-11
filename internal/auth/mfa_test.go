@@ -89,8 +89,9 @@ func TestPasskeysEnabledReflectsWhetherAnyCredentialExists(t *testing.T) {
 
 // TestLoginWithAnyEnabledChecksBothFactors asserts Finding 2's fix at the
 // Service.Login level, the three scenarios the fix round specifies: a user
-// with only a passkey gets a pending session from a password login; a user
-// with neither factor gets a complete one; an error from either checker
+// with only a passkey gets a pending session from a password login that must
+// verify it; a user with neither factor gets a pending session that must
+// enrol one (a second factor is mandatory); an error from either checker
 // prevents an MFA-complete session from ever being created. Before this
 // fix, mfaRequired came from a single MFAChecker (TOTP alone), so
 // registering a passkey never changed it — a stolen password alone
@@ -120,8 +121,8 @@ func TestLoginWithAnyEnabledChecksBothFactors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.MFARequired || len(sess.mfa) != 1 || !sess.mfa[0] {
-			t.Fatalf("an account with no second factor must get a complete session, got %+v, sessions %+v", res, sess)
+		if res.MFARequired || !res.EnrolmentRequired || len(sess.mfa) != 1 || sess.mfa[0] {
+			t.Fatalf("an account with no second factor must get a pending session that requires enrolment, got %+v, sessions %+v", res, sess)
 		}
 	})
 

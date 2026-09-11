@@ -71,8 +71,9 @@ func TestSetupStatusCompleteFlow(t *testing.T) {
 		t.Fatalf("me after setup: status %d", me.StatusCode)
 	}
 	var meBody struct {
-		InstanceAdmin bool `json:"instance_admin"`
-		MFAComplete   bool `json:"mfa_complete"`
+		InstanceAdmin        bool `json:"instance_admin"`
+		MFAComplete          bool `json:"mfa_complete"`
+		MFAEnrolmentRequired bool `json:"mfa_enrolment_required"`
 	}
 	if err := json.NewDecoder(me.Body).Decode(&meBody); err != nil {
 		t.Fatal(err)
@@ -80,19 +81,19 @@ func TestSetupStatusCompleteFlow(t *testing.T) {
 	if !meBody.InstanceAdmin {
 		t.Fatal("the setup response's session is not the instance admin")
 	}
-	// Finding 1, fix round 1: the wizard's session must be MFA-complete,
-	// matching what auth.Service.Login already gives any account with no
-	// second factor enrolled. A pending (MFA-incomplete) session here would
-	// 403 at every credential-enrolment route (they all sit behind
-	// requireInteractiveSession), stranding the administrator with no way
-	// to reach TOTP or passkey enrolment except logging out and back in.
-	if !meBody.MFAComplete {
-		t.Fatal("the setup response's session must be MFA-complete: see setup.Result.Cookie's own doc comment")
+	// A second factor is mandatory: the new administrator has none yet, so
+	// the wizard's session is not MFA-complete but pending enrolment — see
+	// setup.Result.Cookie's own doc comment.
+	if meBody.MFAComplete || !meBody.MFAEnrolmentRequired {
+		t.Fatalf("the setup response's session: mfa_complete=%v mfa_enrolment_required=%v, want false/true",
+			meBody.MFAComplete, meBody.MFAEnrolmentRequired)
+	}
+	// Until it enrols, it may not reach instance administration.
+	if smtp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/admin/settings/smtp", nil); smtp.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET /admin/settings/smtp before enrolment: status %d, want 403", smtp.StatusCode)
 	}
 
-	// The real-world consequence of the bug this guards against: the
-	// wizard's session must actually be able to reach the enrolment route
-	// it hands off to, not just report MFAComplete = true in isolation.
+	// It must be able to reach the enrolment route the wizard hands off to.
 	enrol := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", map[string]any{})
 	if enrol.StatusCode != http.StatusOK {
 		t.Fatalf("POST /auth/totp/enrol with the wizard's own session: status %d, want 200; body %s", enrol.StatusCode, mustReadBody(t, enrol))

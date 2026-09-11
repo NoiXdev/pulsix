@@ -25,6 +25,7 @@ function renderRoot() {
       return <div>LOGIN{search.step === 'totp' ? ' TOTP STEP' : ''}</div>;
     },
   });
+  const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: () => <div>ENROLMENT</div> });
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const hostsRoute = createRoute({
     getParentRoute: () => orgRoute,
@@ -32,7 +33,7 @@ function renderRoot() {
     validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' ? s.q : undefined }),
     component: () => <div>HOSTS PAGE</div>,
   });
-  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, orgRoute.addChildren([hostsRoute])]);
+  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, enrolRoute, orgRoute.addChildren([hostsRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/'] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -59,18 +60,34 @@ describe('RootRedirect', () => {
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
   });
 
-  it('redirects to /login?step=totp when the session is MFA-pending', async () => {
+  it('redirects to /login?step=totp when the session has a second factor to verify', async () => {
     mockApi({
       'GET /api/v1/setup/status': { completed: true },
       'GET /api/v1/auth/me': {
         user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
         mfa_complete: false,
-        totp_confirmed: false,
+        mfa_enrolment_required: false,
+        totp_confirmed: true,
         instance_admin: false,
       },
     });
     renderRoot();
     expect(await screen.findByText('LOGIN TOTP STEP')).toBeInTheDocument();
+  });
+
+  it('redirects to /account/enrol when the account has no second factor yet (it is mandatory)', async () => {
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: false,
+        mfa_enrolment_required: true,
+        totp_confirmed: false,
+        instance_admin: false,
+      },
+    });
+    renderRoot();
+    expect(await screen.findByText('ENROLMENT')).toBeInTheDocument();
   });
 
   it('redirects to the first organization for a ready session', async () => {

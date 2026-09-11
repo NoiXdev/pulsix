@@ -16,7 +16,8 @@ function renderAt(initialPath = '/account/security', qc = new QueryClient({ defa
     validateSearch: (s: Record<string, unknown>) => ({ step: typeof s.step === 'string' ? s.step : undefined }),
     component: () => <div>LOGIN PAGE</div>,
   });
-  const routeTree = rootRoute.addChildren([securityRoute, loginRoute]);
+  const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: () => <div>ENROLMENT</div> });
+  const routeTree = rootRoute.addChildren([securityRoute, loginRoute, enrolRoute]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
 
   return render(
@@ -48,6 +49,29 @@ describe('AccountSecurityLayout', () => {
     expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
     expect(screen.getByText('Account')).toBeInTheDocument();
     expect(screen.getByText('second factor active')).toBeInTheDocument();
+  });
+
+  it('sends a session whose account has no second factor yet to enrolment, without requesting organizations', async () => {
+    let orgsRequested = false;
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: false,
+        mfa_enrolment_required: true,
+        totp_confirmed: false,
+        instance_admin: false,
+      },
+      'GET /api/v1/orgs': () => {
+        orgsRequested = true;
+        return ORGS;
+      },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+    });
+
+    renderAt();
+
+    expect(await screen.findByText('ENROLMENT')).toBeInTheDocument();
+    expect(orgsRequested).toBe(false);
   });
 
   it('shows a friendly page instead of hanging when the account belongs to no organization', async () => {

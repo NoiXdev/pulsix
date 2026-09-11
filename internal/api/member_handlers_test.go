@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -102,14 +103,16 @@ func TestInviteAcceptAppearsInMembers(t *testing.T) {
 	}
 }
 
-// TestInviteAcceptNewAccountOpensMFACompleteSession is the fix for the
+// TestInviteAcceptNewAccountOpensEnrolmentSession is the fix for the
 // product bug task-15b-report.md's "Product bug #2" reported but left
 // unfixed: accepting an invite that creates a brand-new account (this
-// address never had a password before) must open a session right away —
-// MFA-complete, exactly like Login treats an account with no second
-// factor enrolled — so the invitee's browser continues straight to
-// second-factor enrolment instead of landing on a login-required dead end.
-func TestInviteAcceptNewAccountOpensMFACompleteSession(t *testing.T) {
+// address never had a password before) must open a session right away, so
+// the invitee's browser continues straight to second-factor enrolment
+// instead of landing on a login-required dead end. A second factor is
+// mandatory, so that session is not MFA-complete: it is refused on the
+// organization it just joined until it enrols one, and enrolling completes
+// it with no fresh login.
+func TestInviteAcceptNewAccountOpensEnrolmentSession(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("newacct-owner@example.test", "correct horse battery")
 	s.SeedOrg("newacct-org", owner)
@@ -142,8 +145,19 @@ func TestInviteAcceptNewAccountOpensMFACompleteSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("look up session from accept's cookie: %v", err)
 	}
-	if !principal.MFAComplete {
-		t.Fatal("session opened by accepting a new-account invite is not MFA-complete")
+	if principal.MFAComplete {
+		t.Fatal("session opened by accepting a new-account invite is MFA-complete before any second factor exists")
+	}
+
+	invitee := s.Client()
+	u, _ := url.Parse(s.HTTP.URL)
+	invitee.Jar.SetCookies(u, []*http.Cookie{sessionCookie})
+	if resp := requestJSON(t, invitee, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/newacct-org/hosts", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("organization route before enrolment: status %d, want 403", resp.StatusCode)
+	}
+	enrolAndConfirmTOTP(t, s, invitee)
+	if resp := requestJSON(t, invitee, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/newacct-org/hosts", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("organization route after enrolment, same session: status %d, want 200", resp.StatusCode)
 	}
 }
 

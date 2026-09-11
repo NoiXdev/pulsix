@@ -34,14 +34,21 @@ import { registerPasskey } from '../auth/passkeys.ts';
  *    codes are explicitly dismissed below (there was previously no
  *    dismissal for them at all).
  *  - Important 4: the header pill used to read `me.data.mfa_complete`,
- *    but the backend treats an account with *no* factor enrolled at all
- *    as MFA-complete (Login only requires a step-up when there is
- *    something to step up to) — so a freshly created administrator the
- *    setup wizard just told to enrol a factor saw a green "second factor
- *    active" immediately. The status below is derived instead from
- *    whether TOTP is actually confirmed or at least one passkey exists.
+ *    which says whether this *session* has completed a second factor, not
+ *    whether the *account* has one. The status below is derived instead
+ *    from whether TOTP is actually confirmed or at least one passkey
+ *    exists.
+ *
+ * The page serves two layouts: the account security page inside the app
+ * shell (AccountSecurityLayout) and second-factor enrolment for an account
+ * that has none yet (EnrolmentLayout, which passes onEnrolled).
+ *
+ * onEnrolled, when given, is called once the
+ * account has just gained a second factor and the user is done with this
+ * page: after they dismiss the recovery codes of a freshly confirmed TOTP
+ * secret, or right after a passkey is registered.
  */
-export function AccountSecurityPage() {
+export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | Promise<void> } = {}) {
   const toast = useToast();
   const me = useMe({ enabled: true });
   const passkeys = usePasskeys();
@@ -111,6 +118,7 @@ export function AccountSecurityPage() {
                   toast.show('Passkey added');
                   setNewPasskeyName('');
                   await passkeys.refetch();
+                  await onEnrolled?.();
                 } catch (err) {
                   toast.show(err instanceof Error ? err.message : 'failed to add passkey', 'destructive');
                 }
@@ -204,7 +212,7 @@ export function AccountSecurityPage() {
                 </div>
                 <Button
                   variant="primary"
-                  onClick={() => {
+                  onClick={async () => {
                     setRecoveryCodes(null);
                     setCode('');
                     // Critical fix: the recovery codes were never
@@ -212,6 +220,7 @@ export function AccountSecurityPage() {
                     // this component's own state does not clear
                     // TanStack Query's mutation cache — reset() does.
                     confirmTotp.reset();
+                    await onEnrolled?.();
                   }}
                 >
                   I have saved these

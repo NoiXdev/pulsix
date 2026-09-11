@@ -38,7 +38,15 @@ type loginInput struct {
 type loginOutput struct {
 	SetCookie http.Cookie `header:"Set-Cookie"`
 	Body      struct {
+		// MFARequired: the account has a second factor, and the session
+		// must verify it (POST /auth/totp/verify or a passkey) before it
+		// can do anything else.
 		MFARequired bool `json:"mfa_required"`
+		// MFAEnrolmentRequired: the account has no second factor yet, and
+		// the session can reach only the enrolment routes until it enrols
+		// one. Exactly one of the two is always true — a password never
+		// completes a session on its own.
+		MFAEnrolmentRequired bool `json:"mfa_enrolment_required"`
 	}
 }
 
@@ -50,17 +58,17 @@ type meOutput struct {
 			DisplayName string `json:"display_name"`
 		} `json:"user"`
 		MFAComplete bool `json:"mfa_complete"`
-		// TOTPConfirmed distinguishes "this account has a confirmed TOTP
-		// factor" from MFAComplete, which the SPA must not treat as a
-		// synonym for "has a second factor": a session with none enrolled
-		// at all still comes back MFAComplete: true (Login only requires a
-		// step-up when a factor exists to step up to — see
-		// auth.Service.Login), so a freshly created administrator the
-		// setup wizard just told to enrol would otherwise see a
-		// contradictory "second factor active" (task-15a-report.md,
-		// finding "Important 4"). Combined client-side with whether
-		// GET /auth/passkeys returns any credential, this tells the
-		// account security page whether a real factor exists.
+		// MFAEnrolmentRequired is true for a session that is not
+		// MFA-complete because its account has no second factor at all:
+		// it may reach only the enrolment routes (and this one, and
+		// logout) until it enrols one, which completes it. The SPA takes
+		// such a session straight to enrolment; a session that is not
+		// MFA-complete with this false has a factor to verify instead.
+		MFAEnrolmentRequired bool `json:"mfa_enrolment_required"`
+		// TOTPConfirmed says whether the account has a confirmed TOTP
+		// factor. Combined client-side with whether GET /auth/passkeys
+		// returns any credential, it tells the account security page
+		// which factors exist.
 		TOTPConfirmed bool `json:"totp_confirmed"`
 		InstanceAdmin bool `json:"instance_admin"`
 	}
@@ -79,6 +87,7 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		out := &loginOutput{}
 		out.SetCookie = sessionCookie(res.Cookie, deps.Secure)
 		out.Body.MFARequired = res.MFARequired
+		out.Body.MFAEnrolmentRequired = res.EnrolmentRequired
 		return out, nil
 	})
 
@@ -111,12 +120,19 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		}
 		totpConfirmed, err := deps.TOTP.Enabled(ctx, p.UserID)
 		if err != nil {
-			return nil, err
+			return nil, mapAuthErr(ctx, err)
 		}
 		out := &meOutput{}
 		out.Body.User.ID, out.Body.User.Email, out.Body.User.DisplayName = u.ID.String(), u.Email, u.DisplayName
 		out.Body.MFAComplete, out.Body.InstanceAdmin = p.MFAComplete, p.InstanceAdmin
 		out.Body.TOTPConfirmed = totpConfirmed
+		if !p.MFAComplete {
+			enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)
+			if err != nil {
+				return nil, mapAuthErr(ctx, err)
+			}
+			out.Body.MFAEnrolmentRequired = !enrolled
+		}
 		return out, nil
 	})
 }
@@ -125,6 +141,32 @@ func sessionCookie(value string, secure bool) http.Cookie {
 	return http.Cookie{Name: auth.CookieName, Value: value, Path: "/", HttpOnly: true, Secure: secure,
 		SameSite: http.SameSiteLaxMode, MaxAge: int(auth.SessionTTL.Seconds())}
 }
+
+// The four session gates. A second factor is mandatory, so a session is in
+// one of three states, and every route names the gate that admits exactly
+// the states it may serve:
+//
+//	state \ gate                  requireSession  requireEnrolmentSession  requireMFAComplete  requireInteractiveSession
+//	pending, factor to verify      yes             no                       no                  no
+//	pending, no factor (enrol)     yes             yes                      no                  no
+//	MFA-complete session           yes             yes                      yes                 yes
+//	bearer token (always complete) yes             no                       yes                 no
+//
+//   - requireSession: /auth/me, /auth/logout, /auth/totp/verify — reachable
+//     in every state, because they are how a pending session learns what it
+//     still owes and supplies it (or gives up).
+//   - requireEnrolmentSession: TOTP enrol and confirm, passkey register
+//     begin and finish, and the passkey list — the only routes an account
+//     without a second factor can use, and the ones that give it one.
+//     Confirming a TOTP secret or finishing a passkey registration
+//     completes that session on the spot (Sessions.MarkMFAComplete), with
+//     no fresh login.
+//   - requireMFAComplete (and requireOrg, which applies the same rule):
+//     everything else a signed-in person does — organizations, the
+//     activity feed, every org-scoped route.
+//   - requireInteractiveSession: removing a second factor (TOTP disable,
+//     passkey delete), creating API tokens, and every instance-admin route
+//     — MFA-complete and never a bearer token.
 
 // requireSession returns the principal or a 401. It is the right check for
 // /auth/logout, /auth/me and /auth/totp/verify: routes that a
@@ -145,12 +187,12 @@ func requireSession(ctx context.Context) (auth.Principal, error) {
 }
 
 // requireMFAComplete is the check for everything else: it additionally
-// rejects a session that exists but has not completed a required second
-// factor. Today NoMFA{} makes every session MFA-complete so this behaves
-// like requireSession, but from Task 7 login can create sessions with
-// mfa_complete = false, and any route that isn't in requireSession's
-// exception list above must use this instead or it will silently accept a
-// half-authenticated caller.
+// rejects a session that exists but has not completed its second factor —
+// whether it still has one to verify or has none to verify yet (a password
+// login never completes a session on its own). Any route that isn't in
+// requireSession's or requireEnrolmentSession's lists above must use this
+// (or a stricter gate) or it will silently accept a half-authenticated
+// caller.
 func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
 	p, err := requireSession(ctx)
 	if err != nil {
@@ -164,9 +206,11 @@ func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
 
 // requireInteractiveSession is requireMFAComplete plus one more condition:
 // the principal must not have come from an API token (p.TokenID == nil).
-// It is the gate for every route that manages the account's own
-// credentials — passkey register/list/delete and TOTP enrol/confirm/delete
-// — because an API token is, by construction, always MFA-complete
+// It is the gate for every route that removes one of the account's own
+// credentials — passkey delete and TOTP disable — and for minting API
+// tokens and every instance-admin route; the routes that add a credential
+// use requireEnrolmentSession, which applies the same token rule. An API
+// token is, by construction, always MFA-complete
 // (Tokens.Resolve: "a token is not a browser session with its own
 // second-factor step-up"), so requireMFAComplete alone lets a token —
 // however narrowly scoped, e.g. a viewer-scoped token minted for read-only
@@ -197,6 +241,57 @@ func requireInteractiveSession(ctx context.Context) (auth.Principal, error) {
 	return p, nil
 }
 
+// requireEnrolmentSession admits an interactive session that may enrol a
+// second factor: one that is MFA-complete, or one that is pending only
+// because its account has no confirmed second factor at all. A pending
+// session whose account does have a factor is refused (403, "second factor
+// required") exactly as requireInteractiveSession refuses it — it must
+// verify that factor first, so a stolen password alone can never plant a new
+// one next to it — and so is a bearer token, whatever its scope.
+//
+// Whether the account has a factor is read live, not remembered from login:
+// once any session of the account enrols one, every other pending session of
+// that account loses enrolment access and must verify instead.
+func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, error) {
+	p, err := requireSession(ctx)
+	if err != nil {
+		return p, err
+	}
+	if p.TokenID != nil {
+		return p, huma.Error403Forbidden("interactive session required")
+	}
+	if p.MFAComplete {
+		return p, nil
+	}
+	enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)
+	if err != nil {
+		return p, mapAuthErr(ctx, err)
+	}
+	if enrolled {
+		return p, huma.Error403Forbidden("second factor required")
+	}
+	return p, nil
+}
+
+// completeEnrolment upgrades a session that was pending only for lack of a
+// second factor once it has just enrolled one, so it continues without a
+// fresh login. A session that was already MFA-complete is left alone.
+func completeEnrolment(ctx context.Context, deps Deps, p auth.Principal) error {
+	if p.MFAComplete {
+		return nil
+	}
+	if err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
+		return mapAuthErr(ctx, err)
+	}
+	return nil
+}
+
+// secondFactors is the account-level view over both kinds of second factor
+// deps carries.
+func secondFactors(deps Deps) auth.SecondFactors {
+	return auth.SecondFactors{TOTP: deps.TOTP, Passkeys: deps.Passkeys}
+}
+
 // mapAuthErr translates service sentinels to HTTP errors. Anything not
 // recognized is an internal detail (a corrupt password hash, a database
 // outage, ...) that must never reach an unauthenticated client: it is
@@ -209,6 +304,8 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error401Unauthorized("login required")
 	case errors.Is(err, auth.ErrInvalidTOTPCode):
 		return huma.Error400BadRequest("invalid code")
+	case errors.Is(err, auth.ErrLastSecondFactor):
+		return huma.Error409Conflict("cannot remove the last second factor; add another one first")
 	default:
 		slog.ErrorContext(ctx, "unmapped auth error", "err", err)
 		return huma.Error500InternalServerError("internal error")

@@ -129,12 +129,15 @@ func TestLoginCreatesSessionAndFlagsMFA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.MFARequired || res.Cookie != "cookie" || len(sess.created) != 1 || sess.mfa[0] {
+	if !res.MFARequired || res.EnrolmentRequired || res.Cookie != "cookie" || len(sess.created) != 1 || sess.mfa[0] {
 		t.Fatalf("result %+v, sessions %+v", res, sess)
 	}
 }
 
-func TestLoginSucceedsWithoutMFA(t *testing.T) {
+// TestLoginWithoutAFactorRequiresEnrolment: a second factor is mandatory,
+// so a password login to an account that has none opens a session that is
+// not MFA-complete and flags enrolment instead of verification.
+func TestLoginWithoutAFactorRequiresEnrolment(t *testing.T) {
 	hash, _ := auth.HashPassword("correct horse")
 	uid := uuid.Must(uuid.NewV7())
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash}}}
@@ -144,7 +147,7 @@ func TestLoginSucceedsWithoutMFA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.MFARequired || res.Cookie != "cookie" || len(sess.created) != 1 || !sess.mfa[0] {
+	if res.MFARequired || !res.EnrolmentRequired || res.Cookie != "cookie" || len(sess.created) != 1 || sess.mfa[0] {
 		t.Fatalf("result %+v, sessions %+v", res, sess)
 	}
 }

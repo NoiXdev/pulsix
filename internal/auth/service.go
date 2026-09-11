@@ -111,10 +111,16 @@ func NewService(store Store, sessions SessionStore, mfa MFAChecker) *Service {
 	return &Service{store: store, sessions: sessions, mfa: mfa}
 }
 
-// LoginResult is what the transport needs to answer a login.
+// LoginResult is what the transport needs to answer a login. A password
+// never completes a session on its own — a second factor is mandatory — so
+// exactly one of the two flags is always set: MFARequired when the account
+// has a second factor to verify (POST /auth/totp/verify, or a passkey), and
+// EnrolmentRequired when it has none yet and must enrol one before the
+// session can do anything else.
 type LoginResult struct {
-	Cookie      string
-	MFARequired bool
+	Cookie            string
+	MFARequired       bool
+	EnrolmentRequired bool
 }
 
 // Login verifies the password and opens a session.
@@ -158,15 +164,18 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 	if u.DisabledAt != nil {
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	mfaRequired, err := s.mfa.Enabled(ctx, u.ID)
+	hasFactor, err := s.mfa.Enabled(ctx, u.ID)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("check mfa: %w", err)
 	}
-	_, cookie, err := s.sessions.Create(ctx, u.ID, !mfaRequired)
+	// Never MFA-complete: an account with a factor must verify it, and an
+	// account without one must enrol one first (the API's
+	// requireEnrolmentSession admits exactly that and nothing else).
+	_, cookie, err := s.sessions.Create(ctx, u.ID, false)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("create session: %w", err)
 	}
-	return LoginResult{Cookie: cookie, MFARequired: mfaRequired}, nil
+	return LoginResult{Cookie: cookie, MFARequired: hasFactor, EnrolmentRequired: !hasFactor}, nil
 }
 
 // Logout revokes the caller's session.

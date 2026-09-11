@@ -35,23 +35,24 @@ type okOutput struct {
 // registerMFARoutes wires the TOTP enrolment, confirmation, session step-up
 // and disable endpoints.
 //
-// Gating: enrol/confirm/disable use requireInteractiveSession because they
-// mutate or remove a second factor for the calling account — a session that
-// has not yet supplied its own second factor must not be able to enrol a
-// new one (that would let a stolen password-only session silently establish
-// an attacker-controlled TOTP secret and lock the real owner out) or delete
-// the existing one (which would strip MFA protection without ever having
-// proven possession of it) — and, per requireInteractiveSession's own doc
-// comment, an API token must not be able to do either regardless of its
-// scope either, since it is always MFA-complete by construction (Finding 1,
-// fix round 1). verify is the one route that must accept a
+// Gating: enrol and confirm use requireEnrolmentSession — an MFA-complete
+// session, or a pending one whose account has no second factor yet (the
+// only thing such an account may do is enrol one; confirming completes the
+// session). A pending session whose account already has a factor is
+// refused: a stolen password alone must never be able to establish an
+// attacker-controlled TOTP secret next to the real one. Disable uses
+// requireInteractiveSession — removing a factor needs a completed second
+// factor — and refuses to remove the account's last one. Per
+// requireInteractiveSession's own doc comment, an API token can do none of
+// this regardless of its scope, since it is always MFA-complete by
+// construction (Finding 1, fix round 1). verify is the one route that must accept a
 // half-authenticated (MFA-pending) session, per requireSession's doc
 // comment: it is the second-factor step-up itself, so requiring
 // MFA-complete first would make it unreachable from the state it exists to
 // resolve — it stays on requireSession, unchanged.
 func registerMFARoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/totp/enrol", func(ctx context.Context, in *codeInput) (*totpEnrolOutput, error) {
-		p, err := requireInteractiveSession(ctx)
+		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
 		}
@@ -73,13 +74,18 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/auth/totp/confirm", func(ctx context.Context, in *codeInput) (*recoveryOutput, error) {
-		p, err := requireInteractiveSession(ctx)
+		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
 		}
 		codes, err := deps.TOTP.ConfirmEnrol(ctx, p.UserID, in.Body.Code)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
+		}
+		// The account now has a second factor: a session that was pending
+		// only for want of one is complete from here on.
+		if err := completeEnrolment(ctx, deps, p); err != nil {
+			return nil, err
 		}
 		// Instance-level event, same mechanism as POST
 		// /admin/users/{id}/deactivate (Task 11 fix round 1, Finding 1): a
@@ -129,7 +135,8 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if !ok {
 			return nil, huma.Error401Unauthorized("invalid code")
 		}
-		if err := deps.TOTP.Disable(ctx, p.UserID); err != nil {
+		// Refused with 409 when TOTP is the account's last second factor.
+		if err := secondFactors(deps).DisableTOTP(ctx, p.UserID); err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
 		// Instance-level event, same mechanism as confirm above: removing a

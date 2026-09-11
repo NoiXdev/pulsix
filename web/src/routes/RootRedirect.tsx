@@ -9,10 +9,12 @@ import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
  * RootRedirect resolves the four startup states the task brief names,
  * strictly in this order:
  *
- *   1. setup not completed  -> /setup
- *   2. no session           -> /login
- *   3. session, MFA pending -> /login?step=totp
- *   4. ready session        -> /o/{first org}/hosts
+ *   1. setup not completed          -> /setup
+ *   2. no session                   -> /login
+ *   3. session, factor to verify    -> /login?step=totp
+ *   4. session, no factor yet       -> /account/enrol (a second factor is
+ *                                      mandatory; nothing else is reachable)
+ *   5. ready session                -> /o/{first org}/hosts
  *
  * It calls useSetupStatus and useMe directly (not a router loader) so the
  * same TanStack Query cache both hooks share is what every other page
@@ -45,7 +47,11 @@ export function RootRedirect() {
     }
     if (!me.data) return;
     if (!me.data.mfa_complete) {
-      void navigate({ to: '/login', search: { step: 'totp' } });
+      if (me.data.mfa_enrolment_required) {
+        void navigate({ to: '/account/enrol' });
+      } else {
+        void navigate({ to: '/login', search: { step: 'totp' } });
+      }
       return;
     }
     if (!orgs.data) return;
