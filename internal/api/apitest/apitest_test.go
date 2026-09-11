@@ -102,6 +102,74 @@ type failingLogoutAuth struct {
 
 func (f failingLogoutAuth) Logout(context.Context, auth.Principal) error { return f.err }
 
+// TestSeedUserReusesPasswordHash proves the fix for the internal/api
+// package timeout under `go test -race`: SeedUser hashes a given plaintext
+// password with the production argon2id parameters once per test binary
+// and reuses that hash for later users seeded with the same password,
+// instead of re-running the (deliberately slow) hash on every call. Two
+// users seeded with the same password must end up with byte-identical
+// stored hashes, and each must still verify — through the real
+// auth.VerifyPassword, running the real production parameters — against
+// the password that produced it and reject a wrong one. A third user
+// seeded with a different password must get a different hash, so the
+// cache is keyed by password and not shared indiscriminately.
+func TestSeedUserReusesPasswordHash(t *testing.T) {
+	s := apitest.New(t)
+
+	const passwordA = "correct horse battery staple"
+	const passwordB = "a completely different password"
+
+	user1 := s.SeedUser("cache-user-1@example.test", passwordA)
+	user2 := s.SeedUser("cache-user-2@example.test", passwordA)
+	user3 := s.SeedUser("cache-user-3@example.test", passwordB)
+
+	hash1 := passwordHashOf(t, s, user1)
+	hash2 := passwordHashOf(t, s, user2)
+	hash3 := passwordHashOf(t, s, user3)
+
+	if hash1 != hash2 {
+		t.Fatalf("two users seeded with the same password got different stored hashes:\nuser1: %s\nuser2: %s", hash1, hash2)
+	}
+	if hash1 == hash3 {
+		t.Fatalf("users seeded with different passwords got the same stored hash: %s", hash1)
+	}
+
+	for _, tc := range []struct {
+		name string
+		hash string
+		pw   string
+		want bool
+	}{
+		{"user1 correct password", hash1, passwordA, true},
+		{"user1 wrong password", hash1, passwordB, false},
+		{"user3 correct password", hash3, passwordB, true},
+		{"user3 wrong password", hash3, passwordA, false},
+	} {
+		ok, err := auth.VerifyPassword(tc.hash, tc.pw)
+		if err != nil {
+			t.Fatalf("%s: VerifyPassword: %v", tc.name, err)
+		}
+		if ok != tc.want {
+			t.Fatalf("%s: VerifyPassword = %v, want %v", tc.name, ok, tc.want)
+		}
+	}
+}
+
+// passwordHashOf reads back the stored password hash for userID, so the
+// test can compare what SeedUser actually persisted rather than any value
+// internal to apitest.
+func passwordHashOf(t *testing.T, s *apitest.Server, userID uuid.UUID) string {
+	t.Helper()
+	user, err := s.Q.GetUserByID(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("GetUserByID(%s): %v", userID, err)
+	}
+	if user.PasswordHash == nil {
+		t.Fatalf("user %s has no stored password hash", userID)
+	}
+	return *user.PasswordHash
+}
+
 // TestMailerRecordsSentMessages exercises Mailer.Send/Sent directly — the
 // path every invite-mail test in internal/api drives indirectly through
 // tenancy.Service.Invite, but (per this file's own package-level comment)

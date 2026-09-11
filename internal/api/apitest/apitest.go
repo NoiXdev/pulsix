@@ -231,10 +231,52 @@ func (s *Server) Client() *http.Client {
 	return &http.Client{Jar: jar}
 }
 
+// passwordHashCache memoizes HashPassword by plaintext password, for the
+// lifetime of the test binary. auth.HashPassword runs the production
+// argon2id parameters (internal/auth/password.go: time 3, memory 64 MiB, 2
+// threads), which is the point of those parameters in production but makes
+// it the dominant cost of `go test -race ./internal/api/...`: nearly every
+// one of that package's tests calls SeedUser at least once, almost always
+// with the same literal password, and hashing it fresh every time is what
+// pushed the package past the race detector's 10-minute timeout.
+//
+// Reusing a cached hash across users seeded with the same password is safe:
+// each hash produced by HashPassword still carries its own random salt (the
+// cache stores the finished PHC string, not the salt or key material
+// separately), so two users who happen to share a password in a test still
+// get byte-identical stored hashes only because they share both password
+// and cached salt — indistinguishable, for every assertion these tests
+// make, from two users who coincidentally salted the same way. Every seeded
+// hash still verifies exclusively through the real auth.VerifyPassword
+// running the real production parameters; nothing here weakens what a login
+// test exercises. A sync.Map is used, not a plain map, because apitest.New
+// is called from many tests whose *testing.T.Parallel subtests can call
+// SeedUser concurrently within one test binary.
+var passwordHashCache sync.Map // string (password) -> string (PHC hash)
+
+// hashPasswordCached returns HashPassword(password), computing it at most
+// once per distinct password for the life of the test binary. See
+// passwordHashCache for why reusing the hash (and so its salt) across
+// seeded users is safe in tests.
+func hashPasswordCached(password string) (string, error) {
+	if cached, ok := passwordHashCache.Load(password); ok {
+		return cached.(string), nil
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return "", err
+	}
+	// LoadOrStore so two goroutines racing to hash the same new password
+	// converge on one winning hash instead of each seeding a different
+	// (still individually valid) one.
+	actual, _ := passwordHashCache.LoadOrStore(password, hash)
+	return actual.(string), nil
+}
+
 // SeedUser inserts a user with a password.
 func (s *Server) SeedUser(email, password string) uuid.UUID {
 	s.T.Helper()
-	hash, err := auth.HashPassword(password)
+	hash, err := hashPasswordCached(password)
 	if err != nil {
 		s.T.Fatal(err)
 	}
