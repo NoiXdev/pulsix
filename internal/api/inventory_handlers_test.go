@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -300,5 +301,43 @@ func TestInventoryPermissionsAndIsolation(t *testing.T) {
 	other := f.s.HTTP.URL + "/api/v1/orgs/inv-perm-other/inventory/groups/" + g.Group.ID
 	if resp := requestJSON(t, f.s.LoginAs(otherOwner), http.MethodGet, other, nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("a group of another organization: %d", resp.StatusCode)
+	}
+}
+
+// TestHostInventoryGroupsMasksSecrets pins that a host's group list returns
+// its membership secrets as {"$secret":"set"}, never plaintext or a sealed
+// envelope.
+func TestHostInventoryGroupsMasksSecrets(t *testing.T) {
+	f := newInvFixture(t, "inv-host-groups")
+	g := f.group(t, "webserver", nil)
+	url := f.base + "/inventory/groups/" + g.Group.ID
+	if resp := requestWithHeaders(t, f.c, http.MethodPut, url+"/schema", webSchemaBody, map[string]string{"If-Match": `"1"`}); resp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	host := f.host(t, "web-01", true)
+	if resp := requestJSON(t, f.c, http.MethodPut, url+"/members/"+host, map[string]any{"vars": map[string]any{"vhosts": []any{
+		map[string]any{"domain": "acme.io", "basic_auth": map[string]any{"user": "u", "password": "host-groups-hunter2"}},
+	}}}); resp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	resp := requestJSON(t, f.c, http.MethodGet, f.base+"/hosts/"+host+"/inventory/groups", nil)
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || strings.Contains(body, "hunter2") || strings.Contains(body, "$sealed") {
+		t.Fatalf("host groups: %d %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Groups []struct {
+			Vars map[string]any `json:"vars"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Groups) != 1 {
+		t.Fatalf("groups = %s", body)
+	}
+	pw := out.Groups[0].Vars["vhosts"].([]any)[0].(map[string]any)["basic_auth"].(map[string]any)["password"]
+	if !reflect.DeepEqual(pw, map[string]any{"$secret": "set"}) {
+		t.Fatalf("password = %#v, want the mask", pw)
 	}
 }
