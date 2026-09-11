@@ -66,6 +66,36 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  docker:
+    # Builds the real release artifact — deploy/docker/Dockerfile.manager
+    # — and runs it through scripts/smoke.sh on every push, so a broken
+    # image fails here before a release tag ever reaches release.yml,
+    # which builds and pushes from the exact same Dockerfile. Only the
+    # amd64 image is built here (the runner's own architecture, loadable
+    # straight into its local Docker daemon with a plain `docker build`);
+    # release.yml is what additionally cross-builds arm64.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout@v7.0.1 — this job's own step, pinned to the
+      # newest stable release as of 2026-09-11; the other jobs in this
+      # file keep their existing pinned versions untouched (out of scope
+      # for this change, see task-16-report.md).
+      - uses: actions/checkout@v7.0.1
+      - name: Build the manager image
+        run: |
+          docker build -f deploy/docker/Dockerfile.manager \
+            -t noixdev/pulsix-manager:${{ github.sha }} \
+            --build-arg VERSION=${{ github.sha }} .
+      - name: Run the release smoke test against it
+        run: |
+          PULSIX_MASTER_KEY="$(openssl rand -hex 32)"
+          export PULSIX_MASTER_KEY
+          export PULSIX_VERSION="${{ github.sha }}"
+          export DB_PASSWORD="ci-smoke-test"
+          export PULSIX_PUBLIC_URL="http://localhost:8080"
+          scripts/smoke.sh
+
   commits:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,23 @@
+# Keeps the manager image build context small and reproducible: none of
+# this is COPYed into deploy/docker/Dockerfile.manager, and excluding it
+# here means a developer's local build artifacts, editor state or a large
+# pre-existing web/node_modules tree can never accidentally change what
+# gets built or leak into an image layer.
+.git/
+.github/
+.idea/
+.vscode/
+.superpowers/
+bin/
+brand/
+design/
+docs/
+web/node_modules/
+web/dist/
+web/coverage/
+web/test-results/
+web/playwright-report/
+web/.tmp/
+*.md
+.env
+.env.*

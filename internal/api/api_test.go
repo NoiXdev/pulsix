@@ -83,12 +83,17 @@ func testPasskeys(t *testing.T) *auth.Passkeys {
 	return pk
 }
 
-func TestHealthz(t *testing.T) {
-	h, err := api.New(api.Deps{
-		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
-		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(),
-	})
+// healthzBody is a fake http response body shape for /healthz — it is a
+// package-level type only so both TestHealthz cases below can decode into
+// it without repeating the struct definition.
+type healthzBody struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
+
+func healthzRequest(t *testing.T, deps api.Deps) healthzBody {
+	t.Helper()
+	h, err := api.New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,14 +102,52 @@ func TestHealthz(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var body struct {
-		Status string `json:"status"`
-	}
+	var body healthzBody
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
+	return body
+}
+
+func baseHealthzDeps(t *testing.T) api.Deps {
+	t.Helper()
+	return api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(),
+	}
+}
+
+func TestHealthz(t *testing.T) {
+	body := healthzRequest(t, baseHealthzDeps(t))
 	if body.Status != "ok" {
 		t.Fatalf("status field = %q, want ok", body.Status)
+	}
+}
+
+// TestHealthzVersionDefaultsToDev covers api.Deps.Version's zero value: a
+// caller that never sets it (every existing api.Deps{} literal except
+// app.Build's) must still get a healthz version, matching the "dev"
+// default cmd/manager/main.go's own `version` variable falls back to for
+// an unstamped `go build`/`go run`.
+func TestHealthzVersionDefaultsToDev(t *testing.T) {
+	deps := baseHealthzDeps(t)
+	deps.Version = ""
+	body := healthzRequest(t, deps)
+	if body.Version != "dev" {
+		t.Fatalf("version field = %q, want dev", body.Version)
+	}
+}
+
+// TestHealthzReportsConfiguredVersion covers the path app.Build actually
+// takes: a non-empty Deps.Version must be reported verbatim, not
+// overridden by the "dev" default.
+func TestHealthzReportsConfiguredVersion(t *testing.T) {
+	deps := baseHealthzDeps(t)
+	deps.Version = "v1.2.3"
+	body := healthzRequest(t, deps)
+	if body.Version != "v1.2.3" {
+		t.Fatalf("version field = %q, want v1.2.3", body.Version)
 	}
 }
 

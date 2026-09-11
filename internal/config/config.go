@@ -15,6 +15,12 @@ type Config struct {
 	PublicURL    string
 	StatusDomain string
 	MasterKey    [32]byte
+	// Version is the manager's build version, exposed on /healthz. It is
+	// not read from the environment: Load leaves it at its zero value, and
+	// cmd/manager/main.go sets it directly from the package-level `version`
+	// variable ldflags stamps at build time (see the Dockerfile's `-X
+	// main.version=...` and the release workflow), after Load returns.
+	Version string
 }
 
 // Load reads and validates configuration. getenv is injected for tests.

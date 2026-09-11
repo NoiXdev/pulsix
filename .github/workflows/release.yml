@@ -1,0 +1,69 @@
+# Cuts a Pulsix release: one `vX.Y.Z` tag on `main` builds and pushes one
+# multi-arch manager image, tagged with that version and `latest`, to both
+# registries. This is the project's single-version-for-everything rule
+# (see the v0.1 core plan) applied to the manager for this milestone —
+# later milestones extend this same workflow to the worker image and
+# agent binaries under the same tag, rather than introducing per-component
+# tags.
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # A tag push is only ever triggered by someone with write access to
+    # this repository creating a tag — GitHub does not fire `push` events
+    # for tags from a fork's pull request, so this workflow, and the
+    # registry credentials below, are never reachable from a PR. This
+    # `permissions` block additionally keeps GITHUB_TOKEN itself
+    # read-only: pushing the built image uses the registry secrets below
+    # instead, GITHUB_TOKEN is not involved in that at all.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Derive the release version from the tag
+        id: version
+        run: echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      # QEMU is what makes the arm64 half of the build possible on an
+      # amd64 GitHub-hosted runner (user-mode emulation for the "COPY
+      # --from=web"/"go build" stages' non-native instructions); Buildx is
+      # the builder that actually understands --platform and produces one
+      # multi-arch manifest list per tag below.
+      - uses: docker/setup-qemu-action@v4.3.0
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4.3.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: harbor.cloud.noidee.dev
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build and push the manager image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.manager
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            noixdev/pulsix-manager:${{ steps.version.outputs.version }}
+            noixdev/pulsix-manager:latest
+            harbor.cloud.noidee.dev/noixdev/pulsix-manager:${{ steps.version.outputs.version }}
+            harbor.cloud.noidee.dev/noixdev/pulsix-manager:latest

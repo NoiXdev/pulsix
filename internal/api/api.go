@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -42,6 +43,13 @@ type Deps struct {
 	// test surfaces.
 	Mailer *mail.SMTP
 	Secure bool // set Secure on cookies (true behind HTTPS)
+	// Version is the manager's build version, reported on GET /healthz.
+	// Left empty by every existing caller except app.Build (which sets it
+	// from config.Config.Version, itself set by cmd/manager/main.go's
+	// ldflags-stamped `version` variable) — New defaults an empty value to
+	// "dev" in the /healthz handler below, so no caller needs to know
+	// about this field just to keep building a working Deps.
+	Version string
 }
 
 // scalarVersion and scalarIntegrity pin the third-party script the API
@@ -147,9 +155,16 @@ func New(deps Deps) (http.Handler, error) {
 	// router.
 	r.Use(requireMFAForExplorer)
 
+	healthzVersion := deps.Version
+	if healthzVersion == "" {
+		healthzVersion = "dev"
+	}
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		_ = json.NewEncoder(w).Encode(struct {
+			Status  string `json:"status"`
+			Version string `json:"version"`
+		}{Status: "ok", Version: healthzVersion})
 	})
 
 	r.Get("/api/explorer", func(w http.ResponseWriter, _ *http.Request) {

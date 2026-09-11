@@ -19,6 +19,14 @@ import (
 // requests to finish before giving up.
 const shutdownTimeout = 10 * time.Second
 
+// version is the manager's build version, reported on /healthz so an
+// operator can tell exactly what is running without inspecting the image
+// tag. It stays "dev" for a local `go build`/`go test`/`go run`; the
+// release Dockerfile overrides it with `-ldflags "-X main.version=..."`
+// set from the release tag, so the value baked into a shipped image always
+// matches the version that tag released.
+var version = "dev"
+
 // main only translates run's exit code: the actual logic lives in run so
 // that every defer in it (stop(), a.Close()) actually executes — os.Exit
 // called from inside a function with pending defers skips them, which is
@@ -49,6 +57,7 @@ func run() int {
 		slog.Error("configuration error", "err", err)
 		return 1
 	}
+	cfg.Version = version
 
 	// Cancelled on SIGTERM (the signal a container orchestrator sends for a
 	// graceful stop) or SIGINT (Ctrl-C during local development) — either

@@ -1,0 +1,119 @@
+# Single-node deployment for the Pulsix manager. Run from this directory
+# (or point --env-file/-f at it from elsewhere) with an actual .env copied
+# from .env.example — see that file and README.md for what each variable
+# means and why every one of them is required, not merely a suggestion.
+#
+# Every ${VAR:?message} below is deliberate: Compose's own interpolation
+# refuses to start any service — not just fails a healthcheck later — the
+# moment a required variable is unset or empty, so a copy-pasted .env with
+# a blank secret is caught at `docker compose up` time, before the manager
+# or the database ever runs with one.
+services:
+  db:
+    # Keep this in sync with deploy/compose/docker-compose.test.yml's own
+    # `db` service — the e2e suite and this production stack must run the
+    # exact same TimescaleDB/PostgreSQL version.
+    image: timescale/timescaledb:2.30.0-pg18
+    environment:
+      POSTGRES_DB: pulsix
+      POSTGRES_USER: pulsix
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?set DB_PASSWORD in .env (openssl rand -hex 32)}"
+    volumes:
+      # Mounted at /var/lib/postgresql (the parent directory), not
+      # .../data: the PG18+ image places data in a major-version-specific
+      # subdirectory of this parent and refuses to start if something
+      # else (an empty bind/volume from the old pre-18 convention) is
+      # already mounted at .../data — see
+      # https://github.com/docker-library/postgres/pull/1259 and
+      # docker-compose.test.yml's own comment on the exact same issue.
+      # Unlike that test-only stack's tmpfs, this is a real named volume
+      # so data survives `docker compose down` (but not `down -v`).
+      - pulsix-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsix -d pulsix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  manager:
+    image: noixdev/pulsix-manager:${PULSIX_VERSION:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # The "pulsix" role created by POSTGRES_USER above owns the schema
+      # (it ran the migrations that created pulsix_app and granted it —
+      # migration 00002_rls.sql) and is therefore, in Postgres terms, a
+      # superuser-equivalent for this database: it can bypass row-level
+      # security entirely. That is fine ONLY because internal/app.Build
+      # never serves a single request through this connection string
+      # directly — it opens it once to run migrations, then reopens as
+      # the least-privilege pulsix_app role via SET ROLE and REFUSES TO
+      # START if that role could still bypass RLS (see
+      # internal/app/app.go's assertCannotBypassRLS). Do not point this at
+      # a role you have not verified is not itself a superuser or
+      # BYPASSRLS unless you trust the same guard to catch it.
+      PULSIX_DATABASE_URL: "postgres://pulsix:${DB_PASSWORD:?set DB_PASSWORD in .env (openssl rand -hex 32)}@db:5432/pulsix?sslmode=disable"
+      PULSIX_MASTER_KEY: "${PULSIX_MASTER_KEY:?run: openssl rand -hex 32}"
+      PULSIX_PUBLIC_URL: "${PULSIX_PUBLIC_URL:?e.g. https://pulsix.example.com}"
+      PULSIX_STATUS_DOMAIN: "${PULSIX_STATUS_DOMAIN:-}"
+    ports:
+      # Host-side port is overridable (default 8080) for a machine that
+      # already has something bound to 8080 — the container always
+      # listens on 8080 internally, matching PULSIX_LISTEN's own default.
+      - "${PULSIX_HOST_PORT:-8080}:8080"
+    restart: unless-stopped
+    # Traefik reads its routing entirely from labels on the container it
+    # routes to. These labels are inert unless the `proxy` profile is
+    # enabled (no Traefik provider is watching them otherwise), so they
+    # are safe to leave in place for every deployment — with or without a
+    # proxy in front of the manager.
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.pulsix.rule=Host(`${PULSIX_DOMAIN:-pulsix.localhost}`)"
+      - traefik.http.routers.pulsix.entrypoints=websecure
+      - traefik.http.routers.pulsix.tls.certresolver=letsencrypt
+      - traefik.http.services.pulsix.loadbalancer.server.port=8080
+
+  # Optional TLS-terminating reverse proxy, only started with:
+  #   docker compose --profile proxy up -d
+  # Not part of the default `docker compose up`: an operator behind their
+  # own load balancer or reverse proxy (or just testing over plain HTTP on
+  # localhost) has no use for a second one, and scripts/smoke.sh — which
+  # talks to the manager directly on :8080 — never enables this profile.
+  traefik:
+    image: traefik:v3.7.13@sha256:f86a2cab1b5c649070c49f883c743dd32d8485a56e3368c5f93b9e91f1e91259
+    profiles: [proxy]
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      # Deliberately a soft default (:-), not the hard :? guard used for
+      # every other secret in this file: Compose interpolates every
+      # service in this file up front, even ones no active --profile
+      # will start, so a :? here would make a plain `docker compose up`
+      # (proxy profile never requested) refuse to start over a variable
+      # that deployment does not even use. An empty ACME email only
+      # matters, and only fails, once --profile proxy actually starts
+      # this container — and it fails loudly in Traefik's own logs when
+      # it does.
+      - "--certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL:-}"
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - pulsix-letsencrypt:/letsencrypt
+      # Read-only: Traefik only needs to list/watch containers and their
+      # labels to build its routing table, never to create or modify them.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+volumes:
+  pulsix-db:
+  pulsix-letsencrypt:

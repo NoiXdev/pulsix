@@ -1,0 +1,75 @@
+# Dockerfile.manager builds the Pulsix manager image: a Go binary with the
+# React SPA embedded via internal/web/embed.go's `//go:embed all:dist`.
+#
+# Build context must be the repository root (see Makefile's `build`/
+# `web-build` targets and web/e2e/global-setup.ts for the same build order
+# used outside Docker):
+#
+#   docker build -f deploy/docker/Dockerfile.manager -t noixdev/pulsix-manager:dev .
+#
+# This is deliberately self-contained: it builds the SPA from web/ and the
+# binary from the Go module inside the image itself, so the result does not
+# depend on a previously built web/dist, a previously embedded
+# internal/web/dist, or anything else already sitting in a developer's
+# working tree — a clean `git clone` and this one command are enough.
+#
+# Base image versions were the newest stable tag on their registry as of
+# 2026-09-11 (see task-16-report.md for how each was checked) and are
+# pinned by tag *and* digest so a build today and a build next year from
+# the same Dockerfile produce bit-identical base layers:
+#   - node:24.21.0-alpine   (matches the "24" major the rest of the repo
+#     already targets — web/package.json's @types/node is 24.x, and CI's
+#     setup-node uses node-version 24)
+#   - golang:1.27.1-alpine  (matches go.mod's `go 1.27` and this machine's
+#     installed `go version` exactly)
+#   - gcr.io/distroless/static:nonroot (the final, shipped stage — no
+#     shell, no package manager, non-root by construction; "static"
+#     because CGO_ENABLED=0 below produces a fully static binary that needs
+#     no libc)
+
+# ---- Stage 1: build the SPA ----------------------------------------------
+FROM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS web
+WORKDIR /src/web
+# Copied separately from the rest of web/ so `npm ci` only reruns (and its
+# layer only invalidates) when the lockfile actually changes.
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# ---- Stage 2: build the Go binary, embedding the SPA from stage 1 --------
+FROM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS build
+WORKDIR /src
+# go.mod/go.sum first, same reasoning as npm ci above: `go mod download`
+# only reruns when dependencies actually change, not on every source edit.
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# internal/web/dist is tracked with a committed placeholder index.html/
+# robots.txt (see that directory's own comment) so `go build`/`go test`
+# work without a frontend build at all — it must be removed, not merged
+# into, before the real build lands there, or a stale placeholder file
+# with no counterpart in the real Vite output (robots.txt: the SPA has no
+# web/public/robots.txt, so the real build never produces one) would ship
+# inside the image. This mirrors web/e2e/global-setup.ts's
+# rmSync(distDir)+cpSync(...) exactly.
+RUN rm -rf internal/web/dist
+COPY --from=web /src/web/dist ./internal/web/dist
+ARG VERSION=dev
+# CGO_ENABLED=0 for a fully static binary the distroless "static" base can
+# run with no libc. -trimpath removes this build's absolute source paths
+# from the binary; -s -w strip the symbol table and DWARF debug info both
+# already unneeded at runtime. -X main.version stamps the release version
+# in (see cmd/manager/main.go's `version` variable) so it can be read back
+# off GET /healthz without inspecting the image tag.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/pulsix-manager ./cmd/manager
+
+# ---- Stage 3: the image that actually ships -------------------------------
+FROM gcr.io/distroless/static:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
+COPY --from=build /out/pulsix-manager /pulsix-manager
+EXPOSE 8080
+# distroless/static:nonroot's built-in "nonroot" user (uid 65532) — no
+# useradd/shell available in this base to create a different one, and none
+# is needed.
+USER nonroot
+ENTRYPOINT ["/pulsix-manager"]

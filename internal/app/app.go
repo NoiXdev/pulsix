@@ -148,6 +148,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	handler, err := api.New(api.Deps{
 		DB: appDB, Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
+		Version: cfg.Version,
 	})
 	if err != nil {
 		appDB.Close()
