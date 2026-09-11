@@ -27,7 +27,7 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
   const { url } = extractInviteLink(body);
 
   // A separate, unauthenticated browser context: accepting the invite and
-  // logging in as the operator must not touch the administrator's own
+  // signing in as the operator must not touch the administrator's own
   // session in `page`.
   // storageState: { cookies: [], origins: [] } — not the default
   // browser.newContext() with no options. This file's own `test.use({
@@ -47,31 +47,15 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
     await operatorPage.getByLabel('Choose a password').fill(OPERATOR.password);
     await operatorPage.getByRole('button', { name: 'Accept invitation' }).click();
 
-    // PRODUCT BUG (reported, not papered over — see task-15b-report.md):
-    // POST /api/v1/invites/accept (internal/api/member_handlers.go's
-    // inviteAcceptOutput) never sets a session cookie — unlike
-    // /setup/complete, whose Result.Cookie comes from a real
-    // sessions.Create call, AcceptInvite has no auth.Sessions dependency
-    // at all. InviteAcceptPage.tsx's own code (`await acceptInvite(...);
-    // await refetchMe(); await navigate({to:'/'})`) clearly expects
-    // acceptance to also sign the user in, and refetchMe()'s resulting
-    // 401 surfaces to the invitee as this confusing "login required"
-    // error — even though their account and membership were, in fact,
-    // just created successfully server-side. Asserted here so a fix that
-    // silently stops producing this error is caught, and documented
-    // rather than hidden by skipping straight to the workaround below.
-    await expect(operatorPage.getByText('login required')).toBeVisible();
-
-    // Work around the gap above the way a real invitee would have to
-    // today: sign in explicitly with the credentials just set. The
-    // invited account has no second factor enrolled, and the backend
-    // treats "no factor at all" as MFA-complete (see auth.Service.Login's
-    // own reasoning), so this lands directly on the hosts page.
-    await operatorPage.goto('/login');
-    await operatorPage.getByLabel('Email address').fill(OPERATOR.email);
-    await operatorPage.getByLabel('Password').fill(OPERATOR.password);
-    await operatorPage.getByRole('button', { name: 'Sign in' }).click();
-    await expect(operatorPage).toHaveURL(new RegExp(`/o/${ORG.slug}/hosts`));
+    // Accepting an invite that creates a brand-new account now opens a
+    // session right away — MFA-complete, exactly like Login treats an
+    // account with no second factor enrolled (see
+    // tenancy.Service.AcceptInvite / api.registerInviteAcceptRoute) — so
+    // the operator lands signed in, continuing straight past the
+    // enrolment screen (this account never enrols one in this spec)
+    // rather than hitting a login-required dead end that used to require
+    // a separate, explicit sign-in step here.
+    await expect(operatorPage).toHaveURL(/\/account\/security$/);
 
     // The actual assertion this spec exists for: an operator (role
     // "operator", which tenancy.PermMembersManage does not grant) hitting
@@ -87,5 +71,59 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
   // Back on the administrator's own session: the new member is really
   // there, not just accepted client-side.
   await page.reload();
+  await expect(page.getByText(OPERATOR.email)).toBeVisible();
+});
+
+// This is AcceptInvite's other branch, exercised end to end: OPERATOR
+// already has a password-bearing account (created by the test above). An
+// invite token only proves control of a mailbox at the moment it is
+// accepted, not knowledge of that account's real password, so accepting a
+// second, intercepted invitation for the same address must gain its
+// holder nothing — no session, and the account's *own* password (not the
+// one just submitted at acceptance) is what actually signs it in.
+test("re-inviting an address that already has an account adds the membership but signs in with that account's own password", async ({
+  page,
+  browser,
+}) => {
+  const secondOrg = { slug: 'members-second-org', name: 'Members Second Org' };
+  const createOrg = await page.request.post('/api/v1/orgs', { data: secondOrg });
+  expect(createOrg.ok()).toBeTruthy();
+
+  const invite = await page.request.post(`/api/v1/orgs/${secondOrg.slug}/invites`, {
+    data: { email: OPERATOR.email, role: 'viewer' },
+  });
+  expect(invite.ok()).toBeTruthy();
+
+  const body = await waitForMessageTo(OPERATOR.email);
+  const { url } = extractInviteLink(body);
+
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const acceptPage = await context.newPage();
+  try {
+    await acceptPage.goto(url);
+    await acceptPage.getByLabel('Your name').fill('Attacker-Chosen Name');
+    await acceptPage.getByLabel('Choose a password').fill('attacker-chosen-password');
+    await acceptPage.getByRole('button', { name: 'Accept invitation' }).click();
+
+    // No session opened: the page tells this holder to sign in with the
+    // password the account already has, instead of leaving them signed in
+    // as OPERATOR.
+    await expect(acceptPage.getByRole('heading', { name: 'You already have an account' })).toBeVisible();
+    await acceptPage.getByRole('button', { name: 'Go to sign in' }).click();
+    await expect(acceptPage).toHaveURL(/\/login$/);
+
+    // The account's real password — set when OPERATOR first accepted,
+    // never the one just submitted above — is what actually works.
+    await acceptPage.getByLabel('Email address').fill(OPERATOR.email);
+    await acceptPage.getByLabel('Password').fill(OPERATOR.password);
+    await acceptPage.getByRole('button', { name: 'Sign in' }).click();
+    await expect(acceptPage).toHaveURL(/\/o\/[^/]+\/hosts$/);
+  } finally {
+    await context.close();
+  }
+
+  // And the membership this second invite granted is real, not just
+  // accepted client-side: the operator now also belongs to secondOrg.
+  await page.goto(`/o/${secondOrg.slug}/settings/members`);
   await expect(page.getByText(OPERATOR.email)).toBeVisible();
 });

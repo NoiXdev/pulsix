@@ -356,15 +356,18 @@ func TestInviteCreatesUserSendsMailAndAcceptJoins(t *testing.T) {
 	if len(mail.sent) != 1 || !strings.Contains(mail.sent[0].body, inv.Token) {
 		t.Fatalf("mail %+v", mail.sent)
 	}
-	uid, gotOrg, err := svc.AcceptInvite(ctx, inv.Token, "New User", "correct horse battery")
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "New User", "correct horse battery")
 	if err != nil || gotOrg != org.ID {
 		t.Fatalf("accept: %v", err)
+	}
+	if !newAccount {
+		t.Fatal("accepting an invite for a brand-new address should report newAccount = true")
 	}
 	role, err := svc.MembershipOf(ctx, org.ID, uid)
 	if err != nil || role != tenancy.RoleOperator {
 		t.Fatalf("role %s %v", role, err)
 	}
-	if _, _, err := svc.AcceptInvite(ctx, inv.Token, "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("invite reused: %v", err)
 	}
 }
@@ -393,12 +396,15 @@ func TestAcceptInviteExistingAccountKeepsPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uid, gotOrg, err := svc.AcceptInvite(ctx, inv.Token, "Attacker-Chosen Name", "attacker-chosen-password")
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "Attacker-Chosen Name", "attacker-chosen-password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if uid != existing || gotOrg != org.ID {
 		t.Fatalf("accept created/joined the wrong user: got %s, want %s", uid, existing)
+	}
+	if newAccount {
+		t.Fatal("accepting an invite for an address with its own password should report newAccount = false")
 	}
 	if len(st.users) != 2 { // owner + existing, no third user created
 		t.Fatalf("accept created a duplicate user: %d users", len(st.users))
@@ -441,12 +447,15 @@ func TestAcceptInviteAsExistingMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uid, gotOrg, err := svc.AcceptInvite(ctx, inv.Token, "Ignored Name", "correct horse battery")
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "Ignored Name", "correct horse battery")
 	if err != nil {
 		t.Fatalf("accept as existing member: %v", err)
 	}
 	if uid != existing || gotOrg != org.ID {
 		t.Fatalf("accept resolved the wrong user/org: got %s/%s, want %s/%s", uid, gotOrg, existing, org.ID)
+	}
+	if newAccount {
+		t.Fatal("accepting an invite for an existing member with a password should report newAccount = false")
 	}
 	role, err := svc.MembershipOf(ctx, org.ID, existing)
 	if err != nil || role != tenancy.RoleViewer {
@@ -461,10 +470,51 @@ func TestAcceptInviteAsExistingMember(t *testing.T) {
 	}
 }
 
+// TestAcceptInviteReinvitedPasswordlessAccountReportsNewAccount covers
+// AcceptInvite's third branch: a user row that already exists but has
+// never had a password set (PasswordHash == nil — left over from an
+// earlier, never-accepted invite for the same address). This accept call
+// is what actually gives the address its first password, so it must
+// report newAccount = true just like a genuinely brand-new row — the
+// handler layer opens a session on that signal (see
+// api.registerInviteAcceptRoute), and this address has never had
+// credentials to sign in with before now, so it needs one exactly as much
+// as a first-time invitee does.
+func TestAcceptInviteReinvitedPasswordlessAccountReportsNewAccount(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	mail := &fakeMailer{}
+	svc := tenancy.NewService(st, mail, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	passwordless := st.addUser("never-accepted@x", false)
+
+	inv, err := svc.Invite(ctx, org.ID, owner, "never-accepted@x", tenancy.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "First Real Name", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != passwordless || gotOrg != org.ID {
+		t.Fatalf("accept resolved the wrong user/org: got %s/%s, want %s/%s", uid, gotOrg, passwordless, org.ID)
+	}
+	if !newAccount {
+		t.Fatal("giving a passwordless row its first password should report newAccount = true")
+	}
+	if st.users[passwordless].PasswordHash == nil {
+		t.Fatal("accept did not set a password for the passwordless row")
+	}
+	if st.users[passwordless].DisplayName != "First Real Name" {
+		t.Fatalf("display name = %q, want the name given at acceptance", st.users[passwordless].DisplayName)
+	}
+}
+
 func TestAcceptInviteUnknownTokenNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := tenancy.NewService(newFakeStore(), &fakeMailer{}, testPublicURL, time.Now)
-	if _, _, err := svc.AcceptInvite(ctx, "not-a-real-token", "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, _, _, err := svc.AcceptInvite(ctx, "not-a-real-token", "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("unknown token: %v, want ErrNotFound", err)
 	}
 }
@@ -478,7 +528,7 @@ func TestInviteExpires(t *testing.T) {
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 	inv, _ := svc.Invite(ctx, org.ID, owner, "late@x", tenancy.RoleViewer)
 	now = now.Add(8 * 24 * time.Hour)
-	if _, _, err := svc.AcceptInvite(ctx, inv.Token, "Late", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "Late", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("expired invite: %v", err)
 	}
 }
@@ -1009,7 +1059,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["TakeInvite"] = boom
-		if _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite TakeInvite failure: %v, want %v", err, boom)
 		}
 	})
@@ -1025,7 +1075,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["CreateUser"] = boom
-		if _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite CreateUser failure: %v, want %v", err, boom)
 		}
 	})
@@ -1041,7 +1091,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["GetUserByEmail"] = boom
-		if _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite GetUserByEmail failure: %v, want %v", err, boom)
 		}
 	})
@@ -1061,7 +1111,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["SetUserPasswordAndName"] = boom
-		if _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite SetUserPasswordAndName failure: %v, want %v", err, boom)
 		}
 	})
@@ -1077,7 +1127,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["AddMembership"] = boom
-		if _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite AddMembership failure: %v, want %v", err, boom)
 		}
 	})

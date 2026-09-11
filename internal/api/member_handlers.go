@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -67,7 +68,16 @@ type inviteAcceptInput struct {
 }
 
 type inviteAcceptOutput struct {
-	Body struct {
+	// SetCookie is a pointer, not a bare http.Cookie like every other
+	// cookie-setting output in this package (loginOutput, logoutOutput,
+	// setupCompleteOutput): this route sets a cookie only when accepting
+	// the invite just created the account (see the handler below), and huma
+	// skips a header field entirely when it is a nil pointer (writeHeader's
+	// reflect.Indirect check) — a bare zero-value http.Cookie would instead
+	// still serialize to an empty but present Set-Cookie header, which is
+	// not "no cookie".
+	SetCookie *http.Cookie `header:"Set-Cookie"`
+	Body      struct {
 		UserID string `json:"user_id"`
 		OrgID  string `json:"org_id"`
 	}
@@ -178,9 +188,26 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 // unlike the instance-admin deactivate route (Finding 1) it has a real
 // organization available (AcceptInvite already returns it), so nothing
 // blocks recording it here the same way.
+//
+// Whether acceptance also opens a session depends on which of
+// tenancy.Service.AcceptInvite's two cases just happened, per the fix that
+// replaced this route's original behaviour of never opening one at all
+// (task-15b-report.md's "Product bug #2", reported but deliberately left
+// unfixed by that round): the invite token is a single-use credential for
+// a *new* account, so when accepting it just gave the address its first
+// password, the response opens a session — MFA-complete, exactly like
+// Login treats an account with no second factor enrolled yet (see
+// auth.Service.Login) — and the SPA continues straight to second-factor
+// enrolment. When the address already belonged to an account with its own
+// password, accepting only adds the membership; that account's holder
+// still has to sign in with their own credentials and second factor, so an
+// intercepted invitation for an existing address gains its holder nothing.
+// This keeps tenancy from depending on auth: the decision (newAccount) is
+// tenancy's to report, but only this handler — which already has both
+// deps.Tenancy and deps.Sessions — ever calls Sessions.Create.
 func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/invites/accept", func(ctx context.Context, in *inviteAcceptInput) (*inviteAcceptOutput, error) {
-		uid, orgID, err := deps.Tenancy.AcceptInvite(ctx, in.Body.Token, in.Body.DisplayName, in.Body.Password)
+		uid, orgID, newAccount, err := deps.Tenancy.AcceptInvite(ctx, in.Body.Token, in.Body.DisplayName, in.Body.Password)
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
@@ -193,6 +220,14 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, uid.String(), "accepted invite and joined the organization")
 		out := &inviteAcceptOutput{}
 		out.Body.UserID, out.Body.OrgID = uid.String(), orgID.String()
+		if newAccount {
+			_, cookie, err := deps.Sessions.Create(ctx, uid, true)
+			if err != nil {
+				return nil, fmt.Errorf("open session for accepted invite: %w", err)
+			}
+			c := sessionCookie(cookie, deps.Secure)
+			out.SetCookie = &c
+		}
 		return out, nil
 	}, withAudit("acceptInvite", "member"))
 }

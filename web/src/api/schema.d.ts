@@ -650,6 +650,25 @@ export interface components {
             code?: string;
             recovery_code?: string;
         };
+        Cookie: {
+            Domain: string;
+            /** Format: date-time */
+            Expires: string;
+            HttpOnly: boolean;
+            /** Format: int64 */
+            MaxAge: number;
+            Name: string;
+            Partitioned: boolean;
+            Path: string;
+            Quoted: boolean;
+            Raw: string;
+            RawExpires: string;
+            /** Format: int64 */
+            SameSite: number;
+            Secure: boolean;
+            Unparsed: string[] | null;
+            Value: string;
+        };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
             location?: string;
@@ -1832,6 +1851,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    "Set-Cookie"?: components["schemas"]["Cookie"];
                     [name: string]: unknown;
                 };
                 content: {

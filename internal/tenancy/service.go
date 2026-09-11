@@ -278,7 +278,17 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 // one has ever logged into it) has its password and display name set here;
 // an account that already has a password keeps it, and keeps its existing
 // display name, unchanged.
-func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password string) (uuid.UUID, uuid.UUID, error) {
+//
+// The returned newAccount reports which of those two cases happened: true
+// when this call just gave the address its first password (a brand-new
+// user row, or a never-logged-in row left over from an earlier,
+// never-accepted invite) — false when the address already belonged to an
+// account with a password of its own. The handler layer (see
+// api.registerInviteAcceptRoute) uses this to decide whether accepting the
+// invite also opens a session: a token is a single-use credential for a
+// new account, never a way to sign in as an account that already has its
+// own password.
+func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password string) (userID uuid.UUID, orgID uuid.UUID, newAccount bool, err error) {
 	sum := sha256.Sum256([]byte(token))
 	inv, err := s.store.TakeInvite(ctx, sum[:], s.now())
 	if err != nil {
@@ -286,38 +296,41 @@ func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password
 			// TakeInvite's contract already folds "unknown token", "already
 			// accepted" and "expired" into ErrNotFound (see Store.TakeInvite),
 			// so this is a genuine no-such-invite, not a store failure.
-			return uuid.Nil, uuid.Nil, ErrNotFound
+			return uuid.Nil, uuid.Nil, false, ErrNotFound
 		}
 		// A database outage here must not present as "no such invite": that
 		// would turn a store failure into a silent 404 the same way the
 		// review flagged for every other method in this file. Adjacent fix,
 		// Task 10 fix round 1.
-		return uuid.Nil, uuid.Nil, fmt.Errorf("take invite: %w", err)
+		return uuid.Nil, uuid.Nil, false, fmt.Errorf("take invite: %w", err)
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("hash password: %w", err)
+		return uuid.Nil, uuid.Nil, false, fmt.Errorf("hash password: %w", err)
 	}
 	u, err := s.store.GetUserByEmail(ctx, inv.Email)
+	created := false
 	switch {
 	case errors.Is(err, ErrNotFound):
 		u = User{ID: uuid.Must(uuid.NewV7()), Email: inv.Email, DisplayName: displayName, PasswordHash: &hash}
 		if err := s.store.CreateUser(ctx, u); err != nil {
-			return uuid.Nil, uuid.Nil, fmt.Errorf("create invited user: %w", err)
+			return uuid.Nil, uuid.Nil, false, fmt.Errorf("create invited user: %w", err)
 		}
+		created = true
 	case err != nil:
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, false, err
 	default:
 		if u.PasswordHash == nil {
 			if err := s.store.SetUserPasswordAndName(ctx, u.ID, hash, displayName); err != nil {
-				return uuid.Nil, uuid.Nil, fmt.Errorf("set invited user credentials: %w", err)
+				return uuid.Nil, uuid.Nil, false, fmt.Errorf("set invited user credentials: %w", err)
 			}
+			created = true
 		}
 	}
 	if err := s.store.AddMembership(ctx, inv.OrgID, u.ID, inv.Role); err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("add membership: %w", err)
+		return uuid.Nil, uuid.Nil, false, fmt.Errorf("add membership: %w", err)
 	}
-	return u.ID, inv.OrgID, nil
+	return u.ID, inv.OrgID, created, nil
 }
 
 // ChangeRole sets target's role in orgID. actorRole is the caller's already

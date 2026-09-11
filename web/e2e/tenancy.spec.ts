@@ -46,15 +46,14 @@ test('a second organization\'s user cannot see the first organization\'s hosts, 
     await tenantPage.getByLabel('Choose a password').fill(SECOND_USER.password);
     await tenantPage.getByRole('button', { name: 'Accept invitation' }).click();
 
-    // POST /api/v1/invites/accept sets no session cookie (see
-    // members.spec.ts's own note and task-15b-report.md), so — same as
-    // there — sign in explicitly with the credentials just set.
-    await expect(tenantPage.getByText('login required')).toBeVisible();
-    await tenantPage.goto('/login');
-    await tenantPage.getByLabel('Email address').fill(SECOND_USER.email);
-    await tenantPage.getByLabel('Password').fill(SECOND_USER.password);
-    await tenantPage.getByRole('button', { name: 'Sign in' }).click();
-    await expect(tenantPage).toHaveURL(new RegExp(`/o/${SECOND_ORG.slug}/hosts`));
+    // Accepting an invite that creates a brand-new account opens a
+    // session right away (see tenancy.Service.AcceptInvite /
+    // api.registerInviteAcceptRoute), so the invitee lands signed in with
+    // no separate sign-in step — go straight to "beta"'s hosts page from
+    // here.
+    await expect(tenantPage).toHaveURL(/\/account\/security$/);
+    await tenantPage.goto(`/o/${SECOND_ORG.slug}/hosts`);
+    await expect(tenantPage.getByRole('heading', { name: 'Hosts' })).toBeVisible();
 
     // The org switcher (and GET /orgs behind it) must only ever list the
     // organizations this account actually belongs to.

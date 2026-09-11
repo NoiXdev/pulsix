@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
+	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -99,6 +100,124 @@ func TestInviteAcceptAppearsInMembers(t *testing.T) {
 	if found.Email != "invitee@example.test" || found.Role != "operator" {
 		t.Fatalf("invited member = %+v", found)
 	}
+}
+
+// TestInviteAcceptNewAccountOpensMFACompleteSession is the fix for the
+// product bug task-15b-report.md's "Product bug #2" reported but left
+// unfixed: accepting an invite that creates a brand-new account (this
+// address never had a password before) must open a session right away —
+// MFA-complete, exactly like Login treats an account with no second
+// factor enrolled — so the invitee's browser continues straight to
+// second-factor enrolment instead of landing on a login-required dead end.
+func TestInviteAcceptNewAccountOpensMFACompleteSession(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("newacct-owner@example.test", "correct horse battery")
+	s.SeedOrg("newacct-org", owner)
+	c := s.LoginAs(owner)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/newacct-org/invites", map[string]any{"email": "brand-new@example.test", "role": "operator"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	token := extractInviteToken(t, s)
+
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{
+		"token": token, "display_name": "Brand New", "password": "correct horse battery",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("accept invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	cookies := resp.Cookies()
+	var sessionCookie *http.Cookie
+	for _, ck := range cookies {
+		if ck.Name == auth.CookieName {
+			sessionCookie = ck
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatalf("accept response set no %s cookie: %+v", auth.CookieName, resp.Header.Values("Set-Cookie"))
+	}
+	principal, err := s.Sessions.Lookup(context.Background(), sessionCookie.Value)
+	if err != nil {
+		t.Fatalf("look up session from accept's cookie: %v", err)
+	}
+	if !principal.MFAComplete {
+		t.Fatal("session opened by accepting a new-account invite is not MFA-complete")
+	}
+}
+
+// TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword is the
+// other half of the same fix: an address that already belongs to an
+// account with its own password must gain nothing from an intercepted
+// invitation — no session, and the account's real password (not the one
+// submitted at acceptance) is what still signs it in.
+func TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("existacct-owner@example.test", "correct horse battery")
+	s.SeedOrg("existacct-org", owner)
+	s.SeedUser("already-has-account@example.test", "the-real-password")
+	c := s.LoginAs(owner)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/existacct-org/invites", map[string]any{"email": "already-has-account@example.test", "role": "operator"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	token := extractInviteToken(t, s)
+
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{
+		"token": token, "display_name": "Attacker-Chosen Name", "password": "attacker-chosen-password",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("accept invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	for _, ck := range resp.Cookies() {
+		if ck.Name == auth.CookieName {
+			t.Fatalf("accept for an existing account set a session cookie: %+v", ck)
+		}
+	}
+
+	// The account's real password still works.
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{
+		"email": "already-has-account@example.test", "password": "the-real-password",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login with the real password: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	// The password submitted at acceptance was never applied.
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{
+		"email": "already-has-account@example.test", "password": "attacker-chosen-password",
+	})
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("login with the attacker-chosen password from acceptance unexpectedly succeeded")
+	}
+}
+
+// extractInviteToken pulls the invite token out of the most recently sent
+// mail, the same way TestInviteAcceptAppearsInMembers does inline — a real
+// invitee only ever learns the token this way (through the link in the
+// e-mail), never from the invite-creation response itself.
+func extractInviteToken(t *testing.T, s *apitest.Server) string {
+	t.Helper()
+	sent := s.Mail.Sent()
+	if len(sent) == 0 {
+		t.Fatal("no invite mail was sent")
+	}
+	body := sent[len(sent)-1].Body
+	const marker = "/invite/"
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("invite mail has no token link: %q", body)
+	}
+	token := strings.TrimSpace(body[i+len(marker):])
+	if nl := strings.IndexAny(token, "\n\r"); nl >= 0 {
+		token = token[:nl]
+	}
+	if token == "" {
+		t.Fatalf("empty token extracted from mail body: %q", body)
+	}
+	return token
 }
 
 // TestInviteRequiresMembersManage proves an operator (below the
