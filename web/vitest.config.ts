@@ -1,6 +1,5 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import path from 'node:path';
 
 // vitest.config.ts is intentionally separate from vite.config.ts (rather
 // than a merged `test` block in the app config): @tailwindcss/vite has no
@@ -9,11 +8,6 @@ import path from 'node:path';
 // what the test runner does.
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: {
-      '@': path.resolve(import.meta.dirname, 'src'),
-    },
-  },
   test: {
     environment: 'jsdom',
     // openapi-fetch resolves the app's relative API paths (baseUrl: '')
@@ -28,27 +22,36 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      // Scoped to the logic-bearing surface this task's Step 2 names and
-      // the small modules around it (the API client's error handling, the
-      // codec, the utility helpers) — not the whole src tree. Route
-      // components, *Page.tsx compositions, and the generated client are
-      // excluded deliberately: they are almost entirely hooks-to-JSX
-      // wiring with no independent branching logic of their own to unit
-      // test, and Task 15's second half (Playwright, not built here)
-      // exercises them against a real backend and a real browser, which is
-      // the level that actually matters for a page's correctness. Folding
-      // their line count into this threshold would either force
-      // shallow snapshot-style tests that regress silently, or force the
-      // threshold down for the whole app — neither makes the number more
-      // meaningful. See task-15a-report.md for the full rationale.
-      include: [
-        'src/features/**/*.ts',
-        'src/features/hosts/capabilities.tsx',
-        'src/ui/shell.tsx',
-        'src/api/client.ts',
-        'src/lib/utils.ts',
+      // Gated on the whole source tree (finding "Important 11",
+      // task-15a-report.md fix round 1: the previous five-glob
+      // whitelist covered ~100 statements and excluded RootRedirect —
+      // where the fix round's Important 3 bug lived — the shell's
+      // active-route logic, every schema and every hook). Excluded here,
+      // with a reason each:
+      //   - main.tsx: pure ReactDOM bootstrap (createRoot().render(...)),
+      //     no branching logic of its own — parallel to the Go side's
+      //     own cmd/... entry-point exclusion (scripts/coverage-gate.sh).
+      //   - router.tsx: declarative route-tree wiring (createRoute calls
+      //     naming a component and a path) with no logic of its own to
+      //     assert against; every route's *own* component is covered
+      //     where it has behaviour (the tests below build small
+      //     standalone routers around each one rather than importing
+      //     this file, so this file's own statements would otherwise
+      //     read 0% for having nothing to do with what was tested).
+      //   - api/schema.d.ts, vite-env.d.ts: type-only, no runtime
+      //     statements (openapi-typescript-generated and the Vite
+      //     ambient-types file respectively).
+      //   - test/**: test infrastructure (mockApi, fetchMock, setup),
+      //     not application logic.
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/main.tsx',
+        'src/router.tsx',
+        'src/api/schema.d.ts',
+        'src/vite-env.d.ts',
+        'src/test/**',
       ],
-      exclude: ['src/**/*.test.{ts,tsx}'],
       thresholds: {
         lines: 70,
         statements: 70,

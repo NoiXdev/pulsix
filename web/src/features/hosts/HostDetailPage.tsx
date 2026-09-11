@@ -96,6 +96,7 @@ export function HostDetailPage() {
                 type="button"
                 role="switch"
                 aria-checked={h.managed}
+                aria-label="Managed (Ansible via SSH)"
                 onClick={() => setCapabilities.mutate({ managed: !h.managed })}
                 className={
                   h.managed
@@ -114,6 +115,7 @@ export function HostDetailPage() {
                 type="button"
                 role="switch"
                 aria-checked={h.monitored}
+                aria-label="Monitored"
                 onClick={() => setCapabilities.mutate({ monitored: !h.monitored })}
                 className={
                   h.monitored
