@@ -14,6 +14,27 @@ import {
 } from './webauthnCodec.ts';
 
 /**
+ * PasskeyCeremonyBegin is the shape POST …/register/begin and
+ * …/login/begin actually respond with for their `options` field: go-
+ * webauthn's protocol.CredentialCreation/CredentialAssertion — what
+ * internal/auth/passkey.go's BeginRegistration/BeginLogin json.Marshal —
+ * wrap the real options in a top-level `publicKey` key (matching the
+ * WebAuthn spec's own `navigator.credentials.create({publicKey: ...})`
+ * call shape), not the flat object CreationOptionsJSON/RequestOptionsJSON
+ * describe on their own. Found by passkey.spec.ts's CDP-virtual-
+ * authenticator run: without unwrapping `.publicKey` here,
+ * `decodeCreationOptions`/`decodeRequestOptions` received `{challenge:
+ * undefined, ...}` and base64urlToBuffer threw "Cannot read properties of
+ * undefined (reading 'replace')" on every real ceremony — invisible to
+ * webauthnCodec.ts's own unit tests, which fixture the *already-unwrapped*
+ * flat shape, and to this file, deliberately left untested per
+ * task-15a-report.md pending exactly this kind of end-to-end coverage.
+ */
+interface PasskeyCeremonyBegin<T> {
+  publicKey: T;
+}
+
+/**
  * registerPasskey drives the full "add a passkey" ceremony end to end:
  * fetch options from the API, hand them to the browser's own
  * navigator.credentials.create, and post the signed result back. The
@@ -26,7 +47,8 @@ import {
  */
 export async function registerPasskey(name: string): Promise<void> {
   const begin = await beginPasskeyRegistration();
-  const options = decodeCreationOptions(begin.options as unknown as CreationOptionsJSON);
+  const wrapped = begin.options as unknown as PasskeyCeremonyBegin<CreationOptionsJSON>;
+  const options = decodeCreationOptions(wrapped.publicKey);
 
   const credential = await navigator.credentials.create({ publicKey: options });
   if (!credential) throw new Error('passkey registration was cancelled');
@@ -47,7 +69,8 @@ export async function registerPasskey(name: string): Promise<void> {
  */
 export async function loginWithPasskey(): Promise<void> {
   const begin = await beginPasskeyLogin();
-  const options = decodeRequestOptions(begin.options as unknown as RequestOptionsJSON);
+  const wrapped = begin.options as unknown as PasskeyCeremonyBegin<RequestOptionsJSON>;
+  const options = decodeRequestOptions(wrapped.publicKey);
 
   const credential = await navigator.credentials.get({ publicKey: options });
   if (!credential) throw new Error('passkey login was cancelled');

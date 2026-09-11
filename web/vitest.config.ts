@@ -19,6 +19,13 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    // web/e2e/*.spec.ts are Playwright specs (import `test`/`expect` from
+    // @playwright/test, run by `npm run e2e`, never by Vitest) — without
+    // this, Vitest's own default include pattern (`**/*.{test,spec}.*`)
+    // matches them too and fails every one of them with "did not expect
+    // test() to be called here", since they call Playwright's `test`
+    // outside a Playwright-managed suite.
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

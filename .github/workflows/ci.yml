@@ -30,6 +30,35 @@ jobs:
         run: |
           npm run api:gen
           git diff --exit-code -- src/api/schema.d.ts
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.27" }
+      - uses: actions/setup-node@v6
+        with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # web/e2e/global-setup.ts starts the same docker-compose test stack,
+      # builds the SPA and the manager binary, and starts the manager
+      # itself — this is the same command a contributor runs locally
+      # (`npm run e2e`), not a CI-specific script.
+      - run: npm run e2e
+      - name: Upload Playwright report and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 14
+          if-no-files-found: ignore
+
   commits:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,40 @@
+# Test-only stack for the Playwright end-to-end suite (web/e2e). Started and
+# torn down entirely by web/e2e/global-setup.ts, which always runs
+# `docker compose down -v` before `up` so every run begins from a genuinely
+# empty database — setup.spec's very first assertion (a fresh instance
+# redirects to /setup) depends on nothing being left over from a previous
+# run. Host ports are fixed rather than randomly assigned so
+# web/e2e/env.ts, this file and the manager's own PULSIX_DATABASE_URL agree
+# without extra plumbing; they were chosen to avoid the handful of ports
+# this development machine already had bound (5432, 8080, 1025, 8025,
+# 5433) — CI runners are ephemeral, so the fixed choice costs nothing there.
+services:
+  db:
+    image: timescale/timescaledb:2.30.0-pg18
+    environment:
+      POSTGRES_USER: pulsix
+      POSTGRES_PASSWORD: pulsix
+      POSTGRES_DB: pulsix
+    ports:
+      - "55432:5432"
+    # A tmpfs data directory is an extra layer on top of `down -v` (which
+    # already discards the named/anonymous volume between runs): it also
+    # means the container never fsyncs to a real disk, which is the
+    # difference between a slow and a fast pg_isready on every startup.
+    # Mounted at /var/lib/postgresql (not .../data): PG18's image places
+    # data in a major-version-specific subdirectory of this parent and
+    # refuses to start if something else is already mounted at .../data
+    # (see https://github.com/docker-library/postgres/pull/1259).
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsix -d pulsix"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - "45025:1025" # SMTP — the manager's PULSIX-configured mailer delivers here
+      - "48025:8025" # HTTP API — web/e2e/mailpit.ts reads invite e-mails from here
