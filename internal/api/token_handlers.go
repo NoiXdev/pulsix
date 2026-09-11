@@ -86,12 +86,27 @@ type orgTokenIDInput struct {
 // auth.TokenScopeFromContext by way of requireOrg, which is exactly the
 // subtree that group exists for).
 //
-// Create additionally caps the minted token's role at the caller's own
+// Create additionally requires an interactive session
+// (requireInteractiveSession): a bearer token can list and revoke tokens
+// but never mint one, so a leaked credential cannot outlive its own
+// revocation through a successor it created.
+//
+// Create also caps the minted token's role at the caller's own
 // effective role (tenancy.Lower(scope.Role, requested)): a token can never
 // be more privileged than the principal that created it, the same
 // never-widen rule requireOrg itself applies to an existing token's scope.
 func registerTokenRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/orgs/{org}/tokens", func(ctx context.Context, in *orgTokenCreateInput) (*orgTokenCreateOutput, error) {
+		// Credentials do not mint credentials: creating a token requires an
+		// interactive, MFA-complete browser session and refuses any request
+		// that authenticated with a bearer token, whatever its scope or
+		// role. Otherwise a leaked token with an expiry could mint a
+		// successor without one, and revoking the leaked token would leave
+		// what it minted untouched. Listing and revoking stay available to
+		// tokens with PermTokensManage.
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
 		if err != nil {
 			return nil, err

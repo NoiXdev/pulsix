@@ -133,3 +133,37 @@ func TestBearerTokenScopedToWrongOrgIsForbidden(t *testing.T) {
 		t.Fatalf("members via a token scoped to a different org: status %d, want 403", resp.StatusCode)
 	}
 }
+
+// TestBearerTokenCannotCreateTokens covers "credentials do not mint
+// credentials": even an owner-role token for the very organization in the
+// path gets 403 from token creation, and nothing is minted — while the same
+// token can still list its organization's tokens.
+func TestBearerTokenCannotCreateTokens(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("mint@example.test", "correct horse battery")
+	org := s.SeedOrg("mint-org", uid)
+	plain, _, err := s.Deps.Tokens.Create(context.Background(), uid, org, "ci", "owner", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	resp := bearerRequestJSON(t, s, http.MethodPost, "/api/v1/orgs/mint-org/tokens", plain,
+		map[string]any{"name": "successor", "role": "viewer"})
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("token creation with a bearer token: status %d, want 403", resp.StatusCode)
+	}
+	toks, err := s.Deps.Tokens.List(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toks) != 1 {
+		t.Fatalf("org has %d tokens after a refused creation, want only the original", len(toks))
+	}
+
+	resp = bearerRequest(t, s, http.MethodGet, "/api/v1/orgs/mint-org/tokens", plain)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("token list with a bearer token: status %d, want 200", resp.StatusCode)
+	}
+}
