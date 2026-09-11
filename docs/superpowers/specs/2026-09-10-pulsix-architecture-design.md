@@ -207,8 +207,9 @@ for `int`/`float`, a length in characters for `string`; `pattern`; `min_items`,
 Naming: field names match `^[a-z_][a-z0-9_]{0,63}$` and a top-level field name must not
 start with `ansible_` or `pulsix_`, so a schema can never shadow a connection variable or
 the facts. Group names match `^[a-z_][a-z0-9_]{0,62}$` (a valid Ansible group name), must
-not be `all` or `ungrouped`, and are unique per organization because Ansible's group
-namespace is flat.
+not be `all` or `ungrouped` (Ansible's implicit groups) or `_meta` (the dynamic inventory's
+`_meta.hostvars` block, which a group of that name would overwrite), and are unique per
+organization because Ansible's group namespace is flat.
 
 Values
 

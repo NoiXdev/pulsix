@@ -47,8 +47,9 @@ const maxDescription = 1024
 
 var groupNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
-// reservedGroupNames are Ansible's implicit groups.
-var reservedGroupNames = map[string]bool{"all": true, "ungrouped": true}
+// reservedGroupNames are Ansible's implicit groups and the dynamic
+// inventory's hostvars block, which a group of that name would overwrite.
+var reservedGroupNames = map[string]bool{"all": true, "ungrouped": true, "_meta": true}
 
 // Group is an inventory group. Inside the store, Vars carries sealed
 // secrets; every value this package returns to callers has them masked.

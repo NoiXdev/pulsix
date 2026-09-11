@@ -83,6 +83,7 @@ func TestCreateGroup(t *testing.T) {
 	}{
 		{"reserved all", inventory.GroupInput{Name: "all"}, inventory.ErrInvalidInput, "reserved"},
 		{"reserved ungrouped", inventory.GroupInput{Name: "ungrouped"}, inventory.ErrInvalidInput, "reserved"},
+		{"reserved _meta", inventory.GroupInput{Name: "_meta"}, inventory.ErrInvalidInput, "reserved"},
 		{"dash", inventory.GroupInput{Name: "web-servers"}, inventory.ErrInvalidInput, "letters, digits and underscores"},
 		{"uppercase", inventory.GroupInput{Name: "Web"}, inventory.ErrInvalidInput, "letters, digits and underscores"},
 		{"long description", inventory.GroupInput{Name: "x", Description: strings.Repeat("d", 1025)}, inventory.ErrInvalidInput, "description"},
@@ -136,6 +137,7 @@ func TestUpdateGroup(t *testing.T) {
 		{"stale revision", web.ID, web.Revision + 5, inventory.GroupPatch{Name: "webserver", ParentID: &prod.ID}, inventory.ErrRevisionMismatch, ""},
 		{"unknown group", unknown, 1, inventory.GroupPatch{Name: "x"}, inventory.ErrNotFound, ""},
 		{"bad name", web.ID, web.Revision, inventory.GroupPatch{Name: "all"}, inventory.ErrInvalidInput, "reserved"},
+		{"rename to _meta", web.ID, web.Revision, inventory.GroupPatch{Name: "_meta"}, inventory.ErrInvalidInput, "reserved"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
