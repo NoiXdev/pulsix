@@ -154,6 +154,70 @@ describe('GroupDetailPage', () => {
     expect(put?.headers.get('If-Match')).toBeNull();
   });
 
+  it('reaches a managed host beyond the first page by searching', async () => {
+    const user = userEvent.setup();
+    const searches: string[] = [];
+    let put: MockRequest | undefined;
+    const host = (id: string, name: string) => ({ id, name, zone_id: 'z', address: '', managed: true, monitored: false, facts: {}, created_at: '' });
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [MEMBER] },
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        expect(req.search.get('managed')).toBe('true');
+        const q = req.search.get('q') ?? '';
+        searches.push(q);
+        if (q === 'web-77') return { hosts: [host('h77', 'web-77')], next_cursor: '' };
+        return { hosts: [host('h1', 'web-01'), host('h2', 'web-02')], next_cursor: 'page-2' };
+      },
+      'PUT /api/v1/orgs/acme/inventory/groups/g1/members/h77': (req: MockRequest) => {
+        put = req;
+        return { member: { ...MEMBER, host_id: 'h77', host_name: 'web-77' } };
+      },
+    });
+    renderAt('/o/acme/groups/g1?tab=members');
+    await user.click(await screen.findByRole('button', { name: 'Assign host' }));
+    const dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByRole('option', { name: 'web-02' })).toBeInTheDocument();
+    expect(within(dialog).getByText(/More managed hosts match/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/already a member/)).not.toBeInTheDocument();
+
+    await user.type(within(dialog).getByRole('searchbox', { name: 'Search managed hosts' }), 'web-77');
+    await user.selectOptions(within(dialog).getByLabelText('Host'), await within(dialog).findByRole('option', { name: 'web-77' }));
+    expect(within(dialog).queryByText(/More managed hosts match/)).not.toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('domain'), 'far.acme.io');
+    await user.click(within(dialog).getByRole('button', { name: 'Assign to webserver' }));
+    await screen.findByText('Host assigned to webserver');
+    expect(searches).toContain('web-77');
+    expect(put?.body).toEqual({ vars: { domain: 'far.acme.io' } });
+  });
+
+  it('says every managed host is a member only when no page holds another one', async () => {
+    const user = userEvent.setup();
+    const host = (id: string, name: string) => ({ id, name, zone_id: 'z', address: '', managed: true, monitored: false, facts: {}, created_at: '' });
+    let pages: Record<string, { hosts: ReturnType<typeof host>[]; next_cursor: string }> = {
+      '': { hosts: [host('h1', 'web-01')], next_cursor: 'page-2' },
+      'page-2': { hosts: [host('h2', 'web-02')], next_cursor: '' },
+    };
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [MEMBER] },
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => pages[req.search.get('cursor') ?? ''],
+    });
+    const { unmount } = renderAt('/o/acme/groups/g1?tab=members');
+    await user.click(await screen.findByRole('button', { name: 'Assign host' }));
+    let dialog = screen.getByRole('dialog');
+    // The first page holds only the member; the second page is fetched for the next candidate.
+    expect(await within(dialog).findByRole('option', { name: 'web-02' })).toBeInTheDocument();
+    expect(within(dialog).queryByText(/already a member/)).not.toBeInTheDocument();
+    unmount();
+
+    pages = { '': { hosts: [host('h1', 'web-01')], next_cursor: '' } };
+    renderAt('/o/acme/groups/g1?tab=members');
+    await user.click(await screen.findByRole('button', { name: 'Assign host' }));
+    dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByText('Every managed host is already a member.')).toBeInTheDocument();
+  });
+
   it('renders the masked preview and its warnings', async () => {
     const user = userEvent.setup(); // installs a clipboard stub on navigator
     mockApi({
