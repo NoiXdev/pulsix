@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
@@ -17,8 +18,11 @@ import (
 // is a single statement.
 type SQLStore struct{ q *gen.Queries }
 
-// NewSQLStore wraps the generated queries.
-func NewSQLStore(q *gen.Queries) *SQLStore { return &SQLStore{q: q} }
+// NewSQLStore builds the store on d itself, never on its raw pool, so every
+// statement runs inside the organization bound to the request context
+// (db.WithOrgScope) and row-level security confines it to that
+// organization's events.
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
 // Insert persists e. Meta is marshaled to JSON explicitly (rather than
 // relying on pgx's own encoding of map[string]any) so a nil map — the

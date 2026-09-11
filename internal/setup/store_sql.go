@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -27,21 +27,28 @@ import (
 const setupLockKey = 84231
 
 // SQLStore implements Store with sqlc queries, mirroring auth.SQLStore and
-// tenancy.SQLStore's seam. Unlike those two, it also holds the pool
-// directly (not just *gen.Queries): InTx needs to begin its own
+// tenancy.SQLStore's seam. Unlike those two, it also holds the database
+// handle directly (not just *gen.Queries): InTx needs to begin its own
 // transaction, which a bare *gen.Queries has no way to do.
+//
+// Everything here is instance-level — first-run setup creates the first
+// organization, it does not act inside one — so it runs without an
+// organization bound to the context and row-level security's bypass policy
+// applies by design. It is still built on *db.DB rather than the raw pool,
+// like every store, so that property is a fact about the caller's context
+// and never about how the store happened to be wired.
 type SQLStore struct {
-	pool *pgxpool.Pool
-	q    *gen.Queries
+	db *db.DB
+	q  *gen.Queries
 }
 
-// NewSQLStore wraps pool. Non-transactional methods (AdminExists,
+// NewSQLStore wraps d. Non-transactional methods (AdminExists,
 // AdminMFAEnrolled, LoadSetting — used directly by Status and LoadSMTP,
-// which run outside Complete's transaction) query through pool's normal
+// which run outside Complete's transaction) query through d's normal
 // connection reuse; InTx opens a dedicated transaction for Complete and
 // SaveSMTP-inside-Complete's writes.
-func NewSQLStore(pool *pgxpool.Pool) *SQLStore {
-	return &SQLStore{pool: pool, q: gen.New(pool)}
+func NewSQLStore(d *db.DB) *SQLStore {
+	return &SQLStore{db: d, q: gen.New(d)}
 }
 
 // InTx begins a transaction, takes setupLockKey as an advisory lock scoped
@@ -51,7 +58,7 @@ func NewSQLStore(pool *pgxpool.Pool) *SQLStore {
 // that transaction. fn's error rolls the transaction back and propagates
 // unchanged; success commits.
 func (s *SQLStore) InTx(ctx context.Context, fn func(Store) error) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -61,7 +68,7 @@ func (s *SQLStore) InTx(ctx context.Context, fn func(Store) error) error {
 		return fmt.Errorf("acquire setup lock: %w", err)
 	}
 
-	txStore := &SQLStore{pool: s.pool, q: gen.New(tx)}
+	txStore := &SQLStore{db: s.db, q: gen.New(tx)}
 	if err := fn(txStore); err != nil {
 		return err
 	}

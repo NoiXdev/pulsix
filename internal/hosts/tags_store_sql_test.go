@@ -29,7 +29,7 @@ func insertRawTag(t *testing.T, q *gen.Queries, orgID, hostID uuid.UUID, key, va
 func TestSQLStoreListHostTagsAndReplaceManualTags(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-crud-org")
 	zone := seedZone(t, store, org, "fra")
 	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "web-01"}
@@ -95,7 +95,7 @@ func TestSQLStoreListHostTagsAndReplaceManualTags(t *testing.T) {
 func TestSQLStoreReplaceManualTagsUnknownHostFailsOnForeignKey(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-replace-unknown-org")
 
 	err := store.ReplaceManualTags(ctx, org, uuid.Must(uuid.NewV7()), []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}})
@@ -107,7 +107,7 @@ func TestSQLStoreReplaceManualTagsUnknownHostFailsOnForeignKey(t *testing.T) {
 func TestSQLStoreListTagKeyValueCounts(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-counts-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -153,7 +153,7 @@ func TestSQLStoreListTagKeyValueCounts(t *testing.T) {
 func TestSQLStoreQueryHostsFiltersByRoleAndZone(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-query-org")
 	fra := seedZone(t, store, org, "fra")
 	hel := seedZone(t, store, org, "hel")
@@ -204,7 +204,7 @@ func TestSQLStoreQueryHostsFiltersByRoleAndZone(t *testing.T) {
 func TestSQLStoreQueryHostsMergesFactAndManual(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-merge-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -261,7 +261,7 @@ func TestSQLStoreQueryHostsMergesFactAndManual(t *testing.T) {
 func TestSQLStoreQueryHostsAgreesWithMatches(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-equivalence-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -368,7 +368,7 @@ func TestSQLStoreQueryHostsAgreesWithMatches(t *testing.T) {
 func TestHostTagsAreIsolatedPerOrgByRLS(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	orgA := seedOrg(t, q, "tags-rls-org-a")
 	orgB := seedOrg(t, q, "tags-rls-org-b")
 	zoneA := seedZone(t, store, orgA, "fra")
@@ -420,7 +420,7 @@ func TestHostTagsAreIsolatedPerOrgByRLS(t *testing.T) {
 func TestSQLStoreQueryHostsUnknownKeyMatchesNothing(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-unknown-key-org")
 	zone := seedZone(t, store, org, "fra")
 	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "web-01"}

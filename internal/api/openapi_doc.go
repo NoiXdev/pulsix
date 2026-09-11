@@ -10,7 +10,6 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
-	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
@@ -50,7 +49,6 @@ func Document() ([]byte, error) {
 // comment for why nothing here ever needs to actually work.
 func stubDeps() Deps {
 	return Deps{
-		DB:       &db.DB{},
 		Sessions: &auth.Sessions{},
 		Auth:     stubAuthService{},
 		TOTP:     &auth.TOTP{},

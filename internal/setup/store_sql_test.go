@@ -22,7 +22,7 @@ func newSQLService(t *testing.T) (*setup.Service, *gen.Queries) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	sessions := auth.NewSessions(q, time.Now)
-	store := setup.NewSQLStore(d.Pool())
+	store := setup.NewSQLStore(d)
 	return setup.NewService(store, sessions, crypto.NewBox([32]byte{}), time.Now), q
 }
 

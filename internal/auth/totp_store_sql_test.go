@@ -35,7 +35,7 @@ func TestSQLTOTPStoreConfirmEnrolIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := auth.NewSQLTOTPStore(d.Pool())
+	store := auth.NewSQLTOTPStore(d)
 	dupHash := []byte("duplicate-hash")
 	hashes := [][]byte{dupHash, dupHash, []byte("other-hash")}
 	if err := store.ConfirmEnrol(ctx, uid, hashes); err == nil {

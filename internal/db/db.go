@@ -63,7 +63,12 @@ func OpenAsRole(ctx context.Context, url, postgresRole string) (*DB, error) {
 	return &DB{pool: pool}, nil
 }
 
-// Pool exposes the underlying pool for sqlc-generated code.
+// Pool exposes the underlying pool. It deliberately ignores the org scope
+// WithOrgScope binds: statements run through it see every organization's
+// rows whenever the login role is subject to the bypass policy. It exists
+// for migrations, test fixtures and the startup role check — production
+// stores are built on *DB itself (gen.New(d)), whose Exec/Query/QueryRow/
+// Begin honour the scope, never on this pool.
 func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 
 // Close releases the pool.
@@ -103,15 +108,14 @@ func (d *DB) Migrate(ctx context.Context) error {
 }
 
 // WithOrg runs fn in a transaction scoped to orgID via the RLS setting.
+// fn's own error comes back unchanged (pgx.ErrNoRows included) after the
+// transaction is rolled back; success commits.
 func (d *DB) WithOrg(ctx context.Context, orgID uuid.UUID, fn func(pgx.Tx) error) error {
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.beginOrg(ctx, orgID)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	if _, err := tx.Exec(ctx, `SELECT set_config('pulsix.org_id', $1, true)`, orgID.String()); err != nil {
-		return err
-	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
 	if err := fn(tx); err != nil {
 		return err
 	}

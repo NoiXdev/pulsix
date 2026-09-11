@@ -9,6 +9,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/db"
 )
 
 // auditCarrierKey is the context key auditMiddleware uses to hand an
@@ -225,7 +226,18 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 		}
 		objType, _ := op.Metadata["auditObject"].(string)
 		userID := carrier.userID
-		if err := deps.Audit.Record(reqCtx, audit.Event{
+		// An event that belongs to an organization is written inside that
+		// organization's database scope, so row-level security checks the
+		// insert like every other org-scoped write. reqCtx itself predates
+		// orgScopeMiddleware (this middleware wraps the whole operation), so
+		// the scope is bound here from the organization requireOrg — or the
+		// handler itself — attributed the event to. Instance-level events
+		// (nil org) stay unscoped.
+		recordCtx := reqCtx
+		if carrier.orgID != nil {
+			recordCtx = db.WithOrgScope(reqCtx, *carrier.orgID)
+		}
+		if err := deps.Audit.Record(recordCtx, audit.Event{
 			// carrier.orgID is passed through as-is (nil for an
 			// instance-level action, a real address otherwise) rather than
 			// copied into a local and re-addressed — see auditCarrier's own

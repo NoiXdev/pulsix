@@ -26,7 +26,7 @@ func seedOrg(t *testing.T, q *gen.Queries, slug string) uuid.UUID {
 func TestSQLStoreCreateZoneAndGetZone(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-zone-org")
 
 	z := hosts.Zone{ID: uuid.Must(uuid.NewV7()), OrgID: org, Slug: "fra", Name: "Falkenstein"}
@@ -49,7 +49,7 @@ func TestSQLStoreCreateZoneAndGetZone(t *testing.T) {
 func TestSQLStoreCreateZoneDuplicateSlugUniqueViolation(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-zone-dup-org")
 
 	z := hosts.Zone{ID: uuid.Must(uuid.NewV7()), OrgID: org, Slug: "fra", Name: "Falkenstein"}
@@ -65,7 +65,7 @@ func TestSQLStoreCreateZoneDuplicateSlugUniqueViolation(t *testing.T) {
 func TestSQLStoreListZonesForOrg(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-zone-list-org")
 
 	for _, slug := range []string{"fra", "ams", "nbg"} {
@@ -94,7 +94,7 @@ func seedZone(t *testing.T, store *hosts.SQLStore, orgID uuid.UUID, slug string)
 func TestSQLStoreCreateHostAndGetHost(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-host-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -133,7 +133,7 @@ func TestSQLStoreCreateHostAndGetHost(t *testing.T) {
 func TestSQLStoreCreateHostDuplicateNameUniqueViolation(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-host-dup-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -159,7 +159,7 @@ func TestSQLStoreCreateHostDuplicateNameUniqueViolation(t *testing.T) {
 func TestSQLStoreUpdateHost(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-update-org")
 	zoneA := seedZone(t, store, org, "fra")
 	zoneB := seedZone(t, store, org, "ams")
@@ -192,7 +192,7 @@ func TestSQLStoreUpdateHost(t *testing.T) {
 func TestSQLStoreUpdateHostDuplicateNameUniqueViolation(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-update-dup-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -215,7 +215,7 @@ func TestSQLStoreUpdateHostDuplicateNameUniqueViolation(t *testing.T) {
 func TestSQLStoreDeleteHostScopedToOrg(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	orgA := seedOrg(t, q, "hosts-delete-org-a")
 	orgB := seedOrg(t, q, "hosts-delete-org-b")
 	zoneA := seedZone(t, store, orgA, "fra")
@@ -244,7 +244,7 @@ func TestSQLStoreDeleteHostScopedToOrg(t *testing.T) {
 func TestSQLStoreListHostsPaginatesAcrossPages(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-page-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -286,7 +286,7 @@ func TestSQLStoreListHostsPaginatesAcrossPages(t *testing.T) {
 func TestSQLStoreListHostsFilters(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-filter-org")
 	zoneA := seedZone(t, store, org, "fra")
 	zoneB := seedZone(t, store, org, "ams")
@@ -332,7 +332,7 @@ func TestSQLStoreListHostsFilters(t *testing.T) {
 func TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-patch-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -369,7 +369,7 @@ func TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone(t *testing.T) {
 func TestSQLStorePatchCapabilitiesConcurrent(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "hosts-patch-race-org")
 	zone := seedZone(t, store, org, "fra")
 
@@ -422,7 +422,7 @@ func TestSQLStorePatchCapabilitiesConcurrent(t *testing.T) {
 func TestHostsAreIsolatedPerOrgByRLS(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	orgA := seedOrg(t, q, "hosts-rls-org-a")
 	orgB := seedOrg(t, q, "hosts-rls-org-b")
 	zoneA := seedZone(t, store, orgA, "fra")
@@ -466,7 +466,7 @@ func TestHostsAreIsolatedPerOrgByRLS(t *testing.T) {
 func TestZonesAreIsolatedPerOrgByRLS(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
-	store := hosts.NewSQLStore(q, d.Pool())
+	store := hosts.NewSQLStore(d)
 	orgA := seedOrg(t, q, "zones-rls-org-a")
 	orgB := seedOrg(t, q, "zones-rls-org-b")
 	seedZone(t, store, orgA, "fra")

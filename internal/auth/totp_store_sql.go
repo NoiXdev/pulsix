@@ -6,25 +6,27 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
 // SQLTOTPStore implements TOTPStore with sqlc queries.
 //
-// Unlike SQLStore, it holds the pool itself rather than only a
-// *gen.Queries: ConfirmEnrol needs to open a transaction (pool.Begin), and
+// Unlike SQLStore, it holds the database handle itself rather than only a
+// *gen.Queries: ConfirmEnrol needs to open a transaction (db.Begin), and
 // *gen.Queries has no way to do that on its own — it only ever runs
-// against whatever DBTX (pool or an existing tx) it was built with.
+// against whatever DBTX (the handle or an existing tx) it was built with.
 type SQLTOTPStore struct {
-	q    *gen.Queries
-	pool *pgxpool.Pool
+	q  *gen.Queries
+	db *db.DB
 }
 
-// NewSQLTOTPStore wraps pool.
-func NewSQLTOTPStore(pool *pgxpool.Pool) *SQLTOTPStore {
-	return &SQLTOTPStore{q: gen.New(pool), pool: pool}
+// NewSQLTOTPStore wraps d. Like every store, it is built on *db.DB rather
+// than its raw pool, so it honours an organization bound to the context
+// (db.WithOrgScope) should it ever run inside one.
+func NewSQLTOTPStore(d *db.DB) *SQLTOTPStore {
+	return &SQLTOTPStore{q: gen.New(d), db: d}
 }
 
 func (s *SQLTOTPStore) UpsertTOTPSecret(ctx context.Context, userID uuid.UUID, secretSealed []byte) error {
@@ -67,7 +69,7 @@ func (s *SQLTOTPStore) UseRecoveryCode(ctx context.Context, userID uuid.UUID, co
 // failure partway through the inserts means the caller never receives
 // usable recovery codes: a confirmed factor with no recovery path.
 func (s *SQLTOTPStore) ConfirmEnrol(ctx context.Context, userID uuid.UUID, recoveryCodeHashes [][]byte) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}

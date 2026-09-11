@@ -36,7 +36,7 @@ func TestSQLTokenStoreInsertAndGetByHash(t *testing.T) {
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, "token-store@example.test")
 	org := seedOrg(t, q, "token-store-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "operator"}
 	hash := hashOf("secret-a")
@@ -78,7 +78,7 @@ func TestSQLTokenStoreGetByHashJoinsInstanceAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	org := seedOrg(t, q, "admin-token-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "owner"}
 	hash := hashOf("admin-secret")
 	if err := store.Insert(ctx, tok, hash); err != nil {
@@ -99,7 +99,7 @@ func TestSQLTokenStoreGetByHashExcludesRevoked(t *testing.T) {
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, "revoked-token@example.test")
 	org := seedOrg(t, q, "revoked-token-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer"}
 	hash := hashOf("revoke-me")
 	if err := store.Insert(ctx, tok, hash); err != nil {
@@ -127,7 +127,7 @@ func TestSQLTokenStoreGetByHashExcludesExpired(t *testing.T) {
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, "expired-token@example.test")
 	org := seedOrg(t, q, "expired-token-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	past := time.Now().Add(-time.Hour)
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer", ExpiresAt: &past}
 	hash := hashOf("expired")
@@ -155,7 +155,7 @@ func TestSQLTokenStoreGetByHashExcludesDisabledUser(t *testing.T) {
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, "disabled-token-owner@example.test")
 	org := seedOrg(t, q, "disabled-token-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "operator"}
 	hash := hashOf("disabled-owner-secret")
@@ -181,7 +181,7 @@ func TestSQLTokenStoreRevokeIsScopedToOrg(t *testing.T) {
 	uid := seedUser(t, q, "scoped-revoke@example.test")
 	org := seedOrg(t, q, "scoped-revoke-org")
 	otherOrg := seedOrg(t, q, "scoped-revoke-other-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer"}
 	hash := hashOf("scoped")
 	if err := store.Insert(ctx, tok, hash); err != nil {
@@ -202,7 +202,7 @@ func TestSQLTokenStoreListForOrg(t *testing.T) {
 	uid := seedUser(t, q, "list-token@example.test")
 	org := seedOrg(t, q, "list-token-org")
 	otherOrg := seedOrg(t, q, "list-token-other-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 
 	inOrg := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "in-org", Role: "viewer"}
 	if err := store.Insert(ctx, inOrg, hashOf("in-org")); err != nil {
@@ -235,7 +235,7 @@ func TestSQLTokenStoreTouchLastUsed(t *testing.T) {
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, "touch-token@example.test")
 	org := seedOrg(t, q, "touch-token-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer"}
 	hash := hashOf("touch")
 	if err := store.Insert(ctx, tok, hash); err != nil {
@@ -270,7 +270,7 @@ func TestSQLTokenStoreGetByHashUsesInjectedNow(t *testing.T) {
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, "clock-token@example.test")
 	org := seedOrg(t, q, "clock-token-org")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	exp := time.Now().Add(time.Hour)
 	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer", ExpiresAt: &exp}
 	hash := hashOf("clock-driven")
@@ -304,7 +304,7 @@ func TestAPITokensAreIsolatedPerOrgByRLS(t *testing.T) {
 	uid := seedUser(t, q, "rls-token@example.test")
 	orgA := seedOrg(t, q, "rls-token-org-a")
 	orgB := seedOrg(t, q, "rls-token-org-b")
-	store := auth.NewSQLTokenStore(q)
+	store := auth.NewSQLTokenStore(d)
 	tokA := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: orgA, Name: "a", Role: "viewer"}
 	if err := store.Insert(ctx, tokA, hashOf("rls-a")); err != nil {
 		t.Fatal(err)

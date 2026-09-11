@@ -37,7 +37,7 @@ func TestSQLStoreInsertAndList(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	org := seedOrg(t, q, "audit-store-org")
 	actor := seedUser(t, q, "audit-store@example.test")
 
@@ -84,8 +84,7 @@ func TestSQLStoreInsertAndList(t *testing.T) {
 func TestSQLStoreInsertWithNoOrgOrActor(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
-	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 
 	ev := audit.Event{
 		ID: uuid.Must(uuid.NewV7()), ActorKind: audit.ActorKindSystem,
@@ -107,7 +106,7 @@ func TestSQLStoreListFiltersByActorObjectTypeSince(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	org := seedOrg(t, q, "audit-filter-org")
 	alice := seedUser(t, q, "alice-audit@example.test")
 	bob := seedUser(t, q, "bob-audit@example.test")
@@ -157,7 +156,7 @@ func TestSQLStoreListScopesToOrg(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	orgA := seedOrg(t, q, "audit-scope-a")
 	orgB := seedOrg(t, q, "audit-scope-b")
 
@@ -186,7 +185,7 @@ func TestSQLStoreListForActorSpansOrgs(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	orgA := seedOrg(t, q, "audit-actor-org-a")
 	orgB := seedOrg(t, q, "audit-actor-org-b")
 	actor := seedUser(t, q, "actor-spans@example.test")
@@ -227,7 +226,7 @@ func TestSQLStoreListPaginatesByCursor(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	org := seedOrg(t, q, "audit-page-org")
 
 	base := time.Now().UTC().Truncate(time.Microsecond)
@@ -275,7 +274,7 @@ func TestSQLStoreListPaginationStableWithSharedTimestamp(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	org := seedOrg(t, q, "audit-tie-org")
 	at := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -327,7 +326,7 @@ func TestAuditEventsAreIsolatedPerOrgByRLS(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := audit.NewSQLStore(q)
+	store := audit.NewSQLStore(d)
 	orgA := seedOrg(t, q, "audit-rls-org-a")
 	orgB := seedOrg(t, q, "audit-rls-org-b")
 

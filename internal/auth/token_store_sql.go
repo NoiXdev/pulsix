@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
@@ -18,8 +19,12 @@ import (
 // *gen.Queries.
 type SQLTokenStore struct{ q *gen.Queries }
 
-// NewSQLTokenStore wraps the generated queries.
-func NewSQLTokenStore(q *gen.Queries) *SQLTokenStore { return &SQLTokenStore{q: q} }
+// NewSQLTokenStore builds the store on d itself, never on its raw pool, so
+// every statement runs inside the organization bound to the request context
+// (db.WithOrgScope) and row-level security confines it to that
+// organization's tokens. Resolving a presented token by its hash runs before
+// any organization is known and so stays instance-level by design.
+func NewSQLTokenStore(d *db.DB) *SQLTokenStore { return &SQLTokenStore{q: gen.New(d)} }
 
 func (s *SQLTokenStore) Insert(ctx context.Context, t Token, secretHash []byte) error {
 	return s.q.InsertAPIToken(ctx, gen.InsertAPITokenParams{

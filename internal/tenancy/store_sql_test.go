@@ -33,7 +33,7 @@ func hashOf(secret string) []byte {
 func TestSQLStoreCreateOrgAndGetBySlug(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
-	store := tenancy.NewSQLStore(gen.New(d.Pool()))
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -58,7 +58,7 @@ func TestSQLStoreCreateOrgAndGetBySlug(t *testing.T) {
 func TestSQLStoreCreateOrgDuplicateSlug(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
-	store := tenancy.NewSQLStore(gen.New(d.Pool()))
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -73,7 +73,7 @@ func TestSQLStoreCreateOrgDuplicateSlug(t *testing.T) {
 func TestSQLStoreUpdateOrg(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
-	store := tenancy.NewSQLStore(gen.New(d.Pool()))
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -93,7 +93,7 @@ func TestSQLStoreMembershipLifecycle(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -135,7 +135,7 @@ func TestSQLStoreCountOwners(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -171,7 +171,7 @@ func TestSQLStoreUpdateMembershipRoleBlocksLastOwnerDemotion(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "guard-demote", Name: "Guard"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -209,7 +209,7 @@ func TestSQLStoreDeleteMembershipBlocksLastOwnerRemoval(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "guard-remove", Name: "Guard"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -245,7 +245,7 @@ func TestSQLStoreConcurrentDemotionOfBothOwnersLeavesOneOwner(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 	svc := tenancy.NewService(store, &fakeMailer{}, testPublicURL, time.Now)
 
 	owner1 := seedUser(t, q, "conc-owner1@example.test")
@@ -299,7 +299,7 @@ func TestSQLStoreListMembersIncludesDisabledAt(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -341,7 +341,7 @@ func TestSQLStoreListOrgsForUser(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	uid := seedUser(t, q, "multi-org@example.test")
 	orgA := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "org-a", Name: "Org A"}
@@ -366,7 +366,7 @@ func TestSQLStoreListOrgsForUser(t *testing.T) {
 func TestSQLStoreUserLifecycle(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
-	store := tenancy.NewSQLStore(gen.New(d.Pool()))
+	store := tenancy.NewSQLStore(d)
 
 	if _, err := store.GetUserByEmail(ctx, "nobody@example.test"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("unknown user: %v, want ErrNotFound", err)
@@ -392,7 +392,7 @@ func TestSQLStoreRevokeSessionsAndTokensForUser(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	uid := seedUser(t, q, "revoke-me@example.test")
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
@@ -438,7 +438,7 @@ func TestSQLStoreInviteLifecycle(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -478,7 +478,7 @@ func TestSQLStoreTakeInviteExcludesExpired(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
 	if err := store.CreateOrg(ctx, org); err != nil {
@@ -511,7 +511,7 @@ func TestInvitesAreIsolatedPerOrgByRLS(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	q := gen.New(d.Pool())
-	store := tenancy.NewSQLStore(q)
+	store := tenancy.NewSQLStore(d)
 
 	orgA := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "rls-invite-a", Name: "A"}
 	orgB := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "rls-invite-b", Name: "B"}

@@ -33,7 +33,7 @@ func newTOTPFixture(t *testing.T) (context.Context, *gen.Queries, *auth.TOTP, uu
 		t.Fatal(err)
 	}
 	var key [32]byte
-	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d.Pool()), crypto.NewBox(key), "Pulsix Test", time.Now)
+	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(key), "Pulsix Test", time.Now)
 	return ctx, q, tp, uid
 }
 

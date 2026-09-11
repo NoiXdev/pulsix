@@ -29,6 +29,9 @@ type Scope struct {
 // gate every org-scoped route (organizations, members, invites, tokens)
 // goes through, and it fails closed at every step, in this order:
 //
+//  0. The request did not pass through orgScopeMiddleware, so its database
+//     scope is not bound to this organization → 500 (a wiring bug, never
+//     served as an unscoped request).
 //  1. No principal at all → 401.
 //  2. A session principal that has not completed its second factor → 403
 //     (the same rule requireMFAComplete applies everywhere else; a bearer
@@ -51,6 +54,15 @@ type Scope struct {
 //     role.
 //  7. tenancy.Allows(effective role, perm) — false → 403.
 func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Permission) (Scope, error) {
+	// The organization was already resolved, and the request's database
+	// scope bound to it, by orgScopeMiddleware; requireOrg authorizes
+	// against that same resolution rather than looking the slug up a second
+	// time, and refuses to run at all on a request that never passed through
+	// it (see orgRouteFromContext).
+	route, err := orgRouteFromContext(ctx, orgSlug)
+	if err != nil {
+		return Scope{}, err
+	}
 	p, ok := auth.FromContext(ctx)
 	if !ok {
 		return Scope{}, huma.Error401Unauthorized("login required")
@@ -58,10 +70,10 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	if !p.MFAComplete {
 		return Scope{}, huma.Error403Forbidden("second factor required")
 	}
-	org, err := deps.Tenancy.GetOrgBySlug(ctx, orgSlug)
-	if err != nil {
-		return Scope{}, mapTenancyErr(ctx, err)
+	if route.err != nil {
+		return Scope{}, mapTenancyErr(ctx, route.err)
 	}
+	org := route.org
 	role, err := deps.Tenancy.MembershipOf(ctx, org.ID, p.UserID)
 	if err != nil {
 		return Scope{}, mapTenancyErr(ctx, err)

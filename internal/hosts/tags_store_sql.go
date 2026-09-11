@@ -27,7 +27,7 @@ func (s *SQLStore) ListHostTags(ctx context.Context, orgID, hostID uuid.UUID) ([
 // insert failing) would leave the host with neither its old manual tag set
 // nor its new one, which is worse than either.
 func (s *SQLStore) ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,8 @@ const queryHostsColumns = `h.id, h.org_id, h.zone_id, h.name, h.address, h.manag
 // WHERE fragment (selector.Selector.SQL) is built at runtime from whatever
 // expression the caller parsed, so the query text itself varies per call —
 // exactly what sqlc's static, compile-time query generation cannot express.
-// It runs directly against s.pool instead.
+// It runs directly against s.db instead, which binds it to the request's
+// organization exactly like the generated queries (db.WithOrgScope).
 //
 // selector.Selector.SQL's own doc comment is explicit that its fragment
 // matches *any* row in host_tags with the given key — it knows nothing
@@ -118,7 +119,7 @@ WHERE h.org_id = $1`
 	allArgs = append(allArgs, orgID)
 	allArgs = append(allArgs, args...)
 
-	rows, err := s.pool.Query(ctx, query, allArgs...)
+	rows, err := s.db.Query(ctx, query, allArgs...)
 	if err != nil {
 		return nil, err
 	}

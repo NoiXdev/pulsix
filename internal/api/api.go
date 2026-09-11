@@ -15,7 +15,6 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
-	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
@@ -25,7 +24,6 @@ import (
 
 // Deps carries everything the handlers need. Handlers call services only.
 type Deps struct {
-	DB       *db.DB
 	Sessions *auth.Sessions
 	Auth     AuthService
 	TOTP     *auth.TOTP
@@ -254,8 +252,15 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// router). huma.Group.UseMiddleware wraps each operation registered on
 	// the group individually, so this scoping holds per-operation without a
 	// second chi router or a duplicate OpenAPI document.
+	//
+	// orgScopeMiddleware comes second, after the bearer credential is
+	// resolved: it binds the request's database scope to the {org} in the
+	// path, so row-level security confines every statement the handler
+	// triggers to that organization (see its own doc comment). requireOrg
+	// refuses any request that did not pass through it.
 	orgScoped := huma.NewGroup(hapi)
 	orgScoped.UseMiddleware(bearerAuthMiddleware(deps.Tokens))
+	orgScoped.UseMiddleware(orgScopeMiddleware(deps))
 	registerOrgScopedRoutes(orgScoped, deps) // GET/PATCH /orgs/{org}
 	registerMemberRoutes(orgScoped, deps)    // members + invites, all /orgs/{org}/...
 	registerTokenRoutes(orgScoped, deps)     // /orgs/{org}/tokens...

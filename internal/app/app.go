@@ -85,27 +85,34 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	box := crypto.NewBox(cfg.MasterKey)
-	q := gen.New(appDB.Pool())
+	// Every store is built on appDB itself — never on appDB.Pool() — so each
+	// statement runs inside whatever organization the request context binds
+	// (db.WithOrgScope, set for every org-scoped route by the API's
+	// orgScopeMiddleware). That is what makes the org_isolation policies
+	// enforce the tenant boundary independently of each query's own WHERE
+	// clause; the store constructors taking *db.DB rather than a pool or a
+	// *gen.Queries is what keeps a future store from being wired past it.
+	q := gen.New(appDB)
 	sessions := auth.NewSessions(q, time.Now)
 
-	totp := auth.NewTOTP(auth.NewSQLTOTPStore(appDB.Pool()), box, "Pulsix", time.Now)
+	totp := auth.NewTOTP(auth.NewSQLTOTPStore(appDB), box, "Pulsix", time.Now)
 	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, cfg.RPID(), "Pulsix", cfg.Origin(), time.Now)
 	if err != nil {
 		appDB.Close()
 		return nil, fmt.Errorf("build passkey service: %w", err)
 	}
-	tokens := auth.NewTokens(auth.NewSQLTokenStore(q), time.Now)
+	tokens := auth.NewTokens(auth.NewSQLTokenStore(appDB), time.Now)
 	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys))
 
-	setupSvc := setup.NewService(setup.NewSQLStore(appDB.Pool()), sessions, box, time.Now)
+	setupSvc := setup.NewService(setup.NewSQLStore(appDB), sessions, box, time.Now)
 	// mail.NewSMTP resolves its settings through setupSvc.LoadSMTP on every
 	// call, so a settings change made through PUT /admin/settings/smtp
 	// takes effect on the very next send — there is no separate mailer to
 	// rebuild or process to restart.
 	mailer := mail.NewSMTP(setupSvc.LoadSMTP)
-	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(q), mailer, cfg.PublicURL, time.Now)
-	auditRec := audit.NewRecorder(audit.NewSQLStore(q), time.Now)
-	hostsSvc := hosts.NewService(hosts.NewSQLStore(q, appDB.Pool()), time.Now)
+	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now)
+	auditRec := audit.NewRecorder(audit.NewSQLStore(appDB), time.Now)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(appDB), time.Now)
 	// Every organization gets its "default" zone the moment it is created,
 	// through whichever of the two paths created it — POST /orgs
 	// (tenancy.Service.CreateOrg) or the first-run wizard
@@ -146,7 +153,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	handler, err := api.New(api.Deps{
-		DB: appDB, Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
+		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Version: cfg.Version,
 	})

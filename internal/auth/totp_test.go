@@ -23,7 +23,7 @@ func TestTOTPEnrolVerifyReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var key [32]byte
-	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d.Pool()), crypto.NewBox(key), "Pulsix Test", time.Now)
+	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(key), "Pulsix Test", time.Now)
 
 	secret, url, err := tp.BeginEnrol(ctx, uid, "t@example.test", "")
 	if err != nil || url == "" {

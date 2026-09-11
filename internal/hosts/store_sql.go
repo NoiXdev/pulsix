@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
@@ -20,18 +20,23 @@ import (
 // directly, so it can be driven from the in-memory fake in
 // service_test.go as well as the real database.
 //
-// pool is used only by QueryHosts (tags_store_sql.go): every other method
-// goes through q, the ordinary sqlc-generated path, but QueryHosts' WHERE
-// clause is built at runtime from a selector.Selector, which sqlc's
-// static-query generation has no way to express — see QueryHosts' own doc
-// comment.
+// db is used directly only by QueryHosts and ReplaceManualTags
+// (tags_store_sql.go): every other method goes through q, the ordinary
+// sqlc-generated path, but QueryHosts' WHERE clause is built at runtime from
+// a selector.Selector, which sqlc's static-query generation has no way to
+// express — see QueryHosts' own doc comment — and ReplaceManualTags needs a
+// transaction.
 type SQLStore struct {
-	q    *gen.Queries
-	pool *pgxpool.Pool
+	q  *gen.Queries
+	db *db.DB
 }
 
-// NewSQLStore wraps the generated queries and the pool they run against.
-func NewSQLStore(q *gen.Queries, pool *pgxpool.Pool) *SQLStore { return &SQLStore{q: q, pool: pool} }
+// NewSQLStore builds the store on d itself, never on its raw pool: *db.DB
+// runs each statement — sqlc-generated or hand-written — inside the
+// organization bound to the request context (db.WithOrgScope), so row-level
+// security confines zones, hosts and host tags to that organization
+// independently of each query's own WHERE clause.
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), db: d} }
 
 // uniqueViolationCode is the PostgreSQL error code for a unique constraint
 // violation — zones' (org_id, slug) and hosts' (org_id, name), here.

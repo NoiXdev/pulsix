@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
@@ -18,8 +19,12 @@ import (
 // from the in-memory fake in service_test.go as well as the real database.
 type SQLStore struct{ q *gen.Queries }
 
-// NewSQLStore wraps the generated queries.
-func NewSQLStore(q *gen.Queries) *SQLStore { return &SQLStore{q: q} }
+// NewSQLStore builds the store on d itself, never on its raw pool: *db.DB
+// runs each statement inside the organization bound to the request context
+// (db.WithOrgScope), which is what makes row-level security enforce the
+// tenant boundary for memberships and invitations independently of each
+// query's own WHERE clause.
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
 // uniqueViolationCode is the PostgreSQL error code for a unique constraint
 // violation (organizations.slug here).

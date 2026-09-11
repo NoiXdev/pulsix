@@ -108,7 +108,19 @@ func (failingAuditStore) Insert(context.Context, audit.Event) error {
 // on whether recording that it happened succeeds.
 func WithFailingAudit() Option {
 	return func(s *Server) {
-		s.Deps.Audit = audit.NewRecorder(failingAuditStore{Store: audit.NewSQLStore(s.Q)}, time.Now)
+		s.Deps.Audit = audit.NewRecorder(failingAuditStore{Store: audit.NewSQLStore(s.DB)}, time.Now)
+	}
+}
+
+// WithHostsStore rebuilds Deps.Hosts on wrap's return value, applied to the
+// real SQL store. It exists for the row-level-security proof
+// (rls_test.go): a wrapper can run an arbitrary statement with the exact
+// context a real org-scoped handler hands its store, and so observe what
+// the database lets that request see. The org-created hooks keep pointing
+// at the unwrapped service; both write through the same database.
+func WithHostsStore(wrap func(hosts.Store) hosts.Store) Option {
+	return func(s *Server) {
+		s.Deps.Hosts = hosts.NewService(wrap(hosts.NewSQLStore(s.DB)), time.Now)
 	}
 }
 
@@ -135,8 +147,13 @@ func WithFailingAudit() Option {
 func New(t *testing.T, opts ...Option) *Server {
 	t.Helper()
 	d := testdb.Open(t)
+	// Q is for test fixtures only: it runs on the raw pool, outside any
+	// organization scope. Every store below is built on d itself, exactly
+	// like production wiring (internal/app.Build), so the API under test
+	// runs each statement inside the request's organization.
 	q := gen.New(d.Pool())
-	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(q, time.Now), Mail: &Mailer{}}
+	appQ := gen.New(d)
+	s := &Server{T: t, DB: d, Q: q, Sessions: auth.NewSessions(appQ, time.Now), Mail: &Mailer{}}
 
 	ts := httptest.NewUnstartedServer(nil)
 	_, port, err := net.SplitHostPort(ts.Listener.Addr().String())
@@ -146,8 +163,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	publicURL := "http://localhost:" + port
 	cfg := config.Config{PublicURL: publicURL}
 
-	totp := auth.NewTOTP(auth.NewSQLTOTPStore(d.Pool()), crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
-	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), s.Sessions, cfg.RPID(), "Pulsix Test", cfg.Origin(), time.Now)
+	totp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
+	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(appQ), auth.NewSQLStore(appQ), s.Sessions, cfg.RPID(), "Pulsix Test", cfg.Origin(), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +172,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	// TOTP does, not only at the passkey login endpoints — otherwise a
 	// passkey-only account's password alone would produce an MFA-complete
 	// session (Finding 2, fix round 1).
-	setupSvc := setup.NewService(setup.NewSQLStore(d.Pool()), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
-	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now)
-	hostsSvc := hosts.NewService(hosts.NewSQLStore(q, d.Pool()), time.Now)
+	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
+	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
 	// Every organization gets its "default" zone through this hook,
 	// whichever of the two ways it was created — POST /orgs
 	// (tenancy.Service.CreateOrg) or the first-run wizard
@@ -166,10 +183,10 @@ func New(t *testing.T, opts ...Option) *Server {
 	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 	s.Deps = api.Deps{
-		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
-		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
+		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
+		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
 		Tenancy: tenancySvc,
-		Audit:   audit.NewRecorder(audit.NewSQLStore(q), time.Now),
+		Audit:   audit.NewRecorder(audit.NewSQLStore(d), time.Now),
 		Setup:   setupSvc,
 		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
 		// exercises whatever a test actually stored through
