@@ -9,6 +9,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,12 +20,14 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/config"
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -152,9 +155,13 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		slog.InfoContext(ctx, "reconciled organizations that were missing their default zone", "repaired", repaired)
 	}
 
+	credsSvc := credentials.NewService(credentials.NewSQLStore(appDB), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(appDB), credsSvc, hostsSvc)
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
+		Credentials: credsSvc, SSH: sshSvc,
 		Version: cfg.Version,
 	})
 	if err != nil {

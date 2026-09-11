@@ -245,6 +245,13 @@ func (s *Service) Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Usa
 	return s.store.Usage(ctx, orgID)
 }
 
+// ExpiryState reports whether c has expired or expires within ExpiryWarning,
+// measured with the service's clock.
+func (s *Service) ExpiryState(c Credential) (expired, soon bool) {
+	now := s.now()
+	return c.Expired(now), c.ExpiresSoon(now)
+}
+
 func validateMeta(name, username string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%w: name must be 1-63 lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit", ErrInvalidInput)

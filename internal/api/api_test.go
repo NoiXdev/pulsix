@@ -12,10 +12,12 @@ import (
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -55,6 +57,22 @@ func testMailer() *mail.SMTP {
 // mirroring testTenancy and testAudit above.
 func testHosts() *hosts.Service {
 	return hosts.NewService(nil, time.Now)
+}
+
+// testCredentials builds a *credentials.Service with a nil store, good
+// enough to satisfy api.Deps.validate in tests that never actually drive a
+// credential operation (nil interface values are only a problem once
+// called), mirroring testHosts above.
+func testCredentials() *credentials.Service {
+	return credentials.NewService(nil, nil, time.Now, nil)
+}
+
+// testSSH builds a *sshconf.Service with nil store/lookups, good enough to
+// satisfy api.Deps.validate in tests that never actually drive a jump host
+// or host SSH operation (nil interface values are only a problem once
+// called), mirroring testHosts above.
+func testSSH() *sshconf.Service {
+	return sshconf.NewService(nil, nil, nil)
 }
 
 // fakeAuthService satisfies api.AuthService without touching a database, so
@@ -114,7 +132,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
-		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(),
+		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 	}
 }
 
@@ -208,6 +226,20 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}); err == nil {
 		t.Fatal("api.New without Hosts did not return an error")
 	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Mailer: testMailer(), Hosts: testHosts(),
+	}); err == nil {
+		t.Fatal("api.New without Credentials did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(),
+	}); err == nil {
+		t.Fatal("api.New without SSH did not return an error")
+	}
 }
 
 // testDeps returns a fully-wired (if inert) Deps, exactly like
@@ -218,7 +250,7 @@ func testDeps(t *testing.T) api.Deps {
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
-		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(),
+		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 	}
 }
 

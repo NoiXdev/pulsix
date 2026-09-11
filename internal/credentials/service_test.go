@@ -341,6 +341,17 @@ func TestExpiry(t *testing.T) {
 	}
 }
 
+func TestExpiryState(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(10 * 24 * time.Hour)
+	svc := newService(newFakeStore(), now)
+	c := credentials.Credential{ExpiresAt: &expiresAt}
+	expired, soon := svc.ExpiryState(c)
+	if expired != false || soon != true {
+		t.Fatalf("ExpiryState = %v, %v, want false, true", expired, soon)
+	}
+}
+
 func TestAuthorizedKeyAndSnippets(t *testing.T) {
 	c := credentials.Credential{Name: "acme-deploy", Kind: credentials.KindSSHKey, PublicKey: "ssh-ed25519 AAAAC3Nz"}
 	want := "ssh-ed25519 AAAAC3Nz pulsix:acme:acme-deploy"

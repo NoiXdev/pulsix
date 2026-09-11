@@ -17,12 +17,15 @@ import (
 
 // zoneDTO is the wire shape of one zone.
 type zoneDTO struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	ID        string  `json:"id"`
+	Slug      string  `json:"slug"`
+	Name      string  `json:"name"`
+	BastionID *string `json:"bastion_id,omitempty"`
 }
 
-func toZoneDTO(z hosts.Zone) zoneDTO { return zoneDTO{ID: z.ID.String(), Slug: z.Slug, Name: z.Name} }
+func toZoneDTO(z hosts.Zone) zoneDTO {
+	return zoneDTO{ID: z.ID.String(), Slug: z.Slug, Name: z.Name, BastionID: optionalString(z.BastionID)}
+}
 
 type zoneCreateInput struct {
 	Org  string `path:"org"`

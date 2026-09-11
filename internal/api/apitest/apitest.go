@@ -3,6 +3,7 @@ package apitest
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/config"
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -26,6 +28,7 @@ import (
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -196,6 +199,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	// (internal/app/app.go) binds both to the same hostsSvc.EnsureDefaultZone.
 	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox(testMasterKey), time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
@@ -207,8 +212,10 @@ func New(t *testing.T, opts ...Option) *Server {
 		// PUT /admin/settings/smtp — no separate fake needed, since the
 		// real *mail.SMTP simply fails to dial when nothing is configured
 		// (or the test's own tests want that failure).
-		Mailer: mail.NewSMTP(setupSvc.LoadSMTP),
-		Hosts:  hostsSvc,
+		Mailer:      mail.NewSMTP(setupSvc.LoadSMTP),
+		Hosts:       hostsSvc,
+		Credentials: credsSvc,
+		SSH:         sshSvc,
 	}
 	for _, opt := range opts {
 		opt(s)

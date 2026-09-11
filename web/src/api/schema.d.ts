@@ -381,6 +381,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/bastions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org bastions */
+        get: operations["get-api-v1-orgs-by-org-bastions"];
+        put?: never;
+        /** Post API v1 orgs by org bastions */
+        post: operations["createBastion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/bastions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org bastions by ID */
+        get: operations["get-api-v1-orgs-by-org-bastions-by-id"];
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org bastions by ID */
+        delete: operations["deleteBastion"];
+        options?: never;
+        head?: never;
+        /** Patch API v1 orgs by org bastions by ID */
+        patch: operations["updateBastion"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org credentials */
+        get: operations["get-api-v1-orgs-by-org-credentials"];
+        put?: never;
+        /** Post API v1 orgs by org credentials */
+        post: operations["createCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/credentials/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org credentials by ID */
+        get: operations["get-api-v1-orgs-by-org-credentials-by-id"];
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org credentials by ID */
+        delete: operations["deleteCredential"];
+        options?: never;
+        head?: never;
+        /** Patch API v1 orgs by org credentials by ID */
+        patch: operations["updateCredential"];
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts": {
         parameters: {
             query?: never;
@@ -450,6 +524,24 @@ export interface paths {
         head?: never;
         /** Patch API v1 orgs by org hosts by ID capabilities */
         patch: operations["setHostCapabilities"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/ssh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID SSH */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-ssh"];
+        /** Put API v1 orgs by org hosts by ID SSH */
+        put: operations["setHostSSH"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/orgs/{org}/hosts/{id}/tags": {
@@ -592,6 +684,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/zones/{id}/bastion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org zones by ID bastion */
+        put: operations["setZoneBastion"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/setup/complete": {
         parameters: {
             query?: never;
@@ -640,6 +749,52 @@ export interface components {
             items: components["schemas"]["EventDTO"][] | null;
             next_cursor: string;
         };
+        BastionBodyDTO: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BastionBodyDTO.json
+             */
+            readonly $schema?: string;
+            address: string;
+            credential_id?: string;
+            name: string;
+            /**
+             * Format: int64
+             * @description 0 or omitted means 22
+             */
+            port?: number;
+            username: string;
+            via_bastion_id?: string;
+        };
+        BastionDTO: {
+            address: string;
+            credential_id?: string;
+            id: string;
+            name: string;
+            /** Format: int64 */
+            port: number;
+            username: string;
+            via_bastion_id?: string;
+        };
+        BastionListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BastionListOutputBody.json
+             */
+            readonly $schema?: string;
+            bastions: components["schemas"]["BastionDTO"][] | null;
+        };
+        BastionOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BastionOutputBody.json
+             */
+            readonly $schema?: string;
+            bastion: components["schemas"]["BastionDTO"];
+        };
         CodeInputBody: {
             /**
              * Format: uri
@@ -668,6 +823,97 @@ export interface components {
             Secure: boolean;
             Unparsed: string[] | null;
             Value: string;
+        };
+        CredentialCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CredentialCreateInputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** @description Key kinds: generate a new ed25519 key */
+            generate?: boolean;
+            /** @enum {string} */
+            kind: "ssh_key" | "ssh_password" | "git_key" | "git_token";
+            name: string;
+            /** @description Decrypts private_key once; never stored */
+            passphrase?: string;
+            password?: string;
+            /** @description Key kinds: import this private key */
+            private_key?: string;
+            token?: string;
+            username?: string;
+        };
+        CredentialDTO: {
+            /** Format: date-time */
+            created_at: string;
+            expired: boolean;
+            /** Format: date-time */
+            expires_at?: string;
+            expires_soon: boolean;
+            fingerprint?: string;
+            id: string;
+            key_type?: string;
+            /** @enum {string} */
+            kind: "ssh_key" | "ssh_password" | "git_key" | "git_token";
+            name: string;
+            public_key?: string;
+            /** Format: date-time */
+            updated_at: string;
+            used_by: components["schemas"]["CredentialUsageDTO"];
+            username: string;
+        };
+        CredentialDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CredentialDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            credential: components["schemas"]["CredentialDTO"];
+            snippets?: components["schemas"]["CredentialSnippetsDTO"];
+        };
+        CredentialListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CredentialListOutputBody.json
+             */
+            readonly $schema?: string;
+            credentials: components["schemas"]["CredentialDTO"][] | null;
+        };
+        CredentialSnippetsDTO: {
+            authorized_keys_command: string;
+            cloud_init: string;
+            terraform: string;
+        };
+        CredentialUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CredentialUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** @description Key kinds: generate a new ed25519 key */
+            generate?: boolean;
+            name: string;
+            /** @description Decrypts private_key once; never stored */
+            passphrase?: string;
+            password?: string;
+            /** @description Key kinds: import this private key */
+            private_key?: string;
+            token?: string;
+            username?: string;
+        };
+        CredentialUsageDTO: {
+            /** Format: int64 */
+            bastions: number;
+            /** Format: int64 */
+            hosts: number;
         };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
@@ -821,6 +1067,46 @@ export interface components {
              */
             readonly $schema?: string;
             hosts: components["schemas"]["HostDTO"][] | null;
+        };
+        HostSSHDTO: {
+            bastion_id?: string;
+            /** @enum {string} */
+            bastion_mode: "inherit" | "none" | "explicit";
+            credential_id?: string;
+            host_id: string;
+            /** Format: int64 */
+            port: number;
+            username: string;
+        };
+        HostSSHOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostSSHOutputBody.json
+             */
+            readonly $schema?: string;
+            ssh: components["schemas"]["HostSSHDTO"];
+        };
+        HostSSHPutInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostSSHPutInputBody.json
+             */
+            readonly $schema?: string;
+            bastion_id?: string;
+            /**
+             * @description Omitted means inherit
+             * @enum {string}
+             */
+            bastion_mode?: "inherit" | "none" | "explicit";
+            credential_id?: string;
+            /**
+             * Format: int64
+             * @description 0 or omitted means 22
+             */
+            port?: number;
+            username?: string;
         };
         HostTagsOutputBody: {
             /**
@@ -1237,6 +1523,16 @@ export interface components {
             count: number;
             value: string;
         };
+        ZoneBastionInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ZoneBastionInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Omit or send an empty body to clear the zone default */
+            bastion_id?: string;
+        };
         ZoneCreateInputBody: {
             /**
              * Format: uri
@@ -1257,6 +1553,7 @@ export interface components {
             zone: components["schemas"]["ZoneDTO"];
         };
         ZoneDTO: {
+            bastion_id?: string;
             id: string;
             name: string;
             slug: string;
@@ -2073,6 +2370,338 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-bastions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BastionListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createBastion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BastionBodyDTO"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BastionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-bastions-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BastionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteBastion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateBastion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BastionBodyDTO"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BastionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-credentials-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-hosts": {
         parameters: {
             query?: {
@@ -2304,6 +2933,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostGetOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-hosts-by-id-ssh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSSHOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setHostSSH: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostSSHPutInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSSHOutputBody"];
                 };
             };
             /** @description Error */
@@ -2701,6 +3398,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ZoneCreateOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setZoneBastion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneBastionInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */

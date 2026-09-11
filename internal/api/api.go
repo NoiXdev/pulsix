@@ -15,9 +15,11 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/web"
 )
@@ -33,6 +35,12 @@ type Deps struct {
 	Audit    *audit.Recorder
 	Setup    *setup.Service
 	Hosts    *hosts.Service
+	// Credentials is the organization's encrypted secret store (SSH keys,
+	// passwords, Git deploy keys and tokens); see registerCredentialRoutes.
+	Credentials *credentials.Service
+	// SSH stores jump hosts, zone defaults and host SSH settings; see
+	// registerSSHRoutes.
+	SSH *sshconf.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -106,6 +114,12 @@ func (d Deps) validate() error {
 	}
 	if d.Hosts == nil {
 		missing = append(missing, "Hosts")
+	}
+	if d.Credentials == nil {
+		missing = append(missing, "Credentials")
+	}
+	if d.SSH == nil {
+		missing = append(missing, "SSH")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -261,10 +275,12 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	orgScoped := huma.NewGroup(hapi)
 	orgScoped.UseMiddleware(bearerAuthMiddleware(deps.Tokens))
 	orgScoped.UseMiddleware(orgScopeMiddleware(deps))
-	registerOrgScopedRoutes(orgScoped, deps) // GET/PATCH /orgs/{org}
-	registerMemberRoutes(orgScoped, deps)    // members + invites, all /orgs/{org}/...
-	registerTokenRoutes(orgScoped, deps)     // /orgs/{org}/tokens...
-	registerAuditRoutes(orgScoped, deps)     // GET /orgs/{org}/activity
-	registerHostRoutes(orgScoped, deps)      // zones + hosts, all /orgs/{org}/...
-	registerTagRoutes(orgScoped, deps)       // host tags + the tag selector, all /orgs/{org}/...
+	registerOrgScopedRoutes(orgScoped, deps)  // GET/PATCH /orgs/{org}
+	registerMemberRoutes(orgScoped, deps)     // members + invites, all /orgs/{org}/...
+	registerTokenRoutes(orgScoped, deps)      // /orgs/{org}/tokens...
+	registerAuditRoutes(orgScoped, deps)      // GET /orgs/{org}/activity
+	registerHostRoutes(orgScoped, deps)       // zones + hosts, all /orgs/{org}/...
+	registerTagRoutes(orgScoped, deps)        // host tags + the tag selector, all /orgs/{org}/...
+	registerCredentialRoutes(orgScoped, deps) // /orgs/{org}/credentials...
+	registerSSHRoutes(orgScoped, deps)        // /orgs/{org}/bastions..., zone default, host SSH
 }
