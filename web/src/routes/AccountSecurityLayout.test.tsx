@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
 import { AccountSecurityLayout } from './AccountSecurityLayout.tsx';
 
-function renderAt(initialPath = '/account/security') {
+function renderAt(initialPath = '/account/security', qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const rootRoute = createRootRoute();
   const securityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/security', component: AccountSecurityLayout });
-  const routeTree = rootRoute.addChildren([securityRoute]);
+  const loginRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/login',
+    validateSearch: (s: Record<string, unknown>) => ({ step: typeof s.step === 'string' ? s.step : undefined }),
+    component: () => <div>LOGIN PAGE</div>,
+  });
+  const routeTree = rootRoute.addChildren([securityRoute, loginRoute]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   return render(
     <QueryClientProvider client={qc}>
@@ -59,4 +65,30 @@ describe('AccountSecurityLayout', () => {
 
     expect(await screen.findByText(/does not belong to any organization/)).toBeInTheDocument();
   });
+
+  it('logs out to /login and clears the whole query cache (I3)', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['hosts', 'acme', {}], { pages: [{ hosts: [{ id: 'h1' }] }], pageParams: [''] });
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        instance_admin: true,
+      },
+      'GET /api/v1/orgs': ORGS,
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+      'POST /api/v1/auth/logout': {},
+    });
+
+    renderAt('/account/security', qc);
+
+    await user.click(await screen.findByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+
+    expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+    await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
+  });
 });
+

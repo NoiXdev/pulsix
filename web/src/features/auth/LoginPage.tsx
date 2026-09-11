@@ -8,6 +8,7 @@ import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { login, verifyTotp } from '../../api/hooks/useAuth.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
+import { useResetSession } from '../../api/session.ts';
 import { beginLogin, submitPassword, submitTotp, type LoginState } from './loginMachine.ts';
 import { loginWithPasskey, passkeysSupported } from './passkeys.ts';
 
@@ -28,7 +29,8 @@ import { loginWithPasskey, passkeysSupported } from './passkeys.ts';
  *    refetch resolved, bouncing a correctly verified session straight
  *    back to the TOTP prompt. refetchMe forces the fetch and is awaited
  *    before navigating, so the cache is already current by the time
- *    RootRedirect reads it.
+ *    RootRedirect reads it. The whole cache is reset first (see
+ *    afterAuthenticated), so no earlier session's data survives either.
  *  - Important 5: the TOTP step used to accept only a 6-digit code, with
  *    no way to use a recovery code, no passkey option, and no way back
  *    to the password step — so the recovery codes the app hands out on
@@ -42,6 +44,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const refetchMe = useRefetchMe();
+  const resetSession = useResetSession();
 
   const [state, setState] = useState<LoginState>(() =>
     search.step === 'totp' ? { step: 'totp' } : beginLogin(),
@@ -54,6 +57,12 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   async function afterAuthenticated() {
+    // A new session starts from an empty cache (api/session.ts): nothing
+    // a previous principal loaded on this tab — their hosts, their
+    // activity, their /auth/me — may be served to this one, not even
+    // from a Back navigation. Reset before the /auth/me refetch so that
+    // fetch lands in the fresh cache.
+    resetSession();
     await refetchMe();
     await navigate({ to: '/' });
   }

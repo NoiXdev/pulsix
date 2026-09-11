@@ -6,20 +6,12 @@ const meQueryFn = () => unwrap(api.GET('/api/v1/auth/me'));
 
 /** The signed-in principal (src/routes root logic reads `mfa_complete` to
  * decide whether a session still needs its second factor). Disabled
- * callers should pass `enabled: false` rather than relying on a 401 —
- * see useAuth.ts's login/logout mutations, which invalidate this query
- * instead of calling it eagerly on an anonymous session. */
+ * callers should pass `enabled: false` rather than relying on a 401.
+ * Sign-in and sign-out do not invalidate this query on its own: they
+ * reset the whole cache (api/session.ts), and sign-in then re-fetches it
+ * with refetchMe below. */
 export function useMe(opts: { enabled?: boolean } = {}) {
   return useQuery({ queryKey: meQueryKey, queryFn: meQueryFn, retry: false, enabled: opts.enabled });
-}
-
-export function invalidateMe(qc: QueryClient) {
-  return qc.invalidateQueries({ queryKey: meQueryKey });
-}
-
-export function useInvalidateMe() {
-  const qc = useQueryClient();
-  return () => invalidateMe(qc);
 }
 
 /**

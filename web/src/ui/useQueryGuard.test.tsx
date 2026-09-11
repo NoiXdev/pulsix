@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -91,8 +91,11 @@ describe('useQueryGuard', () => {
     expect(toasts[0]).toHaveTextContent('Could not refresh this page — showing the last loaded data.');
   });
 
-  it('redirects to /login on a 401 background refetch failure instead of tearing the page down', async () => {
+  it('redirects to /login on a 401 background refetch failure and clears the whole query cache (I3)', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // Data some other page loaded for the same session — the reset must
+    // drop it too, not just the query that saw the 401.
+    qc.setQueryData(['hosts', 'acme', {}], { pages: [{ hosts: [{ id: 'h1' }] }], pageParams: [''] });
     let call = 0;
     const queryFn = vi.fn(() => {
       call += 1;
@@ -106,7 +109,45 @@ describe('useQueryGuard', () => {
     await qc.refetchQueries({ queryKey: ['thing'] });
 
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+    await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
+    expect(screen.queryByText(/DATA:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  it('clears the whole query cache on a first-load 401 as well (QueryError\'s own redirect)', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['hosts', 'acme', {}], { pages: [{ hosts: [{ id: 'h1' }] }], pageParams: [''] });
+
+    renderHarness(qc, () => Promise.reject(new ApiError(401, { detail: 'login required' })));
+
+    expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+    await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
+  });
+
+  it.each([
+    [403, 'You do not have access'],
+    [404, 'Not found'],
+  ])(
+    'treats a %i on a background refetch as final: renders the error page instead of the stale data, without a toast (I3)',
+    async (status, heading) => {
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      let call = 0;
+      const queryFn = vi.fn(() => {
+        call += 1;
+        if (call === 1) return Promise.resolve({ value: 'loaded' });
+        return Promise.reject(new ApiError(status, { detail: 'no longer yours' }));
+      });
+
+      renderHarness(qc, queryFn);
+      await screen.findByText('DATA: loaded');
+
+      await qc.refetchQueries({ queryKey: ['thing'] });
+
+      expect(await screen.findByText(heading)).toBeInTheDocument();
+      expect(screen.queryByText(/DATA:/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    },
+  );
 
   it('accepts an infinite query: a failed "load more" page keeps the loaded pages and toasts once', async () => {
     const user = userEvent.setup();

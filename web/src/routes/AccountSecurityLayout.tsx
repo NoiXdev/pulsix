@@ -2,10 +2,11 @@ import { useNavigate } from '@tanstack/react-router';
 import { AppShell } from '../ui/shell.tsx';
 import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
-import { useInvalidateMe, useMe } from '../api/hooks/useMe.ts';
+import { useMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { usePasskeys } from '../api/hooks/usePasskeys.ts';
 import { logout } from '../api/hooks/useAuth.ts';
+import { useResetSession } from '../api/session.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 
 /**
@@ -19,7 +20,7 @@ import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx
  */
 export function AccountSecurityLayout() {
   const navigate = useNavigate();
-  const invalidateMe = useInvalidateMe();
+  const resetSession = useResetSession();
   const me = useMe({ enabled: true });
   const orgs = useOrgs({ enabled: true });
   const passkeys = usePasskeys();
@@ -58,8 +59,13 @@ export function AccountSecurityLayout() {
       }}
       onLogout={async () => {
         await logout();
-        await invalidateMe();
+        // Navigate first, then drop every cached query and mutation
+        // (api/session.ts): whoever signs in next on this tab must not
+        // be served this user's data, and resetting while this layout
+        // is still mounted would only make it re-fetch everything with
+        // the now-dead session.
         await navigate({ to: '/login', search: { step: undefined } });
+        resetSession();
       }}
     >
       <AccountSecurityPage />

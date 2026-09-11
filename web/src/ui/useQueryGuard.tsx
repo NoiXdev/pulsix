@@ -1,5 +1,4 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { useNavigate } from '@tanstack/react-router';
 import type { UseInfiniteQueryResult, UseQueryResult } from '@tanstack/react-query';
 import { errorStatus } from '../lib/apiError.ts';
 import { useToast } from './toastContext.ts';
@@ -10,6 +9,16 @@ import { QueryError } from './QueryState.tsx';
  * Both expose the same `data`/`isError`/`error`/`errorUpdatedAt` fields
  * the guard decides on. */
 export type GuardedQuery<TData, TError> = UseQueryResult<TData, TError> | UseInfiniteQueryResult<TData, TError>;
+
+/**
+ * Statuses that are final even when the page already holds data from an
+ * earlier fetch: 401 (the session is gone), 403 (access was revoked, or
+ * this is a different principal than the one the data was loaded for)
+ * and 404 (the thing no longer exists). Continuing to show the last
+ * loaded data in those cases would keep displaying something the caller
+ * is no longer — or never was — allowed to see.
+ */
+const FINAL_STATUSES = new Set([401, 403, 404]);
 
 /**
  * useQueryGuard is the single place that decides what a failed query does
@@ -33,16 +42,17 @@ export type GuardedQuery<TData, TError> = UseQueryResult<TData, TError> | UseInf
  * The distinction this hook makes:
  * - No data yet and the query failed → return the `QueryError` element;
  *   the caller renders it exactly as before (fix round 1's "Important 7").
- * - Data already present and a background refresh failed → return `null`
- *   (the caller keeps rendering its data) and instead raise a toast, once
- *   per failed fetch (`errorUpdatedAt` dedupes — a re-render caused by
- *   something unrelated, e.g. the toast's own auto-dismiss timer, does
- *   not raise it again for the same failure).
- * - A 401 on a background refresh is the one exception: the session is
- *   gone and every further action on the page will fail too, so this
- *   redirects to /login itself — one place, not one per page.
- * - For an infinite query, a failed "Load more" page fetch is a background
- *   failure like any other: the loaded pages stay and one toast says so.
+ * - Data already present and the latest fetch failed with 401, 403 or 404
+ *   → also return the `QueryError` element: those answers are final, not
+ *   a hiccup, so the stale data is dropped from the page. For a 401,
+ *   QueryError itself redirects to /login and clears the query cache
+ *   (api/session.ts) — one place, not one per page.
+ * - Data already present and any other failure (a 500, a network error)
+ *   → return `null` (the caller keeps rendering its data) and instead
+ *   raise a toast, once per failed fetch (`errorUpdatedAt` dedupes — a
+ *   re-render caused by something unrelated, e.g. the toast's own
+ *   auto-dismiss timer, does not raise it again for the same failure).
+ *   For an infinite query this includes a failed "Load more" page fetch.
  *
  * Usage (replaces the old `if (query.isError) return <QueryError .../>`):
  *
@@ -65,33 +75,30 @@ export function useQueryGuard<TData, TError>(
   options?: { enabled?: boolean },
 ): ReactNode | null {
   const enabled = options?.enabled ?? true;
-  const navigate = useNavigate();
   const toast = useToast();
   const hasData = query.data !== undefined;
+  const status = query.isError ? errorStatus(query.error) : null;
+  const showsError = query.isError && (!hasData || (status !== null && FINAL_STATUSES.has(status)));
   const nextPageFailed = 'isFetchNextPageError' in query && query.isFetchNextPageError;
   // Tracks the errorUpdatedAt of the last background failure this hook
-  // has already reacted to, so the toast/redirect below fires once per
-  // failed fetch, not once per render.
+  // has already toasted about, so the toast below fires once per failed
+  // fetch, not once per render.
   const lastHandled = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!enabled || !query.isError || !hasData) return;
+    if (!enabled || !query.isError || showsError) return;
     if (lastHandled.current === query.errorUpdatedAt) return;
     lastHandled.current = query.errorUpdatedAt;
 
-    if (errorStatus(query.error) === 401) {
-      void navigate({ to: '/login', search: { step: undefined } });
-      return;
-    }
     toast.show(
       nextPageFailed
         ? 'Could not load more — showing what is already loaded.'
         : 'Could not refresh this page — showing the last loaded data.',
       'destructive',
     );
-  }, [enabled, query.isError, hasData, nextPageFailed, query.errorUpdatedAt, query.error, navigate, toast]);
+  }, [enabled, query.isError, showsError, nextPageFailed, query.errorUpdatedAt, toast]);
 
-  if (enabled && query.isError && !hasData) {
+  if (enabled && showsError) {
     return <QueryError error={query.error} />;
   }
   return null;

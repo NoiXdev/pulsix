@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { errorStatus } from '../lib/apiError.ts';
+import { useResetSession } from '../api/session.ts';
 
 /**
  * QueryError is the one place that decides what a failed query renders —
@@ -12,16 +13,21 @@ import { errorStatus } from '../lib/apiError.ts';
  * not have access" state the members-spec explicitly calls for; a 404
  * says the thing does not exist; anything else is a generic failure with
  * the server's own message where there is one.
+ *
+ * The 401 redirect also drops the whole query cache (api/session.ts's
+ * resetSessionCache) once /login is reached: whoever signs in next on
+ * this tab must not be served the expired session's cached data.
  */
 export function QueryError({ error }: { error: unknown }) {
   const navigate = useNavigate();
+  const resetSession = useResetSession();
   const status = errorStatus(error);
 
   useEffect(() => {
     if (status === 401) {
-      void navigate({ to: '/login', search: { step: undefined } });
+      void navigate({ to: '/login', search: { step: undefined } }).finally(resetSession);
     }
-  }, [status, navigate]);
+  }, [status, navigate, resetSession]);
 
   if (status === 401) {
     return <FullPageMessage title="Signing you out" detail="Your session has expired. Redirecting to sign in…" />;

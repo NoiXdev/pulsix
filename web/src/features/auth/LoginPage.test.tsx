@@ -72,7 +72,10 @@ function buildRouter(qc: QueryClient) {
 /** renderLoginAt mounts just LoginPage behind a minimal router — enough
  * for useNavigate/useSearch to work — for tests that don't need
  * RootRedirect's own logic. */
-function renderLoginAt(search: { step?: string } = {}) {
+function renderLoginAt(
+  search: { step?: string } = {},
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const rootRoute = createRootRoute();
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -88,7 +91,6 @@ function renderLoginAt(search: { step?: string } = {}) {
   const routeTree = rootRoute.addChildren([indexRoute, loginRoute]);
   const initial = search.step ? `/login?step=${search.step}` : '/login';
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initial] }) });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   render(
     <QueryClientProvider client={qc}>
@@ -215,5 +217,34 @@ describe('a pending session completing verification (Important 3)', () => {
     // straight back to the TOTP prompt. After: the org page.
     expect(await screen.findByText('ORGANIZATION PAGE')).toBeInTheDocument();
     expect(screen.queryByLabelText('6-digit code')).not.toBeInTheDocument();
+  });
+});
+
+/** I3: a new session must start from an empty cache — nothing an earlier
+ * principal loaded on this tab may survive a sign-in. */
+describe('LoginPage session reset (I3)', () => {
+  it('clears every cached query before re-fetching /auth/me, so only the new session\'s data remains', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['hosts', 'acme', {}], { pages: [{ hosts: [{ id: 'h1', name: 'alice-secret.fra' }] }], pageParams: [''] });
+    qc.setQueryData(['me'], { user: { id: 'u-alice' }, mfa_complete: true });
+    mockApi({
+      'POST /api/v1/auth/login': { mfa_required: false },
+      'GET /api/v1/auth/me': {
+        user: { id: 'u-bob', email: 'bob@example.org', display_name: 'Bob' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        instance_admin: false,
+      },
+    });
+    renderLoginAt({}, qc);
+
+    await user.type(await screen.findByLabelText('Email address'), 'bob@example.org');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText('ROOT');
+
+    expect(qc.getQueryCache().findAll({ queryKey: ['hosts'] })).toHaveLength(0);
+    expect(qc.getQueryData(['me'])).toMatchObject({ user: { id: 'u-bob' } });
   });
 });
