@@ -64,6 +64,28 @@ Last updated: 2026-09-10
 | 1.17 | Activity feed per org and per user from the audit log, filters by actor/object | planned | plan v0.1 Task 11 |
 | 1.18 | First-run setup wizard: instance admin, first org, SMTP, forced second-factor enrolment | planned | plan v0.1 Task 12 |
 
+## v0.1 follow-ups from the final branch review
+
+Items the final whole-branch review deferred. The first group blocks a `v0.1.0` release tag;
+the rest are follow-ups. Recorded 2026-09-11.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1.20 | Rate limiting on login, TOTP verify, passkey finish and invite accept | planned | **release blocker** (with 1.15) |
+| 1.21 | Reapers for expired `webauthn_ceremonies` and `sessions` rows | planned | **release blocker**: unauthenticated write path grows without bound |
+| 1.22 | Throttle `TouchLastUsed`; skip the session lookup for static assets | planned | **release blocker**: per-request write and read amplification |
+| 1.23 | Batch `set_config` with the statement in one round trip for org-scoped queries | planned | today four round trips per scoped statement |
+| 1.24 | SMTP settings `PUT`: an omitted password keeps the stored one | planned | today saving another field wipes the password |
+| 1.25 | Invite cleanup on mail failure: detached context and a dial timeout; do not delete after DATA was accepted | planned | |
+| 1.26 | Make TOTP confirmation and the session upgrade atomic | planned | recoverable today, but the recovery codes are lost |
+| 1.27 | Re-enrolling TOTP keeps the confirmed secret until the new one is confirmed | planned | today an abandoned re-enrolment leaves the account password-only |
+| 1.28 | Step-up (fresh second factor) for passkey registration and deletion | planned | |
+| 1.29 | Security headers (CSP, frame-ancestors, nosniff, referrer policy); gate `/schemas/*` like the OpenAPI document | planned | |
+| 1.30 | Composite foreign keys tying `host_tags.org_id` and `hosts.zone_id` to their owners | planned | additive migration |
+| 1.31 | `If-Match` optimistic concurrency on config objects, starting with host updates | planned | spec §15 |
+| 1.32 | Release workflow publishes only commits on `main` with green CI; `ci.yml` permissions block and SHA-pinned actions | planned | |
+| 1.33 | End-user docs (`noix-docs`, branch `pulsix`): reconcile with what v0.1 actually ships | planned | the branch describes the v1 target |
+
 ## v0.2 · Inventory & Ansible
 
 | # | Item | Status | Notes |
