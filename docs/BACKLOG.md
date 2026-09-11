@@ -118,6 +118,14 @@ the rest of 2.7b (now 2.7c: bootstrap, connection test, host-key pinning), 2.8â€
 | 2.13c | Calendar view of scheduled runs and maintenance windows | planned | |
 | 2.14 | Ad-hoc command on hosts (`ansible -m shell`) | idea | |
 
+## v0.2a follow-ups for v0.2b
+
+Items the v0.2a final whole-branch review deferred to the v0.2b plan. Recorded 2026-09-11.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 2.15 | Serialize tree-changing group writes and chain-changing jump-host writes per organization (transaction + advisory lock), closing the concurrent-move cycle and the jump-host chain race | planned | until then the renderer fails closed on a group cycle or a broken chain (409 on the previews) |
+
 ## v0.3 Â· Agent & monitoring
 
 | # | Item | Status | Notes |

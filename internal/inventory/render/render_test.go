@@ -345,3 +345,18 @@ func TestRenderGolden(t *testing.T) {
 		t.Errorf("inventory differs from %s; if the change is intended, run with -update and review the diff", path)
 	}
 }
+
+// TestRenderFailsClosedOnGroupCycles pins that a group tree with a cycle —
+// which two concurrent moves can leave behind — fails the render instead of
+// producing a document in which the cycle's groups hang off nothing.
+func TestRenderFailsClosedOnGroupCycles(t *testing.T) {
+	for _, scope := range []render.Scope{{}, {HostIDs: []uuid.UUID{hDb01}}} {
+		in := fixture()
+		in.Groups[0].ParentID = ptr(gWebserver) // production below its own child
+		in.Scope = scope
+		_, err := render.Render(in)
+		if !errors.Is(err, render.ErrUnrenderable) || !strings.Contains(err.Error(), "production, webserver") || !strings.Contains(err.Error(), "cycle") {
+			t.Errorf("scope %+v: %v", scope, err)
+		}
+	}
+}

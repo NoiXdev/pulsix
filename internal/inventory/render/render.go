@@ -118,8 +118,9 @@ type renderer struct {
 }
 
 // Render renders in. It fails with ErrUnrenderable, rather than guessing,
-// when a host's jump host cannot be resolved: a job must never take a
-// different route than shown.
+// when the group tree has a cycle or a host's jump host cannot be resolved:
+// a job must never see a different inventory or take a different route
+// than shown.
 func Render(in Input) (Inventory, error) {
 	r := renderer{in: in, groups: make(map[uuid.UUID]Group, len(in.Groups)), hosts: make(map[uuid.UUID]Host, len(in.Hosts))}
 	nodes := make([]grouptree.Node, len(in.Groups))
@@ -130,6 +131,9 @@ func Render(in Input) (Inventory, error) {
 	r.tree = grouptree.New(nodes)
 	for _, h := range in.Hosts {
 		r.hosts[h.ID] = h
+	}
+	if err := r.checkTree(); err != nil {
+		return Inventory{}, err
 	}
 	return r.run()
 }
