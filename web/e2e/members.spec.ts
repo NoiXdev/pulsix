@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { readFileSync } from 'node:fs';
+import { ADMIN_STORAGE_STATE, ORG, OPERATOR_TOTP_STATE_PATH, OPERATOR_TOTP_STEP_STATE_PATH, SMTP } from './env.ts';
 import { extractInviteLink, waitForMessageTo } from './mailpit.ts';
+import { enrolTotp } from './enrol.ts';
+import { nextTotpCode } from './otp.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -47,15 +50,13 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
     await operatorPage.getByLabel('Choose a password').fill(OPERATOR.password);
     await operatorPage.getByRole('button', { name: 'Accept invitation' }).click();
 
-    // Accepting an invite that creates a brand-new account now opens a
-    // session right away — MFA-complete, exactly like Login treats an
-    // account with no second factor enrolled (see
-    // tenancy.Service.AcceptInvite / api.registerInviteAcceptRoute) — so
-    // the operator lands signed in, continuing straight past the
-    // enrolment screen (this account never enrols one in this spec)
-    // rather than hitting a login-required dead end that used to require
-    // a separate, explicit sign-in step here.
-    await expect(operatorPage).toHaveURL(/\/account\/security$/);
+    // Accepting an invite that creates a brand-new account opens a
+    // session right away (see tenancy.Service.AcceptInvite /
+    // api.registerInviteAcceptRoute) — but a second factor is mandatory,
+    // so that session can do nothing but enrol one. Enrolling completes
+    // it and the page continues into the organization.
+    await enrolTotp(operatorPage, OPERATOR_TOTP_STATE_PATH, OPERATOR_TOTP_STEP_STATE_PATH);
+    await expect(operatorPage).toHaveURL(new RegExp(`/o/${ORG.slug}/hosts$`));
 
     // The actual assertion this spec exists for: an operator (role
     // "operator", which tenancy.PermMembersManage does not grant) hitting
@@ -113,10 +114,15 @@ test("re-inviting an address that already has an account adds the membership but
     await expect(acceptPage).toHaveURL(/\/login$/);
 
     // The account's real password — set when OPERATOR first accepted,
-    // never the one just submitted above — is what actually works.
+    // never the one just submitted above — and its own second factor are
+    // what actually work.
     await acceptPage.getByLabel('Email address').fill(OPERATOR.email);
     await acceptPage.getByLabel('Password').fill(OPERATOR.password);
     await acceptPage.getByRole('button', { name: 'Sign in' }).click();
+    await expect(acceptPage.getByRole('heading', { name: 'Enter your second-factor code' })).toBeVisible();
+    const operatorSecret = (JSON.parse(readFileSync(OPERATOR_TOTP_STATE_PATH, 'utf8')) as { secret: string }).secret;
+    await acceptPage.getByLabel('6-digit code').fill(await nextTotpCode(operatorSecret, OPERATOR_TOTP_STEP_STATE_PATH));
+    await acceptPage.getByRole('button', { name: 'Verify' }).click();
     await expect(acceptPage).toHaveURL(/\/o\/[^/]+\/hosts$/);
   } finally {
     await context.close();
@@ -126,4 +132,26 @@ test("re-inviting an address that already has an account adds the membership but
   // accepted client-side: the operator now also belongs to secondOrg.
   await page.goto(`/o/${secondOrg.slug}/settings/members`);
   await expect(page.getByText(OPERATOR.email)).toBeVisible();
+});
+
+// The instance administrator's "Outgoing mail" settings (I4: mail can be
+// configured from the SPA after the wizard): the page shows what setup.spec
+// configured, saves it back, and a test e-mail really arrives.
+test('the Outgoing mail settings show the configured server and send a test e-mail', async ({ page }) => {
+  await page.goto(`/o/${ORG.slug}/settings/members`);
+  await page.getByRole('tab', { name: 'Outgoing mail' }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/mail$`));
+  await expect(page.getByRole('heading', { name: 'Outgoing mail' })).toBeVisible();
+  await expect(page.getByText('configured', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Host', { exact: true })).toHaveValue(SMTP.host);
+  await expect(page.getByLabel('From address', { exact: true })).toHaveValue(SMTP.from);
+
+  await page.getByRole('button', { name: /Save mail settings/ }).click();
+  await expect(page.getByText('Mail settings saved')).toBeVisible();
+
+  const recipient = 'smtp-test@example.test';
+  await page.getByLabel('Recipient').fill(recipient);
+  await page.getByRole('button', { name: /Send test e-mail/ }).click();
+  await expect(page.getByText(`Test e-mail sent to ${recipient}`)).toBeVisible();
+  expect(await waitForMessageTo(recipient)).toContain("This is a test message sent from your Pulsix instance's SMTP settings.");
 });

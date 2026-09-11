@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { ADMIN, ADMIN_STORAGE_STATE, ORG, SMTP, TOTP_STATE_PATH, TOTP_STEP_STATE_PATH } from './env.ts';
-import { nextTotpCode } from './otp.ts';
+import { enrolTotp } from './enrol.ts';
 
 /**
  * setup.spec is the one journey every other spec depends on: it is what
@@ -59,44 +59,29 @@ test('a fresh instance redirects to /setup, the wizard creates the instance, and
   await expect(page.getByRole('heading', { name: 'Enrol a second factor now' })).toBeVisible();
   await page.getByRole('button', { name: 'Create administrator & continue' }).click();
 
-  await expect(page).toHaveURL(/\/account\/security$/);
-  // Scoped to the status Pill specifically (span.rounded-full): the same
-  // "second/Second factor required/active" text also appears, differently
-  // capitalized, in the shell's own user-footer subtitle — a plain
-  // getByText would match both and fail Playwright's strict-mode check.
+  // A second factor is mandatory: the new administrator has none, so the
+  // wizard's session is sent to enrolment and can reach nothing else yet.
+  await expect(page).toHaveURL(/\/account\/enrol$/);
   const mfaPill = page.locator('span.rounded-full', { hasText: 'second factor' });
   await expect(mfaPill).toHaveText(/second factor required/i);
+  const blocked = await page.evaluate(async (orgSlug) => (await fetch(`/api/v1/orgs/${orgSlug}/hosts`)).status, ORG.slug);
+  expect(blocked).toBe(403);
 
   // Enrol TOTP with a code computed from the secret the page itself
   // exposes — this is the load-bearing assertion of the whole spec: if
   // enrolment were broken (wrong endpoint, wrong request shape, a code
-  // the backend never actually validates), the "Confirm" step below would
-  // never get past its own error toast.
-  await page.getByRole('button', { name: 'Enrol authenticator app' }).click();
-  const secret = await page.locator('code').textContent();
-  if (!secret) throw new Error('TOTP secret was not rendered on the enrolment screen');
+  // the backend never actually validates), the "Confirm" step would never
+  // get past its own error toast. enrolTotp also checks for the eight
+  // recovery codes' heading and dismisses them.
+  await enrolTotp(page, TOTP_STATE_PATH, TOTP_STEP_STATE_PATH);
 
-  mkdirSync(path.dirname(TOTP_STATE_PATH), { recursive: true });
-  writeFileSync(TOTP_STATE_PATH, JSON.stringify({ secret: secret.trim() }));
-
-  await page.getByPlaceholder('482913').fill(await nextTotpCode(secret.trim(), TOTP_STEP_STATE_PATH));
-  await page.getByRole('button', { name: 'Confirm' }).click();
-
-  await expect(page.getByText('Recovery codes — shown once.')).toBeVisible();
-  // Eight one-time recovery codes, matching auth.TOTP's own enrolment
-  // contract (see AccountSecurityPage: `recoveryCodes.map((c) => <span
-  // key={c}>{c}</span>)` inside the "font-mono text-xs" grid) — a wrong
-  // count would mean confirm returned something other than a real
-  // recovery-code set.
-  await expect(page.locator('div.font-mono.text-xs > span')).toHaveCount(8);
-  await page.getByRole('button', { name: 'I have saved these' }).click();
-  await expect(mfaPill).toHaveText(/second factor active/i);
-
-  // Reach the (empty) host list — the brief's own success criterion for
-  // this spec.
-  await page.getByRole('link', { name: 'Hosts' }).click();
+  // Enrolling completed the session without a fresh login, and the page
+  // continued into the app: the (empty) host list — the brief's own
+  // success criterion for this spec.
   await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/hosts$`));
   await expect(page.getByText('No hosts yet. Add one to get started.')).toBeVisible();
+  await page.goto('/account/security');
+  await expect(mfaPill).toHaveText(/second factor active/i);
 
   mkdirSync(path.dirname(ADMIN_STORAGE_STATE), { recursive: true });
   await context.storageState({ path: ADMIN_STORAGE_STATE });

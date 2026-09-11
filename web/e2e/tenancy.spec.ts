@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { ADMIN_STORAGE_STATE, ORG, TENANT_TOTP_STATE_PATH, TENANT_TOTP_STEP_STATE_PATH } from './env.ts';
 import { extractInviteLink, waitForMessageTo } from './mailpit.ts';
+import { enrolTotp } from './enrol.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -48,11 +49,10 @@ test('a second organization\'s user cannot see the first organization\'s hosts, 
 
     // Accepting an invite that creates a brand-new account opens a
     // session right away (see tenancy.Service.AcceptInvite /
-    // api.registerInviteAcceptRoute), so the invitee lands signed in with
-    // no separate sign-in step — go straight to "beta"'s hosts page from
-    // here.
-    await expect(tenantPage).toHaveURL(/\/account\/security$/);
-    await tenantPage.goto(`/o/${SECOND_ORG.slug}/hosts`);
+    // api.registerInviteAcceptRoute); a second factor is mandatory, so the
+    // invitee enrols one first and then continues into "beta".
+    await enrolTotp(tenantPage, TENANT_TOTP_STATE_PATH, TENANT_TOTP_STEP_STATE_PATH);
+    await expect(tenantPage).toHaveURL(new RegExp(`/o/${SECOND_ORG.slug}/hosts$`));
     await expect(tenantPage.getByRole('heading', { name: 'Hosts' })).toBeVisible();
 
     // The org switcher (and GET /orgs behind it) must only ever list the

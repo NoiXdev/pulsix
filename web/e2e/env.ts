@@ -71,3 +71,11 @@ export const TOTP_STATE_PATH = path.join(stateDir, 'totp-secret.json');
  * together in wall-clock time, never reserve the same step. */
 export const TOTP_STEP_STATE_PATH = path.join(stateDir, 'totp-step.json');
 export const MANAGER_LOG_PATH = path.join(stateDir, 'manager.log');
+/** The operator members.spec invites enrols TOTP on acceptance (a second
+ * factor is mandatory); its secret and step state let the spec's second
+ * test sign that account back in. */
+export const OPERATOR_TOTP_STATE_PATH = path.join(stateDir, 'operator-totp-secret.json');
+export const OPERATOR_TOTP_STEP_STATE_PATH = path.join(stateDir, 'operator-totp-step.json');
+/** tenancy.spec's second-organization user, enrolled the same way. */
+export const TENANT_TOTP_STATE_PATH = path.join(stateDir, 'tenant-totp-secret.json');
+export const TENANT_TOTP_STEP_STATE_PATH = path.join(stateDir, 'tenant-totp-step.json');
