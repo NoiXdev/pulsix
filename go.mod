@@ -14,9 +14,7 @@ go 1.27
 // script does), breaking client generation. The ignore directive (Go
 // 1.25+) excludes the directory from package loading without creating a
 // second module.
-ignore (
-	./web/node_modules
-)
+ignore ./web/node_modules
 
 require (
 	github.com/danielgtaylor/huma/v2 v2.39.1

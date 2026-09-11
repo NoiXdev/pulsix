@@ -83,6 +83,22 @@ type AuditEvent struct {
 	At         time.Time   `json:"at"`
 }
 
+type Credential struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	Name        string             `json:"name"`
+	Kind        string             `json:"kind"`
+	Username    string             `json:"username"`
+	PublicKey   string             `json:"public_key"`
+	Fingerprint string             `json:"fingerprint"`
+	KeyType     string             `json:"key_type"`
+	Secret      []byte             `json:"secret"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+}
+
 type Host struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`

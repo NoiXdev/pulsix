@@ -95,3 +95,31 @@ func TestOpenWithDifferentKeyFails(t *testing.T) {
 		t.Fatal("sealed value opened with wrong key")
 	}
 }
+
+func TestSealAADBindsCiphertextToItsData(t *testing.T) {
+	box := crypto.NewBox(testKey())
+	sealed, err := box.SealAAD([]byte("hunter2"), []byte("credential:org-a:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := box.OpenAAD(sealed, []byte("credential:org-a:1"))
+	if err != nil || string(plain) != "hunter2" {
+		t.Fatalf("OpenAAD = %q, %v", plain, err)
+	}
+	if _, err := box.OpenAAD(sealed, []byte("credential:org-b:1")); err == nil {
+		t.Fatal("OpenAAD with different data must fail")
+	}
+	if _, err := box.Open(sealed); err == nil {
+		t.Fatal("Open without the data must fail")
+	}
+	if _, err := box.OpenAAD([]byte{1, 2}, nil); err == nil {
+		t.Fatal("OpenAAD of a too-short value must fail")
+	}
+	legacy, err := box.Seal([]byte("old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, err := box.OpenAAD(legacy, nil); err != nil || string(plain) != "old" {
+		t.Fatalf("Seal output must open with nil data: %q, %v", plain, err)
+	}
+}
