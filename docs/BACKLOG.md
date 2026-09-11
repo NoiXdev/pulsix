@@ -101,7 +101,7 @@ the rest of 2.7b (now 2.7c: bootstrap, connection test, host-key pinning), 2.8�
 | 2.3 | Scope flag per field: `group` (set once) or `host` (asked on assignment) | done | |
 | 2.4 | Host-to-group assignment form generated from schema, validation | done | |
 | 2.5 | Host override of group values (optional per field) | done | |
-| 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | done | |
+| 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | in progress | masked dynamic-inventory preview done (v0.2a); the worker's revealed snapshot and its delivery arrive with v0.2b |
 | 2.7 | Credentials & secrets page: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and key rotation via playbook | in progress | store, usage, expiry done (v0.2a); rotation via playbook in v0.2b |
 | 2.7a | SSH jump hosts (bastions): org-level objects, chainable, inherited zone → group → host, rendered as ProxyJump | done | |
 | 2.7b | SSH onboarding: Pulsix-generated or imported keys with visible public key + snippets (authorized_keys, cloud-init, Terraform) | done | mockup: enrollment step 3 |
@@ -125,6 +125,10 @@ Items the v0.2a final whole-branch review deferred to the v0.2b plan. Recorded 2
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 2.15 | Serialize tree-changing group writes and chain-changing jump-host writes per organization (transaction + advisory lock), closing the concurrent-move cycle and the jump-host chain race | planned | until then the renderer fails closed on a group cycle or a broken chain (409 on the previews) |
+| 2.16 | Render inventories inside one repeatable-read transaction | planned | today the renderer's reads (groups, memberships, hosts, SSH settings, jump hosts, credentials) are separate statements |
+| 2.17 | Credential metadata reads without the sealed secret column; a separate secret read for the worker | planned | |
+| 2.18 | Host SSH card read-only for viewers | planned | |
+| 2.19 | Cross-org and malformed-id API tests for every inventory write route | planned | |
 
 ## v0.3 · Agent & monitoring
 
