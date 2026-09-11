@@ -101,6 +101,28 @@ describe('AccountSecurityPage TOTP secret handling (Critical fix)', () => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   });
 
+  it('sends no "code" field at all for a first-time enrolment, not an empty one — an empty string still 422s against the backend\'s ^[0-9]{6}$ pattern', async () => {
+    const user = userEvent.setup();
+    const enrol = mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: false,
+        totp_confirmed: false,
+        instance_admin: true,
+      },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/totp/enrol': { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/pulsix?secret=JBSWY3DPEHPK3PXP' },
+    });
+
+    renderPage(qc);
+    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await screen.findByText('JBSWY3DPEHPK3PXP');
+
+    const call = enrol.mock.calls.find(([req]) => (req instanceof Request ? req.url : req.toString()).includes('/auth/totp/enrol'));
+    const sentBody = call?.[0] instanceof Request ? await call[0].clone().text() : undefined;
+    expect(sentBody).toBe('{}');
+  });
+
   it('leaves no mutation cache entry carrying the TOTP secret or recovery codes once the recovery codes are dismissed', async () => {
     const user = userEvent.setup();
     mockApi({

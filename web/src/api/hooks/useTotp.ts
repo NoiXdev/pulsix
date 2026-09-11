@@ -15,7 +15,16 @@ import { api, unwrap } from '../client.ts';
  */
 export function useEnrolTotp() {
   return useMutation({
-    mutationFn: (code?: string) => unwrap(api.POST('/api/v1/auth/totp/enrol', { body: { code: code ?? '' } })),
+    // A first-time enrolment sends no code at all — internal/api's
+    // codeInput.Body.Code carries `pattern:"^[0-9]{6}$"`, which huma
+    // enforces on any *present* value, empty string included. Sending
+    // `{ code: "" }` (as this used to) therefore 422s outright, breaking
+    // enrolment for every user with no existing factor — i.e. everyone
+    // the setup wizard's own "enrol a second factor now" step sends here.
+    // Only re-enrolling over an already-confirmed secret needs a code
+    // (auth.TOTP.BeginEnrol), so the key is omitted entirely when there
+    // is none, not sent empty.
+    mutationFn: (code?: string) => unwrap(api.POST('/api/v1/auth/totp/enrol', { body: code ? { code } : {} })),
     gcTime: 0,
   });
 }
