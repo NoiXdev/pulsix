@@ -1,6 +1,7 @@
 package inventory_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -135,5 +136,102 @@ func TestRenderFailureIsUnrenderable(t *testing.T) {
 	}
 	if _, err := r.HostPreview(ctx, f.org, f.web01); !errors.Is(err, inventory.ErrUnrenderable) {
 		t.Fatalf("HostPreview: %v", err)
+	}
+}
+
+// retypeSecrets turns the webserver group's two secret fields into strings,
+// as an operator editing the schema would.
+func retypeSecrets(t *testing.T, f fixture, groupID uuid.UUID, group, member bool) {
+	t.Helper()
+	sc := webSchema()
+	if group {
+		sc.Fields[1].Type = schema.TypeString
+	}
+	if member {
+		sc.Fields[3].Fields[1].Type = schema.TypeString
+	}
+	cur := f.store.groups[groupID]
+	if _, _, err := f.svc.SetSchema(ctx, f.org, groupID, cur.Revision, sc); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSecretFieldTurnedStringNeverLeaksTheEnvelope pins the fix for sealed
+// values surviving a secret field's type change: the preview masks them and
+// a snapshot refuses to render rather than hand Ansible the envelope or
+// silently lose the value.
+func TestSecretFieldTurnedStringNeverLeaksTheEnvelope(t *testing.T) {
+	f, r, g := rendererFixture(t)
+	retypeSecrets(t, f, g.ID, false, true)
+
+	preview, err := r.Preview(ctx, f.org, render.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hv := preview.Doc["_meta"].(map[string]any)["hostvars"].(map[string]any)["web-01"].(map[string]any)
+	if got := hv["vhosts"].([]any)[0].(map[string]any)["password"]; got != render.MaskedSecret {
+		t.Fatalf("preview member value after secret→string = %#v", got)
+	}
+	_, err = r.Snapshot(ctx, f.org, render.Scope{})
+	if !errors.Is(err, inventory.ErrUnrenderable) {
+		t.Fatalf("snapshot with a sealed member value under a string field: %v", err)
+	}
+	for _, want := range []string{"webserver", "web-01", "vhosts[0].password"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("snapshot error %q does not name %s", err, want)
+		}
+	}
+
+	retypeSecrets(t, f, g.ID, true, true)
+	preview, err = r.Preview(ctx, f.org, render.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := preview.Doc["webserver"].(map[string]any)["vars"].(map[string]any)["db_password"]; got != render.MaskedSecret {
+		t.Fatalf("preview group value after secret→string = %#v", got)
+	}
+	raw, err := json.Marshal(preview.Doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "$sealed") {
+		t.Fatalf("the preview carries a ciphertext envelope: %s", raw)
+	}
+	_, err = r.Snapshot(ctx, f.org, render.Scope{})
+	if !errors.Is(err, inventory.ErrUnrenderable) || !strings.Contains(err.Error(), "webserver") || !strings.Contains(err.Error(), "db_password") {
+		t.Fatalf("snapshot with a sealed group value under a string field: %v", err)
+	}
+}
+
+// TestStringFieldTurnedSecretIsMaskedInThePreview pins the reverse change: a
+// value stored in plain text before its field became a secret is masked in
+// the preview like any other secret.
+func TestStringFieldTurnedSecretIsMaskedInThePreview(t *testing.T) {
+	f, r, g := rendererFixture(t)
+	sc := webSchema()
+	sc.Fields = append(sc.Fields, schema.Field{Name: "api_token", Type: schema.TypeString})
+	v, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SetVars(ctx, f.org, g.ID, v.Revision, map[string]any{
+		"env": "prod", "db_password": map[string]any{"$secret": "keep", "from": "db_password"}, "api_token": "plain-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sc.Fields[len(sc.Fields)-1].Type = schema.TypeSecret
+	if _, _, err := f.svc.SetSchema(ctx, f.org, g.ID, f.store.groups[g.ID].Revision, sc); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := r.Preview(ctx, f.org, render.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := preview.Doc["webserver"].(map[string]any)["vars"].(map[string]any)["api_token"]; got != render.MaskedSecret {
+		t.Fatalf("preview of a plain value under a secret field = %#v", got)
+	}
+	snap, err := r.Snapshot(ctx, f.org, render.Scope{})
+	if err != nil || snap.Doc["webserver"].(map[string]any)["vars"].(map[string]any)["api_token"] != "plain-token" {
+		t.Fatalf("snapshot of a plain value under a secret field: %v", err)
 	}
 }

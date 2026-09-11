@@ -3,6 +3,7 @@ package schema
 import (
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -54,28 +55,106 @@ func KeepFrom(v any) (string, bool) {
 // depth and whether or not a schema still declares it, replaced by Mask().
 // Reads use it so no ciphertext ever leaves the manager.
 func MaskVars(values map[string]any) map[string]any {
+	return ReplaceSealed(values, func() any { return Mask() })
+}
+
+// ReplaceSealed returns a deep copy of values with every sealed value, at
+// any depth and whether or not a schema still declares it, replaced by what
+// with returns.
+func ReplaceSealed(values map[string]any, with func() any) map[string]any {
 	out := make(map[string]any, len(values))
 	for k, v := range values {
-		out[k] = maskValue(v)
+		out[k] = replaceSealed(v, with)
 	}
 	return out
 }
 
-func maskValue(v any) any {
+func replaceSealed(v any, with func() any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		if _, ok := SealedBytes(t); ok {
-			return Mask()
+			return with()
 		}
-		return MaskVars(t)
+		return ReplaceSealed(t, with)
 	case []any:
 		out := make([]any, len(t))
 		for i, x := range t {
-			out[i] = maskValue(x)
+			out[i] = replaceSealed(x, with)
 		}
 		return out
 	default:
 		return v
+	}
+}
+
+// StraySealed returns, in field order, the paths of sealed values that sit
+// at a declared path whose field is not secret-typed — left behind when a
+// secret field changed type. Values of secret fields are not strays, and
+// undeclared (orphaned) keys are not looked at: rendering drops them.
+func StraySealed(fields []Field, values map[string]any) []string {
+	var out []string
+	strayObject(&out, "", fields, values)
+	return out
+}
+
+func strayObject(out *[]string, prefix string, fields []Field, values map[string]any) {
+	for _, f := range fields {
+		if v, ok := values[f.Name]; ok && v != nil {
+			strayValue(out, join(prefix, f.Name), f, v)
+		}
+	}
+}
+
+func strayValue(out *[]string, path string, f Field, v any) {
+	if f.Type == TypeSecret {
+		return
+	}
+	if _, ok := SealedBytes(v); ok {
+		*out = append(*out, path)
+		return
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		if f.Type == TypeObject {
+			strayObject(out, path, f.Fields, t)
+			return
+		}
+		sealedWithin(out, path, t)
+	case []any:
+		for i, it := range t {
+			ip := fmt.Sprintf("%s[%d]", path, i)
+			if obj, ok := it.(map[string]any); ok && f.Type == TypeRepeater {
+				if _, sealed := SealedBytes(obj); !sealed {
+					strayObject(out, ip, f.Fields, obj)
+					continue
+				}
+			}
+			sealedWithin(out, ip, it)
+		}
+	}
+}
+
+// sealedWithin appends the path of every sealed value inside v, which a
+// field of the wrong shape holds.
+func sealedWithin(out *[]string, path string, v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		if _, ok := SealedBytes(t); ok {
+			*out = append(*out, path)
+			return
+		}
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			sealedWithin(out, join(path, k), t[k])
+		}
+	case []any:
+		for i, x := range t {
+			sealedWithin(out, fmt.Sprintf("%s[%d]", path, i), x)
+		}
 	}
 }
 

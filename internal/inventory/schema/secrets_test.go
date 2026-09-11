@@ -146,3 +146,60 @@ func TestLookup(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceSealedReplacesAtAnyDepth(t *testing.T) {
+	in := map[string]any{
+		"top":    schema.Sealed([]byte{1}),
+		"list":   []any{schema.Sealed([]byte{2}), "plain"},
+		"nested": map[string]any{"deep": schema.Sealed([]byte{3}), "n": 1.0},
+	}
+	got := schema.ReplaceSealed(in, func() any { return "***" })
+	want := map[string]any{"top": "***", "list": []any{"***", "plain"}, "nested": map[string]any{"deep": "***", "n": 1.0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReplaceSealed = %v", got)
+	}
+	if _, ok := schema.SealedBytes(in["top"]); !ok {
+		t.Fatal("ReplaceSealed must not mutate its input")
+	}
+}
+
+// TestStraySealed pins which sealed values a snapshot refuses: those at a
+// declared path whose field is no longer secret-typed, at any depth and in
+// any shape. Secret fields and undeclared (orphaned) keys are not strays.
+func TestStraySealed(t *testing.T) {
+	sealed := schema.Sealed([]byte("ct"))
+	str := schema.Field{Name: "v", Type: schema.TypeString}
+	secret := schema.Field{Name: "v", Type: schema.TypeSecret}
+	cases := []struct {
+		name   string
+		fields []schema.Field
+		values map[string]any
+		want   []string
+	}{
+		{"sealed under a secret", []schema.Field{secret}, map[string]any{"v": sealed}, nil},
+		{"plain under a secret", []schema.Field{secret}, map[string]any{"v": "plain"}, nil},
+		{"orphaned sealed value", []schema.Field{str}, map[string]any{"gone": sealed}, nil},
+		{"null value", []schema.Field{str}, map[string]any{"v": nil}, nil},
+		{"sealed under a string", []schema.Field{str}, map[string]any{"v": sealed}, []string{"v"}},
+		{"sealed under an int", []schema.Field{{Name: "v", Type: schema.TypeInt}}, map[string]any{"v": sealed}, []string{"v"}},
+		{"sealed under an object", []schema.Field{{Name: "v", Type: schema.TypeObject, Fields: []schema.Field{str}}}, map[string]any{"v": sealed}, []string{"v"}},
+		{"sealed inside a mismatched map", []schema.Field{str}, map[string]any{"v": map[string]any{"a": sealed}}, []string{"v.a"}},
+		{"sealed list items", []schema.Field{{Name: "v", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeString}}},
+			map[string]any{"v": []any{"a", sealed, sealed}}, []string{"v[1]", "v[2]"}},
+		{"nested field turned string", []schema.Field{{Name: "v", Type: schema.TypeRepeater, Fields: []schema.Field{
+			{Name: "domain", Type: schema.TypeString}, {Name: "password", Type: schema.TypeString}, {Name: "key", Type: schema.TypeSecret},
+		}}}, map[string]any{"v": []any{
+			map[string]any{"domain": "a.io", "password": sealed, "key": sealed, "old": sealed},
+			sealed,
+		}}, []string{"v[0].password", "v[1]"}},
+		{"object sub-field", []schema.Field{{Name: "o", Type: schema.TypeObject, Fields: []schema.Field{str, {Name: "s", Type: schema.TypeSecret}}}},
+			map[string]any{"o": map[string]any{"v": sealed, "s": sealed}}, []string{"o.v"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := schema.StraySealed(c.fields, c.values); !slices.Equal(got, c.want) {
+				t.Fatalf("StraySealed = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

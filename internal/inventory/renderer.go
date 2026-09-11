@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -138,8 +139,12 @@ func (r *Renderer) render(ctx context.Context, orgID uuid.UUID, scope render.Sco
 		SSH: map[uuid.UUID]sshconf.HostSSH{}, Bastions: map[uuid.UUID]sshconf.Bastion{},
 		ZoneBastions: zoneBastions, CredentialUsers: map[uuid.UUID]string{}, Scope: scope,
 	}
+	hostNames := make(map[uuid.UUID]string, len(hostList))
+	for _, h := range hostList {
+		hostNames[h.ID] = h.Name
+	}
 	for _, g := range groups {
-		vars, err := r.secrets(g.Schema.GroupFields(), g.Vars, GroupAAD(orgID, g.ID), reveal)
+		vars, err := r.secrets("inventory group "+g.Name, g.Schema.GroupFields(), g.Vars, GroupAAD(orgID, g.ID), reveal)
 		if err != nil {
 			return render.Inventory{}, err
 		}
@@ -147,7 +152,8 @@ func (r *Renderer) render(ctx context.Context, orgID uuid.UUID, scope render.Sco
 	}
 	for _, m := range memberships {
 		g := byID[m.GroupID]
-		vars, err := r.secrets(g.Schema.MembershipFields(), m.Vars, MemberAAD(orgID, m.GroupID, m.HostID), reveal)
+		subject := "inventory group " + g.Name + ", host " + hostNames[m.HostID]
+		vars, err := r.secrets(subject, g.Schema.MembershipFields(), m.Vars, MemberAAD(orgID, m.GroupID, m.HostID), reveal)
 		if err != nil {
 			return render.Inventory{}, err
 		}
@@ -170,16 +176,31 @@ func (r *Renderer) render(ctx context.Context, orgID uuid.UUID, scope render.Sco
 	return render.Render(in)
 }
 
-// secrets masks or opens every sealed value of a declared secret field.
-// Undeclared (orphaned) values are left sealed; the renderer drops them.
-func (r *Renderer) secrets(fields []schema.Field, vars map[string]any, aad []byte, reveal bool) (map[string]any, error) {
+// secrets prepares one row's stored vars for rendering; subject names the
+// row in errors. A preview masks every non-null value of a secret field and
+// every other sealed value, declared or not, so no ciphertext envelope and
+// no plaintext stored before a field became secret is ever shown. A
+// snapshot opens the sealed values of secret fields and fails closed with
+// ErrUnrenderable when a declared field that is no longer secret still
+// holds a sealed value: Ansible must neither receive the envelope nor
+// silently lose the value. Undeclared (orphaned) values stay sealed; the
+// renderer drops them.
+func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[string]any, aad []byte, reveal bool) (map[string]any, error) {
+	if !reveal {
+		masked, err := schema.MapSecrets(fields, vars, func(string, any) (any, error) { return render.MaskedSecret, nil })
+		if err != nil {
+			return nil, err
+		}
+		return schema.ReplaceSealed(masked, func() any { return render.MaskedSecret }), nil
+	}
+	if stray := schema.StraySealed(fields, vars); len(stray) > 0 {
+		return nil, fmt.Errorf("%w: %s: %s still holds a stored secret, but the field is no longer a secret field; enter the value again",
+			ErrUnrenderable, subject, strings.Join(stray, ", "))
+	}
 	return schema.MapSecrets(fields, vars, func(_ string, v any) (any, error) {
 		ct, ok := schema.SealedBytes(v)
 		if !ok {
 			return v, nil
-		}
-		if !reveal {
-			return render.MaskedSecret, nil
 		}
 		plain, err := r.box.OpenAAD(ct, aad)
 		if err != nil {
