@@ -72,7 +72,9 @@ describe('SchemaForm', () => {
   it('shows a stored secret as stored, replaces it, and can keep it again', async () => {
     const user = userEvent.setup();
     render(<Harness fields={[{ name: 'db_password', type: 'secret' }]} initial={{ db_password: keepMarker('db_password') }} />);
-    expect(screen.getByText(/stored/)).toBeInTheDocument();
+    const stored = screen.getByLabelText('db_password');
+    expect(stored).toHaveValue('•••••••• stored');
+    expect(stored).toHaveAttribute('readonly');
     await user.click(screen.getByRole('button', { name: 'Replace' }));
     await user.type(screen.getByLabelText('db_password'), 'n3w');
     expect(current()).toEqual({ db_password: 'n3w' });

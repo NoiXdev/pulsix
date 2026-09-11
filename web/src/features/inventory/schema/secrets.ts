@@ -44,10 +44,27 @@ export function toKeepMarkers(fields: readonly SchemaField[], vars: Vars, prefix
   return out;
 }
 
-/** declaredOnly keeps only the top-level keys fields declare, so saving a
- * form drops values of removed fields (spec §6: never silently, but on the
- * next save). */
+/** declaredOnly keeps only the keys fields declare, at every depth, so
+ * saving a form drops values of fields a schema edit removed (spec §6:
+ * never silently, but on the next save) — matching the server, which
+ * validates strictly at every depth (validateObject's "unknown field"). A
+ * removed sub-field of an object or of a repeater entry is pruned the same
+ * way the top-level orphan is; a non-object repeater entry or a list's
+ * items are left as they are (the server reports those on its own). Never
+ * mutates its input. */
 export function declaredOnly(fields: readonly SchemaField[], vars: Vars): Vars {
-  const names = new Set(fields.map((f) => f.name));
-  return Object.fromEntries(Object.entries(vars).filter(([k]) => names.has(k)));
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  const out: Vars = {};
+  for (const [k, v] of Object.entries(vars)) {
+    const f = byName.get(k);
+    if (!f) continue;
+    if (f.type === 'object' && isRecord(v)) {
+      out[k] = declaredOnly(f.fields ?? [], v);
+    } else if (f.type === 'repeater' && Array.isArray(v)) {
+      out[k] = v.map((item) => (isRecord(item) ? declaredOnly(f.fields ?? [], item) : item));
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }

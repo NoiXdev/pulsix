@@ -241,9 +241,15 @@ function SecretInput({ id, value, onChange, disabled, invalid }: { id: string; v
   if (isKeepMarker(value)) {
     return (
       <div className="flex items-center gap-2">
-        <span id={id} className="font-mono text-xs text-muted-foreground">
-          •••••••• stored
-        </span>
+        <Input
+          id={id}
+          type="text"
+          readOnly
+          disabled={disabled}
+          aria-invalid={invalid ? true : undefined}
+          className="font-mono text-muted-foreground"
+          value="•••••••• stored"
+        />
         <Button type="button" variant="ghost" disabled={disabled} onClick={() => onChange(undefined)}>
           Replace
         </Button>
