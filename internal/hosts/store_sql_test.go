@@ -3,6 +3,7 @@ package hosts_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -181,6 +182,36 @@ func TestSQLStoreUpdateHost(t *testing.T) {
 	}
 }
 
+// TestSQLStoreUpdateHostDuplicateNameUniqueViolation proves UpdateHost maps
+// the hosts (org_id, name) unique constraint to ErrNameTaken against the
+// real database, mirroring TestSQLStoreCreateHostDuplicateNameUniqueViolation
+// — creation's own mapping was already covered against the real store, but
+// update's was only covered against the fake (hosts.Service's own
+// TestUpdateHostValidatesNameAndZone), leaving the real SQLStore.UpdateHost
+// error-code branch unexercised (Task 13 fix round 1, adjacent fix).
+func TestSQLStoreUpdateHostDuplicateNameUniqueViolation(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(q)
+	org := seedOrg(t, q, "hosts-update-dup-org")
+	zone := seedZone(t, store, org, "fra")
+
+	if err := store.CreateHost(ctx, hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "web-01"}); err != nil {
+		t.Fatal(err)
+	}
+	h2 := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "web-02"}
+	if err := store.CreateHost(ctx, h2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Renaming web-02 to web-01's already-taken name must be reported as a
+	// conflict, not a generic 500 — the same guarantee CreateHost already
+	// gives, now proven for UpdateHost against the real unique constraint.
+	if _, err := store.UpdateHost(ctx, hosts.Host{ID: h2.ID, OrgID: org, ZoneID: zone.ID, Name: "web-01"}); !errors.Is(err, hosts.ErrNameTaken) {
+		t.Fatalf("rename to a taken name: %v, want ErrNameTaken", err)
+	}
+}
+
 func TestSQLStoreDeleteHostScopedToOrg(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -291,6 +322,92 @@ func TestSQLStoreListHostsFilters(t *testing.T) {
 	got, _, err = store.ListHosts(ctx, org, hosts.ListFilter{Query: "10.0.0"}, "", 10)
 	if err != nil || len(got) != 1 || got[0].Name != "web-01" {
 		t.Fatalf("query filter (address): %+v %v", got, err)
+	}
+}
+
+// TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone proves
+// PatchCapabilities' nil-means-unchanged contract against the real
+// database: setting only monitored must not disturb managed, sequentially
+// (the concurrency case below is TestSQLStorePatchCapabilitiesConcurrent).
+func TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(q)
+	org := seedOrg(t, q, "hosts-patch-org")
+	zone := seedZone(t, store, org, "fra")
+
+	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "k3s-01", Managed: true}
+	if err := store.CreateHost(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+
+	on := true
+	updated, err := store.PatchCapabilities(ctx, org, h.ID, nil, &on)
+	if err != nil {
+		t.Fatalf("PatchCapabilities: %v", err)
+	}
+	if !updated.Managed || !updated.Monitored {
+		t.Fatalf("updated = %+v, want managed still true and monitored now true", updated)
+	}
+
+	if _, err := store.PatchCapabilities(ctx, org, uuid.Must(uuid.NewV7()), &on, nil); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("unknown host: %v, want ErrNotFound", err)
+	}
+}
+
+// TestSQLStorePatchCapabilitiesConcurrent is Task 13 fix round 1's finding
+// 2 test: two goroutines patch the *same* host at the same time, one
+// setting only managed, the other only monitored, starting from both
+// false. A start channel (closed only once both goroutines are blocked on
+// it) forces the two UPDATE statements to actually race against the real
+// database rather than merely running back-to-back on one goroutine — the
+// only way this test could have caught the lost-update bug the read-
+// modify-write version of SetCapabilities had (two concurrent callers each
+// reading the pre-update row and each writing back a version that clobbers
+// the other's change). If both flags are not true afterward, one of the
+// two concurrent writes was lost.
+func TestSQLStorePatchCapabilitiesConcurrent(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(q)
+	org := seedOrg(t, q, "hosts-patch-race-org")
+	zone := seedZone(t, store, org, "fra")
+
+	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "k3s-race"}
+	if err := store.CreateHost(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+
+	on := true
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, errs[0] = store.PatchCapabilities(ctx, org, h.ID, &on, nil)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, errs[1] = store.PatchCapabilities(ctx, org, h.ID, nil, &on)
+	}()
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent patch %d: %v", i, err)
+		}
+	}
+
+	got, err := store.GetHost(ctx, org, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Managed || !got.Monitored {
+		t.Fatalf("host after concurrent patches = %+v, want both managed and monitored true (a lost-update race dropped one write)", got)
 	}
 }
 

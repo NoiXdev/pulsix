@@ -32,6 +32,14 @@ type fakeHostStore struct {
 	// lastListLimit records the limit ListHosts was actually called with,
 	// for TestListHostsClampsLimit.
 	lastListLimit int
+
+	// orgsWithoutZone is returned by OrgsWithoutDefaultZone as-is. The fake
+	// has no separate notion of "every organization that exists" (only
+	// whichever zones happen to have been created), unlike the real SQL
+	// store's query, which scans the organizations table directly — so
+	// ReconcileDefaultZones' own tests set this to whatever candidate list
+	// they want the reconciliation pass to see.
+	orgsWithoutZone []uuid.UUID
 }
 
 func newFakeHostStore() *fakeHostStore {
@@ -129,6 +137,31 @@ func (f *fakeHostStore) UpdateHost(_ context.Context, h hosts.Host) (hosts.Host,
 	merged.Managed, merged.Monitored = h.Managed, h.Monitored
 	f.list[h.ID] = merged
 	return merged, nil
+}
+
+func (f *fakeHostStore) PatchCapabilities(_ context.Context, orgID, hostID uuid.UUID, managed, monitored *bool) (hosts.Host, error) {
+	if err := f.take("PatchCapabilities"); err != nil {
+		return hosts.Host{}, err
+	}
+	h, ok := f.list[hostID]
+	if !ok || h.OrgID != orgID {
+		return hosts.Host{}, hosts.ErrNotFound
+	}
+	if managed != nil {
+		h.Managed = *managed
+	}
+	if monitored != nil {
+		h.Monitored = *monitored
+	}
+	f.list[hostID] = h
+	return h, nil
+}
+
+func (f *fakeHostStore) OrgsWithoutDefaultZone(_ context.Context) ([]uuid.UUID, error) {
+	if err := f.take("OrgsWithoutDefaultZone"); err != nil {
+		return nil, err
+	}
+	return f.orgsWithoutZone, nil
 }
 
 func (f *fakeHostStore) DeleteHost(_ context.Context, orgID, hostID uuid.UUID) error {
@@ -487,7 +520,14 @@ func TestDecodeCursorEmptyIsFirstPage(t *testing.T) {
 	}
 }
 
-func TestCreateHostPropagatesGetHostStoreError(t *testing.T) {
+// TestSetCapabilitiesPropagatesPatchStoreError proves a genuine store
+// failure from SetCapabilities' single atomic write is never swallowed
+// into ErrNotFound. (Previously named TestCreateHostPropagatesGetHostStoreError
+// — that name was wrong on two counts: it is SetCapabilities under test,
+// not CreateHost, and SetCapabilities no longer calls GetHost at all since
+// Task 13 fix round 1, finding 2 replaced its read-modify-write with one
+// atomic Store.PatchCapabilities call.)
+func TestSetCapabilitiesPropagatesPatchStoreError(t *testing.T) {
 	st := newFakeHostStore()
 	svc := hosts.NewService(st, time.Now)
 	org := uuid.Must(uuid.NewV7())
@@ -497,8 +537,74 @@ func TestCreateHostPropagatesGetHostStoreError(t *testing.T) {
 		t.Fatal(err)
 	}
 	boom := errors.New("boom")
-	st.failNext["GetHost"] = boom
+	st.failNext["PatchCapabilities"] = boom
 	if _, err := svc.SetCapabilities(ctx, org, h.ID, nil, nil); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want %v (a genuine store failure must never be swallowed into ErrNotFound)", err, boom)
+	}
+}
+
+// TestReconcileDefaultZonesCreatesMissingZones proves
+// Service.ReconcileDefaultZones gives every organization store.
+// OrgsWithoutDefaultZone names its default zone.
+func TestReconcileDefaultZonesCreatesMissingZones(t *testing.T) {
+	st := newFakeHostStore()
+	svc := hosts.NewService(st, time.Now)
+	orgA := uuid.Must(uuid.NewV7())
+	orgB := uuid.Must(uuid.NewV7())
+	st.orgsWithoutZone = []uuid.UUID{orgA, orgB}
+
+	repaired, err := svc.ReconcileDefaultZones(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileDefaultZones: %v", err)
+	}
+	if repaired != 2 {
+		t.Fatalf("repaired = %d, want 2", repaired)
+	}
+	for _, org := range []uuid.UUID{orgA, orgB} {
+		zones, err := svc.ListZones(ctx, org)
+		if err != nil || len(zones) != 1 || zones[0].Slug != hosts.DefaultZoneSlug {
+			t.Fatalf("org %s zones = %+v, %v", org, zones, err)
+		}
+	}
+}
+
+// TestReconcileDefaultZonesContinuesPastOneFailure proves one organization
+// failing to repair does not stop the pass from trying the rest — the
+// whole point of running this at startup instead of failing the server
+// outright.
+func TestReconcileDefaultZonesContinuesPastOneFailure(t *testing.T) {
+	st := newFakeHostStore()
+	svc := hosts.NewService(st, time.Now)
+	orgA := uuid.Must(uuid.NewV7())
+	orgB := uuid.Must(uuid.NewV7())
+	st.orgsWithoutZone = []uuid.UUID{orgA, orgB}
+	boom := errors.New("boom")
+	// Only the first CreateZone call (orgA's) fails; orgB's must still go
+	// through.
+	st.failNext["CreateZone"] = boom
+
+	repaired, err := svc.ReconcileDefaultZones(ctx)
+	if repaired != 1 {
+		t.Fatalf("repaired = %d, want 1 (one org failing must not stop the rest)", repaired)
+	}
+	if err == nil || !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want a joined error wrapping %v", err, boom)
+	}
+	zones, err := svc.ListZones(ctx, orgB)
+	if err != nil || len(zones) != 1 || zones[0].Slug != hosts.DefaultZoneSlug {
+		t.Fatalf("orgB zones = %+v, %v, want a default zone despite orgA's failure", zones, err)
+	}
+}
+
+// TestReconcileDefaultZonesPropagatesListError proves a failure listing
+// candidate organizations itself (as opposed to repairing one of them) is
+// reported, not silently treated as "nothing to repair".
+func TestReconcileDefaultZonesPropagatesListError(t *testing.T) {
+	st := newFakeHostStore()
+	svc := hosts.NewService(st, time.Now)
+	boom := errors.New("boom")
+	st.failNext["OrgsWithoutDefaultZone"] = boom
+	if _, err := svc.ReconcileDefaultZones(ctx); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapped %v", err, boom)
 	}
 }

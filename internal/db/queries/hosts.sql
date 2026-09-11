@@ -33,6 +33,23 @@ SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7, updated
 WHERE id = $1 AND org_id = $2
 RETURNING *;
 
+-- name: PatchHostCapabilities :one
+-- Expresses a partial capabilities update as one atomic statement — the
+-- same nullable-parameter ("param IS NULL OR ...", here COALESCE) idiom
+-- ListHosts' own filters already use below — instead of the service
+-- reading the row and writing every mutable column back. A read-modify-
+-- write is a lost-update race: two concurrent partial updates touching
+-- different flags (an Ansible run turning on managed while monitoring
+-- turns on monitored) can each read the pre-update row and each write back
+-- a version that clobbers the other's change (Task 13 fix round 1, finding
+-- 2). A NULL parameter here leaves that column exactly as it was.
+UPDATE hosts
+SET managed = COALESCE(sqlc.narg(managed)::boolean, managed),
+    monitored = COALESCE(sqlc.narg(monitored)::boolean, monitored),
+    updated_at = now()
+WHERE id = $1 AND org_id = $2
+RETURNING *;
+
 -- name: DeleteHost :execrows
 DELETE FROM hosts WHERE id = $1 AND org_id = $2;
 
@@ -64,3 +81,18 @@ WHERE org_id = sqlc.arg(org_id)
   )
 ORDER BY name ASC, id ASC
 LIMIT sqlc.arg(row_limit);
+
+-- name: OrgsWithoutDefaultZone :many
+-- Used only by the startup reconciliation pass (internal/app.Build, via
+-- hosts.Service.ReconcileDefaultZones): every organization that has no
+-- zone named sqlc.arg(default_zone_slug) (hosts.DefaultZoneSlug, "default")
+-- — the state a post-commit tenancy.OrgCreatedHook failure can leave an
+-- organization in (see that type's own doc comment), which a caller
+-- retrying org creation cannot repair because the slug is already taken.
+-- organizations carries no row-level security of its own (see Task 4's
+-- migration), so this plain scan sees every organization regardless of
+-- pulsix.org_id.
+SELECT o.id FROM organizations o
+WHERE NOT EXISTS (
+  SELECT 1 FROM zones z WHERE z.org_id = o.id AND z.slug = sqlc.arg(default_zone_slug)::text
+);

@@ -114,6 +114,19 @@ func (s *SQLStore) UpdateHost(ctx context.Context, h Host) (Host, error) {
 	return fromHostRow(row)
 }
 
+// PatchCapabilities applies a partial capabilities update in one atomic
+// statement — see PatchHostCapabilities's own comment (internal/db/queries/
+// hosts.sql) for why this must not be a read-modify-write.
+func (s *SQLStore) PatchCapabilities(ctx context.Context, orgID, hostID uuid.UUID, managed, monitored *bool) (Host, error) {
+	row, err := s.q.PatchHostCapabilities(ctx, gen.PatchHostCapabilitiesParams{
+		ID: hostID, OrgID: orgID, Managed: managed, Monitored: monitored,
+	})
+	if err != nil {
+		return Host{}, mapErr(err)
+	}
+	return fromHostRow(row)
+}
+
 func (s *SQLStore) DeleteHost(ctx context.Context, orgID, hostID uuid.UUID) error {
 	n, err := s.q.DeleteHost(ctx, gen.DeleteHostParams{ID: hostID, OrgID: orgID})
 	if err != nil {
@@ -123,6 +136,14 @@ func (s *SQLStore) DeleteHost(ctx context.Context, orgID, hostID uuid.UUID) erro
 		return ErrNotFound
 	}
 	return nil
+}
+
+// OrgsWithoutDefaultZone lists every organization with no zone named
+// DefaultZoneSlug — see OrgsWithoutDefaultZone's own comment (internal/db/
+// queries/hosts.sql) and Service.ReconcileDefaultZones for how this is
+// used.
+func (s *SQLStore) OrgsWithoutDefaultZone(ctx context.Context) ([]uuid.UUID, error) {
+	return s.q.OrgsWithoutDefaultZone(ctx, DefaultZoneSlug)
 }
 
 // ListHosts decodes cursor, runs the query for one extra row beyond limit

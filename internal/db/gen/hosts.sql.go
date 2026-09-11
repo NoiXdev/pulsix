@@ -273,6 +273,91 @@ func (q *Queries) ListZonesForOrg(ctx context.Context, orgID uuid.UUID) ([]Zone,
 	return items, nil
 }
 
+const orgsWithoutDefaultZone = `-- name: OrgsWithoutDefaultZone :many
+SELECT o.id FROM organizations o
+WHERE NOT EXISTS (
+  SELECT 1 FROM zones z WHERE z.org_id = o.id AND z.slug = $1::text
+)
+`
+
+// Used only by the startup reconciliation pass (internal/app.Build, via
+// hosts.Service.ReconcileDefaultZones): every organization that has no
+// zone named sqlc.arg(default_zone_slug) (hosts.DefaultZoneSlug, "default")
+// — the state a post-commit tenancy.OrgCreatedHook failure can leave an
+// organization in (see that type's own doc comment), which a caller
+// retrying org creation cannot repair because the slug is already taken.
+// organizations carries no row-level security of its own (see Task 4's
+// migration), so this plain scan sees every organization regardless of
+// pulsix.org_id.
+func (q *Queries) OrgsWithoutDefaultZone(ctx context.Context, defaultZoneSlug string) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, orgsWithoutDefaultZone, defaultZoneSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const patchHostCapabilities = `-- name: PatchHostCapabilities :one
+UPDATE hosts
+SET managed = COALESCE($3::boolean, managed),
+    monitored = COALESCE($4::boolean, monitored),
+    updated_at = now()
+WHERE id = $1 AND org_id = $2
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at
+`
+
+type PatchHostCapabilitiesParams struct {
+	ID        uuid.UUID `json:"id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	Managed   *bool     `json:"managed"`
+	Monitored *bool     `json:"monitored"`
+}
+
+// Expresses a partial capabilities update as one atomic statement — the
+// same nullable-parameter ("param IS NULL OR ...", here COALESCE) idiom
+// ListHosts' own filters already use below — instead of the service
+// reading the row and writing every mutable column back. A read-modify-
+// write is a lost-update race: two concurrent partial updates touching
+// different flags (an Ansible run turning on managed while monitoring
+// turns on monitored) can each read the pre-update row and each write back
+// a version that clobbers the other's change (Task 13 fix round 1, finding
+// 2). A NULL parameter here leaves that column exactly as it was.
+func (q *Queries) PatchHostCapabilities(ctx context.Context, arg PatchHostCapabilitiesParams) (Host, error) {
+	row := q.db.QueryRow(ctx, patchHostCapabilities,
+		arg.ID,
+		arg.OrgID,
+		arg.Managed,
+		arg.Monitored,
+	)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.Address,
+		&i.Managed,
+		&i.Monitored,
+		&i.Facts,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateHost = `-- name: UpdateHost :one
 UPDATE hosts
 SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7, updated_at = now()

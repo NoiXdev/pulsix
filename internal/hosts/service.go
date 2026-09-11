@@ -136,9 +136,23 @@ type Store interface {
 	// Managed, Monitored) and returns the row as stored, or ErrNotFound if
 	// no host matches (h.ID, h.OrgID).
 	UpdateHost(ctx context.Context, h Host) (Host, error)
+	// PatchCapabilities atomically applies a partial update to the Managed
+	// and/or Monitored flag of the host identified by (orgID, hostID) in a
+	// single statement — a nil pointer leaves that column exactly as it
+	// was — rather than a read-modify-write, so two concurrent calls
+	// touching different flags can never lose one's write to the other's
+	// (Task 13 fix round 1, finding 2). Returns ErrNotFound if no host
+	// matches (orgID, hostID).
+	PatchCapabilities(ctx context.Context, orgID, hostID uuid.UUID, managed, monitored *bool) (Host, error)
 	// DeleteHost removes the host identified by (orgID, hostID), scoped to
 	// the organization, and returns ErrNotFound if no such host existed.
 	DeleteHost(ctx context.Context, orgID, hostID uuid.UUID) error
+	// OrgsWithoutDefaultZone returns the id of every organization that has
+	// no zone named DefaultZoneSlug — used only by
+	// Service.ReconcileDefaultZones, the startup pass that heals an
+	// organization a post-commit OrgCreatedHook failure left zoneless (see
+	// OrgCreatedHook's own doc comment in package tenancy).
+	OrgsWithoutDefaultZone(ctx context.Context) ([]uuid.UUID, error)
 }
 
 // DefaultListLimit and MaxListLimit bound ListHosts' page size, the same
@@ -218,6 +232,36 @@ func (s *Service) EnsureDefaultZone(ctx context.Context, orgID uuid.UUID) error 
 	return nil
 }
 
+// ReconcileDefaultZones finds every organization with no "default" zone —
+// the state a post-commit tenancy.OrgCreatedHook failure can leave behind
+// (see that type's own doc comment) and that a caller retrying org
+// creation cannot repair, since the org's slug is already taken — and
+// gives each one its default zone via EnsureDefaultZone.
+//
+// It is meant to run once at startup (internal/app.Build), turning a
+// permanent inconsistency into one that heals itself on the next restart.
+// One organization failing to repair does not stop the rest from being
+// tried: repaired counts every organization that was actually fixed, and
+// err — when non-nil — joins (errors.Join) every failure that occurred, for
+// the caller to log; it is never returned in a way that would make the
+// caller treat "a handful of organizations are still broken" the same as
+// "the database is unreachable".
+func (s *Service) ReconcileDefaultZones(ctx context.Context) (repaired int, err error) {
+	orgIDs, listErr := s.store.OrgsWithoutDefaultZone(ctx)
+	if listErr != nil {
+		return 0, fmt.Errorf("list organizations without a default zone: %w", listErr)
+	}
+	var errs []error
+	for _, orgID := range orgIDs {
+		if ensureErr := s.EnsureDefaultZone(ctx, orgID); ensureErr != nil {
+			errs = append(errs, fmt.Errorf("org %s: %w", orgID, ensureErr))
+			continue
+		}
+		repaired++
+	}
+	return repaired, errors.Join(errs...)
+}
+
 // CreateHost creates a host under orgID. The zone must already belong to
 // orgID (checked via store.GetZone, so a zone id from another org fails
 // exactly like an unknown one — ErrNotFound), and the name must be valid
@@ -265,23 +309,19 @@ func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, in HostIn
 }
 
 // SetCapabilities updates the Managed and/or Monitored flag of the host
-// identified by (orgID, id). A nil pointer leaves that flag exactly as it
-// was — this is what keeps the two capabilities genuinely independent: a
-// caller setting only Managed can never accidentally clear Monitored (or
-// vice versa), since a flag this call does not mention is never read from
-// anything but the row already stored.
+// identified by (orgID, id) in one atomic store call (Store.PatchCapabilities)
+// rather than a read-modify-write. A nil pointer leaves that flag exactly
+// as it was — this is what keeps the two capabilities genuinely
+// independent: a caller setting only Managed can never accidentally clear
+// Monitored (or vice versa) — and expressing the update as a single
+// statement is what keeps two *concurrent* callers independent too: a
+// read-modify-write here would let one caller's write silently clobber the
+// other's (Task 13 fix round 1, finding 2 — see PatchHostCapabilities'
+// own comment, internal/db/queries/hosts.sql, and
+// TestSQLStorePatchCapabilitiesConcurrent, store_sql_test.go, for the race
+// this closes).
 func (s *Service) SetCapabilities(ctx context.Context, orgID, id uuid.UUID, managed, monitored *bool) (Host, error) {
-	h, err := s.store.GetHost(ctx, orgID, id)
-	if err != nil {
-		return Host{}, err
-	}
-	if managed != nil {
-		h.Managed = *managed
-	}
-	if monitored != nil {
-		h.Monitored = *monitored
-	}
-	return s.store.UpdateHost(ctx, h)
+	return s.store.PatchCapabilities(ctx, orgID, id, managed, monitored)
 }
 
 // ListHosts returns a keyset-paginated page of orgID's hosts matching f.
