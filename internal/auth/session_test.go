@@ -91,7 +91,7 @@ func TestSessionLookupRejectsDisabledUser(t *testing.T) {
 		t.Fatalf("lookup before disabling: %v", err)
 	}
 
-	if err := q.DisableUser(ctx, gen.DisableUserParams{ID: uid, DisabledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+	if _, err := q.DisableUser(ctx, gen.DisableUserParams{ID: uid, DisabledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Lookup(ctx, cookie); err == nil {

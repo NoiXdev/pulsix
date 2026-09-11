@@ -172,8 +172,22 @@ func (s *SQLStore) SetUserPasswordAndName(ctx context.Context, id uuid.UUID, has
 	return s.q.SetUserPasswordAndName(ctx, gen.SetUserPasswordAndNameParams{ID: id, PasswordHash: &hash, DisplayName: name})
 }
 
+// DisableUser returns ErrNotFound for an unknown id and ErrLastInstanceAdmin
+// when the query's own atomic guard refused to disable the last active
+// instance administrator (see tenancy_users.sql). The guard is what decides;
+// the follow-up lookup only tells its two "no row affected" outcomes apart.
 func (s *SQLStore) DisableUser(ctx context.Context, id uuid.UUID, at time.Time) error {
-	return s.q.DisableUser(ctx, gen.DisableUserParams{ID: id, DisabledAt: pgtype.Timestamptz{Time: at, Valid: true}})
+	n, err := s.q.DisableUser(ctx, gen.DisableUserParams{ID: id, DisabledAt: pgtype.Timestamptz{Time: at, Valid: true}})
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.q.GetUserByID(ctx, id); err != nil {
+		return mapErr(err)
+	}
+	return ErrLastInstanceAdmin
 }
 
 func (s *SQLStore) RevokeSessionsForUser(ctx context.Context, id uuid.UUID) error {

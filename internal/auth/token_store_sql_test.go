@@ -166,7 +166,7 @@ func TestSQLTokenStoreGetByHashExcludesDisabledUser(t *testing.T) {
 		t.Fatalf("GetByHash before disabling: %v", err)
 	}
 
-	if err := q.DisableUser(ctx, gen.DisableUserParams{ID: uid, DisabledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+	if _, err := q.DisableUser(ctx, gen.DisableUserParams{ID: uid, DisabledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := store.GetByHash(ctx, hash, time.Now()); !errors.Is(err, auth.ErrNotFound) {

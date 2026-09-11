@@ -317,6 +317,9 @@ func TestSQLStoreListMembersIncludesDisabledAt(t *testing.T) {
 	if err := store.DisableUser(ctx, disabled, at); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.DisableUser(ctx, uuid.Must(uuid.NewV7()), at); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("DisableUser for an unknown user: %v, want ErrNotFound", err)
+	}
 
 	members, err := store.ListMembers(ctx, org.ID)
 	if err != nil {
@@ -554,5 +557,55 @@ func TestInvitesAreIsolatedPerOrgByRLS(t *testing.T) {
 	}
 	if len(seen) != 1 || seen[0] != orgA.ID {
 		t.Fatalf("RLS leak: saw %v, want only [%s]", seen, orgA.ID)
+	}
+}
+
+// TestSQLStoreDisableUserKeepsOneInstanceAdmin covers M6's atomic guard
+// against the real database: the last active instance administrator cannot
+// be disabled, one of two can, and two administrators disabling each other
+// concurrently can never both succeed.
+func TestSQLStoreDisableUserKeepsOneInstanceAdmin(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(d)
+	makeAdmin := func(email string) uuid.UUID {
+		id := seedUser(t, q, email)
+		if _, err := d.Pool().Exec(ctx, `UPDATE users SET instance_admin = true WHERE id = $1`, id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	first := makeAdmin("first-admin@example.test")
+	if err := store.DisableUser(ctx, first, time.Now()); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
+		t.Fatalf("disabling the only instance admin: %v, want ErrLastInstanceAdmin", err)
+	}
+	second := makeAdmin("second-admin@example.test")
+
+	errs := make(chan error, 2)
+	for _, pair := range [][2]uuid.UUID{{first, second}, {second, first}} {
+		go func(target uuid.UUID) { errs <- store.DisableUser(ctx, target, time.Now()) }(pair[0])
+	}
+	var ok, refused int
+	for range 2 {
+		switch err := <-errs; {
+		case err == nil:
+			ok++
+		case errors.Is(err, tenancy.ErrLastInstanceAdmin):
+			refused++
+		default:
+			t.Fatalf("concurrent DisableUser: %v", err)
+		}
+	}
+	if ok != 1 || refused != 1 {
+		t.Fatalf("concurrent deactivation of both admins: %d succeeded, %d refused; want exactly one of each", ok, refused)
+	}
+	var active int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM users WHERE instance_admin AND disabled_at IS NULL`).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("active instance admins = %d, want 1", active)
 	}
 }

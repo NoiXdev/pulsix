@@ -51,8 +51,16 @@ func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipPara
 	return result.RowsAffected(), nil
 }
 
-const disableUser = `-- name: DisableUser :exec
-UPDATE users SET disabled_at = $2 WHERE id = $1
+const disableUser = `-- name: DisableUser :execrows
+UPDATE users AS u SET disabled_at = $2
+WHERE u.id = $1
+  AND (
+    NOT u.instance_admin
+    OR u.disabled_at IS NOT NULL
+    OR (SELECT count(*) FROM (
+          SELECT 1 FROM users AS a WHERE a.instance_admin AND a.disabled_at IS NULL FOR UPDATE
+        ) AS locked_admins) > 1
+  )
 `
 
 type DisableUserParams struct {
@@ -60,9 +68,20 @@ type DisableUserParams struct {
 	DisabledAt pgtype.Timestamptz `json:"disabled_at"`
 }
 
-func (q *Queries) DisableUser(ctx context.Context, arg DisableUserParams) error {
-	_, err := q.db.Exec(ctx, disableUser, arg.ID, arg.DisabledAt)
-	return err
+// Disables id, but refuses (0 rows affected) to disable the instance's last
+// active instance administrator: setup is gated on "no instance
+// administrator exists", so losing the last one would leave the instance
+// unrecoverable without editing the database. The guard is atomic in the
+// same way UpdateMembershipRole's last-owner guard is: the FOR UPDATE
+// subquery locks every active administrator's row before counting them, so
+// two administrators deactivating each other concurrently serialize, and
+// the second sees the first's change instead of both reading "two active".
+func (q *Queries) DisableUser(ctx context.Context, arg DisableUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableUser, arg.ID, arg.DisabledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getOrganizationByID = `-- name: GetOrganizationByID :one

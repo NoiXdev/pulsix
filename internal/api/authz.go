@@ -131,7 +131,7 @@ func mapTenancyErr(ctx context.Context, err error) error {
 		return huma.Error403Forbidden("not a member of this organization")
 	case errors.Is(err, tenancy.ErrForbidden):
 		return huma.Error403Forbidden(err.Error())
-	case errors.Is(err, tenancy.ErrLastOwner):
+	case errors.Is(err, tenancy.ErrLastOwner), errors.Is(err, tenancy.ErrLastInstanceAdmin):
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, tenancy.ErrSlugTaken):
 		return huma.Error409Conflict(err.Error())

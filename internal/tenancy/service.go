@@ -22,6 +22,10 @@ var (
 	ErrForbidden = errors.New("forbidden")
 	ErrLastOwner = errors.New("organization needs at least one owner")
 	ErrSlugTaken = errors.New("slug already in use")
+	// ErrLastInstanceAdmin means the change would leave the instance with
+	// no active instance administrator — refused, since first-run setup is
+	// gated on none existing and could not be re-run to recover.
+	ErrLastInstanceAdmin = errors.New("the instance needs at least one active instance administrator")
 )
 
 // InviteTTL is how long an invitation link works.
@@ -100,6 +104,9 @@ type Store interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	CreateUser(ctx context.Context, u User) error
 	SetUserPasswordAndName(ctx context.Context, id uuid.UUID, hash, name string) error
+	// DisableUser disables id, returning ErrNotFound for an unknown user and
+	// ErrLastInstanceAdmin — atomically, so two concurrent calls cannot both
+	// succeed — when id is the last active instance administrator.
 	DisableUser(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeSessionsForUser(ctx context.Context, id uuid.UUID) error
 	RevokeTokensForUser(ctx context.Context, id uuid.UUID) error
@@ -401,7 +408,10 @@ func (s *Service) RemoveMember(ctx context.Context, orgID uuid.UUID, actorRole R
 
 // DeactivateUser disables target's account instance-wide and ends its
 // access immediately: sessions and API tokens are revoked, not merely
-// flagged for later. actorIsInstanceAdmin is supplied by the handler from
+// flagged for later. It refuses, with ErrLastInstanceAdmin and before
+// revoking anything, to disable the last active instance administrator —
+// the caller themselves included — since the instance could then only be
+// recovered by editing the database. actorIsInstanceAdmin is supplied by the handler from
 // the caller's auth.Principal — the tenancy package has no notion of
 // instance-level roles of its own, only org membership, so it cannot look
 // this up itself.

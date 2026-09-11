@@ -26,6 +26,9 @@ type fakeStore struct {
 	disabledAt   map[uuid.UUID]time.Time
 	revokedSess  map[uuid.UUID]bool
 	revokedTok   map[uuid.UUID]bool
+	// instanceAdmins marks users as instance administrators, for
+	// DisableUser's last-active-administrator guard.
+	instanceAdmins map[uuid.UUID]bool
 
 	// failNext, when set, makes the named method's next call return this
 	// error instead of doing its normal thing — used to exercise a
@@ -39,7 +42,7 @@ func newFakeStore() *fakeStore {
 		users: map[uuid.UUID]tenancy.User{}, usersByEmail: map[string]uuid.UUID{},
 		memberships: map[[2]uuid.UUID]tenancy.Role{}, invites: map[string]tenancy.Invite{},
 		disabledAt: map[uuid.UUID]time.Time{}, revokedSess: map[uuid.UUID]bool{}, revokedTok: map[uuid.UUID]bool{},
-		failNext: map[string]error{},
+		instanceAdmins: map[uuid.UUID]bool{}, failNext: map[string]error{},
 	}
 }
 
@@ -275,9 +278,25 @@ func (f *fakeStore) SetUserPasswordAndName(_ context.Context, id uuid.UUID, hash
 	return nil
 }
 
+// DisableUser mirrors the SQL guard: an unknown user is ErrNotFound, and
+// the last active instance administrator cannot be disabled.
 func (f *fakeStore) DisableUser(_ context.Context, id uuid.UUID, at time.Time) error {
 	if err := f.take("DisableUser"); err != nil {
 		return err
+	}
+	if _, ok := f.users[id]; !ok {
+		return tenancy.ErrNotFound
+	}
+	if _, alreadyDisabled := f.disabledAt[id]; f.instanceAdmins[id] && !alreadyDisabled {
+		active := 0
+		for admin := range f.instanceAdmins {
+			if _, disabled := f.disabledAt[admin]; !disabled {
+				active++
+			}
+		}
+		if active <= 1 {
+			return tenancy.ErrLastInstanceAdmin
+		}
 	}
 	f.disabledAt[id] = at
 	return nil
@@ -898,6 +917,35 @@ func TestDeactivateUserRequiresInstanceAdmin(t *testing.T) {
 	}
 	if _, disabled := st.disabledAt[target]; disabled {
 		t.Fatal("non-admin call must not have disabled the user")
+	}
+}
+
+// TestDeactivateUserRefusesTheLastInstanceAdmin covers M6: setup is gated on
+// "no instance administrator exists", so disabling the last active one —
+// the caller themselves included — would lock the instance for good. It is
+// refused before anything is revoked; with a second active administrator
+// it goes through.
+func TestDeactivateUserRefusesTheLastInstanceAdmin(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	admin := st.addUser("admin@x", true)
+	st.instanceAdmins[admin] = true
+
+	if err := svc.DeactivateUser(ctx, true, admin); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
+		t.Fatalf("deactivating the only instance admin: %v, want ErrLastInstanceAdmin", err)
+	}
+	if st.revokedSess[admin] || st.revokedTok[admin] {
+		t.Fatal("the refused deactivation still revoked sessions or tokens")
+	}
+
+	second := st.addUser("second@x", true)
+	st.instanceAdmins[second] = true
+	if err := svc.DeactivateUser(ctx, true, admin); err != nil {
+		t.Fatalf("deactivating one of two instance admins: %v", err)
+	}
+	if err := svc.DeactivateUser(ctx, true, second); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
+		t.Fatalf("deactivating the remaining instance admin: %v, want ErrLastInstanceAdmin", err)
 	}
 }
 
