@@ -46,6 +46,10 @@ describe('HostDetailPage', () => {
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
       'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
         patched = req.body;
         return { host: { ...HOST.host, managed: true } };
@@ -69,6 +73,10 @@ describe('HostDetailPage', () => {
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
       'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
         putTags = req.body;
         return { tags: [{ key: 'role', value: 'db', source: 'manual' }] };
@@ -90,6 +98,10 @@ describe('HostDetailPage', () => {
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
     });
 
     renderPage(qc);
@@ -109,6 +121,10 @@ describe('HostDetailPage', () => {
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
       'DELETE /api/v1/orgs/acme/hosts/h1': {},
     });
 
@@ -129,6 +145,10 @@ describe('HostDetailPage', () => {
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
       'DELETE /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'host still managed' }), { status: 409 }),
     });
 

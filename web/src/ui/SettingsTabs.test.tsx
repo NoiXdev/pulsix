@@ -39,6 +39,13 @@ describe('SettingsTabs', () => {
     expect(await screen.findByRole('tab', { name: 'Outgoing mail' })).toBeInTheDocument();
   });
 
+  it('links to the Credentials and Jump hosts tabs', async () => {
+    mockApi({ 'GET /api/v1/auth/me': me(false) });
+    renderTabs();
+    expect(await screen.findByRole('tab', { name: 'Credentials' })).toHaveAttribute('href', '/o/acme/settings/credentials');
+    expect(screen.getByRole('tab', { name: 'Jump hosts' })).toHaveAttribute('href', '/o/acme/settings/jump-hosts');
+  });
+
   it('hides it from everyone else', async () => {
     mockApi({ 'GET /api/v1/auth/me': me(false) });
     renderTabs();

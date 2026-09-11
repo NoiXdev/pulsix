@@ -14,6 +14,8 @@ import { MembersPage } from './features/members/MembersPage.tsx';
 import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
+import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
+import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -121,6 +123,8 @@ const activityRoute = createRoute({
   component: ActivityPage,
 });
 const tokensRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/tokens', component: TokensPage });
+const credentialsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/credentials', component: CredentialsPage });
+const jumpHostsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/jump-hosts', component: JumpHostsPage });
 // Instance-wide outgoing mail settings, for instance administrators; filed
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
@@ -138,7 +142,7 @@ const routeTree = rootRoute.addChildren([
     hostDetailRoute,
     groupsRoute,
     groupDetailRoute,
-    settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, mailRoute]),
+    settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, credentialsRoute, jumpHostsRoute, mailRoute]),
   ]),
 ]);
 

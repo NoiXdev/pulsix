@@ -48,6 +48,24 @@ export function SettingsTabs({ org }: { org: string }) {
       >
         API tokens
       </Link>
+      <Link
+        to="/o/$org/settings/credentials"
+        params={{ org }}
+        role="tab"
+        activeProps={{ className: ACTIVE, 'aria-selected': true }}
+        inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+      >
+        Credentials
+      </Link>
+      <Link
+        to="/o/$org/settings/jump-hosts"
+        params={{ org }}
+        role="tab"
+        activeProps={{ className: ACTIVE, 'aria-selected': true }}
+        inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+      >
+        Jump hosts
+      </Link>
       {me.data?.instance_admin && (
         <Link
           to="/o/$org/settings/mail"
