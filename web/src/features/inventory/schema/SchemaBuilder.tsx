@@ -36,9 +36,21 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
   const setFields = (next: SchemaField[]) => onChange({ fields: next });
   const idBase = `sb-${pathPrefix.replace(/[^a-zA-Z0-9]/g, '-') || 'top'}`;
 
+  // Problems about this field list itself, not about any one field: "" at
+  // the top level (e.g. too many fields), or the sub-schema's own path when
+  // nested (e.g. "fields[0]" for the repeater at index 0).
+  const listProblems = (problems ?? []).filter((p) => p.path === pathPrefix);
+
   return (
     <div className={nested ? 'flex flex-col gap-3' : 'grid grid-cols-[240px_minmax(0,1fr)_300px] items-start gap-4'}>
       <div className="flex flex-col gap-1">
+        {listProblems.length > 0 && (
+          <ul role="alert" className="flex flex-col gap-0.5 text-[11px] text-destructive">
+            {listProblems.map((p, i) => (
+              <li key={i}>{p.message}</li>
+            ))}
+          </ul>
+        )}
         <ul className="flex flex-col gap-1" aria-label={nested ? 'Sub-fields' : 'Fields'}>
           {fields.map((f, i) => (
             <li key={i}>
@@ -55,7 +67,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
                 {!nested && scopeOf(f) === 'host' && <Tag>host</Tag>}
                 {f.required && <span className="text-[11px] text-destructive" aria-label="required">*</span>}
                 {hasProblemUnder(problems, fieldPath(pathPrefix, i)) && (
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--px-crit)' }} aria-label="has problems" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-destructive" aria-label="has problems" />
                 )}
               </button>
             </li>
@@ -76,6 +88,12 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
 
       {field ? (
         <FieldEditor
+          // Keyed by schema path so selecting a different field (or moving
+          // one to a new index) always mounts a fresh editor: sub-components
+          // that seed local state from props (OptionsField's textarea text)
+          // must not carry a previous field's state into the newly selected
+          // one.
+          key={fieldPath(pathPrefix, index)}
           field={field}
           path={fieldPath(pathPrefix, index)}
           idBase={`${idBase}-${index}`}
@@ -117,11 +135,43 @@ interface FieldEditorProps {
 
 function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMoveDown, onChange, onMove, onRemove }: FieldEditorProps) {
   const id = (k: string) => `${idBase}-${k}`;
-  const problem = (k: string) => problemAt(problems, `${path}.${k}`) ?? (k === 'name' ? problemAt(problems, path) : undefined);
+  const problem = (k: string) => problemAt(problems, `${path}.${k}`);
   const set = (patch: Partial<SchemaField>) => onChange({ ...field, ...patch });
   const isText = field.type === 'string';
   const hasBounds = isText || field.type === 'int' || field.type === 'float';
   const isCollection = field.type === 'list' || field.type === 'repeater';
+  const isSubSchema = field.type === 'repeater' || field.type === 'object';
+  const hasDefault = SCALAR_TYPES.includes(field.type);
+  const hasItemOptions = field.type === 'list' && field.item?.type === 'enum';
+  const showScope = !nested;
+  const showOverridable = !nested && scopeOf(field) === 'group';
+
+  // Every attribute this editor gives its own dedicated slot to, so the
+  // catch-all list below never repeats a message that is already shown next
+  // to the field it belongs to.
+  const shownSuffixes = ['name', 'type'];
+  if (showScope) shownSuffixes.push('scope');
+  if (showOverridable) shownSuffixes.push('overridable');
+  if (field.type === 'enum') shownSuffixes.push('options');
+  if (hasBounds) shownSuffixes.push('min', 'max');
+  if (isText) shownSuffixes.push('pattern');
+  if (isCollection) shownSuffixes.push('min_items', 'max_items');
+  if (hasItemOptions) shownSuffixes.push('item.options');
+  if (hasDefault) shownSuffixes.push('default');
+  if (isSubSchema) shownSuffixes.push('fields');
+
+  // Every other problem at or under this field's own path: an exact match
+  // on `path` is the field list's own problem (e.g. too many sub-fields),
+  // already shown above the nested list by the recursive SchemaBuilder
+  // itself; anything starting with `fields[` belongs to a sub-field, shown
+  // by that sub-field's own editor. What is left has nowhere dedicated to
+  // go, so it is listed here rather than staying invisible.
+  const otherProblems = (problems ?? []).filter((p) => {
+    if (!p.path.startsWith(`${path}.`)) return false;
+    const suffix = p.path.slice(path.length + 1);
+    if (suffix.startsWith('fields[')) return false;
+    return !shownSuffixes.includes(suffix);
+  });
 
   return (
     <div role="group" aria-label={`Field ${field.name}`} className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-4">
@@ -136,6 +186,11 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
               </option>
             ))}
           </select>
+          {problem('type') && (
+            <span role="alert" className="text-[11px] text-destructive">
+              {problem('type')}
+            </span>
+          )}
         </div>
       </div>
       <TextField id={id('label')} label="Label" value={field.label ?? ''} onChange={(v) => set({ label: v || undefined })} />
@@ -152,11 +207,23 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
             <input type="radio" name={id('scope')} checked={scopeOf(field) === 'host'} onChange={() => set({ scope: 'host', overridable: undefined })} />
             Host (asked when a host is assigned)
           </label>
+          {problem('scope') && (
+            <span role="alert" className="text-[11px] text-destructive">
+              {problem('scope')}
+            </span>
+          )}
         </fieldset>
       )}
       <Checkbox id={id('required')} label="Required" checked={!!field.required} onChange={(c) => set({ required: c || undefined })} />
-      {!nested && scopeOf(field) === 'group' && (
-        <Checkbox id={id('overridable')} label="Hosts may override" checked={!!field.overridable} onChange={(c) => set({ overridable: c || undefined })} />
+      {showOverridable && (
+        <div className="flex flex-col gap-1">
+          <Checkbox id={id('overridable')} label="Hosts may override" checked={!!field.overridable} onChange={(c) => set({ overridable: c || undefined })} />
+          {problem('overridable') && (
+            <span role="alert" className="text-[11px] text-destructive">
+              {problem('overridable')}
+            </span>
+          )}
+        </div>
       )}
 
       {field.type === 'enum' && (
@@ -195,10 +262,10 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
           </select>
         </div>
       )}
-      {field.type === 'list' && field.item?.type === 'enum' && (
+      {hasItemOptions && field.item && (
         <OptionsField id={id('item-options')} value={field.item.options ?? []} error={problem('item.options')} onChange={(options) => set({ item: { ...(field.item ?? { name: '', type: 'enum' }), options } })} />
       )}
-      {SCALAR_TYPES.includes(field.type) && (
+      {hasDefault && (
         <div className="flex flex-col gap-1">
           <Label htmlFor={id('default')}>Default</Label>
           <ScalarInput id={id('default')} field={{ ...field, default: undefined, required: false }} value={field.default} onChange={(d) => set({ default: d })} />
@@ -209,11 +276,23 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
           )}
         </div>
       )}
-      {(field.type === 'repeater' || field.type === 'object') && (
+      {isSubSchema && (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
           <span className="text-[11px] font-semibold">Sub-schema</span>
+          {problem('fields') && (
+            <span role="alert" className="text-[11px] text-destructive">
+              {problem('fields')}
+            </span>
+          )}
           <SchemaBuilder nested value={{ fields: field.fields ?? [] }} onChange={(v) => set({ fields: v.fields })} problems={problems} pathPrefix={path} />
         </div>
+      )}
+      {otherProblems.length > 0 && (
+        <ul role="alert" className="flex flex-col gap-0.5 text-[11px] text-destructive">
+          {otherProblems.map((p, i) => (
+            <li key={i}>{p.message}</li>
+          ))}
+        </ul>
       )}
       <div className="flex gap-2 border-t border-border pt-3">
         <Button type="button" variant="ghost" disabled={!canMoveUp} onClick={() => onMove(-1)}>

@@ -85,6 +85,73 @@ describe('SchemaBuilder', () => {
     expect(within(editor('Bad')).getByRole('alert')).toHaveTextContent('must start with a lowercase letter');
   });
 
+  it('gives each selected field its own editor state instead of reusing the previous one', async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initial={{
+          fields: [
+            { name: 'php', type: 'enum', options: ['8.3', '8.4'] },
+            { name: 'db', type: 'enum', options: ['mysql', 'postgres'] },
+          ],
+        }}
+      />,
+    );
+    // php is selected first (index 0); switch to db, which sits at the same
+    // index-independent slot in the editor.
+    await user.click(screen.getByRole('button', { name: /^db/ }));
+    const dbOptions = within(editor('db')).getByLabelText('Options (one per line)');
+    expect(dbOptions).toHaveValue('mysql\npostgres');
+
+    await user.clear(dbOptions);
+    await user.type(dbOptions, 'mysql{enter}mariadb');
+
+    expect(schemaNow().fields[0]).toEqual({ name: 'php', type: 'enum', options: ['8.3', '8.4'] });
+    expect(schemaNow().fields[1]).toEqual({ name: 'db', type: 'enum', options: ['mysql', 'mariadb'] });
+  });
+
+  it('shows a repeater/object .fields problem in its Sub-schema section', () => {
+    render(
+      <Harness
+        initial={{ fields: [{ name: 'vhosts', type: 'repeater', fields: [{ name: 'value', type: 'string' }] }] }}
+        problems={[{ path: 'fields[0].fields', message: 'schemas nest at most 4 levels deep' }]}
+      />,
+    );
+    expect(within(editor('vhosts')).getByText('schemas nest at most 4 levels deep')).toBeInTheDocument();
+  });
+
+  it('shows a field .type problem next to the Type select', () => {
+    render(
+      <Harness
+        initial={{ fields: [{ name: 'weird', type: 'string' }] }}
+        problems={[{ path: 'fields[0].type', message: 'unknown type weird' }]}
+      />,
+    );
+    expect(within(editor('weird')).getByText('unknown type weird')).toBeInTheDocument();
+  });
+
+  it('shows a top-level schema problem above the field list', () => {
+    render(
+      <Harness
+        initial={{ fields: [{ name: 'a', type: 'string' }] }}
+        problems={[{ path: '', message: 'at most 100 fields are allowed' }]}
+      />,
+    );
+    expect(screen.getByText('at most 100 fields are allowed')).toBeInTheDocument();
+  });
+
+  it('marks the "has problems" dot with the destructive token, not a monitoring-state colour', () => {
+    render(
+      <Harness
+        initial={{ fields: [{ name: 'a', type: 'string' }] }}
+        problems={[{ path: 'fields[0].name', message: 'bad' }]}
+      />,
+    );
+    const dot = screen.getByLabelText('has problems');
+    expect(dot).toHaveClass('bg-destructive');
+    expect(dot.getAttribute('style') ?? '').not.toContain('--px-crit');
+  });
+
   it('previews the assignment form from host fields and overrides', () => {
     render(
       <Harness
