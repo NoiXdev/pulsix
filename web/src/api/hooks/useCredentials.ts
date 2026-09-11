@@ -12,11 +12,15 @@ export interface CredentialInput {
   token?: string;
 }
 
+/** Every credential write refreshes the credentials, the SSH settings that
+ * reference them, and the inventory: a credential's username is the
+ * preview's ansible_user wherever a host names none. */
 function useInvalidate(org: string) {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: ['credentials', org] });
     void qc.invalidateQueries({ queryKey: ['ssh', org] });
+    void qc.invalidateQueries({ queryKey: ['inventory', org] });
   };
 }
 
