@@ -210,6 +210,52 @@ func TestCompleteCreatesAdminOrgAndSession(t *testing.T) {
 	}
 }
 
+// TestCompleteRunsOrgCreatedHook proves the wizard's first organization
+// gets the same provisioning hook tenancy.Service.CreateOrg runs (Task 13):
+// the hook must see the org actually committed, and it must run after
+// Complete's own transaction, not inside it — hosts.Service (the real
+// binding, wired in internal/app/app.go and apitest.go) uses a separate
+// store from setup.Store's transaction, so there is no way for it to
+// participate in that transaction even if invoked from inside the InTx
+// callback.
+func TestCompleteRunsOrgCreatedHook(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	var gotOrgID uuid.UUID
+	calls := 0
+	svc.SetOrgCreatedHook(func(_ context.Context, orgID uuid.UUID) error {
+		calls++
+		gotOrgID = orgID
+		if _, ok := st.orgs[orgID]; !ok {
+			t.Error("hook ran before the organization was committed")
+		}
+		return nil
+	})
+	res, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("hook called %d times, want 1", calls)
+	}
+	if gotOrgID != res.OrgID {
+		t.Fatalf("hook got orgID %s, want %s", gotOrgID, res.OrgID)
+	}
+}
+
+// TestCompletePropagatesOrgCreatedHookError proves a failing hook fails
+// the whole Complete call, the same fail-loud contract
+// tenancy.Service.CreateOrg gives its own hook.
+func TestCompletePropagatesOrgCreatedHookError(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	boom := errors.New("boom")
+	svc.SetOrgCreatedHook(func(context.Context, uuid.UUID) error { return boom })
+	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapped %v", err, boom)
+	}
+}
+
 func TestCompleteValidatesInput(t *testing.T) {
 	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
 	for name, in := range map[string]setup.Input{

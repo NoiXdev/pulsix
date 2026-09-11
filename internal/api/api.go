@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -31,6 +32,7 @@ type Deps struct {
 	Tenancy  *tenancy.Service
 	Audit    *audit.Recorder
 	Setup    *setup.Service
+	Hosts    *hosts.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -94,6 +96,9 @@ func (d Deps) validate() error {
 	}
 	if d.Mailer == nil {
 		missing = append(missing, "Mailer")
+	}
+	if d.Hosts == nil {
+		missing = append(missing, "Hosts")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -230,4 +235,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerMemberRoutes(orgScoped, deps)    // members + invites, all /orgs/{org}/...
 	registerTokenRoutes(orgScoped, deps)     // /orgs/{org}/tokens...
 	registerAuditRoutes(orgScoped, deps)     // GET /orgs/{org}/activity
+	registerHostRoutes(orgScoped, deps)      // zones + hosts, all /orgs/{org}/...
 }

@@ -181,17 +181,31 @@ const smtpSettingsKey = "smtp"
 
 // Service implements the first-run wizard and instance settings.
 type Service struct {
-	store    Store
-	sessions SessionStore
-	box      *crypto.Box
-	now      func() time.Time
+	store      Store
+	sessions   SessionStore
+	box        *crypto.Box
+	now        func() time.Time
+	orgCreated tenancy.OrgCreatedHook
 }
 
 // NewService wires the store, session opener, the box used to seal secrets
-// inside instance settings (the SMTP password), and the clock.
+// inside instance settings (the SMTP password), and the clock. No
+// OrgCreatedHook is installed by default — see SetOrgCreatedHook.
 func NewService(store Store, sessions SessionStore, box *crypto.Box, now func() time.Time) *Service {
 	return &Service{store: store, sessions: sessions, box: box, now: now}
 }
+
+// SetOrgCreatedHook installs hook to run once Complete's transaction has
+// committed the wizard's first organization — the same
+// tenancy.OrgCreatedHook type and the same hosts.Service.EnsureDefaultZone
+// binding tenancy.Service.CreateOrg uses (internal/app/app.go wires both to
+// the same hostsSvc.EnsureDefaultZone), so the organization POST /orgs
+// creates and the one the wizard creates are provisioned identically. It
+// is a setter, not a Complete parameter, for the same reason
+// tenancy.Service.SetOrgCreatedHook is one: hosts.Service needs the same
+// database dependency this package's own store already needs, wired once
+// in internal/app/app.go after both services exist.
+func (s *Service) SetOrgCreatedHook(hook tenancy.OrgCreatedHook) { s.orgCreated = hook }
 
 // Status reports whether the wizard has run and, if so, whether the
 // instance administrator has enrolled a second factor yet.
@@ -266,6 +280,29 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 	})
 	if err != nil {
 		return Result{}, err
+	}
+
+	// Provisioning the first organization's default zone happens after
+	// InTx has already committed, not inside it: the hook runs through
+	// hosts.Service's own store, a separate database connection unrelated
+	// to this transaction (see tenancy.OrgCreatedHook's own doc comment for
+	// why forcing it into one transaction is not straightforward — the
+	// same reasoning applies here, since setup.Store's InTx is scoped to
+	// this package's own tables, not hosts'). A failure here is
+	// propagated, not swallowed, but — unlike tenancy.Service.CreateOrg's
+	// callers — a retry through this same wizard endpoint is blocked
+	// afterward: AdminExists is now true, so a second Complete call fails
+	// with ErrAlreadyCompleted before ever reaching this step again. This
+	// is a known, narrow gap (an infrastructure failure in the exact
+	// instant between the wizard's own commit and this call), left open
+	// because closing it would require the same cross-package transaction
+	// coupling OrgCreatedHook's own doc comment explains this codebase
+	// deliberately avoids; EnsureDefaultZone's idempotency at least makes
+	// a manual repair (calling it again for this org id) safe.
+	if s.orgCreated != nil {
+		if err := s.orgCreated(ctx, res.OrgID); err != nil {
+			return Result{}, fmt.Errorf("provision first organization: %w", err)
+		}
 	}
 
 	// mfaComplete = true: see Result.Cookie's own doc comment.

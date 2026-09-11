@@ -12,6 +12,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/crypto"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -47,6 +48,14 @@ func testMailer() *mail.SMTP {
 	return mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) { return mail.SMTPSettings{}, nil })
 }
 
+// testHosts builds a *hosts.Service with a nil store, good enough to
+// satisfy api.Deps.validate in tests that never actually drive a zone or
+// host operation (nil interface values are only a problem once called),
+// mirroring testTenancy and testAudit above.
+func testHosts() *hosts.Service {
+	return hosts.NewService(nil, time.Now)
+}
+
 // fakeAuthService satisfies api.AuthService without touching a database, so
 // tests that only exercise routing (not the auth flow itself) don't need a
 // real *auth.Service.
@@ -77,7 +86,7 @@ func TestHealthz(t *testing.T) {
 	h, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
-		Setup: testSetup(), Mailer: testMailer(),
+		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -147,5 +156,12 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 	}); err == nil {
 		t.Fatal("api.New without Mailer did not return an error")
+	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Mailer: testMailer(),
+	}); err == nil {
+		t.Fatal("api.New without Hosts did not return an error")
 	}
 }

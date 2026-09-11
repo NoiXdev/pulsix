@@ -686,6 +686,78 @@ func TestCreateOrgSlugTaken(t *testing.T) {
 	}
 }
 
+// TestCreateOrgRunsOrgCreatedHook proves the hook Task 13 adds
+// (SetOrgCreatedHook) is actually invoked, with the newly created org's id,
+// once CreateOrg's own steps (the org row and the owner membership) have
+// already succeeded.
+func TestCreateOrgRunsOrgCreatedHook(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+
+	var gotOrgID uuid.UUID
+	calls := 0
+	svc.SetOrgCreatedHook(func(_ context.Context, orgID uuid.UUID) error {
+		calls++
+		gotOrgID = orgID
+		// The org and its owner membership must already be visible to the
+		// hook — it runs after both steps, never before or concurrently.
+		if _, err := st.GetOrgByID(ctx, orgID); err != nil {
+			t.Errorf("hook ran before the org was committed: %v", err)
+		}
+		if role, err := st.GetMembership(ctx, orgID, owner); err != nil || role != tenancy.RoleOwner {
+			t.Errorf("hook ran before the owner membership was committed: role=%s err=%v", role, err)
+		}
+		return nil
+	})
+
+	org, err := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("hook called %d times, want 1", calls)
+	}
+	if gotOrgID != org.ID {
+		t.Fatalf("hook got orgID %s, want %s", gotOrgID, org.ID)
+	}
+}
+
+// TestCreateOrgPropagatesOrgCreatedHookError proves a failing hook fails
+// the whole CreateOrg call — the caller learns provisioning did not fully
+// succeed rather than getting back an Org that silently lacks whatever the
+// hook was supposed to set up (see OrgCreatedHook's own doc comment on why
+// this is "fail loud", not "fail atomically": the org and membership rows
+// are not rolled back, but the caller is never told creation succeeded
+// when it did not finish).
+func TestCreateOrgPropagatesOrgCreatedHookError(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	boom := errors.New("boom")
+	svc.SetOrgCreatedHook(func(context.Context, uuid.UUID) error { return boom })
+
+	if _, err := svc.CreateOrg(ctx, owner, "acme", "Acme"); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapped %v", err, boom)
+	}
+}
+
+// TestCreateOrgWithNoHookInstalledSucceeds proves CreateOrg behaves exactly
+// as it did before OrgCreatedHook existed when no hook is installed — the
+// default for every test above this one in the file, and for any other
+// package's tests that build a bare tenancy.Service.
+func TestCreateOrgWithNoHookInstalledSucceeds(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	if _, err := svc.CreateOrg(ctx, owner, "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGetOrgBySlugNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := tenancy.NewService(newFakeStore(), &fakeMailer{}, testPublicURL, time.Now)

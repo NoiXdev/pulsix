@@ -21,6 +21,7 @@ import (
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -103,10 +104,22 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	mailer := mail.NewSMTP(setupSvc.LoadSMTP)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(q), mailer, cfg.PublicURL, time.Now)
 	auditRec := audit.NewRecorder(audit.NewSQLStore(q), time.Now)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(q), time.Now)
+	// Every organization gets its "default" zone the moment it is created,
+	// through whichever of the two paths created it — POST /orgs
+	// (tenancy.Service.CreateOrg) or the first-run wizard
+	// (setup.Service.Complete) — both bound to the same
+	// hostsSvc.EnsureDefaultZone here, so neither path can produce an
+	// organization the other would have given a zone. See
+	// tenancy.OrgCreatedHook's own doc comment for why this runs as a
+	// sequential step after each service's own writes commit, rather than
+	// inside either one's transaction.
+	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
+	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 
 	handler, err := api.New(api.Deps{
 		DB: appDB, Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
-		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Secure: publicURLIsHTTPS(cfg.PublicURL),
+		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 	})
 	if err != nil {
 		appDB.Close()

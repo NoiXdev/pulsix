@@ -83,6 +83,20 @@ type AuditEvent struct {
 	At         time.Time   `json:"at"`
 }
 
+type Host struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	ZoneID     uuid.UUID          `json:"zone_id"`
+	Name       string             `json:"name"`
+	Address    string             `json:"address"`
+	Managed    bool               `json:"managed"`
+	Monitored  bool               `json:"monitored"`
+	Facts      []byte             `json:"facts"`
+	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
 type InstanceSetting struct {
 	Key       string    `json:"key"`
 	Value     []byte    `json:"value"`
@@ -169,4 +183,12 @@ type WebauthnCeremony struct {
 	UserID    pgtype.UUID `json:"user_id"`
 	Data      []byte      `json:"data"`
 	ExpiresAt time.Time   `json:"expires_at"`
+}
+
+type Zone struct {
+	ID        uuid.UUID `json:"id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }

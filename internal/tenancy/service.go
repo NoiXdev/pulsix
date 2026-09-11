@@ -119,25 +119,61 @@ type Mailer interface {
 	Send(ctx context.Context, to, subject, body string) error
 }
 
+// OrgCreatedHook is invoked by CreateOrg once a new organization has been
+// created and given its owner membership. It exists so another service can
+// provision org-scoped resources of its own — today, hosts.Service.
+// EnsureDefaultZone, giving the new organization its "default" zone —
+// without tenancy importing that service directly: tenancy stays the
+// dependency every other domain package builds on, never the other way
+// around. Wiring binds the concrete function (internal/app/app.go, and
+// internal/api/apitest for tests); tenancy itself only ever sees this
+// narrow func type.
+//
+// It is deliberately not run inside a single database transaction with the
+// organization insert (see CreateOrg's own doc comment for why that is not
+// straightforward here, and would not even be fully atomic for the hook's
+// own writes if it were forced through anyway) — a hook is called as one
+// more sequential step after the organization and its owner membership are
+// already committed, and its error propagates like any other step's. The
+// residual gap this leaves — a hook failure after the org row already
+// exists — is closed as far as it reasonably can be without that
+// transaction: EnsureDefaultZone is idempotent, so any later retry (of
+// CreateOrg's caller, or a manual operator action) safely converges on
+// exactly one default zone, never zero or two.
+type OrgCreatedHook func(ctx context.Context, orgID uuid.UUID) error
+
 // Service implements organizations, memberships, roles and invitations.
 type Service struct {
-	store     Store
-	mailer    Mailer
-	publicURL string
-	now       func() time.Time
+	store      Store
+	mailer     Mailer
+	publicURL  string
+	now        func() time.Time
+	orgCreated OrgCreatedHook
 }
 
 // NewService wires the store, mailer, public URL (used to build the
-// invitation link) and clock.
+// invitation link) and clock. No OrgCreatedHook is installed by default —
+// see SetOrgCreatedHook.
 func NewService(store Store, mailer Mailer, publicURL string, now func() time.Time) *Service {
 	return &Service{store: store, mailer: mailer, publicURL: publicURL, now: now}
 }
 
-// CreateOrg creates an organization and makes ownerID its sole owner. It is
-// deliberately a single, self-contained step — store.CreateOrg followed by
-// one AddMembership call — so a later task can add a post-creation hook
-// (provisioning the org's default zone) as one more step here without
-// restructuring the method or its error handling.
+// SetOrgCreatedHook installs hook to run at the end of every future
+// CreateOrg call that successfully creates an organization. It is a setter
+// rather than a NewService parameter so that wiring hosts.Service (which
+// needs its own store, built from the same database) can happen after
+// tenancy.NewService, and so every one of this package's own tests — and
+// api_test.go's testTenancy, and apitest.go's own Tenancy service before
+// Task 13 — keep building a Service exactly as before, with no hook
+// installed, which is a no-op CreateOrg step (see CreateOrg's nil check).
+func (s *Service) SetOrgCreatedHook(hook OrgCreatedHook) { s.orgCreated = hook }
+
+// CreateOrg creates an organization and makes ownerID its sole owner, then
+// — if a hook is installed (SetOrgCreatedHook) — runs it as one more
+// sequential step, exactly the shape this method's own steps already had
+// before OrgCreatedHook existed: store.CreateOrg, then AddMembership, then
+// the hook. See OrgCreatedHook's own doc comment for why the hook runs
+// this way rather than inside one database transaction with the insert.
 func (s *Service) CreateOrg(ctx context.Context, ownerID uuid.UUID, slug, name string) (Org, error) {
 	org := Org{ID: uuid.Must(uuid.NewV7()), Slug: slug, Name: name, CreatedAt: s.now()}
 	if err := s.store.CreateOrg(ctx, org); err != nil {
@@ -145,6 +181,11 @@ func (s *Service) CreateOrg(ctx context.Context, ownerID uuid.UUID, slug, name s
 	}
 	if err := s.store.AddMembership(ctx, org.ID, ownerID, RoleOwner); err != nil {
 		return Org{}, fmt.Errorf("add owner membership: %w", err)
+	}
+	if s.orgCreated != nil {
+		if err := s.orgCreated(ctx, org.ID); err != nil {
+			return Org{}, fmt.Errorf("provision new organization: %w", err)
+		}
 	}
 	return org, nil
 }

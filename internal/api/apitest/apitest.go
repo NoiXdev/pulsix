@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -155,10 +156,19 @@ func New(t *testing.T, opts ...Option) *Server {
 	// passkey-only account's password alone would produce an MFA-complete
 	// session (Finding 2, fix round 1).
 	setupSvc := setup.NewService(setup.NewSQLStore(d.Pool()), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
+	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(q), time.Now)
+	// Every organization gets its "default" zone through this hook,
+	// whichever of the two ways it was created — POST /orgs
+	// (tenancy.Service.CreateOrg) or the first-run wizard
+	// (setup.Service.Complete) — exactly like production wiring
+	// (internal/app/app.go) binds both to the same hostsSvc.EnsureDefaultZone.
+	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
+	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
 	s.Deps = api.Deps{
 		DB: d, Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(q), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(q), time.Now),
-		Tenancy: tenancy.NewService(tenancy.NewSQLStore(q), s.Mail, publicURL, time.Now),
+		Tenancy: tenancySvc,
 		Audit:   audit.NewRecorder(audit.NewSQLStore(q), time.Now),
 		Setup:   setupSvc,
 		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
@@ -167,6 +177,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		// real *mail.SMTP simply fails to dial when nothing is configured
 		// (or the test's own tests want that failure).
 		Mailer: mail.NewSMTP(setupSvc.LoadSMTP),
+		Hosts:  hostsSvc,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -203,7 +214,12 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 	return id
 }
 
-// SeedOrg inserts an org with ownerID as owner.
+// SeedOrg inserts an org with ownerID as owner, and — like every real org
+// creation path (tenancy.Service.CreateOrg, setup.Service.Complete) —
+// gives it its "default" zone: this bypasses tenancy.Service.CreateOrg
+// itself (so tests get a fixed, predictable slug instead of one it would
+// generate), but a seeded org should still carry the same invariant every
+// production org does, since host_handlers_test.go and others rely on it.
 func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 	s.T.Helper()
 	ctx := context.Background()
@@ -212,6 +228,9 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	if err := s.Q.AddMembership(ctx, gen.AddMembershipParams{OrgID: id, UserID: ownerID, Role: gen.OrgRoleOwner}); err != nil {
+		s.T.Fatal(err)
+	}
+	if err := s.Deps.Hosts.EnsureDefaultZone(ctx, id); err != nil {
 		s.T.Fatal(err)
 	}
 	return id
