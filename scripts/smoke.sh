@@ -13,6 +13,14 @@
 # Optional:
 #   PULSIX_VERSION — image tag to run, e.g. "dev" for a just-built local
 #   image. Defaults to "latest", same as the compose file itself.
+#   PULSIX_SMOKE_PROJECT — the Compose project name the throwaway stack runs
+#   under. Defaults to "pulsix-smoke".
+#
+# The stack always runs under its own Compose project name, never the
+# default one: Compose derives that from the directory (deploy/compose ->
+# "compose"), which is exactly what a real deployment started from
+# deploy/compose uses too — and the teardown below runs `down -v`, which
+# would otherwise stop that deployment and delete its database volume.
 #
 # Usage:
 #   docker build -f deploy/docker/Dockerfile.manager -t noixdev/pulsix-manager:dev .
@@ -28,6 +36,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repo_root/deploy/compose/docker-compose.yml"
+project="${PULSIX_SMOKE_PROJECT:-pulsix-smoke}"
+if [ "$project" = "compose" ]; then
+	echo "smoke: refusing to run under the Compose project name \"compose\" — that is the default a real deployment from deploy/compose uses" >&2
+	exit 1
+fi
 
 for var in DB_PASSWORD PULSIX_MASTER_KEY PULSIX_PUBLIC_URL; do
 	if [ -z "${!var:-}" ]; then
@@ -37,8 +50,11 @@ for var in DB_PASSWORD PULSIX_MASTER_KEY PULSIX_PUBLIC_URL; do
 done
 base_url="$PULSIX_PUBLIC_URL"
 
+# -p always wins over COMPOSE_PROJECT_NAME and the directory default, so no
+# environment an operator happens to have exported can point this script's
+# `down -v` at their real deployment.
 compose() {
-	docker compose -f "$compose_file" "$@"
+	docker compose -p "$project" -f "$compose_file" "$@"
 }
 
 # Always torn down, whether the checks below pass or fail: the trap fires
@@ -53,7 +69,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "smoke: starting the stack (manager image tag: ${PULSIX_VERSION:-latest}) …"
+echo "smoke: starting the stack as Compose project \"$project\" (manager image tag: ${PULSIX_VERSION:-latest}) …"
 compose up -d
 
 echo "smoke: waiting for GET /healthz to answer 200 (timeout 90s) …"
