@@ -124,6 +124,36 @@ describe('CredentialsPage', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('still used');
   });
 
+  it('asks before generating a new key and sends nothing when cancelled', async () => {
+    const user = userEvent.setup();
+    const patches: unknown[] = [];
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      mockApi({
+        'GET /api/v1/auth/me': ME,
+        'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
+        'GET /api/v1/orgs/acme/credentials/c1': { credential: cred({}), snippets: SNIPPETS },
+        'PATCH /api/v1/orgs/acme/credentials/c1': (req: MockRequest) => {
+          patches.push(req.body);
+          return { credential: cred({ fingerprint: 'SHA256:new' }), snippets: SNIPPETS };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
+      const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
+      await user.click(within(dialog).getByRole('button', { name: 'Generate new key' }));
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/replaces the key of acme-deploy/));
+      expect(patches).toEqual([]);
+
+      confirmSpy.mockReturnValue(true);
+      await user.click(within(dialog).getByRole('button', { name: 'Generate new key' }));
+      expect(await screen.findByText(/New key generated/)).toBeInTheDocument();
+      expect(patches).toEqual([{ name: 'acme-deploy', username: 'ansible', generate: true }]);
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
   it('shows a failed credential load inside the dialog instead of staying on Loading', async () => {
     const user = userEvent.setup();
     mockApi({

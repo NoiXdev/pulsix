@@ -99,6 +99,10 @@ function CredentialForm({
   }
 
   async function rotateKey() {
+    // Irreversible: the old private key is gone, and every host and jump host
+    // using it loses access until the new public key is installed.
+    const warning = `Generating a new key replaces the key of ${c.name}. The old key cannot be restored, and hosts that use it lose access until the new public key is installed. Continue?`;
+    if (!confirm(warning)) return;
     try {
       await update.mutateAsync({ name: c.name, username: c.username || undefined, expires_at: c.expires_at ?? undefined, generate: true });
       update.reset();
