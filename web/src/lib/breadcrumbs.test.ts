@@ -16,6 +16,12 @@ describe('crumbLabels', () => {
     expect(crumbLabels('/o/acme/settings/mail', 'acme')).toEqual(['Settings', 'Outgoing mail']);
   });
 
+  it('labels the inventory groups and credentials/jump-hosts segments', () => {
+    expect(crumbLabels('/o/acme/groups', 'acme')).toEqual(['Groups']);
+    expect(crumbLabels('/o/acme/credentials', 'acme')).toEqual(['Credentials']);
+    expect(crumbLabels('/o/acme/jump-hosts', 'acme')).toEqual(['Jump hosts']);
+  });
+
   it('shortens a UUID-shaped host id segment it has no label for', () => {
     expect(crumbLabels('/o/acme/hosts/550e8400-e29b-41d4-a716-446655440000', 'acme')).toEqual([
       'Hosts',

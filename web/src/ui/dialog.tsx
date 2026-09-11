@@ -1,20 +1,34 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 export interface DialogProps {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** 'wide' is for a form with a lot to show at once (e.g. a generated
+   * assignment form next to the group's read-only values); default fits
+   * every other dialog in the app. */
+  size?: 'default' | 'wide';
 }
+
+const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
+  default: 'w-[480px]',
+  wide: 'w-[680px]',
+};
 
 /**
  * Dialog wraps the native <dialog> element (showModal/close), which gives
  * focus trapping, ESC-to-close and a backdrop for free — no Radix
  * dependency needed for a single-purpose modal like the invite/create-
  * token/add-passkey forms this app uses it for.
+ *
+ * The title labels the dialog itself (`aria-labelledby`), not just a
+ * heading inside it, so a test or assistive technology can find the
+ * dialog by name: `getByRole('dialog', { name: 'Add credential' })`.
  */
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+export function Dialog({ open, onClose, title, children, size = 'default' }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
 
   useEffect(() => {
     const el = ref.current;
@@ -28,10 +42,13 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
       ref={ref}
       onClose={onClose}
       onCancel={onClose}
-      className="w-[480px] max-w-[90vw] rounded-xl border border-border bg-card p-0 text-foreground backdrop:bg-black/60"
+      aria-labelledby={titleId}
+      className={`${SIZE_CLASS[size]} max-w-[90vw] rounded-xl border border-border bg-card p-0 text-foreground backdrop:bg-black/60`}
     >
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
-        <h2 className="text-[15px] font-semibold">{title}</h2>
+        <h2 id={titleId} className="text-[15px] font-semibold">
+          {title}
+        </h2>
       </div>
       <div className="p-5">{children}</div>
     </dialog>

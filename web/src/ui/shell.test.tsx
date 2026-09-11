@@ -45,6 +45,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void } = {}
 
   const routeTree = rootRoute.addChildren([
     leaf('/o/$org/hosts'),
+    leaf('/o/$org/groups'),
     leaf('/o/$org/settings/members'),
     leaf('/o/$org/settings/activity'),
     leaf('/o/$org/settings/tokens'),
@@ -72,6 +73,17 @@ describe('AppShell', () => {
 
     const settingsLink = screen.getByRole('link', { name: /Settings/ });
     expect(settingsLink).not.toHaveAttribute('data-nav-active');
+
+    const groupsLink = screen.getByRole('link', { name: /Groups/ });
+    expect(groupsLink).not.toHaveAttribute('data-nav-active');
+  });
+
+  it('marks Groups active on /groups', async () => {
+    renderShellAt('/o/acme/groups');
+
+    const groupsLink = await screen.findByRole('link', { name: /Groups/ });
+    expect(groupsLink).toHaveAttribute('data-nav-active', 'true');
+    expect(screen.getByRole('link', { name: /Hosts/ })).not.toHaveAttribute('data-nav-active');
   });
 
   it('marks Settings active for every route nested under /settings (Members, Activity, Tokens)', async () => {

@@ -22,6 +22,7 @@ export interface MockRequest {
   path: string;
   search: URLSearchParams;
   body: unknown;
+  headers: Headers;
 }
 
 export type MockRoute = unknown | ((req: MockRequest) => unknown);
@@ -53,7 +54,13 @@ export function mockApi(routes: Record<string, MockRoute>) {
     const route = routes[key];
     const resolved =
       typeof route === 'function'
-        ? (route as (req: MockRequest) => unknown)({ method, path: parsed.pathname, search: parsed.searchParams, body })
+        ? (route as (req: MockRequest) => unknown)({
+            method,
+            path: parsed.pathname,
+            search: parsed.searchParams,
+            body,
+            headers: request.headers,
+          })
         : route;
     // A route function that wants a non-200 (e.g. simulating a 500) can
     // return a real Response directly instead of a JSON body.

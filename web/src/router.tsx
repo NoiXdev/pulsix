@@ -8,6 +8,8 @@ import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
 import { HostDetailPage } from './features/hosts/HostDetailPage.tsx';
+import { GroupsPage } from './features/inventory/GroupsPage.tsx';
+import { GroupDetailPage } from './features/inventory/GroupDetailPage.tsx';
 import { MembersPage } from './features/members/MembersPage.tsx';
 import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
@@ -84,6 +86,16 @@ const hostDetailRoute = createRoute({
   component: HostDetailPage,
 });
 
+const groupsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: GroupsPage });
+const groupDetailRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/groups/$id',
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: typeof search.tab === 'string' ? search.tab : undefined,
+  }),
+  component: GroupDetailPage,
+});
+
 /**
  * settingsRoute is the layout route for Members, Activity and API tokens —
  * finding "Important 6": the mockup (Members.dc.html, Activity.dc.html)
@@ -124,6 +136,8 @@ const routeTree = rootRoute.addChildren([
     orgIndexRoute,
     hostsRoute,
     hostDetailRoute,
+    groupsRoute,
+    groupDetailRoute,
     settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, mailRoute]),
   ]),
 ]);

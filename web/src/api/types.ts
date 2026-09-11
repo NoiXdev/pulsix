@@ -20,3 +20,10 @@ export type User = components['schemas']['UserStruct'];
 
 export type HostInput = components['schemas']['HostInputBody'];
 export type SetupCompleteInput = components['schemas']['SetupCompleteInputBody'];
+
+export type InventoryGroupSummary = components['schemas']['GroupSummaryDTO'];
+export type InventoryGroup = components['schemas']['GroupDTO'];
+export type InventoryMember = components['schemas']['InventoryMemberDTO'];
+export type Credential = components['schemas']['CredentialDTO'];
+export type Bastion = components['schemas']['BastionDTO'];
+export type HostSSH = components['schemas']['HostSSHDTO'];

@@ -45,6 +45,7 @@ describe('HostDetailPage', () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
       'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
         patched = req.body;
         return { host: { ...HOST.host, managed: true } };
@@ -67,6 +68,7 @@ describe('HostDetailPage', () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
       'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
         putTags = req.body;
         return { tags: [{ key: 'role', value: 'db', source: 'manual' }] };
@@ -87,6 +89,7 @@ describe('HostDetailPage', () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
     });
 
     renderPage(qc);
@@ -105,6 +108,7 @@ describe('HostDetailPage', () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
       'DELETE /api/v1/orgs/acme/hosts/h1': {},
     });
 
@@ -124,6 +128,7 @@ describe('HostDetailPage', () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
       'DELETE /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'host still managed' }), { status: 409 }),
     });
 

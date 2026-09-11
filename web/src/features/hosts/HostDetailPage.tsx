@@ -10,6 +10,7 @@ import { useDeleteHost, useHost, useSetHostCapabilities } from '../../api/hooks/
 import { useHostTags, useSetHostTags } from '../../api/hooks/useTags.ts';
 import { parseTagChip } from './selectorInput.ts';
 import { useToast } from '../../ui/toastContext.ts';
+import { HostInventoryCard } from './HostInventoryCard.tsx';
 
 /**
  * HostDetailPage follows design/mockups/build.mjs's HOST DETAIL artboard
@@ -164,6 +165,8 @@ export function HostDetailPage() {
           </div>
         </Card>
       </div>
+
+      <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
 
       <Card>
         <div className="flex flex-col gap-2 p-4">
