@@ -94,8 +94,8 @@ func (in Input) validate() error {
 	if len(in.OrgSlug) > maxSlugLength || !slugPattern.MatchString(in.OrgSlug) {
 		problems = append(problems, "organization slug must be lowercase letters, digits and hyphens, 1-40 characters, and must not start or end with a hyphen")
 	}
-	if strings.TrimSpace(in.OrgName) == "" {
-		problems = append(problems, "organization name is required")
+	if err := tenancy.ValidateOrgName(in.OrgName); err != nil {
+		problems = append(problems, strings.TrimPrefix(err.Error(), tenancy.ErrInvalidInput.Error()+": "))
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%w: %s", ErrInvalidInput, strings.Join(problems, "; "))

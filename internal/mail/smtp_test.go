@@ -245,3 +245,71 @@ func TestSendFailsWhenCredentialsProvidedButServerDoesNotAdvertiseAUTH(t *testin
 		t.Fatal("a message must not be delivered unauthenticated when credentials were configured")
 	}
 }
+
+// TestSubjectCannotInjectHeaders covers M4: an organization name carrying a
+// CR/LF goes into the invitation's Subject header, and must not be able to
+// end that header and start one of its own.
+func TestSubjectCannotInjectHeaders(t *testing.T) {
+	backend := &testBackend{username: "pulsix", password: "correct horse"}
+	host, port := startTestServer(t, backend, true)
+	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "correct horse", From: "pulsix@example.test"}, nil
+	})
+
+	subject := "Invitation to Acme\r\nBcc: attacker@evil.test\r\nX-Injected: yes"
+	if err := m.Send(context.Background(), "dest@example.test", subject, "body"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got := backend.recorded()
+	if len(got) != 1 {
+		t.Fatalf("recorded %d messages, want 1", len(got))
+	}
+	headers, _, _ := strings.Cut(string(got[0].data), "\r\n\r\n")
+	for _, line := range strings.Split(headers, "\r\n") {
+		if strings.HasPrefix(line, "Bcc:") || strings.HasPrefix(line, "X-Injected:") {
+			t.Fatalf("subject injected a header line %q into:\n%s", line, headers)
+		}
+	}
+	if !strings.Contains(headers, "Subject: Invitation to Acme Bcc: attacker@evil.test X-Injected: yes") {
+		t.Fatalf("subject not folded onto one line:\n%s", headers)
+	}
+}
+
+// TestNonASCIISubjectIsEncoded: a subject that is not plain ASCII (an
+// organization named "Müller GmbH") goes out as an RFC 2047 encoded word.
+func TestNonASCIISubjectIsEncoded(t *testing.T) {
+	backend := &testBackend{username: "pulsix", password: "correct horse"}
+	host, port := startTestServer(t, backend, true)
+	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "correct horse", From: "pulsix@example.test"}, nil
+	})
+	if err := m.Send(context.Background(), "dest@example.test", "Invitation to Müller GmbH", "body"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	data := string(backend.recorded()[0].data)
+	if !strings.Contains(data, "Subject: =?utf-8?q?") || !strings.Contains(data, "charset=utf-8") {
+		t.Fatalf("non-ASCII subject not encoded:\n%s", data)
+	}
+}
+
+// TestAddressesWithLineBreaksAreRefused: the recipient and sender go into
+// header lines too, so a line break in either is refused before anything is
+// sent.
+func TestAddressesWithLineBreaksAreRefused(t *testing.T) {
+	backend := &testBackend{username: "pulsix", password: "correct horse"}
+	host, port := startTestServer(t, backend, true)
+	for _, tc := range []struct{ from, to string }{
+		{"pulsix@example.test", "dest@example.test\r\nBcc: x@evil.test"},
+		{"pulsix@example.test\nBcc: x@evil.test", "dest@example.test"},
+	} {
+		m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+			return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "correct horse", From: tc.from}, nil
+		})
+		if err := m.Send(context.Background(), tc.to, "s", "b"); err == nil {
+			t.Errorf("Send(from=%q, to=%q) succeeded, want a refusal", tc.from, tc.to)
+		}
+	}
+	if len(backend.recorded()) != 0 {
+		t.Fatal("a message with a line break in an address was delivered")
+	}
+}

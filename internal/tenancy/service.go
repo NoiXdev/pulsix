@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -26,7 +27,35 @@ var (
 	// no active instance administrator — refused, since first-run setup is
 	// gated on none existing and could not be re-run to recover.
 	ErrLastInstanceAdmin = errors.New("the instance needs at least one active instance administrator")
+	// ErrInvalidInput is wrapped with a human-readable reason (see
+	// ValidateOrgName); callers present err.Error() directly.
+	ErrInvalidInput = errors.New("invalid input")
 )
+
+// maxOrgNameLength bounds an organization's display name.
+const maxOrgNameLength = 200
+
+// ValidateOrgName rejects an organization name that is blank, longer than
+// maxOrgNameLength characters, or contains a control character. The name is
+// shown across the product and goes into the Subject header of every
+// invitation e-mail, where a CR or LF would end that header and let the rest
+// of the name inject headers of its own (the mailer encodes the subject
+// defensively as well — this is the first line of defence, not the only
+// one).
+func ValidateOrgName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: organization name is required", ErrInvalidInput)
+	}
+	if len([]rune(name)) > maxOrgNameLength {
+		return fmt.Errorf("%w: organization name must be at most %d characters", ErrInvalidInput, maxOrgNameLength)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%w: organization name must not contain control characters such as line breaks", ErrInvalidInput)
+		}
+	}
+	return nil
+}
 
 // InviteTTL is how long an invitation link works.
 const InviteTTL = 7 * 24 * time.Hour
@@ -182,6 +211,9 @@ func (s *Service) SetOrgCreatedHook(hook OrgCreatedHook) { s.orgCreated = hook }
 // the hook. See OrgCreatedHook's own doc comment for why the hook runs
 // this way rather than inside one database transaction with the insert.
 func (s *Service) CreateOrg(ctx context.Context, ownerID uuid.UUID, slug, name string) (Org, error) {
+	if err := ValidateOrgName(name); err != nil {
+		return Org{}, err
+	}
 	org := Org{ID: uuid.Must(uuid.NewV7()), Slug: slug, Name: name, CreatedAt: s.now()}
 	if err := s.store.CreateOrg(ctx, org); err != nil {
 		return Org{}, fmt.Errorf("create org: %w", err)
@@ -210,6 +242,9 @@ func (s *Service) GetOrgBySlug(ctx context.Context, slug string) (Org, error) {
 // UpdateOrg renames orgID. The slug is immutable — it appears in URLs and
 // API token scopes, so changing it would silently break both.
 func (s *Service) UpdateOrg(ctx context.Context, orgID uuid.UUID, name string) (Org, error) {
+	if err := ValidateOrgName(name); err != nil {
+		return Org{}, err
+	}
 	org, err := s.store.GetOrgByID(ctx, orgID)
 	if err != nil {
 		return Org{}, err

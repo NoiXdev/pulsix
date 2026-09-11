@@ -264,6 +264,8 @@ func TestCompleteValidatesInput(t *testing.T) {
 		"no name":        {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", OrgSlug: "acme", OrgName: "Acme"},
 		"no org name":    {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme"},
 		"slug too short": {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "a-", OrgName: "Acme"},
+		// M4: the name goes into every invitation's Subject header.
+		"org name with a line break": {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme", OrgName: "Acme\r\nBcc: x@evil.test"},
 	} {
 		if _, err := svc.Complete(ctx, in); !errors.Is(err, setup.ErrInvalidInput) {
 			t.Errorf("%s: %v", name, err)

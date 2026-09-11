@@ -9,11 +9,16 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strconv"
 	"strings"
 )
+
+// errHeaderInjection is returned when an address that goes into a header
+// line carries a line break.
+var errHeaderInjection = errors.New("smtp: address contains a line break")
 
 // SMTPSettings is the outbound mail configuration an instance administrator
 // provides through the settings API. Password is held in the clear only in
@@ -86,6 +91,9 @@ func deliver(settings SMTPSettings, to, subject, body string) error {
 	if settings.Host == "" {
 		return errors.New("smtp: not configured")
 	}
+	if strings.ContainsAny(settings.From, "\r\n") || strings.ContainsAny(to, "\r\n") {
+		return errHeaderInjection
+	}
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	c, err := smtp.Dial(addr)
 	if err != nil {
@@ -139,14 +147,27 @@ func deliver(settings SMTPSettings, to, subject, body string) error {
 	return c.Quit()
 }
 
-// buildMessage renders a minimal RFC 5322 message. It carries no MIME
-// boilerplate (no Content-Type, no charset) since every caller in this
-// codebase sends plain ASCII text.
+// buildMessage renders a minimal RFC 5322 plain-text message in UTF-8.
+//
+// The subject is the one header built from data a user controls (an
+// organization's name goes into every invitation's subject), so it is
+// encoded defensively rather than trusted: any line break is folded into a
+// space first — a CR or LF there would otherwise end the header and let the
+// rest of the value inject headers of its own — and the result is written
+// as an RFC 2047 encoded word whenever it is not plain printable ASCII,
+// which also carries non-ASCII names correctly. Organization names are
+// additionally refused control characters at validation
+// (tenancy.ValidateOrgName); this is the second line of defence. The
+// addresses are checked for line breaks by deliver before this runs.
 func buildMessage(from, to, subject, body string) []byte {
+	subject = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(subject)
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
 	b.WriteString("\r\n")
 	b.WriteString(body)
 	b.WriteString("\r\n")

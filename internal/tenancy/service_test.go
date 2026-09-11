@@ -586,6 +586,48 @@ func TestInvitePropagatesMailFailure(t *testing.T) {
 	}
 }
 
+func TestValidateOrgName(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"Acme Hosting":                    true,
+		"Müller GmbH":                     true,
+		"":                                false,
+		"   ":                             false,
+		"Acme\r\nBcc: attacker@evil.test": false,
+		"Acme\nX-Injected: yes":           false,
+		"Tab\there":                       false,
+		strings.Repeat("a", 201):          false,
+		strings.Repeat("ä", 200):          true,
+	} {
+		err := tenancy.ValidateOrgName(name)
+		if ok && err != nil {
+			t.Errorf("ValidateOrgName(%q) = %v, want nil", name, err)
+		}
+		if !ok && !errors.Is(err, tenancy.ErrInvalidInput) {
+			t.Errorf("ValidateOrgName(%q) = %v, want ErrInvalidInput", name, err)
+		}
+	}
+}
+
+// TestOrgNamesWithControlCharactersAreRejected covers M4 at the service: an
+// organization name ends up in the Subject header of every invitation, so
+// neither creating nor renaming may store a CR or LF in it.
+func TestOrgNamesWithControlCharactersAreRejected(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	if _, err := svc.CreateOrg(ctx, owner, "evil", "Evil\r\nBcc: attacker@evil.test"); !errors.Is(err, tenancy.ErrInvalidInput) {
+		t.Fatalf("CreateOrg with CRLF: err = %v, want ErrInvalidInput", err)
+	}
+	org, err := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateOrg(ctx, org.ID, "Acme\nX-Injected: yes"); !errors.Is(err, tenancy.ErrInvalidInput) {
+		t.Fatalf("UpdateOrg with LF: err = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestLastOwnerCannotBeDemotedOrRemoved(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
