@@ -53,6 +53,9 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 	if list, err := store.List(ctx, org); err != nil || len(list) != 1 {
 		t.Fatalf("List = %v, %v", list, err)
 	}
+	if usage, err := store.Usage(ctx, org); err != nil || usage[c.ID] != (credentials.Usage{}) {
+		t.Fatalf("Usage of an unreferenced credential = %v, %v", usage, err)
+	}
 
 	got.Name, got.ExpiresAt = "renamed", nil
 	updated, err := store.Update(ctx, got, nil)

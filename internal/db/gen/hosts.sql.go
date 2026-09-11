@@ -58,7 +58,7 @@ func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) (Host, e
 }
 
 const createZone = `-- name: CreateZone :one
-INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, $3, $4) RETURNING id, org_id, slug, name, created_at
+INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, $3, $4) RETURNING id, org_id, slug, name, created_at, bastion_id
 `
 
 type CreateZoneParams struct {
@@ -82,6 +82,7 @@ func (q *Queries) CreateZone(ctx context.Context, arg CreateZoneParams) (Zone, e
 		&i.Slug,
 		&i.Name,
 		&i.CreatedAt,
+		&i.BastionID,
 	)
 	return i, err
 }
@@ -135,7 +136,7 @@ func (q *Queries) GetHost(ctx context.Context, arg GetHostParams) (Host, error) 
 }
 
 const getZone = `-- name: GetZone :one
-SELECT id, org_id, slug, name, created_at FROM zones WHERE id = $1 AND org_id = $2
+SELECT id, org_id, slug, name, created_at, bastion_id FROM zones WHERE id = $1 AND org_id = $2
 `
 
 type GetZoneParams struct {
@@ -157,6 +158,7 @@ func (q *Queries) GetZone(ctx context.Context, arg GetZoneParams) (Zone, error) 
 		&i.Slug,
 		&i.Name,
 		&i.CreatedAt,
+		&i.BastionID,
 	)
 	return i, err
 }
@@ -244,7 +246,7 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 }
 
 const listZonesForOrg = `-- name: ListZonesForOrg :many
-SELECT id, org_id, slug, name, created_at FROM zones WHERE org_id = $1 ORDER BY slug
+SELECT id, org_id, slug, name, created_at, bastion_id FROM zones WHERE org_id = $1 ORDER BY slug
 `
 
 func (q *Queries) ListZonesForOrg(ctx context.Context, orgID uuid.UUID) ([]Zone, error) {
@@ -262,6 +264,7 @@ func (q *Queries) ListZonesForOrg(ctx context.Context, orgID uuid.UUID) ([]Zone,
 			&i.Slug,
 			&i.Name,
 			&i.CreatedAt,
+			&i.BastionID,
 		); err != nil {
 			return nil, err
 		}

@@ -28,6 +28,7 @@ type fakeStore struct {
 	rows       map[uuid.UUID]stored
 	lastSealed []byte
 	updates    int
+	usage      map[uuid.UUID]credentials.Usage
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{rows: map[uuid.UUID]stored{}} }
@@ -83,6 +84,10 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 	}
 	delete(f.rows, id)
 	return nil
+}
+
+func (f *fakeStore) Usage(_ context.Context, _ uuid.UUID) (map[uuid.UUID]credentials.Usage, error) {
+	return f.usage, nil
 }
 
 func testBox() *crypto.Box {
@@ -362,6 +367,16 @@ func TestAuthorizedKeyAndSnippets(t *testing.T) {
 	deploy := credentials.Credential{Name: "repo", Kind: credentials.KindGitKey, PublicKey: "ssh-ed25519 AAAA"}
 	if credentials.AuthorizedKey(deploy, "acme") == "" || credentials.SnippetsFor(deploy, "acme") != (credentials.Snippets{}) {
 		t.Error("a deploy key shows its public key but no host snippets")
+	}
+}
+
+func TestUsagePassesThrough(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.usage = map[uuid.UUID]credentials.Usage{id: {Bastions: 1, Hosts: 3}}
+	got, err := newService(store, time.Now()).Usage(ctx, uuid.Must(uuid.NewV7()))
+	if err != nil || got[id].Hosts != 3 {
+		t.Fatalf("Usage = %v, %v", got, err)
 	}
 }
 

@@ -21,3 +21,12 @@ RETURNING *;
 
 -- name: DeleteCredential :execrows
 DELETE FROM credentials WHERE org_id = $1 AND id = $2;
+
+-- name: ListCredentialUsage :many
+-- How many jump hosts and hosts reference each credential, for the "used by"
+-- column. Inventory groups never reference credentials directly.
+SELECT c.id,
+  (SELECT count(*) FROM bastions b WHERE b.org_id = c.org_id AND b.credential_id = c.id)::int AS bastions,
+  (SELECT count(*) FROM host_ssh h WHERE h.org_id = c.org_id AND h.credential_id = c.id)::int AS hosts
+FROM credentials c
+WHERE c.org_id = $1;

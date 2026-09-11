@@ -135,6 +135,12 @@ type Sealer interface {
 	OpenAAD(sealed, aad []byte) ([]byte, error)
 }
 
+// Usage counts what references a credential.
+type Usage struct {
+	Bastions int
+	Hosts    int
+}
+
 // Store persists credentials. Every lookup that finds nothing returns
 // ErrNotFound; a name clash returns ErrNameTaken; deleting a referenced
 // credential returns ErrInUse.
@@ -146,6 +152,9 @@ type Store interface {
 	// KeyType; a nil sealed keeps the stored secret.
 	Update(ctx context.Context, c Credential, sealed []byte) (Credential, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
+	// Usage maps credential id to its reference counts; credentials that
+	// nothing references may be absent.
+	Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Usage, error)
 }
 
 // Service implements the credential store.
@@ -229,6 +238,11 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 // Delete removes a credential that nothing references (ErrInUse otherwise).
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.store.Delete(ctx, orgID, id)
+}
+
+// Usage returns reference counts per credential for the "used by" column.
+func (s *Service) Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Usage, error) {
+	return s.store.Usage(ctx, orgID)
 }
 
 func validateMeta(name, username string) error {

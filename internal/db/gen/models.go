@@ -83,6 +83,19 @@ type AuditEvent struct {
 	At         time.Time   `json:"at"`
 }
 
+type Bastion struct {
+	ID           uuid.UUID   `json:"id"`
+	OrgID        uuid.UUID   `json:"org_id"`
+	Name         string      `json:"name"`
+	Address      string      `json:"address"`
+	Port         int32       `json:"port"`
+	Username     string      `json:"username"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+	ViaBastionID pgtype.UUID `json:"via_bastion_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
 type Credential struct {
 	ID          uuid.UUID          `json:"id"`
 	OrgID       uuid.UUID          `json:"org_id"`
@@ -111,6 +124,17 @@ type Host struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	CreatedAt  time.Time          `json:"created_at"`
 	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
+type HostSsh struct {
+	HostID       uuid.UUID   `json:"host_id"`
+	OrgID        uuid.UUID   `json:"org_id"`
+	Username     string      `json:"username"`
+	Port         int32       `json:"port"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+	BastionMode  string      `json:"bastion_mode"`
+	BastionID    pgtype.UUID `json:"bastion_id"`
+	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 type HostTag struct {
@@ -210,9 +234,10 @@ type WebauthnCeremony struct {
 }
 
 type Zone struct {
-	ID        uuid.UUID `json:"id"`
-	OrgID     uuid.UUID `json:"org_id"`
-	Slug      string    `json:"slug"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID   `json:"id"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	Slug      string      `json:"slug"`
+	Name      string      `json:"name"`
+	CreatedAt time.Time   `json:"created_at"`
+	BastionID pgtype.UUID `json:"bastion_id"`
 }

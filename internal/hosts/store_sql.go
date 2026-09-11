@@ -86,7 +86,7 @@ func (s *SQLStore) GetZone(ctx context.Context, orgID, zoneID uuid.UUID) (Zone, 
 }
 
 func toZone(r gen.Zone) Zone {
-	return Zone{ID: r.ID, OrgID: r.OrgID, Slug: r.Slug, Name: r.Name}
+	return Zone{ID: r.ID, OrgID: r.OrgID, Slug: r.Slug, Name: r.Name, BastionID: db.UUIDPtr(r.BastionID)}
 }
 
 func (s *SQLStore) CreateHost(ctx context.Context, h Host) error {

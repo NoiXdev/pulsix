@@ -71,6 +71,9 @@ type Zone struct {
 	OrgID uuid.UUID
 	Slug  string
 	Name  string
+	// BastionID is the zone's default jump host. Package hosts only reads
+	// it; internal/sshconf writes it (SetZoneBastion).
+	BastionID *uuid.UUID
 }
 
 // Host is one managed or monitored (or both) target.

@@ -112,6 +112,42 @@ func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (C
 	return i, err
 }
 
+const listCredentialUsage = `-- name: ListCredentialUsage :many
+SELECT c.id,
+  (SELECT count(*) FROM bastions b WHERE b.org_id = c.org_id AND b.credential_id = c.id)::int AS bastions,
+  (SELECT count(*) FROM host_ssh h WHERE h.org_id = c.org_id AND h.credential_id = c.id)::int AS hosts
+FROM credentials c
+WHERE c.org_id = $1
+`
+
+type ListCredentialUsageRow struct {
+	ID       uuid.UUID `json:"id"`
+	Bastions int32     `json:"bastions"`
+	Hosts    int32     `json:"hosts"`
+}
+
+// How many jump hosts and hosts reference each credential, for the "used by"
+// column. Inventory groups never reference credentials directly.
+func (q *Queries) ListCredentialUsage(ctx context.Context, orgID uuid.UUID) ([]ListCredentialUsageRow, error) {
+	rows, err := q.db.Query(ctx, listCredentialUsage, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCredentialUsageRow
+	for rows.Next() {
+		var i ListCredentialUsageRow
+		if err := rows.Scan(&i.ID, &i.Bastions, &i.Hosts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCredentials = `-- name: ListCredentials :many
 SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, secret, expires_at, created_by, created_at, updated_at FROM credentials WHERE org_id = $1 ORDER BY name
 `

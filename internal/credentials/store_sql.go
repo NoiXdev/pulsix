@@ -81,6 +81,18 @@ func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
+func (s *SQLStore) Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Usage, error) {
+	rows, err := s.q.ListCredentialUsage(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]Usage, len(rows))
+	for _, r := range rows {
+		out[r.ID] = Usage{Bastions: int(r.Bastions), Hosts: int(r.Hosts)}
+	}
+	return out, nil
+}
+
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
