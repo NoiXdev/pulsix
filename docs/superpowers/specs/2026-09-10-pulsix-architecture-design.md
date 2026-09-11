@@ -97,12 +97,19 @@ Topology: `zones(org_id, slug, name)`, `workers(zone_id, name, cert_serial, last
 version, capabilities)`, `hosts(org_id, zone_id, name, address, managed bool, monitored
 bool, facts jsonb, last_seen)`, `host_tags(host_id, key, value, source manual|fact)`.
 
-Inventory (Ansible): `inventory_groups(org_id, parent_id, name, schema jsonb, values
-jsonb, bastion_id)`, `inventory_memberships(group_id, host_id, values jsonb)`,
-`ssh_credentials(org_id, name, kind key|password, encrypted payload)`, `bastions(org_id,
-name, address, port, user, credential_id, via_bastion_id)` (SSH jump hosts, chainable),
-`host_ssh(host_id, user, port, credential_id, bastion_id, bastion_mode inherit|none|
-explicit)`; `zones` also carry a default `bastion_id`.
+Inventory (Ansible): `inventory_groups(org_id, parent_id, name, schema jsonb, vars jsonb,
+bastion_id, revision)`, `inventory_memberships(group_id, host_id, org_id, vars jsonb,
+revision)` — the column is `vars`, not `values`, because `VALUES` is an SQL keyword; the
+API and this spec keep the word "values" for the concept. `revision` backs the `If-Match`
+concurrency check (§15) on group and membership writes. `credentials(org_id, name, kind
+ssh_key|ssh_password|git_key|git_token, username, public_key, fingerprint, key_type,
+sealed secret, expires_at)` replaces `ssh_credentials`: one encrypted store for SSH keys
+and passwords, Git deploy keys and tokens, with `public_key`/`fingerprint`/`key_type` set
+only for `ssh_key`/`git_key`. `bastions(org_id, name, address, port, username,
+credential_id, via_bastion_id)` (SSH jump hosts, chainable up to four hops, cycles
+rejected on write). `host_ssh(host_id, org_id, username, port, credential_id, bastion_mode
+inherit|none|explicit, bastion_id)`, one row per host with settings, defaulting to
+inherit when absent; `zones` also carry a default `bastion_id`.
 
 Ansible content and jobs: `git_repos(org_id, url, credential, branch, last_sync)`,
 `playbooks(org_id, repo_id|null, path|inline, source repo|editor)`, `job_templates(org_id,
@@ -177,7 +184,7 @@ fields. Field definition:
 ```json
 {
   "name": "vhosts", "label": "Virtual hosts", "type": "repeater",
-  "scope": "host", "required": true, "min": 1,
+  "scope": "host", "required": true, "min_items": 1,
   "description": "Virtual hosts served by this host",
   "fields": [
     {"name": "domain", "type": "string", "required": true, "pattern": "^[a-z0-9.-]+$"},
@@ -193,19 +200,37 @@ fields. Field definition:
 Types: `string`, `int`, `float`, `bool`, `enum`, `secret`, `list<T>`, `repeater`
 (list of objects with a sub-schema), `object` (single sub-schema). Common attributes:
 `label`, `description`, `required`, `default`, `scope` (`group` | `host`), `overridable`
-(for group-scoped fields: a host may override), validation (`min`, `max`, `pattern`,
-`min_items`, `max_items`).
+(for group-scoped fields: a host may override), validation (`min`, `max`: a number range
+for `int`/`float`, a length in characters for `string`; `pattern`; `min_items`,
+`max_items`: item count for `list`/`repeater`).
+
+Naming: field names match `^[a-z_][a-z0-9_]{0,63}$` and a top-level field name must not
+start with `ansible_` or `pulsix_`, so a schema can never shadow a connection variable or
+the facts. Group names match `^[a-z_][a-z0-9_]{0,62}$` (a valid Ansible group name), must
+not be `all` or `ungrouped`, and are unique per organization because Ansible's group
+namespace is flat.
 
 Values
 
-- Group-scoped values live on the group (`inventory_groups.values`).
-- Host-scoped values are collected in a form generated from the schema when a host is
-  assigned (`inventory_memberships.values`) and can be edited later.
+- Group-scoped values live on the group (`inventory_groups.vars`).
+- Host-scoped fields are asked only for hosts assigned **directly** to that group
+  (`inventory_memberships.vars`); a host inherits its ancestors' group-scoped values
+  through Ansible's own group inheritance, but does not answer an ancestor's host-scoped
+  fields unless it is a direct member of that ancestor too.
 - Validation runs server-side against the schema on every write; the SPA renders the form
-  from the same schema JSON.
+  from the same schema JSON as a controlled component (§15), not a static form.
 - Schema changes: adding an optional field is free; adding a required field marks
   affected memberships as `incomplete` and the GUI lists them; removing a field keeps the
-  stored value until the next save (never destroys data silently).
+  stored value until the next save (never destroys data silently); the next save sends
+  only the fields the schema still declares, which drops any orphaned ones.
+- **Secret wire format.** Stored inside a vars document as `{"$sealed": "<ciphertext>"}`.
+  Reads return `{"$secret": "set"}`, never the plaintext. A write sends a plaintext string
+  for a new value, or `{"$secret": "keep", "from": "<path>"}` to keep the value already
+  stored at `<path>`, so a repeater entry that moves keeps its secret. A client can never
+  write `$sealed` directly.
+- **Hosts in several groups.** Membership values merge in order of group depth (shallow
+  first), then group name; the later group wins, and a key set to different values by two
+  groups produces a warning in the inventory preview.
 
 Export to Ansible
 
@@ -461,9 +486,12 @@ Layered like Checkmk rulesets and Zabbix templates.
   concurrency on config objects, consistent problem+json errors.
 - Real-time: SSE endpoints for job logs, alert feed and host state changes.
 - SPA: React 19, TypeScript, Vite, TanStack Router and Query, shadcn/ui on Tailwind,
-  uPlot for graphs, react-hook-form with a schema-driven form renderer (used for group
-  assignment, check parameters and job extra vars). Dark-first with the brand tokens;
-  light theme later. ⌘K command palette for global search.
+  uPlot for graphs. Forms rendered from a schema (group assignment, check parameters,
+  job extra vars) are controlled components over a plain value tree, not
+  react-hook-form: the schema is only known at runtime and nests to arbitrary depth, and
+  one recursive renderer over a value tree is simpler to test than nested field-array
+  hooks. react-hook-form stays for static forms (auth, invites, settings). Dark-first
+  with the brand tokens; light theme later. ⌘K command palette for global search.
 - The SPA is built into the manager binary (`embed`), so one image serves everything.
 
 ## 16. Deployment

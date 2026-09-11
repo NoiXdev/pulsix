@@ -2,9 +2,9 @@ import { defineConfig, devices } from '@playwright/test';
 import { BASE_URL } from './e2e/env.ts';
 
 /**
- * The seven journeys are not independent: setup.spec creates the instance
+ * The eight journeys are not independent: setup.spec creates the instance
  * (admin, org "acme", TOTP), and login/passkey/hosts/members/activity/
- * tenancy all assume that instance already exists — most of them load
+ * tenancy/inventory all assume that instance already exists — most of them load
  * setup.spec's own captured browser storage state (env.ADMIN_STORAGE_STATE)
  * to start already signed in, rather than re-running the wizard.
  *
@@ -43,5 +43,6 @@ export default defineConfig({
     { name: 'members', testMatch: /members\.spec\.ts/, dependencies: ['hosts'] },
     { name: 'activity', testMatch: /activity\.spec\.ts/, dependencies: ['members'] },
     { name: 'tenancy', testMatch: /tenancy\.spec\.ts/, dependencies: ['activity'] },
+    { name: 'inventory', testMatch: /inventory\.spec\.ts/, dependencies: ['tenancy'] },
   ],
 });

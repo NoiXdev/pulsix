@@ -5,7 +5,7 @@ One line per deliverable, grouped by milestone. Update the status column as work
 
 Status legend: `idea` · `mockup` · `spec` · `planned` · `in progress` · `done`
 
-Last updated: 2026-09-10
+Last updated: 2026-09-11
 
 ## Milestones
 
@@ -81,24 +81,31 @@ the rest are follow-ups. Recorded 2026-09-11.
 | 1.27 | Re-enrolling TOTP keeps the confirmed secret until the new one is confirmed | planned | today an abandoned re-enrolment leaves the account password-only |
 | 1.28 | Step-up (fresh second factor) for passkey registration and deletion | planned | |
 | 1.29 | Security headers (CSP, frame-ancestors, nosniff, referrer policy); gate `/schemas/*` like the OpenAPI document | planned | |
-| 1.30 | Composite foreign keys tying `host_tags.org_id` and `hosts.zone_id` to their owners | planned | additive migration |
-| 1.31 | `If-Match` optimistic concurrency on config objects, starting with host updates | planned | spec §15 |
+| 1.30 | Composite foreign keys tying `host_tags.org_id` and `hosts.zone_id` to their owners | in progress | composite keys for all v0.2a references; host_tags and hosts.zone_id remain |
+| 1.31 | `If-Match` optimistic concurrency on config objects, starting with host updates | in progress | If-Match on inventory groups and memberships; host updates remain |
 | 1.32 | Release workflow publishes only commits on `main` with green CI; `ci.yml` permissions block and SHA-pinned actions | planned | |
 | 1.33 | End-user docs (`noix-docs`, branch `pulsix`): reconcile with what v0.1 actually ships | planned | the branch describes the v1 target |
 
 ## v0.2 · Inventory & Ansible
 
+Three plans cover this milestone. **v0.2a Inventory**
+(`docs/superpowers/plans/2026-09-11-v0.2a-inventory.md`) covers 2.1–2.7a and the
+key-generation half of 2.7b (visible public key + snippets). **v0.2b Execution** covers
+the rest of 2.7b (now 2.7c: bootstrap, connection test, host-key pinning), 2.8–2.12a.
+**v0.2c Automation** covers 2.13–2.14.
+
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 2.1 | Inventory groups: hierarchy, parents/children | planned | |
-| 2.2 | Variable schema builder per group: string, int, float, bool, enum, secret, list, repeater, sub-schema | planned | JSON schema stored per group |
-| 2.3 | Scope flag per field: `group` (set once) or `host` (asked on assignment) | planned | |
-| 2.4 | Host-to-group assignment form generated from schema, validation | planned | |
-| 2.5 | Host override of group values (optional per field) | planned | |
-| 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | planned | |
-| 2.7 | Credentials & secrets page: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and key rotation via playbook | planned | never leaves worker unencrypted |
-| 2.7a | SSH jump hosts (bastions): org-level objects, chainable, inherited zone → group → host, rendered as ProxyJump | planned | |
-| 2.7b | SSH onboarding: Pulsix-generated or imported keys with visible public key + snippets (authorized_keys, cloud-init, Terraform), one-time bootstrap playbook with an existing login, connection test from the worker with host-key TOFU + pinning, sudo/Python checks, daily re-test | planned | mockup: enrollment step 3 |
+| 2.1 | Inventory groups: hierarchy, parents/children | done | |
+| 2.2 | Variable schema builder per group: string, int, float, bool, enum, secret, list, repeater, sub-schema | done | JSON schema stored per group |
+| 2.3 | Scope flag per field: `group` (set once) or `host` (asked on assignment) | done | |
+| 2.4 | Host-to-group assignment form generated from schema, validation | done | |
+| 2.5 | Host override of group values (optional per field) | done | |
+| 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | done | |
+| 2.7 | Credentials & secrets page: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and key rotation via playbook | in progress | store, usage, expiry done (v0.2a); rotation via playbook in v0.2b |
+| 2.7a | SSH jump hosts (bastions): org-level objects, chainable, inherited zone → group → host, rendered as ProxyJump | done | |
+| 2.7b | SSH onboarding: Pulsix-generated or imported keys with visible public key + snippets (authorized_keys, cloud-init, Terraform) | done | mockup: enrollment step 3 |
+| 2.7c | Bootstrap playbook, connection test from the worker, host-key TOFU + pinning, sudo/Python checks, daily re-test | planned | v0.2b |
 | 2.8 | Several Git repos per org (deploy key / token, branch, subpath), pull before run, `requirements.yml` install, push webhook for auto-sync, sync errors surfaced | planned | main path for playbooks |
 | 2.9 | Ad-hoc playbook editor in GUI | planned | small playbooks, stored in DB |
 | 2.10 | Job templates: playbook, inventory scope, limit, extra vars, credentials | planned | |
