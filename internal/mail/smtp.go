@@ -16,6 +16,14 @@ import (
 	"strings"
 )
 
+// ErrNotConfigured means the instance has no outbound mail settings at all.
+// It is a state, not a delivery failure: callers that can do without mail
+// (an invitation, whose link the administrator can hand over instead) tell
+// it apart from a server that rejected or could not take the message. A
+// settings loader passed to NewSMTP reports "nothing stored" by returning an
+// error that wraps it.
+var ErrNotConfigured = errors.New("smtp is not configured")
+
 // errHeaderInjection is returned when an address that goes into a header
 // line carries a line break.
 var errHeaderInjection = errors.New("smtp: address contains a line break")
@@ -48,7 +56,8 @@ func NewSMTP(load func(ctx context.Context) (SMTPSettings, error)) *SMTP {
 }
 
 // Send implements tenancy.Mailer: it loads the current settings and
-// delivers one message.
+// delivers one message. It returns an error wrapping ErrNotConfigured when
+// no settings exist.
 func (m *SMTP) Send(ctx context.Context, to, subject, body string) error {
 	settings, err := m.load(ctx)
 	if err != nil {
@@ -89,7 +98,7 @@ func (Discard) Send(context.Context, string, string, string) error { return nil 
 // against settings.Host.
 func deliver(settings SMTPSettings, to, subject, body string) error {
 	if settings.Host == "" {
-		return errors.New("smtp: not configured")
+		return ErrNotConfigured
 	}
 	if strings.ContainsAny(settings.From, "\r\n") || strings.ContainsAny(to, "\r\n") {
 		return errHeaderInjection

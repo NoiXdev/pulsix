@@ -137,6 +137,14 @@ func mapTenancyErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, tenancy.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
+	case errors.Is(err, tenancy.ErrInviteDelivery):
+		// The SMTP server's own answer can name internal hosts and
+		// credentials, and the caller is an organization administrator,
+		// not necessarily the instance administrator who owns those
+		// settings: it is logged, and the client gets a specific but
+		// generic explanation. The invitation itself was not kept.
+		slog.ErrorContext(ctx, "invitation e-mail could not be delivered", "err", err)
+		return huma.Error502BadGateway("the invitation e-mail could not be delivered, so no invitation was created; check the instance's outgoing mail settings and try again")
 	default:
 		slog.ErrorContext(ctx, "unmapped tenancy error", "err", err)
 		return huma.Error500InternalServerError("internal error")

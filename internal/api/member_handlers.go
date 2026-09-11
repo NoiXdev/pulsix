@@ -50,6 +50,13 @@ type inviteCreateOutput struct {
 		Email     string    `json:"email"`
 		Role      string    `json:"role"`
 		ExpiresAt time.Time `json:"expires_at"`
+		// MailSent reports whether the invitation e-mail went out.
+		MailSent bool `json:"mail_sent"`
+		// AcceptURL is the acceptance link, present only when it was not
+		// mailed because the instance has no outgoing mail configured: the
+		// administrator hands it to the invitee themselves. It is the same
+		// single-use credential the e-mail would have carried.
+		AcceptURL string `json:"accept_url,omitempty"`
 	}
 }
 
@@ -80,6 +87,11 @@ type inviteAcceptOutput struct {
 	Body      struct {
 		UserID string `json:"user_id"`
 		OrgID  string `json:"org_id"`
+		// SignedIn reports whether accepting opened a session: true when it
+		// created the account (which must now enrol a second factor), false
+		// when the address already had an account of its own, whose holder
+		// signs in with their own credentials.
+		SignedIn bool `json:"signed_in"`
 	}
 }
 
@@ -138,6 +150,7 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, inv.ID.String(), "invited "+inv.Email+" as "+string(inv.Role))
 		out := &inviteCreateOutput{}
 		out.Body.Email, out.Body.Role, out.Body.ExpiresAt = inv.Email, string(inv.Role), inv.ExpiresAt
+		out.Body.MailSent, out.Body.AcceptURL = inv.Mailed, inv.AcceptURL
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createInvite", "invite"))
 
@@ -231,6 +244,7 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 			}
 			c := sessionCookie(cookie, deps.Secure)
 			out.SetCookie = &c
+			out.Body.SignedIn = true
 		}
 		return out, nil
 	}, withAudit("acceptInvite", "member"))

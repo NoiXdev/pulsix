@@ -24,6 +24,24 @@ func (q *Queries) CountOwners(ctx context.Context, orgID uuid.UUID) (int64, erro
 	return count, err
 }
 
+const deleteInvite = `-- name: DeleteInvite :exec
+DELETE FROM invites WHERE id = $1 AND org_id = $2
+`
+
+type DeleteInviteParams struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// Removes an invitation that was never delivered: tenancy.Service.Invite
+// inserts the row before sending the mail that carries its link, and
+// deletes it again when that delivery fails, so a failed invitation leaves
+// no orphaned row behind.
+func (q *Queries) DeleteInvite(ctx context.Context, arg DeleteInviteParams) error {
+	_, err := q.db.Exec(ctx, deleteInvite, arg.ID, arg.OrgID)
+	return err
+}
+
 const deleteMembership = `-- name: DeleteMembership :execrows
 DELETE FROM org_memberships AS m
 WHERE m.org_id = $1 AND m.user_id = $2

@@ -205,6 +205,10 @@ func (s *SQLStore) InsertInvite(ctx context.Context, inv Invite, tokenHash []byt
 	})
 }
 
+func (s *SQLStore) DeleteInvite(ctx context.Context, orgID, id uuid.UUID) error {
+	return s.q.DeleteInvite(ctx, gen.DeleteInviteParams{ID: id, OrgID: orgID})
+}
+
 func (s *SQLStore) TakeInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error) {
 	row, err := s.q.TakeInvite(ctx, gen.TakeInviteParams{TokenHash: tokenHash, Now: now})
 	if err != nil {

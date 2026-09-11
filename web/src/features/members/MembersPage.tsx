@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { UserPlus } from 'lucide-react';
+import { Copy, UserPlus } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
@@ -37,6 +37,10 @@ export function MembersPage() {
   const removeMember = useRemoveMember(org);
 
   const [inviteOpen, setInviteOpen] = useState(false);
+  // Set when an invitation was created but not e-mailed because the
+  // instance has no outgoing mail configured: the link is shown for the
+  // administrator to hand over instead.
+  const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
   const [roleTarget, setRoleTarget] = useState<{ userId: string; name: string; role: string } | null>(null);
 
   const inviteForm = useForm<InviteFormValues>({
@@ -119,8 +123,12 @@ export function MembersPage() {
           className="flex flex-col gap-4"
           onSubmit={inviteForm.handleSubmit(async (values) => {
             try {
-              await invite.mutateAsync(values);
-              toast.show(`Invitation sent to ${values.email}`);
+              const res = await invite.mutateAsync(values);
+              if (res.mail_sent || !res.accept_url) {
+                toast.show(`Invitation sent to ${values.email}`);
+              } else {
+                setInviteLink({ email: res.email, url: res.accept_url });
+              }
               setInviteOpen(false);
               inviteForm.reset();
             } catch (err) {
@@ -160,6 +168,42 @@ export function MembersPage() {
             </Button>
           </div>
         </form>
+      </Dialog>
+
+      <Dialog open={!!inviteLink} onClose={() => setInviteLink(null)} title="Share the invitation link">
+        {inviteLink && (
+          <div className="flex flex-col gap-4">
+            <p className="text-xs text-muted-foreground">
+              Outgoing mail is not configured on this instance, so no e-mail was sent. Give this link to{' '}
+              <span className="font-semibold text-foreground">{inviteLink.email}</span> yourself — it works once and
+              expires in 7 days.
+            </p>
+            <code
+              aria-label="Invitation link"
+              className="break-all rounded-md border border-border bg-background p-2 font-mono text-[11px]"
+            >
+              {inviteLink.url}
+            </code>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(inviteLink.url);
+                    toast.show('Invitation link copied');
+                  } catch {
+                    toast.show('Could not copy — select the link and copy it by hand', 'destructive');
+                  }
+                }}
+              >
+                <Copy size={14} /> Copy link
+              </Button>
+              <Button type="button" variant="primary" onClick={() => setInviteLink(null)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
       </Dialog>
 
       <Dialog

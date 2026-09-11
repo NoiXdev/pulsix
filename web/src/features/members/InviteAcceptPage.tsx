@@ -31,15 +31,13 @@ function InviteAcceptShell({ children }: { children: ReactNode }) {
  * POST /invites/accept opens a session only when accepting it just gave
  * the address its first password — a brand-new account, or a
  * never-logged-in row left over from an earlier, never-accepted invite
- * (see tenancy.Service.AcceptInvite's own doc comment). When the address
- * already belonged to an account with its own password, acceptance only
- * adds the membership and sets no cookie, so the follow-up
- * `await refetchMe()` below correctly 401s — that is not a failure of
- * acceptance itself (the membership was created either way), it is how
- * this page tells the two outcomes apart without the API needing to say
- * so explicitly in the response body: a new invitee continues signed in
- * towards second-factor enrolment, and the holder of an existing account
- * is told to sign in with the password that account already has.
+ * (see tenancy.Service.AcceptInvite's own doc comment) — and says so in
+ * `signed_in`. A new invitee continues signed in towards second-factor
+ * enrolment; the holder of an existing account (signed_in: false; the
+ * membership was added all the same) is told to sign in with the
+ * credentials that account already has. Any failure — of acceptance
+ * itself, or of loading the new session afterwards — is reported as such,
+ * never mistaken for the existing-account outcome.
  */
 export function InviteAcceptPage() {
   const { token } = useParams({ strict: false }) as { token: string };
@@ -78,10 +76,16 @@ export function InviteAcceptPage() {
           e.preventDefault();
           setBusy(true);
           setError(null);
+          let signedIn: boolean;
           try {
-            await acceptInvite({ token, display_name: displayName, password });
+            ({ signed_in: signedIn } = await acceptInvite({ token, display_name: displayName, password }));
           } catch (err) {
             setError(err instanceof Error ? err.message : 'failed to accept invitation');
+            setBusy(false);
+            return;
+          }
+          if (!signedIn) {
+            setJoinedExistingAccount(true);
             setBusy(false);
             return;
           }
@@ -92,8 +96,12 @@ export function InviteAcceptPage() {
             resetSession();
             await refetchMe();
             await navigate({ to: '/account/enrol' });
-          } catch {
-            setJoinedExistingAccount(true);
+          } catch (err) {
+            setError(
+              err instanceof Error
+                ? `You joined the organization, but signing you in failed: ${err.message}. Try signing in.`
+                : 'You joined the organization, but signing you in failed. Try signing in.',
+            );
             setBusy(false);
           }
         }}

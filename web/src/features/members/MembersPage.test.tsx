@@ -39,7 +39,7 @@ describe('MembersPage', () => {
       'GET /api/v1/orgs/acme/members': MEMBERS,
       'POST /api/v1/orgs/acme/invites': (req: MockRequest) => {
         invited = req.body;
-        return { email: 'ops@acme.io', role: 'operator', expires_at: '2026-01-08T00:00:00Z' };
+        return { email: 'ops@acme.io', role: 'operator', expires_at: '2026-01-08T00:00:00Z', mail_sent: true };
       },
     });
 
@@ -55,6 +55,58 @@ describe('MembersPage', () => {
 
     expect(await screen.findByText('Invitation sent to ops@acme.io')).toBeInTheDocument();
     expect(invited).toMatchObject({ email: 'ops@acme.io', role: 'operator' });
+  });
+
+  // I4: on an instance without outgoing mail the invitation is still
+  // created, and the page hands the acceptance link to the administrator
+  // (with a copy action) instead of claiming an e-mail went out.
+  it('shows the acceptance link with a copy action when no e-mail could be sent', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const link = 'http://localhost:3000/invite/tok_nomail';
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'POST /api/v1/orgs/acme/invites': {
+        email: 'ops@acme.io',
+        role: 'operator',
+        expires_at: '2026-01-08T00:00:00Z',
+        mail_sent: false,
+        accept_url: link,
+      },
+    });
+
+    renderPage(qc);
+    await user.click(await screen.findByRole('button', { name: 'Invite member' }));
+    await user.type(screen.getByLabelText('E-mail address'), 'ops@acme.io');
+    await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+
+    expect(await screen.findByLabelText('Invitation link')).toHaveTextContent(link);
+    expect(screen.getByText(/no e-mail was sent/)).toBeInTheDocument();
+    expect(screen.queryByText('Invitation sent to ops@acme.io')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Copy link' }));
+    expect(await screen.findByText('Invitation link copied')).toBeInTheDocument();
+    expect(await navigator.clipboard.readText()).toBe(link);
+
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByLabelText('Invitation link')).not.toBeInTheDocument();
+  });
+
+  it('reports a failed delivery with the server\'s explanation', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'POST /api/v1/orgs/acme/invites': () =>
+        new Response(JSON.stringify({ detail: 'the invitation e-mail could not be delivered' }), { status: 502 }),
+    });
+
+    renderPage(qc);
+    await user.click(await screen.findByRole('button', { name: 'Invite member' }));
+    await user.type(screen.getByLabelText('E-mail address'), 'ops@acme.io');
+    await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+
+    expect(await screen.findByText('the invitation e-mail could not be delivered')).toBeInTheDocument();
   });
 
   it('changes a member\'s role', async () => {

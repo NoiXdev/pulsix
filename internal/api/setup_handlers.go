@@ -206,7 +206,7 @@ func registerSMTPSettingsRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		if err := deps.Mailer.Test(ctx, in.Body.To); err != nil {
-			if errors.Is(err, setup.ErrNotFound) {
+			if errors.Is(err, mail.ErrNotConfigured) {
 				// SMTP was never configured: Mailer.Test fails at loading
 				// settings (setup.LoadSMTP returns ErrNotFound), before it
 				// ever dials anything. That is a state conflict on this

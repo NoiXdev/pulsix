@@ -316,11 +316,17 @@ func (s *Service) SaveSMTP(ctx context.Context, in mail.SMTPSettings) error {
 	return saveSMTP(ctx, s.store, s.box, in)
 }
 
-// LoadSMTP reads the stored settings back and unseals the password. It
-// returns ErrNotFound (via Store.LoadSetting) when no settings have ever
-// been saved — the state every fresh instance starts in.
+// LoadSMTP reads the stored settings back and unseals the password. When
+// no settings have ever been saved — the state every fresh instance starts
+// in — it returns an error that is both ErrNotFound (via Store.LoadSetting)
+// and mail.ErrNotConfigured, so the settings API can answer "not configured
+// yet" and the mailer it is wired into (mail.NewSMTP) can report the same
+// state to its own callers.
 func (s *Service) LoadSMTP(ctx context.Context) (mail.SMTPSettings, error) {
 	data, err := s.store.LoadSetting(ctx, smtpSettingsKey)
+	if errors.Is(err, ErrNotFound) {
+		return mail.SMTPSettings{}, fmt.Errorf("%w: %w", ErrNotFound, mail.ErrNotConfigured)
+	}
 	if err != nil {
 		return mail.SMTPSettings{}, err
 	}

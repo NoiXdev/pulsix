@@ -3,6 +3,7 @@ package mail_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -243,6 +244,22 @@ func TestSendFailsWhenCredentialsProvidedButServerDoesNotAdvertiseAUTH(t *testin
 	}
 	if len(backend.recorded()) != 0 {
 		t.Fatal("a message must not be delivered unauthenticated when credentials were configured")
+	}
+}
+
+// TestSendReportsMissingSettingsAsNotConfigured: a loader that says nothing
+// is stored — or settings with no host — is ErrNotConfigured, a state the
+// caller can act on, not an opaque delivery failure.
+func TestSendReportsMissingSettingsAsNotConfigured(t *testing.T) {
+	nothingStored := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{}, fmt.Errorf("load: %w", mail.ErrNotConfigured)
+	})
+	if err := nothingStored.Send(context.Background(), "dest@example.test", "s", "b"); !errors.Is(err, mail.ErrNotConfigured) {
+		t.Fatalf("Send with nothing stored: err = %v, want ErrNotConfigured", err)
+	}
+	noHost := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) { return mail.SMTPSettings{}, nil })
+	if err := noHost.Send(context.Background(), "dest@example.test", "s", "b"); !errors.Is(err, mail.ErrNotConfigured) {
+		t.Fatalf("Send with no host: err = %v, want ErrNotConfigured", err)
 	}
 }
 

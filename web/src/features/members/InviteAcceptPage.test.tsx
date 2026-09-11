@@ -47,16 +47,15 @@ describe('InviteAcceptPage', () => {
     mockApi({
       'POST /api/v1/invites/accept': (req: MockRequest) => {
         accepted = req.body;
-        return { user_id: 'u2', org_id: 'o1' };
+        return { user_id: 'u2', org_id: 'o1', signed_in: true };
       },
-      // Accepting an invite that creates a new account opens an
-      // MFA-complete session (see tenancy.Service.AcceptInvite /
-      // api.registerInviteAcceptRoute), so the follow-up /auth/me here
-      // succeeds — this is what tells the page it does not need to send
-      // the invitee to /login.
+      // Accepting an invite that creates a new account opens a session
+      // that must enrol a second factor (see tenancy.Service.AcceptInvite /
+      // api.registerInviteAcceptRoute).
       'GET /api/v1/auth/me': {
         user: { id: 'u2', email: 'ops@acme.io', display_name: 'Ops User' },
-        mfa_complete: true,
+        mfa_complete: false,
+        mfa_enrolment_required: true,
         totp_confirmed: false,
         instance_admin: false,
       },
@@ -73,11 +72,8 @@ describe('InviteAcceptPage', () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
-      'POST /api/v1/invites/accept': () => ({ user_id: 'u3', org_id: 'o1' }),
-      // No session was opened (the address already had its own password),
-      // so /auth/me correctly 401s — the page must read that as "go sign
-      // in", not as an error accepting the invite.
-      'GET /api/v1/auth/me': () => new Response(JSON.stringify({ detail: 'no session' }), { status: 401 }),
+      // No session was opened: the address already had its own password.
+      'POST /api/v1/invites/accept': () => ({ user_id: 'u3', org_id: 'o1', signed_in: false }),
     });
 
     renderPage(qc);
@@ -86,6 +82,24 @@ describe('InviteAcceptPage', () => {
     expect(await screen.findByText('You already have an account')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Go to sign in' }));
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+  });
+
+  // I4: the page used to treat *any* failure loading the new session as
+  // "you already have an account". A new account whose session could not
+  // be loaded (a 500 here) is told what actually happened instead.
+  it('reports a failure to load the new session as such, not as an existing account', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'POST /api/v1/invites/accept': () => ({ user_id: 'u4', org_id: 'o1', signed_in: true }),
+      'GET /api/v1/auth/me': () => new Response(JSON.stringify({ detail: 'internal error' }), { status: 500 }),
+    });
+
+    renderPage(qc);
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText(/signing you in failed: internal error/)).toBeInTheDocument();
+    expect(screen.queryByText('You already have an account')).not.toBeInTheDocument();
   });
 
   it('shows an inline error instead of an unhandled rejection when the token is invalid', async () => {

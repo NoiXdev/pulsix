@@ -850,6 +850,7 @@ export interface components {
              */
             readonly $schema?: string;
             org_id: string;
+            signed_in: boolean;
             user_id: string;
         };
         InviteCreateInputBody: {
@@ -871,9 +872,11 @@ export interface components {
              * @example https://example.com/schemas/InviteCreateOutputBody.json
              */
             readonly $schema?: string;
+            accept_url?: string;
             email: string;
             /** Format: date-time */
             expires_at: string;
+            mail_sent: boolean;
             role: string;
         };
         KeyValuesDTO: {

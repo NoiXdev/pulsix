@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/mail"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer.
@@ -30,6 +31,11 @@ var (
 	// ErrInvalidInput is wrapped with a human-readable reason (see
 	// ValidateOrgName); callers present err.Error() directly.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrInviteDelivery means outbound mail is configured but the
+	// invitation e-mail could not be delivered. The invitation is not kept:
+	// Invite removes it again, so nothing is left that nobody was told
+	// about.
+	ErrInviteDelivery = errors.New("the invitation e-mail could not be delivered")
 )
 
 // maxOrgNameLength bounds an organization's display name.
@@ -105,6 +111,11 @@ type User struct {
 // only ever populated by Invite itself — nothing reads it back out of
 // storage, since only its SHA-256 hash is ever persisted (see
 // Store.InsertInvite).
+//
+// Mailed reports whether the invitation e-mail went out. When it did not
+// because the instance has no outbound mail configured, AcceptURL carries
+// the acceptance link instead, for the administrator to hand over
+// themselves; it is empty whenever the link was mailed.
 type Invite struct {
 	ID        uuid.UUID
 	OrgID     uuid.UUID
@@ -113,6 +124,8 @@ type Invite struct {
 	InvitedBy uuid.UUID
 	ExpiresAt time.Time
 	Token     string
+	Mailed    bool
+	AcceptURL string
 }
 
 // Store is the persistence contract for tenancy. Every method that can find
@@ -140,6 +153,8 @@ type Store interface {
 	RevokeSessionsForUser(ctx context.Context, id uuid.UUID) error
 	RevokeTokensForUser(ctx context.Context, id uuid.UUID) error
 	InsertInvite(ctx context.Context, inv Invite, tokenHash []byte) error
+	// DeleteInvite removes an invitation of orgID that was never delivered.
+	DeleteInvite(ctx context.Context, orgID, id uuid.UUID) error
 	// TakeInvite atomically finds an invite that is unaccepted and
 	// unexpired as of now and marks it accepted, returning ErrNotFound if
 	// no such invite exists — whether because the token is unknown,
@@ -150,7 +165,9 @@ type Store interface {
 }
 
 // Mailer sends transactional mail. Tests use a recording fake; production
-// wires an SMTP-backed implementation in Task 12.
+// wires an SMTP-backed implementation in Task 12. Send returns an error
+// wrapping mail.ErrNotConfigured when the instance has no outbound mail
+// settings at all.
 type Mailer interface {
 	Send(ctx context.Context, to, subject, body string) error
 }
@@ -277,9 +294,20 @@ func (s *Service) ListMembers(ctx context.Context, orgID uuid.UUID) ([]Member, e
 // Invite creates an invitation for email to join orgID as role and e-mails
 // the acceptance link. The owner role can never be granted by invite — only
 // ChangeRole, and only by an existing owner, can create a second owner.
+//
+// Inviting does not depend on outbound mail being configured: when it is
+// not (mail.ErrNotConfigured), the invitation is kept and returned with
+// AcceptURL set, so the administrator can hand the link over themselves.
+// When mail is configured but delivery fails, the invitation is deleted
+// again — nobody was told about it, so it must not linger — and the call
+// fails with ErrInviteDelivery wrapping the mailer's own error.
 func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email string, role Role) (Invite, error) {
 	if !Valid(role) || role == RoleOwner {
 		return Invite{}, fmt.Errorf("invite role %q: %w", role, ErrForbidden)
+	}
+	org, err := s.store.GetOrgByID(ctx, orgID)
+	if err != nil {
+		return Invite{}, err
 	}
 	secret := make([]byte, inviteSecretBytes)
 	if _, err := rand.Read(secret); err != nil {
@@ -294,14 +322,20 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 	if err := s.store.InsertInvite(ctx, inv, sum[:]); err != nil {
 		return Invite{}, fmt.Errorf("insert invite: %w", err)
 	}
-	org, err := s.store.GetOrgByID(ctx, orgID)
-	if err != nil {
-		return Invite{}, err
-	}
-	body := fmt.Sprintf("You have been invited to %s on Pulsix as %s.\n\nAccept: %s/invite/%s\n\nThe link expires in 7 days.",
-		org.Name, role, s.publicURL, token)
-	if err := s.mailer.Send(ctx, inv.Email, "Invitation to "+org.Name, body); err != nil {
-		return Invite{}, fmt.Errorf("send invite mail: %w", err)
+	link := s.publicURL + "/invite/" + token
+	body := fmt.Sprintf("You have been invited to %s on Pulsix as %s.\n\nAccept: %s\n\nThe link expires in 7 days.",
+		org.Name, role, link)
+	sendErr := s.mailer.Send(ctx, inv.Email, "Invitation to "+org.Name, body)
+	switch {
+	case sendErr == nil:
+		inv.Mailed = true
+	case errors.Is(sendErr, mail.ErrNotConfigured):
+		inv.AcceptURL = link
+	default:
+		if err := s.store.DeleteInvite(ctx, orgID, inv.ID); err != nil {
+			return Invite{}, fmt.Errorf("%w: %w (and removing the undelivered invitation failed: %w)", ErrInviteDelivery, sendErr, err)
+		}
+		return Invite{}, fmt.Errorf("%w: %w", ErrInviteDelivery, sendErr)
 	}
 	return inv, nil
 }

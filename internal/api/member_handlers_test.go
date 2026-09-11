@@ -192,6 +192,15 @@ func TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword(t *testing.T)
 			t.Fatalf("accept for an existing account set a session cookie: %+v", ck)
 		}
 	}
+	var accepted struct {
+		SignedIn bool `json:"signed_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.SignedIn {
+		t.Fatal("accept for an existing account reported signed_in")
+	}
 
 	// The account's real password still works.
 	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{

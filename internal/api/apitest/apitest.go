@@ -38,14 +38,28 @@ type SentMail struct{ To, Subject, Body string }
 type Mailer struct {
 	mu   sync.Mutex
 	sent []SentMail
+	fail error
 }
 
-// Send records the message and always succeeds.
+// Send records the message and succeeds, unless FailWith set an error to
+// return instead (in which case nothing is recorded).
 func (m *Mailer) Send(_ context.Context, to, subject, body string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fail != nil {
+		return m.fail
+	}
 	m.sent = append(m.sent, SentMail{To: to, Subject: subject, Body: body})
 	return nil
+}
+
+// FailWith makes every later Send return err — e.g. an error wrapping
+// mail.ErrNotConfigured for an instance without outbound mail, or any other
+// error for a delivery failure. nil restores normal recording.
+func (m *Mailer) FailWith(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fail = err
 }
 
 // Sent returns every message recorded so far, oldest first.

@@ -475,6 +475,35 @@ func TestSQLStoreInviteLifecycle(t *testing.T) {
 	if _, err := store.TakeInvite(ctx, hash, now); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("second TakeInvite: %v, want ErrNotFound", err)
 	}
+
+	// DeleteInvite removes an undelivered invitation for good — and only
+	// within its own organization.
+	undelivered := tenancy.Invite{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Email: "undelivered@example.test", Role: tenancy.RoleViewer,
+		InvitedBy: inviter, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.InsertInvite(ctx, undelivered, hashOf("undelivered")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteInvite(ctx, uuid.Must(uuid.NewV7()), undelivered.ID); err != nil {
+		t.Fatalf("DeleteInvite for another organization: %v", err)
+	}
+	if _, err := store.TakeInvite(ctx, hashOf("undelivered"), now); err != nil {
+		t.Fatalf("an invitation was deleted through another organization: %v", err)
+	}
+	gone := tenancy.Invite{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Email: "gone@example.test", Role: tenancy.RoleViewer,
+		InvitedBy: inviter, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.InsertInvite(ctx, gone, hashOf("gone")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteInvite(ctx, org.ID, gone.ID); err != nil {
+		t.Fatalf("DeleteInvite: %v", err)
+	}
+	if _, err := store.TakeInvite(ctx, hashOf("gone"), now); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("TakeInvite after DeleteInvite: %v, want ErrNotFound", err)
+	}
 }
 
 func TestSQLStoreTakeInviteExcludesExpired(t *testing.T) {

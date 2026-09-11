@@ -3,12 +3,14 @@ package tenancy_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -326,6 +328,18 @@ func (f *fakeStore) InsertInvite(_ context.Context, inv tenancy.Invite, tokenHas
 	return nil
 }
 
+func (f *fakeStore) DeleteInvite(_ context.Context, orgID, id uuid.UUID) error {
+	if err := f.take("DeleteInvite"); err != nil {
+		return err
+	}
+	for k, inv := range f.invites {
+		if inv.ID == id && inv.OrgID == orgID {
+			delete(f.invites, k)
+		}
+	}
+	return nil
+}
+
 func (f *fakeStore) TakeInvite(_ context.Context, tokenHash []byte, now time.Time) (tenancy.Invite, error) {
 	if err := f.take("TakeInvite"); err != nil {
 		return tenancy.Invite{}, err
@@ -574,15 +588,72 @@ func TestInviteRejectsUnknownRole(t *testing.T) {
 	}
 }
 
-func TestInvitePropagatesMailFailure(t *testing.T) {
+// TestInviteDeliveryFailureLeavesNoInvitation: with mail configured but
+// delivery failing, Invite fails with ErrInviteDelivery (wrapping the
+// mailer's own error) and removes the invitation it had stored — nobody was
+// told about it, so it must not linger as an orphaned row.
+func TestInviteDeliveryFailureLeavesNoInvitation(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
-	mail := &fakeMailer{failErr: errors.New("smtp down")}
-	svc := tenancy.NewService(st, mail, testPublicURL, time.Now)
+	smtpDown := errors.New("smtp down")
+	svc := tenancy.NewService(st, &fakeMailer{failErr: smtpDown}, testPublicURL, time.Now)
 	owner := st.addUser("owner@x", true)
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
-	if _, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer); err == nil {
-		t.Fatal("expected mail failure to propagate")
+	_, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer)
+	if !errors.Is(err, tenancy.ErrInviteDelivery) || !errors.Is(err, smtpDown) {
+		t.Fatalf("err = %v, want ErrInviteDelivery wrapping the mailer's error", err)
+	}
+	if len(st.invites) != 0 {
+		t.Fatalf("%d invitation(s) left behind after a failed delivery", len(st.invites))
+	}
+}
+
+// TestInviteDeliveryFailureReportsAFailedCleanup: if removing the
+// undelivered invitation fails too, both failures are reported.
+func TestInviteDeliveryFailureReportsAFailedCleanup(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{failErr: errors.New("smtp down")}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	cleanup := errors.New("delete failed")
+	st.failNext["DeleteInvite"] = cleanup
+	if _, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer); !errors.Is(err, tenancy.ErrInviteDelivery) || !errors.Is(err, cleanup) {
+		t.Fatalf("err = %v, want ErrInviteDelivery and the cleanup failure", err)
+	}
+}
+
+// TestInviteWithoutMailConfiguredReturnsTheLink: inviting must not depend on
+// outbound mail. With none configured, the invitation is kept and comes back
+// with its acceptance link for the administrator to hand over; with mail
+// working, the link is mailed and not returned.
+func TestInviteWithoutMailConfiguredReturnsTheLink(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{failErr: fmt.Errorf("load smtp settings: %w", mail.ErrNotConfigured)}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+
+	inv, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer)
+	if err != nil {
+		t.Fatalf("Invite without mail configured: %v", err)
+	}
+	if inv.Mailed || inv.AcceptURL != testPublicURL+"/invite/"+inv.Token {
+		t.Fatalf("invite = mailed %v, accept url %q; want an unmailed invite carrying its link", inv.Mailed, inv.AcceptURL)
+	}
+	if len(st.invites) != 1 {
+		t.Fatalf("stored invitations = %d, want 1", len(st.invites))
+	}
+	if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "long enough password"); err != nil {
+		t.Fatalf("accepting the returned link: %v", err)
+	}
+
+	mailed, err := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now).Invite(ctx, org.ID, owner, "other@x", tenancy.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mailed.Mailed || mailed.AcceptURL != "" {
+		t.Fatalf("mailed invite = mailed %v, accept url %q; want mailed and no link returned", mailed.Mailed, mailed.AcceptURL)
 	}
 }
 

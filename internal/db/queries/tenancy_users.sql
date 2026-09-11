@@ -101,3 +101,10 @@ UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
 
 -- name: RevokeTokensForUser :exec
 UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;
+
+-- name: DeleteInvite :exec
+-- Removes an invitation that was never delivered: tenancy.Service.Invite
+-- inserts the row before sending the mail that carries its link, and
+-- deletes it again when that delivery fails, so a failed invitation leaves
+-- no orphaned row behind.
+DELETE FROM invites WHERE id = $1 AND org_id = $2;
