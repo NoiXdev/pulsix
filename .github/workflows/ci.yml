@@ -3,11 +3,18 @@ on: [push, pull_request]
 jobs:
   go:
     runs-on: ubuntu-latest
+    # Third-party actions are pinned to the commit SHA of each action's
+    # newest stable release (repo constraint, backlog 1.32), resolved from
+    # the release tags via git ls-remote on 2026-09-14:
+    #   actions/checkout v7.0.1   3d3c42e5aac5ba805825da76410c181273ba90b1
+    #   actions/setup-go v7.0.0   b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    #   golangci-lint-action v9.3.0  ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+    #   bufbuild/buf-action v1.5.0  8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: { go-version: "1.27" }
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with: { version: latest }
       - run: scripts/coverage-gate.sh
   proto:
@@ -16,9 +23,12 @@ jobs:
       # fetch-depth: 0 so `buf breaking --against '.git#branch=main'` can
       # clone the main branch out of the local .git dir (same need as the
       # commits job below).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
-      # bufbuild/buf-action@v1.5.0 — newest stable release as of 2026-09-14.
+      # bufbuild/buf-action — newest stable release v1.5.0 (published
+      # 2026-07-22), pinned to its commit SHA
+      # 8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3, resolved from the release
+      # tag via git ls-remote on 2026-09-14 (see the go job's pin table).
       # Runs `buf build`, `buf lint` and `buf breaking` on the proto/ module
       # (the action's own default buf install, so no separate setup step).
       # Every step is set explicitly: the action's lint/format/breaking
@@ -26,7 +36,7 @@ jobs:
       # Buf Schema Registry flow this repo does not use. format stays off
       # for now: worker.proto is kept verbatim from the contract brief,
       # which aligns trailing comments differently than `buf format` would.
-      - uses: bufbuild/buf-action@v1.5.0
+      - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3
         with:
           input: proto
           lint: true
@@ -42,8 +52,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: { go-version: "1.27" }
       - uses: actions/setup-node@v6
         with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
@@ -69,8 +79,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with: { go-version: "1.27" }
       - uses: actions/setup-node@v6
         with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
@@ -104,9 +114,9 @@ jobs:
     timeout-minutes: 15
     steps:
       # actions/checkout@v7.0.1 — this job's own step, pinned to the
-      # newest stable release as of 2026-09-11; the other jobs in this
-      # file keep their existing pinned versions untouched (out of scope
-      # for this change, see task-16-report.md).
+      # newest stable release as of 2026-09-11 (commit
+      # 3d3c42e5aac5ba805825da76410c181273ba90b1, the same SHA the other
+      # jobs pin since the task-3 fix round; see task-16-report.md).
       - uses: actions/checkout@v7.0.1
       # github.sha is on GitHub's documented list of expressions that are
       # always a plain, safe value (a 40-hex-char commit SHA it computes
@@ -136,6 +146,6 @@ jobs:
   commits:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: { fetch-depth: 0 }
       - uses: webiny/action-conventional-commits@v1.3.0
