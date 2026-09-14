@@ -12,58 +12,191 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getJobTemplateForRun = `-- name: GetJobTemplateForRun :one
-SELECT t.id, t.org_id, t.playbook_id, t.scope, t."limit", t.extra_vars,
-       t.extra_vars_schema, t.credential_id,
-       p.source AS playbook_source, p.repo_id AS playbook_repo_id,
-       p.path AS playbook_path, p.inline AS playbook_inline
-FROM job_templates t
-JOIN playbooks p ON p.org_id = t.org_id AND p.id = t.playbook_id
-WHERE t.org_id = $1 AND t.id = $2
+const deleteTemplate = `-- name: DeleteTemplate :execrows
+DELETE FROM job_templates WHERE org_id = $1 AND id = $2
 `
 
-type GetJobTemplateForRunParams struct {
+type DeleteTemplateParams struct {
 	OrgID uuid.UUID `json:"org_id"`
 	ID    uuid.UUID `json:"id"`
 }
 
-type GetJobTemplateForRunRow struct {
-	ID              uuid.UUID   `json:"id"`
-	OrgID           uuid.UUID   `json:"org_id"`
-	PlaybookID      uuid.UUID   `json:"playbook_id"`
-	Scope           []byte      `json:"scope"`
-	Limit           string      `json:"limit"`
-	ExtraVars       []byte      `json:"extra_vars"`
-	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
-	CredentialID    pgtype.UUID `json:"credential_id"`
-	PlaybookSource  string      `json:"playbook_source"`
-	PlaybookRepoID  pgtype.UUID `json:"playbook_repo_id"`
-	PlaybookPath    *string     `json:"playbook_path"`
-	PlaybookInline  *string     `json:"playbook_inline"`
+// Jobs reference templates by template_id with no foreign key on purpose:
+// deleting a template that ran before is allowed, and a finished run keeps
+// its dangling reference (the run view tolerates it).
+func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTemplate, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-// The one template read the enqueue path needs in Task 5: the template row
-// joined with its playbook, so the claim can build the worker payload
-// (inline YAML or "repo:<repo-id>:<path>") without a templates service —
-// that service arrives with Task 7 and shares this table. Scoped by org_id
-// in the WHERE clause, not only relying on RLS (see GetZone's comment in
-// hosts.sql for the reasoning).
-func (q *Queries) GetJobTemplateForRun(ctx context.Context, arg GetJobTemplateForRunParams) (GetJobTemplateForRunRow, error) {
-	row := q.db.QueryRow(ctx, getJobTemplateForRun, arg.OrgID, arg.ID)
-	var i GetJobTemplateForRunRow
+const getTemplate = `-- name: GetTemplate :one
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at FROM job_templates WHERE org_id = $1 AND id = $2
+`
+
+type GetTemplateParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// Scoped by org_id in the WHERE clause, not only relying on RLS (see
+// GetZone's comment in hosts.sql): a template belonging to a different
+// organization must be invisible, not merely forbidden.
+func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, getTemplate, arg.OrgID, arg.ID)
+	var i JobTemplate
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
+		&i.Name,
 		&i.PlaybookID,
 		&i.Scope,
 		&i.Limit,
 		&i.ExtraVars,
 		&i.ExtraVarsSchema,
 		&i.CredentialID,
-		&i.PlaybookSource,
-		&i.PlaybookRepoID,
-		&i.PlaybookPath,
-		&i.PlaybookInline,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertTemplate = `-- name: InsertTemplate :one
+INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at
+`
+
+type InsertTemplateParams struct {
+	ID              uuid.UUID   `json:"id"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	Name            string      `json:"name"`
+	PlaybookID      uuid.UUID   `json:"playbook_id"`
+	Scope           []byte      `json:"scope"`
+	Limit           string      `json:"limit"`
+	ExtraVars       []byte      `json:"extra_vars"`
+	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
+	CredentialID    pgtype.UUID `json:"credential_id"`
+}
+
+// The referenced playbook and credential are validated by the service
+// first; the composite foreign keys are the second guard — a reference
+// vanishing between check and insert surfaces as a foreign-key violation
+// the store maps to ErrNotFound.
+func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, insertTemplate,
+		arg.ID,
+		arg.OrgID,
+		arg.Name,
+		arg.PlaybookID,
+		arg.Scope,
+		arg.Limit,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.CredentialID,
+	)
+	var i JobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PlaybookID,
+		&i.Scope,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CredentialID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listTemplates = `-- name: ListTemplates :many
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at FROM job_templates WHERE org_id = $1 ORDER BY name
+`
+
+func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemplate, error) {
+	rows, err := q.db.Query(ctx, listTemplates, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JobTemplate
+	for rows.Next() {
+		var i JobTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.PlaybookID,
+			&i.Scope,
+			&i.Limit,
+			&i.ExtraVars,
+			&i.ExtraVarsSchema,
+			&i.CredentialID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateTemplate = `-- name: UpdateTemplate :one
+UPDATE job_templates SET
+  name = $3, playbook_id = $4, scope = $5, "limit" = $6,
+  extra_vars = $7, extra_vars_schema = $8, credential_id = $9, updated_at = now()
+WHERE org_id = $1 AND id = $2
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at
+`
+
+type UpdateTemplateParams struct {
+	OrgID           uuid.UUID   `json:"org_id"`
+	ID              uuid.UUID   `json:"id"`
+	Name            string      `json:"name"`
+	PlaybookID      uuid.UUID   `json:"playbook_id"`
+	Scope           []byte      `json:"scope"`
+	Limit           string      `json:"limit"`
+	ExtraVars       []byte      `json:"extra_vars"`
+	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
+	CredentialID    pgtype.UUID `json:"credential_id"`
+}
+
+// Full replacement of every editable field (PUT semantics); updated_at is
+// set here, the way every other store's UPDATE does.
+func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, updateTemplate,
+		arg.OrgID,
+		arg.ID,
+		arg.Name,
+		arg.PlaybookID,
+		arg.Scope,
+		arg.Limit,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.CredentialID,
+	)
+	var i JobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PlaybookID,
+		&i.Scope,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CredentialID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

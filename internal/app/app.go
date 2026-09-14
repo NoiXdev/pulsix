@@ -36,6 +36,7 @@ import (
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/workers"
 )
@@ -185,13 +186,19 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// handler: the repository registry's sync action enqueues through the
 	// jobs service, and the queue reports finished sync_repo runs back
 	// through it (SetSyncSink below). The reaper goroutine itself starts
-	// further down, reusing the same queue.
-	templates := jobs.NewSQLTemplates(appDB)
-	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	// further down, reusing the same queue. The template lookup adapter
+	// rides the templates and playbooks stores, both constructible before
+	// their services (the service graph is circular here: jobs needs the
+	// template source, playbooks needs repos, repos needs jobs — the stores
+	// break the cycle while keeping one source of SQL for the table).
+	templateStore := templates.NewSQLStore(appDB)
+	playbooksStore := playbooks.NewSQLStore(appDB)
+	templateLookup := NewTemplateLookup(templateStore, playbooksStore)
+	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, templateLookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
-	jobsSvc := jobs.NewService(jobs.NewSQLStore(appDB), jobsQueue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	jobsSvc := jobs.NewService(jobs.NewSQLStore(appDB), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 	reposSvc := repos.NewService(repos.NewSQLStore(appDB), credsSvc, jobsSvc)
-	playbooksSvc := playbooks.NewService(playbooks.NewSQLStore(appDB), reposSvc)
+	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	jobsQueue.SetSyncSink(jobsSvc)
 
 	handler, err := api.New(api.Deps{

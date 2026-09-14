@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/config"
@@ -33,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -209,16 +211,19 @@ func New(t *testing.T, opts ...Option) *Server {
 	inventorySvc := inventory.NewService(invStore, hostsSvc, sshSvc, crypto.NewBox(testMasterKey))
 	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, crypto.NewBox(testMasterKey))
 	// The job queue rides the same services the renderer needs, exactly
-	// like production wiring (internal/app.Build): the reaper is NOT
-	// started here — tests drive Claim/Finish through Deps' services or
-	// the queue directly, and a background reaper would sweep jobs out
-	// from under running assertions.
-	templates := jobs.NewSQLTemplates(d)
-	jobsQueue := jobs.NewSQLQueue(d, crypto.NewBox(testMasterKey), renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	// like production wiring (internal/app.Build): the template lookup
+	// adapter wraps the templates and playbooks stores, and the reaper is
+	// NOT started here — tests drive Claim/Finish through Deps' services or
+	// the queue directly, and a background reaper would sweep jobs out from
+	// under running assertions.
+	templateStore := templates.NewSQLStore(d)
+	playbooksStore := playbooks.NewSQLStore(d)
+	templateLookup := app.NewTemplateLookup(templateStore, playbooksStore)
+	jobsQueue := jobs.NewSQLQueue(d, crypto.NewBox(testMasterKey), renderer, credsSvc, templateLookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
-	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templates, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
+	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
-	playbooksSvc := playbooks.NewService(playbooks.NewSQLStore(d), reposSvc)
+	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),

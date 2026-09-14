@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
@@ -20,7 +21,9 @@ import (
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/sshconf"
+	"github.com/noixdev/pulsix/internal/templates"
 )
 
 // TestQueueClaimShipsRealPayload is the end-to-end claim: a template with
@@ -103,10 +106,10 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	templates := jobs.NewSQLTemplates(d)
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
-	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 
 	created, err := svc.EnqueueRun(scoped, org, templateID, nil)
 	if err != nil {
@@ -195,8 +198,8 @@ func TestQueueClaimFailsUnbuildableJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	templates := jobs.NewSQLTemplates(d)
-	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	zone := uuid.Must(uuid.NewV7())
 	j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
 	j.TemplateID = &templateID
@@ -275,10 +278,10 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	templates := jobs.NewSQLTemplates(d)
-	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 
 	job, err := svc.EnqueueSync(scoped, org, repoID, nil)
 	if err != nil {
@@ -426,12 +429,12 @@ func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
 	invStore := inventory.NewSQLStore(d)
 	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
 	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
-	templates := jobs.NewSQLTemplates(d)
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 
 	scoped := db.WithOrgScope(ctx, org)
-	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 	queue.SetSyncSink(svc)
 
 	if _, err := hostsSvc.CreateZone(scoped, org, hosts.DefaultZoneSlug, hosts.DefaultZoneName); err != nil {
