@@ -1,9 +1,12 @@
 package jobs_test
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,7 +106,7 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 	templates := jobs.NewSQLTemplates(d)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, box, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 
 	created, err := svc.EnqueueRun(scoped, org, templateID, nil)
 	if err != nil {
@@ -211,5 +214,287 @@ func TestQueueClaimFailsUnbuildableJobs(t *testing.T) {
 	}
 	if got.Status != jobs.StatusError || got.FinishedAt == nil || got.Error == "" {
 		t.Fatalf("unbuildable job = %+v", got)
+	}
+}
+
+// sinkCall is one recorded SyncSink observation.
+type sinkCall struct {
+	orgID, repoID uuid.UUID
+	at            time.Time
+	errText       string
+}
+
+// recordingSink is a SyncSink that records every call.
+type recordingSink struct {
+	mu    sync.Mutex
+	calls []sinkCall
+	err   error
+}
+
+func (s *recordingSink) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	s.calls = append(s.calls, sinkCall{orgID, repoID, at, errText})
+	return nil
+}
+
+func (s *recordingSink) all() []sinkCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]sinkCall(nil), s.calls...)
+}
+
+// TestQueueClaimSyncRepoCarriesPlainPayload verifies the claim path for the
+// one non-host kind: the plain {"repo_id": ...} payload passes through
+// unsealed, no playbook or inventory snapshot ships, and no credential is
+// opened — a git sync touches no managed host.
+func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-sync-claim-org")
+	box := crypto.NewBox(testBoxKey("jobs-sync-claim-key-0123456789ab"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+
+	scoped := db.WithOrgScope(ctx, org)
+	if _, err := hostsSvc.CreateZone(scoped, org, hosts.DefaultZoneSlug, hosts.DefaultZoneName); err != nil {
+		t.Fatal(err)
+	}
+	repoID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(scoped,
+		`INSERT INTO git_repos (id, org_id, name, url) VALUES ($1, $2, 'infra', 'https://git.example.com/acme/infra.git')`,
+		repoID, org); err != nil {
+		t.Fatal(err)
+	}
+
+	templates := jobs.NewSQLTemplates(d)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+
+	job, err := svc.EnqueueSync(scoped, org, repoID, nil)
+	if err != nil {
+		t.Fatalf("EnqueueSync: %v", err)
+	}
+	claim, err := queue.Claim(ctx, []uuid.UUID{job.ZoneID}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	j := &claim.Job
+	if j.GetKind() != "sync_repo" || j.GetOrgId() != org.String() {
+		t.Fatalf("identity = %+v", j)
+	}
+	var claimedPayload struct {
+		RepoID string `json:"repo_id"`
+	}
+	if err := json.Unmarshal([]byte(j.GetKindPayload()), &claimedPayload); err != nil ||
+		claimedPayload.RepoID != repoID.String() {
+		t.Fatalf("kind payload = %q, want repo_id %s", j.GetKindPayload(), repoID)
+	}
+	if j.GetPlaybook() != "" || j.GetTemplateId() != "" || j.GetLimit() != "" || j.GetSshUsername() != "" {
+		t.Fatalf("host-bound fields must stay empty: %+v", j)
+	}
+	if doc := j.GetInventoryDoc(); doc != "{}" {
+		t.Fatalf("inventory doc = %q, want the empty document", doc)
+	}
+	if len(j.GetConnections()) != 0 || len(j.GetCredentials()) != 0 || len(j.GetHostKeys()) != 0 {
+		t.Fatalf("no host material may ship: %v / %v", j.GetConnections(), j.GetCredentials())
+	}
+}
+
+// TestQueueFinishRecordsSyncResults pins the finish-path sync recording:
+// the queue detects a finished sync_repo job and hands (org, repo, at,
+// error) to the injected SyncSink — never for other kinds, never for a
+// cancelled sync, never twice, and never failing the finish itself.
+func TestQueueFinishRecordsSyncResults(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-sync-finish-org")
+	store := jobs.NewSQLStore(d)
+	queue := jobs.NewSQLQueue(d, crypto.NewBox(testBoxKey("jobs-sync-finish-key")), emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+	sink := &recordingSink{}
+	queue.SetSyncSink(sink)
+
+	scoped := db.WithOrgScope(ctx, org)
+	zone := uuid.Must(uuid.NewV7())
+	repoID := uuid.Must(uuid.NewV7())
+	syncJob := func(status jobs.Status) jobs.Job {
+		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
+		j.Payload = json.RawMessage(`{"repo_id":"` + repoID.String() + `"}`)
+		if err := store.CreateJob(scoped, j, j.Payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Exec(ctx, `UPDATE jobs SET status = $2 WHERE id = $1`, j.ID, string(status)); err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+
+	t.Run("success reaches the sink", func(t *testing.T) {
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, map[string]any{}, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		calls := sink.all()
+		if len(calls) != 1 || calls[0].orgID != org || calls[0].repoID != repoID || calls[0].errText != "" || calls[0].at.IsZero() {
+			t.Fatalf("sink calls = %+v", calls)
+		}
+	})
+	t.Run("failure carries the reason", func(t *testing.T) {
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusFailed, nil, "git pull: not a repository"); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		calls := sink.all()
+		if len(calls) != 2 || calls[1].errText != "git pull: not a repository" {
+			t.Fatalf("sink calls = %+v", calls)
+		}
+	})
+	t.Run("cancelled sync records nothing", func(t *testing.T) {
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusCancelled, nil, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		if calls := sink.all(); len(calls) != 2 {
+			t.Fatalf("a cancelled sync must not record a sync result: %+v", calls)
+		}
+	})
+	t.Run("other kinds stay out", func(t *testing.T) {
+		j := newJob(org, zone, jobs.KindConnectionTest, jobs.StatusQueued)
+		if err := store.CreateJob(scoped, j, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Exec(ctx, `UPDATE jobs SET status = 'running' WHERE id = $1`, j.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, map[string]any{}, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		if calls := sink.all(); len(calls) != 2 {
+			t.Fatalf("non-sync finish must not hit the sink: %+v", calls)
+		}
+	})
+	t.Run("finish is idempotent for the sink", func(t *testing.T) {
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatal(err)
+		}
+		if calls := sink.all(); len(calls) != 3 {
+			t.Fatalf("a retried finish must not re-record: %+v", calls)
+		}
+	})
+	t.Run("nil sink is safe", func(t *testing.T) {
+		j := syncJob(jobs.StatusRunning)
+		queue.SetSyncSink(nil)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatalf("Finish with nil sink: %v", err)
+		}
+	})
+	t.Run("sink failure does not fail the finish", func(t *testing.T) {
+		failing := &recordingSink{err: errors.New("boom")}
+		queue.SetSyncSink(failing)
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatalf("Finish = %v, want nil (the terminal status stands, the sink failure is logged)", err)
+		}
+	})
+}
+
+// TestQueueFinishWiresTheRealSyncSink runs the production wiring: the
+// queue's sink is the org-scoped jobs service, so finishing a sync writes
+// the repository's last_sync/last_sync_error columns directly.
+func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-sync-sink-org")
+	box := crypto.NewBox(testBoxKey("jobs-sync-sink-key-0123456789ab"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+	templates := jobs.NewSQLTemplates(d)
+	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
+
+	scoped := db.WithOrgScope(ctx, org)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	queue.SetSyncSink(svc)
+
+	if _, err := hostsSvc.CreateZone(scoped, org, hosts.DefaultZoneSlug, hosts.DefaultZoneName); err != nil {
+		t.Fatal(err)
+	}
+	repoID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(scoped,
+		`INSERT INTO git_repos (id, org_id, name, url) VALUES ($1, $2, 'infra', 'https://git.example.com/acme/infra.git')`,
+		repoID, org); err != nil {
+		t.Fatal(err)
+	}
+
+	store := jobs.NewSQLStore(d)
+	zone := uuid.Must(uuid.NewV7())
+	syncJob := func() jobs.Job {
+		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
+		j.Payload = json.RawMessage(`{"repo_id":"` + repoID.String() + `"}`)
+		if err := store.CreateJob(scoped, j, j.Payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Exec(ctx, `UPDATE jobs SET status = 'running' WHERE id = $1`, j.ID); err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+
+	// Success first: last_sync set, last_sync_error cleared.
+	j := syncJob()
+	if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	var lastSync *time.Time
+	var lastErr *string
+	if err := d.Pool().QueryRow(ctx, `SELECT last_sync, last_sync_error FROM git_repos WHERE id = $1`, repoID).Scan(&lastSync, &lastErr); err != nil {
+		t.Fatal(err)
+	}
+	if lastSync == nil || lastSync.IsZero() || lastErr != nil {
+		t.Fatalf("success columns = %v / %v", lastSync, lastErr)
+	}
+
+	// Then a failure: last_sync_error carries the reason.
+	j2 := syncJob()
+	if err := queue.Finish(ctx, j2.ID, jobs.StatusFailed, nil, "git pull: not a repository"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Pool().QueryRow(ctx, `SELECT last_sync, last_sync_error FROM git_repos WHERE id = $1`, repoID).Scan(&lastSync, &lastErr); err != nil {
+		t.Fatal(err)
+	}
+	if lastErr == nil || *lastErr != "git pull: not a repository" {
+		t.Fatalf("failure record = %v / %v", lastSync, lastErr)
+	}
+
+	// A repository deleted while its sync ran: the sink records nothing,
+	// the finish still succeeds.
+	j3 := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
+	j3.Payload = json.RawMessage(`{"repo_id":"` + uuid.Must(uuid.NewV7()).String() + `"}`)
+	if err := store.CreateJob(scoped, j3, j3.Payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(ctx, `UPDATE jobs SET status = 'running' WHERE id = $1`, j3.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Finish(ctx, j3.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+		t.Fatalf("a vanished repository must not fail the finish: %v", err)
 	}
 }

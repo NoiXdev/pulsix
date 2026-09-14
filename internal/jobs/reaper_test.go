@@ -32,7 +32,7 @@ func TestReaperRequeuesStaleClaims(t *testing.T) {
 	zone := uuid.Must(uuid.NewV7())
 	queue := newTestQueue(d)
 	reaper := jobs.NewReaper(queue, 0)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 
 	// A claimed job whose worker went away: stale claim, no stream.
 	claim := claimOne(t, d, org, zone, queue)
@@ -95,7 +95,7 @@ func TestReaperFailsUnconfirmedCancels(t *testing.T) {
 	zone := uuid.Must(uuid.NewV7())
 	queue := newTestQueue(d)
 	reaper := jobs.NewReaper(queue, 0)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 
 	// A cancel whose worker confirmed within the deadline survives.
 	claim := claimOne(t, d, org, zone, queue)

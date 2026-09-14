@@ -86,3 +86,13 @@ RETURNING id;
 -- its worker to confirm a cancel. The deadline check happens in Go, where
 -- the cancel-request timestamps live (see cancelRegistry).
 SELECT id, claimed_at FROM jobs WHERE status = 'cancelling';
+
+-- name: UpdateRepoSyncState :execrows
+-- The terminal result of a sync_repo job, recorded on the repository row by
+-- the queue's finish path (SQLQueue.Finish → jobs.Store.RecordSyncResult):
+-- last_sync carries when the job ended, last_sync_error its failure reason
+-- (a NULL clears the previous failure on success). The WHERE clause is
+-- scoped by org_id and its update count is the caller's ErrNotFound signal
+-- — a repository deleted while its sync ran records nothing.
+UPDATE git_repos SET last_sync = @last_sync, last_sync_error = @last_sync_error
+WHERE org_id = @org_id AND id = @id;

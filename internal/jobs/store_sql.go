@@ -106,6 +106,30 @@ func (s *SQLStore) ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, af
 	return out, nil
 }
 
+func (s *SQLStore) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+	n, err := s.q.UpdateRepoSyncState(ctx, gen.UpdateRepoSyncStateParams{
+		OrgID: orgID, ID: repoID,
+		LastSync:      pgtype.Timestamptz{Time: at, Valid: true},
+		LastSyncError: syncErrorPtr(errText),
+	})
+	if err != nil {
+		return fmt.Errorf("record sync result: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// syncErrorPtr maps an empty failure text (a succeeded sync) onto NULL, so
+// a success clears the previous error rather than storing "".
+func syncErrorPtr(errText string) *string {
+	if errText == "" {
+		return nil
+	}
+	return &errText
+}
+
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound

@@ -105,7 +105,7 @@ func TestOpenSecretGeneratedKeyRoundTrip(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	org := seedOrg(t, q, "cred-opensecret-org")
-	svc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox([32]byte{'t','e','s','t','-','m','a','s','t','e','r','-','k','e','y','0','1','2','3','4'}), time.Now, rand.Reader)
+	svc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox([32]byte{'t', 'e', 's', 't', '-', 'm', 'a', 's', 't', 'e', 'r', '-', 'k', 'e', 'y', '0', '1', '2', '3', '4'}), time.Now, rand.Reader)
 	created, err := svc.Create(ctx, org, credentials.CreateInput{
 		Name: "run-key", Kind: credentials.KindSSHKey, Username: "ansible",
 		Material: credentials.Material{Generate: true},

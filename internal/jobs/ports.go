@@ -6,6 +6,7 @@ package jobs
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -35,6 +36,22 @@ type MembershipSource interface {
 type HostLister interface {
 	ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]hosts.Host, error)
 	GetHost(ctx context.Context, orgID, id uuid.UUID) (hosts.Host, error)
+}
+
+// DefaultZoneSource is the slice of hosts.Service the sync enqueue path
+// needs: the org's zones, to find the "default" zone a sync_repo job runs
+// in (hosts.Service satisfies it; unit tests use fakes).
+type DefaultZoneSource interface {
+	ListZones(ctx context.Context, orgID uuid.UUID) ([]hosts.Zone, error)
+}
+
+// SyncSink is the optional port a finished sync_repo job's terminal outcome
+// flows through (SQLQueue.SetSyncSink): the concrete implementation is the
+// org-scoped jobs.Service.RecordSyncResult, updating the repository's
+// last_sync/last_sync_error. Declared here so the queue half never imports
+// the service half.
+type SyncSink interface {
+	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error
 }
 
 // SnapshotSource is the slice of inventory.Renderer the claim path needs:

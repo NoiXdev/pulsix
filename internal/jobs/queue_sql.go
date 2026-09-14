@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,7 +50,19 @@ type SQLQueue struct {
 	rand      io.Reader
 	streams   *streamRegistry
 	cancels   *cancelRegistry
+	// sync is the optional sink a finished sync_repo job's outcome is
+	// recorded through. Nil-safe by design: it is wired after construction
+	// by internal/app (SetSyncSink) because the sink is the org-scoped
+	// jobs.Service, whose own construction needs this queue.
+	sync SyncSink
 }
+
+// SetSyncSink injects the sink RecordSyncResult calls flow through on the
+// finish path. It exists (rather than a constructor parameter) for the
+// same circularity tenancy's OrgCreatedHook setter does: the concrete sink
+// — the org-scoped jobs.Service — is built after the queue it reports
+// through. The queue's Finish never depends on it being set.
+func (q *SQLQueue) SetSyncSink(sink SyncSink) { q.sync = sink }
 
 // NewSQLQueue wires the queue onto d: the pool for the org-unscoped claim
 // path, d itself for the org-scoped payload reads.
@@ -137,6 +150,23 @@ func (q *SQLQueue) failJob(ctx context.Context, jobID uuid.UUID, cause error) er
 // never log it. It writes through out because a protobuf message must
 // never be copied by value (vet copylocks).
 func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job) error {
+	// A sync_repo job is deliberately not host-bound: it touches no managed
+	// host, so the whole host-bound payload machinery — the inventory
+	// snapshot, connections and opened credentials — is skipped. A broken
+	// jump chain or an empty org must never fail a git sync, and no
+	// inventory secrets ship on a job that cannot use them.
+	if job.Kind == KindSyncRepo {
+		kindPayload, err := q.openKindPayload(job)
+		if err != nil {
+			return err
+		}
+		*out = workerpb.Job{
+			Id: job.ID.String(), Kind: string(job.Kind),
+			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
+			InventoryDoc: "{}", KindPayload: kindPayload,
+		}
+		return nil
+	}
 	scope := render.Scope{HostIDs: job.HostIDs}
 	playbook, limit, sshUser := "", "", ""
 	var extraVars map[string]string
@@ -318,6 +348,7 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 	if tag.RowsAffected() == 1 {
 		q.streams.remove(jobID)
 		q.cancels.remove(jobID)
+		q.recordSync(ctx, jobID, status, errText)
 		return nil
 	}
 	var current string
@@ -340,4 +371,39 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 // later.
 func (q *SQLQueue) NoteCancelRequested(jobID uuid.UUID, at time.Time) {
 	q.cancels.note(jobID, at)
+}
+
+// recordSync hands a finished sync_repo job's outcome to the optional
+// sync sink. A terminal record already stands — the sink is bookkeeping,
+// not bookkeeping-breaking — so a sink failure is logged, never returned.
+// A cancelled sync records nothing: it never ran, and recording last_sync
+// for it would look like a successful fetch. A non-sync job, or a job
+// already terminal when Finish retried, records nothing.
+func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Status, errText string) {
+	if q.sync == nil || status == StatusCancelled {
+		return
+	}
+	var orgID uuid.UUID
+	var kind string
+	var payload json.RawMessage
+	if err := q.db.Pool().QueryRow(ctx,
+		`SELECT org_id, kind, payload FROM jobs WHERE id = $1`, jobID,
+	).Scan(&orgID, &kind, &payload); err != nil {
+		slog.ErrorContext(ctx, "record sync result: look up finished job", "err", err, "job", jobID)
+		return
+	}
+	if Kind(kind) != KindSyncRepo {
+		return
+	}
+	var sp syncPayload
+	if err := json.Unmarshal(payload, &sp); err != nil || sp.RepoID == uuid.Nil {
+		slog.ErrorContext(ctx, "record sync result: job payload carries no repo id", "job", jobID)
+		return
+	}
+	if err := q.sync.RecordSyncResult(ctx, orgID, sp.RepoID, q.now(), errText); err != nil {
+		// The job's terminal status is already recorded; a failed
+		// bookkeeping write is logged so an operator sees the gap, the
+		// same tradeoff the audit middleware makes.
+		slog.ErrorContext(ctx, "record sync result", "err", err, "job", jobID)
+	}
 }

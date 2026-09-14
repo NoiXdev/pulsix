@@ -379,3 +379,34 @@ func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsPara
 	}
 	return items, nil
 }
+
+const updateRepoSyncState = `-- name: UpdateRepoSyncState :execrows
+UPDATE git_repos SET last_sync = $1, last_sync_error = $2
+WHERE org_id = $3 AND id = $4
+`
+
+type UpdateRepoSyncStateParams struct {
+	LastSync      pgtype.Timestamptz `json:"last_sync"`
+	LastSyncError *string            `json:"last_sync_error"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	ID            uuid.UUID          `json:"id"`
+}
+
+// The terminal result of a sync_repo job, recorded on the repository row by
+// the queue's finish path (SQLQueue.Finish → jobs.Store.RecordSyncResult):
+// last_sync carries when the job ended, last_sync_error its failure reason
+// (a NULL clears the previous failure on success). The WHERE clause is
+// scoped by org_id and its update count is the caller's ErrNotFound signal
+// — a repository deleted while its sync ran records nothing.
+func (q *Queries) UpdateRepoSyncState(ctx context.Context, arg UpdateRepoSyncStateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateRepoSyncState,
+		arg.LastSync,
+		arg.LastSyncError,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

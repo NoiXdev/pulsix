@@ -49,6 +49,10 @@ var (
 	ErrUnknownStream = errors.New("no live stream binding for job")
 	// ErrInvalidCursor is returned by DecodeCursor for a malformed cursor.
 	ErrInvalidCursor = errors.New("jobs: invalid cursor")
+	// ErrNoZone means the organization has no "default" zone for a sync_repo
+	// job to run in — a wiring gap the startup reconciliation pass
+	// (hosts.Service.ReconcileDefaultZones) is supposed to have healed.
+	ErrNoZone = errors.New("organization has no default zone")
 )
 
 // Kind is what a job does.
@@ -259,6 +263,12 @@ type Store interface {
 	// seq. The org_id filter is what keeps one tenant from reading
 	// another's events on the RLS-free job_events table.
 	ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, after int64) ([]Event, error)
+	// RecordSyncResult stamps a sync_repo job's terminal outcome onto the
+	// repository row it ran for: last_sync carries at, last_sync_error the
+	// failure reason (an empty errText clears it). ErrNotFound when no
+	// repository of the organization matches — e.g. one deleted while its
+	// sync was running.
+	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error
 }
 
 // Claim is one claimed job ready to ship to a worker, with the binding
@@ -353,16 +363,17 @@ type Service struct {
 	templates TemplateSource
 	resolver  ScopeResolver
 	hosts     HostLookup
+	zones     DefaultZoneSource
 	box       Sealer
 	now       func() time.Time
 	rand      io.Reader
 }
 
 // NewService wires the store, the claim queue, the template source, the
-// scope resolver, the host lookup, the sealing box, the clock and the
-// entropy source for run-group ids.
-func NewService(store Store, queue Queue, templates TemplateSource, resolver ScopeResolver, hosts HostLookup, box Sealer, now func() time.Time, rand io.Reader) *Service {
-	return &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, box: box, now: now, rand: rand}
+// scope resolver, the host lookup, the default-zone source, the sealing
+// box, the clock and the entropy source for run-group ids.
+func NewService(store Store, queue Queue, templates TemplateSource, resolver ScopeResolver, hosts HostLookup, zones DefaultZoneSource, box Sealer, now func() time.Time, rand io.Reader) *Service {
+	return &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
 }
 
 // scopeJSON is the render.Scope wire format as stored in
@@ -511,6 +522,67 @@ func (s *Service) sealPayload(j Job, payload json.RawMessage) (json.RawMessage, 
 	}
 	enc := base64.StdEncoding.EncodeToString(sealed)
 	return json.RawMessage(`"` + enc + `"`), nil
+}
+
+// syncPayload is a sync_repo job's kind payload: the one reference the
+// worker needs. It carries no secret, so it is stored plain — never sealed.
+type syncPayload struct {
+	RepoID uuid.UUID `json:"repo_id"`
+}
+
+// EnqueueSync enqueues one sync_repo job for the repository. sync_repo is
+// deliberately NOT host-bound: it runs once, in the organization's default
+// zone (resolved through the DefaultZoneSource port), so the git fetch
+// happens regardless of how many hosts the org manages and without
+// rendering any inventory snapshot. The payload is plain JSON — nothing in
+// it is secret — so the claim path passes it through unsealed.
+func (s *Service) EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (Job, error) {
+	zoneID, err := s.defaultZone(ctx, orgID)
+	if err != nil {
+		return Job{}, err
+	}
+	payload, err := json.Marshal(syncPayload{RepoID: repoID})
+	if err != nil {
+		return Job{}, fmt.Errorf("encode sync payload: %w", err)
+	}
+	j := Job{
+		ID: s.newID(), OrgID: orgID, ZoneID: zoneID,
+		Kind: KindSyncRepo, HostIDs: []uuid.UUID{},
+		Status: StatusQueued, RunGroupID: s.newID(), Trigger: TriggerManual,
+		ActorID: actor, CreatedAt: s.now(),
+	}
+	if err := s.store.CreateJob(ctx, j, payload); err != nil {
+		return Job{}, err
+	}
+	return j, nil
+}
+
+// defaultZone resolves the organization's "default" zone; ErrNoZone when it
+// is genuinely absent (a startup-reconciliation failure an operator must
+// heal — see ErrNoZone).
+func (s *Service) defaultZone(ctx context.Context, orgID uuid.UUID) (uuid.UUID, error) {
+	if s.zones == nil {
+		return uuid.Nil, fmt.Errorf("%w: no zone source wired", ErrNoZone)
+	}
+	zones, err := s.zones.ListZones(ctx, orgID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("list zones: %w", err)
+	}
+	for _, z := range zones {
+		if z.Slug == hosts.DefaultZoneSlug {
+			return z.ID, nil
+		}
+	}
+	return uuid.Nil, fmt.Errorf("%w: sync_repo jobs run in the default zone", ErrNoZone)
+}
+
+// RecordSyncResult stamps a sync_repo job's terminal outcome onto its
+// repository row (last_sync / last_sync_error), so the repository list can
+// show when the org's playbook sources last fetched. The sync sink wiring
+// (SQLQueue.SetSyncSink) calls this on the finish path; it is exposed as a
+// service method because the repository row is org-scoped data.
+func (s *Service) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+	return s.store.RecordSyncResult(ctx, orgID, repoID, at, errText)
 }
 
 // Cancel asks a job to stop. A queued job has never been shipped, so it is

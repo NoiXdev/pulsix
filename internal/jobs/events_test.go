@@ -39,7 +39,7 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 	org, other := seedOrg(t, q, "jobs-events-org"), seedOrg(t, q, "jobs-events-other")
 	zone := uuid.Must(uuid.NewV7())
 	queue := newTestQueue(d)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 
 	claim := claimOne(t, d, org, zone, queue)
 	jobID := uuid.MustParse(claim.Job.GetId())
@@ -97,7 +97,7 @@ func TestCancelFlowAndFinishIdempotency(t *testing.T) {
 	org := seedOrg(t, q, "jobs-cancel-org")
 	zone := uuid.Must(uuid.NewV7())
 	queue := newTestQueue(d)
-	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 
 	claim := claimOne(t, d, org, zone, queue)
 	jobID := uuid.MustParse(claim.Job.GetId())

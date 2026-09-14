@@ -29,6 +29,11 @@ const (
 	PermInventoryWrite   Permission = "inventory.write"
 	PermCredentialsRead  Permission = "credentials.read"
 	PermCredentialsWrite Permission = "credentials.write"
+
+	PermReposRead      Permission = "repos.read"
+	PermReposWrite     Permission = "repos.write"
+	PermPlaybooksRead  Permission = "playbooks.read"
+	PermPlaybooksWrite Permission = "playbooks.write"
 )
 
 // rank orders roles from least to most privileged. A role absent from this
@@ -38,9 +43,10 @@ var rank = map[Role]int{RoleViewer: 1, RoleOperator: 2, RoleAdmin: 3, RoleOwner:
 
 // matrix is the fixed, minimum-role-per-permission table: owner can do
 // everything, admin everything except deleting the org, operator can read
-// and write hosts, read and write inventory, read the audit log and read
-// credentials, viewer can only read hosts and inventory. Writing a
-// credential (creating, rotating or deleting one) needs admin.
+// and write hosts, read and write inventory, read the audit log, read
+// credentials and manage git repositories plus playbooks, viewer can only
+// read. Writing a credential (creating, rotating or deleting one) needs
+// admin.
 var matrix = map[Permission]Role{
 	PermOrgManage:        RoleAdmin,
 	PermOrgDelete:        RoleOwner,
@@ -53,6 +59,10 @@ var matrix = map[Permission]Role{
 	PermInventoryWrite:   RoleOperator,
 	PermCredentialsRead:  RoleOperator,
 	PermCredentialsWrite: RoleAdmin,
+	PermReposRead:        RoleViewer,
+	PermReposWrite:       RoleOperator,
+	PermPlaybooksRead:    RoleViewer,
+	PermPlaybooksWrite:   RoleOperator,
 }
 
 // Allows reports whether role may perform perm. It is total: an unknown role

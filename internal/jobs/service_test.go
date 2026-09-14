@@ -33,6 +33,9 @@ type fakeStore struct {
 	cancelled map[uuid.UUID]jobs.Status
 	events    []jobs.Event
 	eventsErr error
+	syncs     []fakeSyncResult
+	syncErr   error
+	nextErr   error
 }
 
 func newFakeStore() *fakeStore {
@@ -42,6 +45,9 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) CreateJob(_ context.Context, j jobs.Job, payload json.RawMessage) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.nextErr != nil {
+		return f.nextErr
+	}
 	f.jobs[j.ID] = storedJob{j: j, payload: payload}
 	return nil
 }
@@ -115,6 +121,24 @@ func (f *fakeStore) ListJobEvents(_ context.Context, orgID, jobID uuid.UUID, aft
 	return out, nil
 }
 
+// syncResults records RecordSyncResult calls; syncErr is what the store
+// reports back (e.g. ErrNotFound for a repo deleted mid-run).
+type fakeSyncResult struct {
+	orgID, repoID uuid.UUID
+	at            time.Time
+	errText       string
+}
+
+func (f *fakeStore) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.syncErr != nil {
+		return f.syncErr
+	}
+	f.syncs = append(f.syncs, fakeSyncResult{orgID, repoID, at, errText})
+	return nil
+}
+
 type fakeQueue struct {
 	mu       sync.Mutex
 	notes    []time.Time
@@ -179,6 +203,27 @@ func (f *fakeHosts) GetHost(_ context.Context, _, id uuid.UUID) (hosts.Host, err
 	return h, nil
 }
 
+// fakeZones is the DefaultZoneSource stand-in: zones per org, with an
+// optional error.
+type fakeZones struct {
+	byOrg map[uuid.UUID][]hosts.Zone
+	err   error
+}
+
+func (f *fakeZones) ListZones(_ context.Context, orgID uuid.UUID) ([]hosts.Zone, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.byOrg[orgID], nil
+}
+
+func (f *fakeZones) add(orgID, zoneID uuid.UUID, slug string) {
+	if f.byOrg == nil {
+		f.byOrg = map[uuid.UUID][]hosts.Zone{}
+	}
+	f.byOrg[orgID] = append(f.byOrg[orgID], hosts.Zone{ID: zoneID, OrgID: orgID, Slug: slug})
+}
+
 type fakeSealer struct{}
 
 func (fakeSealer) SealAAD(plain, _ []byte) ([]byte, error) {
@@ -193,8 +238,12 @@ func (fakeSealer) OpenAAD(sealed, _ []byte) ([]byte, error) {
 	return []byte(rest), nil
 }
 
-func newService(store *fakeStore, q *fakeQueue, tmpl *fakeTemplates, res *fakeResolver, hs *fakeHosts) *jobs.Service {
-	return jobs.NewService(store, q, tmpl, res, hs, fakeSealer{}, func() time.Time {
+func newService(store *fakeStore, q *fakeQueue, tmpl *fakeTemplates, res *fakeResolver, hs *fakeHosts, zones ...jobs.DefaultZoneSource) *jobs.Service {
+	var zs jobs.DefaultZoneSource
+	for _, z := range zones {
+		zs = z
+	}
+	return jobs.NewService(store, q, tmpl, res, hs, zs, fakeSealer{}, func() time.Time {
 		return time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 	}, rand.Reader)
 }
@@ -596,6 +645,109 @@ func TestCursorRoundTrip(t *testing.T) {
 	}
 }
 
+// TestEnqueueSyncEnqueuesIntoTheDefaultZone pins the sync_repo semantics the
+// task resolved: one job, not host-bound, in the org's default zone, with a
+// plain (never sealed) {"repo_id": ...} payload.
+func TestEnqueueSyncEnqueuesIntoTheDefaultZone(t *testing.T) {
+	org, repoID, actor := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	defaultZone, otherZone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	zs := &fakeZones{}
+	zs.add(org, otherZone, "edge")
+	zs.add(org, defaultZone, hosts.DefaultZoneSlug)
+	store := newFakeStore()
+	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
+
+	job, err := svc.EnqueueSync(ctx, org, repoID, &actor)
+	if err != nil {
+		t.Fatalf("EnqueueSync: %v", err)
+	}
+	if job.ZoneID != defaultZone || job.Kind != jobs.KindSyncRepo || job.Status != jobs.StatusQueued ||
+		job.Trigger != jobs.TriggerManual || job.TemplateID != nil || len(job.HostIDs) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	if job.ActorID == nil || *job.ActorID != actor || job.RunGroupID == uuid.Nil {
+		t.Fatalf("job attribution = %+v", job)
+	}
+	if !job.CreatedAt.Equal(time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)) {
+		t.Fatalf("created at = %v", job.CreatedAt)
+	}
+	// The payload is the plain repo reference, NOT sealed: it carries no
+	// secret, and the queue passes plain JSON through at claim time.
+	stored := store.jobs[job.ID]
+	var payload struct {
+		RepoID string `json:"repo_id"`
+	}
+	if err := json.Unmarshal(stored.payload, &payload); err != nil {
+		t.Fatalf("payload %s is not plain JSON: %v", stored.payload, err)
+	}
+	if payload.RepoID != repoID.String() {
+		t.Fatalf("payload = %s, want repo_id %s", stored.payload, repoID)
+	}
+}
+
+func TestEnqueueSyncFailsClosed(t *testing.T) {
+	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	actor := uuid.Must(uuid.NewV7())
+
+	t.Run("no default zone", func(t *testing.T) {
+		zs := &fakeZones{}
+		zs.add(org, uuid.Must(uuid.NewV7()), "edge")
+		svc := newService(newFakeStore(), &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
+		if _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, jobs.ErrNoZone) {
+			t.Fatalf("err = %v, want ErrNoZone", err)
+		}
+	})
+	t.Run("zone listing error", func(t *testing.T) {
+		boom := errors.New("boom")
+		zs := &fakeZones{err: boom}
+		svc := newService(newFakeStore(), &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
+		if _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, boom) {
+			t.Fatalf("err = %v, want wrapped boom", err)
+		}
+	})
+	t.Run("store error", func(t *testing.T) {
+		boom := errors.New("boom")
+		zs := &fakeZones{}
+		zs.add(org, uuid.Must(uuid.NewV7()), hosts.DefaultZoneSlug)
+		store := newFakeStore()
+		store.nextErr = boom
+		svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
+		if _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, boom) {
+			t.Fatalf("err = %v, want wrapped boom", err)
+		}
+	})
+}
+
+// TestRecordSyncResult proves the org-scoped half records the terminal sync
+// outcome on the repository.
+func TestRecordSyncResult(t *testing.T) {
+	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	at := time.Date(2026, 9, 14, 13, 0, 0, 0, time.UTC)
+	store := newFakeStore()
+	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, &fakeZones{})
+
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, ""); err != nil {
+		t.Fatalf("RecordSyncResult: %v", err)
+	}
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, "git pull failed"); err != nil {
+		t.Fatalf("RecordSyncResult: %v", err)
+	}
+	if len(store.syncs) != 2 {
+		t.Fatalf("syncs = %+v", store.syncs)
+	}
+	success, failure := store.syncs[0], store.syncs[1]
+	if success.orgID != org || success.repoID != repoID || !success.at.Equal(at) || success.errText != "" {
+		t.Fatalf("success record = %+v", success)
+	}
+	if failure.errText != "git pull failed" {
+		t.Fatalf("failure record = %+v", failure)
+	}
+	store.syncErr = jobs.ErrNotFound
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, ""); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("store failure = %v, want ErrNotFound", err)
+	}
+}
+
 func TestKindAndStatusPredicates(t *testing.T) {
 	for _, k := range []jobs.Kind{"run", "adhoc", "connection_test", "bootstrap", "rotate_key", "sync_repo"} {
 		if !k.Valid() {
@@ -634,10 +786,11 @@ func TestJobAADBindsOrgAndJob(t *testing.T) {
 
 // Compile-time interface checks for the fakes.
 var (
-	_ jobs.Store          = (*fakeStore)(nil)
-	_ jobs.Queue          = (*fakeQueue)(nil)
-	_ jobs.CancelRecorder = (*fakeQueue)(nil)
-	_ jobs.TemplateSource = (*fakeTemplates)(nil)
-	_ jobs.ScopeResolver  = (*fakeResolver)(nil)
-	_ jobs.HostLookup     = (*fakeHosts)(nil)
+	_ jobs.Store             = (*fakeStore)(nil)
+	_ jobs.Queue             = (*fakeQueue)(nil)
+	_ jobs.CancelRecorder    = (*fakeQueue)(nil)
+	_ jobs.TemplateSource    = (*fakeTemplates)(nil)
+	_ jobs.ScopeResolver     = (*fakeResolver)(nil)
+	_ jobs.HostLookup        = (*fakeHosts)(nil)
+	_ jobs.DefaultZoneSource = (*fakeZones)(nil)
 )

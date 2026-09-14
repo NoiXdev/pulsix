@@ -108,7 +108,7 @@ func TestGRPCPortAdapters(t *testing.T) {
 	if cancelled, err := events.Cancelled(ctx, j.ID); err != nil || cancelled {
 		t.Fatalf("Cancelled = %v, %v", cancelled, err)
 	}
-	if err := jobs.NewService(store, queue, stubTemplates{}, nil, nil, stubBox{}, time.Now, rand.Reader).
+	if err := jobs.NewService(store, queue, stubTemplates{}, nil, nil, nil, stubBox{}, time.Now, rand.Reader).
 		Cancel(db.WithOrgScope(ctx, org.ID), org.ID, j.ID); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestGRPCPortAdapters(t *testing.T) {
 // stubBox is a Sealer stand-in; the adapters' tests never seal.
 type stubBox struct{}
 
-func (stubBox) SealAAD(plain, _ []byte) ([]byte, error) { return plain, nil }
+func (stubBox) SealAAD(plain, _ []byte) ([]byte, error)  { return plain, nil }
 func (stubBox) OpenAAD(sealed, _ []byte) ([]byte, error) { return sealed, nil }
 
 func TestSystemAuditorMapsOrgID(t *testing.T) {
