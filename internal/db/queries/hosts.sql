@@ -102,3 +102,15 @@ SELECT o.id FROM organizations o
 WHERE NOT EXISTS (
   SELECT 1 FROM zones z WHERE z.org_id = o.id AND z.slug = sqlc.arg(default_zone_slug)::text
 );
+
+-- name: GetZonesBySlug :many
+-- Zone lookup without an org scope — the `worker add` CLI path, which runs
+-- before any request context exists and must resolve the slug across every
+-- organization (slugs are unique per org, not instance-wide). Returns all
+-- matches ordered by organization slug so a caller can either take the
+-- single row or ask the operator to disambiguate.
+SELECT z.id, z.org_id, o.slug AS org_slug
+FROM zones z
+JOIN organizations o ON o.id = z.org_id
+WHERE z.slug = $1
+ORDER BY o.slug;

@@ -16,20 +16,25 @@ import (
 	"net/url"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/workers"
 )
 
 // appRole is the least-privilege PostgreSQL role every request is served
@@ -37,11 +42,14 @@ import (
 // matters and how it is verified, not merely assumed.
 const appRole = "pulsix_app"
 
-// App is a fully wired manager: an http.Handler plus what main.go needs to
-// shut it down cleanly.
+// App is a fully wired manager: an http.Handler, the optional worker gRPC
+// server (nil unless cfg.GRPCListen was set), plus what main.go needs to
+// shut both down cleanly.
 type App struct {
-	Handler http.Handler
-	db      *db.DB
+	Handler    http.Handler
+	GRPC       *grpc.Server
+	GRPCListen string
+	db         *db.DB
 }
 
 // Close releases the application's database pool. It does not touch the
@@ -174,7 +182,32 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("build api handler: %w", err)
 	}
 
-	return &App{Handler: handler, db: appDB}, nil
+	// The worker gRPC endpoint is opt-in via PULSIX_GRPC_LISTEN; its ports
+	// are the stubs from grpc_stubs.go until Task 5's job queue lands. The
+	// workers service rides appDB: the workers table carries no row-level
+	// security by design (migration 00017), so GetBySerial/Touch work
+	// outside any org scope.
+	var grpcServer *grpc.Server
+	if cfg.GRPCListen != "" {
+		caInst, err := ca.New(ca.NewSQLStore(appDB), box, ca.Config{
+			CommonName: caCommonName, ListenHost: cfg.GRPCHost(),
+		})
+		if err != nil {
+			appDB.Close()
+			return nil, fmt.Errorf("open CA for gRPC server: %w", err)
+		}
+		grpcServer, err = grpcsrv.New(ctx, grpcsrv.Deps{
+			CA: caInst, Workers: workers.NewService(workers.NewSQLStore(appDB)),
+			Claims: stubClaimer{}, Events: stubEventRecorder{}, Results: stubResultRecorder{},
+			Audit: systemAuditor{auditRec}, Clock: time.Now,
+		})
+		if err != nil {
+			appDB.Close()
+			return nil, fmt.Errorf("build gRPC server: %w", err)
+		}
+	}
+
+	return &App{Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB}, nil
 }
 
 // publicURLIsHTTPS reports whether cfg.PublicURL uses the https scheme, so

@@ -57,3 +57,39 @@ func TestLoadRejectsMissingAndBadValues(t *testing.T) {
 		}
 	}
 }
+
+// TestGRPCListenAndHost (Task 4): PULSIX_GRPC_LISTEN is optional (empty =
+// gRPC disabled) and GRPCHost strips the port for the server certificate's
+// DNS SAN.
+func TestGRPCListenAndHost(t *testing.T) {
+	cfg, err := config.Load(env(map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GRPCListen != "" {
+		t.Errorf("GRPCListen default = %q, want empty (disabled)", cfg.GRPCListen)
+	}
+	if cfg.GRPCHost() != "" {
+		t.Errorf("GRPCHost without a listener = %q, want empty", cfg.GRPCHost())
+	}
+
+	cfg, err = config.Load(env(map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+		"PULSIX_GRPC_LISTEN":  "manager.example.test:8444",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GRPCListen != "manager.example.test:8444" {
+		t.Errorf("GRPCListen = %q", cfg.GRPCListen)
+	}
+	if got := cfg.GRPCHost(); got != "manager.example.test" {
+		t.Errorf("GRPCHost = %q, want manager.example.test", got)
+	}
+}

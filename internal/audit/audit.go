@@ -190,3 +190,30 @@ func (r *Recorder) List(ctx context.Context, orgID uuid.UUID, filter Filter, cur
 func (r *Recorder) ListForActor(ctx context.Context, actorID uuid.UUID, filter Filter, cursor string, limit int) ([]Event, string, error) {
 	return r.store.ListForActor(ctx, actorID, filter, cursor, clampLimit(limit))
 }
+
+// SystemEvent is the reduced shape a system-generated event arrives in:
+// no user is behind it, so there is no actor id to pass, only the
+// operation, what it touched and why.
+type SystemEvent struct {
+	Operation  string
+	ObjectType string
+	ObjectID   string
+	// OrgID is nil for instance-level operations (the instance CA is one).
+	OrgID   *uuid.UUID
+	Summary string
+}
+
+// RecordSystem persists ev as a system event: ActorKind system, no actor
+// id, the same ID/At stamping Record does. It keeps the existing Record
+// API untouched — this is the path transport layers that act without a
+// user (the gRPC worker endpoint) take.
+func (r *Recorder) RecordSystem(ctx context.Context, ev SystemEvent) error {
+	return r.Record(ctx, Event{
+		Action:     ev.Operation,
+		ObjectType: ev.ObjectType,
+		ObjectID:   ev.ObjectID,
+		OrgID:      ev.OrgID,
+		Summary:    ev.Summary,
+		ActorKind:  ActorKindSystem,
+	})
+}

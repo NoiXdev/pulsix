@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // TestServeWithGracefulShutdownWaitsForDrain is a regression test for
@@ -85,5 +88,38 @@ func TestServeWithGracefulShutdownWaitsForDrain(t *testing.T) {
 	}
 	if !handlerFinished.Load() {
 		t.Fatal("handler never finished")
+	}
+}
+
+// TestServeGRPCWithGracefulStop (Task 4): the gRPC server binds the
+// configured listener and GracefulStop completes when the context is
+// cancelled — signalled by the returned channel closing, which is the
+// ordering main.go sequences its cleanup on. A plain, non-TLS server is
+// enough: this covers start/stop wiring, not the mTLS layer
+// (internal/grpcsrv's own tests cover that).
+func TestServeGRPCWithGracefulStop(t *testing.T) {
+	srv := grpc.NewServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := serveGRPCWithGracefulStop(ctx, srv, "127.0.0.1:0")
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GracefulStop did not complete after the context was cancelled")
+	}
+}
+
+// TestWorkerAddFlagValidation: missing flags fail fast with exit 1, before
+// any database or configuration is touched.
+func TestWorkerAddFlagValidation(t *testing.T) {
+	cases := [][]string{
+		nil,
+		{"--zone", "fra-1"},
+		{"--name", "fra-1-a"},
+	}
+	for _, args := range cases {
+		if code := runWorkerAdd(args, io.Discard, io.Discard); code != 1 {
+			t.Errorf("worker add %v: exit code = %d, want 1", args, code)
+		}
 	}
 }

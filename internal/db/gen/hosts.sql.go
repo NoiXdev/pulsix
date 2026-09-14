@@ -163,6 +163,45 @@ func (q *Queries) GetZone(ctx context.Context, arg GetZoneParams) (Zone, error) 
 	return i, err
 }
 
+const getZonesBySlug = `-- name: GetZonesBySlug :many
+SELECT z.id, z.org_id, o.slug AS org_slug
+FROM zones z
+JOIN organizations o ON o.id = z.org_id
+WHERE z.slug = $1
+ORDER BY o.slug
+`
+
+type GetZonesBySlugRow struct {
+	ID      uuid.UUID `json:"id"`
+	OrgID   uuid.UUID `json:"org_id"`
+	OrgSlug string    `json:"org_slug"`
+}
+
+// Zone lookup without an org scope — the `worker add` CLI path, which runs
+// before any request context exists and must resolve the slug across every
+// organization (slugs are unique per org, not instance-wide). Returns all
+// matches ordered by organization slug so a caller can either take the
+// single row or ask the operator to disambiguate.
+func (q *Queries) GetZonesBySlug(ctx context.Context, slug string) ([]GetZonesBySlugRow, error) {
+	rows, err := q.db.Query(ctx, getZonesBySlug, slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetZonesBySlugRow
+	for rows.Next() {
+		var i GetZonesBySlugRow
+		if err := rows.Scan(&i.ID, &i.OrgID, &i.OrgSlug); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllHosts = `-- name: ListAllHosts :many
 SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts WHERE org_id = $1 ORDER BY name
 `

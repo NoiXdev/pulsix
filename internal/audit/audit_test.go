@@ -361,3 +361,51 @@ func TestEncodeDecodeCursorRoundTrip(t *testing.T) {
 		t.Fatalf("round trip = (%v, %v), want (%v, %v)", gotAt, gotID, at, id)
 	}
 }
+
+// TestRecordSystem (Task 4): RecordSystem is the path gRPC claims and
+// results take — an event with no user behind it, stamped like any other.
+func TestRecordSystem(t *testing.T) {
+	store := &memStore{}
+	want := time.Date(2026, 9, 14, 10, 0, 0, 0, time.UTC)
+	rec := audit.NewRecorder(store, func() time.Time { return want })
+
+	orgID := uuid.Must(uuid.NewV7())
+	err := rec.RecordSystem(context.Background(), audit.SystemEvent{
+		Operation: "job.claim", ObjectType: "job", ObjectID: "job-1",
+		OrgID: &orgID, Summary: "job claimed by worker fra-1-a",
+	})
+	if err != nil {
+		t.Fatalf("RecordSystem: %v", err)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("store has %d events, want 1", len(store.events))
+	}
+	got := store.events[0]
+	if got.Action != "job.claim" || got.ObjectType != "job" || got.ObjectID != "job-1" {
+		t.Fatalf("event fields = %+v", got)
+	}
+	if got.OrgID == nil || *got.OrgID != orgID {
+		t.Fatalf("OrgID = %v, want the org", got.OrgID)
+	}
+	if got.ActorKind != audit.ActorKindSystem || got.ActorID != nil {
+		t.Fatalf("actor = (%q, %v), want system with no actor id", got.ActorKind, got.ActorID)
+	}
+	if !got.At.Equal(want) {
+		t.Fatalf("At = %v, want %v", got.At, want)
+	}
+}
+
+// TestRecordSystemInstanceLevel: a nil OrgID stays nil (instance-level
+// operation) rather than being coerced to anything.
+func TestRecordSystemInstanceLevel(t *testing.T) {
+	store := &memStore{}
+	rec := audit.NewRecorder(store, time.Now)
+	if err := rec.RecordSystem(context.Background(), audit.SystemEvent{
+		Operation: "job.result", ObjectType: "job", ObjectID: "job-2",
+	}); err != nil {
+		t.Fatalf("RecordSystem: %v", err)
+	}
+	if got := store.events[0].OrgID; got != nil {
+		t.Fatalf("OrgID = %v, want nil for an instance-level event", got)
+	}
+}

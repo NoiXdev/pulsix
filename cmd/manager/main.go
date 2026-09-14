@@ -1,15 +1,22 @@
-// Command manager runs the Pulsix manager (API, SPA, scheduler).
+// Command manager runs the Pulsix manager (API, SPA, scheduler) and its
+// worker-facing subcommands (`worker add`).
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/config"
@@ -39,16 +46,52 @@ func main() {
 
 // dispatch routes to the "openapi" subcommand (writes the OpenAPI document
 // to stdout and exits, no server or database involved — see
-// api.Document's doc comment) or, for any other argument list, starts the
-// manager server as before. Kept as its own function, separate from run(),
+// api.Document's doc comment), the "worker add" enrollment subcommand (see
+// app.RunWorkerAdd), or, for any other argument list, starts the manager
+// server as before. Kept as its own function, separate from run(),
 // so run()'s existing shape (and main_test.go's coverage of
 // serveWithGracefulShutdown, which calls into what run() wires up) stays
-// untouched by this addition.
+// untouched by these additions.
 func dispatch(args []string) int {
 	if len(args) > 0 && args[0] == "openapi" {
 		return runOpenAPI(os.Stdout)
 	}
+	if len(args) >= 2 && args[0] == "worker" && args[1] == "add" {
+		return runWorkerAdd(args[2:], os.Stdout, os.Stderr)
+	}
 	return run()
+}
+
+// runWorkerAdd parses `worker add`'s flags and enrolls a worker. Errors go
+// to stderr; exit 1. Nothing is logged to stdout but the PEM blocks, so the
+// command's output stays pipeable.
+func runWorkerAdd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("worker add", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	zoneSlug := fs.String("zone", "", "zone slug the worker serves (required)")
+	orgSlug := fs.String("org", "", "organization slug (required only when several organizations use the same zone slug)")
+	name := fs.String("name", "", "worker name, 1-63 lowercase letters, digits or hyphens (required)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *zoneSlug == "" || *name == "" {
+		// stderr here is best-effort: the diagnostic is for the operator's
+		// terminal, and a closed pipe must not turn a usage hint into a
+		// different error. Every other exit path returns 1 explicitly.
+		_, _ = fmt.Fprintln(stderr, "worker add: --zone and --name are required")
+		fs.Usage()
+		return 1
+	}
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "worker add: configuration error: %v\n", err)
+		return 1
+	}
+	if err := app.RunWorkerAdd(context.Background(), cfg, *zoneSlug, *orgSlug, *name, stdout); err != nil {
+		_, _ = fmt.Fprintf(stderr, "worker add: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func run() int {
@@ -87,12 +130,48 @@ func run() int {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// The worker gRPC endpoint, when configured: served alongside the HTTP
+	// server, graceful-stopped when the shutdown signal fires. The stop
+	// goroutine signals grpcStopped so the HTTP drain below waits for
+	// in-flight RPCs to finish before main tears the database pool down.
+	if a.GRPC != nil {
+		grpcStopped := serveGRPCWithGracefulStop(ctx, a.GRPC, cfg.GRPCListen)
+		defer func() { <-grpcStopped }()
+	}
+
 	slog.Info("pulsix-manager listening", "addr", cfg.Listen)
 	if err := serveWithGracefulShutdown(ctx, stop, srv, srv.ListenAndServe); err != nil {
 		slog.Error("server stopped", "err", err)
 		return 1
 	}
 	return 0
+}
+
+// serveGRPCWithGracefulStop runs the worker gRPC server on listen (a
+// listener failure aborts immediately — the manager must not look healthy
+// while its configured worker endpoint is not up) and triggers
+// GracefulStop when ctx is cancelled. It returns a channel closed once the
+// stop has completed, so the caller can sequence its cleanup after it.
+func serveGRPCWithGracefulStop(ctx context.Context, srv *grpc.Server, listen string) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		slog.Info("shutting down gRPC server")
+		srv.GracefulStop()
+		close(done)
+	}()
+	lis, err := net.Listen("tcp", listen)
+	if err != nil {
+		slog.Error("gRPC listener failed", "addr", listen, "err", err)
+		return done
+	}
+	slog.Info("pulsix-manager gRPC listening", "addr", listen)
+	go func() {
+		if err := srv.Serve(lis); err != nil {
+			slog.Error("gRPC server stopped", "err", err)
+		}
+	}()
+	return done
 }
 
 // serveWithGracefulShutdown runs serve (normally srv.ListenAndServe) until

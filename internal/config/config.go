@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 )
 
@@ -15,6 +16,10 @@ type Config struct {
 	PublicURL    string
 	StatusDomain string
 	MasterKey    [32]byte
+	// GRPCListen is the worker gRPC endpoint's listener address
+	// (PULSIX_GRPC_LISTEN, e.g. ":8444"). Empty — the default — means the
+	// gRPC endpoint is disabled.
+	GRPCListen string
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -40,6 +45,7 @@ func Load(getenv func(string) string) (Config, error) {
 		return cfg, errors.New("PULSIX_PUBLIC_URL must be an absolute URL")
 	}
 	cfg.StatusDomain = getenv("PULSIX_STATUS_DOMAIN")
+	cfg.GRPCListen = getenv("PULSIX_GRPC_LISTEN") // empty = the gRPC endpoint stays disabled
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {
 		return cfg, fmt.Errorf("PULSIX_MASTER_KEY must be 64 hex characters (32 bytes)")
@@ -67,4 +73,19 @@ func (c Config) RPID() string {
 func (c Config) Origin() string {
 	u, _ := url.Parse(c.PublicURL)
 	return u.Scheme + "://" + u.Host
+}
+
+// GRPCHost is the hostname the gRPC server certificate carries as its DNS
+// SAN: the host part of GRPCListen, or empty when the address names no
+// host (":8444") — the certificate then names no host and clients must pin
+// the CA alone. SplitHostPort's error is ignored the same way RPID's is:
+// GRPCListen is operator-set and only read when non-empty; an address
+// SplitHostPort cannot read degrades to "no SAN" rather than failing to
+// start.
+func (c Config) GRPCHost() string {
+	host, _, err := net.SplitHostPort(c.GRPCListen)
+	if err != nil {
+		return ""
+	}
+	return host
 }
