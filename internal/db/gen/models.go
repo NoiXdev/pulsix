@@ -145,6 +145,12 @@ type HostTag struct {
 	Source string    `json:"source"`
 }
 
+type InstanceCa struct {
+	ID        int32     `json:"id"`
+	Sealed    []byte    `json:"sealed"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type InstanceSetting struct {
 	Key       string    `json:"key"`
 	Value     []byte    `json:"value"`

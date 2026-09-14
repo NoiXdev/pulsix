@@ -4,10 +4,11 @@
 # Policy (plan Global Constraints): every Go package must be at or above
 # 80% line coverage; internal/auth, internal/tenancy, internal/db,
 # internal/inventory/schema, internal/inventory/grouptree,
-# internal/inventory/render and internal/credentials must be at or above
-# 90% once those packages exist. A single blended number across the whole
-# module cannot express two different floors and lets a weak package hide
-# behind a strong one, so this checks every package individually.
+# internal/inventory/render, internal/credentials and internal/ca must be
+# at or above 90% once those packages exist. A single blended number across
+# the whole module cannot express two different floors and lets a weak
+# package hide behind a strong one, so this checks every package
+# individually.
 #
 # cmd/... is entry-point wiring (main.go, ListenAndServe) with no test
 # files by design (see task-1 brief/report) and is explicitly excluded
@@ -96,7 +97,8 @@ go test -race -cover ./... 2>&1 | awk -v module="$module" -v generated="$generat
 		floor = default_floor
 		if (pkg == module "/internal/auth" || pkg == module "/internal/tenancy" || pkg == module "/internal/db" ||
 		    pkg == module "/internal/inventory/schema" || pkg == module "/internal/inventory/grouptree" ||
-		    pkg == module "/internal/inventory/render" || pkg == module "/internal/credentials") {
+		    pkg == module "/internal/inventory/render" || pkg == module "/internal/credentials" ||
+		    pkg == module "/internal/ca") {
 			floor = 90
 		}
 
