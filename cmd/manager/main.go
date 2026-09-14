@@ -118,25 +118,44 @@ func run() int {
 		slog.Error("failed to build application", "err", err)
 		return 1
 	}
-	// a.Close() tears down the database pool. serveWithGracefulShutdown
-	// below must have fully drained in-flight requests before this defer
-	// runs, or a request still executing when the listener closed would
-	// have the pool pulled out from under it.
+	// a.Close() tears down the database pool. The servers below must have
+	// fully drained in-flight work before this defer runs, or a request or
+	// RPC still executing when the listeners closed would have the pool
+	// pulled out from under it — serve() waits for both drains before
+	// returning, and function-own defers run after it returns.
 	defer a.Close()
+
+	return serve(ctx, stop, cfg, a)
+}
+
+// serve runs the HTTP server and — when the app wired one — the worker gRPC
+// endpoint until ctx is cancelled, and returns the process exit code.
+//
+// The gRPC listener binds BEFORE the HTTP server starts serving: a bind
+// failure (a port conflict on PULSIX_GRPC_LISTEN) aborts startup with a
+// non-zero exit. A manager that reports healthy while its configured worker
+// endpoint is dead is exactly the failure an orchestrator would otherwise
+// never notice, so this is fail-fast, not log-and-continue — and on that
+// path nothing was serving yet, so aborting cannot strand connections.
+func serve(ctx context.Context, stop context.CancelFunc, cfg config.Config, a *app.App) int {
+	if a.GRPC != nil {
+		grpcLis, err := net.Listen("tcp", cfg.GRPCListen)
+		if err != nil {
+			slog.Error("worker gRPC listener failed to bind", "addr", cfg.GRPCListen, "err", err)
+			return 1
+		}
+		// Serve until ctx fires. The deferred wait keeps run()'s own
+		// sequencing — the gRPC drain completes before a.Close() runs —
+		// and cannot hang forever: the graceful stop it waits on is
+		// bounded by grpcShutdownTimeout (see serveGRPCWithGracefulStop).
+		grpcStopped := serveGRPCWithGracefulStop(ctx, a.GRPC, grpcLis)
+		defer func() { <-grpcStopped }()
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           a.Handler,
 		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	// The worker gRPC endpoint, when configured: served alongside the HTTP
-	// server, graceful-stopped when the shutdown signal fires. The stop
-	// goroutine signals grpcStopped so the HTTP drain below waits for
-	// in-flight RPCs to finish before main tears the database pool down.
-	if a.GRPC != nil {
-		grpcStopped := serveGRPCWithGracefulStop(ctx, a.GRPC, cfg.GRPCListen)
-		defer func() { <-grpcStopped }()
 	}
 
 	slog.Info("pulsix-manager listening", "addr", cfg.Listen)
@@ -147,25 +166,42 @@ func run() int {
 	return 0
 }
 
-// serveGRPCWithGracefulStop runs the worker gRPC server on listen (a
-// listener failure aborts immediately — the manager must not look healthy
-// while its configured worker endpoint is not up) and triggers
-// GracefulStop when ctx is cancelled. It returns a channel closed once the
-// stop has completed, so the caller can sequence its cleanup after it.
-func serveGRPCWithGracefulStop(ctx context.Context, srv *grpc.Server, listen string) <-chan struct{} {
+// grpcShutdownTimeout bounds how long graceful gRPC stop waits for
+// in-flight RPCs before forcing the stop — a package var so tests can
+// shrink it (a RunEvents stream held open by a worker would otherwise take
+// the real timeout to prove the bound).
+var grpcShutdownTimeout = shutdownTimeout
+
+// serveGRPCWithGracefulStop serves the worker gRPC server on lis and
+// triggers GracefulStop when ctx is cancelled. It returns a channel closed
+// once the stop has completed, so the caller can sequence its cleanup
+// after it.
+//
+// The stop is bounded by grpcShutdownTimeout: GracefulStop waits for
+// in-flight RPCs — a worker holding a RunEvents stream open would make
+// that wait unbounded — and past the bound the shutdown falls back to
+// srv.Stop(), which closes transports immediately. Without that fallback
+// an early serve error (whose caller has already cancelled ctx through
+// serveWithGracefulShutdown) could hang the deferred wait on the way out.
+func serveGRPCWithGracefulStop(ctx context.Context, srv *grpc.Server, lis net.Listener) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutting down gRPC server")
-		srv.GracefulStop()
+		gracefulDone := make(chan struct{})
+		go func() {
+			defer close(gracefulDone)
+			srv.GracefulStop()
+		}()
+		select {
+		case <-gracefulDone:
+		case <-time.After(grpcShutdownTimeout):
+			slog.Warn("gRPC graceful stop timed out; forcing stop", "timeout", grpcShutdownTimeout)
+			srv.Stop()
+		}
 		close(done)
 	}()
-	lis, err := net.Listen("tcp", listen)
-	if err != nil {
-		slog.Error("gRPC listener failed", "addr", listen, "err", err)
-		return done
-	}
-	slog.Info("pulsix-manager gRPC listening", "addr", listen)
+	slog.Info("pulsix-manager gRPC listening", "addr", lis.Addr())
 	go func() {
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("gRPC server stopped", "err", err)

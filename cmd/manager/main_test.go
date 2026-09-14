@@ -1,15 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/noixdev/pulsix/internal/app"
+	"github.com/noixdev/pulsix/internal/config"
+	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
 
 // TestServeWithGracefulShutdownWaitsForDrain is a regression test for
@@ -91,21 +100,91 @@ func TestServeWithGracefulShutdownWaitsForDrain(t *testing.T) {
 	}
 }
 
-// TestServeGRPCWithGracefulStop (Task 4): the gRPC server binds the
-// configured listener and GracefulStop completes when the context is
-// cancelled — signalled by the returned channel closing, which is the
-// ordering main.go sequences its cleanup on. A plain, non-TLS server is
-// enough: this covers start/stop wiring, not the mTLS layer
-// (internal/grpcsrv's own tests cover that).
+// TestServeGRPCWithGracefulStop (Task 4): the gRPC server serves on the
+// given listener and GracefulStop completes when the context is cancelled —
+// signalled by the returned channel closing, which is the ordering main.go
+// sequences its cleanup on. A plain, non-TLS server is enough: this covers
+// start/stop wiring, not the mTLS layer (internal/grpcsrv's own tests cover
+// that).
 func TestServeGRPCWithGracefulStop(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := grpc.NewServer()
 	ctx, cancel := context.WithCancel(context.Background())
-	stopped := serveGRPCWithGracefulStop(ctx, srv, "127.0.0.1:0")
+	stopped := serveGRPCWithGracefulStop(ctx, srv, lis)
 	cancel()
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("GracefulStop did not complete after the context was cancelled")
+	}
+}
+
+// blockingWorker is a WorkerService whose RunEvents handler holds the
+// stream open until its transport is torn down — the in-flight RPC that
+// makes GracefulStop wait, and the hang the bounded stop exists for.
+type blockingWorker struct {
+	workerpb.UnimplementedWorkerServiceServer
+	started sync.Once
+	entered chan struct{}
+}
+
+func (b *blockingWorker) RunEvents(stream workerpb.WorkerService_RunEventsServer) error {
+	b.started.Do(func() { close(b.entered) })
+	<-stream.Context().Done() // release only when the transport is closing
+	return nil
+}
+
+// TestServeGRPCGracefulStopIsBounded (fix round 1): an in-flight RPC — a
+// worker holding a RunEvents stream open — makes GracefulStop wait
+// unboundedly. The stop must fall back to srv.Stop() at the timeout so the
+// deferred wait in serve() can never hang the exit.
+func TestServeGRPCGracefulStopIsBounded(t *testing.T) {
+	restore := grpcShutdownTimeout
+	grpcShutdownTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { grpcShutdownTimeout = restore })
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &blockingWorker{entered: make(chan struct{})}
+	srv := grpc.NewServer()
+	workerpb.RegisterWorkerServiceServer(srv, w)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopped := serveGRPCWithGracefulStop(ctx, srv, lis)
+
+	// A client holds one RunEvents stream open — the RPC GracefulStop
+	// would wait for forever.
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }() // best-effort: the test is done with the conn
+	stream, err := workerpb.NewWorkerServiceClient(conn).RunEvents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.CloseSend() }()
+	select {
+	case <-w.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the blocking handler never started")
+	}
+
+	// Fire the shutdown and demand it completes despite the open stream.
+	cancel()
+	st := time.Now()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bounded graceful stop did not complete while a stream was open — exit would hang")
+	}
+	if elapsed := time.Since(st); elapsed < 150*time.Millisecond {
+		t.Fatalf("stop completed after %v, want it to have waited at least the 200ms bound first", elapsed)
 	}
 }
 
@@ -121,5 +200,86 @@ func TestWorkerAddFlagValidation(t *testing.T) {
 		if code := runWorkerAdd(args, io.Discard, io.Discard); code != 1 {
 			t.Errorf("worker add %v: exit code = %d, want 1", args, code)
 		}
+	}
+}
+
+// TestServeAbortsWhenGRPCBindFails (fix round 1): when PULSIX_GRPC_LISTEN
+// names a port that cannot be bound (here: bound twice), serve must abort
+// with exit code 1 BEFORE the HTTP server starts — a manager must never
+// come up healthy with its configured worker endpoint dead.
+func TestServeAbortsWhenGRPCBindFails(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = occupied.Close() }() // holds the port until the test ends
+
+	// Capture the default logger so the test can prove serve aborted
+	// rather than proceeded: the bind-failure log must be there, the
+	// "listening" line (logged only once HTTP serving starts) must not.
+	// The mutex guards slog writes from serve's goroutine against the
+	// assertions below.
+	var logsMu sync.Mutex
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&syncWriter{mu: &logsMu, w: &logs}, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	a := &app.App{GRPC: grpc.NewServer()}
+	cfg := config.Config{Listen: "127.0.0.1:0", GRPCListen: occupied.Addr().String()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan int, 1)
+	go func() { done <- serve(ctx, cancel, cfg, a) }()
+	select {
+	case code := <-done:
+		if code != 1 {
+			t.Fatalf("serve exit code = %d, want 1 (abort on bind failure)", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve kept running after the gRPC bind failure — it must abort startup")
+	}
+	logsMu.Lock()
+	out := logs.String()
+	logsMu.Unlock()
+	if !strings.Contains(out, "failed to bind") || strings.Contains(out, "pulsix-manager listening") {
+		t.Fatalf("serve must abort before the HTTP server starts; logs:\n%s", out)
+	}
+}
+
+// syncWriter is the mutex-protected io.Writer the slog captures above use,
+// because the default logger writes from serve's goroutine.
+type syncWriter struct {
+	mu *sync.Mutex
+	w  *bytes.Buffer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// TestServeShutsDownCleanly (fix round 1): normal cancellation shuts both
+// servers down and serve returns 0 — within a timeout, so a regression
+// that hangs the deferred gRPC wait fails loudly instead of freezing CI.
+func TestServeShutsDownCleanly(t *testing.T) {
+	a := &app.App{GRPC: grpc.NewServer()}
+	cfg := config.Config{Listen: "127.0.0.1:0", GRPCListen: "127.0.0.1:0"}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan int, 1)
+	go func() { done <- serve(ctx, cancel, cfg, a) }()
+	time.Sleep(100 * time.Millisecond) // let both listeners come up
+	cancel()
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("serve exit code = %d, want 0 on clean shutdown", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not return after cancellation — shutdown hangs")
 	}
 }
