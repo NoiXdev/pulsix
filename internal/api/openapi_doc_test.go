@@ -40,6 +40,11 @@ func TestDocument(t *testing.T) {
 		"/api/v1/orgs/{org}/activity",
 		"/api/v1/orgs/{org}/tokens",
 		"/api/v1/auth/passkeys/login/finish",
+		"/api/v1/orgs/{org}/repos",
+		"/api/v1/orgs/{org}/repos/{id}",
+		"/api/v1/orgs/{org}/repos/{id}/sync",
+		"/api/v1/orgs/{org}/playbooks",
+		"/api/v1/orgs/{org}/playbooks/{id}",
 	} {
 		if _, ok := paths[want]; !ok {
 			t.Errorf("Document() paths missing %q", want)

@@ -29,9 +29,11 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
-	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -179,11 +181,25 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	inventorySvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
 	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
 
+	// The job queue and its org-scoped service are built before the API
+	// handler: the repository registry's sync action enqueues through the
+	// jobs service, and the queue reports finished sync_repo runs back
+	// through it (SetSyncSink below). The reaper goroutine itself starts
+	// further down, reusing the same queue.
+	templates := jobs.NewSQLTemplates(appDB)
+	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
+	jobsSvc := jobs.NewService(jobs.NewSQLStore(appDB), jobsQueue, templates, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	reposSvc := repos.NewService(repos.NewSQLStore(appDB), credsSvc, jobsSvc)
+	playbooksSvc := playbooks.NewService(playbooks.NewSQLStore(appDB), reposSvc)
+	jobsQueue.SetSyncSink(jobsSvc)
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Credentials: credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
+		Repos: reposSvc, Playbooks: playbooksSvc,
 		Version: cfg.Version,
 	})
 	if err != nil {
@@ -201,7 +217,6 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// their stale claims swept even before a worker ever connects. It is
 	// stopped in Close.
 	reaperCtx, reaperStop := context.WithCancel(context.Background())
-	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, jobs.NewSQLTemplates(appDB), sshSvc, time.Now, rand.Reader)
 	go jobs.NewReaper(jobsQueue, 0).Run(reaperCtx)
 
 	var grpcServer *grpc.Server

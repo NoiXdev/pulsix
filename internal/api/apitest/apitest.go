@@ -27,7 +27,10 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -205,6 +208,17 @@ func New(t *testing.T, opts ...Option) *Server {
 	invStore := inventory.NewSQLStore(d)
 	inventorySvc := inventory.NewService(invStore, hostsSvc, sshSvc, crypto.NewBox(testMasterKey))
 	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, crypto.NewBox(testMasterKey))
+	// The job queue rides the same services the renderer needs, exactly
+	// like production wiring (internal/app.Build): the reaper is NOT
+	// started here — tests drive Claim/Finish through Deps' services or
+	// the queue directly, and a background reaper would sweep jobs out
+	// from under running assertions.
+	templates := jobs.NewSQLTemplates(d)
+	jobsQueue := jobs.NewSQLQueue(d, crypto.NewBox(testMasterKey), renderer, credsSvc, templates, sshSvc, time.Now, rand.Reader)
+	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
+	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templates, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
+	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
+	playbooksSvc := playbooks.NewService(playbooks.NewSQLStore(d), reposSvc)
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
@@ -222,6 +236,8 @@ func New(t *testing.T, opts ...Option) *Server {
 		SSH:         sshSvc,
 		Inventory:   inventorySvc,
 		Renderer:    renderer,
+		Repos:       reposSvc,
+		Playbooks:   playbooksSvc,
 	}
 	for _, opt := range opts {
 		opt(s)

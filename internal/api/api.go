@@ -19,6 +19,8 @@ import (
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -49,6 +51,10 @@ type Deps struct {
 	// inventory (masked for the preview endpoints); see
 	// registerInventoryMemberRoutes.
 	Renderer *inventory.Renderer
+	// Repos is the git repository registry; see registerRepoRoutes.
+	Repos *repos.Service
+	// Playbooks stores repo and editor playbooks; see registerPlaybookRoutes.
+	Playbooks *playbooks.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -134,6 +140,12 @@ func (d Deps) validate() error {
 	}
 	if d.Renderer == nil {
 		missing = append(missing, "Renderer")
+	}
+	if d.Repos == nil {
+		missing = append(missing, "Repos")
+	}
+	if d.Playbooks == nil {
+		missing = append(missing, "Playbooks")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -300,4 +312,6 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerSSHRoutes(orgScoped, deps)             // /orgs/{org}/bastions..., zone default, host SSH
 	registerInventoryRoutes(orgScoped, deps)       // /orgs/{org}/inventory/groups...
 	registerInventoryMemberRoutes(orgScoped, deps) // memberships, host inventory, previews
+	registerRepoRoutes(orgScoped, deps)            // /orgs/{org}/repos...
+	registerPlaybookRoutes(orgScoped, deps)        // /orgs/{org}/playbooks...
 }

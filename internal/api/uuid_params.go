@@ -27,6 +27,19 @@ func parseOptionalUUID(s *string, field string) (*uuid.UUID, error) {
 	return &id, nil
 }
 
+// optionalUUID parses an optional id carried in a plain request-body string;
+// "" means none.
+func optionalUUID(s, field string) (*uuid.UUID, error) {
+	if s == "" {
+		return nil, nil
+	}
+	id, err := parseUUID(s, field)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 // optionalString renders an optional id for a response.
 func optionalString(id *uuid.UUID) *string {
 	if id == nil {
