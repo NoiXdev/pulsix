@@ -676,6 +676,74 @@ func TestBackoff(t *testing.T) {
 	}
 }
 
+// TestLoopUnmarshalableStatsReportedAsError: stats the JSON encoder cannot
+// represent degrade the result to the error status with the failure named —
+// the manager's run view is built on the stats, so a run must never be
+// recorded successful without them.
+func TestLoopUnmarshalableStatsReportedAsError(t *testing.T) {
+	cfg := cfgFor(t.TempDir())
+	client := &fakeWorkerClient{claimQueue: []*workerpb.ClaimJobResponse{jobFor(uuid.Must(uuid.NewV7()), "tok")}}
+	exec := &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, _ func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		return StatusSucceeded, map[string]any{"web-1": make(chan int)}, nil // unmarshalable
+	}}
+
+	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
+	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
+	cancel()
+	<-done
+
+	reports := client.reported()
+	if reports[0].Status != string(StatusError) {
+		t.Fatalf("status = %q, want error", reports[0].Status)
+	}
+	if reports[0].Error == "" || !strings.Contains(reports[0].Error, "report stats") {
+		t.Fatalf("error %q must name the stats failure", reports[0].Error)
+	}
+}
+
+// TestLoopDoesNotMutateExecutorEvent: the loop owns identity and time, and
+// stamps them onto a CLONE of the executor's event (the documented contract
+// at the sink) — the executor's own pointer must read back untouched, while
+// the stream carries the stamped copy.
+func TestLoopDoesNotMutateExecutorEvent(t *testing.T) {
+	cfg := cfgFor(t.TempDir(), zoneID)
+	jobID := uuid.Must(uuid.NewV7())
+	client := &fakeWorkerClient{claimQueue: []*workerpb.ClaimJobResponse{jobFor(jobID, "tok")}}
+
+	ev := &workerpb.RunEvent{Host: "web-1", Task: "Run playbook", State: "ok", Payload: `{"x":1}`}
+	exec := &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, sink func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		if err := sink(ev); err != nil {
+			return StatusError, nil, err
+		}
+		// Re-read after the loop consumed the event: a mutation would
+		// corrupt a runner's own event batch.
+		if ev.Host != "web-1" || ev.Task != "Run playbook" || ev.State != "ok" || ev.Payload != `{"x":1}` {
+			t.Errorf("the loop mutated the executor's event: %+v", ev)
+		}
+		if ev.JobId != "" || ev.Seq != 0 || ev.GetAt() != nil {
+			t.Errorf("the loop stamped identity onto the executor's event: job_id=%q seq=%d at=%v", ev.JobId, ev.Seq, ev.GetAt())
+		}
+		return StatusSucceeded, nil, nil
+	}}
+
+	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
+	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
+	cancel()
+	<-done
+
+	events := client.streamsNow()[0].events()
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	sent := events[0]
+	if sent.GetJobId() != jobID.String() || sent.GetSeq() != 1 {
+		t.Fatalf("streamed event = job_id %q seq %d, want the stamped copy", sent.GetJobId(), sent.GetSeq())
+	}
+	if sent.GetAt() == nil {
+		t.Fatal("streamed event carries no timestamp")
+	}
+}
+
 // TestLoopCleanShutdown: cancelling mid-wait exits Run with nil promptly.
 func TestLoopCleanShutdown(t *testing.T) {
 	cfg := cfgFor(t.TempDir())

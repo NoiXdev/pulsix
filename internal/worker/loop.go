@@ -303,13 +303,18 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 
 // report is the terminal ReportResult write. It runs on a detached, bounded
 // context so the result lands even when the loop's context is already
-// cancelled by shutdown.
+// cancelled by shutdown. Stats the encoder cannot represent degrade the
+// result deterministically to the error status — the manager's run view is
+// built on the stats, so a run recorded "successful" without them would
+// lie; the error text names the marshalling failure.
 func (l *Loop) report(ctx context.Context, job *workerpb.Job, status Status, stats map[string]any, errText string) (Status, error) {
 	var statsJSON []byte
 	if stats != nil {
 		var err error
 		if statsJSON, err = json.Marshal(stats); err != nil {
 			l.log.ErrorContext(ctx, "marshal job stats", "job_id", job.GetId(), "err", err)
+			status = StatusError
+			errText = joinErrText(errText, fmt.Sprintf("report stats: %v", err))
 		}
 	}
 	reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
@@ -323,6 +328,15 @@ func (l *Loop) report(ctx context.Context, job *workerpb.Job, status Status, sta
 		return status, fmt.Errorf("report result: %w", err)
 	}
 	return status, nil
+}
+
+// joinErrText joins two halves of a result's error text, keeping the
+// executor's own reason first when there is one.
+func joinErrText(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "; " + b
 }
 
 // newWorkDir creates a fresh owner-private temp dir under the data dir; the
