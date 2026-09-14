@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package pulsix.worker.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/noixdev/pulsix/internal/pb/workerpb";
+
+service WorkerService {
+  // ClaimJob atomically claims one queued job of one of the worker's zones
+  // (SELECT ... FOR UPDATE SKIP LOCKED) and returns its full payload,
+  // including the rendered inventory snapshot and revealed credential
+  // secrets. Empty response with no job means "queue empty".
+  rpc ClaimJob(ClaimJobRequest) returns (ClaimJobResponse);
+  // RunEvents streams a run's events after a successful claim. The worker
+  // sends events; the manager may answer with a cancel directive. Closing
+  // the stream without a terminal event makes the manager re-queue the job.
+  rpc RunEvents(stream RunEvent) returns (stream ManagerDirective);
+  // ReportResult is the terminal unary call: the worker reports the final
+  // status and per-host stats. Sent after the last RunEvents message.
+  rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
+}
+
+message ClaimJobRequest {
+  string version = 1;                // worker build version, recorded on the job
+  repeated string zone_ids = 2;      // the zones this worker serves (uuids)
+}
+
+message ClaimJobResponse {
+  // job is empty when the queue has nothing for these zones.
+  Job job = 1;
+}
+
+message Job {
+  string id = 1;                     // uuid
+  string kind = 2;                   // run | adhoc | connection_test | bootstrap | rotate_key | sync_repo
+  string org_id = 3;                 // uuid
+  string zone_id = 4;                // uuid
+  string template_id = 5;            // uuid, empty for non-run kinds
+  string playbook = 6;               // inline YAML or "repo:<repo-id>:<subpath>"
+  string limit = 7;
+  map<string, string> extra_vars = 8;   // JSON-encoded values
+  string ssh_username = 9;
+  // inventory_doc is the dynamic-inventory JSON with secrets revealed.
+  string inventory_doc = 10;
+  // connections maps hostname to the rendered Connection JSON.
+  map<string, string> connections = 11;
+  // credentials maps credential uuid to the revealed Secret JSON. Only
+  // credentials the snapshot references. Never logged.
+  map<string, string> credentials = 12;
+  // host_keys maps hostname to the pinned public-key fingerprint
+  // ("SHA256:..."), present when the host has a pin the worker must verify.
+  map<string, string> host_keys = 13;
+  // kind_payload carries kind-specific JSON (bootstrap login, rotation
+  // keys, adhoc argv). Never logged.
+  string kind_payload = 14;
+  string worker_token = 15;          // echoes the claim for stream binding
+}
+
+message RunEvent {
+  string job_id = 1;
+  uint64 seq = 2;
+  string host = 3;
+  string task = 4;
+  string state = 5;                  // ok | failed | skipped | changed | unreachable | stdout | run_start | run_end
+  string payload = 6;                // JSON
+  google.protobuf.Timestamp at = 7;
+}
+
+message ManagerDirective { bool cancel = 1; }
+
+message ReportResultRequest {
+  string job_id = 1;
+  string status = 2;                 // succeeded | failed | cancelled | error
+  string stats = 3;                  // JSON: per-host ok/failed/skipped/changed counts
+  string error = 4;                  // human-readable failure reason, empty on success
+}
+
+message ReportResultResponse {}

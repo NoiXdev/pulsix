@@ -1,0 +1,16 @@
+version: v2
+# The module= option makes protoc-gen-go/protoc-gen-go-grpc compute the
+# output path as the go_package import path relative to the module path,
+# i.e. internal/pb/workerpb under the out dir — so `cd proto && buf
+# generate` places the generated files flat in ../internal/pb/workerpb,
+# importable as github.com/noixdev/pulsix/internal/pb/workerpb, while the
+# descriptor file identity stays the canonical pulsix/worker/v1/worker.proto.
+plugins:
+  - local: protoc-gen-go
+    out: ..
+    opt: module=github.com/noixdev/pulsix
+  - local: protoc-gen-go-grpc
+    out: ..
+    opt:
+      - module=github.com/noixdev/pulsix
+      - require_unimplemented_servers=false

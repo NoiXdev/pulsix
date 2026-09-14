@@ -1,4 +1,4 @@
-.PHONY: test lint build sqlc web-build
+.PHONY: test lint build sqlc buf-lint buf-generate web-build
 test:
 	go test -race -cover ./...
 lint:
@@ -15,3 +15,7 @@ web-build:
 	cp -r web/dist internal/web/dist
 sqlc:
 	sqlc generate
+buf-lint:
+	cd proto && buf lint
+buf-generate:
+	cd proto && buf generate

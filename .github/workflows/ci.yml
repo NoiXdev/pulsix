@@ -10,6 +10,32 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with: { version: latest }
       - run: scripts/coverage-gate.sh
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 so `buf breaking --against '.git#branch=main'` can
+      # clone the main branch out of the local .git dir (same need as the
+      # commits job below).
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # bufbuild/buf-action@v1.5.0 — newest stable release as of 2026-09-14.
+      # Runs `buf build`, `buf lint` and `buf breaking` on the proto/ module
+      # (the action's own default buf install, so no separate setup step).
+      # Every step is set explicitly: the action's lint/format/breaking
+      # inputs default to PR-only, and `push`/`pr_comment` would engage the
+      # Buf Schema Registry flow this repo does not use. format stays off
+      # for now: worker.proto is kept verbatim from the contract brief,
+      # which aligns trailing comments differently than `buf format` would.
+      - uses: bufbuild/buf-action@v1.5.0
+        with:
+          input: proto
+          lint: true
+          format: false
+          breaking: true
+          breaking_against: ".git#branch=main"
+          push: false
+          pr_comment: false
+
   web:
     runs-on: ubuntu-latest
     defaults:
