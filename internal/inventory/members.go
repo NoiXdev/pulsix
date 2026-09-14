@@ -61,6 +61,13 @@ func (s *Service) Unassign(ctx context.Context, orgID, groupID, hostID uuid.UUID
 	return s.store.DeleteMembership(ctx, orgID, groupID, hostID)
 }
 
+// ListMemberships returns every membership of the organization, unfiltered.
+// The job queue's scope resolver (internal/jobs) reads it to walk a scope
+// group's subtree.
+func (s *Service) ListMemberships(ctx context.Context, orgID uuid.UUID) ([]Membership, error) {
+	return s.store.ListMemberships(ctx, orgID)
+}
+
 // Members lists a group's members by host name, each with its completeness
 // against the current schema.
 func (s *Service) Members(ctx context.Context, orgID, groupID uuid.UUID) ([]MemberView, error) {

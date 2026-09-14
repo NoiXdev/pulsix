@@ -9,12 +9,21 @@ import (
 )
 
 // exemptedFromRLS lists the org-owned tables that deliberately carry no
-// row-level security. workers is the only one: GetBySerial/Touch resolve a
-// worker by its certificate serial outside the pulsix.org_id scope (the
-// gRPC interceptor has no org context; the serial is the secret and is
-// globally unique), and every other statement filters by org_id in its
-// WHERE clause. See internal/db/migrations/00017_workers.sql.
-var exemptedFromRLS = map[string]bool{"workers": true}
+// row-level security.
+//
+// workers: GetBySerial/Touch resolve a worker by its certificate serial
+// outside the pulsix.org_id scope (the gRPC interceptor has no org
+// context; the serial is the secret and is globally unique), and every
+// other statement filters by org_id in its WHERE clause. See
+// internal/db/migrations/00017_workers.sql.
+//
+// job_events: the worker event path (gRPC, org-unscoped by design)
+// appends without an org scope, so a policy pair would force every append
+// through an explicit scope for no gain. The table is read only through
+// jobs.Service.Events, which resolves the job's organization first and
+// then filters by org_id in the WHERE clause. See
+// internal/db/migrations/00018_jobs.sql.
+var exemptedFromRLS = map[string]bool{"workers": true, "job_events": true}
 
 func TestEveryOrgOwnedTableForcesRowLevelSecurity(t *testing.T) {
 	d := testdb.Open(t)

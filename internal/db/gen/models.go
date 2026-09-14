@@ -112,6 +112,20 @@ type Credential struct {
 	UpdatedAt   time.Time          `json:"updated_at"`
 }
 
+type GitRepo struct {
+	ID            uuid.UUID          `json:"id"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	Name          string             `json:"name"`
+	Url           string             `json:"url"`
+	Branch        string             `json:"branch"`
+	Subpath       string             `json:"subpath"`
+	CredentialID  pgtype.UUID        `json:"credential_id"`
+	LastSync      pgtype.Timestamptz `json:"last_sync"`
+	LastSyncError *string            `json:"last_sync_error"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+}
+
 type Host struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`
@@ -193,6 +207,52 @@ type Invite struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type Job struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	ZoneID     uuid.UUID          `json:"zone_id"`
+	Kind       string             `json:"kind"`
+	TemplateID pgtype.UUID        `json:"template_id"`
+	HostIds    []uuid.UUID        `json:"host_ids"`
+	Status     string             `json:"status"`
+	WorkerID   pgtype.UUID        `json:"worker_id"`
+	ClaimedAt  pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	Stats      []byte             `json:"stats"`
+	Error      string             `json:"error"`
+	RunGroupID uuid.UUID          `json:"run_group_id"`
+	Trigger    string             `json:"trigger"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	Payload    []byte             `json:"payload"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
+type JobEvent struct {
+	JobID   uuid.UUID `json:"job_id"`
+	Seq     int64     `json:"seq"`
+	OrgID   uuid.UUID `json:"org_id"`
+	At      time.Time `json:"at"`
+	Host    string    `json:"host"`
+	Task    string    `json:"task"`
+	State   string    `json:"state"`
+	Payload []byte    `json:"payload"`
+}
+
+type JobTemplate struct {
+	ID              uuid.UUID   `json:"id"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	Name            string      `json:"name"`
+	PlaybookID      uuid.UUID   `json:"playbook_id"`
+	Scope           []byte      `json:"scope"`
+	Limit           string      `json:"limit"`
+	ExtraVars       []byte      `json:"extra_vars"`
+	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
+	CredentialID    pgtype.UUID `json:"credential_id"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
+}
+
 type OrgMembership struct {
 	OrgID     uuid.UUID `json:"org_id"`
 	UserID    uuid.UUID `json:"user_id"`
@@ -219,6 +279,17 @@ type Passkey struct {
 	BackupEligible bool               `json:"backup_eligible"`
 	CreatedAt      time.Time          `json:"created_at"`
 	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+}
+
+type Playbook struct {
+	ID        uuid.UUID   `json:"id"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	RepoID    pgtype.UUID `json:"repo_id"`
+	Path      *string     `json:"path"`
+	Inline    *string     `json:"inline"`
+	Source    string      `json:"source"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 type RecoveryCode struct {

@@ -1,13 +1,21 @@
 package credentials_test
 
 import (
+	"crypto/rand"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/credentials"
+	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 )
@@ -86,5 +94,55 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 	}
 	if err := store.Delete(ctx, org, c.ID); !errors.Is(err, credentials.ErrNotFound) {
 		t.Fatalf("second Delete: %v", err)
+	}
+}
+
+// TestOpenSecretGeneratedKeyRoundTrip is the brief's integration test for
+// backlog 2.17: a generated SSH key goes through Create (sealed) and comes
+// back through OpenSecret as a parseable private key — the exact path the
+// job claim's payload build takes.
+func TestOpenSecretGeneratedKeyRoundTrip(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "cred-opensecret-org")
+	svc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox([32]byte{'t','e','s','t','-','m','a','s','t','e','r','-','k','e','y','0','1','2','3','4'}), time.Now, rand.Reader)
+	created, err := svc.Create(ctx, org, credentials.CreateInput{
+		Name: "run-key", Kind: credentials.KindSSHKey, Username: "ansible",
+		Material: credentials.Material{Generate: true},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	secret, err := svc.OpenSecret(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("OpenSecret: %v", err)
+	}
+	if _, err := gossh.ParsePrivateKey([]byte(secret.PrivateKey)); err != nil {
+		t.Fatalf("opened private key does not parse: %v", err)
+	}
+	if _, err := svc.OpenSecret(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, credentials.ErrNotFound) {
+		t.Fatalf("unknown credential: %v", err)
+	}
+}
+
+// TestGetCredentialSecretSelectsNoMetadata is the regression test backlog
+// 2.17 asks for: the generated SQL of GetCredentialSecret must select
+// exactly kind and secret — never SELECT *, which would silently widen the
+// one secret-bearing read into a metadata read.
+func TestGetCredentialSecretSelectsNoMetadata(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "db", "gen", "credentials.sql.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`const getCredentialSecret = ` + "`([^`]*)`").FindSubmatch(raw)
+	if m == nil {
+		t.Fatal("getCredentialSecret query not found in gen/credentials.sql.go")
+	}
+	sql := string(m[1])
+	if !strings.Contains(sql, "SELECT kind, secret FROM credentials") {
+		t.Fatalf("GetCredentialSecret must select exactly kind and secret, got:\n%s", sql)
+	}
+	if strings.Contains(sql, "SELECT *") {
+		t.Fatalf("GetCredentialSecret must not select *:\n%s", sql)
 	}
 }

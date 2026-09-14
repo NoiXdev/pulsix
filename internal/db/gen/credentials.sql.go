@@ -112,6 +112,33 @@ func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (C
 	return i, err
 }
 
+const getCredentialSecret = `-- name: GetCredentialSecret :one
+SELECT kind, secret FROM credentials WHERE org_id = $1 AND id = $2
+`
+
+type GetCredentialSecretParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+type GetCredentialSecretRow struct {
+	Kind   string `json:"kind"`
+	Secret []byte `json:"secret"`
+}
+
+// The ONE read that returns the sealed secret bytes, for the job-claim path
+// only (backlog 2.17): it selects the kind (to know which Secret field is
+// set) and the ciphertext, and deliberately nothing else — no name, no
+// metadata — so a regression can never widen it back into a metadata read
+// that happens to carry the secret. Callers open the ciphertext with the
+// credential AAD; see credentials.Service.OpenSecret.
+func (q *Queries) GetCredentialSecret(ctx context.Context, arg GetCredentialSecretParams) (GetCredentialSecretRow, error) {
+	row := q.db.QueryRow(ctx, getCredentialSecret, arg.OrgID, arg.ID)
+	var i GetCredentialSecretRow
+	err := row.Scan(&i.Kind, &i.Secret)
+	return i, err
+}
+
 const listCredentialUsage = `-- name: ListCredentialUsage :many
 SELECT c.id,
   (SELECT count(*) FROM bastions b WHERE b.org_id = c.org_id AND b.credential_id = c.id)::int AS bastions,

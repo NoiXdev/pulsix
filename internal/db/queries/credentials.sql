@@ -6,6 +6,15 @@ RETURNING *;
 -- name: GetCredential :one
 SELECT * FROM credentials WHERE org_id = $1 AND id = $2;
 
+-- name: GetCredentialSecret :one
+-- The ONE read that returns the sealed secret bytes, for the job-claim path
+-- only (backlog 2.17): it selects the kind (to know which Secret field is
+-- set) and the ciphertext, and deliberately nothing else — no name, no
+-- metadata — so a regression can never widen it back into a metadata read
+-- that happens to carry the secret. Callers open the ciphertext with the
+-- credential AAD; see credentials.Service.OpenSecret.
+SELECT kind, secret FROM credentials WHERE org_id = $1 AND id = $2;
+
 -- name: ListCredentials :many
 SELECT * FROM credentials WHERE org_id = $1 ORDER BY name;
 

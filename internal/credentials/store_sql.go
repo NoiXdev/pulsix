@@ -93,6 +93,17 @@ func (s *SQLStore) Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Us
 	return out, nil
 }
 
+// LoadSecret reads kind and sealed bytes only — the generated query is the
+// narrowest possible select (see GetCredentialSecret's comment in
+// credentials.sql), so no metadata column can ride along.
+func (s *SQLStore) LoadSecret(ctx context.Context, orgID, id uuid.UUID) (Kind, []byte, error) {
+	row, err := s.q.GetCredentialSecret(ctx, gen.GetCredentialSecretParams{OrgID: orgID, ID: id})
+	if err != nil {
+		return "", nil, mapErr(err)
+	}
+	return Kind(row.Kind), row.Secret, nil
+}
+
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound

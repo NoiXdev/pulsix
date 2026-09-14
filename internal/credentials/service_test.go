@@ -90,6 +90,14 @@ func (f *fakeStore) Usage(_ context.Context, _ uuid.UUID) (map[uuid.UUID]credent
 	return f.usage, nil
 }
 
+func (f *fakeStore) LoadSecret(_ context.Context, orgID, id uuid.UUID) (credentials.Kind, []byte, error) {
+	r, ok := f.rows[id]
+	if !ok || r.c.OrgID != orgID {
+		return "", nil, credentials.ErrNotFound
+	}
+	return r.c.Kind, r.sealed, nil
+}
+
 func testBox() *crypto.Box {
 	var key [32]byte
 	copy(key[:], "credentials-test-key-0123456789a")
@@ -400,5 +408,34 @@ func TestKindPredicates(t *testing.T) {
 	}
 	if credentials.Kind("nope").Valid() {
 		t.Error("Valid")
+	}
+}
+
+func TestOpenSecretRoundTripsAndFailsClosed(t *testing.T) {
+	store := newFakeStore()
+	svc := newService(store, time.Now())
+	org := uuid.Must(uuid.NewV7())
+	pw, err := svc.Create(ctx, org, credentials.CreateInput{Name: "host-login", Kind: credentials.KindSSHPassword, Username: "ansible", Material: credentials.Material{Password: "hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := svc.OpenSecret(ctx, org, pw.ID)
+	if err != nil {
+		t.Fatalf("OpenSecret: %v", err)
+	}
+	if secret.Password != "hunter2" || secret.PrivateKey != "" || secret.Token != "" {
+		t.Fatalf("OpenSecret = %+v", secret)
+	}
+	if _, err := svc.OpenSecret(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, credentials.ErrNotFound) {
+		t.Fatalf("unknown credential: %v", err)
+	}
+	if _, err := svc.OpenSecret(ctx, uuid.Must(uuid.NewV7()), pw.ID); !errors.Is(err, credentials.ErrNotFound) {
+		t.Fatalf("another org must not see the credential: %v", err)
+	}
+	// A ciphertext that does not open under the credential's AAD (one
+	// copied from another row) must fail, never return garbage.
+	store.rows[pw.ID] = stored{c: pw, sealed: []byte("tampered")}
+	if _, err := svc.OpenSecret(ctx, org, pw.ID); err == nil || errors.Is(err, credentials.ErrNotFound) {
+		t.Fatalf("tampered ciphertext: %v", err)
 	}
 }

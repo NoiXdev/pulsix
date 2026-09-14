@@ -155,6 +155,11 @@ type Store interface {
 	// Usage maps credential id to its reference counts; credentials that
 	// nothing references may be absent.
 	Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Usage, error)
+	// LoadSecret returns the kind and the sealed secret bytes of one
+	// credential — the one store read that exposes ciphertext, used only
+	// by Service.OpenSecret (the job-claim path). ErrNotFound when the
+	// credential does not exist in the organization.
+	LoadSecret(ctx context.Context, orgID, id uuid.UUID) (Kind, []byte, error)
 }
 
 // Service implements the credential store.
@@ -243,6 +248,45 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 // Usage returns reference counts per credential for the "used by" column.
 func (s *Service) Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Usage, error) {
 	return s.store.Usage(ctx, orgID)
+}
+
+// OpenSecret decrypts and returns a credential's secret. It exists for the
+// one caller that legitimately needs plaintext material — the job queue
+// building a claim's payload for a worker (backlog 2.17): every other read
+// stays on the metadata paths, and this method must never be wired into
+// anything that logs, caches or serves its result. The sealed bytes only
+// open with the credential's own AAD, so a ciphertext copied into another
+// row or organization fails here.
+func (s *Service) OpenSecret(ctx context.Context, orgID, id uuid.UUID) (Secret, error) {
+	kind, sealed, err := s.store.LoadSecret(ctx, orgID, id)
+	if err != nil {
+		return Secret{}, err
+	}
+	plain, err := s.box.OpenAAD(sealed, AAD(orgID, id))
+	if err != nil {
+		return Secret{}, fmt.Errorf("open credential secret: %w", err)
+	}
+	var secret Secret
+	if err := json.Unmarshal(plain, &secret); err != nil {
+		return Secret{}, fmt.Errorf("decode credential secret: %w", err)
+	}
+	if secret.fieldFor(kind) == "" {
+		return Secret{}, fmt.Errorf("open credential secret: stored secret carries no value for kind %s", kind)
+	}
+	return secret, nil
+}
+
+// fieldFor reports which Secret field the kind's material lives in.
+func (s Secret) fieldFor(k Kind) string {
+	switch k {
+	case KindSSHKey, KindGitKey:
+		return s.PrivateKey
+	case KindSSHPassword:
+		return s.Password
+	case KindGitToken:
+		return s.Token
+	}
+	return ""
 }
 
 // ExpiryState reports whether c has expired or expires within ExpiryWarning,

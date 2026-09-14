@@ -29,6 +29,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/setup"
@@ -50,12 +51,20 @@ type App struct {
 	GRPC       *grpc.Server
 	GRPCListen string
 	db         *db.DB
+	// stopReaper cancels the job queue's reaper goroutine; Close calls it.
+	stopReaper func()
 }
 
-// Close releases the application's database pool. It does not touch the
-// migration pool Build opens: that one is already closed before Build
-// returns, successfully or not — see Build's own comment on why.
-func (a *App) Close() { a.db.Close() }
+// Close releases the application's database pool and stops the reaper. It
+// does not touch the migration pool Build opens: that one is already closed
+// before Build returns, successfully or not — see Build's own comment on
+// why.
+func (a *App) Close() {
+	if a.stopReaper != nil {
+		a.stopReaper()
+	}
+	a.db.Close()
+}
 
 // Build constructs every dependency in order — database (running
 // migrations, then reopening as the least-privilege role and verifying it
@@ -183,31 +192,41 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	// The worker gRPC endpoint is opt-in via PULSIX_GRPC_LISTEN; its ports
-	// are the stubs from grpc_stubs.go until Task 5's job queue lands. The
-	// workers service rides appDB: the workers table carries no row-level
-	// security by design (migration 00017), so GetBySerial/Touch work
-	// outside any org scope.
+	// are the real job queue from Task 5 (jobs_ports.go adapts it to the
+	// grpcsrv interfaces). The workers service rides appDB: the workers
+	// table carries no row-level security by design (migration 00017), so
+	// GetBySerial/Touch work outside any org scope.
+	//
+	// The reaper runs regardless of the gRPC listener: enqueued jobs need
+	// their stale claims swept even before a worker ever connects. It is
+	// stopped in Close.
+	reaperCtx, reaperStop := context.WithCancel(context.Background())
+	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, jobs.NewSQLTemplates(appDB), sshSvc, time.Now, rand.Reader)
+	go jobs.NewReaper(jobsQueue, 0).Run(reaperCtx)
+
 	var grpcServer *grpc.Server
 	if cfg.GRPCListen != "" {
 		caInst, err := ca.New(ca.NewSQLStore(appDB), box, ca.Config{
 			CommonName: caCommonName, ListenHost: cfg.GRPCHost(),
 		})
 		if err != nil {
+			reaperStop()
 			appDB.Close()
 			return nil, fmt.Errorf("open CA for gRPC server: %w", err)
 		}
 		grpcServer, err = grpcsrv.New(ctx, grpcsrv.Deps{
 			CA: caInst, Workers: workers.NewService(workers.NewSQLStore(appDB)),
-			Claims: stubClaimer{}, Events: stubEventRecorder{}, Results: stubResultRecorder{},
+			Claims: jobsClaimer{jobsQueue}, Events: jobsEventRecorder{jobsQueue}, Results: jobsResultRecorder{jobsQueue},
 			Audit: systemAuditor{auditRec}, Clock: time.Now,
 		})
 		if err != nil {
+			reaperStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
 	}
 
-	return &App{Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB}, nil
+	return &App{Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, stopReaper: reaperStop}, nil
 }
 
 // publicURLIsHTTPS reports whether cfg.PublicURL uses the https scheme, so
