@@ -199,6 +199,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(appDB), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 	reposSvc := repos.NewService(repos.NewSQLStore(appDB), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
+	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
 	jobsQueue.SetSyncSink(jobsSvc)
 
 	handler, err := api.New(api.Deps{
@@ -206,7 +207,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Credentials: credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
-		Repos: reposSvc, Playbooks: playbooksSvc,
+		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Version: cfg.Version,
 	})
 	if err != nil {

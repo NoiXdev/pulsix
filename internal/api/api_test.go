@@ -21,6 +21,7 @@ import (
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -110,6 +111,14 @@ func testPlaybooks() *playbooks.Service {
 	return playbooks.NewService(nil, nil)
 }
 
+// testTemplates builds a *templates.Service with nil store/lookups, good
+// enough to satisfy api.Deps.validate in tests that never actually drive a
+// template operation (nil interface values are only a problem once called),
+// mirroring testPlaybooks above.
+func testTemplates() *templates.Service {
+	return templates.NewService(nil, nil, nil, nil, nil)
+}
+
 // fakeAuthService satisfies api.AuthService without touching a database, so
 // tests that only exercise routing (not the auth flow itself) don't need a
 // real *auth.Service.
@@ -169,7 +178,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
 		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
-		Repos: testRepos(), Playbooks: testPlaybooks(),
+		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(),
 	}
 }
 
@@ -307,6 +316,14 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}); err == nil {
 		t.Fatal("api.New without Playbooks did not return an error")
 	}
+	if _, err := api.New(api.Deps{
+		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
+		Renderer: testRenderer(), Repos: testRepos(), Playbooks: testPlaybooks(),
+	}); err == nil {
+		t.Fatal("api.New without Templates did not return an error")
+	}
 }
 
 // testDeps returns a fully-wired (if inert) Deps, exactly like
@@ -319,7 +336,7 @@ func testDeps(t *testing.T) api.Deps {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
 		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
-		Repos: testRepos(), Playbooks: testPlaybooks(),
+		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(),
 	}
 }
 

@@ -224,6 +224,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
+	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
@@ -243,6 +244,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Renderer:    renderer,
 		Repos:       reposSvc,
 		Playbooks:   playbooksSvc,
+		Templates:   templatesSvc,
 	}
 	for _, opt := range opts {
 		opt(s)

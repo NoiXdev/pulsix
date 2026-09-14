@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/web"
@@ -55,6 +56,10 @@ type Deps struct {
 	Repos *repos.Service
 	// Playbooks stores repo and editor playbooks; see registerPlaybookRoutes.
 	Playbooks *playbooks.Service
+	// Templates is the job-template registry (a run's playbook, scope,
+	// limit, extra vars and default credential); see
+	// registerTemplateRoutes.
+	Templates *templates.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -146,6 +151,9 @@ func (d Deps) validate() error {
 	}
 	if d.Playbooks == nil {
 		missing = append(missing, "Playbooks")
+	}
+	if d.Templates == nil {
+		missing = append(missing, "Templates")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -314,4 +322,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerInventoryMemberRoutes(orgScoped, deps) // memberships, host inventory, previews
 	registerRepoRoutes(orgScoped, deps)            // /orgs/{org}/repos...
 	registerPlaybookRoutes(orgScoped, deps)        // /orgs/{org}/playbooks...
+	registerTemplateRoutes(orgScoped, deps)        // /orgs/{org}/job-templates...
 }
