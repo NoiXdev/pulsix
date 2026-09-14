@@ -8,6 +8,14 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 )
 
+// exemptedFromRLS lists the org-owned tables that deliberately carry no
+// row-level security. workers is the only one: GetBySerial/Touch resolve a
+// worker by its certificate serial outside the pulsix.org_id scope (the
+// gRPC interceptor has no org context; the serial is the secret and is
+// globally unique), and every other statement filters by org_id in its
+// WHERE clause. See internal/db/migrations/00017_workers.sql.
+var exemptedFromRLS = map[string]bool{"workers": true}
+
 func TestEveryOrgOwnedTableForcesRowLevelSecurity(t *testing.T) {
 	d := testdb.Open(t)
 	rows, err := d.Pool().Query(context.Background(), `
@@ -29,6 +37,9 @@ func TestEveryOrgOwnedTableForcesRowLevelSecurity(t *testing.T) {
 		var rls, force, bypass bool
 		if err := rows.Scan(&name, &rls, &force, &qual, &bypass); err != nil {
 			t.Fatal(err)
+		}
+		if exemptedFromRLS[name] {
+			continue
 		}
 		seen++
 		if !rls || !force {

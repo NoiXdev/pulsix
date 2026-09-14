@@ -263,6 +263,17 @@ type WebauthnCeremony struct {
 	ExpiresAt time.Time   `json:"expires_at"`
 }
 
+type Worker struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	ZoneID     uuid.UUID          `json:"zone_id"`
+	Name       string             `json:"name"`
+	CertSerial string             `json:"cert_serial"`
+	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+	Version    string             `json:"version"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
 type Zone struct {
 	ID        uuid.UUID   `json:"id"`
 	OrgID     uuid.UUID   `json:"org_id"`
