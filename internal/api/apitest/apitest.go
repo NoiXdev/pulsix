@@ -222,6 +222,11 @@ func New(t *testing.T, opts ...Option) *Server {
 	jobsQueue := jobs.NewSQLQueue(d, crypto.NewBox(testMasterKey), renderer, credsSvc, templateLookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
+	// The same post-construction wiring production uses (internal/app):
+	// the claim reads host-key pins from the hosts service, and a finished
+	// connection_test job records its outcome through it.
+	jobsQueue.SetKeyPins(hostsSvc)
+	jobsQueue.SetTestSink(hostsSvc)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
@@ -245,6 +250,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Repos:       reposSvc,
 		Playbooks:   playbooksSvc,
 		Templates:   templatesSvc,
+		Jobs:        jobsSvc,
 	}
 	for _, opt := range opts {
 		opt(s)

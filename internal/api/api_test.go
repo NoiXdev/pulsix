@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
@@ -119,6 +120,13 @@ func testTemplates() *templates.Service {
 	return templates.NewService(nil, nil, nil, nil, nil)
 }
 
+// testJobs satisfies Deps' Jobs requirement for tests that only exercise
+// routing (not the enqueue itself): a service on nil deps whose methods are
+// never called by these routes.
+func testJobs() *jobs.Service {
+	return jobs.NewService(nil, nil, nil, nil, nil, nil, nil, time.Now, nil)
+}
+
 // fakeAuthService satisfies api.AuthService without touching a database, so
 // tests that only exercise routing (not the auth flow itself) don't need a
 // real *auth.Service.
@@ -178,7 +186,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
 		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
-		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(),
+		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 	}
 }
 
@@ -336,7 +344,7 @@ func testDeps(t *testing.T) api.Deps {
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
 		Setup: testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
-		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(),
+		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 	}
 }
 

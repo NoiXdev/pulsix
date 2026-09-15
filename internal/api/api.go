@@ -18,12 +18,13 @@ import (
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/setup"
-	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/sshconf"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/web"
 )
@@ -60,6 +61,9 @@ type Deps struct {
 	// limit, extra vars and default credential); see
 	// registerTemplateRoutes.
 	Templates *templates.Service
+	// Jobs is the org-scoped job queue; the connection-test trigger route
+	// enqueues through it (registerHostopsRoutes).
+	Jobs *jobs.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -154,6 +158,9 @@ func (d Deps) validate() error {
 	}
 	if d.Templates == nil {
 		missing = append(missing, "Templates")
+	}
+	if d.Jobs == nil {
+		missing = append(missing, "Jobs")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -323,4 +330,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerRepoRoutes(orgScoped, deps)            // /orgs/{org}/repos...
 	registerPlaybookRoutes(orgScoped, deps)        // /orgs/{org}/playbooks...
 	registerTemplateRoutes(orgScoped, deps)        // /orgs/{org}/job-templates...
+	registerHostopsRoutes(orgScoped, deps)         // connection test + host key, all /orgs/{org}/hosts/{id}/...
 }
