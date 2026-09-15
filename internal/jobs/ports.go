@@ -64,6 +64,34 @@ type TestSink interface {
 	RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostKeyState string, checks []hosts.HostTestCheck) error
 }
 
+// RotationFinisher is the optional port a rotation group's terminal
+// outcome flows through (SQLQueue.SetRotationFinisher): when the LAST job
+// of a rotate_key group reaches a terminal state, the pending new private
+// key — which traveled only inside the sealed job payloads — is sealed
+// onto the credential (all succeeded) or dropped (anything else). The
+// concrete implementation is credentials.Service.FinishRotation, a single
+// UPDATE that never runs across a job boundary. Declared here so the
+// queue half never imports the credentials service.
+type RotationFinisher interface {
+	FinishRotation(ctx context.Context, orgID, credentialID, groupID uuid.UUID, allSucceeded bool, newPrivateKey credentials.Secret, newPublicKey, newFingerprint, newKeyType string) error
+}
+
+// RotationTargets is the slice of the stores the rotation enqueue path
+// needs (SQLQueue, which runs the org-scoped reads under the caller's
+// scope, implements it): the managed hosts and jump hosts referencing a
+// credential — one rotate_key job each, all sharing the rotation group.
+type RotationTargets interface {
+	ListCredentialHosts(ctx context.Context, orgID, credentialID uuid.UUID) ([]RotationHost, error)
+	ListCredentialBastions(ctx context.Context, orgID, credentialID uuid.UUID) ([]sshconf.Bastion, error)
+}
+
+// RotationHost is one rotation target from the hosts table, with the zone
+// its rotate_key job claims in.
+type RotationHost struct {
+	ID     uuid.UUID
+	ZoneID uuid.UUID
+}
+
 // KeyPinSource is the slice of hosts.Service the claim path needs: each
 // host's pinned host-key fingerprint, absent for unpinned hosts. The claim
 // turns the ids into the job's host_keys map (keyed by host name). A nil

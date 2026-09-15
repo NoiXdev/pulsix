@@ -39,3 +39,20 @@ SELECT c.id,
   (SELECT count(*) FROM host_ssh h WHERE h.org_id = c.org_id AND h.credential_id = c.id)::int AS hosts
 FROM credentials c
 WHERE c.org_id = $1;
+
+-- name: ListCredentialHosts :many
+-- The managed hosts referencing one credential (the rotation enqueue's
+-- target list, backlog 2.7): every host whose own SSH settings log in with
+-- the credential, with the zone the rotate_key job claims in. Unmanaged
+-- hosts are excluded — a job can only run against a managed host, and an
+-- operator who unmanaged a host excluded it from provisioning; the usage
+-- counter above still counts it, so the "used by" column stays honest.
+SELECT h.id, h.zone_id
+FROM host_ssh s
+JOIN hosts h ON h.org_id = s.org_id AND h.id = s.host_id
+WHERE s.org_id = $1 AND s.credential_id = $2 AND h.managed;
+
+-- name: ListCredentialBastions :many
+-- The jump hosts referencing one credential, in name order — the other
+-- half of the rotation target list.
+SELECT * FROM bastions WHERE org_id = $1 AND credential_id = $2 ORDER BY name;

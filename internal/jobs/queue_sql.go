@@ -71,9 +71,15 @@ type SQLQueue struct {
 	cancels *cancelRegistry
 	// sync is the optional sink a finished sync_repo job's outcome is
 	// recorded through. Nil-safe by design: it is wired after construction
-	// by internal/app (SetSyncSink) because the sink is the org-scoped
-	// jobs.Service, whose own construction needs this queue.
+	// by internal/app (SetSyncSink), because the concrete sink is the
+	// org-scoped jobs.Service, which itself is built with the queue it
+	// reports through.
 	sync SyncSink
+	// rotation is the optional sink a completed rotate_key group's outcome
+	// flows through (SetRotationFinisher): credentials.Service
+	// finalizes the rotation — sealing the pending new key onto the
+	// credential or leaving it untouched.
+	rotation RotationFinisher
 }
 
 // SetSyncSink injects the sink RecordSyncResult calls flow through on the
@@ -202,20 +208,42 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		}
 		return nil
 	}
-	// A sync_repo job is deliberately not host-bound: it touches no managed
-	// host, so the whole host-bound payload machinery — the inventory
-	// snapshot, connections and opened credentials — is skipped. A broken
-	// jump chain or an empty org must never fail a git sync, and no
-	// inventory secrets ship on a job that cannot use them.
-	if job.Kind == KindSyncRepo {
-		kindPayload, err := q.openKindPayload(job)
+	// The bootstrap and rotate_key jobs are self-contained the same way:
+	// the kind payload carries the target, the one-time login (bootstrap)
+	// or the old credential and pending new key (rotate_key), and the
+	// pinned host key — the worker's executors reshape the claim into a
+	// one-host run and drive the embedded system playbooks. The rendered
+	// route resolves the target's connection (address, port, jump chain);
+	// the inventory document is discarded.
+	if job.Kind == KindBootstrap || job.Kind == KindRotateKey {
+		kindPayload, hostKeys, err := q.systemPayload(ctx, job)
 		if err != nil {
 			return err
 		}
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
-			InventoryDoc: "{}", KindPayload: kindPayload,
+			InventoryDoc: "{}", HostKeys: hostKeys, KindPayload: kindPayload,
+		}
+		return nil
+	}
+	// A sync_repo job is deliberately not host-bound: it touches no managed
+	// host, so the whole host-bound payload machinery — the inventory
+	// snapshot, connections and opened credentials — is skipped. A broken
+	// jump chain or an empty org must never fail a git sync, and no
+	// inventory secrets ship on a job that cannot use them. The claim-time
+	// enrichment (Task 11) resolves the repository the job syncs — url,
+	// branch, subpath and the git credential as `git:<repo-id>` — the same
+	// way a repo playbook's run claim carries its fetch target.
+	if job.Kind == KindSyncRepo {
+		kindPayload, credentials, err := q.syncRepoPayload(ctx, job)
+		if err != nil {
+			return err
+		}
+		*out = workerpb.Job{
+			Id: job.ID.String(), Kind: string(job.Kind),
+			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
+			InventoryDoc: "{}", Credentials: credentials, KindPayload: kindPayload,
 		}
 		return nil
 	}
@@ -701,6 +729,11 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 		q.cancels.remove(jobID)
 		q.recordSync(ctx, jobID, status, errText)
 		q.recordTest(ctx, jobID, status)
+		q.recordRotation(ctx, jobID, status)
+		// The terminal payload's at-rest lifetime ends here: the sealed
+		// one-time login / pending rotation key drops once the job is
+		// terminal (see clearPayload).
+		q.clearPayload(ctx, jobID)
 		return nil
 	}
 	var current string

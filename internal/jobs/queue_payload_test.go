@@ -231,7 +231,7 @@ func TestBuildPayloadHostJobOpensSealedKindPayload(t *testing.T) {
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	q := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{})
 
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindBootstrap}
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindAdhoc}
 	sealed, err := q.box.SealAAD([]byte(`{"login":"ansible"}`), JobAAD(org, job.ID))
 	if err != nil {
 		t.Fatal(err)

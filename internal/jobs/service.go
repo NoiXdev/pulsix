@@ -377,6 +377,11 @@ type Service struct {
 	// type: hosts.Service implements it, unit-test fakes that do not
 	// simply leave the guard off.
 	keyGuard KeyGuardSource
+	// rotationTargets is the credential-referencing store the rotation
+	// enqueue needs, resolved from the queue's own type (SQLQueue
+	// implements it with org-scoped reads); a queue that does not leaves
+	// rotation enqueueing fail-closed.
+	rotationTargets RotationTargets
 }
 
 // NewService wires the store, the claim queue, the template source, the
@@ -388,6 +393,9 @@ func NewService(store Store, queue Queue, templates TemplateSource, resolver Sco
 	s := &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
 	if g, ok := hosts.(KeyGuardSource); ok {
 		s.keyGuard = g
+	}
+	if rt, ok := queue.(RotationTargets); ok {
+		s.rotationTargets = rt
 	}
 	return s
 }
@@ -666,11 +674,22 @@ func (s *Service) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID,
 	return s.store.RecordSyncResult(ctx, orgID, repoID, at, errText)
 }
 
+// payloadCleaner is the optional queue hook Service.Cancel uses to drop a
+// cancelled-before-claim job's sealed payload — the same at-rest lifetime
+// rule SQLQueue.Finish applies to terminal jobs: a queued bootstrap or
+// rotate_key job that never shipped carries its one-time login or pending
+// key for nothing.
+type payloadCleaner interface {
+	ClearTerminalPayload(ctx context.Context, jobID uuid.UUID)
+}
+
 // Cancel asks a job to stop. A queued job has never been shipped, so it is
 // cancelled outright; a claimed/running job enters cancelling and the
 // worker confirms through its terminal ReportResult. The cancel-request
 // timestamp is recorded on the queue (when it implements CancelRecorder)
-// for the reaper's confirmation deadline.
+// for the reaper's confirmation deadline. A job cancelled before its claim
+// has its sealed payload wiped immediately (when the queue implements
+// payloadCleaner): it will never run, so its secrets must not linger.
 func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 	if _, err := s.store.GetJob(ctx, orgID, id); err != nil {
 		return err
@@ -683,6 +702,9 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 		if cr, ok := s.queue.(CancelRecorder); ok {
 			cr.NoteCancelRequested(id, s.now())
 		}
+	}
+	if cp, ok := s.queue.(payloadCleaner); ok {
+		cp.ClearTerminalPayload(ctx, id)
 	}
 	return nil
 }

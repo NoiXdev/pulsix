@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 )
@@ -282,6 +283,10 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	// The claim-time enrichment resolves the repository through the same
+	// registry the API serves.
+	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
+	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
 
 	job, err := svc.EnqueueSync(scoped, org, repoID, nil)
 	if err != nil {
@@ -296,11 +301,19 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 		t.Fatalf("identity = %+v", j)
 	}
 	var claimedPayload struct {
-		RepoID string `json:"repo_id"`
+		Repo struct {
+			ID      string `json:"id"`
+			URL     string `json:"url"`
+			Branch  string `json:"branch"`
+			Subpath string `json:"subpath"`
+		} `json:"repo"`
 	}
 	if err := json.Unmarshal([]byte(j.GetKindPayload()), &claimedPayload); err != nil ||
-		claimedPayload.RepoID != repoID.String() {
-		t.Fatalf("kind payload = %q, want repo_id %s", j.GetKindPayload(), repoID)
+		claimedPayload.Repo.ID != repoID.String() {
+		t.Fatalf("kind payload = %q, want the enriched repo payload", j.GetKindPayload())
+	}
+	if claimedPayload.Repo.URL != "https://git.example.com/acme/infra.git" || claimedPayload.Repo.Branch != "main" {
+		t.Fatalf("repo payload = %+v", claimedPayload.Repo)
 	}
 	if j.GetPlaybook() != "" || j.GetTemplateId() != "" || j.GetLimit() != "" || j.GetSshUsername() != "" {
 		t.Fatalf("host-bound fields must stay empty: %+v", j)
@@ -308,9 +321,21 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 	if doc := j.GetInventoryDoc(); doc != "{}" {
 		t.Fatalf("inventory doc = %q, want the empty document", doc)
 	}
-	if len(j.GetConnections()) != 0 || len(j.GetCredentials()) != 0 || len(j.GetHostKeys()) != 0 {
-		t.Fatalf("no host material may ship: %v / %v", j.GetConnections(), j.GetCredentials())
+	if len(j.GetConnections()) != 0 || len(j.GetHostKeys()) != 0 {
+		t.Fatalf("no host material may ship: %v", j.GetConnections())
 	}
+}
+
+// repoRefAdapter adapts repos.Service to the queue's RepoSource port, the
+// way internal/app wires it.
+type repoRefAdapter struct{ reposSvc *repos.Service }
+
+func (a repoRefAdapter) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.RepoRef, error) {
+	r, err := a.reposSvc.Get(ctx, orgID, repoID)
+	if err != nil {
+		return jobs.RepoRef{}, err
+	}
+	return jobs.RepoRef{ID: r.ID, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath, CredentialID: r.CredentialID}, nil
 }
 
 // TestQueueFinishRecordsSyncResults pins the finish-path sync recording:

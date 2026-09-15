@@ -139,6 +139,91 @@ func (q *Queries) GetCredentialSecret(ctx context.Context, arg GetCredentialSecr
 	return i, err
 }
 
+const listCredentialBastions = `-- name: ListCredentialBastions :many
+SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at FROM bastions WHERE org_id = $1 AND credential_id = $2 ORDER BY name
+`
+
+type ListCredentialBastionsParams struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+}
+
+// The jump hosts referencing one credential, in name order — the other
+// half of the rotation target list.
+func (q *Queries) ListCredentialBastions(ctx context.Context, arg ListCredentialBastionsParams) ([]Bastion, error) {
+	rows, err := q.db.Query(ctx, listCredentialBastions, arg.OrgID, arg.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Bastion
+	for rows.Next() {
+		var i Bastion
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.Address,
+			&i.Port,
+			&i.Username,
+			&i.CredentialID,
+			&i.ViaBastionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCredentialHosts = `-- name: ListCredentialHosts :many
+SELECT h.id, h.zone_id
+FROM host_ssh s
+JOIN hosts h ON h.org_id = s.org_id AND h.id = s.host_id
+WHERE s.org_id = $1 AND s.credential_id = $2 AND h.managed
+`
+
+type ListCredentialHostsParams struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+}
+
+type ListCredentialHostsRow struct {
+	ID     uuid.UUID `json:"id"`
+	ZoneID uuid.UUID `json:"zone_id"`
+}
+
+// The managed hosts referencing one credential (the rotation enqueue's
+// target list, backlog 2.7): every host whose own SSH settings log in with
+// the credential, with the zone the rotate_key job claims in. Unmanaged
+// hosts are excluded — a job can only run against a managed host, and an
+// operator who unmanaged a host excluded it from provisioning; the usage
+// counter above still counts it, so the "used by" column stays honest.
+func (q *Queries) ListCredentialHosts(ctx context.Context, arg ListCredentialHostsParams) ([]ListCredentialHostsRow, error) {
+	rows, err := q.db.Query(ctx, listCredentialHosts, arg.OrgID, arg.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCredentialHostsRow
+	for rows.Next() {
+		var i ListCredentialHostsRow
+		if err := rows.Scan(&i.ID, &i.ZoneID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCredentialUsage = `-- name: ListCredentialUsage :many
 SELECT c.id,
   (SELECT count(*) FROM bastions b WHERE b.org_id = c.org_id AND b.credential_id = c.id)::int AS bastions,
