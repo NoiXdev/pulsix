@@ -34,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/schedule"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -56,6 +57,8 @@ type App struct {
 	db         *db.DB
 	// stopReaper cancels the job queue's reaper goroutine; Close calls it.
 	stopReaper func()
+	// stopRetest cancels the connection re-test scheduler's goroutine.
+	stopRetest func()
 }
 
 // Close releases the application's database pool and stops the reaper. It
@@ -65,6 +68,9 @@ type App struct {
 func (a *App) Close() {
 	if a.stopReaper != nil {
 		a.stopReaper()
+	}
+	if a.stopRetest != nil {
+		a.stopRetest()
 	}
 	a.db.Close()
 }
@@ -204,6 +210,11 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
 	jobsQueue.SetRepoSource(repoRefSource{reposSvc})
+	// Host keys and test history: the claim reads the pins from the hosts
+	// service, and a finished connection_test job records its outcome
+	// through it (org-scoped, so the wiring rides the same service).
+	jobsQueue.SetKeyPins(hostsSvc)
+	jobsQueue.SetTestSink(hostsSvc)
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
@@ -211,7 +222,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		Credentials: credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
-		Version: cfg.Version,
+		Jobs: jobsSvc, Version: cfg.Version,
 	})
 	if err != nil {
 		appDB.Close()
@@ -230,6 +241,11 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	reaperCtx, reaperStop := context.WithCancel(context.Background())
 	go jobs.NewReaper(jobsQueue, 0).Run(reaperCtx)
 
+	// The daily connection re-test: one pass per interval (default 1h),
+	// staggered per host, under its own advisory lock. Stopped in Close.
+	retestCtx, retestStop := context.WithCancel(context.Background())
+	go schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run(retestCtx)
+
 	var grpcServer *grpc.Server
 	if cfg.GRPCListen != "" {
 		caInst, err := ca.New(ca.NewSQLStore(appDB), box, ca.Config{
@@ -237,6 +253,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		})
 		if err != nil {
 			reaperStop()
+			retestStop()
 			appDB.Close()
 			return nil, fmt.Errorf("open CA for gRPC server: %w", err)
 		}
@@ -247,12 +264,13 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		})
 		if err != nil {
 			reaperStop()
+			retestStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
 	}
 
-	return &App{Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, stopReaper: reaperStop}, nil
+	return &App{Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, stopReaper: reaperStop, stopRetest: retestStop}, nil
 }
 
 // publicURLIsHTTPS reports whether cfg.PublicURL uses the https scheme, so
