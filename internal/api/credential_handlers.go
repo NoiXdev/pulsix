@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -102,6 +103,23 @@ type credentialGetInput struct {
 	ID  string `path:"id"`
 }
 
+// credentialRotateInput is the rotate request (no body).
+type credentialRotateInput struct {
+	Org string `path:"org"`
+	ID  string `path:"id"`
+}
+
+// rotationStartOutput is the 202 body of POST .../rotate: the rotation
+// group's first job (so the SPA can navigate to the run view) and the
+// number of rotate_key jobs the group carries. A credential nothing
+// references re-keys immediately: job_count is 0 and job_id is empty.
+type rotationStartOutput struct {
+	Body struct {
+		JobID    string `json:"job_id"`
+		JobCount int    `json:"job_count"`
+	}
+}
+
 type credentialDetailOutput struct {
 	Body struct {
 		Credential credentialDTO          `json:"credential"`
@@ -189,6 +207,33 @@ func registerCredentialRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, c.ID.String(), "created credential "+c.Name)
 		return credentialDetail(deps, c, credentials.Usage{}, scope.Org.Slug), nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createCredential", "credential"))
+
+	huma.Post(hapi, "/api/v1/orgs/{org}/credentials/{id}/rotate", func(ctx context.Context, in *credentialRotateInput) (*rotationStartOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermCredentialsWrite)
+		if err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "credential id")
+		if err != nil {
+			return nil, err
+		}
+		actor := scope.UserID
+		result, err := deps.Credentials.Rotate(ctx, scope.OrgID, id, &actor)
+		if err != nil {
+			return nil, mapCredentialsErr(ctx, err)
+		}
+		summary := fmt.Sprintf("started credential rotation (%d job(s))", result.Count)
+		if result.Count == 0 {
+			summary = "rotated credential (nothing referenced it; re-keyed immediately)"
+		}
+		setAuditObject(ctx, id.String(), summary)
+		out := &rotationStartOutput{}
+		if result.Count > 0 {
+			out.Body.JobID = result.FirstJobID.String()
+			out.Body.JobCount = result.Count
+		}
+		return out, nil
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withAudit("rotateCredential", "credential"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/credentials/{id}", func(ctx context.Context, in *credentialGetInput) (*credentialDetailOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermCredentialsRead)

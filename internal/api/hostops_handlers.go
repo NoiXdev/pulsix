@@ -2,12 +2,16 @@
 // operator triggers a connection test for a managed host (the manager
 // enqueues a connection_test job; the outcome flows back through the
 // queue's finish path into the host's test history), reads the latest
-// result, and pins or clears the host key — only ever pinning a
-// fingerprint a test actually observed (you can only pin what you saw).
+// result, pins or clears the host key — only ever pinning a fingerprint a
+// test actually observed — and bootstraps the host's ansible account with
+// an operator-provided one-time login (spec §5, backlog 2.7c part 2): the
+// login is sealed into the job's payload, used once by the worker and
+// never stored anywhere — not in the audit trail, not in a log line.
 package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -16,8 +20,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -75,10 +81,34 @@ type hostKeyInput struct {
 	}
 }
 
-// registerHostopsRoutes wires the four host-operation routes under
-// /orgs/{org}/hosts/{id}: connection-test start (enqueue) and read, and the
-// host-key pin/clear. Reads gate on inventory.read, writes on
-// inventory.write — the same convention the host SSH settings routes use.
+// bootstrapInput is the one-time login the bootstrap runs with: the login
+// user plus exactly one of password and private key. The body is never
+// stored — it is sealed into the job's payload and wiped from the row
+// when the job reaches a terminal state.
+type bootstrapInput struct {
+	Org string `path:"org"`
+	ID  string `path:"id"`
+	Body struct {
+		User       string `json:"user" minLength:"1" maxLength:"64"`
+		Password   string `json:"password,omitempty" maxLength:"1024" doc:"One-time password; exactly one of password and private_key"`
+		PrivateKey string `json:"private_key,omitempty" maxLength:"16384" doc:"One-time private key; exactly one of password and private_key"`
+	}
+}
+
+// bootstrapEnqueuePayload is the sealed kind payload the job row stores:
+// which ssh_key credential's public key installs and what logs in this
+// once. Never logged, never served.
+type bootstrapEnqueuePayload struct {
+	CredentialID string             `json:"credential_id"`
+	LoginUser    string             `json:"login_user"`
+	Login        credentials.Secret `json:"login"`
+}
+
+// registerHostopsRoutes wires the host-operation routes under
+// /orgs/{org}/hosts/{id}: connection-test start (enqueue) and read, the
+// host-key pin/clear, and the bootstrap start. Reads gate on
+// inventory.read, writes on inventory.write — the same convention the host
+// SSH settings routes use.
 func registerHostopsRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/orgs/{org}/hosts/{id}/connection-test", func(ctx context.Context, in *hostRouteInput) (*connectionTestStartOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermInventoryWrite)
@@ -99,6 +129,69 @@ func registerHostopsRoutes(hapi huma.API, deps Deps) {
 		out.Body.JobID = j.ID.String()
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withAudit("startConnectionTest", "host_connection_test"))
+
+	huma.Post(hapi, "/api/v1/orgs/{org}/hosts/{id}/bootstrap", func(ctx context.Context, in *bootstrapInput) (*connectionTestStartOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermInventoryWrite)
+		if err != nil {
+			return nil, err
+		}
+		hostID, err := parseUUID(in.ID, "host id")
+		if err != nil {
+			return nil, err
+		}
+		// Exactly one one-time credential; huma bounds the sizes, the
+		// exclusive-or is ours.
+		if (in.Body.Password == "") == (in.Body.PrivateKey == "") {
+			return nil, huma.Error400BadRequest("exactly one of password and private_key is required")
+		}
+		// The host must exist, be managed, and carry an ssh_key credential
+		// of its own: the bootstrap installs THAT credential's public key.
+		host, err := deps.Hosts.GetHost(ctx, scope.OrgID, hostID)
+		if err != nil {
+			return nil, mapHostopsErr(ctx, err)
+		}
+		if !host.Managed {
+			return nil, huma.Error400BadRequest("host is not managed")
+		}
+		sshSettings, err := deps.SSH.HostSSH(ctx, scope.OrgID, hostID)
+		if err != nil {
+			if errors.Is(err, sshconf.ErrNotFound) {
+				return nil, bootstrapNoCredentialError()
+			}
+			return nil, mapHostopsErr(ctx, err)
+		}
+		if sshSettings.CredentialID == nil {
+			return nil, bootstrapNoCredentialError()
+		}
+		cred, err := deps.Credentials.Get(ctx, scope.OrgID, *sshSettings.CredentialID)
+		if err != nil {
+			return nil, mapCredentialsErr(ctx, err)
+		}
+		if cred.Kind != credentials.KindSSHKey {
+			return nil, huma.Error422UnprocessableEntity("bootstrap installs the public key of an ssh_key credential; create one first")
+		}
+		secret := credentials.Secret{Password: in.Body.Password}
+		if in.Body.PrivateKey != "" {
+			secret = credentials.Secret{PrivateKey: in.Body.PrivateKey}
+		}
+		payload, err := json.Marshal(bootstrapEnqueuePayload{
+			CredentialID: cred.ID.String(), LoginUser: in.Body.User, Login: secret,
+		})
+		if err != nil {
+			return nil, err
+		}
+		actor := scope.UserID
+		j, err := deps.Jobs.EnqueueHostJob(ctx, scope.OrgID, jobs.KindBootstrap, []uuid.UUID{hostID}, payload, jobs.TriggerManual, &actor)
+		if err != nil {
+			return nil, mapHostopsErr(ctx, err)
+		}
+		// The audit summary names the host — never the body's one-time
+		// login.
+		setAuditObject(ctx, j.ID.String(), "started bootstrap for host "+hostID.String())
+		out := &connectionTestStartOutput{}
+		out.Body.JobID = j.ID.String()
+		return out, nil
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withAudit("bootstrapHost", "host"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/hosts/{id}/connection-test", func(ctx context.Context, in *hostRouteInput) (*hostTestOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermInventoryRead)
@@ -185,4 +278,11 @@ func mapHostopsErr(ctx context.Context, err error) error {
 		slog.ErrorContext(ctx, "unmapped hostops error", "err", err)
 		return huma.Error500InternalServerError("internal error")
 	}
+}
+
+// bootstrapNoCredentialError is the 422 a host without an ssh_key
+// credential of its own gets: the bootstrap's whole purpose is installing
+// that credential's public key, so there is nothing to bootstrap with.
+func bootstrapNoCredentialError() error {
+	return huma.Error422UnprocessableEntity("bootstrap installs the public key of an ssh_key credential; create one first")
 }

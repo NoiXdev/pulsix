@@ -215,6 +215,13 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// through it (org-scoped, so the wiring rides the same service).
 	jobsQueue.SetKeyPins(hostsSvc)
 	jobsQueue.SetTestSink(hostsSvc)
+	// Credential rotation (Task 11): the credentials service enqueues its
+	// rotation group through the jobs service (the narrow
+	// credentials.RotationEnqueuer port), and a completed rotate_key group
+	// finalizes back through the queue's RotationFinisher port — sealing
+	// the pending new key onto the credential or leaving it untouched.
+	credsSvc.SetRotationEnqueuer(jobsSvc)
+	jobsQueue.SetRotationFinisher(credsSvc)
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,

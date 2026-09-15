@@ -223,10 +223,13 @@ func New(t *testing.T, opts ...Option) *Server {
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
 	// The same post-construction wiring production uses (internal/app):
-	// the claim reads host-key pins from the hosts service, and a finished
-	// connection_test job records its outcome through it.
+	// the claim reads host-key pins from the hosts service, a finished
+	// connection_test job records its outcome through it, and the rotation
+	// ports close the credential-rotation loop.
 	jobsQueue.SetKeyPins(hostsSvc)
 	jobsQueue.SetTestSink(hostsSvc)
+	credsSvc.SetRotationEnqueuer(jobsSvc)
+	jobsQueue.SetRotationFinisher(credsSvc)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
