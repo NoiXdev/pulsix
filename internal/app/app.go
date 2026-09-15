@@ -201,6 +201,9 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
 	jobsQueue.SetSyncSink(jobsSvc)
+	// Repo playbooks claim their repository through the same service: the
+	// adapter narrows repos.Service to the queue's RepoSource port.
+	jobsQueue.SetRepoSource(repoRefSource{reposSvc})
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,

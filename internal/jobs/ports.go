@@ -75,3 +75,23 @@ type CredentialSource interface {
 type BastionSource interface {
 	GetBastion(ctx context.Context, orgID, id uuid.UUID) (sshconf.Bastion, error)
 }
+
+// RepoSource is the slice of repos.Service the claim path needs for repo
+// playbooks: the repository one resolves to — url, branch and subpath, plus
+// the id of the git credential it logs in with. Ids and addresses only;
+// the secret is opened separately into the credentials map.
+type RepoSource interface {
+	Get(ctx context.Context, orgID, repoID uuid.UUID) (RepoRef, error)
+}
+
+// RepoRef is the repository one repo playbook's claim carries to the
+// worker: the fetch needs url, branch and the playbook's file path (the
+// repo's own subpath joined with the playbook's path), and the git
+// credential id opens the secret the claim ships as `git:<repo-id>`.
+type RepoRef struct {
+	ID           uuid.UUID
+	URL          string
+	Branch       string
+	Subpath      string
+	CredentialID *uuid.UUID
+}

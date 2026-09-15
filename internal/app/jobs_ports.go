@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/repos"
 )
 
 // jsonRaw wraps a wire payload string as raw JSON; the queue normalizes
@@ -70,6 +71,27 @@ func (a jobsResultRecorder) Finish(ctx context.Context, res grpcsrv.Result) erro
 		return err
 	}
 	return a.q.Finish(ctx, jobID, jobs.Status(res.Status), res.Stats, res.Error)
+}
+
+// repoRefSource adapts repos.Service to the jobs queue's RepoSource port:
+// a repo playbook's claim resolves its repository through the same
+// registry the API serves — url, branch, subpath and the git credential
+// id, ids and addresses only.
+type repoRefSource struct{ s *repos.Service }
+
+// Get implements jobs.RepoSource.
+func (a repoRefSource) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.RepoRef, error) {
+	r, err := a.s.Get(ctx, orgID, repoID)
+	if err != nil {
+		return jobs.RepoRef{}, err
+	}
+	return jobs.RepoRef{
+		ID:           r.ID,
+		URL:          r.URL,
+		Branch:       r.Branch,
+		Subpath:      r.Subpath,
+		CredentialID: r.CredentialID,
+	}, nil
 }
 
 // systemAuditor adapts audit.Recorder to grpcsrv.SystemAuditor: the gRPC

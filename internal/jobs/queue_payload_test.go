@@ -96,6 +96,22 @@ func (f fakeTemplates) TemplateLookup(_ context.Context, _, id uuid.UUID) (Templ
 	return t, nil
 }
 
+type fakeRepos struct {
+	byID map[uuid.UUID]RepoRef
+	err  error
+}
+
+func (f fakeRepos) Get(_ context.Context, _, id uuid.UUID) (RepoRef, error) {
+	if f.err != nil {
+		return RepoRef{}, f.err
+	}
+	r, ok := f.byID[id]
+	if !ok {
+		return RepoRef{}, ErrNotFound
+	}
+	return r, nil
+}
+
 func newTestQueue(renderer SnapshotSource, creds CredentialSource, templates TemplateSource, bastions BastionSource) *SQLQueue {
 	return &SQLQueue{
 		box: fakeBox{}, renderer: renderer, creds: creds, templates: templates, bastions: bastions,
@@ -108,6 +124,7 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 	hostID, credID, bastionID, bastionCredID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	templateID := uuid.Must(uuid.NewV7())
 	repoID := uuid.Must(uuid.NewV7())
+	gitCredID := uuid.Must(uuid.NewV7())
 
 	renderer := fakeRenderer{inv: render.Inventory{
 		Doc: map[string]any{"all": map[string]any{}},
@@ -119,6 +136,7 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 		secrets: map[uuid.UUID]credentials.Secret{
 			credID:        {PrivateKey: "host-key"},
 			bastionCredID: {Password: "bastion-pw"},
+			gitCredID:     {Token: "git-token-material"},
 		},
 		metas: map[uuid.UUID]credentials.Credential{
 			credID: {ID: credID, Username: "ansible"},
@@ -136,6 +154,9 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 	}}
 	q := newTestQueue(renderer, creds, templates, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
 		bastionID: {ID: bastionID, CredentialID: &bastionCredID},
+	}})
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{
+		repoID: {ID: repoID, URL: "ssh://git@example.org/ansible.git", Branch: "main", Subpath: "ansible", CredentialID: &gitCredID},
 	}})
 
 	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID}
@@ -159,12 +180,20 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 	if !strings.Contains(j.InventoryDoc, `"all"`) {
 		t.Fatalf("inventory doc = %q", j.InventoryDoc)
 	}
-	var conn render.Connection
-	if err := json.Unmarshal([]byte(j.Connections["web1"]), &conn); err != nil || conn.HostID != hostID {
+	var conn map[string]any
+	if err := json.Unmarshal([]byte(j.Connections["web1"]), &conn); err != nil {
 		t.Fatalf("connection web1 = %q, %v", j.Connections["web1"], err)
 	}
-	if len(j.Credentials) != 2 {
-		t.Fatalf("credentials = %v, want the host and the bastion credential", j.Credentials)
+	if conn["host_id"] != hostID.String() {
+		t.Fatalf("connection host id = %v", conn["host_id"])
+	}
+	// The claim adds the bastions' login credentials, aligned with the
+	// bastion list — the worker cannot hop without them.
+	if ids, ok := conn["bastion_credential_ids"].([]any); !ok || len(ids) != 1 || ids[0] != bastionCredID.String() {
+		t.Fatalf("bastion credential ids = %v", conn["bastion_credential_ids"])
+	}
+	if len(j.Credentials) != 3 {
+		t.Fatalf("credentials = %v, want host, bastion and the git credential", j.Credentials)
 	}
 	if j.Credentials[credID.String()] != `{"private_key":"host-key"}` {
 		t.Fatalf("host credential = %q", j.Credentials[credID.String()])
@@ -172,11 +201,29 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 	if j.Credentials[bastionCredID.String()] != `{"password":"bastion-pw"}` {
 		t.Fatalf("bastion credential = %q", j.Credentials[bastionCredID.String()])
 	}
+	// A repo playbook claims its repository: url, branch and the file
+	// (repo subpath + playbook path), plus the git credential as
+	// `git:<repo-id>`.
+	if j.Credentials["git:"+repoID.String()] != `{"token":"git-token-material"}` {
+		t.Fatalf("git credential = %q", j.Credentials["git:"+repoID.String()])
+	}
+	var kindPayload struct {
+		Repo struct {
+			ID      string `json:"id"`
+			URL     string `json:"url"`
+			Branch  string `json:"branch"`
+			Subpath string `json:"subpath"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(j.KindPayload), &kindPayload); err != nil {
+		t.Fatalf("kind payload = %q: %v", j.KindPayload, err)
+	}
+	if kindPayload.Repo.ID != repoID.String() || kindPayload.Repo.URL != "ssh://git@example.org/ansible.git" ||
+		kindPayload.Repo.Branch != "main" || kindPayload.Repo.Subpath != "ansible/site.yml" {
+		t.Fatalf("repo payload = %+v", kindPayload.Repo)
+	}
 	if len(j.HostKeys) != 0 {
 		t.Fatalf("host keys must be empty until Task 10: %v", j.HostKeys)
-	}
-	if j.KindPayload != "" {
-		t.Fatalf("run jobs carry no kind payload: %q", j.KindPayload)
 	}
 }
 
@@ -463,5 +510,110 @@ func TestReaperFallbackAnchorsOnClaimedAt(t *testing.T) {
 	requeued, failed, err := NewReaper(q, 0).Sweep(context.Background())
 	if err != nil || requeued != 0 || failed != 1 {
 		t.Fatalf("Sweep = %d/%d, %v", requeued, failed, err)
+	}
+}
+
+func TestBuildPayloadEditorPlaybookCarriesNoRepoPayload(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()), PlaybookInline: "- hosts: all",
+			Scope: json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`)},
+	}}
+	q := newTestQueue(fakeRenderer{}, fakeCreds{}, templates, fakeBastions{})
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{}})
+
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID}
+	out := &workerpb.Job{}
+	if err := q.buildPayload(context.Background(), job, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	if out.Playbook != "- hosts: all" {
+		t.Fatalf("playbook = %q", out.Playbook)
+	}
+	if out.KindPayload != "" {
+		t.Fatalf("an editor playbook carries no repo payload: %q", out.KindPayload)
+	}
+}
+
+func TestBuildPayloadRepoPlaybookFailsClosed(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+	repoID := uuid.Must(uuid.NewV7())
+	gitCredID := uuid.Must(uuid.NewV7())
+
+	// A repo playbook claim with no repo source wired is a wiring bug.
+	q := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, PlaybookRepo: &repoID, PlaybookPath: "site.yml", Scope: json.RawMessage(`{}`)},
+	}}, fakeBastions{})
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); err == nil {
+		t.Fatal("a repo playbook without a repo source must fail")
+	}
+
+	// An unknown repo.
+	q = newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, PlaybookRepo: &repoID, PlaybookPath: "site.yml", Scope: json.RawMessage(`{}`)},
+	}}, fakeBastions{})
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{}})
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown repo: %v", err)
+	}
+
+	// An unopenable git credential.
+	creds := fakeCreds{err: errors.New("locked")}
+	q = newTestQueue(fakeRenderer{}, creds, fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, PlaybookRepo: &repoID, PlaybookPath: "site.yml", Scope: json.RawMessage(`{}`)},
+	}}, fakeBastions{})
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{
+		repoID: {ID: repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &gitCredID},
+	}})
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); err == nil {
+		t.Fatal("an unopenable git credential must fail")
+	}
+}
+
+func TestBuildPayloadShipsEffectiveCredentialForTemplateDefault(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hostID, credID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+
+	// The host has no SSH credential of its own; the template's default
+	// is the login the worker uses — the claim names it per host, so the
+	// worker can map the key file.
+	renderer := fakeRenderer{inv: render.Inventory{
+		Doc: map[string]any{"all": map[string]any{}, "_meta": map[string]any{"hostvars": map[string]any{
+			"web1": map[string]any{"ansible_host": "192.0.2.10"},
+		}}},
+		Connections: map[string]render.Connection{
+			"web1": {HostID: hostID, BastionSource: "none"},
+		},
+	}}
+	creds := fakeCreds{
+		secrets: map[uuid.UUID]credentials.Secret{credID: {PrivateKey: "default-key"}},
+		metas:   map[uuid.UUID]credentials.Credential{credID: {ID: credID, Username: "ansible"}},
+	}
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, PlaybookInline: "- hosts: all", Scope: json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`), CredentialID: &credID},
+	}}
+	q := newTestQueue(renderer, creds, templates, fakeBastions{})
+
+	out := &workerpb.Job{}
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID}, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	var conn map[string]any
+	if err := json.Unmarshal([]byte(out.Connections["web1"]), &conn); err != nil {
+		t.Fatalf("connection web1 = %q, %v", out.Connections["web1"], err)
+	}
+	if conn["credential_id"] != credID.String() {
+		t.Fatalf("effective credential = %v, want the template default", conn["credential_id"])
+	}
+	if out.Credentials[credID.String()] != `{"private_key":"default-key"}` {
+		t.Fatalf("default credential = %q", out.Credentials[credID.String()])
+	}
+	// The rendered hostvars' bastion-less args stay out.
+	if _, has := conn["bastions"]; has {
+		t.Fatalf("no bastions, no chain: %v", conn)
 	}
 }

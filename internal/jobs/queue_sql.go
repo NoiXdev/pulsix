@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,10 +47,16 @@ type SQLQueue struct {
 	creds     CredentialSource
 	templates TemplateSource
 	bastions  BastionSource
-	now       func() time.Time
-	rand      io.Reader
-	streams   *streamRegistry
-	cancels   *cancelRegistry
+	// repos resolves the repository a repo playbook's claim fetches. Nil
+	// until SetRepoSource is called after construction — the same
+	// circularity the sync sink has: the concrete source is the
+	// repos.Service, which itself is built with the jobs service this
+	// queue belongs to.
+	repos   RepoSource
+	now     func() time.Time
+	rand    io.Reader
+	streams *streamRegistry
+	cancels *cancelRegistry
 	// sync is the optional sink a finished sync_repo job's outcome is
 	// recorded through. Nil-safe by design: it is wired after construction
 	// by internal/app (SetSyncSink) because the sink is the org-scoped
@@ -63,6 +70,12 @@ type SQLQueue struct {
 // — the org-scoped jobs.Service — is built after the queue it reports
 // through. The queue's Finish never depends on it being set.
 func (q *SQLQueue) SetSyncSink(sink SyncSink) { q.sync = sink }
+
+// SetRepoSource injects the repository resolver a repo playbook's claim
+// needs (see the repos field). A nil source makes every repo playbook's
+// claim fail closed — a wiring bug, never silently shipped without the
+// repo the run must fetch.
+func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
 
 // NewSQLQueue wires the queue onto d: the pool for the org-unscoped claim
 // path, d itself for the org-scoped payload reads.
@@ -211,16 +224,20 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		credIDs[*defaultCred] = true
 	}
 	for name, c := range inv.Connections {
-		b, err := json.Marshal(c)
-		if err != nil {
-			return fmt.Errorf("encode connection for host %s: %w", name, err)
+		// The connection the claim ships carries the EFFECTIVE login
+		// credential: the host's own, or the template's default when the
+		// host has none — the worker maps it to the key file it writes.
+		if c.CredentialID == nil && defaultCred != nil {
+			c.CredentialID = defaultCred
 		}
-		connections[name] = string(b)
 		if c.CredentialID != nil {
 			credIDs[*c.CredentialID] = true
 		}
 		// The rendered chain names bastion ids; each one's login
-		// credential must ship too, or the worker cannot hop.
+		// credential must ship too, or the worker cannot hop. The claim
+		// also carries the ids themselves, aligned with the bastions
+		// list, so the worker can map each hop's key file.
+		bastionCredIDs := make([]string, 0, len(c.Bastions))
 		for _, bastionID := range c.Bastions {
 			bastion, err := q.bastions.GetBastion(ctx, job.OrgID, bastionID)
 			if err != nil {
@@ -228,8 +245,19 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 			}
 			if bastion.CredentialID != nil {
 				credIDs[*bastion.CredentialID] = true
+				bastionCredIDs = append(bastionCredIDs, bastion.CredentialID.String())
+			} else {
+				bastionCredIDs = append(bastionCredIDs, "")
 			}
 		}
+		b, err := json.Marshal(claimConnection{
+			HostID: c.HostID, CredentialID: c.CredentialID, Bastions: c.Bastions,
+			BastionCredentialIDs: bastionCredIDs, BastionSource: c.BastionSource,
+		})
+		if err != nil {
+			return fmt.Errorf("encode connection for host %s: %w", name, err)
+		}
+		connections[name] = string(b)
 	}
 	credentials := make(map[string]string, len(credIDs))
 	for id := range credIDs {
@@ -246,6 +274,15 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	kindPayload := ""
 	if job.Kind != KindRun {
 		if kindPayload, err = q.openKindPayload(job); err != nil {
+			return err
+		}
+	} else if repoID, sub, isRepo := parsePlaybookRef(playbook); isRepo {
+		// A repo playbook's claim carries the repository the worker must
+		// fetch (the claim-time enrichment the Task 6 review flagged) and
+		// the repo's git credential as `git:<repo-id>`: the worker clones
+		// itself, and it needs url, branch and the playbook's file path.
+		var err error
+		if kindPayload, err = q.repoKindPayload(ctx, job, repoID, sub, credentials); err != nil {
 			return err
 		}
 	}
@@ -272,6 +309,79 @@ func playbookRef(t TemplateRow) string {
 		return "repo:" + t.PlaybookRepo.String() + ":" + t.PlaybookPath
 	}
 	return t.PlaybookInline
+}
+
+// parsePlaybookRef splits a playbook reference into its repo id and the
+// playbook's path; a reference without the repo: prefix is inline (not a
+// repo, no error).
+func parsePlaybookRef(ref string) (uuid.UUID, string, bool) {
+	rest, isRepo := strings.CutPrefix(ref, "repo:")
+	if !isRepo {
+		return uuid.Nil, "", false
+	}
+	idStr, sub, ok := strings.Cut(rest, ":")
+	if !ok {
+		return uuid.Nil, "", true
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return uuid.Nil, "", true
+	}
+	return id, sub, true
+}
+
+// repoKindPayload resolves a repo playbook's repository into the claim's
+// kind payload and opens the repo's git credential into the credentials
+// map as `git:<repo-id>`. A missing repo source is a wiring bug and fails
+// closed; an unknown repository is a dangling playbook reference (the
+// playbooks table's foreign key keeps the window narrow).
+func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUID, path string, credentials map[string]string) (string, error) {
+	if q.repos == nil {
+		return "", fmt.Errorf("repo playbook %s: no repo source wired", repoID)
+	}
+	repo, err := q.repos.Get(ctx, job.OrgID, repoID)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo %s: %w", repoID, err)
+	}
+	sub := repo.Subpath
+	if sub == "" {
+		sub = path
+	} else if path != "" {
+		sub += "/" + path
+	}
+	if repo.CredentialID != nil {
+		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *repo.CredentialID)
+		if err != nil {
+			return "", fmt.Errorf("open repo credential %s: %w", *repo.CredentialID, err)
+		}
+		b, err := json.Marshal(secret)
+		if err != nil {
+			return "", fmt.Errorf("encode repo credential %s: %w", *repo.CredentialID, err)
+		}
+		credentials["git:"+repoID.String()] = string(b)
+	}
+	payload := map[string]any{"repo": map[string]any{
+		"id": repoID.String(), "url": repo.URL, "branch": repo.Branch, "subpath": sub,
+	}}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode repo kind payload: %w", err)
+	}
+	return string(b), nil
+}
+
+// claimConnection is the connection JSON one claim ships for a host: the
+// rendered Connection (internal/inventory/render) plus the claim-time
+// additions — the effective login credential and, aligned with the
+// bastions list, each bastion's login credential id.
+type claimConnection struct {
+	HostID       uuid.UUID   `json:"host_id"`
+	CredentialID *uuid.UUID  `json:"credential_id,omitempty"`
+	Bastions     []uuid.UUID `json:"bastions,omitempty"`
+	// BastionCredentialIDs[i] is the credential bastions[i] logs in with;
+	// an empty string when that bastion carries none.
+	BastionCredentialIDs []string `json:"bastion_credential_ids,omitempty"`
+	BastionSource        string   `json:"bastion_source"`
 }
 
 // stringMap decodes an extra_vars jsonb into the wire map: every value
