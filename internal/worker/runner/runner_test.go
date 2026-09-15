@@ -27,11 +27,13 @@ const (
 	fakeEnvEvents = "FAKE_RUNNER_EVENTS" // the JSONL fixture to emit
 	fakeEnvExit   = "FAKE_RUNNER_EXIT"   // the process exit code
 	fakeEnvSticky = "FAKE_RUNNER_STICKY" // set → ignore SIGTERM (cancel test)
+	fakeEnvFlood  = "FAKE_RUNNER_FLOOD"  // set → flood ok-events in a loop, counting into the file (prompt-kill test)
 )
 
 // writeFakeRunner writes the fake ansible-runner binary: it dumps its env
 // and its argv to the given files, optionally sticks (ignores SIGTERM — the
-// cancel test), then emits the event fixture and exits with the code.
+// cancel test) or floods (emits ok-events in a loop until killed — the
+// prompt-kill test), then emits the event fixture and exits with the code.
 func writeFakeRunner(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ansible-runner")
@@ -41,6 +43,16 @@ func writeFakeRunner(t *testing.T) string {
 		"if [ -n \"$" + fakeEnvSticky + "\" ]; then\n" +
 		"  trap '' TERM\n" +
 		"  while :; do sleep 5; done\n" +
+		"fi\n" +
+		"if [ -n \"$" + fakeEnvFlood + "\" ]; then\n" +
+		"  i=0\n" +
+		"  while [ \"$i\" -lt 200 ]; do\n" +
+		"    printf '%s\\n' '{\"event\": \"runner_on_ok\", \"event_data\": {\"host\": \"h\", \"task\": \"t\"}}'\n" +
+		"    echo x >> \"$" + fakeEnvFlood + "\"\n" +
+		"    sleep 0.01\n" +
+		"    i=$((i+1))\n" +
+		"  done\n" +
+		"  exit 0\n" +
 		"fi\n" +
 		"cat \"$" + fakeEnvEvents + "\" 2>/dev/null\n" +
 		"exit ${" + fakeEnvExit + ":-0}\n"
@@ -606,6 +618,38 @@ func TestRunSinkErrorStopsTheRun(t *testing.T) {
 	}
 }
 
+func TestRunSinkErrorKillsTheRunnerPromptly(t *testing.T) {
+	// A runner that floods events until killed, a sink that errors on the
+	// first one: the run must stop the subprocess immediately — the error
+	// surfaces fast and the unobserved tail of the run is never emitted.
+	const total = 200
+	fake := writeFakeRunner(t)
+	countFile := filepath.Join(t.TempDir(), "count")
+	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
+	t.Setenv(fakeEnvArgs, filepath.Join(t.TempDir(), "args"))
+	t.Setenv(fakeEnvEvents, "")
+	t.Setenv(fakeEnvExit, "0")
+	t.Setenv(fakeEnvFlood, countFile)
+
+	env := runEnv(t)
+	c := &collector{err: context.Canceled} // errors on the very first event
+	start := time.Now()
+	_, _, err := (&Runner{RunnerBin: fake, KillGrace: 250 * time.Millisecond}).Run(
+		context.Background(), runJob(t), env, c.sink)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("a broken stream must fail the run")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("the run took %v to fail; the runner must die promptly, not finish unobserved", elapsed)
+	}
+	// The unimpeded fake would have emitted all 200 events (10 ms apart,
+	// ~2 s); a prompt kill leaves only a fraction on the counter.
+	if n := countLines(t, countFile); n > total/2 {
+		t.Errorf("the runner kept emitting after the stream broke: %d of %d events", n, total)
+	}
+}
+
 func TestRunBrokenInventoryFailsClosed(t *testing.T) {
 	job := runJob(t)
 	job.InventoryDoc = `{oops`
@@ -674,6 +718,26 @@ func checkMode(t *testing.T, path string, want os.FileMode) {
 	if got := fi.Mode().Perm(); got != want {
 		t.Errorf("%s mode = %o, want %o", path, got, want)
 	}
+}
+
+// countLines counts a flood counter file's non-empty lines; a missing file
+// counts as zero (the fake may be killed before its first append).
+func countLines(t *testing.T, path string) int {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("read %s: %v", path, err)
+	}
+	n := 0
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(l) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // assertStates compares the forwarded event states against the want list.

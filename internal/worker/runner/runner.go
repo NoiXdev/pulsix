@@ -164,10 +164,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	}
 
 	cancelledCh := make(chan struct{}, 1)
-	grace := r.KillGrace
-	if grace == 0 {
-		grace = defaultKillGrace
-	}
+	grace := r.killGrace()
 	// The cancel watcher: SIGTERM to the process group (the runner and its
 	// ansible child together), then SIGKILL after the grace. The second
 	// signal is best-effort — a runner that died on the first one is fine
@@ -175,22 +172,21 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	go func() {
 		<-ctx.Done()
 		cancelledCh <- struct{}{}
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		time.Sleep(grace)
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		terminateGroup(cmd.Process.Pid, grace)
 	}()
 
 	stats, scanErr := r.streamEvents(ctx, stdout, sink)
-	waitErr := cmd.Wait()
-
 	if scanErr != nil {
-		// The event stream broke (the manager is gone): stop the run and
-		// surface the transport failure — the claim is at-least-once, the
-		// reaper requeues what this worker never reported.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// The event stream broke (the manager is gone): the run cannot be
+		// observed anymore, so it must not keep going — stop the process
+		// group immediately (the same TERM→KILL policy as the cancel path)
+		// before waiting for it. The claim is at-least-once; the reaper
+		// requeues what this worker never reported.
+		terminateGroup(cmd.Process.Pid, grace)
 		_ = cmd.Wait()
 		return worker.StatusError, nil, fmt.Errorf("stream runner events: %w", scanErr)
 	}
+	waitErr := cmd.Wait()
 
 	select {
 	case <-cancelledCh:
@@ -285,6 +281,30 @@ func ident(jobID string) string {
 		return jobID[:8]
 	}
 	return jobID
+}
+
+// killGrace returns the effective SIGTERM-to-SIGKILL grace.
+func (r *Runner) killGrace() time.Duration {
+	if r.KillGrace > 0 {
+		return r.KillGrace
+	}
+	return defaultKillGrace
+}
+
+// terminateGroup stops a run's process group: SIGTERM first, SIGKILL after
+// the grace — a runner that exits on the TERM is left alone (its group is
+// gone; the liveness check spares the wait), one that ignores it is killed
+// bounded. The cancel path and a broken event stream share the policy.
+func terminateGroup(pid int, grace time.Duration) {
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(-pid, 0); err != nil {
+			return // the group is gone; the TERM did its job
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
 }
 
 // summarize maps the process exit onto the loop's terminal statuses.
