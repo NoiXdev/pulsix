@@ -140,6 +140,17 @@ type Host struct {
 	UpdatedAt  time.Time          `json:"updated_at"`
 }
 
+type HostConnectionTest struct {
+	ID           uuid.UUID `json:"id"`
+	OrgID        uuid.UUID `json:"org_id"`
+	HostID       uuid.UUID `json:"host_id"`
+	At           time.Time `json:"at"`
+	Ok           bool      `json:"ok"`
+	HostKey      string    `json:"host_key"`
+	HostKeyState string    `json:"host_key_state"`
+	Checks       []byte    `json:"checks"`
+}
+
 type HostSsh struct {
 	HostID       uuid.UUID   `json:"host_id"`
 	OrgID        uuid.UUID   `json:"org_id"`
@@ -149,6 +160,7 @@ type HostSsh struct {
 	BastionMode  string      `json:"bastion_mode"`
 	BastionID    pgtype.UUID `json:"bastion_id"`
 	UpdatedAt    time.Time   `json:"updated_at"`
+	SshHostKey   *string     `json:"ssh_host_key"`
 }
 
 type HostTag struct {
