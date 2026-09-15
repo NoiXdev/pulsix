@@ -53,6 +53,11 @@ var (
 	// job to run in — a wiring gap the startup reconciliation pass
 	// (hosts.Service.ReconcileDefaultZones) is supposed to have healed.
 	ErrNoZone = errors.New("organization has no default zone")
+	// ErrHostKeyChanged means every host a run's scope resolved to has a
+	// changed host key (spec §5 block-on-mismatch): the enqueue fails until
+	// an operator re-pins the hosts. A partially affected scope keeps the
+	// good hosts and is not this error.
+	ErrHostKeyChanged = errors.New("all targeted hosts have a changed host key")
 )
 
 // Kind is what a job does.
@@ -367,13 +372,32 @@ type Service struct {
 	box       Sealer
 	now       func() time.Time
 	rand      io.Reader
+	// keyGuard is the ChangedHosts source for EnqueueRun's block-on-
+	// mismatch. Resolved once at construction from the HostLookup's own
+	// type: hosts.Service implements it, unit-test fakes that do not
+	// simply leave the guard off.
+	keyGuard KeyGuardSource
 }
 
 // NewService wires the store, the claim queue, the template source, the
 // scope resolver, the host lookup, the default-zone source, the sealing
-// box, the clock and the entropy source for run-group ids.
+// box, the clock and the entropy source for run-group ids. When the host
+// lookup implements KeyGuardSource — hosts.Service always does — EnqueueRun
+// blocks on changed host keys.
 func NewService(store Store, queue Queue, templates TemplateSource, resolver ScopeResolver, hosts HostLookup, zones DefaultZoneSource, box Sealer, now func() time.Time, rand io.Reader) *Service {
-	return &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
+	s := &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
+	if g, ok := hosts.(KeyGuardSource); ok {
+		s.keyGuard = g
+	}
+	return s
+}
+
+// KeyGuardSource is the slice of hosts.Service EnqueueRun's block-on-
+// mismatch needs: which of the given hosts' LATEST connection test reports
+// a changed host key. Declared here, next to its consumer, so unit tests
+// can drive fakes and internal/app wires the real hosts service.
+type KeyGuardSource interface {
+	ChangedHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 // scopeJSON is the render.Scope wire format as stored in
@@ -429,6 +453,19 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 	if len(targets) == 0 {
 		return nil, ErrEmptyScope
 	}
+	// Block on mismatch (spec §5): hosts whose latest connection test
+	// reports a changed host key are excluded from the scope — a run must
+	// never SSH into a host whose key stopped matching its pin. When that
+	// empties the whole scope the enqueue fails with ErrHostKeyChanged.
+	if s.keyGuard != nil {
+		targets, err = s.excludeKeyChanged(ctx, orgID, targets)
+		if err != nil {
+			return nil, err
+		}
+		if len(targets) == 0 {
+			return nil, ErrHostKeyChanged
+		}
+	}
 	group := s.newID()
 	now := s.now()
 	tmplID := templateID
@@ -448,18 +485,62 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 	return out, nil
 }
 
+// excludeKeyChanged drops every targeted host whose latest connection test
+// reports a changed host key from the per-zone targets. A guard failure
+// fails the enqueue closed.
+func (s *Service) excludeKeyChanged(ctx context.Context, orgID uuid.UUID, targets []ZoneTargets) ([]ZoneTargets, error) {
+	ids := make([]uuid.UUID, 0, len(targets))
+	seen := map[uuid.UUID]bool{}
+	for _, t := range targets {
+		for _, id := range t.HostIDs {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return targets, nil
+	}
+	changed, err := s.keyGuard.ChangedHosts(ctx, orgID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("resolve changed host keys: %w", err)
+	}
+	if len(changed) == 0 {
+		return targets, nil
+	}
+	out := make([]ZoneTargets, 0, len(targets))
+	for _, t := range targets {
+		kept := t.HostIDs[:0:0]
+		for _, id := range t.HostIDs {
+			if !changed[id] {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) > 0 {
+			out = append(out, ZoneTargets{ZoneID: t.ZoneID, HostIDs: kept})
+		}
+	}
+	return out, nil
+}
+
 // EnqueueHostJob enqueues connection_test / bootstrap / rotate_key / adhoc
 // / sync_repo jobs for explicit hosts: one job per zone the hosts live in,
 // all sharing a run group. The payload is sealed with the box (AAD
 // job:<orgID>:<jobID>) before insert, because bootstrap and rotate_key
 // carry secrets. The returned Job is the first of the group; callers that
-// need every job of the group list by RunGroupID.
-func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind, hostIDs []uuid.UUID, payload json.RawMessage, actor *uuid.UUID) (Job, error) {
+// need every job of the group list by RunGroupID. trigger names what put
+// the job in the queue — manual for operator actions, system for the
+// background scheduler.
+func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind, hostIDs []uuid.UUID, payload json.RawMessage, trigger string, actor *uuid.UUID) (Job, error) {
 	if !kind.IsHostKind() {
 		return Job{}, fmt.Errorf("%w: kind must be one of adhoc, connection_test, bootstrap, rotate_key, sync_repo (run goes through EnqueueRun)", ErrInvalidInput)
 	}
 	if len(hostIDs) == 0 {
 		return Job{}, fmt.Errorf("%w: at least one host is required", ErrInvalidInput)
+	}
+	if trigger == "" {
+		trigger = TriggerManual
 	}
 	// Validate every host first, so a bad id fails the whole enqueue
 	// before any job row exists.
@@ -492,7 +573,7 @@ func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind
 		j := Job{
 			ID: s.newID(), OrgID: orgID, ZoneID: zoneID,
 			Kind: kind, HostIDs: byZone[zoneID],
-			Status: StatusQueued, RunGroupID: group, Trigger: TriggerManual,
+			Status: StatusQueued, RunGroupID: group, Trigger: trigger,
 			ActorID: actor, CreatedAt: now,
 		}
 		stored := json.RawMessage(nil)

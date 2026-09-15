@@ -76,6 +76,14 @@ func (emptySources) GetBastion(context.Context, uuid.UUID, uuid.UUID) (sshconf.B
 	return sshconf.Bastion{}, sshconf.ErrNotFound
 }
 
+// emptyPins is the KeyPinSource fake the integration queues wire: no host
+// carries a pin.
+type emptyPins struct{}
+
+func (emptyPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
+}
+
 func TestSQLStoreJobCRUD(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -217,7 +225,7 @@ func TestQueueClaimConcurrency(t *testing.T) {
 	zoneA := uuid.Must(uuid.NewV7())
 	scoped := db.WithOrgScope(ctx, org)
 	for i := 0; i < 8; i++ {
-		if err := store.CreateJob(scoped, newJob(org, zoneA, jobs.KindConnectionTest, jobs.StatusQueued), nil); err != nil {
+		if err := store.CreateJob(scoped, newJob(org, zoneA, jobs.KindAdhoc, jobs.StatusQueued), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -244,10 +252,10 @@ func TestQueueClaimConcurrency(t *testing.T) {
 	// gets one, from both zones.
 	zoneB := uuid.Must(uuid.NewV7())
 	for i := 0; i < 4; i++ {
-		if err := store.CreateJob(scoped, newJob(org, zoneA, jobs.KindConnectionTest, jobs.StatusQueued), nil); err != nil {
+		if err := store.CreateJob(scoped, newJob(org, zoneA, jobs.KindAdhoc, jobs.StatusQueued), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateJob(scoped, newJob(org, zoneB, jobs.KindConnectionTest, jobs.StatusQueued), nil); err != nil {
+		if err := store.CreateJob(scoped, newJob(org, zoneB, jobs.KindAdhoc, jobs.StatusQueued), nil); err != nil {
 			t.Fatal(err)
 		}
 	}

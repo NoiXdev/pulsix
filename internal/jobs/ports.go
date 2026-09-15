@@ -54,6 +54,26 @@ type SyncSink interface {
 	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error
 }
 
+// TestSink is the optional port a finished connection_test job's outcome
+// flows through (SQLQueue.SetTestSink): the concrete implementation is the
+// org-scoped hosts.Service.RecordConnectionTest, appending the
+// host_connection_tests row. Declared here so the queue half never imports
+// the hosts service; checks are the manager-side mirror of the probe's
+// check rows (hosts.HostTestCheck), parsed from the job's final event.
+type TestSink interface {
+	RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostKeyState string, checks []hosts.HostTestCheck) error
+}
+
+// KeyPinSource is the slice of hosts.Service the claim path needs: each
+// host's pinned host-key fingerprint, absent for unpinned hosts. The claim
+// turns the ids into the job's host_keys map (keyed by host name). A nil
+// source makes every connection_test claim fail closed — the probe could
+// not run trust on first use against the pin — while run and ad-hoc jobs
+// simply ship no pins.
+type KeyPinSource interface {
+	PinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error)
+}
+
 // SnapshotSource is the slice of inventory.Renderer the claim path needs:
 // the secrets-revealed snapshot of the job's scope. Its result travels
 // only inside the mTLS claim response and is never logged or persisted.

@@ -488,7 +488,10 @@ func TestReaperFallbackAnchorsOnClaimedAt(t *testing.T) {
 	zone := uuid.Must(uuid.NewV7())
 	q := NewSQLQueue(d, fakeBox{}, fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
 	store := NewSQLStore(d)
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: KindConnectionTest,
+	// Kind-agnostic reaper bookkeeping; adhoc claims do not depend on a
+	// rendered probe target the way a (fail-closed) connection_test
+	// claim would.
+	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: KindAdhoc,
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, CreatedAt: time.Now()}
 	if err := store.CreateJob(db.WithOrgScope(context.Background(), org.ID), j, nil); err != nil {
 		t.Fatal(err)

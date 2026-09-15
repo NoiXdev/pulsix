@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -348,7 +349,7 @@ func TestEnqueueHostJobSplitsByZoneAndSealsPayload(t *testing.T) {
 	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, fh)
 
 	payload := json.RawMessage(`{"argv":["uptime"]}`)
-	first, err := svc.EnqueueHostJob(ctx, org, jobs.KindAdhoc, []uuid.UUID{h1.ID, h2.ID, h3.ID}, payload, nil)
+	first, err := svc.EnqueueHostJob(ctx, org, jobs.KindAdhoc, []uuid.UUID{h1.ID, h2.ID, h3.ID}, payload, jobs.TriggerManual, nil)
 	if err != nil {
 		t.Fatalf("EnqueueHostJob: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestEnqueueHostJobValidatesInput(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := svc.EnqueueHostJob(ctx, org, c.kind, c.ids, nil, nil)
+			_, err := svc.EnqueueHostJob(ctx, org, c.kind, c.ids, nil, jobs.TriggerManual, nil)
 			if !errors.Is(err, c.want) {
 				t.Fatalf("err = %v, want %v", err, c.want)
 			}
@@ -794,3 +795,79 @@ var (
 	_ jobs.HostLookup        = (*fakeHosts)(nil)
 	_ jobs.DefaultZoneSource = (*fakeZones)(nil)
 )
+
+// guardedHosts is a fakeHosts that also implements the KeyGuardSource port:
+// the changed set EnqueueRun's block-on-mismatch excludes.
+type guardedHosts struct {
+	fakeHosts
+	changed map[uuid.UUID]bool
+	err     error
+}
+
+func (g *guardedHosts) ChangedHosts(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	if g.err != nil {
+		return nil, g.err
+	}
+	out := map[uuid.UUID]bool{}
+	for _, id := range hostIDs {
+		if g.changed[id] {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
+func TestEnqueueRunBlocksOnChangedHostKey(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	good, bad := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	zone := uuid.Must(uuid.NewV7())
+
+	template := func() (jobs.Job, *fakeTemplates) {
+		id := uuid.Must(uuid.NewV7())
+		return jobs.Job{Kind: jobs.KindRun, TemplateID: &id}, &fakeTemplates{byID: map[uuid.UUID]jobs.TemplateRow{
+			id: {ID: id, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()), PlaybookInline: "- hosts: all", Scope: json.RawMessage(`{"host_ids":["` + good.String() + `","` + bad.String() + `"]}`)},
+		}}
+	}
+
+	t.Run("one changed host in two keeps the good one", func(t *testing.T) {
+		j, tmpl := template()
+		fh := &guardedHosts{fakeHosts: fakeHosts{byID: map[uuid.UUID]hosts.Host{
+			good: {ID: good, OrgID: org, ZoneID: zone, Managed: true},
+			bad:  {ID: bad, OrgID: org, ZoneID: zone, Managed: true},
+		}}, changed: map[uuid.UUID]bool{bad: true}}
+		res := &fakeResolver{targets: []jobs.ZoneTargets{{ZoneID: zone, HostIDs: []uuid.UUID{good, bad}}}}
+		svc := jobs.NewService(newFakeStore(), &fakeQueue{}, tmpl, res, fh, nil, fakeSealer{}, time.Now, rand.Reader)
+		jobsOut, err := svc.EnqueueRun(ctx, org, *j.TemplateID, nil)
+		if err != nil {
+			t.Fatalf("EnqueueRun: %v", err)
+		}
+		if len(jobsOut) != 1 || !slices.Equal(jobsOut[0].HostIDs, []uuid.UUID{good}) {
+			t.Fatalf("jobs = %+v, want only the good host", jobsOut)
+		}
+	})
+
+	t.Run("all changed fails the enqueue", func(t *testing.T) {
+		j, tmpl := template()
+		fh := &guardedHosts{fakeHosts: fakeHosts{byID: map[uuid.UUID]hosts.Host{
+			good: {ID: good, OrgID: org, ZoneID: zone, Managed: true},
+			bad:  {ID: bad, OrgID: org, ZoneID: zone, Managed: true},
+		}}, changed: map[uuid.UUID]bool{good: true, bad: true}}
+		res := &fakeResolver{targets: []jobs.ZoneTargets{{ZoneID: zone, HostIDs: []uuid.UUID{good, bad}}}}
+		svc := jobs.NewService(newFakeStore(), &fakeQueue{}, tmpl, res, fh, nil, fakeSealer{}, time.Now, rand.Reader)
+		if _, err := svc.EnqueueRun(ctx, org, *j.TemplateID, nil); !errors.Is(err, jobs.ErrHostKeyChanged) {
+			t.Fatalf("EnqueueRun = %v, want ErrHostKeyChanged", err)
+		}
+	})
+
+	t.Run("a guard failure fails the enqueue closed", func(t *testing.T) {
+		j, tmpl := template()
+		fh := &guardedHosts{fakeHosts: fakeHosts{byID: map[uuid.UUID]hosts.Host{
+			good: {ID: good, OrgID: org, ZoneID: zone, Managed: true},
+		}}, err: errors.New("locked")}
+		res := &fakeResolver{targets: []jobs.ZoneTargets{{ZoneID: zone, HostIDs: []uuid.UUID{good}}}}
+		svc := jobs.NewService(newFakeStore(), &fakeQueue{}, tmpl, res, fh, nil, fakeSealer{}, time.Now, rand.Reader)
+		if _, err := svc.EnqueueRun(ctx, org, *j.TemplateID, nil); err == nil || !strings.Contains(err.Error(), "locked") {
+			t.Fatalf("EnqueueRun = %v, want the guard failure", err)
+		}
+	})
+}

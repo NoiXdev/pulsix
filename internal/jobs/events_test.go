@@ -18,7 +18,10 @@ import (
 // claimOne inserts one queued job and claims it on q, returning the claim.
 func claimOne(t *testing.T, d *db.DB, org, zone uuid.UUID, q *jobs.SQLQueue) *jobs.Claim {
 	t.Helper()
-	j := newJob(org, zone, jobs.KindConnectionTest, jobs.StatusQueued)
+	// The queue plumbing under test is kind-agnostic; adhoc keeps the
+	// claim from depending on a rendered probe target the way a
+	// connection_test claim (fail-closed) would.
+	j := newJob(org, zone, jobs.KindAdhoc, jobs.StatusQueued)
 	if err := jobs.NewSQLStore(d).CreateJob(db.WithOrgScope(ctx, org), j, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +33,11 @@ func claimOne(t *testing.T, d *db.DB, org, zone uuid.UUID, q *jobs.SQLQueue) *jo
 }
 
 func newTestQueue(d *db.DB) *jobs.SQLQueue {
-	return jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+	queue := jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+	// A connection_test claim fails closed without a host-key pin source —
+	// these tests claim connection_test jobs, so they carry the empty fake.
+	queue.SetKeyPins(emptyPins{})
+	return queue
 }
 
 func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {

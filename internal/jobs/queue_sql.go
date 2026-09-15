@@ -15,10 +15,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/sshconf"
 )
 
 // SQLQueue is the claim half of the job queue and the ONE org-unscoped
@@ -52,7 +55,16 @@ type SQLQueue struct {
 	// circularity the sync sink has: the concrete source is the
 	// repos.Service, which itself is built with the jobs service this
 	// queue belongs to.
-	repos   RepoSource
+	repos RepoSource
+	// pins is the optional source of host-key fingerprints (the hosts
+	// service). Nil until SetKeyPins: a connection_test claim without it
+	// fails closed — the probe could not run trust on first use against
+	// the pin — while run and ad-hoc claims simply ship no host keys.
+	pins KeyPinSource
+	// test is the optional sink a finished connection_test job's outcome is
+	// recorded through (SetTestSink, the same post-construction wiring the
+	// sync sink has; the concrete sink is the hosts service).
+	test    TestSink
 	now     func() time.Time
 	rand    io.Reader
 	streams *streamRegistry
@@ -76,6 +88,16 @@ func (q *SQLQueue) SetSyncSink(sink SyncSink) { q.sync = sink }
 // claim fail closed — a wiring bug, never silently shipped without the
 // repo the run must fetch.
 func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
+
+// SetKeyPins injects the host-key fingerprint source the claim needs. A
+// nil source makes every connection_test claim fail closed (see the pins
+// field); run and ad-hoc jobs then ship no host keys.
+func (q *SQLQueue) SetKeyPins(source KeyPinSource) { q.pins = source }
+
+// SetTestSink injects the sink RecordTest flows through on the finish path,
+// the connection-test sibling of SetSyncSink. A nil sink records nothing —
+// the wiring gap shows up as a missing test history, never as a failed job.
+func (q *SQLQueue) SetTestSink(sink TestSink) { q.test = sink }
 
 // NewSQLQueue wires the queue onto d: the pool for the org-unscoped claim
 // path, d itself for the org-scoped payload reads.
@@ -163,6 +185,23 @@ func (q *SQLQueue) failJob(ctx context.Context, jobID uuid.UUID, cause error) er
 // never log it. It writes through out because a protobuf message must
 // never be copied by value (vet copylocks).
 func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job) error {
+	// A connection_test job is also deliberately not snapshot-bound: the
+	// probe target is fully resolved into the kind payload at claim time —
+	// the effective connection comes from the same rendered route run jobs
+	// claim, but the probe consumes a self-contained payload and the
+	// inventory document (hostvars with revealed secrets) is discarded.
+	if job.Kind == KindConnectionTest {
+		kindPayload, hostKeys, err := q.connectionTestPayload(ctx, job)
+		if err != nil {
+			return err
+		}
+		*out = workerpb.Job{
+			Id: job.ID.String(), Kind: string(job.Kind),
+			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
+			InventoryDoc: "{}", HostKeys: hostKeys, KindPayload: kindPayload,
+		}
+		return nil
+	}
 	// A sync_repo job is deliberately not host-bound: it touches no managed
 	// host, so the whole host-bound payload machinery — the inventory
 	// snapshot, connections and opened credentials — is skipped. A broken
@@ -290,16 +329,218 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	if job.TemplateID != nil {
 		templateID = job.TemplateID.String()
 	}
+	hostKeys, err := q.claimHostKeys(ctx, job, inv.Connections)
+	if err != nil {
+		return err
+	}
 	*out = workerpb.Job{
 		Id: job.ID.String(), Kind: string(job.Kind),
 		OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
 		TemplateId: templateID, Playbook: playbook, Limit: limit,
 		ExtraVars: extraVars, SshUsername: sshUser,
 		InventoryDoc: string(doc), Connections: connections, Credentials: credentials,
-		HostKeys:    map[string]string{}, // host-key pins arrive with Task 10; the field is plumbed now
+		HostKeys:    hostKeys,
 		KindPayload: kindPayload,
 	}
 	return nil
+}
+
+// claimHostKeys collects the pinned fingerprints of the job's hosts into
+// the claim's host_keys map, keyed by host name — the map the run's SSH
+// preflight and the connection test's TOFU read. The pins source is
+// optional (SetKeyPins): unwired, run and ad-hoc jobs ship no keys.
+func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]render.Connection) (map[string]string, error) {
+	if q.pins == nil || len(conns) == 0 {
+		return map[string]string{}, nil
+	}
+	ids := make([]uuid.UUID, 0, len(conns))
+	seen := map[uuid.UUID]bool{}
+	for _, c := range conns {
+		if !seen[c.HostID] {
+			seen[c.HostID] = true
+			ids = append(ids, c.HostID)
+		}
+	}
+	pinned, err := q.pins.PinnedKeys(ctx, job.OrgID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("resolve host key pins: %w", err)
+	}
+	out := map[string]string{}
+	for name, c := range conns {
+		if fingerprint, ok := pinned[c.HostID]; ok {
+			out[name] = fingerprint
+		}
+	}
+	return out, nil
+}
+
+// connectionTestPayload resolves the job's single host into the
+// self-contained kind payload the sshprobe executor consumes:
+//
+//	{"host":{"id","name","address","port","username"},
+//	 "credential":"<revealed Secret JSON or empty>",
+//	 "bastions":[{"id","address","port","username","credential":"<Secret JSON>"}…]}
+//
+// The effective connection — login credential and jump chain — comes from
+// the same rendered snapshot run jobs claim, so the probe tests exactly
+// the route a run would take (host SSH setting → group → zone → none, the
+// bastion's own chain expanded). Nothing secret ships outside the payload:
+// the inventory document is discarded, and the credentials map stays
+// empty. The second return is the host_keys map: the pinned fingerprint
+// for the host when it carries one.
+func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, map[string]string, error) {
+	if len(job.HostIDs) != 1 {
+		return "", nil, fmt.Errorf("%w: connection_test targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
+	}
+	// The pin needs the hosts store: nil pins source is a wiring bug that
+	// would silently run the probe unpinned — fail closed.
+	if q.pins == nil {
+		return "", nil, fmt.Errorf("connection test claim: no host key pin source wired")
+	}
+	hostID := job.HostIDs[0]
+	inv, err := q.renderer.Snapshot(ctx, job.OrgID, render.Scope{HostIDs: job.HostIDs})
+	if err != nil {
+		return "", nil, fmt.Errorf("render connection: %w", err)
+	}
+	var conn render.Connection
+	connName := ""
+	for name, c := range inv.Connections {
+		if c.HostID == hostID {
+			conn, connName = c, name
+			break
+		}
+	}
+	if connName == "" {
+		return "", nil, fmt.Errorf("connection test %s: host %s renders no connection (not managed, or scope mismatch)", job.ID, hostID)
+	}
+	host := probeHost{
+		ID:      hostID,
+		Name:    connName,
+		Address: connAddress(inv.Doc, connName),
+	}
+	if host.Address == "" {
+		host.Address = host.Name
+	}
+	host.Port, host.Username = connPortAndUser(inv.Doc, connName)
+
+	// The login credential and every hop's credential are opened here;
+	// they travel only inside the kind payload.
+	credential := ""
+	if conn.CredentialID != nil {
+		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *conn.CredentialID)
+		if err != nil {
+			return "", nil, fmt.Errorf("open credential %s: %w", *conn.CredentialID, err)
+		}
+		if credential, err = secretJSON(secret); err != nil {
+			return "", nil, err
+		}
+	}
+	hops := make([]probeBastion, 0, len(conn.Bastions))
+	for _, bastionID := range conn.Bastions {
+		b, err := q.bastions.GetBastion(ctx, job.OrgID, bastionID)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve bastion %s: %w", bastionID, err)
+		}
+		hopCredential := ""
+		if b.CredentialID != nil {
+			secret, err := q.creds.OpenSecret(ctx, job.OrgID, *b.CredentialID)
+			if err != nil {
+				return "", nil, fmt.Errorf("open bastion credential %s: %w", *b.CredentialID, err)
+			}
+			if hopCredential, err = secretJSON(secret); err != nil {
+				return "", nil, err
+			}
+		}
+		hops = append(hops, probeBastion{ID: bastionID, Address: b.Address, Port: b.Port, Username: b.Username, Credential: hopCredential})
+	}
+
+	// The pinned fingerprint, if the host carries one.
+	hostKeys := map[string]string{}
+	pinned, err := q.pins.PinnedKeys(ctx, job.OrgID, []uuid.UUID{hostID})
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve host key pins: %w", err)
+	}
+	if fingerprint, ok := pinned[hostID]; ok {
+		hostKeys[connName] = fingerprint
+	}
+
+	payload := map[string]any{"host": host, "credential": credential, "bastions": hops}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode connection-test kind payload: %w", err)
+	}
+	return string(b), hostKeys, nil
+}
+
+// probeHost is the host object of the kind payload.
+type probeHost struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	Address  string    `json:"address"`
+	Port     int       `json:"port"`
+	Username string    `json:"username"`
+}
+
+// probeBastion is one hop of the kind payload's chain, its credential
+// inline as Secret JSON (or empty when the hop carries none).
+type probeBastion struct {
+	ID         uuid.UUID `json:"id"`
+	Address    string    `json:"address"`
+	Port       int       `json:"port"`
+	Username   string    `json:"username"`
+	Credential string    `json:"credential"`
+}
+
+// connAddress reads the host's ansible_host from the rendered snapshot —
+// the address ansible itself will dial.
+func connAddress(doc map[string]any, name string) string {
+	vars, _ := docHostVars(doc)[name]
+	if vars == nil {
+		return ""
+	}
+	s, _ := vars["ansible_host"].(string)
+	return s
+}
+
+// connPortAndUser reads the host's effective port and login user the same
+// way the renderer wrote them: ansible_port only when it differs from the
+// default, ansible_user from the host's own setting or its credential.
+func connPortAndUser(doc map[string]any, name string) (port int, username string) {
+	vars, _ := docHostVars(doc)[name]
+	if vars != nil {
+		switch v := vars["ansible_port"].(type) {
+		case int:
+			port = v
+		case float64:
+			port = int(v)
+		}
+		username, _ = vars["ansible_user"].(string)
+	}
+	if port == 0 {
+		port = sshconf.DefaultPort
+	}
+	return port, username
+}
+
+func docHostVars(doc map[string]any) map[string]map[string]any {
+	meta, _ := doc["_meta"].(map[string]any)
+	hostvars, _ := meta["hostvars"].(map[string]any)
+	out := map[string]map[string]any{}
+	for name, v := range hostvars {
+		m, _ := v.(map[string]any)
+		out[name] = m
+	}
+	return out
+}
+
+// secretJSON encodes a revealed secret as its JSON form, the claim's wire
+// format for credential strings.
+func secretJSON(secret credentials.Secret) (string, error) {
+	b, err := json.Marshal(secret)
+	if err != nil {
+		return "", fmt.Errorf("encode credential: %w", err)
+	}
+	return string(b), nil
 }
 
 // playbookRef renders the playbook reference the worker resolves: an
@@ -459,6 +700,7 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 		q.streams.remove(jobID)
 		q.cancels.remove(jobID)
 		q.recordSync(ctx, jobID, status, errText)
+		q.recordTest(ctx, jobID, status)
 		return nil
 	}
 	var current string
@@ -516,4 +758,78 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 		// same tradeoff the audit middleware makes.
 		slog.ErrorContext(ctx, "record sync result", "err", err, "job", jobID)
 	}
+}
+
+// recordTest hands a finished connection_test job's outcome to the optional
+// test sink, the connection-test sibling of recordSync. The probe's result
+// travels as the job's final run event ("ok" or "failed"), whose payload is
+// the Result JSON — parsed here into the sink's narrow arguments. A
+// cancelled test records nothing (it never ran); a job without events or a
+// sink failure is logged, never fatal — the terminal status already stands.
+func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Status) {
+	if q.test == nil || status == StatusCancelled {
+		return
+	}
+	var orgID uuid.UUID
+	var kind string
+	var hostIDs []uuid.UUID
+	if err := q.db.Pool().QueryRow(ctx,
+		`SELECT org_id, kind, host_ids FROM jobs WHERE id = $1`, jobID,
+	).Scan(&orgID, &kind, &hostIDs); err != nil {
+		slog.ErrorContext(ctx, "record test result: look up finished job", "err", err, "job", jobID)
+		return
+	}
+	if Kind(kind) != KindConnectionTest {
+		return
+	}
+	if len(hostIDs) != 1 {
+		slog.ErrorContext(ctx, "record test result: job carries no single host", "job", jobID, "hosts", len(hostIDs))
+		return
+	}
+	var at time.Time
+	var state string
+	var payload json.RawMessage
+	if err := q.db.Pool().QueryRow(ctx,
+		`SELECT at, state, payload FROM job_events WHERE job_id = $1 AND state IN ('ok','failed') ORDER BY seq DESC LIMIT 1`,
+		jobID,
+	).Scan(&at, &state, &payload); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The job finished without a result event (the executor's
+			// parse/transport error path); there is nothing to record.
+			return
+		}
+		slog.ErrorContext(ctx, "record test result: look up result event", "err", err, "job", jobID)
+		return
+	}
+	var res testResultPayload
+	if err := json.Unmarshal(payload, &res); err != nil {
+		slog.ErrorContext(ctx, "record test result: result event is not a result", "err", err, "job", jobID)
+		return
+	}
+	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostKeyState, res.Checks); err != nil {
+		// The job's terminal status is already recorded; a failed
+		// bookkeeping write is logged so an operator sees the gap, the
+		// same tradeoff the sync sink and the audit middleware make.
+		slog.ErrorContext(ctx, "record test result", "err", err, "job", jobID)
+	}
+}
+
+// testResultPayload is the manager-side mirror of the worker's probe
+// result, parsed from the final event's payload. Its ok() must stay the
+// sshprobe.Result.OK formula: reachable, authenticated, passwordless sudo
+// and Python present — all four, or the test is not ok (a failed sudo or
+// Python still yields ok=false; the checks list carries the details).
+type testResultPayload struct {
+	Reachable    bool                  `json:"reachable"`
+	HostKey      string                `json:"host_key"`
+	HostKeyState string                `json:"host_key_state"`
+	Auth         bool                  `json:"auth"`
+	Sudo         bool                  `json:"sudo"`
+	Python       bool                  `json:"python"`
+	Checks       []hosts.HostTestCheck `json:"checks"`
+	Err          string                `json:"err,omitempty"`
+}
+
+func (r testResultPayload) ok() bool {
+	return r.Reachable && r.Auth && r.Sudo && r.Python
 }
