@@ -1,11 +1,14 @@
 // The rotate-key executor (spec §5, backlog 2.7 rotation): it runs the
 // embedded key-rotation playbook — installing the new public key over the
 // old, still-working credential — against one host or jump host. The
-// executor only runs the playbook; the enqueue side (credentials.Rotate)
-// appends the connection test that verifies the new key, and the group's
+// executor only runs the playbook; the rotation group carries the
+// verification: a follow-up connection_test job per host target,
+// authenticating with the pending new key sealed in the test job's own
+// payload, whose outcome the group's finalize gate counts. The group's
 // terminal outcome decides whether the new private key is sealed onto the
 // credential or dropped. The new private key travels only inside the
-// sealed job payload and the run's work dir — never an event, stat or log.
+// sealed job payloads and the run's work dir — never an event, stat or
+// log.
 //
 // Terminal mapping is the runner's; broken input is an executor error.
 // The host-key pin is preflighted like the bootstrap's: with a pin on

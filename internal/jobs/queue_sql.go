@@ -451,10 +451,41 @@ func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, 
 	}
 	host.Port, host.Username = connPortAndUser(inv.Doc, connName)
 
+	// A rotation group's follow-up test carries the pending new key sealed
+	// in its own payload: the probe authenticates with the NEW key, so the
+	// group's verification is genuinely about the rotation's outcome — the
+	// credential row still holds the old secret until the group finalizes.
+	// The only writer of such a payload is the rotation enqueue; any other
+	// (or unparseable) payload keeps the rendered credential, and a sealed
+	// payload that does not open under this job's AAD still fails the claim.
+	override := credentials.Secret{}
+	if len(job.Payload) > 0 {
+		plain, err := q.openKindPayload(job)
+		if err != nil {
+			return "", nil, err
+		}
+		var rp rotationJobPayload
+		if json.Unmarshal([]byte(plain), &rp) == nil && rp.CredentialID != uuid.Nil && rp.NewPrivateKey.PrivateKey != "" {
+			override = rp.NewPrivateKey
+			// The new key is installed for the credential's own account —
+			// the same resolution the rotate_key payload uses.
+			if cred, err := q.creds.Get(ctx, job.OrgID, rp.CredentialID); err == nil && cred.Username != "" {
+				host.Username = cred.Username
+			}
+		}
+	}
+
 	// The login credential and every hop's credential are opened here;
 	// they travel only inside the kind payload.
 	credential := ""
-	if conn.CredentialID != nil {
+	switch {
+	case override.PrivateKey != "":
+		secret, err := secretJSON(override)
+		if err != nil {
+			return "", nil, err
+		}
+		credential = secret
+	case conn.CredentialID != nil:
 		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *conn.CredentialID)
 		if err != nil {
 			return "", nil, fmt.Errorf("open credential %s: %w", *conn.CredentialID, err)

@@ -17,11 +17,43 @@ import (
 
 // SQLStore implements Store with sqlc queries on *db.DB, so every statement
 // runs inside the request's organization scope — the same seam as
-// hosts.SQLStore.
-type SQLStore struct{ q *gen.Queries }
+// hosts.SQLStore. The db handle is kept for the one multi-statement
+// operation the queue needs (CreateJobGroup's single transaction).
+type SQLStore struct {
+	q *gen.Queries
+	d *db.DB
+}
 
 // NewSQLStore builds the store on d itself, never on its raw pool.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
+
+// CreateJobGroup inserts every job of one enqueue group inside a single
+// transaction: all rows commit together or nothing does — a rotation
+// enqueue that fails halfway must never leave an orphaned partial group
+// behind (whose rotate_key jobs could run and finalize on their own).
+// payloads maps job id to the already-sealed stored form (nil for jobs
+// without one). The org scope is bound explicitly, so the inserts pass the
+// org_isolation policy the same way every org-scoped write does.
+func (s *SQLStore) CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+	return s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		q := gen.New(tx)
+		for _, j := range jobs {
+			hostIDs := j.HostIDs
+			if hostIDs == nil {
+				hostIDs = []uuid.UUID{}
+			}
+			if _, err := q.CreateJob(ctx, gen.CreateJobParams{
+				ID: j.ID, OrgID: j.OrgID, ZoneID: j.ZoneID, Kind: string(j.Kind),
+				TemplateID: db.NullUUID(j.TemplateID), HostIds: hostIDs, Status: string(j.Status),
+				RunGroupID: j.RunGroupID, Trigger: j.Trigger, ActorID: db.NullUUID(j.ActorID),
+				Payload: payloads[j.ID],
+			}); err != nil {
+				return fmt.Errorf("create job %s: %w", j.ID, err)
+			}
+		}
+		return nil
+	})
+}
 
 func (s *SQLStore) CreateJob(ctx context.Context, j Job, payload json.RawMessage) error {
 	hostIDs := j.HostIDs

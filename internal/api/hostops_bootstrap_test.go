@@ -240,8 +240,9 @@ func TestRotateRouteStartsTheRotationGroup(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&started); err != nil {
 		t.Fatal(err)
 	}
-	if started.JobCount != 1 || started.JobID == "" {
-		t.Fatalf("202 body = %+v", started)
+	// One host target → one run plus its follow-up connection_test.
+	if started.JobCount != 2 || started.JobID == "" {
+		t.Fatalf("202 body = %+v, want the run plus its verification test", started)
 	}
 	j, err := f.s.Deps.Jobs.Get(hctx, f.orgID, mustUUID(t, started.JobID))
 	if err != nil {
@@ -249,6 +250,22 @@ func TestRotateRouteStartsTheRotationGroup(t *testing.T) {
 	}
 	if string(j.Kind) != "rotate_key" || j.RunGroupID == uuid.Nil {
 		t.Fatalf("job = %+v", j)
+	}
+	// The group's second job is the follow-up connection_test in the same
+	// run group.
+	testKind := jobs.KindConnectionTest
+	list, _, err := f.s.Deps.Jobs.List(hctx, f.orgID, jobs.Filter{Kind: &testKind}, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var testJob *jobs.Job
+	for i := range list {
+		if list[i].RunGroupID == j.RunGroupID {
+			testJob = &list[i]
+		}
+	}
+	if testJob == nil || len(testJob.HostIDs) != 1 || testJob.HostIDs[0].String() != f.hostID {
+		t.Fatalf("the rotation group carries no follow-up test for the host: %+v", list)
 	}
 	// The rotate event is audited with a summary that names no secret.
 	activity := readActivity(t, f.s, f.ownerC, "sys-org")

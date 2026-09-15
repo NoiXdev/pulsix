@@ -54,16 +54,22 @@ func (z oneZone) ListZones(context.Context, uuid.UUID) ([]hosts.Zone, error) {
 }
 
 // rotationOnlyStore is the Store stand-in the enqueue test needs: it
-// records CreateJob calls.
+// records CreateJob calls and models the groupInserter capability with
+// all-or-nothing semantics (staged rows commit only when the whole call
+// succeeds).
 type rotationOnlyStore struct {
-	mu       sync.Mutex
-	jobs     []Job
-	payloads map[uuid.UUID]json.RawMessage
-	nextErr  error
+	mu             sync.Mutex
+	jobs           []Job
+	payloads       map[uuid.UUID]json.RawMessage
+	nextErr        error
+	groupCalls     int
+	failGroupAt    int   // 1-based job index whose insert fails; 0 = no failure
+	groupErr       error // the failure the staged insert trips
+	stagedPayloads map[uuid.UUID]json.RawMessage
 }
 
 func newRotationOnlyStore() *rotationOnlyStore {
-	return &rotationOnlyStore{payloads: map[uuid.UUID]json.RawMessage{}}
+	return &rotationOnlyStore{payloads: map[uuid.UUID]json.RawMessage{}, stagedPayloads: map[uuid.UUID]json.RawMessage{}}
 }
 
 func (s *rotationOnlyStore) CreateJob(_ context.Context, j Job, payload json.RawMessage) error {
@@ -74,6 +80,38 @@ func (s *rotationOnlyStore) CreateJob(_ context.Context, j Job, payload json.Raw
 	}
 	s.jobs = append(s.jobs, j)
 	s.payloads[j.ID] = payload
+	return nil
+}
+
+// CreateJobGroup implements the groupInserter capability with the same
+// all-or-nothing contract the real store's transaction gives: rows stage
+// into the group's own slice and only become visible when the whole call
+// succeeds, so a mid-group failure leaves nothing behind.
+func (s *rotationOnlyStore) CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.groupCalls++
+	if s.nextErr != nil {
+		return s.nextErr
+	}
+	if s.stagedPayloads == nil {
+		s.stagedPayloads = map[uuid.UUID]json.RawMessage{}
+	}
+	staged := make([]Job, 0, len(jobs))
+	for i, j := range jobs {
+		if s.failGroupAt > 0 && i == s.failGroupAt {
+			return s.groupErr
+		}
+		staged = append(staged, j)
+		s.stagedPayloads[j.ID] = payloads[j.ID]
+	}
+	s.jobs = append(s.jobs, staged...)
+	if s.payloads == nil {
+		s.payloads = map[uuid.UUID]json.RawMessage{}
+	}
+	for id, p := range s.stagedPayloads {
+		s.payloads[id] = p
+	}
 	return nil
 }
 
@@ -97,9 +135,11 @@ func (s *rotationOnlyStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UU
 	return nil
 }
 
-// TestEnqueueRotationCreatesOneJobPerTarget pins the group shape: one job
-// per host (its zone) and per bastion (the default zone), all sharing the
-// group, each payload sealed with the job row's own AAD.
+// TestEnqueueRotationCreatesOneJobPerTarget pins the group shape: one
+// rotate_key job per host (its zone) plus its follow-up connection_test
+// (same group and zone, created strictly later so it claims after the
+// playbook run), one rotate_key per bastion (the default zone, no
+// host-bound test), all payloads sealed with the job row's own AAD.
 func TestEnqueueRotationCreatesOneJobPerTarget(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	zoneA, zoneB, zoneDefault := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -128,19 +168,41 @@ func TestEnqueueRotationCreatesOneJobPerTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnqueueRotation: %v", err)
 	}
-	if count != 3 || first == uuid.Nil || group == uuid.Nil {
-		t.Fatalf("group = %s, first = %s, count = %d", group, first, count)
+	if count != 5 || first == uuid.Nil || group == uuid.Nil {
+		t.Fatalf("group = %s, first = %s, count = %d, want 2 runs + 2 tests + 1 bastion run", group, first, count)
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if len(store.jobs) != 3 {
+	if len(store.jobs) != 5 {
 		t.Fatalf("stored jobs = %d", len(store.jobs))
+	}
+	if store.groupCalls != 1 {
+		t.Fatalf("group insert calls = %d, want exactly one transactional call", store.groupCalls)
+	}
+	// The verification jobs come strictly after the playbook runs in the
+	// claim order: created_at advances one microsecond per job (the
+	// monotonic clock readings stay comparable, so .After is exact).
+	// The claim order (created_at) must put every HOST's verification test
+	// after its playbook run — the created_at advances one microsecond per
+	// job. The bastion run comes last and carries no host-bound test.
+	var lastHostRunAt, firstTestAt time.Time
+	for _, j := range store.jobs {
+		if j.Kind == KindRotateKey && len(j.HostIDs) == 1 &&
+			(lastHostRunAt.IsZero() || j.CreatedAt.After(lastHostRunAt)) {
+			lastHostRunAt = j.CreatedAt
+		}
+		if j.Kind == KindConnectionTest && (firstTestAt.IsZero() || j.CreatedAt.Before(firstTestAt)) {
+			firstTestAt = j.CreatedAt
+		}
+	}
+	if firstTestAt.IsZero() || !firstTestAt.After(lastHostRunAt) {
+		t.Fatalf("the follow-up tests must claim after the host playbook runs: last host run %v, first test %v", lastHostRunAt, firstTestAt)
 	}
 	for _, j := range store.jobs {
 		if j.RunGroupID != group {
 			t.Fatalf("job %s carries group %s, want %s", j.ID, j.RunGroupID, group)
 		}
-		if j.Kind != KindRotateKey || j.Status != StatusQueued || j.Trigger != TriggerManual {
+		if j.Status != StatusQueued || j.Trigger != TriggerManual {
 			t.Fatalf("job = %+v", j)
 		}
 		var b64 string
@@ -163,17 +225,24 @@ func TestEnqueueRotationCreatesOneJobPerTarget(t *testing.T) {
 			rp.NewPublicKey != "ssh-ed25519 AAAA new" || rp.NewFingerprint != "SHA256:new" || rp.NewKeyType != "ed25519" {
 			t.Fatalf("rotation payload of %s = %+v", j.ID, rp)
 		}
-		switch rp.Target.Kind {
-		case rotationTargetHost:
-			if len(j.HostIDs) != 1 || (j.ZoneID != zoneA && j.ZoneID != zoneB) {
-				t.Fatalf("host job = %+v", j)
-			}
-		case rotationTargetBastion:
+		// Every job's payload carries the same pending key; the kind and
+		// host scope differ. The follow-up test of a host target is the
+		// group's verification: a connection_test in the host's zone.
+		switch {
+		case j.Kind == KindRotateKey && rp.Target.Kind == rotationTargetBastion:
 			if rp.Target.ID != bastion1 || len(j.HostIDs) != 0 || j.ZoneID != zoneDefault {
 				t.Fatalf("bastion job = %+v (target %+v)", j, rp.Target)
 			}
+		case j.Kind == KindRotateKey && rp.Target.Kind == rotationTargetHost:
+			if len(j.HostIDs) != 1 || (j.ZoneID != zoneA && j.ZoneID != zoneB) || rp.Target.ID != j.HostIDs[0] {
+				t.Fatalf("host run = %+v", j)
+			}
+		case j.Kind == KindConnectionTest:
+			if rp.Target.Kind != rotationTargetHost || rp.Target.ID != j.HostIDs[0] {
+				t.Fatalf("verification job = %+v (target %+v)", j, rp.Target)
+			}
 		default:
-			t.Fatalf("unknown target kind %q", rp.Target.Kind)
+			t.Fatalf("unexpected job kind %q (target %+v)", j.Kind, rp.Target.Kind)
 		}
 	}
 }
@@ -288,4 +357,75 @@ func (f hostOnlyTargets) ListCredentialHosts(context.Context, uuid.UUID, uuid.UU
 
 func (f hostOnlyTargets) ListCredentialBastions(context.Context, uuid.UUID, uuid.UUID) ([]sshconf.Bastion, error) {
 	return nil, f.bastionErr
+}
+
+// TestEnqueueRotationAtomicGroupInsert pins the finding's fix: the whole
+// group rides ONE transactional insert call — a mid-group failure leaves
+// nothing behind (the staged rows never commit), no per-row CreateJob
+// calls happen, and the error propagates.
+func TestEnqueueRotationAtomicGroupInsert(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	credID := uuid.Must(uuid.NewV7())
+	host1, host2 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	key := credentials.PendingKey{
+		PrivateKey:  credentials.Secret{PrivateKey: "new-pem"},
+		PublicKey:   "ssh-ed25519 AAAA new",
+		Fingerprint: "SHA256:new",
+		KeyType:     "ed25519",
+	}
+
+	// A store whose second staged insert fails: the group's rows stage,
+	// the failure aborts, nothing commits.
+	store := newRotationOnlyStore()
+	store.failGroupAt = 2
+	store.groupErr = errors.New("disk full")
+	svc := &Service{store: store, queue: noQueue{}, box: fakeBox{}, now: time.Now, rand: rand.Reader}
+	svc.rotationTargets = fakeRotationTargets{
+		hosts: []RotationHost{{ID: host1, ZoneID: uuid.Must(uuid.NewV7())}, {ID: host2, ZoneID: uuid.Must(uuid.NewV7())}},
+	}
+	_, _, _, err := svc.EnqueueRotation(db.WithOrgScope(context.Background(), org), org, credID, key, nil)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("mid-group failure: %v", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.jobs) != 0 {
+		t.Fatalf("a failed group insert must leave nothing behind: %+v", store.jobs)
+	}
+	if store.groupCalls != 1 {
+		t.Fatalf("group insert calls = %d, want exactly one", store.groupCalls)
+	}
+
+	// A store without the atomic capability fails the enqueue closed.
+	svc = &Service{store: &plainRotationStore{}, queue: noQueue{}, box: fakeBox{}, now: time.Now, rand: rand.Reader}
+	svc.rotationTargets = fakeRotationTargets{
+		hosts: []RotationHost{{ID: host1, ZoneID: uuid.Must(uuid.NewV7())}},
+	}
+	_, _, _, err = svc.EnqueueRotation(db.WithOrgScope(context.Background(), org), org, credID, key, nil)
+	if err == nil || !strings.Contains(err.Error(), "cannot insert the group atomically") {
+		t.Fatalf("store without the group capability: %v", err)
+	}
+}
+
+// plainRotationStore implements Store WITHOUT the groupInserter
+// capability: the rotation enqueue must refuse it rather than fall back to
+// per-row inserts.
+type plainRotationStore struct{}
+
+func (plainRotationStore) CreateJob(context.Context, Job, json.RawMessage) error { return nil }
+func (plainRotationStore) GetJob(context.Context, uuid.UUID, uuid.UUID) (Job, error) {
+	return Job{}, ErrNotFound
+}
+func (plainRotationStore) ListJobs(context.Context, uuid.UUID, Filter, string, int) ([]Job, string, error) {
+	return nil, "", nil
+}
+func (plainRotationStore) CancelJob(context.Context, uuid.UUID, uuid.UUID) (Status, error) {
+	return "", ErrNotRunning
+}
+func (plainRotationStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, int64) ([]Event, error) {
+	return nil, nil
+}
+func (plainRotationStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string) error {
+	return nil
 }

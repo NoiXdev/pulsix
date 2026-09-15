@@ -3,17 +3,23 @@
 // credentials.RotationEnqueuer (declared over there as a narrow port, to
 // keep the import arrow jobs → credentials): it lists the managed hosts
 // and jump hosts referencing the credential and inserts one rotate_key job
-// per target, all sharing one run group. Each job's payload carries the
-// pending new key SEALED with the box (AAD job:<orgID>:<jobID>) before
-// insert — the pending key never exists anywhere else in the clear, not
-// even in a table column.
+// per target plus one follow-up connection_test job per HOST target — the
+// group's verification, authenticating with the pending new key — all
+// sharing one run group and inserted inside ONE transaction (a failure
+// halfway leaves nothing behind; an orphaned partial group could run and
+// finalize on its own). Every job's payload carries the pending new key
+// SEALED with the box (AAD job:<orgID>:<jobID>) before insert — the
+// pending key never exists anywhere else in the clear, not even in a table
+// column.
 //
 // The finish half rides SQLQueue.Finish (recordRotation): when the last
-// job of a rotate_key group reports terminal, the outcome flows through
-// the RotationFinisher port to credentials.Service.FinishRotation, which
-// seals the new key onto the credential (all succeeded) or leaves it
-// untouched (anything else). Double-finalization is safe by value: two
-// finishes observing the same completed group seal the identical key.
+// job of a rotation group — rotate_key OR the follow-up connection_test —
+// reports terminal, the outcome flows through the RotationFinisher port to
+// credentials.Service.FinishRotation, which seals the new key onto the
+// credential (all succeeded) or leaves it untouched (anything else — a
+// failed rotation playbook, or a follow-up test that could not get in with
+// the new key). Double-finalization is safe by value: two finishes
+// observing the same completed group seal the identical key.
 package jobs
 
 import (
@@ -21,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -96,14 +103,29 @@ func (q *SQLQueue) ListCredentialBastions(ctx context.Context, orgID, credential
 // credential that never changes, never as a failed job.
 func (q *SQLQueue) SetRotationFinisher(finisher RotationFinisher) { q.rotation = finisher }
 
-// EnqueueRotation enqueues the credential's rotation group: one
-// rotate_key job per managed host and jump host referencing it, all
-// sharing one run group, each payload carrying the pending new key sealed
-// with the job's own AAD. Host targets claim in the host's zone; bastion
-// targets claim in the organization's default zone (bastions are not
-// zone-bound; a sync-shaped job with no host scope). Returns the group id,
-// the group's first job id and the job count — count 0 means nothing
-// references the credential (the caller re-keys it immediately).
+// groupInserter is the store capability the rotation enqueue needs: the
+// whole group's inserts inside one transaction. The real SQLStore
+// implements it; a store that does not makes the enqueue fail closed —
+// per-row inserts would leave an orphaned partial group on a mid-loop
+// failure, whose jobs could run and finalize on their own.
+type groupInserter interface {
+	CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error
+}
+
+// EnqueueRotation enqueues the credential's rotation group: one rotate_key
+// job per managed host and jump host referencing it, plus one follow-up
+// connection_test job per HOST target — the group's verification, which
+// authenticates with the pending new key (sealed in the test job's own
+// payload) — all sharing one run group and all inserted inside one
+// transaction. Host targets claim in the host's zone; bastion targets
+// claim in the organization's default zone (bastions are not zone-bound
+// and have no host-bound test history, so a bastion target verifies only
+// through its playbook run). The follow-up tests carry a strictly later
+// created_at (one microsecond per job) so the claim order puts every
+// playbook run before the tests that verify it. Returns the group id, the
+// group's first job id (a rotate_key job) and the job count — count 0
+// means nothing references the credential (the caller re-keys it
+// immediately).
 func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.UUID, key credentials.PendingKey, actor *uuid.UUID) (uuid.UUID, uuid.UUID, int, error) {
 	if s.rotationTargets == nil {
 		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("rotation enqueue: no rotation target source wired")
@@ -119,74 +141,84 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 	if len(hosts) == 0 && len(bastions) == 0 {
 		return uuid.Nil, uuid.Nil, 0, nil
 	}
+	inserter, ok := s.store.(groupInserter)
+	if !ok {
+		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("rotation enqueue: the store cannot insert the group atomically")
+	}
 	group := s.newID()
 	now := s.now()
-	count := 0
-	first := uuid.Nil
-	// One job per host target, in the host's zone.
-	for _, h := range hosts {
+	var jobs []Job
+	payloads := make(map[uuid.UUID]json.RawMessage, 2*len(hosts)+len(bastions))
+	// appendJob builds one group job with its sealed rotation payload.
+	// CreatedAt advances one microsecond per job, so the claim's
+	// created_at order always puts the playbook runs before the follow-up
+	// tests that verify them.
+	appendJob := func(kind Kind, zone uuid.UUID, hostIDs []uuid.UUID, target rotationTarget) error {
 		j := Job{
-			ID: s.newID(), OrgID: orgID, ZoneID: h.ZoneID,
-			Kind: KindRotateKey, HostIDs: []uuid.UUID{h.ID},
+			ID: s.newID(), OrgID: orgID, ZoneID: zone,
+			Kind: kind, HostIDs: hostIDs,
 			Status: StatusQueued, RunGroupID: group, Trigger: TriggerManual,
-			ActorID: actor, CreatedAt: now,
+			ActorID: actor, CreatedAt: now.Add(time.Duration(len(jobs)) * time.Microsecond),
 		}
-		if err := s.createRotationJob(ctx, j, credentialID, rotationTarget{Kind: rotationTargetHost, ID: h.ID}, key); err != nil {
+		payload, err := json.Marshal(rotationJobPayload{
+			CredentialID: credentialID, Target: target,
+			NewPublicKey: key.PublicKey, NewFingerprint: key.Fingerprint, NewKeyType: key.KeyType,
+			NewPrivateKey: key.PrivateKey,
+		})
+		if err != nil {
+			return fmt.Errorf("encode rotation payload: %w", err)
+		}
+		stored, err := s.sealPayload(j, payload)
+		if err != nil {
+			return err
+		}
+		payloads[j.ID] = stored
+		jobs = append(jobs, j)
+		return nil
+	}
+	// The playbook runs first: one per host target, in the host's zone.
+	for _, h := range hosts {
+		if err := appendJob(KindRotateKey, h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}); err != nil {
 			return uuid.Nil, uuid.Nil, 0, err
 		}
-		count++
-		if first == uuid.Nil {
-			first = j.ID
+	}
+	// Then the verification: one connection_test per host target, same
+	// group and zone, whose sealed payload carries the pending new key the
+	// probe authenticates with.
+	for _, h := range hosts {
+		if err := appendJob(KindConnectionTest, h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}); err != nil {
+			return uuid.Nil, uuid.Nil, 0, err
 		}
 	}
 	// One job per bastion target, in the default zone: a bastion is
-	// organization-level infrastructure, not bound to a host's zone.
+	// organization-level infrastructure, not bound to a host's zone, and
+	// has no host-bound connection-test history.
 	if len(bastions) > 0 {
 		zone, err := s.defaultZone(ctx, orgID)
 		if err != nil {
 			return uuid.Nil, uuid.Nil, 0, fmt.Errorf("resolve rotation zone: %w", err)
 		}
 		for _, b := range bastions {
-			j := Job{
-				ID: s.newID(), OrgID: orgID, ZoneID: zone,
-				Kind: KindRotateKey, HostIDs: []uuid.UUID{},
-				Status: StatusQueued, RunGroupID: group, Trigger: TriggerManual,
-				ActorID: actor, CreatedAt: now,
-			}
-			if err := s.createRotationJob(ctx, j, credentialID, rotationTarget{Kind: rotationTargetBastion, ID: b.ID}, key); err != nil {
+			if err := appendJob(KindRotateKey, zone, []uuid.UUID{}, rotationTarget{Kind: rotationTargetBastion, ID: b.ID}); err != nil {
 				return uuid.Nil, uuid.Nil, 0, err
-			}
-			count++
-			if first == uuid.Nil {
-				first = j.ID
 			}
 		}
 	}
-	return group, first, count, nil
-}
-
-// createRotationJob seals the rotation payload and inserts the job.
-func (s *Service) createRotationJob(ctx context.Context, j Job, credentialID uuid.UUID, target rotationTarget, key credentials.PendingKey) error {
-	payload, err := json.Marshal(rotationJobPayload{
-		CredentialID: credentialID, Target: target,
-		NewPublicKey: key.PublicKey, NewFingerprint: key.Fingerprint, NewKeyType: key.KeyType,
-		NewPrivateKey: key.PrivateKey,
-	})
-	if err != nil {
-		return fmt.Errorf("encode rotation payload: %w", err)
+	if err := inserter.CreateJobGroup(ctx, orgID, jobs, payloads); err != nil {
+		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("insert rotation group: %w", err)
 	}
-	stored, err := s.sealPayload(j, payload)
-	if err != nil {
-		return err
-	}
-	return s.store.CreateJob(ctx, j, stored)
+	return group, jobs[0].ID, len(jobs), nil
 }
 
 // recordRotation finalizes a rotation group whose last job just went
-// terminal: the group is complete when every rotate_key job of the group
-// is terminal, and allSucceeded only when every one of them succeeded. A
-// cancelled or failed job leaves the credential untouched. The finisher
-// is bookkeeping, not bookkeeping-breaking — its failure is logged, the
+// terminal: the group is complete when every job of it — the rotate_key
+// playbook runs AND the follow-up connection_test verifications — is
+// terminal, and allSucceeded only when every one of them succeeded. A
+// cancelled or failed job (a playbook that could not install the key, or a
+// test that could not get in with it) leaves the credential untouched. A
+// connection_test job that carries no rotation payload is a plain test, not
+// a group member — skipped silently, the common case. The finisher is
+// bookkeeping, not bookkeeping-breaking — its failure is logged, the
 // terminal status already stands. The finished job's payload (sealed) is
 // still on the row at this point; clearing happens after the sinks.
 func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status Status) {
@@ -202,7 +234,9 @@ func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status S
 		slog.ErrorContext(ctx, "finalize rotation: look up finished job", "err", err, "job", jobID)
 		return
 	}
-	if Kind(kind) != KindRotateKey {
+	switch Kind(kind) {
+	case KindRotateKey, KindConnectionTest:
+	default:
 		return
 	}
 	plain, err := q.openKindPayload(Job{OrgID: orgID, ID: jobID, Payload: payload})
@@ -212,7 +246,12 @@ func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status S
 	}
 	var rp rotationJobPayload
 	if err := json.Unmarshal([]byte(plain), &rp); err != nil || rp.CredentialID == uuid.Nil {
-		slog.ErrorContext(ctx, "finalize rotation: job payload carries no credential", "job", jobID)
+		// A connection_test job without a rotation payload is a plain
+		// test — the everyday case, silently out. A rotate_key job whose
+		// payload carries no credential is an anomaly worth a log line.
+		if Kind(kind) == KindRotateKey {
+			slog.ErrorContext(ctx, "finalize rotation: job payload carries no credential", "job", jobID)
+		}
 		return
 	}
 
@@ -221,7 +260,7 @@ func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status S
 		`SELECT count(*),
 			count(*) FILTER (WHERE status IN ('succeeded','failed','cancelled','error')),
 			count(*) FILTER (WHERE status = 'succeeded')
-		FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind = 'rotate_key'`,
+		FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind IN ('rotate_key','connection_test')`,
 		orgID, groupID,
 	).Scan(&total, &terminal, &succeeded); err != nil {
 		slog.ErrorContext(ctx, "finalize rotation: count group", "err", err, "group", groupID)
