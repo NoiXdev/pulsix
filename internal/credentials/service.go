@@ -168,6 +168,12 @@ type Service struct {
 	box   Sealer
 	now   func() time.Time
 	rand  io.Reader
+	// rotation is the rotation group's enqueue port (SetRotationEnqueuer,
+	// wired after construction by internal/app because the concrete
+	// implementation is the jobs service, whose own construction depends
+	// on this one). Nil means Rotate fails closed — a wiring gap, never a
+	// silent no-op.
+	rotation RotationEnqueuer
 }
 
 // NewService wires the store, the sealing box, the clock and the entropy
@@ -175,6 +181,12 @@ type Service struct {
 func NewService(store Store, box Sealer, now func() time.Time, rand io.Reader) *Service {
 	return &Service{store: store, box: box, now: now, rand: rand}
 }
+
+// SetRotationEnqueuer injects the rotation enqueue port, the same
+// post-construction wiring shape the queues' sinks use: the concrete
+// implementation (internal/jobs) is built after this service and depends
+// on it through its own ports.
+func (s *Service) SetRotationEnqueuer(e RotationEnqueuer) { s.rotation = e }
 
 // AAD is the additional data a credential's secret is sealed with.
 func AAD(orgID, id uuid.UUID) []byte {
