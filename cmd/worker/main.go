@@ -32,6 +32,7 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
+	"github.com/noixdev/pulsix/internal/worker/sshprobe"
 )
 
 // version is the worker's build version, reported to the manager on every
@@ -72,15 +73,17 @@ func run(env []string) int {
 	defer func() { _ = conn.Close() }() // best-effort: the process is exiting anyway
 
 	// The kind dispatch: the ansible-runner executor serves run and
-	// ad-hoc jobs; Tasks 10–11's SSH executors join through the same map.
+	// ad-hoc jobs, the ssh-probe executor serves connection tests.
 	// A kind with no executor in this build reports an infrastructure
 	// error — the claim is at-least-once, the manager requeues it.
 	runExec := runner.NewRunner(cfg.AnsibleRunnerBin, cfg.AnsibleBin, "git", 0, slog.Default())
+	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, slog.Default())
 	loop := worker.NewLoop(
 		cfg, workerpb.NewWorkerServiceClient(conn),
 		worker.NewCompositeExecutor(map[string]worker.Executor{
-			"run":   runExec,
-			"adhoc": runExec,
+			"run":             runExec,
+			"adhoc":           runExec,
+			"connection_test": probeExec,
 		}),
 		worker.WithLogger(slog.Default()),
 	)
