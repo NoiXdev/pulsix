@@ -98,7 +98,8 @@ go test -race -cover ./... 2>&1 | awk -v module="$module" -v generated="$generat
 		if (pkg == module "/internal/auth" || pkg == module "/internal/tenancy" || pkg == module "/internal/db" ||
 		    pkg == module "/internal/inventory/schema" || pkg == module "/internal/inventory/grouptree" ||
 		    pkg == module "/internal/inventory/render" || pkg == module "/internal/credentials" ||
-		    pkg == module "/internal/ca" || pkg == module "/internal/jobs") {
+		    pkg == module "/internal/ca" || pkg == module "/internal/jobs" ||
+		    pkg == module "/internal/worker/runner") {
 			floor = 90
 		}
 

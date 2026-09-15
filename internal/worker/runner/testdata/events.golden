@@ -1,0 +1,59 @@
+[
+  {
+    "state": "stdout"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "host": "web1",
+    "state": "task",
+    "task": "Install nginx"
+  },
+  {
+    "host": "web1",
+    "state": "ok",
+    "task": "Install nginx"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "host": "web1",
+    "state": "changed",
+    "task": "Enable nginx"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "host": "app1",
+    "state": "failed",
+    "task": "Run migration"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "host": "db1",
+    "state": "unreachable",
+    "task": "Install nginx"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "host": "web1",
+    "state": "skipped",
+    "task": "Only on ubuntu"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "state": "stdout"
+  },
+  {
+    "state": "parse-error"
+  }
+]

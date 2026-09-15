@@ -1,0 +1,211 @@
+// The worker-side git fetch for repo playbooks (backlog 2.11): the runner
+// clones or updates the organization's repository itself — the claim's
+// KindPayload carries {"repo": {"id","url","branch","subpath"}} and the
+// repo's git credential ships in the Credentials map under `git:<repo-id>`
+// (the claim-time enrichment internal/jobs does at claim time).
+//
+// Hygiene:
+//   - The cache layout is RepoCacheDir/<org-id>/<repo-id> — org-scoped, so
+//     one organization's playbooks never serve another's, and the clone is
+//     owner-private.
+//   - A credential's secret lives only in a 0600 file under the run's work
+//     dir (the loop wipes the dir when the run ends): a git_key via
+//     GIT_SSH_COMMAND pointing ssh at the key file, a git_token via a
+//     GIT_ASKPASS script that cats a token file. A token is never embedded
+//     in a URL (that would persist it in the clone's .git/config) and never
+//     exported as a plain environment variable.
+//   - The failure reason names the command and its exit code only — never
+//     the URL (the one place an operator's token could hide) and never the
+//     key material.
+//
+// v0.2b runs one job at a time per worker, so the cache needs no lock; the
+// embedded worker of Task 17 uses its own data dir.
+package runner
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/google/uuid"
+)
+
+// gitRepoSpec is one repository the run must materialize, straight from the
+// claim's kind payload.
+type gitRepoSpec struct {
+	OrgID   uuid.UUID
+	RepoID  uuid.UUID
+	URL     string
+	Branch  string
+	Subpath string
+}
+
+// gitCredential is one claim credential's revealed Secret, parsed for the
+// fetch: a git_key's private key or a git_token's token.
+type gitCredential struct {
+	PrivateKey string `json:"private_key"`
+	Token      string `json:"token"`
+}
+
+// fetchRepo materializes the repo in the org-scoped cache and returns the
+// local playbook file's absolute path. cacheRoot is the worker's persistent
+// repo cache; workDir is the run's private work dir (holds the credential's
+// temporary 0600 files, wiped by the loop when the run ends). secretJSON is
+// the claim's Secret JSON for `git:<repo-id>`; empty means the repo fetches
+// without a credential.
+func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, cacheRoot, workDir string) (string, error) {
+	if spec.URL == "" {
+		return "", errors.New("repo has no url")
+	}
+	if spec.Branch == "" {
+		return "", errors.New("repo has no branch")
+	}
+	sub, err := safeSubpath(spec.Subpath)
+	if err != nil {
+		return "", fmt.Errorf("repo subpath: %w", err)
+	}
+
+	var cred gitCredential
+	if secretJSON != "" {
+		if err := json.Unmarshal([]byte(secretJSON), &cred); err != nil {
+			return "", fmt.Errorf("git credential: %w", err)
+		}
+	}
+
+	gitBin := r.GitBin
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	env := append([]string{}, stripPrivateEnv(os.Environ())...)
+	if home := filepath.Join(workDir, homeDirName); home != "" {
+		env = append(env, "HOME="+home)
+	}
+
+	// Credential plumbing: the secret reaches git only through a file path.
+	switch {
+	case cred.PrivateKey != "":
+		keyFile := filepath.Join(workDir, gitKeysDir, spec.RepoID.String())
+		if err := writeSecretFile(keyFile, cred.PrivateKey, 0o600); err != nil {
+			return "", err
+		}
+		defer func() { _ = os.Remove(keyFile) }()
+		env = append(env, "GIT_SSH_COMMAND="+gitSSHCommand(keyFile), "GIT_TERMINAL_PROMPT=0")
+	case cred.Token != "":
+		tokenFile := filepath.Join(workDir, gitTokensDir, spec.RepoID.String())
+		if err := writeSecretFile(tokenFile, cred.Token, 0o600); err != nil {
+			return "", err
+		}
+		askpass, err := writeAskpass(workDir, spec.RepoID.String(), tokenFile)
+		if err != nil {
+			return "", err
+		}
+		// Both files are wiped when the fetch ends.
+		defer func() {
+			_ = os.Remove(tokenFile)
+			_ = os.Remove(askpass)
+		}()
+		// The askpass answers git's username and password prompts with the
+		// token: providers accept a token as the username for clone/fetch,
+		// and the secret itself never leaves the token file — the script
+		// only cats it.
+		env = append(env, "GIT_ASKPASS="+askpass, "GIT_TERMINAL_PROMPT=0")
+	}
+
+	target := filepath.Join(cacheRoot, spec.OrgID.String(), spec.RepoID.String())
+	if _, statErr := os.Stat(filepath.Join(target, ".git")); statErr == nil {
+		// Present: bring it to the branch's tip — the run must see the
+		// branch's current state, not a stale cache.
+		if err := runGit(ctx, gitBin, target, env, "fetch", "--quiet", "origin", spec.Branch); err != nil {
+			return "", err
+		}
+		if err := runGit(ctx, gitBin, target, env, "reset", "--hard", "FETCH_HEAD"); err != nil {
+			return "", err
+		}
+	} else {
+		if err := os.MkdirAll(cacheRoot, 0o700); err != nil {
+			return "", fmt.Errorf("create repo cache root: %w", err)
+		}
+		if _, statErr := os.Stat(target); statErr == nil {
+			// A leftover that is not a verifiable clone (a killed earlier
+			// run's partial copy): re-clone rather than build on it.
+			if err := os.RemoveAll(target); err != nil {
+				return "", fmt.Errorf("clear stale cache dir: %w", err)
+			}
+		}
+		if err := runGit(ctx, gitBin, cacheRoot, env,
+			"clone", "--quiet", "--branch", spec.Branch, "--single-branch", spec.URL, target); err != nil {
+			_ = os.RemoveAll(target) // a partial clone must not linger
+			return "", err
+		}
+		_ = os.Chmod(target, 0o700)
+	}
+
+	playbook := filepath.Join(target, sub)
+	fi, statErr := os.Stat(playbook)
+	if statErr != nil || fi.IsDir() {
+		return "", fmt.Errorf("playbook %s is not a file in the repository cache", spec.Subpath)
+	}
+	return playbook, nil
+}
+
+// gitSSHCommand points ssh at the fetched key file: identities pinned to
+// that one file, host keys accepted on first use and remembered only inside
+// the run's work dir home.
+func gitSSHCommand(keyFile string) string {
+	return fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyFile)
+}
+
+// writeAskpass writes the GIT_ASKPASS script: secret-free (it cats the
+// token file), executable, owner-private.
+func writeAskpass(workDir, repoID, tokenFile string) (string, error) {
+	script := "#!/bin/sh\ncat '" + tokenFile + "'\n"
+	path := filepath.Join(workDir, "gitaskpass-"+repoID+".sh")
+	if err := writeSecretFile(path, script, 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// safeSubpath validates the playbook's subpath inside a clone: non-empty,
+// no traversal, no absolute path, no backslashes.
+func safeSubpath(sub string) (string, error) {
+	if sub == "" {
+		return "", errors.New("is empty")
+	}
+	if strings.HasPrefix(sub, "/") || strings.Contains(sub, `\`) || strings.Contains(sub, "..") {
+		return "", errors.New("must be a relative path without traversal")
+	}
+	return filepath.FromSlash(sub), nil
+}
+
+// runGit runs one git command inside dir; its failure names the command and
+// exit code only — never the URL or any secret.
+func runGit(ctx context.Context, gitBin, dir string, env []string, args ...string) error {
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, gitBin, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return fmt.Errorf("git %s: exit %d: %s", args[0], exit.ExitCode(), truncate(stderr.String(), 4<<10))
+		}
+		return fmt.Errorf("git %s: %v", args[0], err)
+	}
+	return nil
+}
+
+// truncate keeps a diagnostic buffer bounded.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[len(s)-max:]
+}

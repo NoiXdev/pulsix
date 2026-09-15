@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/runner"
 	"google.golang.org/grpc"
 )
 
@@ -43,13 +44,18 @@ func (failingClient) ReportResult(context.Context, *workerpb.ReportResultRequest
 
 // TestRunWorkerCleanShutdown: a loop whose claims fail still exits 0 when
 // its context is cancelled — the shutdown, not the claim failure, decides
-// the exit code.
+// the exit code. The executor is the real wiring (the ansible-runner
+// executor behind the kind dispatch); no claim ever reaches it here.
 func TestRunWorkerCleanShutdown(t *testing.T) {
+	runExec := runner.NewRunner("ansible-runner", "ansible-playbook", "git", 0, nil)
 	loop := worker.NewLoop(worker.Config{
 		ManagerAddr: "manager:8444", CertPath: "cert.pem", KeyPath: "key.pem", CAPath: "ca.pem",
 		DataDir: t.TempDir(), Zones: []uuid.UUID{uuid.Must(uuid.NewV7())},
 		ClaimInterval: 5 * time.Millisecond, MaxConcurrent: 1,
-	}, failingClient{}, stubExecutor{})
+	}, failingClient{}, worker.NewCompositeExecutor(map[string]worker.Executor{
+		"run":   runExec,
+		"adhoc": runExec,
+	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
@@ -64,20 +70,5 @@ func TestRunWorkerCleanShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("workerLoop did not return after cancellation")
-	}
-}
-
-// TestStubExecutorReportsError: the placeholder executor never pretends a
-// job succeeded.
-func TestStubExecutor(t *testing.T) {
-	status, stats, err := stubExecutor{}.Run(t.Context(), &workerpb.Job{Kind: "run"}, worker.RunEnv{}, func(*workerpb.RunEvent) error { return nil })
-	if status != worker.StatusError {
-		t.Fatalf("status = %q, want error", status)
-	}
-	if stats != nil {
-		t.Fatalf("stats = %v, want nil", stats)
-	}
-	if err == nil {
-		t.Fatal("the stub must return an error")
 	}
 }

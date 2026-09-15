@@ -24,7 +24,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -32,6 +31,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/runner"
 )
 
 // version is the worker's build version, reported to the manager on every
@@ -71,8 +71,17 @@ func run(env []string) int {
 	}
 	defer func() { _ = conn.Close() }() // best-effort: the process is exiting anyway
 
+	// The kind dispatch: the ansible-runner executor serves run and
+	// ad-hoc jobs; Tasks 10–11's SSH executors join through the same map.
+	// A kind with no executor in this build reports an infrastructure
+	// error — the claim is at-least-once, the manager requeues it.
+	runExec := runner.NewRunner(cfg.AnsibleRunnerBin, cfg.AnsibleBin, "git", 0, slog.Default())
 	loop := worker.NewLoop(
-		cfg, workerpb.NewWorkerServiceClient(conn), stubExecutor{},
+		cfg, workerpb.NewWorkerServiceClient(conn),
+		worker.NewCompositeExecutor(map[string]worker.Executor{
+			"run":   runExec,
+			"adhoc": runExec,
+		}),
 		worker.WithLogger(slog.Default()),
 	)
 	return workerLoop(ctx, loop)
@@ -85,14 +94,4 @@ func workerLoop(ctx context.Context, loop *worker.Loop) int {
 		return 1
 	}
 	return 0
-}
-
-// stubExecutor stands in for Task 9's ansible-runner executor (and Task
-// 12's sshprobe): it reports every job as an infrastructure error, so a
-// worker deployed ahead of the runner never pretends to have run anything.
-// The manager requeues the job; the run view shows the error.
-type stubExecutor struct{}
-
-func (stubExecutor) Run(_ context.Context, job *workerpb.Job, _ worker.RunEnv, _ func(*workerpb.RunEvent) error) (worker.Status, map[string]any, error) {
-	return worker.StatusError, nil, fmt.Errorf("job kind %q has no executor in this build", job.GetKind())
 }
