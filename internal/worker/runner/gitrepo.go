@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -121,10 +122,10 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 	if _, statErr := os.Stat(filepath.Join(target, ".git")); statErr == nil {
 		// Present: bring it to the branch's tip — the run must see the
 		// branch's current state, not a stale cache.
-		if err := runGit(ctx, gitBin, target, env, "fetch", "--quiet", "origin", spec.Branch); err != nil {
+		if err := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "origin", spec.Branch); err != nil {
 			return "", err
 		}
-		if err := runGit(ctx, gitBin, target, env, "reset", "--hard", "FETCH_HEAD"); err != nil {
+		if err := runGit(ctx, gitBin, target, env, spec.URL, "reset", "--hard", "FETCH_HEAD"); err != nil {
 			return "", err
 		}
 	} else {
@@ -138,7 +139,7 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 				return "", fmt.Errorf("clear stale cache dir: %w", err)
 			}
 		}
-		if err := runGit(ctx, gitBin, cacheRoot, env,
+		if err := runGit(ctx, gitBin, cacheRoot, env, spec.URL,
 			"clone", "--quiet", "--branch", spec.Branch, "--single-branch", spec.URL, target); err != nil {
 			_ = os.RemoveAll(target) // a partial clone must not linger
 			return "", err
@@ -184,9 +185,29 @@ func safeSubpath(sub string) (string, error) {
 	return filepath.FromSlash(sub), nil
 }
 
+// urlCredPattern matches `user:password@` userinfo inside a URL-shaped
+// token (https://, ssh://, and the scp-like form alike) — the password half
+// is what must never survive into a job's error text. A user without a
+// password (git@github.com) is left alone.
+var urlCredPattern = regexp.MustCompile(`[^@/\s:]+:[^@/\s]+@`)
+
+// redactURLs strips credential-bearing URLs from a git diagnostic: every
+// occurrence of the repo's own URL goes first (it is the claim's value,
+// embeddable credentials included), then any remaining scheme://user:pass@
+// userinfo pattern loses its secret half. Over-redaction is acceptable —
+// a diagnostic is never worth a secret.
+func redactURLs(s, url string) string {
+	if url != "" {
+		s = strings.ReplaceAll(s, url, "[repo url]")
+	}
+	return urlCredPattern.ReplaceAllString(s, "[redacted]@")
+}
+
 // runGit runs one git command inside dir; its failure names the command and
-// exit code only — never the URL or any secret.
-func runGit(ctx context.Context, gitBin, dir string, env []string, args ...string) error {
+// exit code, and a bounded stderr tail with every URL credential redacted —
+// git echoes the repo URL verbatim on access failures, so the tail must
+// never carry it (it can hold an operator's embedded credentials).
+func runGit(ctx context.Context, gitBin, dir string, env []string, redactURL string, args ...string) error {
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, gitBin, args...)
 	cmd.Dir = dir
@@ -195,7 +216,7 @@ func runGit(ctx context.Context, gitBin, dir string, env []string, args ...strin
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return fmt.Errorf("git %s: exit %d: %s", args[0], exit.ExitCode(), truncate(stderr.String(), 4<<10))
+			return fmt.Errorf("git %s: exit %d: %s", args[0], exit.ExitCode(), redactURLs(truncate(stderr.String(), 4<<10), redactURL))
 		}
 		return fmt.Errorf("git %s: %v", args[0], err)
 	}

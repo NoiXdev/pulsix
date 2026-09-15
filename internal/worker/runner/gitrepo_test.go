@@ -247,16 +247,33 @@ func TestFetchRepoRejectsBadSpecs(t *testing.T) {
 }
 
 func TestFetchRepoErrorTextNeverNamesTheURL(t *testing.T) {
-	// The URL is the one place a token could hide; the failure reason must
-	// name the command and exit code only.
-	r := &Runner{GitBin: gitOnPATH(t)}
-	cacheRoot, workDir := t.TempDir(), t.TempDir()
-	spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: "ssh://user:secret@nonexistent.invalid/x.git", Branch: "main", Subpath: "site.yml"}
+	// git echoes URLs verbatim on failure — an https URL with embedded
+	// credentials included. The fake git reproduces exactly that: it
+	// writes the URL into its stderr and exits, so the redaction of the
+	// stderr tail is genuinely exercised and the failure reason names the
+	// command and exit code only.
+	const url = "https://user:secret-token@example.invalid/x.git"
+	workDir := t.TempDir()
+	wrapper := filepath.Join(workDir, "git")
+	script := "#!/bin/sh\n" +
+		"echo \"fatal: unable to access '" + url + "/': Could not resolve host\" >&2\n" +
+		"exit 128\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{GitBin: wrapper}
+	cacheRoot := t.TempDir()
+	spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: url, Branch: "main", Subpath: "site.yml"}
 	_, err := r.fetchRepo(context.Background(), spec, "", cacheRoot, workDir)
 	if err == nil {
 		t.Fatal("an unclonable repo must fail")
 	}
-	if strings.Contains(err.Error(), "secret") {
-		t.Errorf("the error text must not echo the URL: %v", err)
+	for _, forbidden := range []string{url, "secret-token", "user:secret"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Errorf("the error text must not carry the URL or its credentials (%q): %v", forbidden, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "git clone") || !strings.Contains(err.Error(), "exit 128") {
+		t.Errorf("the error still names command and exit code: %v", err)
 	}
 }
