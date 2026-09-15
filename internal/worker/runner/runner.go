@@ -47,10 +47,16 @@ import (
 const defaultKillGrace = 5 * time.Second
 
 // The job kinds this executor runs; every other kind is reported as an
-// executor error (the composite dispatch's default, Tasks 10/11 add theirs).
+// executor error (the composite dispatch's default). bootstrap and
+// rotate_key are the Task 11 system playbooks: their claims ship no
+// playbook — the runner materializes the worker's embedded YAML (see
+// materializePlaybook) against the one-host inventory the executor built
+// from the kind payload.
 const (
-	kindRun   = "run"
-	kindAdhoc = "adhoc"
+	kindRun        = "run"
+	kindAdhoc      = "adhoc"
+	kindBootstrap  = "bootstrap"
+	kindRotateKey  = "rotate_key"
 )
 
 // The runner's own bookend events; the state values are the manager's
@@ -99,7 +105,7 @@ func NewRunner(runnerBin, ansibleBin, gitBin string, killGrace time.Duration, lo
 // view is built on the stats, and a stats-less success would lie.
 func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, sink func(*workerpb.RunEvent) error) (worker.Status, map[string]any, error) {
 	switch job.GetKind() {
-	case kindRun, kindAdhoc:
+	case kindRun, kindAdhoc, kindBootstrap, kindRotateKey:
 	default:
 		return worker.StatusError, nil, fmt.Errorf("job kind %q has no ansible-runner executor", job.GetKind())
 	}

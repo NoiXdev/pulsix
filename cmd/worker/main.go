@@ -72,10 +72,13 @@ func run(env []string) int {
 	}
 	defer func() { _ = conn.Close() }() // best-effort: the process is exiting anyway
 
-	// The kind dispatch: the ansible-runner executor serves run and
-	// ad-hoc jobs, the ssh-probe executor serves connection tests.
-	// A kind with no executor in this build reports an infrastructure
-	// error — the claim is at-least-once, the manager requeues it.
+	// The kind dispatch: the ansible-runner executor serves run and ad-hoc
+	// jobs and the Task 11 system playbooks (bootstrap and rotate_key —
+	// the two executors reshape their one-host claim and delegate to the
+	// same runner), the ssh-probe executor serves connection tests and the
+	// repo-sync executor serves sync_repo. A kind with no executor in this
+	// build reports an infrastructure error — the claim is at-least-once,
+	// the manager requeues it.
 	runExec := runner.NewRunner(cfg.AnsibleRunnerBin, cfg.AnsibleBin, "git", 0, slog.Default())
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, slog.Default())
 	loop := worker.NewLoop(
@@ -83,7 +86,10 @@ func run(env []string) int {
 		worker.NewCompositeExecutor(map[string]worker.Executor{
 			"run":             runExec,
 			"adhoc":           runExec,
+			"bootstrap":       worker.NewBootstrapExecutor(runExec),
+			"rotate_key":      worker.NewRotateExecutor(runExec),
 			"connection_test": probeExec,
+			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
 		}),
 		worker.WithLogger(slog.Default()),
 	)

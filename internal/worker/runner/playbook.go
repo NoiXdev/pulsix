@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	workerplaybooks "github.com/noixdev/pulsix/internal/worker/playbooks"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,10 +24,18 @@ import (
 // enqueue time (Task 15), the runner defends the same bound.
 const maxAdhocArgv = 8 << 10
 
+// The embedded system playbooks' names (internal/worker/playbooks).
+const (
+	sysBootstrap = "pulsix.bootstrap.yml"
+	sysRotateKey = "pulsix.rotate_key.yml"
+)
+
 // materializePlaybook resolves the run's playbook file and returns its
-// absolute path. An adhoc kind builds its inline playbook; a run job with a
-// repo reference fetches the repository (repo cache dir) and points at the
-// file inside the clone; an inline playbook is written verbatim.
+// absolute path. An adhoc kind builds its inline playbook; a bootstrap or
+// rotate_key job materializes the worker's embedded system playbook; a run
+// job with a repo reference fetches the repository (repo cache dir) and
+// points at the file inside the clone; an inline playbook is written
+// verbatim.
 func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env worker.RunEnv) (string, error) {
 	if job.GetKind() == kindAdhoc {
 		text, err := adhocPlaybookText(job.GetKindPayload())
@@ -35,6 +44,24 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 		}
 		path := filepath.Join(env.WorkDir, projectDirName, playbookFileName)
 		if err := writeTextFile(path, text, 0o600); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+
+	// The two system playbooks ride inside the worker binary; their claims
+	// carry no playbook field, so the kind decides the file.
+	if job.GetKind() == kindBootstrap || job.GetKind() == kindRotateKey {
+		name := sysBootstrap
+		if job.GetKind() == kindRotateKey {
+			name = sysRotateKey
+		}
+		text, err := workerplaybooks.Get(name)
+		if err != nil {
+			return "", fmt.Errorf("embedded playbook: %w", err)
+		}
+		path := filepath.Join(env.WorkDir, projectDirName, playbookFileName)
+		if err := writeTextFile(path, string(text), 0o600); err != nil {
 			return "", err
 		}
 		return path, nil

@@ -1,0 +1,23 @@
+# pulsix.bootstrap.yml — creates the ansible user, installs the public key
+# and a passwordless sudo rule (spec §5). Runs with the operator-provided
+# one-time login; that login is used once and never stored.
+- hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure ansible user exists
+      ansible.builtin.user:
+        name: "{{ pulsix_user | default('ansible') }}"
+        shell: /bin/bash
+        state: present
+    - name: Install public key
+      ansible.builtin.authorized_key:
+        user: "{{ pulsix_user | default('ansible') }}"
+        key: "{{ pulsix_public_key }}"
+        manage_dir: true
+    - name: Allow passwordless sudo
+      ansible.builtin.copy:
+        content: "{{ pulsix_user | default('ansible') }} ALL=(ALL) NOPASSWD:ALL\n"
+        dest: "/etc/sudoers.d/90-pulsix-{{ pulsix_user | default('ansible') }}"
+        mode: "0440"
+        validate: "visudo -cf %s"

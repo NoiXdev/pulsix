@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/noixdev/pulsix/internal/worker"
 )
 
 // gitRepoSpec is one repository the run must materialize, straight from the
@@ -61,15 +62,38 @@ type gitCredential struct {
 // the claim's Secret JSON for `git:<repo-id>`; empty means the repo fetches
 // without a credential.
 func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, cacheRoot, workDir string) (string, error) {
+	sub, err := safeSubpath(spec.Subpath)
+	if err != nil {
+		return "", fmt.Errorf("repo subpath: %w", err)
+	}
+	dir, err := r.FetchRepoDir(ctx, worker.RepoSpec{
+		OrgID: spec.OrgID, RepoID: spec.RepoID, URL: spec.URL, Branch: spec.Branch,
+	}, secretJSON, cacheRoot, workDir)
+	if err != nil {
+		return "", err
+	}
+	playbook := filepath.Join(dir, sub)
+	fi, statErr := os.Stat(playbook)
+	if statErr != nil || fi.IsDir() {
+		return "", fmt.Errorf("playbook %s is not a file in the repository cache", spec.Subpath)
+	}
+	return playbook, nil
+}
+
+// FetchRepoDir materializes a repository in the org-scoped cache and
+// returns the clone's local directory: clone into
+// RepoCacheDir/<org-id>/<repo-id> when absent, fetch+reset to the branch
+// tip when present. It is the sync_repo executor's fetch too — a repo sync
+// materializes the same directory a repo playbook's claim fetches, minus
+// the playbook-file resolution the run jobs need. secretJSON is the claim's
+// Secret JSON for `git:<repo-id>`; empty means the repo fetches without a
+// credential.
+func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJSON, cacheRoot, workDir string) (string, error) {
 	if spec.URL == "" {
 		return "", errors.New("repo has no url")
 	}
 	if spec.Branch == "" {
 		return "", errors.New("repo has no branch")
-	}
-	sub, err := safeSubpath(spec.Subpath)
-	if err != nil {
-		return "", fmt.Errorf("repo subpath: %w", err)
 	}
 
 	var cred gitCredential
@@ -146,13 +170,7 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 		}
 		_ = os.Chmod(target, 0o700)
 	}
-
-	playbook := filepath.Join(target, sub)
-	fi, statErr := os.Stat(playbook)
-	if statErr != nil || fi.IsDir() {
-		return "", fmt.Errorf("playbook %s is not a file in the repository cache", spec.Subpath)
-	}
-	return playbook, nil
+	return target, nil
 }
 
 // gitSSHCommand points ssh at the fetched key file: identities pinned to

@@ -1,0 +1,12 @@
+# pulsix.rotate_key.yml — mirrors pulsix.bootstrap.yml with only the
+# authorized_key task: it runs with the credential being rotated (the old
+# login, still valid on the host) and installs the new public key.
+- hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install new public key
+      ansible.builtin.authorized_key:
+        user: "{{ pulsix_user | default('ansible') }}"
+        key: "{{ pulsix_public_key }}"
+        manage_dir: true
