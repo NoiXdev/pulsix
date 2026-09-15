@@ -188,6 +188,36 @@ type Store interface {
 	// ListAllHosts returns every host of orgID ordered by name, unpaginated,
 	// for the inventory renderer.
 	ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error)
+
+	// ListOrgIDs returns every organization id, for background
+	// reconciliation passes (the daily re-test). organizations carries no
+	// row-level security by design, so this scan sees all of them.
+	ListOrgIDs(ctx context.Context) ([]uuid.UUID, error)
+
+	// Host-key pins and connection-test history (hostkey.go, spec §5).
+	//
+	// SetHostKeyPin creates the host_ssh row with the defaults when the
+	// host carries no SSH settings of its own, and stores the pin on the
+	// row — nothing else on the row changes. A host that does not exist in
+	// the organization fails (ErrNotFound via the foreign key).
+	SetHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint string) error
+	// ClearHostKeyPin clears the pin; no host_ssh row (nothing pinned) is
+	// a no-op, not an error.
+	ClearHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID) error
+	// ListPinnedKeys maps each host id that carries a pin to its
+	// fingerprint.
+	ListPinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error)
+	// ListChangedKeys returns the host ids whose LATEST connection test
+	// reports a changed host key — the block-on-mismatch input.
+	ListChangedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) ([]uuid.UUID, error)
+	// CreateHostTest appends one connection-test outcome row.
+	CreateHostTest(ctx context.Context, t HostTest) error
+	// LatestHostTest returns the newest test row of the host, ErrNotFound
+	// when the host has never been tested.
+	LatestHostTest(ctx context.Context, orgID, hostID uuid.UUID) (HostTest, error)
+	// ListHostsDueForTest returns the org's managed hosts with no test
+	// newer than since and none still queued — the daily re-test selector.
+	ListHostsDueForTest(ctx context.Context, orgID uuid.UUID, since time.Time) ([]Host, error)
 }
 
 // DefaultListLimit and MaxListLimit bound ListHosts' page size, the same

@@ -45,6 +45,18 @@ type fakeHostStore struct {
 	// ReconcileDefaultZones' own tests set this to whatever candidate list
 	// they want the reconciliation pass to see.
 	orgsWithoutZone []uuid.UUID
+	// orgIDs backs ListOrgIDs the same way.
+	orgIDs []uuid.UUID
+
+	// Host-key pinning and connection-test state (hostkey_test.go). pins
+	// records SetHostKeyPin calls; pinnedKeys/changedHosts/queuedTests are
+	// what the fake's reads report; tests holds the recorded test rows.
+	pins         []pinRecord
+	pinnedKeys   map[uuid.UUID]string
+	changedHosts map[uuid.UUID]bool
+	tests        map[uuid.UUID][]hosts.HostTest
+	latestTestAt map[uuid.UUID]time.Time
+	queuedTests  map[uuid.UUID]bool
 }
 
 func newFakeHostStore() *fakeHostStore {
