@@ -139,7 +139,7 @@ func TestClaimJobZoneAuthorization(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newHarness(t)
-			certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+			certPEM, keyPEM, serial := h.issue("fra-1-a", orgID, zoneID, true)
 			client := h.client(certPEM, keyPEM)
 
 			// The queue holds a job of the OTHER organization: whatever the
@@ -171,6 +171,9 @@ func TestClaimJobZoneAuthorization(t *testing.T) {
 			}
 			if len(calls) != 1 {
 				t.Fatalf("claim port calls = %d, want 1", len(calls))
+			}
+			if row, err := h.store.GetBySerial(t.Context(), serial); err != nil || calls[0].Scope.WorkerID != row.ID {
+				t.Fatalf("claim scope worker = %s, want the authenticated worker's row id (%v)", calls[0].Scope.WorkerID, err)
 			}
 			if calls[0].Scope.OrgID != orgID {
 				t.Fatalf("claim scope org = %s, want the worker's own org %s", calls[0].Scope.OrgID, orgID)

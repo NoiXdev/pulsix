@@ -38,7 +38,7 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 		return nil, status.Errorf(codes.Internal, "touch worker: %v", err)
 	}
 
-	claim, err := s.deps.Claims.Claim(ctx, ClaimScope{OrgID: worker.OrgID, ZoneIDs: zones}, req.GetVersion())
+	claim, err := s.deps.Claims.Claim(ctx, ClaimScope{WorkerID: worker.ID, OrgID: worker.OrgID, ZoneIDs: zones}, req.GetVersion())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "claim job: %v", err)
 	}

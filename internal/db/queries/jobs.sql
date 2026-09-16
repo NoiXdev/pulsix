@@ -74,12 +74,13 @@ ORDER BY seq;
 -- The brief's claimed state is collapsed into running here, with
 -- claimed_at and started_at set together: nothing between the two states
 -- ever observes a job, and the schema's CHECK keeps both spellings legal.
--- worker_id stays NULL: the Claimer port carries no worker identity (see
--- SQLQueue's doc comment). org_id is the claiming worker's own
+-- worker_id records the claiming worker (NULL only for the manager's own
+-- in-process claims): the terminal result is accepted from that worker
+-- alone (SQLQueue.FinishFor). org_id is the claiming worker's own
 -- organization (from its registry row, never from the request): zone ids
 -- are visible through each organization's API, so the zone filter alone
 -- must never be what keeps another organization's jobs out of reach.
-UPDATE jobs SET status = 'running', worker_id = NULL, claimed_at = now(), started_at = now()
+UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now()
 WHERE id = (
   SELECT id FROM jobs
   WHERE status = 'queued' AND org_id = sqlc.arg(org_id)::uuid AND zone_id = ANY(sqlc.arg(zone_ids)::uuid[])

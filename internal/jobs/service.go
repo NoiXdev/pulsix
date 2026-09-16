@@ -297,9 +297,13 @@ type Claim struct {
 }
 
 // Queue is the claim port the gRPC server calls (through internal/app's
-// adapters). Org-unscoped by design: the claim is keyed by zone, and the
-// worker's zones are trusted because the connection already authenticated
-// as a registered worker.
+// adapters). It runs outside any request's organization scope, but nothing
+// a worker sends is trusted on its own: the gRPC layer accepts only the
+// zone the worker's certificate was enrolled for, the claim filters on the
+// worker's own organization, the claimed row records the worker
+// (SQLQueue.ClaimFor), and the terminal result is accepted only from that
+// same worker for a job of its organization and zone
+// (SQLQueue.FinishFor); RunEvents is bound by the one-time claim token.
 type Queue interface {
 	// Claim picks one queued job of orgID for any of the zones, marks it
 	// running and returns its payload plus a fresh binding token. A nil

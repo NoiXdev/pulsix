@@ -1,12 +1,13 @@
 // ReportResult: the terminal unary call. The status must be one of the
 // known set, the job id must parse, and the stats JSON (when present) must
 // decode — all caller errors; everything else goes to the ResultRecorder
-// port and one system audit event.
+// port, bound to the authenticated worker, and one system audit event.
 package grpcsrv
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"google.golang.org/grpc/codes"
@@ -27,7 +28,7 @@ var resultStatuses = map[string]bool{
 
 // ReportResult implements workerpb.WorkerServiceServer.ReportResult.
 func (s *Server) ReportResult(ctx context.Context, req *workerpb.ReportResultRequest) (*workerpb.ReportResultResponse, error) {
-	_, _, err := authenticated(ctx)
+	_, worker, err := authenticated(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +43,21 @@ func (s *Server) ReportResult(ctx context.Context, req *workerpb.ReportResultReq
 	if err != nil {
 		return nil, err
 	}
-	res := Result{JobID: jobID.String(), Status: req.GetStatus(), Stats: stats, Error: req.GetError()}
+	// The result is bound to the authenticated worker: the recorder acts
+	// only on a job of this worker's organization and zone that this
+	// worker claimed. Anything else is NotFound — the same answer as an
+	// unknown id, so a worker learns nothing about other organizations'
+	// jobs — and nothing is written or audited.
+	res := Result{
+		JobID: jobID.String(), Status: req.GetStatus(), Stats: stats, Error: req.GetError(),
+		Worker: WorkerRef{ID: worker.ID, OrgID: worker.OrgID, ZoneID: worker.ZoneID},
+	}
 	if err := s.deps.Results.Finish(ctx, res); err != nil {
+		if errors.Is(err, ErrJobNotClaimed) {
+			slog.WarnContext(ctx, "job result refused: job not claimed by the reporting worker",
+				"job_id", jobID, "worker", worker.Name, "org", worker.OrgID)
+			return nil, status.Error(codes.NotFound, "no job with this id is claimed by this worker")
+		}
 		return nil, status.Errorf(codes.Internal, "record job result: %v", err)
 	}
 	// The org is not carried on the wire: ResultRecorder.Finish resolves

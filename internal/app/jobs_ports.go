@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"google.golang.org/protobuf/proto"
 
@@ -29,7 +30,7 @@ type jobsClaimer struct{ q *jobs.SQLQueue }
 // because a protobuf message must never be copied by value (vet copylocks);
 // merging into a zero message is exactly a copy.
 func (a jobsClaimer) Claim(ctx context.Context, scope grpcsrv.ClaimScope, version string) (*grpcsrv.JobClaim, error) {
-	c, err := a.q.Claim(ctx, scope.OrgID, scope.ZoneIDs, version)
+	c, err := a.q.ClaimFor(ctx, scope.WorkerID, scope.OrgID, scope.ZoneIDs, version)
 	if err != nil || c == nil {
 		return nil, err
 	}
@@ -63,14 +64,22 @@ func (a jobsEventRecorder) Cancelled(ctx context.Context, jobID uuid.UUID) (bool
 // jobsResultRecorder adapts jobs.SQLQueue to grpcsrv.ResultRecorder.
 type jobsResultRecorder struct{ q *jobs.SQLQueue }
 
-// Finish implements grpcsrv.ResultRecorder. The queue's Finish is
-// idempotent, so a worker retrying after a failed audit write is a no-op.
+// Finish implements grpcsrv.ResultRecorder through the worker-bound
+// FinishFor: only the worker that claimed the job (same organization and
+// zone) may finish it; the queue's refusal maps onto grpcsrv's sentinel.
+// FinishFor is idempotent for that worker, so a retry after a failed audit
+// write is a no-op.
 func (a jobsResultRecorder) Finish(ctx context.Context, res grpcsrv.Result) error {
 	jobID, err := uuid.Parse(res.JobID)
 	if err != nil {
 		return err
 	}
-	return a.q.Finish(ctx, jobID, jobs.Status(res.Status), res.Stats, res.Error)
+	worker := jobs.WorkerRef{ID: res.Worker.ID, OrgID: res.Worker.OrgID, ZoneID: res.Worker.ZoneID}
+	err = a.q.FinishFor(ctx, worker, jobID, jobs.Status(res.Status), res.Stats, res.Error)
+	if errors.Is(err, jobs.ErrNotClaimedByWorker) {
+		return grpcsrv.ErrJobNotClaimed
+	}
+	return err
 }
 
 // repoRefSource adapts repos.Service to the jobs queue's RepoSource port:

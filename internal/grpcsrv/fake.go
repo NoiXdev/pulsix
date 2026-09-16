@@ -105,16 +105,35 @@ func (f *FakeEventRecorder) SetCancelling(jobID uuid.UUID, cancelling bool) {
 	f.cancelling[jobID] = cancelling
 }
 
-// FakeResultRecorder records terminal results in a slice.
+// FakeResultRecorder records terminal results in a slice. Once Bind was
+// called it enforces the claim binding like the real queue: a result for a
+// job not bound to the reporting worker is refused with ErrJobNotClaimed
+// and not recorded.
 type FakeResultRecorder struct {
-	mu      sync.Mutex
-	results []Result
+	mu       sync.Mutex
+	results  []Result
+	bindings map[string]WorkerRef
+}
+
+// Bind records that worker claimed jobID.
+func (f *FakeResultRecorder) Bind(jobID string, worker WorkerRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.bindings == nil {
+		f.bindings = map[string]WorkerRef{}
+	}
+	f.bindings[jobID] = worker
 }
 
 // Finish implements ResultRecorder.
 func (f *FakeResultRecorder) Finish(_ context.Context, res Result) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.bindings != nil {
+		if bound, ok := f.bindings[res.JobID]; !ok || bound != res.Worker {
+			return ErrJobNotClaimed
+		}
+	}
 	f.results = append(f.results, res)
 	return nil
 }

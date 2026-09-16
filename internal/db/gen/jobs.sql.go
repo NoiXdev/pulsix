@@ -40,10 +40,10 @@ func (q *Queries) CancelJob(ctx context.Context, arg CancelJobParams) (string, e
 }
 
 const claimJob = `-- name: ClaimJob :one
-UPDATE jobs SET status = 'running', worker_id = NULL, claimed_at = now(), started_at = now()
+UPDATE jobs SET status = 'running', worker_id = $1::uuid, claimed_at = now(), started_at = now()
 WHERE id = (
   SELECT id FROM jobs
-  WHERE status = 'queued' AND org_id = $1::uuid AND zone_id = ANY($2::uuid[])
+  WHERE status = 'queued' AND org_id = $2::uuid AND zone_id = ANY($3::uuid[])
   ORDER BY created_at
   FOR UPDATE SKIP LOCKED
   LIMIT 1
@@ -52,8 +52,9 @@ RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, c
 `
 
 type ClaimJobParams struct {
-	OrgID   uuid.UUID   `json:"org_id"`
-	ZoneIds []uuid.UUID `json:"zone_ids"`
+	WorkerID pgtype.UUID `json:"worker_id"`
+	OrgID    uuid.UUID   `json:"org_id"`
+	ZoneIds  []uuid.UUID `json:"zone_ids"`
 }
 
 // THE org-unscoped claim (plan Global Constraints): runs on the raw pool,
@@ -63,13 +64,14 @@ type ClaimJobParams struct {
 // The brief's claimed state is collapsed into running here, with
 // claimed_at and started_at set together: nothing between the two states
 // ever observes a job, and the schema's CHECK keeps both spellings legal.
-// worker_id stays NULL: the Claimer port carries no worker identity (see
-// SQLQueue's doc comment). org_id is the claiming worker's own
+// worker_id records the claiming worker (NULL only for the manager's own
+// in-process claims): the terminal result is accepted from that worker
+// alone (SQLQueue.FinishFor). org_id is the claiming worker's own
 // organization (from its registry row, never from the request): zone ids
 // are visible through each organization's API, so the zone filter alone
 // must never be what keeps another organization's jobs out of reach.
 func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error) {
-	row := q.db.QueryRow(ctx, claimJob, arg.OrgID, arg.ZoneIds)
+	row := q.db.QueryRow(ctx, claimJob, arg.WorkerID, arg.OrgID, arg.ZoneIds)
 	var i Job
 	err := row.Scan(
 		&i.ID,

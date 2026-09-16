@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -87,15 +88,17 @@ func TestGRPCPortAdapters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Claim: the adapter maps the queue's claim onto grpcsrv's.
-	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1")
+	// Claim: the adapter maps the queue's claim onto grpcsrv's and binds
+	// the job to the claiming worker.
+	worker := grpcsrv.WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone}
+	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
 	if claim.Token == "" || claim.Job.GetId() != j.ID.String() {
 		t.Fatalf("claim = %+v", claim)
 	}
-	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1")
+	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1")
 	if err != nil || empty != nil {
 		t.Fatalf("drained claim = %v, %v", empty, err)
 	}
@@ -120,13 +123,19 @@ func TestGRPCPortAdapters(t *testing.T) {
 	}
 
 	results := jobsResultRecorder{queue}
-	if err := results.Finish(ctx, grpcsrv.Result{JobID: j.ID.String(), Status: "cancelled", Stats: map[string]any{"ok": 1}}); err != nil {
+	// Another worker of the same organization and zone is refused with
+	// grpcsrv's sentinel.
+	stranger := grpcsrv.WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone}
+	if err := results.Finish(ctx, grpcsrv.Result{JobID: j.ID.String(), Status: "succeeded", Worker: stranger}); !errors.Is(err, grpcsrv.ErrJobNotClaimed) {
+		t.Fatalf("stranger's Finish = %v, want grpcsrv.ErrJobNotClaimed", err)
+	}
+	if err := results.Finish(ctx, grpcsrv.Result{JobID: j.ID.String(), Status: "cancelled", Stats: map[string]any{"ok": 1}, Worker: worker}); err != nil {
 		t.Fatalf("Finish: %v", err)
 	}
-	if err := results.Finish(ctx, grpcsrv.Result{JobID: j.ID.String(), Status: "cancelled"}); err != nil {
+	if err := results.Finish(ctx, grpcsrv.Result{JobID: j.ID.String(), Status: "cancelled", Worker: worker}); err != nil {
 		t.Fatalf("idempotent Finish: %v", err)
 	}
-	if err := results.Finish(ctx, grpcsrv.Result{JobID: "not-a-uuid", Status: "failed"}); err == nil {
+	if err := results.Finish(ctx, grpcsrv.Result{JobID: "not-a-uuid", Status: "failed", Worker: worker}); err == nil {
 		t.Fatal("unparseable job id must fail")
 	}
 	got, err := store.GetJob(db.WithOrgScope(ctx, org.ID), org.ID, j.ID)

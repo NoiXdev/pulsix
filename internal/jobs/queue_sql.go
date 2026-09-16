@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/db"
@@ -34,10 +35,10 @@ import (
 // inside a db.WithOrgScope bound to the claimed job's organization, so RLS
 // still applies to them.
 //
-// worker_id stays NULL on claim: the Claimer port the gRPC server defines
-// carries no worker identity (only the connection's zones and the build
-// version, which Workers.Touch already records on the worker row), so the
-// claim cannot name the worker; the claim audit event does.
+// worker_id records the claiming worker on ClaimFor (the gRPC path) and is
+// what binds the terminal result to that worker (FinishFor); the manager's
+// own unbound Claim leaves it NULL, and such a job accepts no worker's
+// result.
 //
 // streams, the bound-stream registry, is in-process and is the source of
 // truth for "a worker is still attached" — the reaper requeues stale
@@ -142,7 +143,19 @@ func NewSQLQueue(d *db.DB, box Sealer, renderer SnapshotSource, creds Credential
 // fails the job with the reason instead of shipping a partial one, and the
 // claim reports an empty queue — the worker polls again and gets the next
 // job.
-func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, _ string) (*Claim, error) {
+func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error) {
+	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version)
+}
+
+// ClaimFor is Claim on behalf of an enrolled worker: the claimed row
+// records workerID (jobs.worker_id), and only that worker's FinishFor is
+// accepted for the job afterwards. The gRPC claim path uses this; Claim
+// (no binding) remains for the manager's own in-process callers.
+func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error) {
+	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version)
+}
+
+func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string) (*Claim, error) {
 	if len(zones) == 0 {
 		return nil, nil
 	}
@@ -151,7 +164,7 @@ func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID
 		return nil, fmt.Errorf("begin claim transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{OrgID: orgID, ZoneIds: zones})
+	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{WorkerID: workerID, OrgID: orgID, ZoneIds: zones})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -770,6 +783,40 @@ func (q *SQLQueue) openKindPayload(job Job) (string, error) {
 // concurrently would otherwise each count the other as still running and
 // neither would finalize the group.
 func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, stats map[string]any, errText string) error {
+	return q.finish(ctx, nil, jobID, status, stats, errText)
+}
+
+// WorkerRef is the enrolled worker a result comes from, as the gRPC layer
+// authenticated it (registry id, organization, zone).
+type WorkerRef struct {
+	ID     uuid.UUID
+	OrgID  uuid.UUID
+	ZoneID uuid.UUID
+}
+
+// ErrNotClaimedByWorker is FinishFor's refusal: the job is unknown, belongs
+// to another organization or zone, was never claimed by a worker, or was
+// claimed by a different worker (including one whose claim the reaper
+// took back). Deliberately one error for all of them, so a worker cannot
+// probe which job ids exist elsewhere.
+var ErrNotClaimedByWorker = errors.New("job is not claimed by this worker")
+
+// FinishFor is Finish on behalf of an enrolled worker — the only form the
+// gRPC result path uses. It acts only on a job whose org_id and zone_id
+// are the worker's and whose worker_id is the worker's own (set by
+// ClaimFor); anything else returns ErrNotClaimedByWorker without touching
+// the row, the sinks or the payload. The binding is checked before the
+// transaction and enforced again in the status UPDATE's WHERE clause, so a
+// reaper requeue in between cannot slip a stranger's result through. An
+// already terminal job the worker itself finished stays the idempotent
+// no-op.
+func (q *SQLQueue) FinishFor(ctx context.Context, worker WorkerRef, jobID uuid.UUID, status Status, stats map[string]any, errText string) error {
+	return q.finish(ctx, &worker, jobID, status, stats, errText)
+}
+
+// finish is Finish/FinishFor; worker nil means the manager's own unbound
+// finish.
+func (q *SQLQueue) finish(ctx context.Context, worker *WorkerRef, jobID uuid.UUID, status Status, stats map[string]any, errText string) error {
 	if !status.Terminal() {
 		return fmt.Errorf("%w: %q is not a terminal status", ErrInvalidInput, status)
 	}
@@ -783,15 +830,29 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 	}
 	// org_id, kind and run_group_id never change after insert, so reading
 	// them before the transaction is safe; the org binds the transaction.
-	var orgID, groupID uuid.UUID
+	var orgID, zoneID, groupID uuid.UUID
 	var kind string
+	var claimedBy *uuid.UUID
 	if err := q.db.Pool().QueryRow(ctx,
-		`SELECT org_id, kind, run_group_id FROM jobs WHERE id = $1`, jobID,
-	).Scan(&orgID, &kind, &groupID); err != nil {
+		`SELECT org_id, zone_id, kind, run_group_id, worker_id FROM jobs WHERE id = $1`, jobID,
+	).Scan(&orgID, &zoneID, &kind, &groupID, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if worker != nil {
+				return ErrNotClaimedByWorker
+			}
 			return ErrNotFound
 		}
 		return fmt.Errorf("look up job: %w", err)
+	}
+	if worker != nil && (orgID != worker.OrgID || zoneID != worker.ZoneID || claimedBy == nil || *claimedBy != worker.ID) {
+		slog.WarnContext(ctx, "job result refused: job not claimed by the reporting worker",
+			"job", jobID, "worker", worker.ID, "worker_org", worker.OrgID)
+		return ErrNotClaimedByWorker
+	}
+	// A nil boundWorker matches every row (the manager's own finish).
+	var boundWorker *uuid.UUID
+	if worker != nil {
+		boundWorker = &worker.ID
 	}
 
 	finished := false
@@ -804,15 +865,20 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 		}
 		tag, err := q.db.Exec(ctx,
 			`UPDATE jobs SET status = $2, stats = $3, error = $4, finished_at = $5
-			 WHERE id = $1 AND status IN ('running', 'cancelling')`,
-			jobID, string(status), statsJSON, errText, q.now())
+			 WHERE id = $1 AND status IN ('running', 'cancelling')
+			   AND ($6::uuid IS NULL OR worker_id = $6::uuid)`,
+			jobID, string(status), statsJSON, errText, q.now(), boundWorker)
 		if err != nil {
 			return fmt.Errorf("finish job: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
 			var current string
-			if err := q.db.QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&current); err != nil {
+			var nowClaimedBy *uuid.UUID
+			if err := q.db.QueryRow(ctx, `SELECT status, worker_id FROM jobs WHERE id = $1`, jobID).Scan(&current, &nowClaimedBy); err != nil {
 				return fmt.Errorf("look up job status: %w", err)
+			}
+			if boundWorker != nil && (nowClaimedBy == nil || *nowClaimedBy != *boundWorker) {
+				return ErrNotClaimedByWorker
 			}
 			if Status(current).Terminal() {
 				return nil

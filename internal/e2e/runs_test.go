@@ -100,10 +100,10 @@ func (s *scenario) drive() {
 	if run.Job.Status != "succeeded" {
 		s.t.Fatalf("run job = %q (error %q)", run.Job.Status, run.Job.Error)
 	}
-	// v0.2b's claim leaves worker_id unset (the claim audit event names the
-	// worker instead), so the detail's worker name stays empty.
-	if run.Job.WorkerName != "" {
-		s.t.Fatalf("run worker_name = %q, want empty (v0.2b claim contract)", run.Job.WorkerName)
+	// The claim records the claiming worker (worker_id binds the result to
+	// it), so the detail names the enrolled worker.
+	if run.Job.WorkerName != "e2e-worker" {
+		s.t.Fatalf("run worker_name = %q, want the claiming worker e2e-worker", run.Job.WorkerName)
 	}
 	if run.Job.Template == nil || run.Job.Template.Name != "hello" {
 		s.t.Fatalf("run template = %+v, want the hello template", run.Job.Template)

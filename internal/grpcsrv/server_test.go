@@ -48,6 +48,61 @@ func TestReportResultHappyPath(t *testing.T) {
 	}
 }
 
+// TestReportResultBoundToClaimingWorker (fix round 2): a worker may finish
+// only a job it claimed itself. The server hands the recorder the
+// authenticated worker (never anything from the request), and a job bound
+// to any other worker — of another organization, or of the same
+// organization and zone — is refused with NotFound: nothing recorded,
+// nothing audited.
+func TestReportResultBoundToClaimingWorker(t *testing.T) {
+	otherOrg := uuid.MustParse("33333333-3333-7333-8333-333333333333")
+	otherZone := uuid.MustParse("44444444-4444-7444-8444-444444444444")
+	tests := []struct {
+		name     string
+		boundTo  func(self WorkerRef) WorkerRef
+		wantCode codes.Code
+	}{
+		{name: "claimed by the caller", boundTo: func(self WorkerRef) WorkerRef { return self }, wantCode: codes.OK},
+		{name: "job of another organization", boundTo: func(WorkerRef) WorkerRef {
+			return WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: otherOrg, ZoneID: otherZone}
+		}, wantCode: codes.NotFound},
+		{name: "same organization and zone, claimed by another worker", boundTo: func(self WorkerRef) WorkerRef {
+			return WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: self.OrgID, ZoneID: self.ZoneID}
+		}, wantCode: codes.NotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			certPEM, keyPEM, serial := h.issue("fra-1-a", orgID, zoneID, true)
+			client := h.client(certPEM, keyPEM)
+			row, err := h.store.GetBySerial(t.Context(), serial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			self := WorkerRef{ID: row.ID, OrgID: orgID, ZoneID: zoneID}
+
+			jobID := uuid.Must(uuid.NewV7())
+			h.results.Bind(jobID.String(), tt.boundTo(self))
+			_, err = client.ReportResult(t.Context(), &workerpb.ReportResultRequest{
+				JobId: jobID.String(), Status: "succeeded", Stats: `{"forged":{"ok":1}}`,
+			})
+			if status.Code(err) != tt.wantCode {
+				t.Fatalf("code = %s (%v), want %s", status.Code(err), err, tt.wantCode)
+			}
+			results, events := h.results.Results(), h.audit.Events()
+			if tt.wantCode != codes.OK {
+				if len(results) != 0 || len(events) != 0 {
+					t.Fatalf("refused result recorded %+v / audited %+v", results, events)
+				}
+				return
+			}
+			if len(results) != 1 || results[0].Worker != self {
+				t.Fatalf("results = %+v, want one carrying the authenticated worker %+v", results, self)
+			}
+		})
+	}
+}
+
 // TestReportResultUnknownStatus: the status set is closed.
 func TestReportResultUnknownStatus(t *testing.T) {
 	h := newHarness(t)

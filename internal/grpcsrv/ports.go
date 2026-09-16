@@ -14,6 +14,7 @@ package grpcsrv
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,8 +35,11 @@ type JobClaim struct {
 // enrolled zone). The server builds it from the registry row the auth
 // interceptor resolved, never from the request alone.
 type ClaimScope struct {
-	OrgID   uuid.UUID
-	ZoneIDs []uuid.UUID
+	// WorkerID is the claiming worker's registry id: the claimed job is
+	// bound to it, and only that worker may report the job's result.
+	WorkerID uuid.UUID
+	OrgID    uuid.UUID
+	ZoneIDs  []uuid.UUID
 }
 
 // Claimer picks one queued job for a worker. Org-unscoped at the database
@@ -68,13 +72,30 @@ type EventRecorder interface {
 	Cancelled(ctx context.Context, jobID uuid.UUID) (bool, error)
 }
 
+// WorkerRef is the authenticated worker behind a call, taken from the
+// registry row the auth interceptor resolved — never from the request.
+type WorkerRef struct {
+	ID     uuid.UUID
+	OrgID  uuid.UUID
+	ZoneID uuid.UUID
+}
+
 // Result is the terminal status a worker reports for a finished job.
 type Result struct {
 	JobID  string
 	Status string // succeeded | failed | cancelled | error
 	Stats  map[string]any
 	Error  string
+	// Worker is the reporting worker. The recorder must act only on a job
+	// of Worker's organization and zone that Worker itself claimed.
+	Worker WorkerRef
 }
+
+// ErrJobNotClaimed is what a ResultRecorder returns when the job is not a
+// job the reporting worker holds: unknown, of another organization or
+// zone, never claimed, or claimed by a different worker. ReportResult maps
+// it to NotFound, deliberately indistinguishable from an unknown id.
+var ErrJobNotClaimed = errors.New("job is not claimed by this worker")
 
 // ResultRecorder writes the terminal status.
 type ResultRecorder interface {
