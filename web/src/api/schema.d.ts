@@ -455,6 +455,23 @@ export interface paths {
         patch: operations["updateCredential"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/credentials/{id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org credentials by ID rotate */
+        post: operations["rotateCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts": {
         parameters: {
             query?: never;
@@ -509,6 +526,23 @@ export interface paths {
         patch: operations["updateHost"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/hosts/{id}/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org hosts by ID bootstrap */
+        post: operations["bootstrapHost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts/{id}/capabilities": {
         parameters: {
             query?: never;
@@ -524,6 +558,42 @@ export interface paths {
         head?: never;
         /** Patch API v1 orgs by org hosts by ID capabilities */
         patch: operations["setHostCapabilities"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/connection-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID connection test */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-connection-test"];
+        put?: never;
+        /** Post API v1 orgs by org hosts by ID connection test */
+        post: operations["startConnectionTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org hosts by ID host key */
+        put: operations["setHostKey"];
+        post?: never;
+        /** Delete API v1 orgs by org hosts by ID host key */
+        delete: operations["clearHostKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/orgs/{org}/hosts/{id}/inventory/groups": {
@@ -736,6 +806,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/job-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org job templates */
+        get: operations["get-api-v1-orgs-by-org-job-templates"];
+        put?: never;
+        /** Post API v1 orgs by org job templates */
+        post: operations["createTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/job-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org job templates by ID */
+        get: operations["get-api-v1-orgs-by-org-job-templates-by-id"];
+        /** Put API v1 orgs by org job templates by ID */
+        put: operations["updateTemplate"];
+        post?: never;
+        /** Delete API v1 orgs by org job templates by ID */
+        delete: operations["deleteTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/job-templates/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org job templates by ID run */
+        post: operations["runJobTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org jobs */
+        get: operations["get-api-v1-orgs-by-org-jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org jobs by ID */
+        get: operations["get-api-v1-orgs-by-org-jobs-by-id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org jobs by ID cancel */
+        post: operations["cancelJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org jobs by ID events */
+        get: operations["get-api-v1-orgs-by-org-jobs-by-id-events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}/retry-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org jobs by ID retry failed */
+        post: operations["retryFailedJobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org jobs by ID stream */
+        get: operations["get-api-v1-orgs-by-org-jobs-by-id-stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/members": {
         parameters: {
             query?: never;
@@ -769,6 +995,97 @@ export interface paths {
         head?: never;
         /** Patch API v1 orgs by org members by user ID */
         patch: operations["changeMemberRole"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/playbooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org playbooks */
+        get: operations["get-api-v1-orgs-by-org-playbooks"];
+        put?: never;
+        /** Post API v1 orgs by org playbooks */
+        post: operations["createPlaybook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/playbooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org playbooks by ID */
+        get: operations["get-api-v1-orgs-by-org-playbooks-by-id"];
+        /** Put API v1 orgs by org playbooks by ID */
+        put: operations["updatePlaybook"];
+        post?: never;
+        /** Delete API v1 orgs by org playbooks by ID */
+        delete: operations["deletePlaybook"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org repos */
+        get: operations["get-api-v1-orgs-by-org-repos"];
+        put?: never;
+        /** Post API v1 orgs by org repos */
+        post: operations["createRepo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org repos by ID */
+        get: operations["get-api-v1-orgs-by-org-repos-by-id"];
+        /** Put API v1 orgs by org repos by ID */
+        put: operations["updateRepo"];
+        post?: never;
+        /** Delete API v1 orgs by org repos by ID */
+        delete: operations["deleteRepo"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org repos by ID sync */
+        post: operations["syncRepo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/orgs/{org}/tags": {
@@ -952,6 +1269,24 @@ export interface components {
             readonly $schema?: string;
             bastion: components["schemas"]["BastionDTO"];
         };
+        BootstrapInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BootstrapInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description One-time password; exactly one of password and private_key */
+            password?: string;
+            /** @description One-time private key; exactly one of password and private_key */
+            private_key?: string;
+            user: string;
+        };
+        CheckDTO: {
+            detail: string;
+            name: string;
+            ok: boolean;
+        };
         CodeInputBody: {
             /**
              * Format: uri
@@ -967,6 +1302,15 @@ export interface components {
             bastions?: string[] | null;
             credential_id?: string;
             host_id: string;
+        };
+        ConnectionTestStartOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ConnectionTestStartOutputBody.json
+             */
+            readonly $schema?: string;
+            job_id: string;
         };
         Cookie: {
             Domain: string;
@@ -1347,6 +1691,15 @@ export interface components {
             name: string;
             zone_id: string;
         };
+        HostKeyInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostKeyInputBody.json
+             */
+            readonly $schema?: string;
+            fingerprint: string;
+        };
         HostListOutputBody: {
             /**
              * Format: uri
@@ -1436,6 +1789,23 @@ export interface components {
              */
             readonly $schema?: string;
             tags: components["schemas"]["TagDTO"][] | null;
+        };
+        HostTestDTO: {
+            /** Format: date-time */
+            at: string;
+            checks: components["schemas"]["CheckDTO"][] | null;
+            host_key: string;
+            host_key_state: string;
+            ok: boolean;
+        };
+        HostTestOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostTestOutputBody.json
+             */
+            readonly $schema?: string;
+            test: components["schemas"]["HostTestDTO"];
         };
         InventoryMemberDTO: {
             complete: boolean;
@@ -1528,6 +1898,132 @@ export interface components {
             expires_at: string;
             mail_sent: boolean;
             role: string;
+        };
+        JobCancelOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/JobCancelOutputBody.json
+             */
+            readonly $schema?: string;
+            job: components["schemas"]["JobStruct"];
+        };
+        JobDTO: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            /** @enum {string} */
+            kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "sync_repo";
+            run_group_id: string;
+            /** @enum {string} */
+            status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
+            template_id?: string;
+            /** @enum {string} */
+            trigger: "manual" | "system";
+            zone_id: string;
+        };
+        JobDetailDTO: {
+            actor_name?: string;
+            /** Format: date-time */
+            created_at: string;
+            error?: string;
+            /** Format: date-time */
+            finished_at?: string;
+            group: components["schemas"]["JobGroupMemberDTO"][] | null;
+            /** @description The job's target host ids */
+            hosts: string[] | null;
+            id: string;
+            /** @enum {string} */
+            kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "sync_repo";
+            run_group_id: string;
+            /** Format: date-time */
+            started_at?: string;
+            stats: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
+            template: components["schemas"]["JobTemplateSummaryDTO"];
+            /** @enum {string} */
+            trigger: "manual" | "system";
+            worker_name?: string;
+            zone_id: string;
+        };
+        JobDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/JobDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            job: components["schemas"]["JobDetailDTO"];
+        };
+        JobEventDTO: {
+            /** Format: date-time */
+            at: string;
+            host: string;
+            /** @description The event payload as stored (a bare stdout line reads as {"text": "..."}) */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Format: int64 */
+            seq: number;
+            state: string;
+            task: string;
+        };
+        JobEventsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/JobEventsOutputBody.json
+             */
+            readonly $schema?: string;
+            events: components["schemas"]["JobEventDTO"][] | null;
+        };
+        JobGroupMemberDTO: {
+            id: string;
+            /** @enum {string} */
+            status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
+            zone_id: string;
+        };
+        JobListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/JobListOutputBody.json
+             */
+            readonly $schema?: string;
+            jobs: components["schemas"]["JobDTO"][] | null;
+            next_cursor: string;
+        };
+        JobRefDTO: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            kind: string;
+            run_group_id: string;
+            status: string;
+            trigger: string;
+            zone_id: string;
+        };
+        JobStartOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/JobStartOutputBody.json
+             */
+            readonly $schema?: string;
+            jobs: components["schemas"]["JobDTO"][] | null;
+        };
+        JobStruct: {
+            id: string;
+            /** @enum {string} */
+            status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
+        };
+        JobTemplateSummaryDTO: {
+            id: string;
+            /** @description (deleted) when the template no longer exists */
+            name: string;
         };
         KeyValuesDTO: {
             key: string;
@@ -1752,6 +2248,61 @@ export interface components {
             name: string;
             response: unknown;
         };
+        PlaybookCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookCreateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Editor playbooks: the YAML document */
+            inline?: string;
+            name?: string;
+            path?: string;
+            repo_id?: string;
+        };
+        PlaybookDTO: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            inline?: string;
+            path?: string;
+            repo_id?: string;
+            /** @enum {string} */
+            source: "repo" | "editor";
+            summary: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PlaybookDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            playbook: components["schemas"]["PlaybookDTO"];
+        };
+        PlaybookListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookListOutputBody.json
+             */
+            readonly $schema?: string;
+            playbooks: components["schemas"]["PlaybookDTO"][] | null;
+        };
+        PlaybookUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Editor playbooks: the replacement YAML document */
+            inline: string;
+            name?: string;
+        };
         PreviewOutputBody: {
             /**
              * Format: uri
@@ -1779,6 +2330,85 @@ export interface components {
              */
             readonly $schema?: string;
             recovery_codes: string[] | null;
+        };
+        RepoCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoCreateInputBody.json
+             */
+            readonly $schema?: string;
+            branch?: string;
+            credential_id?: string;
+            name: string;
+            subpath?: string;
+            url: string;
+        };
+        RepoDTO: {
+            branch: string;
+            /** Format: date-time */
+            created_at: string;
+            credential_id?: string;
+            id: string;
+            /** Format: date-time */
+            last_sync?: string;
+            last_sync_error?: string;
+            name: string;
+            subpath: string;
+            /** Format: date-time */
+            updated_at: string;
+            url: string;
+        };
+        RepoDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            repo: components["schemas"]["RepoDTO"];
+        };
+        RepoListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoListOutputBody.json
+             */
+            readonly $schema?: string;
+            repos: components["schemas"]["RepoDTO"][] | null;
+        };
+        RepoSyncOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoSyncOutputBody.json
+             */
+            readonly $schema?: string;
+            job: components["schemas"]["JobRefDTO"];
+        };
+        RepoUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            branch?: string;
+            credential_id?: string;
+            name: string;
+            subpath?: string;
+            url: string;
+        };
+        RotationStartOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RotationStartOutputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            job_count: number;
+            job_id: string;
         };
         Schema: {
             fields: components["schemas"]["Field"][] | null;
@@ -1877,6 +2507,90 @@ export interface components {
         TagInput: {
             key: string;
             value: string;
+        };
+        TemplateCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateCreateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The default SSH credential for hosts without one of their own */
+            credential_id?: string;
+            /** @description Validated against extra_vars_schema when one is set; secrets read back as {"$secret": "set"} */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            /** @description The optional typed schema the extra vars must satisfy */
+            extra_vars_schema?: components["schemas"]["Schema"];
+            /** @description Free-form ansible limit pattern */
+            limit?: string;
+            name: string;
+            playbook_id: string;
+            scope?: components["schemas"]["TemplateScopeInput"];
+        };
+        TemplateDTO: {
+            /** Format: date-time */
+            created_at: string;
+            credential_id?: string;
+            extra_vars: {
+                [key: string]: unknown;
+            };
+            extra_vars_schema?: components["schemas"]["Schema"];
+            id: string;
+            limit: string;
+            name: string;
+            playbook_id: string;
+            scope: components["schemas"]["TemplateScopeDTO"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        TemplateDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            template: components["schemas"]["TemplateDTO"];
+        };
+        TemplateListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateListOutputBody.json
+             */
+            readonly $schema?: string;
+            templates: components["schemas"]["TemplateDTO"][] | null;
+        };
+        TemplateScopeDTO: {
+            group_id: string | null;
+            host_ids: string[] | null;
+        };
+        TemplateScopeInput: {
+            group_id?: string;
+            host_ids?: string[] | null;
+        };
+        TemplateUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The default SSH credential for hosts without one of their own */
+            credential_id?: string;
+            /** @description Validated against extra_vars_schema when one is set; secrets read back as {"$secret": "set"} */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            /** @description The optional typed schema the extra vars must satisfy */
+            extra_vars_schema?: components["schemas"]["Schema"];
+            /** @description Free-form ansible limit pattern */
+            limit?: string;
+            name: string;
+            playbook_id: string;
+            scope?: components["schemas"]["TemplateScopeInput"];
         };
         TokenDTO: {
             /** Format: date-time */
@@ -3093,6 +3807,38 @@ export interface operations {
             };
         };
     };
+    rotateCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RotationStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-hosts": {
         parameters: {
             query?: {
@@ -3301,6 +4047,42 @@ export interface operations {
             };
         };
     };
+    bootstrapHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BootstrapInputBody"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     setHostCapabilities: {
         parameters: {
             query?: never;
@@ -3324,6 +4106,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostGetOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-hosts-by-id-connection-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostTestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    startConnectionTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setHostKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostKeyInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    clearHostKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */
@@ -3964,6 +4878,403 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-job-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-job-templates-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    runJobTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-jobs": {
+        parameters: {
+            query?: {
+                status?: string;
+                kind?: string;
+                template_id?: string;
+                group?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-jobs-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    cancelJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobCancelOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-jobs-by-id-events": {
+        parameters: {
+            query?: {
+                /** @description Only events with a greater sequence number come back */
+                after?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobEventsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    retryFailedJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-jobs-by-id-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-members": {
         parameters: {
             query?: never;
@@ -4050,6 +5361,370 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-playbooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createPlaybook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaybookCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-playbooks-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updatePlaybook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaybookUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deletePlaybook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-repos-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    syncRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSyncOutputBody"];
                 };
             };
             /** @description Error */
