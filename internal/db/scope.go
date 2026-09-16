@@ -41,8 +41,17 @@ func OrgScope(ctx context.Context) (uuid.UUID, bool) {
 	return id, ok
 }
 
-// readTxKey is the context key WithReadTx binds its transaction under.
-type readTxKey struct{}
+// boundTxKey is the context key WithReadTx and WithWriteTx bind their
+// transaction under.
+type boundTxKey struct{}
+
+// boundTx is one transaction bound to a context; write distinguishes
+// WithWriteTx's read-write transaction (where Begin and WithOrg nest as
+// savepoints) from WithReadTx's shared read-only one.
+type boundTx struct {
+	tx    pgx.Tx
+	write bool
+}
 
 // WithReadTx runs fn against a context bound to one read-only, repeatable
 // read transaction scoped to orgID (backlog 2.16): every statement any
@@ -73,16 +82,51 @@ func (d *DB) WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx contex
 	if _, err := tx.Exec(ctx, `SELECT set_config('pulsix.org_id', $1, true)`, orgID.String()); err != nil {
 		return fmt.Errorf("bind read transaction to organization: %w", err)
 	}
-	if err := fn(context.WithValue(ctx, readTxKey{}, tx)); err != nil {
+	if err := fn(context.WithValue(ctx, boundTxKey{}, boundTx{tx: tx})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// readTx reports the transaction WithReadTx bound to ctx, if any.
-func readTx(ctx context.Context) (pgx.Tx, bool) {
-	tx, ok := ctx.Value(readTxKey{}).(pgx.Tx)
-	return tx, ok
+// WithWriteTx runs fn against a context bound to one read-write
+// transaction scoped to orgID: every statement any store built on *DB
+// executes through the ctx fn receives runs inside this one transaction,
+// so a caller that composes writes across several domain stores (the job
+// queue's finish: the terminal status, the connection-test row, the
+// repository's sync state, the rotated credential and the payload wipe)
+// commits all of them or none of them. A store that opens its own
+// transaction inside — Begin, or WithOrg — gets a savepoint nested in the
+// bound transaction, so its own Commit never ends the outer one early.
+//
+// fn's error rolls everything back and propagates unchanged; a context
+// cancelled before the commit rolls everything back too (the commit fails
+// on the cancelled context, and the deferred rollback releases the
+// connection). Success commits.
+func (d *DB) WithWriteTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	tx, err := d.beginOrg(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	// The rollback must run even when ctx is already cancelled, so the
+	// connection goes back to the pool clean.
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	if err := fn(context.WithValue(ctx, boundTxKey{}, boundTx{tx: tx, write: true})); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("commit write transaction: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit write transaction: %w", err)
+	}
+	return nil
+}
+
+// txOf reports the transaction WithReadTx or WithWriteTx bound to ctx, if
+// any.
+func txOf(ctx context.Context) (boundTx, bool) {
+	b, ok := ctx.Value(boundTxKey{}).(boundTx)
+	return b, ok
 }
 
 // Exec runs sql on the pool, or — when ctx carries an org scope — inside a
@@ -90,8 +134,8 @@ func readTx(ctx context.Context) (pgx.Tx, bool) {
 // Begin it makes *DB a drop-in gen.DBTX: stores build their sqlc queries
 // with gen.New(d) and never see the pool itself.
 func (d *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if tx, ok := readTx(ctx); ok {
-		return tx.Exec(ctx, sql, args...)
+	if b, ok := txOf(ctx); ok {
+		return b.tx.Exec(ctx, sql, args...)
 	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
@@ -111,8 +155,8 @@ func (d *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandT
 // org-bound transaction, and Scan's error (pgx.ErrNoRows included) comes
 // back unchanged.
 func (d *DB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if tx, ok := readTx(ctx); ok {
-		return tx.QueryRow(ctx, sql, args...)
+	if b, ok := txOf(ctx); ok {
+		return b.tx.QueryRow(ctx, sql, args...)
 	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
@@ -126,8 +170,8 @@ func (d *DB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 // by the caller, or implicitly once Next reports the last row — which then
 // commits it (or rolls it back if reading the rows failed).
 func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if tx, ok := readTx(ctx); ok {
-		return tx.Query(ctx, sql, args...)
+	if b, ok := txOf(ctx); ok {
+		return b.tx.Query(ctx, sql, args...)
 	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
@@ -149,14 +193,21 @@ func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 // commit together. When ctx carries an org scope, the transaction is bound
 // to that organization before it is handed back.
 func (d *DB) Begin(ctx context.Context) (pgx.Tx, error) {
-	if tx, ok := readTx(ctx); ok {
+	if b, ok := txOf(ctx); ok {
+		if b.write {
+			// Inside WithWriteTx a store's own transaction is a savepoint:
+			// its Commit releases the savepoint, its Rollback undoes only
+			// its own statements, and the outer transaction decides what
+			// persists.
+			return b.tx.Begin(ctx)
+		}
 		// No production caller does this today (the renderer's read path
 		// never opens its own nested transaction) — TestWithReadTxBeginReturns
 		// TheSharedTransaction (scope_test.go) is what exercises this branch.
 		// A future caller gets the SAME shared transaction, not a new one —
 		// committing or rolling it back ends WithReadTx's transaction early
 		// for every other store still reading through it.
-		return tx, nil
+		return b.tx, nil
 	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {

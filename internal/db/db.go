@@ -110,7 +110,22 @@ func (d *DB) Migrate(ctx context.Context) error {
 // WithOrg runs fn in a transaction scoped to orgID via the RLS setting.
 // fn's own error comes back unchanged (pgx.ErrNoRows included) after the
 // transaction is rolled back; success commits.
+//
+// Inside WithWriteTx (a write transaction bound to ctx) fn runs on a
+// savepoint of that transaction instead, so the outer transaction decides
+// what persists.
 func (d *DB) WithOrg(ctx context.Context, orgID uuid.UUID, fn func(pgx.Tx) error) error {
+	if b, ok := txOf(ctx); ok && b.write {
+		sp, err := b.tx.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin savepoint: %w", err)
+		}
+		defer sp.Rollback(ctx) //nolint:errcheck // no-op once released
+		if err := fn(sp); err != nil {
+			return err
+		}
+		return sp.Commit(ctx)
+	}
 	tx, err := d.beginOrg(ctx, orgID)
 	if err != nil {
 		return err

@@ -25,11 +25,13 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -211,38 +213,44 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 }
 
 // recordRotation finalizes a rotation group whose last job just went
-// terminal: the group is complete when every job of it — the rotate_key
-// playbook runs AND the follow-up connection_test verifications — is
-// terminal, and allSucceeded only when every one of them succeeded. A
-// cancelled or failed job (a playbook that could not install the key, or a
-// test that could not get in with it) leaves the credential untouched. A
-// connection_test job that carries no rotation payload is a plain test, not
-// a group member — skipped silently, the common case. The finisher is
-// bookkeeping, not bookkeeping-breaking — its failure is logged, the
-// terminal status already stands. The finished job's payload (sealed) is
-// still on the row at this point; clearing happens after the sinks.
-func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status Status) {
+// terminal, inside Finish's transaction (ctx carries it; Finish holds the
+// group's advisory lock, so the completeness count sees every other
+// member's committed status): the group is complete when every job of it
+// — the rotate_key playbook runs AND the follow-up connection_test
+// verifications — is terminal, and allSucceeded only when every one of
+// them succeeded. A cancelled or failed job (a playbook that could not
+// install the key, or a test that could not get in with it) leaves the
+// credential untouched. A connection_test job that carries no rotation
+// payload is a plain test, not a group member — skipped silently, the
+// common case. A payload that cannot be opened or a credential deleted
+// meanwhile is logged and skipped (a retry could never fix it); a database
+// or finisher failure is returned and rolls the whole finish back, so the
+// retry finalizes. The finished job's payload (sealed) is still on the row
+// at this point; clearing happens after the sinks.
+func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status Status) error {
 	if q.rotation == nil || status == StatusCancelled {
-		return
+		return nil
 	}
 	var orgID, groupID uuid.UUID
 	var kind string
 	var payload json.RawMessage
-	if err := q.db.Pool().QueryRow(ctx,
+	if err := q.db.QueryRow(ctx,
 		`SELECT org_id, kind, payload, run_group_id FROM jobs WHERE id = $1`, jobID,
 	).Scan(&orgID, &kind, &payload, &groupID); err != nil {
-		slog.ErrorContext(ctx, "finalize rotation: look up finished job", "err", err, "job", jobID)
-		return
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("finalize rotation: look up finished job: %w", err)
 	}
 	switch Kind(kind) {
 	case KindRotateKey, KindConnectionTest:
 	default:
-		return
+		return nil
 	}
 	plain, err := q.openKindPayload(Job{OrgID: orgID, ID: jobID, Payload: payload})
 	if err != nil {
 		slog.ErrorContext(ctx, "finalize rotation: open job payload", "err", err, "job", jobID)
-		return
+		return nil
 	}
 	var rp rotationJobPayload
 	if err := json.Unmarshal([]byte(plain), &rp); err != nil || rp.CredentialID == uuid.Nil {
@@ -252,38 +260,42 @@ func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status S
 		if Kind(kind) == KindRotateKey {
 			slog.ErrorContext(ctx, "finalize rotation: job payload carries no credential", "job", jobID)
 		}
-		return
+		return nil
 	}
 
 	var total, terminal, succeeded int
-	if err := q.db.Pool().QueryRow(ctx,
+	if err := q.db.QueryRow(ctx,
 		`SELECT count(*),
 			count(*) FILTER (WHERE status IN ('succeeded','failed','cancelled','error')),
 			count(*) FILTER (WHERE status = 'succeeded')
 		FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind IN ('rotate_key','connection_test')`,
 		orgID, groupID,
 	).Scan(&total, &terminal, &succeeded); err != nil {
-		slog.ErrorContext(ctx, "finalize rotation: count group", "err", err, "group", groupID)
-		return
+		return fmt.Errorf("finalize rotation: count group: %w", err)
 	}
 	if total == 0 || terminal < total {
-		return // the group is not done yet
+		return nil // the group is not done yet
 	}
 	allSucceeded := succeeded == total
 	if err := q.rotation.FinishRotation(ctx, orgID, rp.CredentialID, groupID, allSucceeded,
 		rp.NewPrivateKey, rp.NewPublicKey, rp.NewFingerprint, rp.NewKeyType); err != nil {
-		// The job's terminal status is already recorded; a failed
-		// bookkeeping write is logged so an operator sees the gap, the
-		// same tradeoff the sync/test sinks and the audit middleware make.
-		slog.ErrorContext(ctx, "finalize rotation", "err", err, "group", groupID)
+		if sinkGone(err) {
+			slog.WarnContext(ctx, "finalize rotation: credential no longer exists", "group", groupID)
+			return nil
+		}
+		return fmt.Errorf("finalize rotation: %w", err)
 	}
+	return nil
 }
 
 // ClearTerminalPayload is the exported clear Service.Cancel reaches
 // through its payloadCleaner hook: a job cancelled before its claim never
-// ships, so its sealed payload's at-rest lifetime ends immediately.
+// ships, so its sealed payload's at-rest lifetime ends immediately. A
+// failure is logged — the cancel itself already stands.
 func (q *SQLQueue) ClearTerminalPayload(ctx context.Context, jobID uuid.UUID) {
-	q.clearPayload(ctx, jobID)
+	if err := q.clearPayload(ctx, jobID); err != nil {
+		slog.ErrorContext(ctx, "clear terminal job payload", "err", err, "job", jobID)
+	}
 }
 
 // clearPayload wipes a terminal system job's sealed payload: the one-time
@@ -291,12 +303,14 @@ func (q *SQLQueue) ClearTerminalPayload(ctx context.Context, jobID uuid.UUID) {
 // have served their purpose the moment the job is terminal — the sealed
 // ciphertext must not sit at rest any longer than the run needs it
 // (backlog 2.7c at-rest lifetime). Nothing depends on it afterwards: the
-// job's error text, stats and events carry the record.
-func (q *SQLQueue) clearPayload(ctx context.Context, jobID uuid.UUID) {
-	if _, err := q.db.Pool().Exec(ctx,
+// job's error text, stats and events carry the record. On the finish path
+// it runs inside Finish's transaction.
+func (q *SQLQueue) clearPayload(ctx context.Context, jobID uuid.UUID) error {
+	if _, err := q.db.Exec(ctx,
 		`UPDATE jobs SET payload = NULL
 		 WHERE id = $1 AND kind IN ('connection_test','bootstrap','rotate_key') AND payload IS NOT NULL`,
 		jobID); err != nil {
-		slog.ErrorContext(ctx, "clear terminal job payload", "err", err, "job", jobID)
+		return fmt.Errorf("clear terminal job payload: %w", err)
 	}
+	return nil
 }

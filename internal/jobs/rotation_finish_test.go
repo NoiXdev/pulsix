@@ -100,7 +100,9 @@ func TestRecordRotationBranches(t *testing.T) {
 	if err := store.CreateJob(scoped, corrupt, json.RawMessage(`"`+base64Of(sealed)+`"`)); err != nil {
 		t.Fatal(err)
 	}
-	q.recordRotation(context.Background(), corrupt.ID, StatusSucceeded)
+	if err := q.recordRotation(context.Background(), corrupt.ID, StatusSucceeded); err != nil {
+		t.Fatalf("recordRotation: %v", err)
+	}
 	if calls := finisher.all(); len(calls) != 0 {
 		t.Fatalf("a corrupt payload must finalize nothing: %+v", calls)
 	}
@@ -120,7 +122,9 @@ func TestRecordRotationBranches(t *testing.T) {
 	if err := store.CreateJob(scoped, job, mustSeal(q.box, org, job.ID, payload)); err != nil {
 		t.Fatal(err)
 	}
-	q.recordRotation(context.Background(), job.ID, StatusSucceeded)
+	if err := q.recordRotation(context.Background(), job.ID, StatusSucceeded); err != nil {
+		t.Fatalf("recordRotation: %v", err)
+	}
 	if calls := finisher.all(); len(calls) != 0 {
 		t.Fatalf("an incomplete group must finalize nothing: %+v", calls)
 	}
@@ -144,7 +148,9 @@ func TestRecordRotationBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("finish err = %v status = %q", finishErr, status)
-	q.recordRotation(context.Background(), job.ID, StatusSucceeded)
+	if err := q.recordRotation(context.Background(), job.ID, StatusSucceeded); err != nil {
+		t.Fatalf("recordRotation: %v", err)
+	}
 	calls := finisher.all()
 	for i, c := range calls {
 		t.Logf("call %d: %+v", i, c)
@@ -188,21 +194,27 @@ func TestRecordRotationMissingJobAndOtherKind(t *testing.T) {
 	q.SetRotationFinisher(finisher)
 
 	// An unknown job id: the lookup logs and returns.
-	q.recordRotation(context.Background(), uuid.Must(uuid.NewV7()), StatusSucceeded)
+	if err := q.recordRotation(context.Background(), uuid.Must(uuid.NewV7()), StatusSucceeded); err != nil {
+		t.Fatalf("recordRotation: %v", err)
+	}
 	if calls := finisher.all(); len(calls) != 0 {
 		t.Fatalf("unknown job must finalize nothing: %+v", calls)
 	}
 
 	// A non-rotation job records nothing.
-	q.recordRotation(context.Background(), uuid.Must(uuid.NewV7()), StatusSucceeded)
+	if err := q.recordRotation(context.Background(), uuid.Must(uuid.NewV7()), StatusSucceeded); err != nil {
+		t.Fatalf("recordRotation: %v", err)
+	}
 	if calls := finisher.all(); len(calls) != 0 {
 		t.Fatalf("a non-rotate job must finalize nothing: %+v", calls)
 	}
 }
 
-// TestRecordRotationFinisherErrorIsLoggedNotFatal pins the bookkeeping
-// posture: a failing finalize never breaks the terminal record.
-func TestRecordRotationFinisherErrorIsLoggedNotFatal(t *testing.T) {
+// TestRecordRotationFinisherErrorFailsTheFinish pins the atomic posture
+// (fix round 1): a failing finalize fails the whole finish — the job stays
+// running, so the worker's retry (or the reaper's requeue) finalizes the
+// group instead of leaving a succeeded job with an unsealed key.
+func TestRecordRotationFinisherErrorFailsTheFinish(t *testing.T) {
 	d := testdb.Open(t)
 	orgID := uuid.Must(uuid.NewV7())
 	genQ := gen.New(d.Pool())
@@ -235,11 +247,17 @@ func TestRecordRotationFinisherErrorIsLoggedNotFatal(t *testing.T) {
 	if _, err := q.Claim(context.Background(), orgID, []uuid.UUID{job.ZoneID}, "v1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Finish(context.Background(), job.ID, StatusSucceeded, nil, ""); err != nil {
-		t.Fatalf("finish: %v", err)
+	if err := q.Finish(context.Background(), job.ID, StatusSucceeded, nil, ""); err == nil {
+		t.Fatal("finish succeeded although the finalize failed")
 	}
-	// The group is complete; the failing finisher is logged, the job stands.
 	if calls := finisher.all(); len(calls) != 0 {
 		t.Fatalf("a failing finisher must record nothing: %+v", calls)
+	}
+	var status string
+	if err := d.Pool().QueryRow(context.Background(), `SELECT status FROM jobs WHERE id = $1`, job.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if Status(status) != StatusRunning {
+		t.Fatalf("status after the failed finalize = %s, want running", status)
 	}
 }

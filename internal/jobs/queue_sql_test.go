@@ -429,12 +429,31 @@ func TestQueueFinishRecordsSyncResults(t *testing.T) {
 			t.Fatalf("Finish with nil sink: %v", err)
 		}
 	})
-	t.Run("sink failure does not fail the finish", func(t *testing.T) {
+	t.Run("sink failure fails the finish and keeps the job running", func(t *testing.T) {
 		failing := &recordingSink{err: errors.New("boom")}
 		queue.SetSyncSink(failing)
 		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err == nil {
+			t.Fatal("Finish = nil, want the sink failure (the finish is atomic)")
+		}
+		if row, err := store.GetJob(scoped, org, j.ID); err != nil || row.Status != jobs.StatusRunning {
+			t.Fatalf("job after the failed finish = %+v, %v; want still running", row, err)
+		}
+		// The retry, with the sink healthy again, completes the finish.
+		healthy := &recordingSink{}
+		queue.SetSyncSink(healthy)
 		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
-			t.Fatalf("Finish = %v, want nil (the terminal status stands, the sink failure is logged)", err)
+			t.Fatalf("retried Finish: %v", err)
+		}
+		if row, err := store.GetJob(scoped, org, j.ID); err != nil || row.Status != jobs.StatusSucceeded || len(healthy.all()) != 1 {
+			t.Fatalf("job after the retry = %+v, %v, sink calls %d; want succeeded and recorded once", row, err, len(healthy.all()))
+		}
+	})
+	t.Run("a repository deleted meanwhile does not wedge the finish", func(t *testing.T) {
+		queue.SetSyncSink(&recordingSink{err: jobs.ErrNotFound})
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatalf("Finish = %v, want nil (a vanished repository is logged and skipped)", err)
 		}
 	})
 }

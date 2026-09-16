@@ -752,6 +752,23 @@ func (q *SQLQueue) openKindPayload(job Job) (string, error) {
 // reports ErrNotRunning, so a late report from a worker whose claim the
 // reaper took back is visible instead of silently overwriting the fresh
 // claim.
+//
+// Atomic: the terminal status, every finish-path sink (the repository's
+// sync state, the connection-test row, the rotation group's finalize) and
+// the wipe of the sealed payload run in ONE transaction bound to the job's
+// organization (db.WithWriteTx — the sinks' stores join it through the
+// ctx). A sink failure or a context cancelled mid-finish rolls all of it
+// back and returns the error: the job stays running with its payload, and
+// the retried Finish completes everything. Without that, a crash between
+// the status write and a sink left a succeeded job whose rotation key was
+// never sealed, whose test row was missing or whose one-time login stayed
+// at rest — and the retry saw a terminal job and did nothing.
+//
+// Members of a rotation group serialize on a per-group advisory
+// transaction lock taken before the status write: with the status and the
+// group's completeness count in one transaction, two members finishing
+// concurrently would otherwise each count the other as still running and
+// neither would finalize the group.
 func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, stats map[string]any, errText string) error {
 	if !status.Terminal() {
 		return fmt.Errorf("%w: %q is not a terminal status", ErrInvalidInput, status)
@@ -764,36 +781,82 @@ func (q *SQLQueue) Finish(ctx context.Context, jobID uuid.UUID, status Status, s
 		}
 		statsJSON = b
 	}
-	tag, err := q.db.Pool().Exec(ctx,
-		`UPDATE jobs SET status = $2, stats = $3, error = $4, finished_at = $5
-		 WHERE id = $1 AND status IN ('running', 'cancelling')`,
-		jobID, string(status), statsJSON, errText, q.now())
-	if err != nil {
-		return fmt.Errorf("finish job: %w", err)
-	}
-	if tag.RowsAffected() == 1 {
-		q.streams.remove(jobID)
-		q.cancels.remove(jobID)
-		q.recordSync(ctx, jobID, status, errText)
-		q.recordTest(ctx, jobID, status)
-		q.recordRotation(ctx, jobID, status)
-		// The terminal payload's at-rest lifetime ends here: the sealed
-		// one-time login / pending rotation key drops once the job is
-		// terminal (see clearPayload).
-		q.clearPayload(ctx, jobID)
-		return nil
-	}
-	var current string
-	if err := q.db.Pool().QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&current); err != nil {
+	// org_id, kind and run_group_id never change after insert, so reading
+	// them before the transaction is safe; the org binds the transaction.
+	var orgID, groupID uuid.UUID
+	var kind string
+	if err := q.db.Pool().QueryRow(ctx,
+		`SELECT org_id, kind, run_group_id FROM jobs WHERE id = $1`, jobID,
+	).Scan(&orgID, &kind, &groupID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
-		return fmt.Errorf("look up job status: %w", err)
+		return fmt.Errorf("look up job: %w", err)
 	}
-	if Status(current).Terminal() {
+
+	finished := false
+	err := q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
+		if Kind(kind) == KindRotateKey || Kind(kind) == KindConnectionTest {
+			if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
+				finishGroupLockKeyPrefix+groupID.String()); err != nil {
+				return fmt.Errorf("lock run group: %w", err)
+			}
+		}
+		tag, err := q.db.Exec(ctx,
+			`UPDATE jobs SET status = $2, stats = $3, error = $4, finished_at = $5
+			 WHERE id = $1 AND status IN ('running', 'cancelling')`,
+			jobID, string(status), statsJSON, errText, q.now())
+		if err != nil {
+			return fmt.Errorf("finish job: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			var current string
+			if err := q.db.QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&current); err != nil {
+				return fmt.Errorf("look up job status: %w", err)
+			}
+			if Status(current).Terminal() {
+				return nil
+			}
+			return fmt.Errorf("%w: job is %s", ErrNotRunning, current)
+		}
+		if err := q.recordSync(ctx, jobID, status, errText); err != nil {
+			return err
+		}
+		if err := q.recordTest(ctx, jobID, status); err != nil {
+			return err
+		}
+		if err := q.recordRotation(ctx, jobID, status); err != nil {
+			return err
+		}
+		// The terminal payload's at-rest lifetime ends here: the sealed
+		// one-time login / pending rotation key drops once the job is
+		// terminal (see clearPayload).
+		if err := q.clearPayload(ctx, jobID); err != nil {
+			return err
+		}
+		finished = true
 		return nil
+	})
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("%w: job is %s", ErrNotRunning, current)
+	if finished {
+		q.streams.remove(jobID)
+		q.cancels.remove(jobID)
+	}
+	return nil
+}
+
+// finishGroupLockKeyPrefix namespaces the per-run-group finish lock within
+// hashtext's key space (the same scheme inventory's tree lock uses).
+const finishGroupLockKeyPrefix = "job-run-group-finish:"
+
+// sinkGone reports whether a sink failed because the row it records onto
+// is gone (the host, repository or credential was deleted while the job
+// ran). That is permanent, not retryable: failing the finish for it would
+// wedge the job in running forever, so it is logged and skipped.
+func sinkGone(err error) bool {
+	return errors.Is(err, ErrNotFound) || errors.Is(err, hosts.ErrNotFound) || errors.Is(err, credentials.ErrNotFound)
 }
 
 // NoteCancelRequested records when a cancel was requested — the anchor for
@@ -806,92 +869,96 @@ func (q *SQLQueue) NoteCancelRequested(jobID uuid.UUID, at time.Time) {
 }
 
 // recordSync hands a finished sync_repo job's outcome to the optional
-// sync sink. A terminal record already stands — the sink is bookkeeping,
-// not bookkeeping-breaking — so a sink failure is logged, never returned.
-// A cancelled sync records nothing: it never ran, and recording last_sync
-// for it would look like a successful fetch. A non-sync job, or a job
-// already terminal when Finish retried, records nothing.
-func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Status, errText string) {
+// sync sink, inside Finish's transaction (ctx carries it). A database or
+// sink failure is returned and rolls the whole finish back; a data anomaly
+// (a sync job without a repo id) and a repository deleted meanwhile are
+// logged and skipped — retrying could never fix them. A cancelled sync
+// records nothing: it never ran, and recording last_sync for it would look
+// like a successful fetch. A non-sync job records nothing.
+func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Status, errText string) error {
 	if q.sync == nil || status == StatusCancelled {
-		return
+		return nil
 	}
 	var orgID uuid.UUID
 	var kind string
 	var payload json.RawMessage
-	if err := q.db.Pool().QueryRow(ctx,
+	if err := q.db.QueryRow(ctx,
 		`SELECT org_id, kind, payload FROM jobs WHERE id = $1`, jobID,
 	).Scan(&orgID, &kind, &payload); err != nil {
-		slog.ErrorContext(ctx, "record sync result: look up finished job", "err", err, "job", jobID)
-		return
+		return fmt.Errorf("record sync result: look up finished job: %w", err)
 	}
 	if Kind(kind) != KindSyncRepo {
-		return
+		return nil
 	}
 	var sp syncPayload
 	if err := json.Unmarshal(payload, &sp); err != nil || sp.RepoID == uuid.Nil {
 		slog.ErrorContext(ctx, "record sync result: job payload carries no repo id", "job", jobID)
-		return
+		return nil
 	}
 	if err := q.sync.RecordSyncResult(ctx, orgID, sp.RepoID, q.now(), errText); err != nil {
-		// The job's terminal status is already recorded; a failed
-		// bookkeeping write is logged so an operator sees the gap, the
-		// same tradeoff the audit middleware makes.
-		slog.ErrorContext(ctx, "record sync result", "err", err, "job", jobID)
+		if sinkGone(err) {
+			slog.WarnContext(ctx, "record sync result: repository no longer exists", "job", jobID)
+			return nil
+		}
+		return fmt.Errorf("record sync result: %w", err)
 	}
+	return nil
 }
 
 // recordTest hands a finished connection_test job's outcome to the optional
-// test sink, the connection-test sibling of recordSync. The probe's result
-// travels as the job's final run event ("ok" or "failed"), whose payload is
-// the Result JSON — parsed here into the sink's narrow arguments. A
-// cancelled test records nothing (it never ran); a job without events or a
-// sink failure is logged, never fatal — the terminal status already stands.
-func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Status) {
+// test sink, the connection-test sibling of recordSync, inside Finish's
+// transaction. The probe's result travels as the job's final run event
+// ("ok" or "failed"), whose payload is the Result JSON — parsed here into
+// the sink's narrow arguments. A cancelled test records nothing (it never
+// ran); a job without a result event, a malformed one, or a host deleted
+// meanwhile is logged and skipped; a database or sink failure rolls the
+// finish back.
+func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Status) error {
 	if q.test == nil || status == StatusCancelled {
-		return
+		return nil
 	}
 	var orgID uuid.UUID
 	var kind string
 	var hostIDs []uuid.UUID
-	if err := q.db.Pool().QueryRow(ctx,
+	if err := q.db.QueryRow(ctx,
 		`SELECT org_id, kind, host_ids FROM jobs WHERE id = $1`, jobID,
 	).Scan(&orgID, &kind, &hostIDs); err != nil {
-		slog.ErrorContext(ctx, "record test result: look up finished job", "err", err, "job", jobID)
-		return
+		return fmt.Errorf("record test result: look up finished job: %w", err)
 	}
 	if Kind(kind) != KindConnectionTest {
-		return
+		return nil
 	}
 	if len(hostIDs) != 1 {
 		slog.ErrorContext(ctx, "record test result: job carries no single host", "job", jobID, "hosts", len(hostIDs))
-		return
+		return nil
 	}
 	var at time.Time
 	var state string
 	var payload json.RawMessage
-	if err := q.db.Pool().QueryRow(ctx,
+	if err := q.db.QueryRow(ctx,
 		`SELECT at, state, payload FROM job_events WHERE job_id = $1 AND state IN ('ok','failed') ORDER BY seq DESC LIMIT 1`,
 		jobID,
 	).Scan(&at, &state, &payload); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The job finished without a result event (the executor's
 			// parse/transport error path); there is nothing to record.
-			return
+			return nil
 		}
-		slog.ErrorContext(ctx, "record test result: look up result event", "err", err, "job", jobID)
-		return
+		return fmt.Errorf("record test result: look up result event: %w", err)
 	}
 	var res testResultPayload
 	if err := json.Unmarshal(payload, &res); err != nil {
 		slog.ErrorContext(ctx, "record test result: result event is not a result", "err", err, "job", jobID)
-		return
+		return nil
 	}
 	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostKeyState, res.Checks); err != nil {
-		// The job's terminal status is already recorded; a failed
-		// bookkeeping write is logged so an operator sees the gap, the
-		// same tradeoff the sync sink and the audit middleware make.
-		slog.ErrorContext(ctx, "record test result", "err", err, "job", jobID)
+		if sinkGone(err) {
+			slog.WarnContext(ctx, "record test result: host no longer exists", "job", jobID)
+			return nil
+		}
+		return fmt.Errorf("record test result: %w", err)
 	}
+	return nil
 }
 
 // testResultPayload is the manager-side mirror of the worker's probe

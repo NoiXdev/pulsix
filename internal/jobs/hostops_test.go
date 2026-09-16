@@ -568,13 +568,18 @@ func TestFinishConnectionTestTwoHostsRecordsNothing(t *testing.T) {
 		 VALUES ($1, 1, $2, now(), 'web1', 'connection_test', 'ok', '{"reachable":true}')`, j.ID, org); err != nil {
 		t.Fatal(err)
 	}
-	q.recordTest(context.Background(), j.ID, StatusSucceeded)
+	if err := q.recordTest(context.Background(), j.ID, StatusSucceeded); err != nil {
+		t.Fatalf("recordTest: %v", err)
+	}
 	if calls := sink.all(); len(calls) != 0 {
 		t.Fatalf("a multi-host connection_test records nothing: %+v", calls)
 	}
 }
 
-func TestFinishConnectionTestSinkFailureIsLoggedNotFatal(t *testing.T) {
+// TestFinishConnectionTestSinkFailureFailsTheFinish (fix round 1): the
+// connection-test row and the terminal status commit together, so a
+// failing sink fails the finish and leaves the job running for the retry.
+func TestFinishConnectionTestSinkFailureFailsTheFinish(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-fails")
 	zone := uuid.Must(uuid.NewV7())
@@ -604,8 +609,25 @@ func TestFinishConnectionTestSinkFailureIsLoggedNotFatal(t *testing.T) {
 	if err := stream.Append(context.Background(), Event{Seq: 1, State: "ok", Payload: json.RawMessage(`{"reachable":true,"auth":true,"sudo":true,"python":true}`), At: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	// The sink failure must not fail the finish.
-	if err := q.Finish(context.Background(), j.ID, StatusSucceeded, nil, ""); err != nil {
-		t.Fatalf("Finish: %v", err)
+	if err := q.Finish(context.Background(), j.ID, StatusSucceeded, nil, ""); err == nil {
+		t.Fatal("Finish succeeded although the test sink failed")
 	}
+	var status string
+	if err := d.Pool().QueryRow(context.Background(), `SELECT status FROM jobs WHERE id = $1`, j.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if Status(status) != StatusRunning {
+		t.Fatalf("status after the failed finish = %s, want running", status)
+	}
+	// A host deleted meanwhile is permanent: logged and skipped.
+	q.SetTestSink(goneTestSink{})
+	if err := q.Finish(context.Background(), j.ID, StatusSucceeded, nil, ""); err != nil {
+		t.Fatalf("Finish with a vanished host: %v", err)
+	}
+}
+
+type goneTestSink struct{}
+
+func (goneTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, []hosts.HostTestCheck) error {
+	return hosts.ErrNotFound
 }
