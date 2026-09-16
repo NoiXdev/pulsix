@@ -1,12 +1,16 @@
 package inventory_test
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/credentials"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
@@ -125,6 +129,78 @@ func TestUpdateGroupSerializesConcurrentMoves(t *testing.T) {
 				}
 				cur = *g.ParentID
 			}
+		}
+	}
+}
+
+// TestUpdateGroupWithBastionDoesNotStarvePoolConnections is a regression
+// test for a pool-exhaustion deadlock a reviewer found in fix round 1:
+// UpdateGroup used to check a given BastionID's existence *inside*
+// WithTreeLock's locked transaction, through s.bastions — a cross-package
+// call on the ambient ctx, not through txStore, so it opened its own
+// transaction on a second connection from the same pool while the locked
+// transaction already held one.
+//
+// With a pool of 2 and 2 concurrent UpdateGroup(BastionID: ...) calls,
+// this reproduces reliably: whichever call wins the advisory lock holds
+// connection 1 and, under the old code, needs a second connection to
+// check the bastion; the loser holds connection 2, blocked on the same
+// lock. The pool has nothing left to give the winner, and the loser can
+// never free its connection because the winner it is waiting on is now
+// itself stuck waiting for a connection. Each call's own context carries
+// a bounded timeout, so the old code fails this test within that bound
+// (context deadline exceeded on one or both calls) instead of hanging the
+// whole test binary.
+func TestUpdateGroupWithBastionDoesNotStarvePoolConnections(t *testing.T) {
+	url := testdb.URL(t)
+	d, err := db.OpenAsRole(context.Background(), url+"&pool_max_conns=2", "pulsix_app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	q := gen.New(d.Pool())
+	hostStore := hosts.NewSQLStore(d)
+	sshStore := sshconf.NewSQLStore(d)
+	credStore := credentials.NewSQLStore(d)
+	sshSvc := sshconf.NewService(sshStore, credStore, hostStore)
+	svc := inventory.NewService(inventory.NewSQLStore(d), hostStore, sshSvc, testBox())
+
+	org, err := q.CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: "pool-deadlock", Name: "pool-deadlock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bastion, err := sshSvc.CreateBastion(ctx, org.ID, sshconf.BastionInput{Name: "b", Address: "b.example", Username: "ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpA, err := svc.CreateGroup(ctx, org.ID, inventory.GroupInput{Name: "grp_a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpB, err := svc.CreateGroup(ctx, org.ID, inventory.GroupInput{Name: "grp_b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	start := make(chan struct{})
+	for i, g := range []inventory.GroupView{grpA, grpB} {
+		wg.Add(1)
+		go func(i int, g inventory.GroupView) {
+			defer wg.Done()
+			<-start
+			cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, errs[i] = svc.UpdateGroup(cctx, org.ID, g.ID, g.Revision, inventory.GroupPatch{Name: g.Name, BastionID: &bastion.ID})
+		}(i, g)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("update %d: %v (pool exhaustion deadlock?)", i, err)
 		}
 	}
 }

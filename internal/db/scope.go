@@ -150,11 +150,12 @@ func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 // to that organization before it is handed back.
 func (d *DB) Begin(ctx context.Context) (pgx.Tx, error) {
 	if tx, ok := readTx(ctx); ok {
-		// No caller does this today (the renderer's read path never opens
-		// its own nested transaction), so this is untested; documented so a
-		// future one knows what it is getting: the SAME shared transaction,
-		// not a new one — committing or rolling it back ends WithReadTx's
-		// transaction early for every other store still reading through it.
+		// No production caller does this today (the renderer's read path
+		// never opens its own nested transaction) — TestWithReadTxBeginReturns
+		// TheSharedTransaction (scope_test.go) is what exercises this branch.
+		// A future caller gets the SAME shared transaction, not a new one —
+		// committing or rolling it back ends WithReadTx's transaction early
+		// for every other store still reading through it.
 		return tx, nil
 	}
 	orgID, ok := OrgScope(ctx)

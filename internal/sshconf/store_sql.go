@@ -24,10 +24,14 @@ type SQLStore struct {
 // NewSQLStore builds the store.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
 
-// chainLockAAD namespaces this package's per-organization advisory lock key
-// (see inventory.treeLockAAD for the sibling group-tree lock; the two never
-// need to block each other, since bastions and groups are separate graphs).
-const chainLockAAD = "bastion-chain:"
+// chainLockKeyPrefix namespaces this lock's key within hashtext's output
+// space, the same way inventory.treeLockKeyPrefix does for the sibling
+// group-tree lock (see its doc comment): without a distinct prefix,
+// hashtext(orgID.String()) alone would hash this lock and the group-tree
+// lock to the same key for the same organization, incorrectly serializing
+// two unrelated locks against each other — bastions and groups are
+// separate graphs and never need to block each other.
+const chainLockKeyPrefix = "bastion-chain:"
 
 // WithChainLock runs fn against a Store bound to one transaction that holds
 // orgID's jump-host chain advisory lock for the whole call (backlog 2.15):
@@ -38,7 +42,7 @@ const chainLockAAD = "bastion-chain:"
 // that is rejected against the first's already-committed state.
 func (s *SQLStore) WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error {
 	return s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, chainLockAAD+orgID.String()); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, chainLockKeyPrefix+orgID.String()); err != nil {
 			return fmt.Errorf("acquire bastion chain lock: %w", err)
 		}
 		return fn(&SQLStore{db: s.db, q: gen.New(tx)})

@@ -144,6 +144,21 @@ type Store interface {
 	// concurrent WithTreeLock call for the same organization. Every write
 	// that depends on a tree snapshot (a move's cycle/depth check, a
 	// create's parent check, a delete) must run inside it.
+	//
+	// fn must call through txStore alone, never through the outer ctx, a
+	// field on Service (s.bastions, s.hosts), or any other *db.DB-backed
+	// store or service not bound to this transaction. A call through the
+	// ambient ctx opens its own transaction on its own connection from
+	// the same pool, while this transaction already holds one — with a
+	// small pool and enough contention on the lock, that second
+	// connection may never come free (every other connection is a caller
+	// blocked on this same advisory lock, and none of them releases
+	// theirs until the lock holder — which is now stuck waiting for a
+	// connection — finishes), deadlocking the pool. Any reference this
+	// closure needs to validate belongs either before WithTreeLock is
+	// called (re-checked, if it matters, by the store's own constraints —
+	// composite foreign keys, or a fresh read under the lock) or through
+	// txStore's own methods.
 	WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
 	// WithReadTx runs fn against a context bound to one repeatable-read
 	// transaction scoped to orgID (backlog 2.16): every store built on the
@@ -258,22 +273,32 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 	if err := validateGroupMeta(in.Name, in.Description); err != nil {
 		return GroupView{}, err
 	}
+	// The group's existence and the bastion reference are both checked
+	// before WithTreeLock, in that order (group-not-found still wins over
+	// an invalid bastion), and neither runs inside the lock: s.bastions
+	// is a cross-package call through the ambient ctx, not through
+	// txStore, so it would take a second connection from the pool while
+	// the locked transaction already holds one — see WithTreeLock's doc
+	// comment for why that can deadlock the pool under contention. The
+	// lock's own GetGroup below re-checks existence (a delete racing in
+	// between still surfaces as ErrNotFound there) and the composite FK
+	// on bastion_id still guards a bastion deleted in between; neither
+	// pre-check needs to be repeated inside the lock for correctness.
+	if _, err := s.store.GetGroup(ctx, orgID, id); err != nil {
+		return GroupView{}, err
+	}
+	if in.BastionID != nil {
+		if _, err := s.bastions.GetBastion(ctx, orgID, *in.BastionID); errors.Is(err, sshconf.ErrNotFound) {
+			return GroupView{}, fmt.Errorf("%w: jump host does not exist", ErrInvalidInput)
+		} else if err != nil {
+			return GroupView{}, err
+		}
+	}
 	var result GroupView
 	err := s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
-		// GetGroup runs before the bastion check, same as every other
-		// reference check below it: an update to a group that does not
-		// exist must 404, never 400, regardless of what else about the
-		// request is also wrong.
 		cur, err := txStore.GetGroup(ctx, orgID, id)
 		if err != nil {
 			return err
-		}
-		if in.BastionID != nil {
-			if _, err := s.bastions.GetBastion(ctx, orgID, *in.BastionID); errors.Is(err, sshconf.ErrNotFound) {
-				return fmt.Errorf("%w: jump host does not exist", ErrInvalidInput)
-			} else if err != nil {
-				return err
-			}
 		}
 		t, err := treeVia(ctx, txStore, orgID)
 		if err != nil {

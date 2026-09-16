@@ -25,12 +25,15 @@ type SQLStore struct {
 // NewSQLStore builds the store.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
 
-// treeLockAAD namespaces the per-organization advisory lock key from any
-// other package's (int64 hashtext keys share one 32-bit keyspace per
-// PostgreSQL session/session-less xact lock; see also
-// sshconf.chainLockAAD, internal/schedule.AdvisoryKeyRetest and
-// db.migrationLockKey, none of which collide with a string-derived key).
-const treeLockAAD = "inventory-tree:"
+// treeLockKeyPrefix namespaces this lock's key within hashtext's output
+// space (pg_advisory_xact_lock(bigint) takes one 64-bit keyspace, shared
+// by every advisory lock in the process — hand-picked ones like
+// db.migrationLockKey and internal/schedule.AdvisoryKeyRetest included):
+// without a prefix distinguishing it from sshconf.chainLockKeyPrefix,
+// hashtext(orgID.String()) alone would hash the group-tree and the
+// bastion-chain lock for the *same* organization to the same key,
+// incorrectly serializing two unrelated locks against each other.
+const treeLockKeyPrefix = "inventory-tree:"
 
 // WithTreeLock runs fn against a Store bound to one transaction that holds
 // orgID's group-tree advisory lock for the whole call (backlog 2.15): the
@@ -44,7 +47,7 @@ const treeLockAAD = "inventory-tree:"
 // state, instead of both succeeding against a stale tree.
 func (s *SQLStore) WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error {
 	return s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, treeLockAAD+orgID.String()); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, treeLockKeyPrefix+orgID.String()); err != nil {
 			return fmt.Errorf("acquire inventory tree lock: %w", err)
 		}
 		return fn(&SQLStore{db: s.db, q: gen.New(tx)})

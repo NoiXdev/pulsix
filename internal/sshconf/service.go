@@ -118,6 +118,15 @@ type Store interface {
 	// against any concurrent WithChainLock call for the same organization.
 	// Every write that depends on a chain snapshot (a create or update that
 	// sets ViaBastionID) must run inside it.
+	//
+	// fn must call through txStore alone, never through the outer ctx, a
+	// field on Service (s.creds, s.hosts), or any other *db.DB-backed
+	// store or service not bound to this transaction — see
+	// inventory.Store.WithTreeLock's doc comment for the pool-deadlock
+	// this guards against (the same hazard applies here: a call through
+	// the ambient ctx opens its own transaction on its own pool
+	// connection while this one already holds one, which a small,
+	// contended pool may never free up again).
 	WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
 }
 
