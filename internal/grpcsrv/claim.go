@@ -25,6 +25,15 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	// An empty request (internal/worker's Config.Zones doc: "empty means
+	// the claim sends no zone ids and the manager resolves them from the
+	// certificate's urn:pulsix:zone SAN") resolves to the registered
+	// worker's own zone — worker.ZoneID is exactly that SAN, already
+	// verified and looked up by the auth interceptor, so this is a plain
+	// registry read, not a second certificate parse.
+	if len(zones) == 0 {
+		zones = []uuid.UUID{worker.ZoneID}
+	}
 
 	// The claim doubles as the worker's heartbeat: Touch records last_seen
 	// and the self-reported build version.

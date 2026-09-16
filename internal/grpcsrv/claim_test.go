@@ -85,6 +85,32 @@ func TestClaimJobEmptyQueue(t *testing.T) {
 	}
 }
 
+// TestClaimJobEmptyZoneIDsFallsBackToWorkerZone (Task 17): a claim request
+// with no zone ids at all — internal/worker's documented default when
+// PULSIX_WORKER_ZONES is unset (or, equivalently, the embedded worker,
+// which never sets it) — must resolve to the calling worker's own
+// registered zone rather than matching nothing.
+func TestClaimJobEmptyZoneIDsFallsBackToWorkerZone(t *testing.T) {
+	h := newHarness(t)
+	certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+	client := h.client(certPEM, keyPEM)
+
+	jobID := uuid.Must(uuid.NewV7())
+	h.enqueueClaim(jobID, orgID, zoneID)
+
+	resp, err := client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "0.2.0"}) // ZoneIds deliberately empty
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.GetJob().GetId(); got != jobID.String() {
+		t.Fatalf("claimed id = %q, want %q — empty ZoneIds must fall back to the worker's registered zone", got, jobID)
+	}
+	calls := h.claims.Calls()
+	if len(calls) != 1 || len(calls[0].Zones) != 1 || calls[0].Zones[0] != zoneID {
+		t.Fatalf("Claim was called with zones %v, want exactly [%s]", calls, zoneID)
+	}
+}
+
 // TestClaimJobInvalidZoneIDs: an unparseable zone id is the caller's error.
 func TestClaimJobInvalidZoneIDs(t *testing.T) {
 	h := newHarness(t)
