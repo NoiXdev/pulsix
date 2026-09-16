@@ -6,7 +6,7 @@ import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useCredential, useDeleteCredential, useUpdateCredential } from '../../api/hooks/useCredentials.ts';
+import { useCredential, useDeleteCredential, useRotateCredential, useUpdateCredential } from '../../api/hooks/useCredentials.ts';
 import { kindLabel, usageLabel } from './labels.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
 import type { Credential } from '../../api/types.ts';
@@ -30,7 +30,7 @@ import type { Credential } from '../../api/types.ts';
  * The guard element is rendered inside this dialog's own title/Close/Escape
  * chrome instead of replacing it, so a failed load can still be dismissed
  * like any other dialog. */
-export function CredentialDialog({ org, id, onClose }: { org: string; id: string; onClose: () => void }) {
+export function CredentialDialog({ org, id, canRotate = false, onClose }: { org: string; id: string; canRotate?: boolean; onClose: () => void }) {
   const detail = useCredential(org, id);
   const update = useUpdateCredential(org, id);
   const remove = useDeleteCredential(org);
@@ -55,29 +55,36 @@ export function CredentialDialog({ org, id, onClose }: { org: string; id: string
 
   return (
     <CredentialForm
+      org={org}
       credential={c}
       snippets={detail.data?.snippets}
       update={update}
       remove={remove}
+      canRotate={canRotate}
       onClose={onClose}
     />
   );
 }
 
 function CredentialForm({
+  org,
   credential: c,
   snippets,
   update,
   remove,
+  canRotate,
   onClose,
 }: {
+  org: string;
   credential: Credential;
   snippets?: { authorized_keys_command: string; cloud_init: string; terraform: string };
   update: ReturnType<typeof useUpdateCredential>;
   remove: ReturnType<typeof useDeleteCredential>;
+  canRotate: boolean;
   onClose: () => void;
 }) {
   const toast = useToast();
+  const rotate = useRotateCredential(org);
   const [name, setName] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [replacement, setReplacement] = useState('');
@@ -109,6 +116,22 @@ function CredentialForm({
       toast.show('New key generated; install the new public key before hosts use it');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generating failed');
+    }
+  }
+
+  async function onRotate() {
+    // Rotation re-keys the credential and installs the new key on every
+    // referencing host and jump host; only ssh_key credentials rotate (the
+    // server 422s anything else). A failed rotation leaves the credential
+    // untouched.
+    const warning = `Rotate ${c.name}? A new key is generated and installed on every host and jump host referencing it; the old key stops working once the rotation completes. Continue?`;
+    if (!confirm(warning)) return;
+    try {
+      const { job_count } = await rotate.mutateAsync(c.id);
+      rotate.reset();
+      toast.show(job_count > 0 ? `Rotation of ${c.name} started (${job_count} job(s))` : `${c.name} rotated`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rotating failed');
     }
   }
 
@@ -163,6 +186,11 @@ function CredentialForm({
             {isKey && (
               <Button type="button" onClick={() => void rotateKey()}>
                 Generate new key
+              </Button>
+            )}
+            {canRotate && c.kind === 'ssh_key' && (
+              <Button type="button" onClick={() => void onRotate()} disabled={rotate.isPending}>
+                Rotate key
               </Button>
             )}
             <Button type="submit" variant="primary" disabled={update.isPending}>

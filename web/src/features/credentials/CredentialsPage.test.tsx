@@ -124,8 +124,7 @@ describe('CredentialsPage', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('still used');
   });
 
-  it('asks before generating a new key and sends nothing when cancelled', async () => {
-    const user = userEvent.setup();
+  it('asks before generating a new key and sends nothing when cancelled', async () => {    const user = userEvent.setup();
     const patches: unknown[] = [];
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     try {
@@ -182,5 +181,51 @@ describe('CredentialsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Credential' });
     expect(await within(dialog).findByText(/the vault is unreachable/)).toBeInTheDocument();
     expect(within(dialog).queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it('rotates an ssh_key credential after confirmation and shows the new fingerprint', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      let rotated = false;
+      mockApi({
+        'GET /api/v1/auth/me': ME,
+        'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
+        'GET /api/v1/orgs/acme/credentials': () => ({ credentials: [cred({ fingerprint: rotated ? 'SHA256:new' : 'SHA256:old' })] }),
+        'GET /api/v1/orgs/acme/credentials/c1': () => ({ credential: cred({ fingerprint: rotated ? 'SHA256:new' : 'SHA256:old' }), snippets: SNIPPETS }),
+        'POST /api/v1/orgs/acme/credentials/c1/rotate': () => {
+          rotated = true;
+          return { job_id: '', job_count: 0 };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
+      const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
+
+      // Declined: no request.
+      await user.click(within(dialog).getByRole('button', { name: 'Rotate key' }));
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/rotated|rotation/i));
+      expect(rotated).toBe(false);
+
+      // Confirmed: the rotation runs and the dialog refetches the credential.
+      confirmSpy.mockReturnValue(true);
+      await user.click(within(dialog).getByRole('button', { name: 'Rotate key' }));
+      expect(await within(dialog).findByText(/SHA256:new/)).toBeInTheDocument();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('gives an operator no rotate button (rotation is an admin write)', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
+      'GET /api/v1/orgs/acme/credentials/c1': { credential: cred({}), snippets: SNIPPETS },
+    });
+    renderPage();
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'acme-deploy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
+    expect(within(dialog).queryByRole('button', { name: 'Rotate key' })).not.toBeInTheDocument();
   });
 });

@@ -8,6 +8,8 @@ import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { may } from '../../lib/roles.ts';
 import { AddCredentialDialog } from './AddCredentialDialog.tsx';
 import { CredentialDialog } from './CredentialDialog.tsx';
 import { expiryState, kindLabel, usageLabel } from './labels.ts';
@@ -16,9 +18,11 @@ const COLUMNS = 'minmax(0, 1fr) 190px minmax(0, 1fr) 130px 110px';
 
 export function CredentialsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const orgInfo = useOrg(org);
   const credentials = useCredentials(org);
   const [addOpen, setAddOpen] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const canRotate = may(orgInfo.data?.org.role, 'credentials.write');
 
   const guard = useQueryGuard(credentials);
   if (guard) return guard;
@@ -65,7 +69,7 @@ export function CredentialsPage() {
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No credentials yet.</p>}
       </Card>
       <AddCredentialDialog org={org} open={addOpen} onClose={() => setAddOpen(false)} />
-      {openId && <CredentialDialog org={org} id={openId} onClose={() => setOpenId(null)} />}
+      {openId && <CredentialDialog org={org} id={openId} canRotate={canRotate} onClose={() => setOpenId(null)} />}
     </>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { Server, Terminal, Trash2 } from 'lucide-react';
+import { Server, Terminal, Trash2, UserPlus } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Tag } from '../../ui/badge.tsx';
@@ -8,10 +8,14 @@ import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useDeleteHost, useHost, useSetHostCapabilities } from '../../api/hooks/useHosts.ts';
 import { useHostTags, useSetHostTags } from '../../api/hooks/useTags.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { parseTagChip } from './selectorInput.ts';
 import { useToast } from '../../ui/toastContext.ts';
+import { may } from '../../lib/roles.ts';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
 import { HostSshCard } from './HostSshCard.tsx';
+import { ConnectionTestCard } from './ConnectionTestCard.tsx';
+import { BootstrapDialog } from './BootstrapDialog.tsx';
 
 /**
  * HostDetailPage follows design/mockups/build.mjs's HOST DETAIL artboard
@@ -25,6 +29,8 @@ export function HostDetailPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
   const navigate = useNavigate();
   const toast = useToast();
+  const orgInfo = useOrg(org);
+  const canWrite = may(orgInfo.data?.org.role, 'inventory.write');
 
   const host = useHost(org, id);
   const tags = useHostTags(org, id);
@@ -34,6 +40,7 @@ export function HostDetailPage() {
 
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState<string | null>(null);
+  const [bootstrapOpen, setBootstrapOpen] = useState(false);
 
   const hostGuard = useQueryGuard(host);
   if (hostGuard) return hostGuard;
@@ -86,6 +93,13 @@ export function HostDetailPage() {
         >
           <Trash2 size={14} /> Delete host
         </Button>
+      </div>
+      <div className="flex justify-end">
+        {h.managed && canWrite && (
+          <Button type="button" onClick={() => setBootstrapOpen(true)}>
+            <UserPlus size={14} /> Bootstrap host
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4 items-start">
@@ -169,6 +183,8 @@ export function HostDetailPage() {
 
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
       <HostSshCard org={org} hostId={h.id} managed={h.managed} />
+      {h.managed && <ConnectionTestCard org={org} hostId={h.id} canWrite={canWrite} />}
+      {bootstrapOpen && <BootstrapDialog org={org} hostId={h.id} hostName={h.name} onClose={() => setBootstrapOpen(false)} />}
 
       <Card>
         <div className="flex flex-col gap-2 p-4">
