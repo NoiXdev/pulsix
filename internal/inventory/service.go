@@ -145,6 +145,13 @@ type Store interface {
 	// that depends on a tree snapshot (a move's cycle/depth check, a
 	// create's parent check, a delete) must run inside it.
 	WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
+	// WithReadTx runs fn against a context bound to one repeatable-read
+	// transaction scoped to orgID (backlog 2.16): every store built on the
+	// same underlying *db.DB that reads through the ctx fn receives — not
+	// just this Store — sees one consistent snapshot instead of one
+	// transaction per statement. The renderer is the one caller that needs
+	// this, since its reads span several domain stores.
+	WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 }
 
 // HostLookup is the slice of hosts.Service this package needs.

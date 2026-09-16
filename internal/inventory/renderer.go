@@ -97,6 +97,24 @@ func (r *Renderer) HostPreview(ctx context.Context, orgID, hostID uuid.UUID) (Ho
 }
 
 func (r *Renderer) render(ctx context.Context, orgID uuid.UUID, scope render.Scope, reveal bool) (render.Inventory, error) {
+	var out render.Inventory
+	err := r.store.WithReadTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		out, err = r.renderIn(ctx, orgID, scope, reveal)
+		return err
+	})
+	return out, err
+}
+
+// renderIn does the actual read-and-build work render used to do directly.
+// It must run with ctx bound by Store.WithReadTx (backlog 2.16): every read
+// below — groups and memberships from r.store, hosts from r.hosts, SSH
+// settings and jump hosts from r.ssh, credential usernames from r.creds —
+// goes through *db.DB underneath, no matter which package's store issued
+// it, so binding ctx once here makes all of them share the one repeatable
+// read transaction WithReadTx opened, instead of each seeing its own
+// separate, possibly different, snapshot.
+func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.Scope, reveal bool) (render.Inventory, error) {
 	groups, err := r.store.ListGroups(ctx, orgID)
 	if err != nil {
 		return render.Inventory{}, err

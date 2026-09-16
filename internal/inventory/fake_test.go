@@ -172,6 +172,13 @@ func (f *fakeStore) WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(i
 	return fn(f)
 }
 
+// WithReadTx runs fn directly against ctx: the fake has no transactions or
+// snapshots to unify. The integration test in renderer_integration_test.go
+// covers the real cross-package transaction.
+func (f *fakeStore) WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 func (f *fakeStore) ListHostMemberships(_ context.Context, orgID, hostID uuid.UUID) ([]inventory.Membership, error) {
 	var out []inventory.Membership
 	for _, m := range f.members {

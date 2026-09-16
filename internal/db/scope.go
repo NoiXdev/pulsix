@@ -41,11 +41,58 @@ func OrgScope(ctx context.Context) (uuid.UUID, bool) {
 	return id, ok
 }
 
+// readTxKey is the context key WithReadTx binds its transaction under.
+type readTxKey struct{}
+
+// WithReadTx runs fn against a context bound to one read-only, repeatable
+// read transaction scoped to orgID (backlog 2.16): every statement any
+// store built on *DB executes through the ctx fn receives — regardless of
+// which package built that store — runs against this same transaction
+// instead of each opening one of its own, so a caller that composes reads
+// across several domain stores (the inventory renderer's groups,
+// memberships, hosts, SSH settings, jump hosts and credentials) sees one
+// consistent snapshot instead of one per statement. This works because
+// every store in this codebase is built on the same *DB (gen.New(d)) and
+// never touches the pool directly (see Pool's doc comment) — Exec, Query
+// and QueryRow all check for this binding first, before the ordinary
+// per-statement org-scoped transaction Exec's own doc comment describes.
+//
+// The transaction is REPEATABLE READ and READ ONLY: every read-path store
+// call the renderer makes is a SELECT, and READ ONLY both documents that
+// and lets Postgres reject an accidental write instead of silently
+// executing it against a snapshot no later reader will ever see. fn's
+// error rolls the transaction back and propagates unchanged; success
+// commits (a plain COMMIT, matching WithOrg, even though nothing was
+// written).
+func (d *DB) WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("begin read transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+	if _, err := tx.Exec(ctx, `SELECT set_config('pulsix.org_id', $1, true)`, orgID.String()); err != nil {
+		return fmt.Errorf("bind read transaction to organization: %w", err)
+	}
+	if err := fn(context.WithValue(ctx, readTxKey{}, tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// readTx reports the transaction WithReadTx bound to ctx, if any.
+func readTx(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(readTxKey{}).(pgx.Tx)
+	return tx, ok
+}
+
 // Exec runs sql on the pool, or — when ctx carries an org scope — inside a
 // transaction bound to that organization. Together with Query, QueryRow and
 // Begin it makes *DB a drop-in gen.DBTX: stores build their sqlc queries
 // with gen.New(d) and never see the pool itself.
 func (d *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if tx, ok := readTx(ctx); ok {
+		return tx.Exec(ctx, sql, args...)
+	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
 		return d.pool.Exec(ctx, sql, args...)
@@ -64,6 +111,9 @@ func (d *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandT
 // org-bound transaction, and Scan's error (pgx.ErrNoRows included) comes
 // back unchanged.
 func (d *DB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if tx, ok := readTx(ctx); ok {
+		return tx.QueryRow(ctx, sql, args...)
+	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
 		return d.pool.QueryRow(ctx, sql, args...)
@@ -76,6 +126,9 @@ func (d *DB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 // by the caller, or implicitly once Next reports the last row — which then
 // commits it (or rolls it back if reading the rows failed).
 func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if tx, ok := readTx(ctx); ok {
+		return tx.Query(ctx, sql, args...)
+	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
 		return d.pool.Query(ctx, sql, args...)
@@ -96,6 +149,14 @@ func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 // commit together. When ctx carries an org scope, the transaction is bound
 // to that organization before it is handed back.
 func (d *DB) Begin(ctx context.Context) (pgx.Tx, error) {
+	if tx, ok := readTx(ctx); ok {
+		// No caller does this today (the renderer's read path never opens
+		// its own nested transaction), so this is untested; documented so a
+		// future one knows what it is getting: the SAME shared transaction,
+		// not a new one — committing or rolling it back ends WithReadTx's
+		// transaction early for every other store still reading through it.
+		return tx, nil
+	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
 		return d.pool.Begin(ctx)

@@ -51,6 +51,14 @@ func (s *SQLStore) WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(St
 	})
 }
 
+// WithReadTx delegates to db.DB.WithReadTx: see its doc comment. This
+// package's own read methods (ListGroups, ListMemberships, …) need no
+// change to take part — they already run through s.q, which is bound to
+// whatever ctx carries, ambient transaction included.
+func (s *SQLStore) WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithReadTx(ctx, orgID, fn)
+}
+
 func (s *SQLStore) CreateGroup(ctx context.Context, g Group) (Group, error) {
 	sc, vars, err := encodeGroup(g)
 	if err != nil {
