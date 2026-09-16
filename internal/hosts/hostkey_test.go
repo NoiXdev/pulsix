@@ -6,26 +6,44 @@ package hosts_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/noixdev/pulsix/internal/hosts"
 )
 
 // pinRecord is one recorded SetHostKeyPin call, for the fake's assertions.
 type pinRecord struct {
-	orgID, hostID uuid.UUID
-	fingerprint   string
+	orgID, hostID          uuid.UUID
+	fingerprint, publicKey string
 }
 
-func (f *fakeHostStore) SetHostKeyPin(_ context.Context, orgID, hostID uuid.UUID, fingerprint string) error {
+func (f *fakeHostStore) SetHostKeyPin(_ context.Context, orgID, hostID uuid.UUID, fingerprint, publicKey string) error {
 	if err := f.take("SetHostKeyPin"); err != nil {
 		return err
 	}
-	f.pins = append(f.pins, pinRecord{orgID: orgID, hostID: hostID, fingerprint: fingerprint})
+	f.pins = append(f.pins, pinRecord{orgID: orgID, hostID: hostID, fingerprint: fingerprint, publicKey: publicKey})
+	return nil
+}
+
+// BackfillHostKeyPin completes a fingerprint-only pin in the fake, with the
+// SQL statement's predicate: only when the pin equals fingerprint and
+// carries no key yet.
+func (f *fakeHostStore) BackfillHostKeyPin(_ context.Context, _, hostID uuid.UUID, fingerprint, publicKey string) error {
+	if err := f.take("BackfillHostKeyPin"); err != nil {
+		return err
+	}
+	if pin, ok := f.pinnedKeys[hostID]; ok && pin.Fingerprint == fingerprint && pin.PublicKey == "" {
+		pin.PublicKey = publicKey
+		f.pinnedKeys[hostID] = pin
+	}
 	return nil
 }
 
@@ -33,11 +51,11 @@ func (f *fakeHostStore) ClearHostKeyPin(_ context.Context, _, _ uuid.UUID) error
 	return f.take("ClearHostKeyPin")
 }
 
-func (f *fakeHostStore) ListPinnedKeys(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+func (f *fakeHostStore) ListPinnedKeys(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]hosts.HostKeyPin, error) {
 	if err := f.take("ListPinnedKeys"); err != nil {
 		return nil, err
 	}
-	out := map[uuid.UUID]string{}
+	out := map[uuid.UUID]hosts.HostKeyPin{}
 	for _, id := range hostIDs {
 		if h, ok := f.list[id]; ok && h.OrgID == orgID {
 			if pin, ok := f.pinnedKeys[id]; ok {
@@ -103,7 +121,7 @@ func (f *fakeHostStore) ListHostsDueForTest(_ context.Context, orgID uuid.UUID, 
 func newHostKeyStore() *fakeHostStore {
 	store := newFakeHostStore()
 	store.pins = []pinRecord{}
-	store.pinnedKeys = map[uuid.UUID]string{}
+	store.pinnedKeys = map[uuid.UUID]hosts.HostKeyPin{}
 	store.changedHosts = map[uuid.UUID]bool{}
 	store.tests = map[uuid.UUID][]hosts.HostTest{}
 	store.latestTestAt = map[uuid.UUID]time.Time{}
@@ -144,16 +162,16 @@ func TestSetHostKeyValidatesFingerprintShape(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if err := svc.SetHostKey(ctx, org, host, c.key); err != nil {
+			if err := svc.SetHostKey(ctx, org, host, c.key, ""); err != nil {
 				if !errors.Is(err, hosts.ErrInvalidInput) {
 					t.Fatalf("SetHostKey(%q) = %v, want ErrInvalidInput", c.key, err)
 				}
 			}
 		})
 	}
-	// A well-formed fingerprint is accepted (the fake records it).
-	valid := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	if err := svc.SetHostKey(ctx, org, host, valid); err != nil {
+	// A well-formed fingerprint with its key is accepted (the fake records it).
+	valid, pub := hostKeyPair(t)
+	if err := svc.SetHostKey(ctx, org, host, valid, pub); err != nil {
 		t.Fatalf("SetHostKey(valid): %v", err)
 	}
 }
@@ -161,11 +179,11 @@ func TestSetHostKeyValidatesFingerprintShape(t *testing.T) {
 func TestSetHostKeyForeignHostInvisible(t *testing.T) {
 	svc, _, orgA, hostA := seededService(t)
 	orgB := uuid.Must(uuid.NewV7())
-	valid := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	if err := svc.SetHostKey(ctx, orgB, hostA, valid); !errors.Is(err, hosts.ErrNotFound) {
+	valid, pub := hostKeyPair(t)
+	if err := svc.SetHostKey(ctx, orgB, hostA, valid, pub); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("SetHostKey in another org = %v, want ErrNotFound", err)
 	}
-	if err := svc.SetHostKey(ctx, orgA, hostA, valid); err != nil {
+	if err := svc.SetHostKey(ctx, orgA, hostA, valid, pub); err != nil {
 		t.Fatalf("own org: %v", err)
 	}
 }
@@ -192,7 +210,7 @@ func TestLatestTest(t *testing.T) {
 	// Two records: the newest wins.
 	at1 := time.Now().Add(-2 * time.Hour)
 	at2 := time.Now().Add(-time.Hour)
-	if err := svc.RecordConnectionTest(ctx, org, host, at1, true, "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", hosts.KeyStateUnpinned,
+	if err := svc.RecordConnectionTest(ctx, org, host, at1, true, "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", hosts.KeyStateUnpinned,
 		[]hosts.HostTestCheck{{Name: "reachability", Detail: "connected", OK: true}}); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +234,7 @@ func TestLatestTest(t *testing.T) {
 
 func TestRecordConnectionTestNormalizesEmptyState(t *testing.T) {
 	svc, store, org, host := seededService(t)
-	if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), false, "", "", nil); err != nil {
+	if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), false, "", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.tests[host][0].HostKeyState; got != hosts.KeyStateUnpinned {
@@ -227,7 +245,7 @@ func TestRecordConnectionTestNormalizesEmptyState(t *testing.T) {
 func TestRecordConnectionTestForeignHostFails(t *testing.T) {
 	svc, _, _, _ := seededService(t)
 	orgB := uuid.Must(uuid.NewV7())
-	if err := svc.RecordConnectionTest(ctx, orgB, uuid.Must(uuid.NewV7()), time.Now(), true, "", hosts.KeyStateUnpinned, nil); err == nil {
+	if err := svc.RecordConnectionTest(ctx, orgB, uuid.Must(uuid.NewV7()), time.Now(), true, "", "", hosts.KeyStateUnpinned, nil); err == nil {
 		t.Fatal("recording a test for a foreign host must fail")
 	}
 }
@@ -256,11 +274,11 @@ func TestChangedHosts(t *testing.T) {
 func TestPinnedKeysScopedToOrg(t *testing.T) {
 	svc, store, orgA, hostA := seededService(t)
 	orgB := uuid.Must(uuid.NewV7())
-	store.pinnedKeys[hostA] = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	store.pinnedKeys[hostA] = hosts.HostKeyPin{Fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
 	// The fake only ever reports org-scoped data.
 	otherHost := uuid.Must(uuid.NewV7())
 	store.list[otherHost] = hosts.Host{ID: otherHost, OrgID: orgB, Name: "foreign", Managed: true}
-	store.pinnedKeys[otherHost] = "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	store.pinnedKeys[otherHost] = hosts.HostKeyPin{Fingerprint: "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}
 
 	keys, err := svc.PinnedKeys(ctx, orgA, []uuid.UUID{hostA, otherHost})
 	if err != nil {
@@ -301,4 +319,98 @@ func (f *fakeHostStore) ListOrgIDs(_ context.Context) ([]uuid.UUID, error) {
 		return nil, err
 	}
 	return f.orgIDs, nil
+}
+
+// hostKeyPair generates a host key and returns its fingerprint and its
+// authorized-key line — what a connection test reports.
+func hostKeyPair(t *testing.T) (fingerprint, publicKey string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ssh.FingerprintSHA256(sshPub), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+}
+
+// TestSetHostKeyStoresTheVerifiedPublicKey (final review C2): a pin is the
+// fingerprint plus the full key ansible's known_hosts needs; the key must
+// be one authorized-key line whose fingerprint is the pinned one.
+func TestSetHostKeyStoresTheVerifiedPublicKey(t *testing.T) {
+	fingerprint, pub := hostKeyPair(t)
+	_, otherPub := hostKeyPair(t)
+	cases := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{"matching key", pub, false},
+		{"missing key", "", true},
+		{"garbage", "not a key", true},
+		{"another host's key", otherPub, true},
+		{"two lines", pub + "\n" + otherPub, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, store, org, host := seededService(t)
+			err := svc.SetHostKey(ctx, org, host, fingerprint, c.key)
+			if c.wantErr {
+				if !errors.Is(err, hosts.ErrInvalidInput) || len(store.pins) != 0 {
+					t.Fatalf("SetHostKey = %v (pins %v), want ErrInvalidInput and nothing stored", err, store.pins)
+				}
+				return
+			}
+			if err != nil || len(store.pins) != 1 || store.pins[0].publicKey != pub || store.pins[0].fingerprint != fingerprint {
+				t.Fatalf("SetHostKey = %v, pins %+v; want the fingerprint and key stored", err, store.pins)
+			}
+		})
+	}
+}
+
+// TestRecordConnectionTestCompletesAFingerprintOnlyPin: a pin made before
+// full keys were stored carries a fingerprint only; the next test that
+// confirms the pin (state pinned) with the observed key fills it in. No
+// other outcome touches the pin, and the test row keeps the key.
+func TestRecordConnectionTestCompletesAFingerprintOnlyPin(t *testing.T) {
+	fingerprint, pub := hostKeyPair(t)
+	otherFingerprint, otherPub := hostKeyPair(t)
+	cases := []struct {
+		name      string
+		seen      string
+		seenKey   string
+		state     string
+		wantPin   string
+		wantRowPK string
+	}{
+		{"confirming test fills the key", fingerprint, pub, hosts.KeyStatePinned, pub, pub},
+		{"changed key never fills it", otherFingerprint, otherPub, hosts.KeyStateChanged, "", otherPub},
+		{"unpinned observation never fills it", fingerprint, pub, hosts.KeyStateUnpinned, "", pub},
+		{"a key that does not match its fingerprint is dropped", fingerprint, otherPub, hosts.KeyStatePinned, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, store, org, host := seededService(t)
+			store.pinnedKeys[host] = hosts.HostKeyPin{Fingerprint: fingerprint}
+			if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), true, c.seen, c.seenKey, c.state, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := store.pinnedKeys[host].PublicKey; got != c.wantPin {
+				t.Fatalf("pin public key = %q, want %q", got, c.wantPin)
+			}
+			rows := store.tests[host]
+			if len(rows) != 1 || rows[0].HostPublicKey != c.wantRowPK {
+				t.Fatalf("test row = %+v, want host public key %q", rows, c.wantRowPK)
+			}
+			keys, err := svc.PinnedPublicKeys(ctx, org, []uuid.UUID{host})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := keys[host]; got != c.wantPin {
+				t.Fatalf("PinnedPublicKeys = %q, want %q", got, c.wantPin)
+			}
+		})
+	}
 }

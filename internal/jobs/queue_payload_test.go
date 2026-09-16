@@ -166,6 +166,7 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{
 		repoID: {ID: repoID, URL: "ssh://git@example.org/ansible.git", Branch: "main", Subpath: "ansible", CredentialID: &gitCredID},
 	}})
+	q.SetKeyPins(fakePins{})
 
 	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
 	out := &workerpb.Job{}
@@ -610,6 +611,7 @@ func TestBuildPayloadShipsEffectiveCredentialForTemplateDefault(t *testing.T) {
 		templateID: {ID: templateID, PlaybookInline: "- hosts: all", Scope: json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`), CredentialID: &credID},
 	}}
 	q := newTestQueue(renderer, creds, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
 
 	out := &workerpb.Job{}
 	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, out); err != nil {

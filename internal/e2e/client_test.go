@@ -66,6 +66,33 @@ func (a *apiClient) do(method, path string, body, out any) {
 	}
 }
 
+// status performs one JSON request and returns its status code without
+// asserting it — for the steps that expect a refusal.
+func (a *apiClient) status(method, path string, body any) int {
+	a.t.Helper()
+	var reqBody io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			a.t.Fatalf("encode %s %s body: %v", method, path, err)
+		}
+		reqBody = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, a.base+path, reqBody)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := a.http.Do(req)
+	if err != nil {
+		a.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
 // sessionCookie returns the current session cookie as a Cookie header
 // value — the SSE read below is a manual request, so it needs the header.
 func (a *apiClient) sessionCookie() (string, bool) {

@@ -56,7 +56,9 @@ func TestParseProxyJump(t *testing.T) {
 
 func TestHopHostConfig(t *testing.T) {
 	// The ssh_config entry a hop resolves to: HostName unbracketed, port
-	// defaulting to 22, and the identity file of the hop's credential.
+	// defaulting to 22, the identity file of the hop's credential, and the
+	// hop's host key trusted on first use inside the run's own known_hosts
+	// under the hop's alias (bastions carry no pin).
 	cases := []struct {
 		name    string
 		part    proxyPart
@@ -64,32 +66,38 @@ func TestHopHostConfig(t *testing.T) {
 		want    string
 	}{
 		{"full", proxyPart{User: "u", Addr: "b.example.org", Port: "2222"}, "/w/keys/cred-1",
-			"Host pulsix-jump-b1\n    HostName b.example.org\n    Port 2222\n    User u\n    IdentityFile /w/keys/cred-1\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n"},
+			"Host pulsix-jump-b1\n    HostName b.example.org\n    Port 2222\n    User u\n    IdentityFile /w/keys/cred-1\n    IdentitiesOnly yes\n    HostKeyAlias pulsix-jump-b1\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"},
 		{"no credential", proxyPart{User: "u", Addr: "b.example.org", Port: "2222"}, "",
-			"Host pulsix-jump-b1\n    HostName b.example.org\n    Port 2222\n    User u\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n"},
+			"Host pulsix-jump-b1\n    HostName b.example.org\n    Port 2222\n    User u\n    IdentitiesOnly yes\n    HostKeyAlias pulsix-jump-b1\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"},
 		{"ipv6 unbracketed", proxyPart{User: "u", Addr: "[fd00::9]", Port: "2222"}, "/w/keys/c",
-			"Host pulsix-jump-b1\n    HostName fd00::9\n    Port 2222\n    User u\n    IdentityFile /w/keys/c\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n"},
+			"Host pulsix-jump-b1\n    HostName fd00::9\n    Port 2222\n    User u\n    IdentityFile /w/keys/c\n    IdentitiesOnly yes\n    HostKeyAlias pulsix-jump-b1\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"},
 		{"default port", proxyPart{User: "", Addr: "b.example.org", Port: ""}, "/w/keys/c",
-			"Host pulsix-jump-b1\n    HostName b.example.org\n    Port 22\n    IdentityFile /w/keys/c\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n"},
+			"Host pulsix-jump-b1\n    HostName b.example.org\n    Port 22\n    IdentityFile /w/keys/c\n    IdentitiesOnly yes\n    HostKeyAlias pulsix-jump-b1\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h := hopHost("b1", c.part, c.keyPath)
-			if got := h.String(); got != c.want {
+			if got := h.config("/w/known_hosts"); got != c.want {
 				t.Errorf("config =\n%q\nwant\n%q", got, c.want)
 			}
 		})
 	}
 }
 
-func TestSshConfigTextOrdersBlocks(t *testing.T) {
+func TestSshConfigTextOrdersBlocksAndEndsWithDefaults(t *testing.T) {
 	hosts := []proxyHost{
 		{id: "b2", part: proxyPart{User: "u", Addr: "10.0.0.9", Port: "2222"}, keyPath: "/w/keys/c2"},
 		{id: "b1", part: proxyPart{User: "v", Addr: "10.0.0.8"}, keyPath: "/w/keys/c1"},
 	}
-	want := "Host pulsix-jump-b1\n    HostName 10.0.0.8\n    Port 22\n    User v\n    IdentityFile /w/keys/c1\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n" +
-		"Host pulsix-jump-b2\n    HostName 10.0.0.9\n    Port 2222\n    User u\n    IdentityFile /w/keys/c2\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n"
-	if got := sshConfigText(hosts); got != want {
+	hop := func(id string) string {
+		return "    HostKeyAlias pulsix-jump-" + id + "\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"
+	}
+	want := "Host pulsix-jump-b1\n    HostName 10.0.0.8\n    Port 22\n    User v\n    IdentityFile /w/keys/c1\n    IdentitiesOnly yes\n" + hop("b1") +
+		"Host pulsix-jump-b2\n    HostName 10.0.0.9\n    Port 2222\n    User u\n    IdentityFile /w/keys/c2\n    IdentitiesOnly yes\n" + hop("b2") +
+		// The defaults block comes last (ssh_config: first obtained value
+		// wins), for hosts and hops the claim could not alias.
+		"Host *\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"
+	if got := sshConfigText(hosts, "/w/known_hosts"); got != want {
 		t.Errorf("sshConfigText =\n%q\nwant\n%q", got, want)
 	}
 }

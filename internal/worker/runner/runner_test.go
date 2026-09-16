@@ -270,7 +270,7 @@ func TestRunEnvIsHygienic(t *testing.T) {
 
 	// Exactly the fixed ANSIBLE_* set, none of the operator's decoys.
 	for _, want := range []string{
-		"ANSIBLE_HOST_KEY_CHECKING=False",
+		"ANSIBLE_HOST_KEY_CHECKING=True",
 		"ANSIBLE_RETRY_FILES_ENABLED=False",
 		"ANSIBLE_SSH_ARGS=-F " + filepath.Join(env.WorkDir, "ssh_config"),
 		"ANSIBLE_CONFIG=" + filepath.Join(env.WorkDir, "ansible.cfg"),

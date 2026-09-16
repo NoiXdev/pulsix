@@ -200,13 +200,17 @@ type Store interface {
 	// host carries no SSH settings of its own, and stores the pin on the
 	// row — nothing else on the row changes. A host that does not exist in
 	// the organization fails (ErrNotFound via the foreign key).
-	SetHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint string) error
-	// ClearHostKeyPin clears the pin; no host_ssh row (nothing pinned) is
-	// a no-op, not an error.
+	SetHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint, publicKey string) error
+	// ClearHostKeyPin clears the pin (fingerprint and key); no host_ssh row
+	// (nothing pinned) is a no-op, not an error.
 	ClearHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID) error
+	// BackfillHostKeyPin stores publicKey on a pin that carries only the
+	// fingerprint (pinned before migration 00021) — and only when the pin
+	// equals fingerprint; anything else is a no-op.
+	BackfillHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint, publicKey string) error
 	// ListPinnedKeys maps each host id that carries a pin to its
-	// fingerprint.
-	ListPinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error)
+	// fingerprint and, when stored, its full public key.
+	ListPinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]HostKeyPin, error)
 	// ListChangedKeys returns the host ids whose LATEST connection test
 	// reports a changed host key — the block-on-mismatch input.
 	ListChangedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) ([]uuid.UUID, error)

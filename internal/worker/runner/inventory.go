@@ -161,10 +161,12 @@ func keyPath(keysDir, credID string) string {
 }
 
 // materializeInventory writes the run's inventory: the claim's dynamic
-// inventory document with the connection secrets folded in (inventory.json,
-// 0600), the private ssh_config for the bastion hops, the per-credential
-// key files (0600, one per credential the connections reference), and the
-// executable wrapper the run passes as --inventory.
+// inventory document with the connection secrets and the pinned hosts'
+// strict host-key options folded in (inventory.json, 0600), the run's
+// known_hosts with the pinned keys (0600), the private ssh_config for the
+// bastion hops, the per-credential key files (0600, one per credential the
+// connections reference), and the executable wrapper the run passes as
+// --inventory.
 func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) error {
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(job.GetInventoryDoc()), &doc); err != nil {
@@ -175,6 +177,10 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 	if err != nil {
 		return err
 	}
+	knownHosts, err := pinHosts(merged, job.GetConnections(), job.GetHostKeys(), job.GetKnownHosts())
+	if err != nil {
+		return err
+	}
 	invJSON, err := json.Marshal(merged)
 	if err != nil {
 		return fmt.Errorf("encode inventory document: %w", err)
@@ -182,7 +188,11 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 	if err := writeTextFile(filepath.Join(env.WorkDir, inventoryDocName), string(invJSON), 0o600); err != nil {
 		return err
 	}
-	if err := writeTextFile(filepath.Join(env.WorkDir, sshConfigName), sshConfigText(blocks), 0o600); err != nil {
+	knownHostsPath := filepath.Join(env.WorkDir, knownHostsName)
+	if err := writeTextFile(knownHostsPath, knownHosts, 0o600); err != nil {
+		return err
+	}
+	if err := writeTextFile(filepath.Join(env.WorkDir, sshConfigName), sshConfigText(blocks, knownHostsPath), 0o600); err != nil {
 		return err
 	}
 	for _, id := range keys {
@@ -230,4 +240,64 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 		}
 	}
 	return nil
+}
+
+// hostKeyAlias is the known_hosts name a pinned host's key is recorded
+// under: the host's uuid, so the entry is independent of the address and
+// port ansible dials (and of every other host sharing them).
+func hostKeyAlias(hostID string) string {
+	return "pulsix-host-" + hostID
+}
+
+// pinHosts enforces the claim's host-key pins on ansible's own SSH
+// connections (final review C2). For every host the claim pins (host_keys)
+// it requires the pinned key (known_hosts) — one authorized-key line — and
+//   - returns the known_hosts line "pulsix-host-<host-id> <key>",
+//   - prepends "-o StrictHostKeyChecking=yes -o HostKeyAlias=pulsix-host-<id>"
+//     to the host's ansible_ssh_common_args. ssh uses the first value it
+//     obtains for an option, so prepending wins over anything later in the
+//     same value and over the run's ssh_config defaults (accept-new).
+//
+// A pinned host whose key is missing or malformed fails the run closed —
+// it must never be dialed without the check. Unpinned hosts are left to
+// the ssh_config defaults: trust on first use within the run's wiped
+// known_hosts. Pinned names the claim does not connect to are ignored.
+func pinHosts(doc map[string]any, connections, hostKeys, knownHosts map[string]string) (string, error) {
+	meta, _ := doc["_meta"].(map[string]any)
+	hostvars, _ := meta["hostvars"].(map[string]any)
+	names := make([]string, 0, len(hostKeys))
+	for name := range hostKeys {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var b strings.Builder
+	for _, name := range names {
+		rawConn, ok := connections[name]
+		if !ok {
+			continue
+		}
+		vars, ok := hostvars[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		var conn connection
+		if err := json.Unmarshal([]byte(rawConn), &conn); err != nil || conn.HostID == "" {
+			return "", fmt.Errorf("pinned host %s: connection carries no host id", name)
+		}
+		key := strings.TrimSpace(knownHosts[name])
+		if key == "" {
+			return "", fmt.Errorf("host %s is pinned but the claim carries no pinned key: refusing to connect without host key checking", name)
+		}
+		if strings.ContainsAny(key, "\r\n") || len(strings.Fields(key)) < 2 {
+			return "", fmt.Errorf("host %s: the pinned key is not one authorized-key line", name)
+		}
+		alias := hostKeyAlias(conn.HostID)
+		strict := "-o StrictHostKeyChecking=yes -o HostKeyAlias=" + alias
+		if args := varString(vars, "ansible_ssh_common_args"); args != "" {
+			strict += " " + args
+		}
+		vars["ansible_ssh_common_args"] = strict
+		fmt.Fprintf(&b, "%s %s\n", alias, key)
+	}
+	return b.String(), nil
 }

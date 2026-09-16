@@ -240,7 +240,13 @@ func registerHostopsRoutes(hapi huma.API, deps Deps) {
 		if test.HostKey == "" || test.HostKey != in.Body.Fingerprint {
 			return nil, huma.Error422UnprocessableEntity("the fingerprint does not match the latest connection test result; only the observed key can be pinned")
 		}
-		if err := deps.Hosts.SetHostKey(ctx, scope.OrgID, hostID, in.Body.Fingerprint); err != nil {
+		// The pin stores the observed key itself (the worker's known_hosts
+		// enforces it on every connection). A test recorded before full
+		// keys were kept cannot provide it: a fresh test must observe it.
+		if test.HostPublicKey == "" {
+			return nil, huma.Error422UnprocessableEntity("the latest connection test did not record the full host key; run a new connection test and pin its result")
+		}
+		if err := deps.Hosts.SetHostKey(ctx, scope.OrgID, hostID, in.Body.Fingerprint, test.HostPublicKey); err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
 		setAuditObject(ctx, hostID.String(), "pinned host key")
@@ -274,6 +280,8 @@ func mapHostopsErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, jobs.ErrInvalidInput) || errors.Is(err, hosts.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
+	case errors.Is(err, jobs.ErrHostKeyChanged):
+		return huma.Error409Conflict(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped hostops error", "err", err)
 		return huma.Error500InternalServerError("internal error")

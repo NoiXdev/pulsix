@@ -55,6 +55,12 @@ message Job {
   // keys, adhoc argv). Never logged.
   string kind_payload = 14;
   string worker_token = 15;          // echoes the claim for stream binding
+  // known_hosts maps hostname to the pinned host's full public key in
+  // authorized-key form ("ssh-ed25519 AAAA..."), one entry for every host
+  // in host_keys. The worker writes them into the run's known_hosts and
+  // connects to those hosts with strict host key checking; a host in
+  // host_keys without an entry here fails the run closed.
+  map<string, string> known_hosts = 16;
 }
 
 message RunEvent {

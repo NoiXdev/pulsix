@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -105,8 +106,13 @@ func hopHost(bastionID string, part proxyPart, keyPath string) proxyHost {
 	}
 }
 
-// String renders one Host block of the private ssh_config.
-func (h proxyHost) String() string {
+// config renders one Host block of the private ssh_config. Bastions carry
+// no pin of their own, so a hop's host key is trusted on first use —
+// recorded under the hop's alias in the run's own known_hosts (wiped with
+// the work dir) and never the system's. A pinned target is still verified
+// end to end: ProxyJump tunnels the target's handshake through the hop,
+// so a hop cannot impersonate a pinned host.
+func (h proxyHost) config(knownHostsPath string) string {
 	port := h.part.Port
 	if port == "" {
 		port = "22"
@@ -123,26 +129,37 @@ func (h proxyHost) String() string {
 		fmt.Fprintf(&b, "    IdentityFile %s\n", h.keyPath)
 	}
 	b.WriteString("    IdentitiesOnly yes\n")
-	b.WriteString("    StrictHostKeyChecking accept-new\n")
+	fmt.Fprintf(&b, "    HostKeyAlias %s\n", bastionAlias(h.id))
+	b.WriteString(knownHostsDefaults(knownHostsPath))
 	return b.String()
 }
 
+// knownHostsDefaults is the host-key posture of every block the run's
+// ssh_config writes: trust on first use, into the run's known_hosts only.
+// A pinned host overrides StrictHostKeyChecking on the command line
+// (command-line options win over ssh_config).
+func knownHostsDefaults(knownHostsPath string) string {
+	return "    StrictHostKeyChecking accept-new\n" +
+		"    UserKnownHostsFile " + knownHostsPath + "\n" +
+		"    GlobalKnownHostsFile /dev/null\n"
+}
+
 // sshConfigText renders the private ssh_config file: one Host block per
-// bastion, ordered by alias so the output is deterministic. Empty hop list
-// yields an empty (but present) config — the ssh_args option stays stable.
-func sshConfigText(hosts []proxyHost) string {
+// bastion, ordered by alias so the output is deterministic, then the
+// catch-all defaults for every other host and for jump chains the claim
+// could not alias (ssh_config applies the first value it obtains, so the
+// catch-all must come last). ProxyJump hops read this same file.
+func sshConfigText(hosts []proxyHost, knownHostsPath string) string {
 	sorted := append([]proxyHost(nil), hosts...)
-	for i := range sorted {
-		for j := i + 1; j < len(sorted); j++ {
-			if bastionAlias(sorted[j].id) < bastionAlias(sorted[i].id) {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	slices.SortFunc(sorted, func(a, b proxyHost) int {
+		return strings.Compare(bastionAlias(a.id), bastionAlias(b.id))
+	})
 	var b strings.Builder
 	for _, h := range sorted {
-		b.WriteString(h.String())
+		b.WriteString(h.config(knownHostsPath))
 	}
+	b.WriteString("Host *\n")
+	b.WriteString(knownHostsDefaults(knownHostsPath))
 	return b.String()
 }
 

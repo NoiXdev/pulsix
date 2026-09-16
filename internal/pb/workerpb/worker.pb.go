@@ -142,8 +142,14 @@ type Job struct {
 	HostKeys map[string]string `protobuf:"bytes,13,rep,name=host_keys,json=hostKeys,proto3" json:"host_keys,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// kind_payload carries kind-specific JSON (bootstrap login, rotation
 	// keys, adhoc argv). Never logged.
-	KindPayload   string `protobuf:"bytes,14,opt,name=kind_payload,json=kindPayload,proto3" json:"kind_payload,omitempty"`
-	WorkerToken   string `protobuf:"bytes,15,opt,name=worker_token,json=workerToken,proto3" json:"worker_token,omitempty"` // echoes the claim for stream binding
+	KindPayload string `protobuf:"bytes,14,opt,name=kind_payload,json=kindPayload,proto3" json:"kind_payload,omitempty"`
+	WorkerToken string `protobuf:"bytes,15,opt,name=worker_token,json=workerToken,proto3" json:"worker_token,omitempty"` // echoes the claim for stream binding
+	// known_hosts maps hostname to the pinned host's full public key in
+	// authorized-key form ("ssh-ed25519 AAAA..."), one entry for every host
+	// in host_keys. The worker writes them into the run's known_hosts and
+	// connects to those hosts with strict host key checking; a host in
+	// host_keys without an entry here fails the run closed.
+	KnownHosts    map[string]string `protobuf:"bytes,16,rep,name=known_hosts,json=knownHosts,proto3" json:"known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -281,6 +287,13 @@ func (x *Job) GetWorkerToken() string {
 		return x.WorkerToken
 	}
 	return ""
+}
+
+func (x *Job) GetKnownHosts() map[string]string {
+	if x != nil {
+		return x.KnownHosts
+	}
+	return nil
 }
 
 type RunEvent struct {
@@ -532,7 +545,7 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xd0\x06\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xd7\a\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -551,7 +564,9 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\vcredentials\x18\f \x03(\v2&.pulsix.worker.v1.Job.CredentialsEntryR\vcredentials\x12@\n" +
 	"\thost_keys\x18\r \x03(\v2#.pulsix.worker.v1.Job.HostKeysEntryR\bhostKeys\x12!\n" +
 	"\fkind_payload\x18\x0e \x01(\tR\vkindPayload\x12!\n" +
-	"\fworker_token\x18\x0f \x01(\tR\vworkerToken\x1a<\n" +
+	"\fworker_token\x18\x0f \x01(\tR\vworkerToken\x12F\n" +
+	"\vknown_hosts\x18\x10 \x03(\v2%.pulsix.worker.v1.Job.KnownHostsEntryR\n" +
+	"knownHosts\x1a<\n" +
 	"\x0eExtraVarsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
@@ -562,6 +577,9 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
 	"\rHostKeysEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
+	"\x0fKnownHostsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb7\x01\n" +
 	"\bRunEvent\x12\x15\n" +
@@ -597,7 +615,7 @@ func file_pulsix_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_pulsix_worker_v1_worker_proto_rawDescData
 }
 
-var file_pulsix_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_pulsix_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_pulsix_worker_v1_worker_proto_goTypes = []any{
 	(*ClaimJobRequest)(nil),       // 0: pulsix.worker.v1.ClaimJobRequest
 	(*ClaimJobResponse)(nil),      // 1: pulsix.worker.v1.ClaimJobResponse
@@ -610,7 +628,8 @@ var file_pulsix_worker_v1_worker_proto_goTypes = []any{
 	nil,                           // 8: pulsix.worker.v1.Job.ConnectionsEntry
 	nil,                           // 9: pulsix.worker.v1.Job.CredentialsEntry
 	nil,                           // 10: pulsix.worker.v1.Job.HostKeysEntry
-	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	nil,                           // 11: pulsix.worker.v1.Job.KnownHostsEntry
+	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 }
 var file_pulsix_worker_v1_worker_proto_depIdxs = []int32{
 	2,  // 0: pulsix.worker.v1.ClaimJobResponse.job:type_name -> pulsix.worker.v1.Job
@@ -618,18 +637,19 @@ var file_pulsix_worker_v1_worker_proto_depIdxs = []int32{
 	8,  // 2: pulsix.worker.v1.Job.connections:type_name -> pulsix.worker.v1.Job.ConnectionsEntry
 	9,  // 3: pulsix.worker.v1.Job.credentials:type_name -> pulsix.worker.v1.Job.CredentialsEntry
 	10, // 4: pulsix.worker.v1.Job.host_keys:type_name -> pulsix.worker.v1.Job.HostKeysEntry
-	11, // 5: pulsix.worker.v1.RunEvent.at:type_name -> google.protobuf.Timestamp
-	0,  // 6: pulsix.worker.v1.WorkerService.ClaimJob:input_type -> pulsix.worker.v1.ClaimJobRequest
-	3,  // 7: pulsix.worker.v1.WorkerService.RunEvents:input_type -> pulsix.worker.v1.RunEvent
-	5,  // 8: pulsix.worker.v1.WorkerService.ReportResult:input_type -> pulsix.worker.v1.ReportResultRequest
-	1,  // 9: pulsix.worker.v1.WorkerService.ClaimJob:output_type -> pulsix.worker.v1.ClaimJobResponse
-	4,  // 10: pulsix.worker.v1.WorkerService.RunEvents:output_type -> pulsix.worker.v1.ManagerDirective
-	6,  // 11: pulsix.worker.v1.WorkerService.ReportResult:output_type -> pulsix.worker.v1.ReportResultResponse
-	9,  // [9:12] is the sub-list for method output_type
-	6,  // [6:9] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	11, // 5: pulsix.worker.v1.Job.known_hosts:type_name -> pulsix.worker.v1.Job.KnownHostsEntry
+	12, // 6: pulsix.worker.v1.RunEvent.at:type_name -> google.protobuf.Timestamp
+	0,  // 7: pulsix.worker.v1.WorkerService.ClaimJob:input_type -> pulsix.worker.v1.ClaimJobRequest
+	3,  // 8: pulsix.worker.v1.WorkerService.RunEvents:input_type -> pulsix.worker.v1.RunEvent
+	5,  // 9: pulsix.worker.v1.WorkerService.ReportResult:input_type -> pulsix.worker.v1.ReportResultRequest
+	1,  // 10: pulsix.worker.v1.WorkerService.ClaimJob:output_type -> pulsix.worker.v1.ClaimJobResponse
+	4,  // 11: pulsix.worker.v1.WorkerService.RunEvents:output_type -> pulsix.worker.v1.ManagerDirective
+	6,  // 12: pulsix.worker.v1.WorkerService.ReportResult:output_type -> pulsix.worker.v1.ReportResultResponse
+	10, // [10:13] is the sub-list for method output_type
+	7,  // [7:10] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_pulsix_worker_v1_worker_proto_init() }
@@ -643,7 +663,7 @@ func file_pulsix_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pulsix_worker_v1_worker_proto_rawDesc), len(file_pulsix_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

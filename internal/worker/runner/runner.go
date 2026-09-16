@@ -97,7 +97,7 @@ func NewRunner(runnerBin, ansibleBin, gitBin string, killGrace time.Duration, lo
 // Run runs one claimed job. Terminal mapping:
 //
 //	exit 0 with clean stats (stats present)  → succeeded
-//	exit 0/2/3 with failed or unreachable hosts → failed, with stats
+//	exit 0/2/3/4 with failed or unreachable hosts → failed, with stats
 //	any other exit code                     → error
 //	a run the context cancelled             → cancelled
 //
@@ -263,7 +263,10 @@ func (r *Runner) streamEvents(ctx context.Context, stdout io.Reader, sink func(*
 func (r *Runner) subprocessEnv(env worker.RunEnv) []string {
 	out := stripPrivateEnv(os.Environ())
 	return append(out,
-		"ANSIBLE_HOST_KEY_CHECKING=False", // host-key pinning is the claim's host_keys (Task 10/12)
+		// Host key checking stays on: pinned hosts are checked strictly
+		// against the run's known_hosts, everything else is trusted on
+		// first use inside it (see pinHosts and sshConfigText).
+		"ANSIBLE_HOST_KEY_CHECKING=True",
 		"ANSIBLE_RETRY_FILES_ENABLED=False",
 		"ANSIBLE_SSH_ARGS="+sshArgs(env.WorkDir),
 		"ANSIBLE_CONFIG="+filepath.Join(env.WorkDir, ansibleCfgName),
@@ -319,7 +322,10 @@ func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, 
 		return worker.StatusError, nil, fmt.Sprintf("ansible-runner terminated by signal (%v)", waitErr)
 	}
 	switch rc {
-	case 0, 2, 3:
+	// 0 ok, 2 host failures (RUN_FAILED_HOSTS), 4 unreachable hosts
+	// (RUN_UNREACHABLE_HOSTS — e.g. a host whose pinned key no longer
+	// matches); 3 is kept for runner versions that report unreachable so.
+	case 0, 2, 3, 4:
 		if stats == nil {
 			// No recap: the manager's run view would be empty. Fall back to
 			// the artifacts stats before giving up.
@@ -331,8 +337,8 @@ func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, 
 		}
 		return worker.StatusSucceeded, out, ""
 	default:
-		// Anything else (1: ansible error, 4: check mode, 5: no hosts
-		// matched, ...) is an infrastructure failure of the run itself.
+		// Anything else (1: ansible error, 5: bad options, 250: internal
+		// error, ...) is an infrastructure failure of the run itself.
 		return worker.StatusError, nil, fmt.Sprintf("ansible-runner exited with code %d", rc)
 	}
 }

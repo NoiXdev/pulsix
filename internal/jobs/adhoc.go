@@ -90,6 +90,15 @@ func (s *Service) EnqueueAdhoc(ctx context.Context, orgID uuid.UUID, hostIDs []u
 		}
 		byZone[h.ZoneID] = append(byZone[h.ZoneID], id)
 	}
+	// A host whose key changed is never dialed: the explicitly chosen
+	// targets fail as a whole rather than silently shrinking.
+	targets := make([]uuid.UUID, 0, len(seen))
+	for _, zone := range zoneOrder {
+		targets = append(targets, byZone[zone]...)
+	}
+	if err := s.refuseChangedHosts(ctx, orgID, targets); err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(adhocKindPayload{Module: module, Argv: argv})
 	if err != nil {
 		return nil, fmt.Errorf("encode ad-hoc payload: %w", err)

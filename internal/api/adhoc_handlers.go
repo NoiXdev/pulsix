@@ -91,6 +91,10 @@ func mapAdhocErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, jobs.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
+	case errors.Is(err, jobs.ErrHostKeyChanged):
+		// A targeted host's key changed: the command is refused until a
+		// connection test confirms the pinned key again.
+		return huma.Error409Conflict(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped adhoc error", "err", err)
 		return huma.Error500InternalServerError("internal error")

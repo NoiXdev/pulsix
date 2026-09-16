@@ -335,7 +335,7 @@ func TestMaterializeRunnerConfigWritesExtravars(t *testing.T) {
 		t.Errorf("extravars = %q", text)
 	}
 	cfg := string(mustRead(t, filepath.Join(env.WorkDir, "ansible.cfg")))
-	for _, want := range []string{"host_key_checking = False", "retry_files_enabled = False", "ssh_args = -F "} {
+	for _, want := range []string{"host_key_checking = True", "retry_files_enabled = False", "ssh_args = -F "} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("ansible.cfg lacks %q:\n%s", want, cfg)
 		}
@@ -425,4 +425,43 @@ func jsonUnmarshal(line string, into any) error {
 // assertion compares identity, output is irrelevant).
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// TestSummarizeMapsAnsiblePlaybookExitCodes: ansible-playbook exits 2 when
+// a host failed and 4 when a host was unreachable (TaskQueueManager's
+// RUN_FAILED_HOSTS / RUN_UNREACHABLE_HOSTS). Both are runs that happened
+// and reported a recap — failed with stats, so retry-failed can re-run the
+// unreachable host (a host whose pinned key no longer matches is exactly
+// such a host). Other codes without a recap are infrastructure errors.
+func TestSummarizeMapsAnsiblePlaybookExitCodes(t *testing.T) {
+	conns := map[string]string{"web1": `{"host_id":"` + testHostID + `"}`}
+	clean := map[string]hostStat{"web1": {Ok: 2}}
+	failed := map[string]hostStat{"web1": {Ok: 1, Failed: 1}}
+	dark := map[string]hostStat{"web1": {Unreachable: 1}}
+	cases := []struct {
+		name            string
+		rc              int
+		stats           map[string]hostStat
+		want            worker.Status
+		wantUnreachable bool
+	}{
+		{"clean", 0, clean, worker.StatusSucceeded, false},
+		{"host failures", 2, failed, worker.StatusFailed, false},
+		{"unreachable host", 4, dark, worker.StatusFailed, true},
+		{"unreachable without a recap", 4, nil, worker.StatusError, false},
+		{"ansible error", 1, nil, worker.StatusError, false},
+		{"bad options", 5, nil, worker.StatusError, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			status, stats, _ := summarize(c.rc, c.stats, nil, "", conns)
+			if status != c.want {
+				t.Fatalf("summarize(%d) = %s, want %s", c.rc, status, c.want)
+			}
+			got, _ := stats[statsUnreachableHosts].([]string)
+			if c.wantUnreachable && (len(got) != 1 || got[0] != testHostID) {
+				t.Fatalf("unreachable_hosts = %v, want [%s]", stats[statsUnreachableHosts], testHostID)
+			}
+		})
+	}
 }

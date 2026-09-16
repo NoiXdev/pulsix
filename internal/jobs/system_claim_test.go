@@ -48,7 +48,7 @@ func TestBuildPayloadBootstrapShipsOneTimeLogin(t *testing.T) {
 	q := newTestQueue(renderer, creds, fakeTemplates{}, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
 		bastionID: {ID: bastionID, Address: "10.0.0.1", Port: 2223, Username: "jumper", CredentialID: &hopCredID},
 	}})
-	q.SetKeyPins(fakePins{byID: map[uuid.UUID]string{hostID: pinned}})
+	q.SetKeyPins(fakePins{byID: map[uuid.UUID]string{hostID: pinned}, pubByID: map[uuid.UUID]string{hostID: "ssh-ed25519 AAAA pinned"}})
 
 	// The sealed enqueue payload the API built.
 	req := bootstrapRequest{CredentialID: credID, LoginUser: "root", Login: credentials.Secret{Password: "one-time-pw"}}

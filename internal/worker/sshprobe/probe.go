@@ -92,6 +92,10 @@ type Result struct {
 	// HostKey is the OpenSSH fingerprint of the observed host key
 	// ("SHA256:…"), empty when the handshake never got that far.
 	HostKey string `json:"host_key"`
+	// HostPublicKey is the observed host key itself in authorized-key form
+	// ("ssh-ed25519 AAAA…", no comment), empty when HostKey is. Pinning
+	// stores it: ansible's known_hosts needs the key, not its fingerprint.
+	HostPublicKey string `json:"host_public_key,omitempty"`
 	// HostKeyState is the TOFU verdict of HostKey against the pin:
 	// unpinned, pinned, changed — or empty when nothing was observed
 	// (never reached).
@@ -136,17 +140,22 @@ func (p *Probe) Run(ctx context.Context, target ProbeTarget) (Result, error) {
 	}
 
 	timeout := p.dialTimeout()
-	var seenKey string
+	var seen observedKey
 	cfg := &ssh.ClientConfig{
 		User:            target.Username,
 		Auth:            auth,
-		HostKeyCallback: hostKeyCallback(target.PinnedKey, &seenKey),
+		HostKeyCallback: hostKeyCallback(target.PinnedKey, &seen),
 		Timeout:         timeout,
 	}
+	seenKey := func() string { return seen.fingerprint }
 
 	client, conn, err := p.dial(ctx, target.Bastions, joinHostPort(target.Address, target.Port), cfg)
 	if err != nil {
-		return p.dialOutcome(target.PinnedKey, seenKey, err), nil
+		res := p.dialOutcome(target.PinnedKey, seen.fingerprint, err)
+		if res.HostKey != "" {
+			res.HostPublicKey = seen.publicKey
+		}
+		return res, nil
 	}
 	defer func() { _ = client.Close() }()
 
@@ -164,14 +173,15 @@ func (p *Probe) Run(ctx context.Context, target ProbeTarget) (Result, error) {
 	}()
 
 	res := Result{
-		Reachable:    true,
-		HostKey:      seenKey,
-		HostKeyState: string(Compare(target.PinnedKey, seenKey)),
-		Auth:         true,
+		Reachable:     true,
+		HostKey:       seenKey(),
+		HostPublicKey: seen.publicKey,
+		HostKeyState:  string(Compare(target.PinnedKey, seenKey())),
+		Auth:          true,
 	}
 	res.Checks = append(res.Checks,
 		Check{Name: "reachability", Detail: "connected " + route(target.Bastions), OK: true},
-		Check{Name: "host_key", Detail: keyDetail(seenKey, res.HostKeyState), OK: true},
+		Check{Name: "host_key", Detail: keyDetail(seenKey(), res.HostKeyState), OK: true},
 		Check{Name: "auth", Detail: "ssh authentication ok", OK: true},
 	)
 
@@ -373,14 +383,21 @@ func (p *Probe) dial(ctx context.Context, hops []BastionHop, target string, targ
 	return nil, nil, errors.New("no dial steps") // unreachable: steps always ends with the target
 }
 
-// hostKeyCallback captures the fingerprint and enforces the pin: a pin the
-// observed key does not match aborts the handshake before any
-// authentication can happen.
-func hostKeyCallback(pinned string, seen *string) ssh.HostKeyCallback {
+// observedKey is the target host key one handshake saw: its OpenSSH
+// fingerprint and the key itself in authorized-key form.
+type observedKey struct {
+	fingerprint string
+	publicKey   string
+}
+
+// hostKeyCallback captures the key and its fingerprint and enforces the
+// pin: a pin the observed key does not match aborts the handshake before
+// any authentication can happen.
+func hostKeyCallback(pinned string, seen *observedKey) ssh.HostKeyCallback {
 	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
-		fingerprint := ssh.FingerprintSHA256(key)
-		*seen = fingerprint
-		if pinned != "" && fingerprint != pinned {
+		seen.fingerprint = ssh.FingerprintSHA256(key)
+		seen.publicKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+		if pinned != "" && seen.fingerprint != pinned {
 			return errHostKeyChanged
 		}
 		return nil

@@ -37,10 +37,26 @@ func (fullProbeCreds) Get(_ context.Context, _, id uuid.UUID) (credentials.Crede
 	return credentials.Credential{ID: id, Username: "deploy"}, nil
 }
 
-// fakePins is a KeyPinSource fake: pins by host id.
+// fakePins is a KeyPinSource fake: pins by host id, with the pinned full
+// public keys in pubByID (a pin without an entry is fingerprint-only).
 type fakePins struct {
-	byID map[uuid.UUID]string
-	err  error
+	byID    map[uuid.UUID]string
+	pubByID map[uuid.UUID]string
+	err     error
+}
+
+// PinnedPublicKeys implements KnownHostSource.
+func (f fakePins) PinnedPublicKeys(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := map[uuid.UUID]string{}
+	for _, id := range hostIDs {
+		if pub, ok := f.pubByID[id]; ok {
+			out[id] = pub
+		}
+	}
+	return out, nil
 }
 
 // ChangedHosts reports no changed host: fakePins doubles as the claim's
@@ -270,14 +286,14 @@ func TestBuildPayloadRunShipsPinnedHostKeys(t *testing.T) {
 		Connections: map[string]render.Connection{"web1": {HostID: hostID}},
 	}}
 	q := newTestQueue(renderer, fakeCreds{}, templates, fakeBastions{})
-	q.SetKeyPins(fakePins{byID: map[uuid.UUID]string{hostID: "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}})
+	q.SetKeyPins(fakePins{byID: map[uuid.UUID]string{hostID: "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}, pubByID: map[uuid.UUID]string{hostID: "ssh-ed25519 AAAA pinned"}})
 	out := &workerpb.Job{}
 	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{
 		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: []uuid.UUID{hostID},
 	}, out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
 	}
-	if len(out.HostKeys) != 1 || out.HostKeys["web1"] != "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" {
+	if len(out.HostKeys) != 1 || out.HostKeys["web1"] != "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" || out.KnownHosts["web1"] != "ssh-ed25519 AAAA pinned" {
 		t.Fatalf("host keys = %v, want exactly the claimed host's pin", out.HostKeys)
 	}
 }
@@ -316,14 +332,15 @@ type testRecord struct {
 	at            time.Time
 	ok            bool
 	hostKey       string
+	hostPublicKey string
 	hostKeyState  string
 	checks        []hosts.HostTestCheck
 }
 
-func (f *fakeTestSink) RecordConnectionTest(_ context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostKeyState string, checks []hosts.HostTestCheck) error {
+func (f *fakeTestSink) RecordConnectionTest(_ context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, testRecord{orgID: orgID, hostID: hostID, at: at, ok: ok, hostKey: hostKey, hostKeyState: hostKeyState, checks: checks})
+	f.calls = append(f.calls, testRecord{orgID: orgID, hostID: hostID, at: at, ok: ok, hostKey: hostKey, hostPublicKey: hostPublicKey, hostKeyState: hostKeyState, checks: checks})
 	return nil
 }
 
@@ -532,7 +549,7 @@ func claimJobID(t *testing.T, d *db.DB, org, zone uuid.UUID) uuid.UUID {
 // job's terminal status already stands, the failure is logged, never fatal.
 type failingTestSink struct{}
 
-func (failingTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, []hosts.HostTestCheck) error {
+func (failingTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck) error {
 	return errors.New("disk full")
 }
 
@@ -632,6 +649,6 @@ func TestFinishConnectionTestSinkFailureFailsTheFinish(t *testing.T) {
 
 type goneTestSink struct{}
 
-func (goneTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, []hosts.HostTestCheck) error {
+func (goneTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck) error {
 	return hosts.ErrNotFound
 }

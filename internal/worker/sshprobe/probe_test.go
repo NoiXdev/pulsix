@@ -584,3 +584,54 @@ func TestNilCredentialMethods(t *testing.T) {
 		t.Fatalf("methods = %v, %v", methods, err)
 	}
 }
+
+// TestProbeReportsTheFullHostPublicKey (final review C2): every outcome
+// that observed the host key — a passing test, a failed login, a changed
+// key — reports the key itself in authorized-key form next to its
+// fingerprint, so pinning stores what ansible's known_hosts needs to
+// enforce the pin. A probe that never reached key exchange reports none.
+func TestProbeReportsTheFullHostPublicKey(t *testing.T) {
+	key := newKey(t)
+	srv := startProbeServer(t, withAuthorizedKey(key))
+	tgt := srv.asTarget()
+	fingerprintOf := func(t *testing.T, line string) string {
+		t.Helper()
+		pub, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(line))
+		if err != nil || len(rest) != 0 {
+			t.Fatalf("host public key %q is not one authorized-key line: %v", line, err)
+		}
+		return ssh.FingerprintSHA256(pub)
+	}
+
+	ok := runProbe(t, tgt, key.secret())
+	cases := []struct {
+		name   string
+		target ProbeTarget
+	}{
+		{"passing test", ProbeTarget{Address: tgt.Address, Port: tgt.Port, Username: "ansible", Credential: key.secret()}},
+		{"failed login", ProbeTarget{Address: tgt.Address, Port: tgt.Port, Username: "ansible", Credential: newKey(t).secret()}},
+		{"changed key", ProbeTarget{Address: tgt.Address, Port: tgt.Port, Username: "ansible", Credential: key.secret(), PinnedKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := newProbe().Run(context.Background(), c.target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.HostPublicKey == "" {
+				t.Fatalf("no host public key reported: %+v", res)
+			}
+			if got := fingerprintOf(t, res.HostPublicKey); got != res.HostKey || got != ok.HostKey {
+				t.Fatalf("public key fingerprint %s, reported %s, want %s", got, res.HostKey, ok.HostKey)
+			}
+		})
+	}
+
+	unreachable, err := newProbe().Run(context.Background(), ProbeTarget{Address: "127.0.0.1", Port: 1, Username: "ansible", Credential: key.secret()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unreachable.HostPublicKey != "" {
+		t.Fatalf("an unreachable host reported a public key: %q", unreachable.HostPublicKey)
+	}
+}

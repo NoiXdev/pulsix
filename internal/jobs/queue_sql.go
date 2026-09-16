@@ -67,6 +67,9 @@ type SQLQueue struct {
 	// (the pins source implements it — hosts.Service does); nil fails
 	// run and ad-hoc claims closed.
 	keyGuard KeyGuardSource
+	// knownHosts is the pinned hosts' full public keys (the pins source
+	// implements it); nil fails every claim for a pinned host closed.
+	knownHosts KnownHostSource
 	// test is the optional sink a finished connection_test job's outcome is
 	// recorded through (SetTestSink, the same post-construction wiring the
 	// sync sink has; the concrete sink is the hosts service).
@@ -119,9 +122,12 @@ func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
 // field); run and ad-hoc jobs then ship no host keys.
 func (q *SQLQueue) SetKeyPins(source KeyPinSource) {
 	q.pins = source
-	q.keyGuard = nil
+	q.keyGuard, q.knownHosts = nil, nil
 	if g, ok := source.(KeyGuardSource); ok {
 		q.keyGuard = g
+	}
+	if k, ok := source.(KnownHostSource); ok {
+		q.knownHosts = k
 	}
 }
 
@@ -258,14 +264,14 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// route resolves the target's connection (address, port, jump chain);
 	// the inventory document is discarded.
 	if job.Kind == KindBootstrap || job.Kind == KindRotateKey {
-		kindPayload, hostKeys, err := q.systemPayload(ctx, job)
+		kindPayload, pins, err := q.systemPayload(ctx, job)
 		if err != nil {
 			return err
 		}
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
-			InventoryDoc: "{}", HostKeys: hostKeys, KindPayload: kindPayload,
+			InventoryDoc: "{}", HostKeys: pins.fingerprints, KnownHosts: pins.publicKeys, KindPayload: kindPayload,
 		}
 		return nil
 	}
@@ -411,7 +417,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	if job.TemplateID != nil {
 		templateID = job.TemplateID.String()
 	}
-	hostKeys, err := q.claimHostKeys(ctx, job, inv.Connections)
+	pins, err := q.claimHostKeys(ctx, job, inv.Connections)
 	if err != nil {
 		return err
 	}
@@ -421,7 +427,8 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		TemplateId: templateID, Playbook: playbook, Limit: limit,
 		ExtraVars: extraVars, SshUsername: sshUser,
 		InventoryDoc: string(doc), Connections: connections, Credentials: credentials,
-		HostKeys:    hostKeys,
+		HostKeys:    pins.fingerprints,
+		KnownHosts:  pins.publicKeys,
 		KindPayload: kindPayload,
 	}
 	return nil
@@ -453,30 +460,57 @@ func (q *SQLQueue) excludeChangedAtClaim(ctx context.Context, job Job) ([]uuid.U
 	return kept, nil
 }
 
-// claimHostKeys collects the pinned fingerprints of the job's hosts into
-// the claim's host_keys map, keyed by host name — the map the run's SSH
-// preflight and the connection test's TOFU read. The pins source is
-// optional (SetKeyPins): unwired, run and ad-hoc jobs ship no keys.
-func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]render.Connection) (map[string]string, error) {
-	if q.pins == nil || len(conns) == 0 {
-		return map[string]string{}, nil
+// claimPins is what a host-bound claim ships about pinned host keys, both
+// maps keyed by host name: the fingerprints (host_keys) and the full public
+// keys the worker writes into the run's known_hosts (known_hosts).
+type claimPins struct {
+	fingerprints map[string]string
+	publicKeys   map[string]string
+}
+
+// claimHostKeys collects the pins of the job's rendered hosts. Every pinned
+// host must come with its full public key: the worker enforces a pin
+// through known_hosts, which a fingerprint cannot fill. A pin made before
+// full keys were recorded fails the claim with the remedy (a connection
+// test confirming the pin stores the key); so does an unwired key source.
+func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]render.Connection) (claimPins, error) {
+	out := claimPins{fingerprints: map[string]string{}, publicKeys: map[string]string{}}
+	if len(conns) == 0 {
+		return out, nil
+	}
+	if q.pins == nil {
+		return claimPins{}, fmt.Errorf("%s claim %s: no host key pin source wired", job.Kind, job.ID)
 	}
 	ids := make([]uuid.UUID, 0, len(conns))
-	seen := map[uuid.UUID]bool{}
-	for _, c := range conns {
-		if !seen[c.HostID] {
-			seen[c.HostID] = true
+	names := make(map[uuid.UUID][]string, len(conns))
+	for name, c := range conns {
+		if _, seen := names[c.HostID]; !seen {
 			ids = append(ids, c.HostID)
 		}
+		names[c.HostID] = append(names[c.HostID], name)
 	}
 	pinned, err := q.pins.PinnedKeys(ctx, job.OrgID, ids)
 	if err != nil {
-		return nil, fmt.Errorf("resolve host key pins: %w", err)
+		return claimPins{}, fmt.Errorf("resolve host key pins: %w", err)
 	}
-	out := map[string]string{}
-	for name, c := range conns {
-		if fingerprint, ok := pinned[c.HostID]; ok {
-			out[name] = fingerprint
+	if len(pinned) == 0 {
+		return out, nil
+	}
+	if q.knownHosts == nil {
+		return claimPins{}, fmt.Errorf("%s claim %s: no pinned host key source wired", job.Kind, job.ID)
+	}
+	keys, err := q.knownHosts.PinnedPublicKeys(ctx, job.OrgID, ids)
+	if err != nil {
+		return claimPins{}, fmt.Errorf("resolve pinned host public keys: %w", err)
+	}
+	for hostID, fingerprint := range pinned {
+		pub := keys[hostID]
+		if pub == "" {
+			return claimPins{}, fmt.Errorf("host %s was pinned before full host keys were recorded, so its pin cannot be enforced: run a connection test for the host (it completes the pin) and retry", hostID)
+		}
+		for _, name := range names[hostID] {
+			out.fingerprints[name] = fingerprint
+			out.publicKeys[name] = pub
 		}
 	}
 	return out, nil
@@ -1032,7 +1066,7 @@ func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Statu
 		slog.ErrorContext(ctx, "record test result: result event is not a result", "err", err, "job", jobID)
 		return nil
 	}
-	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostKeyState, res.Checks); err != nil {
+	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostPublicKey, res.HostKeyState, res.Checks); err != nil {
 		if sinkGone(err) {
 			slog.WarnContext(ctx, "record test result: host no longer exists", "job", jobID)
 			return nil
@@ -1048,14 +1082,15 @@ func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Statu
 // and Python present — all four, or the test is not ok (a failed sudo or
 // Python still yields ok=false; the checks list carries the details).
 type testResultPayload struct {
-	Reachable    bool                  `json:"reachable"`
-	HostKey      string                `json:"host_key"`
-	HostKeyState string                `json:"host_key_state"`
-	Auth         bool                  `json:"auth"`
-	Sudo         bool                  `json:"sudo"`
-	Python       bool                  `json:"python"`
-	Checks       []hosts.HostTestCheck `json:"checks"`
-	Err          string                `json:"err,omitempty"`
+	Reachable     bool                  `json:"reachable"`
+	HostKey       string                `json:"host_key"`
+	HostPublicKey string                `json:"host_public_key"`
+	HostKeyState  string                `json:"host_key_state"`
+	Auth          bool                  `json:"auth"`
+	Sudo          bool                  `json:"sudo"`
+	Python        bool                  `json:"python"`
+	Checks        []hosts.HostTestCheck `json:"checks"`
+	Err           string                `json:"err,omitempty"`
 }
 
 func (r testResultPayload) ok() bool {

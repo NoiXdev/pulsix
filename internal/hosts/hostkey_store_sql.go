@@ -32,8 +32,12 @@ func (s *SQLStore) ListOrgIDs(ctx context.Context) ([]uuid.UUID, error) {
 }
 
 // SetHostKeyPin implements Store (see the interface's own comment).
-func (s *SQLStore) SetHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint string) error {
-	rowsAffected, err := s.q.UpsertHostKeyPin(ctx, gen.UpsertHostKeyPinParams{OrgID: orgID, HostID: hostID, SshHostKey: &fingerprint})
+func (s *SQLStore) SetHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint, publicKey string) error {
+	var pub *string
+	if publicKey != "" {
+		pub = &publicKey
+	}
+	rowsAffected, err := s.q.UpsertHostKeyPin(ctx, gen.UpsertHostKeyPinParams{OrgID: orgID, HostID: hostID, SshHostKey: &fingerprint, SshHostPublicKey: pub})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationCode {
@@ -53,18 +57,30 @@ func (s *SQLStore) ClearHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID)
 	return err
 }
 
+// BackfillHostKeyPin implements Store (see the interface's own comment).
+func (s *SQLStore) BackfillHostKeyPin(ctx context.Context, orgID, hostID uuid.UUID, fingerprint, publicKey string) error {
+	_, err := s.q.BackfillHostKeyPinPublicKey(ctx, gen.BackfillHostKeyPinPublicKeyParams{
+		OrgID: orgID, HostID: hostID, Fingerprint: &fingerprint, PublicKey: &publicKey,
+	})
+	return err
+}
+
 // ListPinnedKeys implements Store (see the interface's own comment).
-func (s *SQLStore) ListPinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+func (s *SQLStore) ListPinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]HostKeyPin, error) {
 	rows, err := s.q.ListPinnedHostKeys(ctx, gen.ListPinnedHostKeysParams{OrgID: orgID, HostIds: hostIDs})
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[uuid.UUID]string, len(rows))
+	out := make(map[uuid.UUID]HostKeyPin, len(rows))
 	for _, r := range rows {
 		if r.SshHostKey == nil {
 			continue // the query filters to non-null pins; never expected
 		}
-		out[r.HostID] = *r.SshHostKey
+		pin := HostKeyPin{Fingerprint: *r.SshHostKey}
+		if r.SshHostPublicKey != nil {
+			pin.PublicKey = *r.SshHostPublicKey
+		}
+		out[r.HostID] = pin
 	}
 	return out, nil
 }
@@ -86,6 +102,7 @@ func (s *SQLStore) CreateHostTest(ctx context.Context, t HostTest) error {
 	_, err = s.q.CreateHostConnectionTest(ctx, gen.CreateHostConnectionTestParams{
 		ID: t.ID, OrgID: t.OrgID, HostID: t.HostID, At: t.At,
 		Ok: t.OK, HostKey: t.HostKey, HostKeyState: t.HostKeyState, Checks: checks,
+		HostPublicKey: t.HostPublicKey,
 	})
 	return err
 }
@@ -126,6 +143,6 @@ func toHostTest(r gen.HostConnectionTest) (HostTest, error) {
 	}
 	return HostTest{
 		ID: r.ID, OrgID: r.OrgID, HostID: r.HostID, At: r.At,
-		OK: r.Ok, HostKey: r.HostKey, HostKeyState: r.HostKeyState, Checks: checks,
+		OK: r.Ok, HostKey: r.HostKey, HostPublicKey: r.HostPublicKey, HostKeyState: r.HostKeyState, Checks: checks,
 	}, nil
 }

@@ -141,26 +141,28 @@ type Host struct {
 }
 
 type HostConnectionTest struct {
-	ID           uuid.UUID `json:"id"`
-	OrgID        uuid.UUID `json:"org_id"`
-	HostID       uuid.UUID `json:"host_id"`
-	At           time.Time `json:"at"`
-	Ok           bool      `json:"ok"`
-	HostKey      string    `json:"host_key"`
-	HostKeyState string    `json:"host_key_state"`
-	Checks       []byte    `json:"checks"`
+	ID            uuid.UUID `json:"id"`
+	OrgID         uuid.UUID `json:"org_id"`
+	HostID        uuid.UUID `json:"host_id"`
+	At            time.Time `json:"at"`
+	Ok            bool      `json:"ok"`
+	HostKey       string    `json:"host_key"`
+	HostKeyState  string    `json:"host_key_state"`
+	Checks        []byte    `json:"checks"`
+	HostPublicKey string    `json:"host_public_key"`
 }
 
 type HostSsh struct {
-	HostID       uuid.UUID   `json:"host_id"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	Username     string      `json:"username"`
-	Port         int32       `json:"port"`
-	CredentialID pgtype.UUID `json:"credential_id"`
-	BastionMode  string      `json:"bastion_mode"`
-	BastionID    pgtype.UUID `json:"bastion_id"`
-	UpdatedAt    time.Time   `json:"updated_at"`
-	SshHostKey   *string     `json:"ssh_host_key"`
+	HostID           uuid.UUID   `json:"host_id"`
+	OrgID            uuid.UUID   `json:"org_id"`
+	Username         string      `json:"username"`
+	Port             int32       `json:"port"`
+	CredentialID     pgtype.UUID `json:"credential_id"`
+	BastionMode      string      `json:"bastion_mode"`
+	BastionID        pgtype.UUID `json:"bastion_id"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	SshHostKey       *string     `json:"ssh_host_key"`
+	SshHostPublicKey *string     `json:"ssh_host_public_key"`
 }
 
 type HostTag struct {

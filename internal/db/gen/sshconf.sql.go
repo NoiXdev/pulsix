@@ -101,7 +101,7 @@ func (q *Queries) GetBastion(ctx context.Context, arg GetBastionParams) (Bastion
 }
 
 const getHostSSH = `-- name: GetHostSSH :one
-SELECT host_id, org_id, username, port, credential_id, bastion_mode, bastion_id, updated_at, ssh_host_key FROM host_ssh WHERE org_id = $1 AND host_id = $2
+SELECT host_id, org_id, username, port, credential_id, bastion_mode, bastion_id, updated_at, ssh_host_key, ssh_host_public_key FROM host_ssh WHERE org_id = $1 AND host_id = $2
 `
 
 type GetHostSSHParams struct {
@@ -122,6 +122,7 @@ func (q *Queries) GetHostSSH(ctx context.Context, arg GetHostSSHParams) (HostSsh
 		&i.BastionID,
 		&i.UpdatedAt,
 		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }
@@ -162,7 +163,7 @@ func (q *Queries) ListBastions(ctx context.Context, orgID uuid.UUID) ([]Bastion,
 }
 
 const listHostSSH = `-- name: ListHostSSH :many
-SELECT host_id, org_id, username, port, credential_id, bastion_mode, bastion_id, updated_at, ssh_host_key FROM host_ssh WHERE org_id = $1
+SELECT host_id, org_id, username, port, credential_id, bastion_mode, bastion_id, updated_at, ssh_host_key, ssh_host_public_key FROM host_ssh WHERE org_id = $1
 `
 
 func (q *Queries) ListHostSSH(ctx context.Context, orgID uuid.UUID) ([]HostSsh, error) {
@@ -184,6 +185,7 @@ func (q *Queries) ListHostSSH(ctx context.Context, orgID uuid.UUID) ([]HostSsh, 
 			&i.BastionID,
 			&i.UpdatedAt,
 			&i.SshHostKey,
+			&i.SshHostPublicKey,
 		); err != nil {
 			return nil, err
 		}
@@ -293,7 +295,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (host_id) DO UPDATE
 SET username = EXCLUDED.username, port = EXCLUDED.port, credential_id = EXCLUDED.credential_id,
     bastion_mode = EXCLUDED.bastion_mode, bastion_id = EXCLUDED.bastion_id, updated_at = now()
-RETURNING host_id, org_id, username, port, credential_id, bastion_mode, bastion_id, updated_at, ssh_host_key
+RETURNING host_id, org_id, username, port, credential_id, bastion_mode, bastion_id, updated_at, ssh_host_key, ssh_host_public_key
 `
 
 type UpsertHostSSHParams struct {
@@ -327,6 +329,7 @@ func (q *Queries) UpsertHostSSH(ctx context.Context, arg UpsertHostSSHParams) (H
 		&i.BastionID,
 		&i.UpdatedAt,
 		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }

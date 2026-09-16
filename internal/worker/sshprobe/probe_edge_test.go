@@ -119,11 +119,11 @@ func TestExecSessionFailureAfterDeadConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var seenKey string
+	var seen observedKey
 	cfg := &ssh.ClientConfig{
 		User:            "ansible",
 		Auth:            auth,
-		HostKeyCallback: hostKeyCallback("", &seenKey),
+		HostKeyCallback: hostKeyCallback("", &seen),
 		Timeout:         p.dialTimeout(),
 	}
 	client, conn, err := p.dial(context.Background(), nil, joinHostPort(tgt.Address, tgt.Port), cfg)

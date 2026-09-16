@@ -12,8 +12,38 @@ import (
 	"github.com/google/uuid"
 )
 
+const backfillHostKeyPinPublicKey = `-- name: BackfillHostKeyPinPublicKey :execrows
+UPDATE host_ssh SET ssh_host_public_key = $1, updated_at = now()
+WHERE org_id = $2 AND host_id = $3 AND ssh_host_key = $4
+  AND ssh_host_public_key IS NULL
+`
+
+type BackfillHostKeyPinPublicKeyParams struct {
+	PublicKey   *string   `json:"public_key"`
+	OrgID       uuid.UUID `json:"org_id"`
+	HostID      uuid.UUID `json:"host_id"`
+	Fingerprint *string   `json:"fingerprint"`
+}
+
+// A pin made before full host keys were stored (migration 00021) carries a
+// fingerprint only; a later connection test that observed a key with
+// exactly that fingerprint completes it. The fingerprint predicate is what
+// makes this safe: only the pinned key itself can fill the column.
+func (q *Queries) BackfillHostKeyPinPublicKey(ctx context.Context, arg BackfillHostKeyPinPublicKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, backfillHostKeyPinPublicKey,
+		arg.PublicKey,
+		arg.OrgID,
+		arg.HostID,
+		arg.Fingerprint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearHostKeyPin = `-- name: ClearHostKeyPin :execrows
-UPDATE host_ssh SET ssh_host_key = NULL, updated_at = now()
+UPDATE host_ssh SET ssh_host_key = NULL, ssh_host_public_key = NULL, updated_at = now()
 WHERE org_id = $1 AND host_id = $2
 `
 
@@ -31,19 +61,20 @@ func (q *Queries) ClearHostKeyPin(ctx context.Context, arg ClearHostKeyPinParams
 }
 
 const createHostConnectionTest = `-- name: CreateHostConnectionTest :execrows
-INSERT INTO host_connection_tests (id, org_id, host_id, at, ok, host_key, host_key_state, checks)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO host_connection_tests (id, org_id, host_id, at, ok, host_key, host_key_state, checks, host_public_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type CreateHostConnectionTestParams struct {
-	ID           uuid.UUID `json:"id"`
-	OrgID        uuid.UUID `json:"org_id"`
-	HostID       uuid.UUID `json:"host_id"`
-	At           time.Time `json:"at"`
-	Ok           bool      `json:"ok"`
-	HostKey      string    `json:"host_key"`
-	HostKeyState string    `json:"host_key_state"`
-	Checks       []byte    `json:"checks"`
+	ID            uuid.UUID `json:"id"`
+	OrgID         uuid.UUID `json:"org_id"`
+	HostID        uuid.UUID `json:"host_id"`
+	At            time.Time `json:"at"`
+	Ok            bool      `json:"ok"`
+	HostKey       string    `json:"host_key"`
+	HostKeyState  string    `json:"host_key_state"`
+	Checks        []byte    `json:"checks"`
+	HostPublicKey string    `json:"host_public_key"`
 }
 
 func (q *Queries) CreateHostConnectionTest(ctx context.Context, arg CreateHostConnectionTestParams) (int64, error) {
@@ -56,6 +87,7 @@ func (q *Queries) CreateHostConnectionTest(ctx context.Context, arg CreateHostCo
 		arg.HostKey,
 		arg.HostKeyState,
 		arg.Checks,
+		arg.HostPublicKey,
 	)
 	if err != nil {
 		return 0, err
@@ -64,7 +96,7 @@ func (q *Queries) CreateHostConnectionTest(ctx context.Context, arg CreateHostCo
 }
 
 const getLatestHostConnectionTest = `-- name: GetLatestHostConnectionTest :one
-SELECT id, org_id, host_id, at, ok, host_key, host_key_state, checks FROM host_connection_tests
+SELECT id, org_id, host_id, at, ok, host_key, host_key_state, checks, host_public_key FROM host_connection_tests
 WHERE org_id = $1 AND host_id = $2
 ORDER BY at DESC
 LIMIT 1
@@ -89,6 +121,7 @@ func (q *Queries) GetLatestHostConnectionTest(ctx context.Context, arg GetLatest
 		&i.HostKey,
 		&i.HostKeyState,
 		&i.Checks,
+		&i.HostPublicKey,
 	)
 	return i, err
 }
@@ -224,7 +257,7 @@ func (q *Queries) ListOrgIDs(ctx context.Context) ([]uuid.UUID, error) {
 }
 
 const listPinnedHostKeys = `-- name: ListPinnedHostKeys :many
-SELECT host_id, ssh_host_key FROM host_ssh
+SELECT host_id, ssh_host_key, ssh_host_public_key FROM host_ssh
 WHERE org_id = $1 AND host_id = ANY($2::uuid[]) AND ssh_host_key IS NOT NULL
 `
 
@@ -234,8 +267,9 @@ type ListPinnedHostKeysParams struct {
 }
 
 type ListPinnedHostKeysRow struct {
-	HostID     uuid.UUID `json:"host_id"`
-	SshHostKey *string   `json:"ssh_host_key"`
+	HostID           uuid.UUID `json:"host_id"`
+	SshHostKey       *string   `json:"ssh_host_key"`
+	SshHostPublicKey *string   `json:"ssh_host_public_key"`
 }
 
 // The pinned fingerprint of each named host that carries one (empty when
@@ -249,7 +283,7 @@ func (q *Queries) ListPinnedHostKeys(ctx context.Context, arg ListPinnedHostKeys
 	var items []ListPinnedHostKeysRow
 	for rows.Next() {
 		var i ListPinnedHostKeysRow
-		if err := rows.Scan(&i.HostID, &i.SshHostKey); err != nil {
+		if err := rows.Scan(&i.HostID, &i.SshHostKey, &i.SshHostPublicKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -262,16 +296,17 @@ func (q *Queries) ListPinnedHostKeys(ctx context.Context, arg ListPinnedHostKeys
 
 const upsertHostKeyPin = `-- name: UpsertHostKeyPin :execrows
 
-INSERT INTO host_ssh (host_id, org_id, ssh_host_key)
-VALUES ($2, $1, $3)
+INSERT INTO host_ssh (host_id, org_id, ssh_host_key, ssh_host_public_key)
+VALUES ($2, $1, $3, $4)
 ON CONFLICT (host_id) DO UPDATE
-SET ssh_host_key = EXCLUDED.ssh_host_key, updated_at = now()
+SET ssh_host_key = EXCLUDED.ssh_host_key, ssh_host_public_key = EXCLUDED.ssh_host_public_key, updated_at = now()
 `
 
 type UpsertHostKeyPinParams struct {
-	OrgID      uuid.UUID `json:"org_id"`
-	HostID     uuid.UUID `json:"host_id"`
-	SshHostKey *string   `json:"ssh_host_key"`
+	OrgID            uuid.UUID `json:"org_id"`
+	HostID           uuid.UUID `json:"host_id"`
+	SshHostKey       *string   `json:"ssh_host_key"`
+	SshHostPublicKey *string   `json:"ssh_host_public_key"`
 }
 
 // Host-key pins and connection-test history (spec §5, backlog 2.7c).
@@ -282,7 +317,12 @@ type UpsertHostKeyPinParams struct {
 // settings of its own (username ”, port 22, bastion_mode 'inherit') and
 // stores the pin; an existing row keeps every other column untouched.
 func (q *Queries) UpsertHostKeyPin(ctx context.Context, arg UpsertHostKeyPinParams) (int64, error) {
-	result, err := q.db.Exec(ctx, upsertHostKeyPin, arg.OrgID, arg.HostID, arg.SshHostKey)
+	result, err := q.db.Exec(ctx, upsertHostKeyPin,
+		arg.OrgID,
+		arg.HostID,
+		arg.SshHostKey,
+		arg.SshHostPublicKey,
+	)
 	if err != nil {
 		return 0, err
 	}

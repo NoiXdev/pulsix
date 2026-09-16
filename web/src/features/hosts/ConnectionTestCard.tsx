@@ -13,7 +13,7 @@ const KEY_STATE_TONE: Record<string, Tone> = { pinned: 'ok', changed: 'crit', un
  * operator starts a connection test (a connection_test job), the latest
  * result's checks read row by row in the state colours, and the observed
  * host key fingerprint is pinned or cleared — a `changed` key blocks jobs
- * until the new fingerprint is pinned. Read-only for viewers
+ * until the new key is pinned and a new connection test confirms it. Read-only for viewers
  * (inventory.write is an operator permission server-side; `canWrite`
  * mirrors that from the session's role). The host detail DTO does not
  * carry the test state (Task 10 deferral): the card reads it here.
@@ -115,7 +115,7 @@ function HostKey({
       </div>
       {state === 'changed' && (
         <p className="text-[11px]" style={{ color: 'var(--px-crit)' }}>
-          The host key changed since it was pinned — jobs are blocked until the new key is pinned.
+          The host key changed since it was pinned — jobs are blocked until the new key is pinned and a new connection test confirms it.
         </p>
       )}
       {state === 'unpinned' && <p className="text-[11px] text-muted-foreground">Pinning the observed key enables trust-on-first-use.</p>}

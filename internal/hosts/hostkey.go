@@ -1,20 +1,28 @@
 // Host-key pinning and connection-test history (spec §5, backlog 2.7c).
 //
 // A connection test's outcome lands here as a HostTest row; the operator
-// pins the fingerprint a test observed (only what was seen — the API
-// checks the pin against the latest result), and every later test compares
-// its observation against the pin. A host whose latest test reports
-// `changed` is blocked from run jobs until an operator re-pins, which is
-// the ChangedHosts read the jobs package consumes.
+// pins the key a test observed (only what was seen — the API checks the
+// pin against the latest result), and every later test compares its
+// observation against the pin. A host whose latest test reports `changed`
+// is blocked from jobs (the ChangedHosts read the jobs package consumes)
+// until a fresh connection test no longer reports a changed key — re-pinning
+// alone does not unblock it: the operator pins the newly observed key and
+// the next test must confirm it (reporting `pinned`).
+//
+// A pin is the fingerprint plus the full public key: the fingerprint is
+// what the probe compares, the key is what the worker writes into the
+// run's known_hosts so ansible's own SSH connections enforce the pin.
 package hosts
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"regexp"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 )
 
 // The TOFU verdicts a test row can carry, the stored spellings of the
@@ -47,28 +55,59 @@ type HostTest struct {
 	// HostKey is the fingerprint the probe observed, empty when the
 	// handshake never got that far.
 	HostKey string `json:"host_key"`
+	// HostPublicKey is the observed key itself in authorized-key form;
+	// empty when nothing was observed, and on rows recorded before
+	// migration 00021.
+	HostPublicKey string `json:"host_public_key"`
 	// HostKeyState is the TOFU verdict: unpinned, pinned or changed.
 	HostKeyState string          `json:"host_key_state"`
 	Checks       []HostTestCheck `json:"checks"`
 }
 
-// SetHostKey pins the fingerprint. Only a fingerprint in the OpenSSH
-// "SHA256:<base64>" shape is accepted; the host must exist in the
-// organization (a foreign host is invisible, ErrNotFound). Creating the
-// pin never requires a host_ssh row to exist: one is created with the
-// defaults when the host carries no SSH settings of its own.
+// HostKeyPin is one host's pin: the OpenSSH fingerprint and the full
+// public key in authorized-key form. PublicKey is empty for a pin made
+// before full keys were stored (not enforceable until a connection test
+// confirming the fingerprint fills it).
+type HostKeyPin struct {
+	Fingerprint string
+	PublicKey   string
+}
+
+// SetHostKey pins a host key: the fingerprint in the OpenSSH
+// "SHA256:<base64>" shape and the key itself in authorized-key form, whose
+// fingerprint must equal the given one. The host must exist in the
+// organization (a foreign host is invisible, ErrNotFound). Creating the pin
+// never requires a host_ssh row to exist: one is created with the defaults
+// when the host carries no SSH settings of its own.
 //
-// The "you can only pin what you saw" rule — the pin must equal the
-// latest test result's observed fingerprint — is the API layer's check
-// (PUT /hosts/{id}/host-key), which reads LatestTest before calling this.
-func (s *Service) SetHostKey(ctx context.Context, orgID, hostID uuid.UUID, fingerprint string) error {
+// The "you can only pin what you saw" rule — the pin must equal the latest
+// test result's observation — is the API layer's check
+// (PUT /hosts/{id}/host-key), which reads LatestTest before calling this
+// and passes the key that test observed.
+func (s *Service) SetHostKey(ctx context.Context, orgID, hostID uuid.UUID, fingerprint, publicKey string) error {
 	if !fingerprintPattern.MatchString(fingerprint) {
 		return fmt.Errorf("%w: host key fingerprint must match SHA256:<43 base64 characters>", ErrInvalidInput)
+	}
+	if err := checkPublicKey(fingerprint, publicKey); err != nil {
+		return err
 	}
 	if _, err := s.store.GetHost(ctx, orgID, hostID); err != nil {
 		return err
 	}
-	return s.store.SetHostKeyPin(ctx, orgID, hostID, fingerprint)
+	return s.store.SetHostKeyPin(ctx, orgID, hostID, fingerprint, publicKey)
+}
+
+// checkPublicKey verifies that publicKey is exactly one authorized-key
+// line whose fingerprint is fingerprint.
+func checkPublicKey(fingerprint, publicKey string) error {
+	pub, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(publicKey))
+	if err != nil || len(bytes.TrimSpace(rest)) != 0 {
+		return fmt.Errorf("%w: host public key must be one authorized-key line", ErrInvalidInput)
+	}
+	if ssh.FingerprintSHA256(pub) != fingerprint {
+		return fmt.Errorf("%w: host public key does not match the fingerprint", ErrInvalidInput)
+	}
+	return nil
 }
 
 // ClearHostKey removes the pin. A host without SSH settings of its own has
@@ -95,7 +134,11 @@ func (s *Service) LatestTest(ctx context.Context, orgID, hostID uuid.UUID) (Host
 // of a connection_test job, with explicit org and host ids and the probe
 // result parsed from the job's final event. An empty host_key_state
 // (nothing was observed) records as unpinned.
-func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostKeyState string, checks []HostTestCheck) error {
+//
+// A test that confirmed the pin (state pinned) and observed the full key
+// completes a pin made before full keys were stored: the store fills the
+// key only when the pin's fingerprint equals the observed key's.
+func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []HostTestCheck) error {
 	// The host must exist in the organization: a job id pointing at a
 	// foreign host is a wiring bug, and the store-level foreign key alone
 	// would turn it into an opaque database error.
@@ -105,16 +148,28 @@ func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.U
 	if hostKeyState == "" {
 		hostKeyState = KeyStateUnpinned
 	}
-	return s.store.CreateHostTest(ctx, HostTest{
+	// A key that does not match its own reported fingerprint is dropped
+	// rather than stored: the row keeps what can be trusted.
+	if hostPublicKey != "" && checkPublicKey(hostKey, hostPublicKey) != nil {
+		hostPublicKey = ""
+	}
+	if err := s.store.CreateHostTest(ctx, HostTest{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, HostID: hostID, At: at,
-		OK: ok, HostKey: hostKey, HostKeyState: hostKeyState, Checks: checks,
-	})
+		OK: ok, HostKey: hostKey, HostPublicKey: hostPublicKey, HostKeyState: hostKeyState, Checks: checks,
+	}); err != nil {
+		return err
+	}
+	if hostKeyState == KeyStatePinned && hostPublicKey != "" {
+		return s.store.BackfillHostKeyPin(ctx, orgID, hostID, hostKey, hostPublicKey)
+	}
+	return nil
 }
 
 // ChangedHosts reports which of the given hosts' LATEST connection test
 // reports a changed host key. The jobs package consults it in EnqueueRun's
 // scope resolution: such hosts are excluded from the run scope (spec §5
-// block-on-mismatch) until an operator re-pins.
+// block-on-mismatch) until a later connection test no longer reports the
+// change (re-pinning alone does not unblock the host).
 func (s *Service) ChangedHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	ids, err := s.store.ListChangedKeys(ctx, orgID, hostIDs)
 	if err != nil {
@@ -131,7 +186,32 @@ func (s *Service) ChangedHosts(ctx context.Context, orgID uuid.UUID, hostIDs []u
 // The job queue's claim path turns the ids into the claim's host_keys map
 // (keyed by host name on the wire).
 func (s *Service) PinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
-	return s.store.ListPinnedKeys(ctx, orgID, hostIDs)
+	pins, err := s.store.ListPinnedKeys(ctx, orgID, hostIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(pins))
+	for id, pin := range pins {
+		out[id] = pin.Fingerprint
+	}
+	return out, nil
+}
+
+// PinnedPublicKeys maps each host id whose pin carries the full public key
+// to that key (authorized-key form). A pinned host missing here has a
+// fingerprint-only pin: the claim path refuses to run against it.
+func (s *Service) PinnedPublicKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	pins, err := s.store.ListPinnedKeys(ctx, orgID, hostIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(pins))
+	for id, pin := range pins {
+		if pin.PublicKey != "" {
+			out[id] = pin.PublicKey
+		}
+	}
+	return out, nil
 }
 
 // ListOrgIDs returns every organization id — the daily re-test's

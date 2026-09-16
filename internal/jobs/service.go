@@ -53,11 +53,14 @@ var (
 	// job to run in — a wiring gap the startup reconciliation pass
 	// (hosts.Service.ReconcileDefaultZones) is supposed to have healed.
 	ErrNoZone = errors.New("organization has no default zone")
-	// ErrHostKeyChanged means every host a run's scope resolved to has a
-	// changed host key (spec §5 block-on-mismatch): the enqueue fails until
-	// an operator re-pins the hosts. A partially affected scope keeps the
-	// good hosts and is not this error.
-	ErrHostKeyChanged = errors.New("all targeted hosts have a changed host key")
+	// ErrHostKeyChanged means a targeted host's latest connection test
+	// reports a changed host key (spec §5 block-on-mismatch): jobs that SSH
+	// into the host are refused until a fresh connection test confirms a
+	// pinned key again. A run's scope drops such hosts and fails with this
+	// error only when none is left; ad-hoc, bootstrap and rotation enqueues
+	// refuse as soon as one explicitly targeted host is affected (the error
+	// names it).
+	ErrHostKeyChanged = errors.New("host key changed: jobs are blocked for the host until a connection test confirms its pinned key")
 )
 
 // Kind is what a job does.
@@ -151,8 +154,8 @@ type Job struct {
 	TemplateID *uuid.UUID
 	// HostIDs are the explicit targets of the host kinds; for run jobs the
 	// per-zone subset of the template's scope the job covers.
-	HostIDs    []uuid.UUID
-	Status     Status
+	HostIDs []uuid.UUID
+	Status  Status
 	// Attempts counts how often the job was claimed (the claim increments
 	// it); the reaper stops requeuing a stale claim at the maximum.
 	Attempts   int
@@ -583,7 +586,10 @@ func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind
 		trigger = TriggerManual
 	}
 	// Validate every host first, so a bad id fails the whole enqueue
-	// before any job row exists.
+	// before any job row exists. The kinds that run playbooks over SSH
+	// (bootstrap, rotate_key; ad-hoc through EnqueueAdhoc) refuse a host
+	// whose key changed; the connection test is how a key gets re-verified
+	// and is never refused.
 	byZone := map[uuid.UUID][]uuid.UUID{}
 	var zoneOrder []uuid.UUID
 	for _, id := range hostIDs {
@@ -606,11 +612,36 @@ func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind
 			byZone[h.ZoneID] = append(byZone[h.ZoneID], id)
 		}
 	}
+	if kind == KindBootstrap || kind == KindRotateKey || kind == KindAdhoc {
+		if err := s.refuseChangedHosts(ctx, orgID, hostIDs); err != nil {
+			return Job{}, err
+		}
+	}
 	created, err := s.insertHostJobs(ctx, orgID, kind, byZone, zoneOrder, payload, trigger, actor)
 	if err != nil {
 		return Job{}, err
 	}
 	return created[0], nil
+}
+
+// refuseChangedHosts fails with ErrHostKeyChanged, naming the first affected
+// host, when any of the explicitly targeted hosts has a changed key. A
+// service built without the guard (unit-test fakes) refuses nothing; a
+// guard failure fails the enqueue closed.
+func (s *Service) refuseChangedHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) error {
+	if s.keyGuard == nil || len(hostIDs) == 0 {
+		return nil
+	}
+	changed, err := s.keyGuard.ChangedHosts(ctx, orgID, hostIDs)
+	if err != nil {
+		return fmt.Errorf("resolve changed host keys: %w", err)
+	}
+	for _, id := range hostIDs {
+		if changed[id] {
+			return fmt.Errorf("%w: host %s", ErrHostKeyChanged, id)
+		}
+	}
+	return nil
 }
 
 // insertHostJobs is the per-zone insert core EnqueueHostJob and

@@ -61,7 +61,7 @@ type SyncSink interface {
 // the hosts service; checks are the manager-side mirror of the probe's
 // check rows (hosts.HostTestCheck), parsed from the job's final event.
 type TestSink interface {
-	RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostKeyState string, checks []hosts.HostTestCheck) error
+	RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck) error
 }
 
 // RotationFinisher is the optional port a rotation group's terminal
@@ -100,6 +100,16 @@ type RotationHost struct {
 // simply ship no pins.
 type KeyPinSource interface {
 	PinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error)
+}
+
+// KnownHostSource is the slice of hosts.Service that makes a pin
+// enforceable on the worker: each pinned host's full public key
+// (authorized-key form), absent for a pin that is only a fingerprint. The
+// pins source implements it (SetKeyPins detects it); a host-bound claim for
+// a pinned host without its key fails closed — the worker's known_hosts
+// needs the key, not the fingerprint.
+type KnownHostSource interface {
+	PinnedPublicKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
 // SnapshotSource is the slice of inventory.Renderer the claim path needs:

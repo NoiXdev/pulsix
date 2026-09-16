@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/noixdev/pulsix/internal/credentials"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -312,6 +313,9 @@ func mapCredentialsErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, credentials.ErrInUse):
 		return huma.Error409Conflict("the credential is still used by a jump host or a host")
+	case errors.Is(err, jobs.ErrHostKeyChanged):
+		// A rotation target's host key changed: the rotation is refused.
+		return huma.Error409Conflict(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped credentials error", "err", err)
 		return huma.Error500InternalServerError("internal error")

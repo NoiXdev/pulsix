@@ -132,7 +132,7 @@ func TestClaimRendersPerZoneAndRetryHostsAgainstTheRealRenderer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := w.hostsSvc.RecordConnectionTest(w.scoped, w.org, ids["a-01"], time.Now(), false,
-		"SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", hosts.KeyStateChanged, nil); err != nil {
+		"SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "", hosts.KeyStateChanged, nil); err != nil {
 		t.Fatal(err)
 	}
 	claim, err = w.queue.Claim(ctx, w.org, []uuid.UUID{zoneA}, "v1")

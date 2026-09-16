@@ -38,7 +38,7 @@ type bootstrapRequest struct {
 // into the self-contained kind payload: the host object (address, port,
 // login user), its jump chain with each hop's credential inline — the
 // same shapes the connection-test payload uses.
-func (q *SQLQueue) systemPayload(ctx context.Context, job Job) (string, map[string]string, error) {
+func (q *SQLQueue) systemPayload(ctx context.Context, job Job) (string, claimPins, error) {
 	if job.Kind == KindRotateKey {
 		return q.rotateSystemPayload(ctx, job)
 	}
@@ -48,79 +48,88 @@ func (q *SQLQueue) systemPayload(ctx context.Context, job Job) (string, map[stri
 // bootstrapSystemPayload resolves the job's single host into the bootstrap
 // payload: the one-time login (from the sealed enqueue payload) plus the
 // host credential's public key and account.
-func (q *SQLQueue) bootstrapSystemPayload(ctx context.Context, job Job) (string, map[string]string, error) {
+func (q *SQLQueue) bootstrapSystemPayload(ctx context.Context, job Job) (string, claimPins, error) {
 	if len(job.HostIDs) != 1 {
-		return "", nil, fmt.Errorf("%w: bootstrap targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
+		return "", claimPins{}, fmt.Errorf("%w: bootstrap targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
 	}
 	// The pin needs the hosts store: nil pins source is a wiring bug that
 	// would silently run the bootstrap unpinned — fail closed.
 	if q.pins == nil {
-		return "", nil, fmt.Errorf("bootstrap claim: no host key pin source wired")
+		return "", claimPins{}, fmt.Errorf("bootstrap claim: no host key pin source wired")
+	}
+	// A host whose key changed after the enqueue is not dialed.
+	if _, err := q.excludeChangedAtClaim(ctx, job); err != nil {
+		return "", claimPins{}, err
 	}
 	hostID := job.HostIDs[0]
-	host, _, hops, err := q.renderTargetConnection(ctx, job.OrgID, hostID)
+	host, conn, hops, err := q.renderTargetConnection(ctx, job.OrgID, hostID)
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
 	kindPayload, err := q.bootstrapKindPayload(ctx, job, host, hops)
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
-	hostKeys, err := q.pinnedKeysFor(ctx, job.OrgID, hostID, host.Name)
+	pins, err := q.claimHostKeys(ctx, job, map[string]render.Connection{host.Name: conn})
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
-	return kindPayload, hostKeys, nil
+	return kindPayload, pins, nil
 }
 
 // rotateSystemPayload resolves the rotation job's target — a host through
 // the rendered snapshot, a jump host through its own via-chain — and
 // folds the old credential and the pending new key into the wire payload.
-func (q *SQLQueue) rotateSystemPayload(ctx context.Context, job Job) (string, map[string]string, error) {
+func (q *SQLQueue) rotateSystemPayload(ctx context.Context, job Job) (string, claimPins, error) {
 	opened, err := q.openKindPayload(job)
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
 	var rp rotationJobPayload
 	if err := json.Unmarshal([]byte(opened), &rp); err != nil {
-		return "", nil, fmt.Errorf("rotate_key %s: kind payload: %w", job.ID, err)
+		return "", claimPins{}, fmt.Errorf("rotate_key %s: kind payload: %w", job.ID, err)
 	}
 	if rp.Target.Kind == rotationTargetBastion {
 		return q.rotateBastionPayload(ctx, job, rp)
 	}
 	if len(job.HostIDs) != 1 {
-		return "", nil, fmt.Errorf("%w: rotate_key targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
+		return "", claimPins{}, fmt.Errorf("%w: rotate_key targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
 	}
 	if q.pins == nil {
-		return "", nil, fmt.Errorf("rotate_key claim: no host key pin source wired")
+		return "", claimPins{}, fmt.Errorf("rotate_key claim: no host key pin source wired")
 	}
 	hostID := job.HostIDs[0]
 	if rp.Target.ID != hostID {
-		return "", nil, fmt.Errorf("rotate_key %s: kind payload names %s, the job targets %s", job.ID, rp.Target.ID, hostID)
+		return "", claimPins{}, fmt.Errorf("rotate_key %s: kind payload names %s, the job targets %s", job.ID, rp.Target.ID, hostID)
 	}
-	host, _, hops, err := q.renderTargetConnection(ctx, job.OrgID, hostID)
+	// A host whose key changed after the enqueue is not dialed.
+	if _, err := q.excludeChangedAtClaim(ctx, job); err != nil {
+		return "", claimPins{}, err
+	}
+	host, conn, hops, err := q.renderTargetConnection(ctx, job.OrgID, hostID)
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
 	kindPayload, err := q.rotateKindPayload(ctx, job, rp, host, hops)
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
-	hostKeys, err := q.pinnedKeysFor(ctx, job.OrgID, hostID, host.Name)
+	pins, err := q.claimHostKeys(ctx, job, map[string]render.Connection{host.Name: conn})
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
-	return kindPayload, hostKeys, nil
+	return kindPayload, pins, nil
 }
 
 // rotateBastionPayload resolves a jump host target: its own via-chain is
 // walked in dial order (the outermost hop first), each hop's credential
-// opened; the target itself logs in with the old credential. Bastions are
-// not pinned hosts, so the claim ships no host keys.
-func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotationJobPayload) (string, map[string]string, error) {
+// opened; the target itself logs in with the old credential. Bastions carry
+// no pin (see BACKLOG: bastion host-key pinning), so the claim ships no host
+// keys and the worker trusts the bastion's key on first use per run.
+func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotationJobPayload) (string, claimPins, error) {
 	target, err := q.bastions.GetBastion(ctx, job.OrgID, rp.Target.ID)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve rotation bastion %s: %w", rp.Target.ID, err)
+		return "", claimPins{}, fmt.Errorf("resolve rotation bastion %s: %w", rp.Target.ID, err)
 	}
 	// Walk the via-chain up from the target, bounded by a seen-set.
 	var chain []sshconf.Bastion
@@ -128,7 +137,7 @@ func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotatio
 	seen := map[uuid.UUID]bool{}
 	for {
 		if seen[cur.ID] {
-			return "", nil, fmt.Errorf("rotation bastion %s: cycle in the jump chain", target.ID)
+			return "", claimPins{}, fmt.Errorf("rotation bastion %s: cycle in the jump chain", target.ID)
 		}
 		seen[cur.ID] = true
 		chain = append(chain, cur)
@@ -137,7 +146,7 @@ func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotatio
 		}
 		next, err := q.bastions.GetBastion(ctx, job.OrgID, *cur.ViaBastionID)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve rotation bastion %s: resolve bastion %s: %w", target.ID, *cur.ViaBastionID, err)
+			return "", claimPins{}, fmt.Errorf("resolve rotation bastion %s: resolve bastion %s: %w", target.ID, *cur.ViaBastionID, err)
 		}
 		cur = next
 	}
@@ -151,10 +160,10 @@ func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotatio
 		if b.CredentialID != nil {
 			secret, err := q.creds.OpenSecret(ctx, job.OrgID, *b.CredentialID)
 			if err != nil {
-				return "", nil, fmt.Errorf("open bastion credential %s: %w", *b.CredentialID, err)
+				return "", claimPins{}, fmt.Errorf("open bastion credential %s: %w", *b.CredentialID, err)
 			}
 			if hopCredential, err = secretJSON(secret); err != nil {
-				return "", nil, err
+				return "", claimPins{}, err
 			}
 		}
 		hops = append(hops, systemHop{ID: b.ID, Address: b.Address, Port: b.Port, Username: b.Username, Credential: hopCredential})
@@ -165,9 +174,9 @@ func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotatio
 	}
 	kindPayload, err := q.rotateKindPayload(ctx, job, rp, host, hops)
 	if err != nil {
-		return "", nil, err
+		return "", claimPins{}, err
 	}
-	return kindPayload, map[string]string{}, nil
+	return kindPayload, claimPins{fingerprints: map[string]string{}, publicKeys: map[string]string{}}, nil
 }
 
 // renderTargetConnection resolves one host through the rendered snapshot:
@@ -220,20 +229,6 @@ func (q *SQLQueue) renderTargetConnection(ctx context.Context, orgID, hostID uui
 		hops = append(hops, systemHop{ID: bastionID, Address: b.Address, Port: b.Port, Username: b.Username, Credential: hopCredential})
 	}
 	return host, conn, hops, nil
-}
-
-// pinnedKeysFor reads one host's pinned fingerprint into the claim's
-// host_keys map (keyed by the snapshot's host name).
-func (q *SQLQueue) pinnedKeysFor(ctx context.Context, orgID, hostID uuid.UUID, hostName string) (map[string]string, error) {
-	pinned, err := q.pins.PinnedKeys(ctx, orgID, []uuid.UUID{hostID})
-	if err != nil {
-		return nil, fmt.Errorf("resolve host key pins: %w", err)
-	}
-	hostKeys := map[string]string{}
-	if fingerprint, ok := pinned[hostID]; ok {
-		hostKeys[hostName] = fingerprint
-	}
-	return hostKeys, nil
 }
 
 // bootstrapKindPayload folds the sealed enqueue payload's one-time login

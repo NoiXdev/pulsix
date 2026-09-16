@@ -52,7 +52,7 @@ type fakeHostStore struct {
 	// records SetHostKeyPin calls; pinnedKeys/changedHosts/queuedTests are
 	// what the fake's reads report; tests holds the recorded test rows.
 	pins         []pinRecord
-	pinnedKeys   map[uuid.UUID]string
+	pinnedKeys   map[uuid.UUID]hosts.HostKeyPin
 	changedHosts map[uuid.UUID]bool
 	tests        map[uuid.UUID][]hosts.HostTest
 	latestTestAt map[uuid.UUID]time.Time

@@ -32,7 +32,7 @@ func TestSQLStoreSetHostKeyPinCreatesRowWithDefaults(t *testing.T) {
 	}
 	// No host_ssh row: pinning creates one with the defaults and the key.
 	fingerprint := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	if err := store.SetHostKeyPin(ctx, org, hostID, fingerprint); err != nil {
+	if err := store.SetHostKeyPin(ctx, org, hostID, fingerprint, ""); err != nil {
 		t.Fatalf("SetHostKeyPin: %v", err)
 	}
 	sshRow, err := q.GetHostSSH(ctx, gen.GetHostSSHParams{OrgID: org, HostID: hostID})
@@ -64,7 +64,7 @@ func TestSQLStoreSetHostKeyPinKeepsExistingSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	fingerprint := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	if err := store.SetHostKeyPin(ctx, org, hostID, fingerprint); err != nil {
+	if err := store.SetHostKeyPin(ctx, org, hostID, fingerprint, ""); err != nil {
 		t.Fatal(err)
 	}
 	sshRow, err := q.GetHostSSH(ctx, gen.GetHostSSHParams{OrgID: org, HostID: hostID})
@@ -93,10 +93,10 @@ func TestSQLStoreSetHostKeyPinForeignHostFails(t *testing.T) {
 	if _, err := q.CreateHost(ctx, gen.CreateHostParams{ID: hostID, OrgID: orgA, ZoneID: zone, Name: "web1", Managed: true, Facts: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetHostKeyPin(ctx, orgB, hostID, "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); !errors.Is(err, hosts.ErrNotFound) {
+	if err := store.SetHostKeyPin(ctx, orgB, hostID, "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ""); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("pinning a foreign host = %v, want ErrNotFound", err)
 	}
-	if err := store.SetHostKeyPin(ctx, orgA, uuid.Must(uuid.NewV7()), "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); !errors.Is(err, hosts.ErrNotFound) {
+	if err := store.SetHostKeyPin(ctx, orgA, uuid.Must(uuid.NewV7()), "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ""); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("pinning an unknown host = %v, want ErrNotFound", err)
 	}
 }
@@ -121,14 +121,14 @@ func TestSQLStoreClearAndListPins(t *testing.T) {
 	}
 	pinA := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	pinB := "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
-	if err := store.SetHostKeyPin(ctx, org, hostA, pinA); err != nil {
+	if err := store.SetHostKeyPin(ctx, org, hostA, pinA, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetHostKeyPin(ctx, org, hostB, pinB); err != nil {
+	if err := store.SetHostKeyPin(ctx, org, hostB, pinB, ""); err != nil {
 		t.Fatal(err)
 	}
 	keys, err := store.ListPinnedKeys(ctx, org, []uuid.UUID{hostA, hostB})
-	if err != nil || len(keys) != 2 || keys[hostA] != pinA || keys[hostB] != pinB {
+	if err != nil || len(keys) != 2 || keys[hostA].Fingerprint != pinA || keys[hostB].Fingerprint != pinB {
 		t.Fatalf("ListPinnedKeys = %v, %v", keys, err)
 	}
 	// Other orgs see none.
@@ -139,7 +139,7 @@ func TestSQLStoreClearAndListPins(t *testing.T) {
 	if err := store.ClearHostKeyPin(ctx, org, hostA); err != nil {
 		t.Fatal(err)
 	}
-	if keys, err := store.ListPinnedKeys(ctx, org, []uuid.UUID{hostA, hostB}); err != nil || len(keys) != 1 || keys[hostB] != pinB {
+	if keys, err := store.ListPinnedKeys(ctx, org, []uuid.UUID{hostA, hostB}); err != nil || len(keys) != 1 || keys[hostB].Fingerprint != pinB {
 		t.Fatalf("after clear: %v, %v", keys, err)
 	}
 	// Clearing a host without a host_ssh row is a no-op.
@@ -234,7 +234,7 @@ func TestSQLStoreListHostKeyChanged(t *testing.T) {
 	// hostD: latest is unpinned with a DIFFERENT key than the stored pin —
 	// the pin comparison also blocks it (defense in depth).
 	pinD := "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
-	if err := store.SetHostKeyPin(ctx, org, hostD, pinD); err != nil {
+	if err := store.SetHostKeyPin(ctx, org, hostD, pinD, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.CreateHostTest(ctx, row(hostD, hosts.KeyStateUnpinned, keyC)); err != nil {
@@ -306,5 +306,77 @@ func TestSQLStoreListHostsDueForTest(t *testing.T) {
 	due, err = store.ListHostsDueForTest(ctx, org, now.Add(-24*time.Hour))
 	if err != nil || len(due) != 0 {
 		t.Fatalf("due after re-queue = %+v, %v — no duplicates allowed", due, err)
+	}
+}
+
+// TestSQLStorePinPublicKeyAndBackfill: the pin stores the full key with
+// the fingerprint; a fingerprint-only pin is completed only by the key the
+// pin names, never overwritten, and clearing the pin clears both.
+func TestSQLStorePinPublicKeyAndBackfill(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hostkey-pubkey-org")
+	zone := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateZone(ctx, gen.CreateZoneParams{ID: zone, OrgID: org, Slug: "default", Name: "Default"}); err != nil {
+		t.Fatal(err)
+	}
+	hostID := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateHost(ctx, gen.CreateHostParams{ID: hostID, OrgID: org, ZoneID: zone, Name: "web1", Managed: true, Facts: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	pinFP := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := store.SetHostKeyPin(ctx, org, hostID, pinFP, ""); err != nil {
+		t.Fatal(err)
+	}
+	read := func() hosts.HostKeyPin {
+		t.Helper()
+		keys, err := store.ListPinnedKeys(ctx, org, []uuid.UUID{hostID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return keys[hostID]
+	}
+	// A key for another fingerprint does not complete the pin.
+	if err := store.BackfillHostKeyPin(ctx, org, hostID, "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "ssh-ed25519 OTHER"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.PublicKey != "" {
+		t.Fatalf("a foreign fingerprint filled the pin: %+v", got)
+	}
+	// The pin's own fingerprint does, once.
+	if err := store.BackfillHostKeyPin(ctx, org, hostID, pinFP, "ssh-ed25519 PINNED"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillHostKeyPin(ctx, org, hostID, pinFP, "ssh-ed25519 LATER"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.Fingerprint != pinFP || got.PublicKey != "ssh-ed25519 PINNED" {
+		t.Fatalf("after backfill: %+v", got)
+	}
+	// Re-pinning stores both; clearing clears both.
+	if err := store.SetHostKeyPin(ctx, org, hostID, "SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "ssh-ed25519 NEW"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.PublicKey != "ssh-ed25519 NEW" {
+		t.Fatalf("after re-pin: %+v", got)
+	}
+	if err := store.ClearHostKeyPin(ctx, org, hostID); err != nil {
+		t.Fatal(err)
+	}
+	var fp, pub *string
+	if err := d.Pool().QueryRow(ctx, `SELECT ssh_host_key, ssh_host_public_key FROM host_ssh WHERE host_id = $1`, hostID).Scan(&fp, &pub); err != nil {
+		t.Fatal(err)
+	}
+	if fp != nil || pub != nil {
+		t.Fatalf("cleared pin still has fingerprint %v / key %v", fp, pub)
+	}
+	// The test row keeps the observed key.
+	if err := store.CreateHostTest(ctx, hosts.HostTest{ID: uuid.Must(uuid.NewV7()), OrgID: org, HostID: hostID, At: time.Now(), OK: true,
+		HostKey: pinFP, HostPublicKey: "ssh-ed25519 SEEN", HostKeyState: hosts.KeyStatePinned}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := store.LatestHostTest(ctx, org, hostID); err != nil || latest.HostPublicKey != "ssh-ed25519 SEEN" {
+		t.Fatalf("latest = %+v, %v", latest, err)
 	}
 }

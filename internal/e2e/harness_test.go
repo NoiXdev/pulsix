@@ -73,6 +73,9 @@ type hostSSHServer struct {
 	addr string
 	host string
 	port int
+
+	authorized ssh.PublicKey
+	srv        *glssh.Server
 }
 
 // startHostSSHServer starts the host's SSH server, accepting exactly the
@@ -81,6 +84,27 @@ type hostSSHServer struct {
 // 0 (passwordless sudo) and `python3 -c 'print(1)'` prints 1 — the probe
 // treats both as passing without needing them to exist on the test host.
 func startHostSSHServer(t *testing.T, authorized ssh.PublicKey, bindHost string) *hostSSHServer {
+	t.Helper()
+	ln, err := net.Listen("tcp", net.JoinHostPort(bindHost, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &hostSSHServer{addr: ln.Addr().String(), host: host, port: port, authorized: authorized}
+	h.serve(t, ln)
+	return h
+}
+
+// serve starts the host's SSH server on ln with a freshly generated host
+// key.
+func (h *hostSSHServer) serve(t *testing.T, ln net.Listener) {
 	t.Helper()
 	srv := &glssh.Server{
 		Handler: func(sess glssh.Session) {
@@ -102,25 +126,26 @@ func startHostSSHServer(t *testing.T, authorized ssh.PublicKey, bindHost string)
 			}
 		},
 		PublicKeyHandler: func(_ glssh.Context, key glssh.PublicKey) bool {
-			return authorized != nil && bytes.Equal(key.Marshal(), authorized.Marshal())
+			return h.authorized != nil && bytes.Equal(key.Marshal(), h.authorized.Marshal())
 		},
 	}
 	srv.AddHostKey(newKeyPair(t).signer)
-	ln, err := net.Listen("tcp", net.JoinHostPort(bindHost, "0"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	h.srv = srv
+}
+
+// rekey replaces the host's SSH server with one presenting a NEW host key
+// on the same address — the "host key changed" event pinning exists for
+// (a reinstalled host, or someone in the middle).
+func (h *hostSSHServer) rekey(t *testing.T) {
+	t.Helper()
+	_ = h.srv.Close()
+	ln, err := net.Listen("tcp", h.addr)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("rebind the host SSH server on %s: %v", h.addr, err)
 	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &hostSSHServer{addr: ln.Addr().String(), host: host, port: port}
+	h.serve(t, ln)
 }
 
 // runRealCommand executes the session's command through /bin/sh, wired to
@@ -323,29 +348,70 @@ func runGitUploadPack(sess glssh.Session, bare string) {
 // emitting the pinned JSONL event stream the worker parses. It mirrors the
 // Task 9 fixture pattern; the outcome reads exactly the extra vars the
 // template set, so the retry path's var flip drives it end to end.
+//
+// Before emitting anything it opens ONE real SSH connection to the run's
+// host the way ansible's ssh connection plugin does — ANSIBLE_SSH_ARGS
+// first, then port, identity file and user, then the host's
+// ansible_ssh_common_args (the jump chain and, for a pinned host, the
+// strict host key options) — and runs `true`. That exercises the worker's
+// generated ssh_config, known_hosts and pin options for real, even without
+// ansible installed: a host whose key no longer matches its pin makes the
+// connection fail, and the fake reports the host unreachable like ansible.
 func writeFakeRunner(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ansible-runner")
-	script := `#!/bin/sh
+	script := `#!/usr/bin/env python3
 # FAKE ansible-runner (test fixture). Emits a deterministic event stream.
-workdir="$2"
-doc="$("$workdir/inventory")" || exit 1
-host="$(printf '%s' "$doc" | sed -n 's/.*"hostvars":{"\([^"]*\)":{.*/\1/p')"
-vars="$workdir/env/extravars"
-greeting="$(sed -n 's/.*"greeting":"\([^"]*\)".*/\1/p' "$vars")"
-should_fail="$(sed -n 's/.*"should_fail":"\([^"]*\)".*/\1/p' "$vars")"
-printf '%s\n' '{"event":"playbook_on_start","stdout":"PLAY [all]","event_data":{}}'
-printf '%s\n' "{\"event\":\"runner_on_start\",\"stdout\":\"\",\"event_data\":{\"host\":\"$host\",\"task\":\"Pulsix greeting\",\"task_action\":\"debug\"}}"
-if [ "$should_fail" = "true" ]; then
-  printf '%s\n' "{\"event\":\"runner_on_failed\",\"stdout\":\"failed: [$host] pulsix e2e deliberate failure\",\"event_data\":{\"host\":\"$host\",\"task\":\"Pulsix deliberate failure\"}}"
-  printf '%s\n' "{\"event\":\"playbook_on_stats\",\"stdout\":\"\",\"event_data\":{\"ok\":{\"$host\":1},\"changed\":{},\"failures\":{\"$host\":1},\"dark\":{},\"skipped\":{}}}"
-  exit 2
-fi
-printf '%s\n' "{\"event\":\"runner_on_ok\",\"stdout\":\"ok: [$host] => {\\\"msg\\\": \\\"$greeting\\\"}\",\"event_data\":{\"host\":\"$host\",\"task\":\"Pulsix greeting\",\"res\":{\"msg\":\"$greeting\"}}}"
-printf '%s\n' "{\"event\":\"runner_on_start\",\"stdout\":\"\",\"event_data\":{\"host\":\"$host\",\"task\":\"Pulsix marker\",\"task_action\":\"raw\"}}"
-printf '%s\n' "{\"event\":\"runner_on_ok\",\"stdout\":\"changed: [$host]\",\"event_data\":{\"host\":\"$host\",\"task\":\"Pulsix marker\",\"res\":{\"changed\":true}}}"
-printf '%s\n' "{\"event\":\"playbook_on_stats\",\"stdout\":\"\",\"event_data\":{\"ok\":{\"$host\":1},\"changed\":{\"$host\":1},\"failures\":{},\"dark\":{},\"skipped\":{}}}"
-exit 0
+import json, os, shlex, subprocess, sys
+
+workdir = sys.argv[2]
+doc = json.loads(subprocess.run([os.path.join(workdir, "inventory")], capture_output=True, check=True).stdout)
+host, hv = next(iter(doc["_meta"]["hostvars"].items()))
+extravars = {}
+try:
+    with open(os.path.join(workdir, "env", "extravars")) as f:
+        extravars = json.load(f)
+except FileNotFoundError:
+    pass
+
+def emit(event, data, stdout=""):
+    print(json.dumps({"event": event, "stdout": stdout, "event_data": data}), flush=True)
+
+cmd = ["ssh"] + shlex.split(os.environ.get("ANSIBLE_SSH_ARGS", ""))
+if os.environ.get("ANSIBLE_HOST_KEY_CHECKING", "True").lower() in ("false", "0", "no"):
+    cmd += ["-o", "StrictHostKeyChecking=no"]  # what ansible adds when checking is off
+if "ansible_port" in hv:
+    cmd += ["-o", "Port=%s" % hv["ansible_port"]]
+if "ansible_ssh_private_key_file" in hv:
+    cmd += ["-o", "IdentityFile=%s" % hv["ansible_ssh_private_key_file"]]
+cmd += ["-o", "KbdInteractiveAuthentication=no", "-o", "PasswordAuthentication=no", "-o", "BatchMode=yes"]
+if "ansible_user" in hv:
+    cmd += ["-o", "User=%s" % hv["ansible_user"]]
+cmd += ["-o", "ConnectTimeout=10"]
+cmd += shlex.split(hv.get("ansible_ssh_common_args", ""))
+cmd += [hv.get("ansible_host", host), "true"]
+
+emit("playbook_on_start", {}, "PLAY [all]")
+ssh = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+if ssh.returncode != 0:
+    msg = (ssh.stderr or "").strip().splitlines()
+    reason = msg[-1] if msg else "ssh exit %d" % ssh.returncode
+    emit("runner_on_unreachable", {"host": host, "task": "Pulsix greeting", "res": {"msg": reason, "unreachable": True}},
+         "fatal: [%s]: UNREACHABLE! => %s" % (host, reason))
+    emit("playbook_on_stats", {"ok": {}, "changed": {}, "failures": {}, "dark": {host: 1}, "skipped": {}})
+    sys.exit(4)
+
+greeting = extravars.get("greeting", "")
+emit("runner_on_start", {"host": host, "task": "Pulsix greeting", "task_action": "debug"})
+if extravars.get("should_fail") == "true":
+    emit("runner_on_failed", {"host": host, "task": "Pulsix deliberate failure"}, "failed: [%s] pulsix e2e deliberate failure" % host)
+    emit("playbook_on_stats", {"ok": {host: 1}, "changed": {}, "failures": {host: 1}, "dark": {}, "skipped": {}})
+    sys.exit(2)
+emit("runner_on_ok", {"host": host, "task": "Pulsix greeting", "res": {"msg": greeting}}, 'ok: [%s] => {"msg": "%s"}' % (host, greeting))
+emit("runner_on_start", {"host": host, "task": "Pulsix marker", "task_action": "raw"})
+emit("runner_on_ok", {"host": host, "task": "Pulsix marker", "res": {"changed": True}}, "changed: [%s]" % host)
+emit("playbook_on_stats", {"ok": {host: 1}, "changed": {host: 1}, "failures": {}, "dark": {}, "skipped": {}})
+sys.exit(0)
 `
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

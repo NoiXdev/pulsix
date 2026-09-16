@@ -22,8 +22,11 @@ const (
 	// KeyStatePinned: the observed key matches the pin.
 	KeyStatePinned KeyState = "pinned"
 	// KeyStateChanged: the observed key differs from the pin. The probe
-	// aborts before authenticating — fail closed — and run jobs for the
-	// host are blocked until an operator re-pins.
+	// aborts before authenticating — fail closed — and SSH-bound jobs for
+	// the host (runs, ad-hoc commands, bootstrap, rotation) are blocked
+	// until a later connection test no longer reports the change: pinning
+	// the new key alone does not unblock the host, the next test must
+	// confirm it.
 	KeyStateChanged KeyState = "changed"
 )
 

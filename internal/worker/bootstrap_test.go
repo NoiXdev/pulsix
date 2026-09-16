@@ -1,5 +1,5 @@
-// The bootstrap executor's tests: the pin preflight and the claim
-// reshaping (asserted through a capture delegate). The full delegation
+// The bootstrap executor's tests: the claim reshaping, pins included
+// (asserted through a capture delegate). The full delegation
 // into the real ansible-runner machinery runs in system_e2e_test.go and
 // Task 14's E2E.
 package worker
@@ -10,12 +10,9 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"encoding/pem"
-	"net"
-	"strconv"
 	"strings"
 	"testing"
 
-	glssh "github.com/gliderlabs/ssh"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -53,52 +50,6 @@ func bootstrapClaim(t *testing.T, host map[string]any, loginUser, secretJSON, pu
 		"host": host, "login_user": loginUser, "login": secretJSON,
 		"public_key": publicKey, "pulsix_user": pulsixUser,
 	})
-}
-
-// executorServer is the pin preflight's in-process SSH target.
-type pinServer struct {
-	addr        string
-	fingerprint string
-}
-
-// startExecutorServer starts a gliderlabs SSH server with one host key.
-func startPinServer(t *testing.T) *pinServer {
-	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &glssh.Server{
-		Handler: func(glssh.Session) {},
-		PublicKeyHandler: func(glssh.Context, glssh.PublicKey) bool {
-			return false // nothing is ever authenticated: the exchange is the test
-		},
-	}
-	srv.AddHostKey(signer)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() { _ = srv.Close() })
-	return &pinServer{addr: ln.Addr().String(), fingerprint: ssh.FingerprintSHA256(signer.PublicKey())}
-}
-
-// hostAddress splits the fixture's listen address.
-func (s *pinServer) hostAddress() (string, int) {
-	host, portStr, err := net.SplitHostPort(s.addr)
-	if err != nil {
-		panic(err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		panic(err)
-	}
-	return host, port
 }
 
 func bootstrapExec(delegate Executor) *BootstrapExecutor {
@@ -177,74 +128,40 @@ func TestBootstrapExecutorPrivateKeyLoginRidesAsItsKeyFile(t *testing.T) {
 	}
 }
 
-func TestBootstrapExecutorPinMismatchFailsClosed(t *testing.T) {
-	srv := startPinServer(t)
-	hostName, port := srv.hostAddress()
-	pinned := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-
-	cap := &captureExecutor{}
-	job := sysJob(t, "bootstrap", bootstrapClaim(t, map[string]any{
-		"id": "u1", "name": "web1", "address": hostName, "port": port,
-	}, "root", secretStr(t, credentials.Secret{Password: "pw"}), "pub", "ansible"),
-		map[string]string{"web1": pinned})
-	status, _, err := bootstrapExec(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
-	if err == nil || status != StatusError {
-		t.Fatalf("status = %q err = %v", status, err)
-	}
-	if !strings.Contains(err.Error(), "host key changed") {
-		t.Errorf("error = %v, want it to name the host key change", err)
-	}
-	if cap.got != nil {
-		t.Error("the runner must never run on a changed host key")
-	}
-}
-
-func TestBootstrapExecutorPinnedHostWithMatchingKeyProceeds(t *testing.T) {
-	srv := startPinServer(t)
-	hostName, port := srv.hostAddress()
-
+// TestBootstrapExecutorHandsThePinToTheRunner (final review C2): the
+// executor no longer dials the host itself — that direct-dial preflight
+// ignored the jump chain and checked a different connection than the one
+// the playbook uses. The pin rides into the runner-shaped claim instead
+// (fingerprint and full key), and the runner enforces it with strict host
+// key checking on the very connection ansible opens, through the same jump
+// chain. The address below is unroutable: nothing may dial it here.
+func TestBootstrapExecutorHandsThePinToTheRunner(t *testing.T) {
 	cap := &captureExecutor{status: StatusSucceeded}
-	job := sysJob(t, "bootstrap", bootstrapClaim(t, map[string]any{
-		"id": "u1", "name": "web1", "address": hostName, "port": port,
-	}, "root", secretStr(t, credentials.Secret{Password: "pw"}), "pub", "ansible"),
-		map[string]string{"web1": srv.fingerprint})
-	status, _, err := bootstrapExec(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
-	if err != nil || status != StatusSucceeded {
-		t.Fatalf("pinned match = %q, %v", status, err)
-	}
-	if cap.got == nil {
-		t.Fatal("a matching pin lets the run proceed")
-	}
-}
-
-func TestBootstrapExecutorUnreachablePinnedHostFailsClosed(t *testing.T) {
-	cap := &captureExecutor{}
 	job := sysJob(t, "bootstrap", bootstrapClaim(t, map[string]any{
 		"id": "u1", "name": "web1", "address": "192.0.2.9", "port": 22,
 	}, "root", secretStr(t, credentials.Secret{Password: "pw"}), "pub", "ansible"),
 		map[string]string{"web1": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
-	_, _, err := bootstrapExec(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
-	if err == nil {
-		t.Fatal("a pin that cannot be verified must fail the job closed")
+	job.KnownHosts = map[string]string{"web1": "ssh-ed25519 AAAA pinned"}
+	status, _, err := bootstrapExec(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
+	if err != nil || status != StatusSucceeded || cap.got == nil {
+		t.Fatalf("pinned bootstrap = %q, %v, ran %v; want it handed to the runner without a preflight dial", status, err, cap.got != nil)
 	}
-	if !strings.Contains(err.Error(), "preflight") {
-		t.Errorf("error names the cause: %v", err)
-	}
-	if cap.got != nil {
-		t.Error("the runner must never run without a verified pin")
+	if cap.got.GetHostKeys()["web1"] != "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" || cap.got.GetKnownHosts()["web1"] != "ssh-ed25519 AAAA pinned" {
+		t.Fatalf("runner claim pins = %v / %v", cap.got.GetHostKeys(), cap.got.GetKnownHosts())
 	}
 }
 
-func TestBootstrapExecutorUnpinnedHostPreflightsNothing(t *testing.T) {
+func TestBootstrapExecutorUnpinnedHostDialsNothing(t *testing.T) {
 	// An unroutable address with no pin: the executor must not dial at all
-	// (TOFU); the run proceeds with the delegate.
+	// (trust on first use happens inside the run); the run proceeds with
+	// the delegate.
 	cap := &captureExecutor{status: StatusSucceeded}
 	job := sysJob(t, "bootstrap", bootstrapClaim(t, map[string]any{
 		"id": "u1", "name": "web1", "address": "192.0.2.9", "port": 22,
 	}, "root", secretStr(t, credentials.Secret{Password: "pw"}), "pub", "ansible"), nil)
 	status, _, err := bootstrapExec(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
 	if err != nil || status != StatusSucceeded || cap.got == nil {
-		t.Fatalf("unpinned bootstrap = %q, %v, %v (no preflight dial may happen)", status, err, cap.got)
+		t.Fatalf("unpinned bootstrap = %q, %v, %v", status, err, cap.got)
 	}
 }
 

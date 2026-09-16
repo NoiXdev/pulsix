@@ -143,6 +143,16 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 	if len(hosts) == 0 && len(bastions) == 0 {
 		return uuid.Nil, uuid.Nil, 0, nil
 	}
+	// A rotation logs into every host target over SSH: a host whose key
+	// changed refuses the whole rotation (a partial one would leave the
+	// credential's key diverged across hosts).
+	hostIDs := make([]uuid.UUID, len(hosts))
+	for i, h := range hosts {
+		hostIDs[i] = h.ID
+	}
+	if err := s.refuseChangedHosts(ctx, orgID, hostIDs); err != nil {
+		return uuid.Nil, uuid.Nil, 0, err
+	}
 	inserter, ok := s.store.(groupInserter)
 	if !ok {
 		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("rotation enqueue: the store cannot insert the group atomically")

@@ -21,8 +21,9 @@ const (
 	inventoryWrapperName = "inventory"
 	// sshConfigName is the run's private ssh_config (bastion aliases).
 	sshConfigName = "ssh_config"
-	// knownHostsName is the run's private known_hosts: accepted host keys
-	// never persist beyond the run's wiped work dir.
+	// knownHostsName is the run's private known_hosts: the claim's pinned
+	// keys (under pulsix-host-<id> aliases) plus keys unpinned hosts
+	// presented during the run; nothing persists beyond the wiped work dir.
 	knownHostsName = "known_hosts"
 	// ansibleCfgName is the run's generated ansible.cfg.
 	ansibleCfgName = "ansible.cfg"
@@ -70,18 +71,21 @@ func writeSecretFile(path, content string, mode os.FileMode) error {
 
 // sshArgs composes the value of ANSIBLE_SSH_ARGS and the generated
 // ansible.cfg's ssh_connection.ssh_args: the run's private ssh_config
-// (per-bastion identity files) plus the pinning posture. IdentitiesOnly
-// stops the agent's keys from overriding a host's own identity; host keys
-// are remembered only in the run's wiped work dir.
+// (per-bastion identity files, the trust-on-first-use defaults) plus the
+// known_hosts posture. IdentitiesOnly stops the agent's keys from
+// overriding a host's own identity; host keys are read and remembered only
+// in the run's known_hosts — the pinned keys the claim shipped, plus
+// whatever unpinned hosts presented during this run — and never in the
+// system's known_hosts.
 func sshArgs(workDir string) string {
-	return fmt.Sprintf("-F %s -o IdentitiesOnly=yes -o UserKnownHostsFile=%s",
+	return fmt.Sprintf("-F %s -o IdentitiesOnly=yes -o UserKnownHostsFile=%s -o GlobalKnownHostsFile=/dev/null",
 		filepath.Join(workDir, sshConfigName), filepath.Join(workDir, knownHostsName))
 }
 
 // ansibleCfgText renders the run's ansible.cfg.
 func ansibleCfgText(workDir string) string {
 	return fmt.Sprintf(`[defaults]
-host_key_checking = False
+host_key_checking = True
 retry_files_enabled = False
 local_tmp = %s
 

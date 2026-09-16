@@ -160,6 +160,67 @@ func (s *scenario) drive() {
 	if len(retry.Job.Hosts) != 1 || retry.Job.Hosts[0] != hostUUID {
 		s.t.Fatalf("retry hosts = %v, want [%s]", retry.Job.Hosts, hostUUID)
 	}
+
+	s.hostKeyChanges()
+}
+
+// hostKeyChanges is the pin's failure case (final review C2): the host
+// starts presenting a different host key after it was pinned. A run that
+// is claimed before any connection test noticed must still refuse to talk
+// to the host — the worker's known_hosts pins the key on ansible's own
+// connection, through the bastion — and once a test reports the change,
+// runs and ad-hoc commands are refused up front.
+func (s *scenario) hostKeyChanges() {
+	s.t.Helper()
+	prefix := "/api/v1/" + s.apiPath()
+	s.host.rekey(s.t)
+
+	runID := s.runTemplate(s.helloTID)
+	run := s.awaitJob(runID, "run", 90*time.Second)
+	if run.Job.Status == "succeeded" {
+		s.t.Fatalf("a run against a host whose key no longer matches its pin succeeded (error %q)", run.Job.Error)
+	}
+	unreachable, _ := run.Job.Stats["unreachable_hosts"].([]any)
+	if run.Job.Status != "failed" || len(unreachable) != 1 || unreachable[0] != s.hostID {
+		s.t.Fatalf("changed-key run = %q, unreachable_hosts %v (error %q); want failed with the host unreachable",
+			run.Job.Status, run.Job.Stats["unreachable_hosts"], run.Job.Error)
+	}
+	events := s.awaitEvents(runID, 30*time.Second, func(e jobEventsOut) bool { return hasEvent(e, "run_end", "") })
+	sawUnreachable := false
+	for _, ev := range events.Events {
+		if ev.State == "unreachable" {
+			sawUnreachable = true
+			if testing.Verbose() {
+				raw, _ := json.Marshal(ev.Payload)
+				s.t.Logf("changed-key run: unreachable event %s", raw)
+			}
+		}
+	}
+	if !sawUnreachable {
+		s.t.Fatalf("the changed-key run streamed no unreachable event: %+v", events.Events)
+	}
+
+	// A connection test sees the change and records it.
+	var testOut struct {
+		JobID string `json:"job_id"`
+	}
+	s.post(prefix+"/hosts/"+s.hostID+"/connection-test", struct{}{}, &testOut)
+	s.awaitJob(testOut.JobID, "connection_test", 60*time.Second)
+	var changed hostTestOut
+	s.get(prefix+"/hosts/"+s.hostID+"/connection-test", &changed)
+	if changed.Test.HostKeyState != "changed" {
+		s.t.Fatalf("host key state after the key change = %q, want changed", changed.Test.HostKeyState)
+	}
+
+	// Now every SSH-bound job for the host is refused up front.
+	if code := s.api.status("POST", prefix+"/job-templates/"+s.helloTID+"/run", struct{}{}); code != 409 {
+		s.t.Fatalf("run against a changed host key = %d, want 409", code)
+	}
+	if code := s.api.status("POST", prefix+"/hosts/command", map[string]any{
+		"host_ids": []string{s.hostID}, "module": "shell", "argv": "true",
+	}); code != 409 {
+		s.t.Fatalf("ad-hoc command against a changed host key = %d, want 409", code)
+	}
 }
 
 // checkDetails joins the connection test's per-stage details.

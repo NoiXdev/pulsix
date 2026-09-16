@@ -1,6 +1,6 @@
 // The rotate-key executor's tests: the pending new key shapes the run (the
 // old credential authenticates, the new public key rides as the extra var)
-// and the pin preflight mirrors the bootstrap's. The full delegation into
+// and the pin rides into the runner-shaped claim like the bootstrap's. The full delegation into
 // the ansible-runner machinery runs in system_e2e_test.go.
 package worker
 
@@ -69,34 +69,22 @@ func TestRotateExecutorRunsThePlaybookWithTheOldLogin(t *testing.T) {
 	}
 }
 
-func TestRotateExecutorPinMismatchFailsClosed(t *testing.T) {
-	srv := startPinServer(t)
-	hostName, port := srv.hostAddress()
-	cap := &captureExecutor{}
-	job := sysJob(t, "rotate_key", rotateClaim(t, map[string]any{
-		"id": "u1", "name": "web1", "address": hostName, "port": port,
-	}, "ansible", secretStr(t, credentials.Secret{Password: "old"}), "pub", "{}", "ansible"),
-		map[string]string{"web1": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
-	status, _, err := NewRotateExecutor(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
-	if err == nil || status != StatusError {
-		t.Fatalf("status = %q err = %v", status, err)
-	}
-	if !strings.Contains(err.Error(), "host key changed") || cap.got != nil {
-		t.Fatalf("error = %v, ran = %v", err, cap.got)
-	}
-}
-
-func TestRotateExecutorPinnedHostWithMatchingKeyProceeds(t *testing.T) {
-	srv := startPinServer(t)
-	hostName, port := srv.hostAddress()
+// TestRotateExecutorHandsThePinToTheRunner: like the bootstrap, no direct
+// dial — the pin rides into the runner-shaped claim and the runner enforces
+// it on ansible's own connection through the jump chain.
+func TestRotateExecutorHandsThePinToTheRunner(t *testing.T) {
 	cap := &captureExecutor{status: StatusSucceeded}
 	job := sysJob(t, "rotate_key", rotateClaim(t, map[string]any{
-		"id": "u1", "name": "web1", "address": hostName, "port": port,
+		"id": "u1", "name": "web1", "address": "192.0.2.9", "port": 22,
 	}, "ansible", secretStr(t, credentials.Secret{Password: "old"}), "pub", "{}", "ansible"),
-		map[string]string{"web1": srv.fingerprint})
+		map[string]string{"web1": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
+	job.KnownHosts = map[string]string{"web1": "ssh-ed25519 AAAA pinned"}
 	status, _, err := NewRotateExecutor(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
 	if err != nil || status != StatusSucceeded || cap.got == nil {
-		t.Fatalf("pinned match = %q, %v, %v", status, err, cap.got)
+		t.Fatalf("pinned rotation = %q, %v, ran %v; want it handed to the runner without a preflight dial", status, err, cap.got != nil)
+	}
+	if cap.got.GetHostKeys()["web1"] == "" || cap.got.GetKnownHosts()["web1"] != "ssh-ed25519 AAAA pinned" {
+		t.Fatalf("runner claim pins = %v / %v", cap.got.GetHostKeys(), cap.got.GetKnownHosts())
 	}
 }
 
