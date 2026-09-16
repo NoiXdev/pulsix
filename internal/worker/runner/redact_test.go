@@ -4,7 +4,10 @@
 // error text must never carry them.
 package runner
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRedactURLs(t *testing.T) {
 	const url = "https://user:secret-token@example.invalid/x.git"
@@ -63,5 +66,30 @@ func TestRedactURLsWithEmptyURL(t *testing.T) {
 	got := redactURLs("fatal: unable to access 'https://u:p@host/x'", "")
 	if got != "fatal: unable to access 'https://[redacted]@host/x'" {
 		t.Errorf("redactURLs = %q", got)
+	}
+}
+
+// TestGitDiagnosticRedactsBeforeTruncating: a git failure's stderr tail is
+// bounded to 4 KiB, and the redaction must see the WHOLE credential-bearing
+// URL: truncating first can cut "user:token@" so the pattern no longer
+// matches and the token's tail survives.
+func TestGitDiagnosticRedactsBeforeTruncating(t *testing.T) {
+	const url = "https://deploy:tok-ABCDEFGHIJKLMNOPQRSTUVWXYZ@example.org/repo.git"
+	other := "https://ci:another-secret-token-value@mirror.example.org/repo.git"
+	// The other URL's userinfo sits right at the start of the kept tail.
+	head := strings.Repeat("x", 100) + "fatal: " + other + "/: auth failed\n"
+	// Size the stderr so the 4 KiB tail starts right after "ci:another-":
+	// the kept text then begins "secret-token-value@mirror…", which the
+	// userinfo pattern (it needs "user:") no longer recognizes.
+	cut := strings.Index(head, "another-") + len("another-")
+	stderr := head + strings.Repeat("y", cut+4<<10-len(head))
+	got := gitDiagnostic(stderr, url)
+	if len(got) > 4<<10 {
+		t.Fatalf("diagnostic = %d bytes, want at most 4 KiB", len(got))
+	}
+	for _, secret := range []string{"another-secret-token-value", "secret-token", "token-value"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("diagnostic leaks %q: %q", secret, got[:120])
+		}
 	}
 }

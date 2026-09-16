@@ -249,10 +249,13 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err != nil {
 			return err
 		}
+		var redact redactSet
+		redact.addKindPayload(kindPayload)
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
 			InventoryDoc: "{}", HostKeys: hostKeys, KindPayload: kindPayload,
+			Redact: redact.list,
 		}
 		return nil
 	}
@@ -268,10 +271,13 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err != nil {
 			return err
 		}
+		var redact redactSet
+		redact.addKindPayload(kindPayload)
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
 			InventoryDoc: "{}", HostKeys: pins.fingerprints, KnownHosts: pins.publicKeys, KindPayload: kindPayload,
+			Redact: redact.list,
 		}
 		return nil
 	}
@@ -288,10 +294,15 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err != nil {
 			return err
 		}
+		var redact redactSet
+		for _, c := range credentials {
+			redact.addSecretJSON(c)
+		}
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
 			InventoryDoc: "{}", Credentials: credentials, KindPayload: kindPayload,
+			Redact: redact.list,
 		}
 		return nil
 	}
@@ -312,6 +323,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	playbook, limit, sshUser := "", "", ""
 	var extraVars map[string]string
 	var defaultCred *uuid.UUID
+	var redact redactSet
 	if job.Kind == KindRun {
 		if job.TemplateID == nil {
 			return fmt.Errorf("run job %s carries no template", job.ID)
@@ -327,6 +339,9 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		limit = tmpl.Limit
 		if extraVars, err = stringMap(tmpl.ExtraVars); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
+		}
+		if err := redact.addExtraVarSecrets(tmpl.ExtraVarsSchema, tmpl.ExtraVars); err != nil {
+			return err
 		}
 		if tmpl.CredentialID != nil {
 			defaultCred = tmpl.CredentialID
@@ -421,6 +436,10 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	if err != nil {
 		return err
 	}
+	for _, c := range credentials {
+		redact.addSecretJSON(c)
+	}
+	redact.add(inv.Secrets...)
 	*out = workerpb.Job{
 		Id: job.ID.String(), Kind: string(job.Kind),
 		OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
@@ -430,6 +449,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		HostKeys:    pins.fingerprints,
 		KnownHosts:  pins.publicKeys,
 		KindPayload: kindPayload,
+		Redact:      redact.list,
 	}
 	return nil
 }

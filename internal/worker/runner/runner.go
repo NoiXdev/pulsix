@@ -182,7 +182,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		terminateGroup(cmd.Process.Pid, grace)
 	}()
 
-	stats, scanErr := r.streamEvents(ctx, stdout, sink)
+	stats, scanErr := r.streamEvents(ctx, stdout, sink, newRedactor(job))
 	if scanErr != nil {
 		// The event stream broke (the manager is gone): the run cannot be
 		// observed anymore, so it must not keep going — stop the process
@@ -217,12 +217,14 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	return status, statsMap, nil
 }
 
-// streamEvents forwards the runner's stdout event stream: each parsed event
-// through the sink, the stdout follow-ups where the callback captured
-// display output, and the last stats event's recap out. A malformed line is
-// a warning, never fatal; a sink error (the stream is gone) aborts the scan
-// and stops the run.
-func (r *Runner) streamEvents(ctx context.Context, stdout io.Reader, sink func(*workerpb.RunEvent) error) (map[string]hostStat, error) {
+// streamEvents forwards the runner's stdout event stream: each ansible
+// event ONCE — a mapped event (task, ok, failed, ...) with its display text
+// inside its own payload, a display-only event (a banner, the recap) as a
+// stdout event carrying {"text": ...} — every payload redacted by red, and
+// the last stats event's recap out. A malformed line is a warning, never
+// fatal; a sink error (the stream is gone) aborts the scan and stops the
+// run.
+func (r *Runner) streamEvents(ctx context.Context, stdout io.Reader, sink func(*workerpb.RunEvent) error, red *redactor) (map[string]hostStat, error) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64<<10), 16<<20) // verbose results are big
 	var lastStats map[string]hostStat
@@ -237,18 +239,13 @@ func (r *Runner) streamEvents(ctx context.Context, stdout io.Reader, sink func(*
 		if ev.Stats != nil {
 			lastStats = ev.Stats
 		}
-		// The primary event first (mapped events), then the stdout
-		// follow-up; banner events (the runner's internal ones) carry
-		// nothing but their stdout.
-		if ok && ev.State != "" {
-			if err := sink(runEvent(ev.State, ev.Host, ev.Task, ev.Payload)); err != nil {
+		switch {
+		case ok && ev.State != "":
+			if err := sink(runEvent(ev.State, red.text(ev.Host), red.text(ev.Task), red.eventPayload(ev))); err != nil {
 				return lastStats, err
 			}
-		}
-		if ev.Stdout != "" {
-			// The display text the callback captured: forwarded as the
-			// run's stdout event, the payload is the raw event line.
-			if err := sink(runEvent(evStateStdout, "", "", ev.Payload)); err != nil {
+		case ev.Stdout != "":
+			if err := sink(runEvent(evStateStdout, "", "", red.textPayload(ev.Stdout))); err != nil {
 				return lastStats, err
 			}
 		}

@@ -234,11 +234,18 @@ func runGit(ctx context.Context, gitBin, dir string, env []string, redactURL str
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return fmt.Errorf("git %s: exit %d: %s", args[0], exit.ExitCode(), redactURLs(truncate(stderr.String(), 4<<10), redactURL))
+			return fmt.Errorf("git %s: exit %d: %s", args[0], exit.ExitCode(), gitDiagnostic(stderr.String(), redactURL))
 		}
 		return fmt.Errorf("git %s: %v", args[0], err)
 	}
 	return nil
+}
+
+// gitDiagnostic is a git failure's bounded stderr tail (4 KiB), redacted
+// FIRST: truncating before redacting can cut a URL's "user:token@" so the
+// userinfo pattern no longer matches and the token's tail survives.
+func gitDiagnostic(stderr, url string) string {
+	return truncate(redactURLs(stderr, url), 4<<10)
 }
 
 // truncate keeps a diagnostic buffer bounded.

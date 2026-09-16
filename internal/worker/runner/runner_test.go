@@ -166,19 +166,21 @@ func TestRunForwardsEventsAndMapsStats(t *testing.T) {
 		t.Errorf("status = %q, want failed (the recap carries failures)", status)
 	}
 
-	// The event order: the runner's bookends, the fixture's events with
-	// their stdout follow-ups, and no seq — the loop owns numbering.
+	// The event order: the runner's bookends and each fixture event once
+	// (a mapped event carries its display text in its own payload; only
+	// display-only lines become stdout events), and no seq — the loop owns
+	// numbering.
 	wantStates := []string{
 		"run_start",
-		"stdout",       // playbook_on_start banner
-		"stdout",       // playbook_on_task_start banner
-		"task",         // runner_on_start
-		"ok", "stdout", // runner_on_ok
-		"changed", "stdout", // runner_on_ok changed
-		"failed", "stdout", // runner_on_failed
-		"unreachable", "stdout", // runner_on_unreachable
-		"skipped", "stdout", // runner_on_skipped
-		"stdout", // the stats line's PLAY RECAP
+		"stdout",      // playbook_on_start banner
+		"stdout",      // playbook_on_task_start banner
+		"task",        // runner_on_start
+		"ok",          // runner_on_ok
+		"changed",     // runner_on_ok changed
+		"failed",      // runner_on_failed
+		"unreachable", // runner_on_unreachable
+		"skipped",     // runner_on_skipped
+		"stdout",      // the stats line's PLAY RECAP
 		"run_end",
 	}
 	assertStates(t, c.states(), wantStates)

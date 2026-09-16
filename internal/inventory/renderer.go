@@ -161,8 +161,9 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 	for _, h := range hostList {
 		hostNames[h.ID] = h.Name
 	}
+	var revealed []string
 	for _, g := range groups {
-		vars, err := r.secrets("inventory group "+g.Name, g.Schema.GroupFields(), g.Vars, GroupAAD(orgID, g.ID), reveal)
+		vars, err := r.secrets("inventory group "+g.Name, g.Schema.GroupFields(), g.Vars, GroupAAD(orgID, g.ID), reveal, &revealed)
 		if err != nil {
 			return render.Inventory{}, err
 		}
@@ -171,7 +172,7 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 	for _, m := range memberships {
 		g := byID[m.GroupID]
 		subject := "inventory group " + g.Name + ", host " + hostNames[m.HostID]
-		vars, err := r.secrets(subject, g.Schema.MembershipFields(), m.Vars, MemberAAD(orgID, m.GroupID, m.HostID), reveal)
+		vars, err := r.secrets(subject, g.Schema.MembershipFields(), m.Vars, MemberAAD(orgID, m.GroupID, m.HostID), reveal, &revealed)
 		if err != nil {
 			return render.Inventory{}, err
 		}
@@ -191,7 +192,49 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 			in.CredentialUsers[c.ID] = c.Username
 		}
 	}
-	return render.Render(in)
+	out, err := render.Render(in)
+	if err != nil {
+		return render.Inventory{}, err
+	}
+	out.Secrets = secretsInDoc(revealed, out.Doc)
+	return out, nil
+}
+
+// secretsInDoc keeps the revealed secret values the rendered document
+// actually carries (as a string value anywhere in it): every group and
+// membership of the organization is opened before render.Render narrows
+// the scope, and a secret outside the job's scope must not travel to the
+// worker even as a redaction entry.
+func secretsInDoc(revealed []string, doc map[string]any) []string {
+	if len(revealed) == 0 {
+		return nil
+	}
+	present := map[string]bool{}
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			present[t] = true
+		case map[string]any:
+			for _, e := range t {
+				walk(e)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range revealed {
+		if s != "" && present[s] && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // secrets prepares one row's stored vars for rendering; subject names the
@@ -214,7 +257,7 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 // would need reordering renderIn around render.Render's own scope logic —
 // out of reach here without disturbing 2.16's one-transaction read, and
 // not what the plan asked for.
-func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[string]any, aad []byte, reveal bool) (map[string]any, error) {
+func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[string]any, aad []byte, reveal bool, revealed *[]string) (map[string]any, error) {
 	if !reveal {
 		masked, err := schema.MapSecrets(fields, vars, func(string, any) (any, error) { return render.MaskedSecret, nil })
 		if err != nil {
@@ -234,6 +277,7 @@ func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[strin
 		if err != nil {
 			return nil, fmt.Errorf("open sealed inventory value: %w", err)
 		}
+		*revealed = append(*revealed, string(plain))
 		return string(plain), nil
 	})
 }

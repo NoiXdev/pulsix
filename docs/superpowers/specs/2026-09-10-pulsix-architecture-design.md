@@ -481,6 +481,39 @@ Layered like Checkmk rulesets and Zabbix templates.
   snapshots to workers; agent secrets never leave the host.
 - Job execution isolation: ansible-runner runs as an unprivileged user in the worker
   container; per-job temp dirs are wiped after the run; `ANSIBLE_*` env is fixed.
+- **Worker trust model.** Anyone who may run jobs in an organization (operators and
+  above) can run arbitrary code on that organization's workers by design: a playbook
+  task can target `localhost`. Such code can reach everything the worker process
+  reaches: the files of the running job (inventory with revealed secrets, key files,
+  extra vars — all 0600 in the job's work dir, wiped afterwards), the repository cache
+  of its organization, the worker's own client certificate and key (so it can act as
+  that worker: claim further jobs of the same organization and zone, including their
+  revealed credentials), and the network the worker sits in. It cannot reach the
+  manager's database, the master key or another organization: a worker is enrolled for
+  one zone of one organization, the manager only hands it that zone's jobs and accepts
+  results only for jobs it claimed, and the default deployment runs workers in their
+  own container without database access or master key. Consequences: grant `jobs.run`
+  only to people you would trust with every credential the organization's hosts use;
+  give each trust domain its own organization (or at least its own zone and worker).
+  Running playbooks under a separate uid so a task cannot read the worker's key is a
+  hardening item (backlog).
+- **Run output redaction.** Run logs are readable with `jobs.read`. The worker removes
+  every secret value the job revealed — credential secrets (keys, passwords, tokens,
+  become passwords), secret-typed extra vars, secret inventory variables, one-time
+  bootstrap logins — from every event before it leaves the worker, as literal strings,
+  their JSON-escaped form and, for keys, line by line; redaction runs before any size
+  truncation. Values shorter than 4 characters are not redacted, and a secret a task
+  transforms (base64, hashes, substrings) cannot be recognized — `no_log: true` remains
+  the playbook author's tool for those. Each ansible event is stored once, reduced to
+  host, task, module, result and display text.
+- **Host keys.** A host's key is pinned from a connection test (fingerprint and full
+  key). Every job that connects to a pinned host — runs, ad-hoc commands, bootstrap,
+  key rotation and revocation — checks the key strictly on the very connection the
+  playbook uses, through its jump hosts; a changed key fails the connection, and once
+  a connection test reports the change such jobs are refused until a test confirms a
+  pinned key again. Unpinned hosts and jump hosts are trusted on first use for the
+  duration of one job only (jump hosts carry no pin yet; a pinned target is still
+  verified end to end through them).
 - Rate limits on auth endpoints, WebAuthn user verification required, TOTP with
   replay protection, API tokens hashed (argon2id) at rest.
 - OWASP audit before v1.0 (`owasp-audit` skill).

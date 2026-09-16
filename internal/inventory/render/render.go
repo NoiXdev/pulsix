@@ -107,6 +107,11 @@ type Inventory struct {
 	Doc         map[string]any
 	Connections map[string]Connection
 	Warnings    []Warning
+	// Secrets lists the secret values a snapshot revealed into Doc (secret
+	// group and membership vars the rendered document carries), so the
+	// claim can tell the worker what to redact from run output. Empty for
+	// a preview. Never logged, never served.
+	Secrets []string
 }
 
 type renderer struct {

@@ -149,7 +149,12 @@ type Job struct {
 	// in host_keys. The worker writes them into the run's known_hosts and
 	// connects to those hosts with strict host key checking; a host in
 	// host_keys without an entry here fails the run closed.
-	KnownHosts    map[string]string `protobuf:"bytes,16,rep,name=known_hosts,json=knownHosts,proto3" json:"known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	KnownHosts map[string]string `protobuf:"bytes,16,rep,name=known_hosts,json=knownHosts,proto3" json:"known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// redact lists every secret value this claim reveals — credential
+	// secrets, secret-typed extra vars, secret inventory vars, one-time
+	// logins — which the worker removes from every run event (payload and
+	// stdout) before it leaves the worker. Never logged.
+	Redact        []string `protobuf:"bytes,17,rep,name=redact,proto3" json:"redact,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -292,6 +297,13 @@ func (x *Job) GetWorkerToken() string {
 func (x *Job) GetKnownHosts() map[string]string {
 	if x != nil {
 		return x.KnownHosts
+	}
+	return nil
+}
+
+func (x *Job) GetRedact() []string {
+	if x != nil {
+		return x.Redact
 	}
 	return nil
 }
@@ -545,7 +557,7 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xd7\a\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xef\a\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -566,7 +578,8 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\fkind_payload\x18\x0e \x01(\tR\vkindPayload\x12!\n" +
 	"\fworker_token\x18\x0f \x01(\tR\vworkerToken\x12F\n" +
 	"\vknown_hosts\x18\x10 \x03(\v2%.pulsix.worker.v1.Job.KnownHostsEntryR\n" +
-	"knownHosts\x1a<\n" +
+	"knownHosts\x12\x16\n" +
+	"\x06redact\x18\x11 \x03(\tR\x06redact\x1a<\n" +
 	"\x0eExtraVarsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

@@ -29,4 +29,19 @@ describe('EventLog', () => {
     expect(screen.getByText('Attempt 1')).toBeInTheDocument();
     expect(screen.getByText('Attempt 2')).toBeInTheDocument();
   });
+
+  it('shows the display text of a task event under its state line (each ansible event arrives once)', () => {
+    render(
+      <EventLog
+        events={[
+          ev(1, 1, 'Install nginx', { state: 'ok', payload: { event: 'runner_on_ok', stdout: 'ok: [web-01] => {"msg": "done"}' } }),
+          ev(2, 1, '', { host: '', state: 'stdout', payload: { text: 'PLAY RECAP' } }),
+        ]}
+      />,
+    );
+    const log = screen.getByRole('list', { name: 'Run events' });
+    expect(within(log).getByText('ok: [web-01] => {"msg": "done"}')).toBeInTheDocument();
+    expect(within(log).getByText('Install nginx')).toBeInTheDocument();
+    expect(within(log).getByText('PLAY RECAP')).toBeInTheDocument();
+  });
 });

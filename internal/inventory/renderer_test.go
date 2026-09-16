@@ -263,3 +263,47 @@ func TestStringFieldTurnedSecretIsMaskedInThePreview(t *testing.T) {
 		t.Fatalf("snapshot of a plain value under a secret field: %v", err)
 	}
 }
+
+// TestSnapshotListsTheSecretsItReveals (final review I4): a snapshot names
+// every secret value it revealed into its document, so the claim can tell
+// the worker what to redact from run output. Only values the rendered
+// document actually carries are listed — a secret of a group outside the
+// scope never leaves the manager — and a preview reveals (and lists)
+// nothing.
+func TestSnapshotListsTheSecretsItReveals(t *testing.T) {
+	f, r, g := rendererFixture(t)
+	other := f.group(t, "elsewhere", nil)
+	v, _, err := f.svc.SetSchema(ctx, f.org, other.ID, other.Revision, schema.Schema{Fields: []schema.Field{{Name: "api_token", Type: schema.TypeSecret}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SetVars(ctx, f.org, other.ID, v.Revision, map[string]any{"api_token": "out-of-scope-secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := r.Snapshot(ctx, f.org, render.Scope{GroupID: &g.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(list []string, v string) bool {
+		for _, s := range list {
+			if s == v {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(snap.Secrets, "group-secret") || !has(snap.Secrets, "member-secret") {
+		t.Fatalf("snapshot secrets = %q, want the group and membership secrets", snap.Secrets)
+	}
+	if has(snap.Secrets, "out-of-scope-secret") || has(snap.Secrets, "prod") {
+		t.Fatalf("snapshot secrets = %q, want neither an out-of-scope secret nor a plain value", snap.Secrets)
+	}
+	preview, err := r.Preview(ctx, f.org, render.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Secrets) != 0 {
+		t.Fatalf("a preview listed secrets: %q", preview.Secrets)
+	}
+}

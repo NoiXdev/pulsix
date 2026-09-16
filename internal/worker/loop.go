@@ -273,7 +273,7 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 		// The loop owns identity and time; clone so the executor's event
 		// is never mutated behind its back.
 		out := proto.Clone(ev).(*workerpb.RunEvent)
-		out.Payload = boundEventPayload(out.GetPayload())
+		out.Payload = BoundEventPayload(out.GetPayload())
 		out.JobId = jobID
 		out.Seq = uint64(seq + 1)
 		out.At = timestamppb.New(l.now())
@@ -365,13 +365,13 @@ func interruptibleSleep(ctx context.Context, d time.Duration) error {
 // MaxEventPayloadBytes even after JSON escaping (at most 6 bytes per byte).
 const truncationHeadBytes = 64 << 10
 
-// boundEventPayload keeps one event's payload within
+// BoundEventPayload keeps one event's payload within
 // workerpb.MaxEventPayloadBytes. A payload under the bound passes untouched;
 // a larger one is replaced by a JSON marker that keeps the event in the
 // run's record: {"truncated": true, "original_bytes": n, "head": "..."}.
 // Executors redact before they emit (the runner does), so the head never
 // carries a secret the full payload would not have lost to redaction.
-func boundEventPayload(payload string) string {
+func BoundEventPayload(payload string) string {
 	if len(payload) <= workerpb.MaxEventPayloadBytes {
 		return payload
 	}

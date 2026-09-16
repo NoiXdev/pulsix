@@ -136,5 +136,6 @@ func synthRunJob(orig *workerpb.Job, hostName string, doc map[string]any, connJS
 		SshUsername: sshUser,
 		HostKeys:    orig.GetHostKeys(),
 		KnownHosts:  orig.GetKnownHosts(),
+		Redact:      orig.GetRedact(),
 	}, nil
 }

@@ -26,6 +26,7 @@ func TestRevokeExecutorRemovesThePreviousKeyWithTheNewLogin(t *testing.T) {
 	job := sysJob(t, "revoke_key", revokeClaim(t, host, "ansible", login, "ssh-ed25519 AAAA oldpub"),
 		map[string]string{"web1": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
 	job.KnownHosts = map[string]string{"web1": "ssh-ed25519 AAAA hostkey"}
+	job.Redact = []string{"new-key-material"}
 	status, _, err := NewRevokeExecutor(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
 	if err != nil || status != StatusSucceeded {
 		t.Fatalf("Run = %q, %v", status, err)
@@ -42,6 +43,9 @@ func TestRevokeExecutorRemovesThePreviousKeyWithTheNewLogin(t *testing.T) {
 	}
 	if _, has := got.GetExtraVars()["pulsix_public_key"]; has {
 		t.Fatal("a revocation must never carry a key to install")
+	}
+	if len(got.GetRedact()) != 1 || got.GetRedact()[0] != "new-key-material" {
+		t.Fatalf("the redact list did not ride into the runner claim: %v", got.GetRedact())
 	}
 	if got.GetKnownHosts()["web1"] != "ssh-ed25519 AAAA hostkey" {
 		t.Fatalf("the pin did not ride into the runner claim: %v", got.GetKnownHosts())
