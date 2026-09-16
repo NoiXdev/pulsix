@@ -165,6 +165,13 @@ func (f *fakeStore) ListGroupMembers(_ context.Context, orgID, groupID uuid.UUID
 	return out, nil
 }
 
+// WithTreeLock runs fn directly against f: unit tests exercise one
+// goroutine at a time, so there is no concurrent call to serialize against.
+// The integration test in store_sql_test.go covers the real lock.
+func (f *fakeStore) WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(inventory.Store) error) error {
+	return fn(f)
+}
+
 func (f *fakeStore) ListHostMemberships(_ context.Context, orgID, hostID uuid.UUID) ([]inventory.Membership, error) {
 	var out []inventory.Membership
 	for _, m := range f.members {

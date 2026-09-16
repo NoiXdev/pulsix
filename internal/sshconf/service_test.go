@@ -118,6 +118,13 @@ func (f *fakeStore) ListHostSSH(_ context.Context, orgID uuid.UUID) ([]sshconf.H
 	return out, nil
 }
 
+// WithChainLock runs fn directly against f: unit tests exercise one
+// goroutine at a time, so there is no concurrent call to serialize against.
+// The integration test in store_sql_test.go covers the real lock.
+func (f *fakeStore) WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(sshconf.Store) error) error {
+	return fn(f)
+}
+
 type fakeCreds map[uuid.UUID]credentials.Credential
 
 func (f fakeCreds) Get(_ context.Context, orgID, id uuid.UUID) (credentials.Credential, error) {

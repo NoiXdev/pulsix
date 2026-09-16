@@ -138,6 +138,13 @@ type Store interface {
 	ListMemberships(ctx context.Context, orgID uuid.UUID) ([]Membership, error)
 	ListGroupMembers(ctx context.Context, orgID, groupID uuid.UUID) ([]Membership, error)
 	ListHostMemberships(ctx context.Context, orgID, hostID uuid.UUID) ([]Membership, error)
+	// WithTreeLock runs fn against a Store bound to one transaction holding
+	// orgID's group-tree advisory lock (backlog 2.15): a tree read inside fn
+	// followed by a write inside the same fn call is atomic against any
+	// concurrent WithTreeLock call for the same organization. Every write
+	// that depends on a tree snapshot (a move's cycle/depth check, a
+	// create's parent check, a delete) must run inside it.
+	WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
 }
 
 // HostLookup is the slice of hosts.Service this package needs.
@@ -174,27 +181,41 @@ func (s *Service) CreateGroup(ctx context.Context, orgID uuid.UUID, in GroupInpu
 	if err := validateGroupMeta(in.Name, in.Description); err != nil {
 		return GroupView{}, err
 	}
-	if in.ParentID != nil {
-		t, err := s.tree(ctx, orgID)
-		if err != nil {
-			return GroupView{}, err
-		}
-		if !t.Has(*in.ParentID) {
-			return GroupView{}, fmt.Errorf("%w: parent group does not exist", ErrInvalidInput)
-		}
-		if t.Depth(*in.ParentID)+2 > MaxGroupDepth {
-			return GroupView{}, errTooDeep()
-		}
-	}
 	g := Group{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ParentID: in.ParentID, Name: in.Name, Description: in.Description,
 		Schema: schema.Schema{Fields: []schema.Field{}}, Vars: map[string]any{},
 	}
-	created, err := s.store.CreateGroup(ctx, g)
+	if in.ParentID == nil {
+		// A root has nothing to check against the tree: no lock needed.
+		created, err := s.store.CreateGroup(ctx, g)
+		if err != nil {
+			return GroupView{}, err
+		}
+		return groupView(created), nil
+	}
+	var result GroupView
+	err := s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
+		t, err := treeVia(ctx, txStore, orgID)
+		if err != nil {
+			return err
+		}
+		if !t.Has(*in.ParentID) {
+			return fmt.Errorf("%w: parent group does not exist", ErrInvalidInput)
+		}
+		if t.Depth(*in.ParentID)+2 > MaxGroupDepth {
+			return errTooDeep()
+		}
+		created, err := txStore.CreateGroup(ctx, g)
+		if err != nil {
+			return err
+		}
+		result = groupView(created)
+		return nil
+	})
 	if err != nil {
 		return GroupView{}, err
 	}
-	return groupView(created), nil
+	return result, nil
 }
 
 // GetGroup returns one group with masked vars and its value problems.
@@ -230,28 +251,6 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 	if err := validateGroupMeta(in.Name, in.Description); err != nil {
 		return GroupView{}, err
 	}
-	cur, err := s.store.GetGroup(ctx, orgID, id)
-	if err != nil {
-		return GroupView{}, err
-	}
-	t, err := s.tree(ctx, orgID)
-	if err != nil {
-		return GroupView{}, err
-	}
-	levels := 1 + t.Height(id)
-	if in.ParentID != nil {
-		p := *in.ParentID
-		switch {
-		case p == id || t.IsDescendant(p, id):
-			return GroupView{}, fmt.Errorf("%w: a group cannot move below itself", ErrInvalidInput)
-		case !t.Has(p):
-			return GroupView{}, fmt.Errorf("%w: parent group does not exist", ErrInvalidInput)
-		}
-		levels += t.Depth(p) + 1
-	}
-	if levels > MaxGroupDepth {
-		return GroupView{}, errTooDeep()
-	}
 	if in.BastionID != nil {
 		if _, err := s.bastions.GetBastion(ctx, orgID, *in.BastionID); errors.Is(err, sshconf.ErrNotFound) {
 			return GroupView{}, fmt.Errorf("%w: jump host does not exist", ErrInvalidInput)
@@ -259,18 +258,53 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 			return GroupView{}, err
 		}
 	}
-	next := cur
-	next.Name, next.Description, next.ParentID, next.BastionID, next.Revision = in.Name, in.Description, in.ParentID, in.BastionID, revision
-	updated, err := s.store.UpdateGroup(ctx, next)
+	var result GroupView
+	err := s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
+		cur, err := txStore.GetGroup(ctx, orgID, id)
+		if err != nil {
+			return err
+		}
+		t, err := treeVia(ctx, txStore, orgID)
+		if err != nil {
+			return err
+		}
+		levels := 1 + t.Height(id)
+		if in.ParentID != nil {
+			p := *in.ParentID
+			switch {
+			case p == id || t.IsDescendant(p, id):
+				return fmt.Errorf("%w: a group cannot move below itself", ErrInvalidInput)
+			case !t.Has(p):
+				return fmt.Errorf("%w: parent group does not exist", ErrInvalidInput)
+			}
+			levels += t.Depth(p) + 1
+		}
+		if levels > MaxGroupDepth {
+			return errTooDeep()
+		}
+		next := cur
+		next.Name, next.Description, next.ParentID, next.BastionID, next.Revision = in.Name, in.Description, in.ParentID, in.BastionID, revision
+		updated, err := txStore.UpdateGroup(ctx, next)
+		if err != nil {
+			return err
+		}
+		result = groupView(updated)
+		return nil
+	})
 	if err != nil {
 		return GroupView{}, err
 	}
-	return groupView(updated), nil
+	return result, nil
 }
 
-// DeleteGroup removes a group without children, and its memberships.
+// DeleteGroup removes a group without children, and its memberships. It
+// runs under the same per-organization tree lock as CreateGroup and
+// UpdateGroup (2.15) so it never races a concurrent move or create that
+// reads this group's existence into a now-stale tree snapshot.
 func (s *Service) DeleteGroup(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.DeleteGroup(ctx, orgID, id)
+	return s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
+		return txStore.DeleteGroup(ctx, orgID, id)
+	})
 }
 
 // SetSchema replaces a group's schema. Stored values are never rewritten;
@@ -326,8 +360,12 @@ func (s *Service) SetVars(ctx context.Context, orgID, id uuid.UUID, revision int
 	return groupView(updated), nil
 }
 
-func (s *Service) tree(ctx context.Context, orgID uuid.UUID) (grouptree.Tree, error) {
-	groups, err := s.store.ListGroups(ctx, orgID)
+// treeVia reads st's groups and builds the structural tree from them. It
+// takes a Store parameter (rather than being a Service method on s.store)
+// so a caller inside WithTreeLock can pass the lock-bound txStore and get a
+// tree snapshot consistent with the write it is about to perform.
+func treeVia(ctx context.Context, st Store, orgID uuid.UUID) (grouptree.Tree, error) {
+	groups, err := st.ListGroups(ctx, orgID)
 	if err != nil {
 		return grouptree.Tree{}, err
 	}

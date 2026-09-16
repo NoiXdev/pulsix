@@ -112,6 +112,13 @@ type Store interface {
 	GetHostSSH(ctx context.Context, orgID, hostID uuid.UUID) (HostSSH, error)
 	PutHostSSH(ctx context.Context, h HostSSH) (HostSSH, error)
 	ListHostSSH(ctx context.Context, orgID uuid.UUID) ([]HostSSH, error)
+	// WithChainLock runs fn against a Store bound to one transaction holding
+	// orgID's jump-host chain advisory lock (backlog 2.15): a chain read
+	// inside fn followed by a write inside the same fn call is atomic
+	// against any concurrent WithChainLock call for the same organization.
+	// Every write that depends on a chain snapshot (a create or update that
+	// sets ViaBastionID) must run inside it.
+	WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
 }
 
 // CredentialLookup is the slice of credentials.Service this package needs.
@@ -139,10 +146,30 @@ func NewService(store Store, creds CredentialLookup, hostLookup HostLookup) *Ser
 // CreateBastion validates and stores a new jump host.
 func (s *Service) CreateBastion(ctx context.Context, orgID uuid.UUID, in BastionInput) (Bastion, error) {
 	b := bastionFrom(uuid.Must(uuid.NewV7()), orgID, in)
-	if err := s.checkBastion(ctx, b); err != nil {
+	if err := s.checkBastionBasics(ctx, b); err != nil {
 		return Bastion{}, err
 	}
-	return s.store.CreateBastion(ctx, b)
+	if b.ViaBastionID == nil {
+		// Nothing can chain through a jump host that does not exist yet, so
+		// creating one without a via cannot affect any chain: no lock needed.
+		return s.store.CreateBastion(ctx, b)
+	}
+	var result Bastion
+	err := s.store.WithChainLock(ctx, orgID, func(txStore Store) error {
+		if err := s.checkChain(ctx, txStore, b); err != nil {
+			return err
+		}
+		created, err := txStore.CreateBastion(ctx, b)
+		if err != nil {
+			return err
+		}
+		result = created
+		return nil
+	})
+	if err != nil {
+		return Bastion{}, err
+	}
+	return result, nil
 }
 
 // GetBastion returns one jump host.
@@ -159,19 +186,48 @@ func (s *Service) ListBastions(ctx context.Context, orgID uuid.UUID) ([]Bastion,
 // own chain, or the chain of any other jump host of the organization, would
 // become cyclic or too long.
 func (s *Service) UpdateBastion(ctx context.Context, orgID, id uuid.UUID, in BastionInput) (Bastion, error) {
-	if _, err := s.store.GetBastion(ctx, orgID, id); err != nil {
-		return Bastion{}, err
-	}
 	b := bastionFrom(id, orgID, in)
-	if err := s.checkBastion(ctx, b); err != nil {
+	if err := s.checkBastionBasics(ctx, b); err != nil {
 		return Bastion{}, err
 	}
-	return s.store.UpdateBastion(ctx, b)
+	if b.ViaBastionID == nil {
+		// Clearing or never setting a via cannot create a cycle: check the
+		// row exists and write it, no chain lock needed.
+		if _, err := s.store.GetBastion(ctx, orgID, id); err != nil {
+			return Bastion{}, err
+		}
+		return s.store.UpdateBastion(ctx, b)
+	}
+	var result Bastion
+	err := s.store.WithChainLock(ctx, orgID, func(txStore Store) error {
+		if _, err := txStore.GetBastion(ctx, orgID, id); err != nil {
+			return err
+		}
+		if err := s.checkChain(ctx, txStore, b); err != nil {
+			return err
+		}
+		updated, err := txStore.UpdateBastion(ctx, b)
+		if err != nil {
+			return err
+		}
+		result = updated
+		return nil
+	})
+	if err != nil {
+		return Bastion{}, err
+	}
+	return result, nil
 }
 
-// DeleteBastion removes a jump host nothing references (ErrInUse otherwise).
+// DeleteBastion removes a jump host nothing references (ErrInUse
+// otherwise). It runs under the same per-organization chain lock as
+// CreateBastion and UpdateBastion (2.15) so it never races a concurrent
+// chain edit that read this jump host's existence into a now-stale
+// snapshot.
 func (s *Service) DeleteBastion(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.DeleteBastion(ctx, orgID, id)
+	return s.store.WithChainLock(ctx, orgID, func(txStore Store) error {
+		return txStore.DeleteBastion(ctx, orgID, id)
+	})
 }
 
 // SetZoneBastion sets or clears (nil) a zone's default jump host.
@@ -249,7 +305,10 @@ func bastionFrom(id, orgID uuid.UUID, in BastionInput) Bastion {
 	return b
 }
 
-func (s *Service) checkBastion(ctx context.Context, b Bastion) error {
+// checkBastionBasics validates everything about b that does not depend on
+// the organization's other jump hosts: field shape and the credential
+// reference. It runs before any lock is taken.
+func (s *Service) checkBastionBasics(ctx context.Context, b Bastion) error {
 	if !namePattern.MatchString(b.Name) {
 		return fmt.Errorf("%w: name must be 1-63 lowercase letters, digits, dots, underscores or hyphens", ErrInvalidInput)
 	}
@@ -262,13 +321,17 @@ func (s *Service) checkBastion(ctx context.Context, b Bastion) error {
 	if !usernamePattern.MatchString(b.Username) {
 		return fmt.Errorf("%w: username is required and may contain letters, digits, dots, underscores, @ and hyphens", ErrInvalidInput)
 	}
-	if err := s.checkCredential(ctx, b.OrgID, b.CredentialID); err != nil {
-		return err
-	}
-	if b.ViaBastionID == nil {
-		return nil
-	}
-	all, err := s.store.ListBastions(ctx, b.OrgID)
+	return s.checkCredential(ctx, b.OrgID, b.CredentialID)
+}
+
+// checkChain validates b's jump host chain (and every other jump host's
+// chain that reaches through b) against st's current state. b.ViaBastionID
+// must be non-nil; callers only need this check — and the WithChainLock it
+// must run inside — when it is. st is the lock-bound Store passed into
+// WithChainLock's fn, so this reads the same transaction the write commits
+// to, never a snapshot a concurrent caller could have moved on from.
+func (s *Service) checkChain(ctx context.Context, st Store, b Bastion) error {
+	all, err := st.ListBastions(ctx, b.OrgID)
 	if err != nil {
 		return err
 	}

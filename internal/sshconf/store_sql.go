@@ -3,6 +3,7 @@ package sshconf
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,10 +16,34 @@ import (
 // migration 00014 make a reference into another organization fail as a
 // foreign key violation, reported here as ErrInvalidInput; the service
 // normally rejects it earlier with a clearer message.
-type SQLStore struct{ q *gen.Queries }
+type SQLStore struct {
+	db *db.DB
+	q  *gen.Queries
+}
 
 // NewSQLStore builds the store.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
+
+// chainLockAAD namespaces this package's per-organization advisory lock key
+// (see inventory.treeLockAAD for the sibling group-tree lock; the two never
+// need to block each other, since bastions and groups are separate graphs).
+const chainLockAAD = "bastion-chain:"
+
+// WithChainLock runs fn against a Store bound to one transaction that holds
+// orgID's jump-host chain advisory lock for the whole call (backlog 2.15):
+// a chain read inside fn followed by a write inside the same fn call is
+// atomic against any concurrent WithChainLock call for the same
+// organization, which is what turns two racing chain edits that would
+// jointly form a cycle (or a too-long chain) into one that succeeds and one
+// that is rejected against the first's already-committed state.
+func (s *SQLStore) WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error {
+	return s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, chainLockAAD+orgID.String()); err != nil {
+			return fmt.Errorf("acquire bastion chain lock: %w", err)
+		}
+		return fn(&SQLStore{db: s.db, q: gen.New(tx)})
+	})
+}
 
 func (s *SQLStore) CreateBastion(ctx context.Context, b Bastion) (Bastion, error) {
 	row, err := s.q.CreateBastion(ctx, gen.CreateBastionParams{

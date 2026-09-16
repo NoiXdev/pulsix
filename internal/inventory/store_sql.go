@@ -17,10 +17,39 @@ import (
 
 // SQLStore implements Store on *db.DB, so every statement runs inside the
 // request's organization scope. Schemas and vars are stored as jsonb.
-type SQLStore struct{ q *gen.Queries }
+type SQLStore struct {
+	db *db.DB
+	q  *gen.Queries
+}
 
 // NewSQLStore builds the store.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
+
+// treeLockAAD namespaces the per-organization advisory lock key from any
+// other package's (int64 hashtext keys share one 32-bit keyspace per
+// PostgreSQL session/session-less xact lock; see also
+// sshconf.chainLockAAD, internal/schedule.AdvisoryKeyRetest and
+// db.migrationLockKey, none of which collide with a string-derived key).
+const treeLockAAD = "inventory-tree:"
+
+// WithTreeLock runs fn against a Store bound to one transaction that holds
+// orgID's group-tree advisory lock for the whole call (backlog 2.15): the
+// lock is acquired before fn's first read, so the tree read, the
+// cycle/depth check and the write fn performs all see one consistent
+// snapshot and commit atomically. A concurrent WithTreeLock call for the
+// same organization blocks until this transaction commits or rolls back
+// (pg_advisory_xact_lock releases automatically then), which is what turns
+// two racing group moves that would jointly form a cycle into one that
+// succeeds and one that is rejected against the first's already-committed
+// state, instead of both succeeding against a stale tree.
+func (s *SQLStore) WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error {
+	return s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, treeLockAAD+orgID.String()); err != nil {
+			return fmt.Errorf("acquire inventory tree lock: %w", err)
+		}
+		return fn(&SQLStore{db: s.db, q: gen.New(tx)})
+	})
+}
 
 func (s *SQLStore) CreateGroup(ctx context.Context, g Group) (Group, error) {
 	sc, vars, err := encodeGroup(g)
