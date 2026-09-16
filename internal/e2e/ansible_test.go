@@ -226,7 +226,7 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 	// exact output the worker binary is configured from.
 	enrollCfg := config.Config{DatabaseURL: testdb.URL(t), MasterKey: masterKey, GRPCListen: "localhost:0"}
 	var enroll strings.Builder
-	if err := app.RunWorkerAdd(ctx, enrollCfg, "default", org, "e2e-worker", &enroll); err != nil {
+	if err := app.RunWorkerAdd(ctx, enrollCfg, app.WorkerAddOptions{ZoneSlug: "default", OrgSlug: org, Name: "e2e-worker"}, &enroll, io.Discard); err != nil {
 		t.Fatalf("worker add: %v", err)
 	}
 	certPEM, keyPEM, caPEM, err := ParseEnrollmentBlocks(enroll.String())

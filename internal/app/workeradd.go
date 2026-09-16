@@ -17,9 +17,11 @@ package app
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -59,13 +61,41 @@ type certIssuer interface {
 	Issue(ctx context.Context, orgID *uuid.UUID, zoneID uuid.UUID, name string) (certPEM, keyPEM []byte, serial *big.Int, err error)
 }
 
+// WorkerAddOptions are `worker add`'s inputs.
+type WorkerAddOptions struct {
+	ZoneSlug string
+	OrgSlug  string // disambiguates a zone slug several organizations use
+	Name     string
+	// BundleDir, when set, writes the certificate bundle (cert.pem,
+	// key.pem, ca.pem) into this directory instead of printing it, and
+	// reuses a bundle already there while its certificate still verifies
+	// against the instance CA and its serial is still registered — the
+	// unattended compose enrollment service reruns on every `up`.
+	BundleDir string
+	// Wait retries zone resolution while the zone does not exist yet (a
+	// fresh instance whose setup wizard has not run), instead of failing.
+	Wait bool
+	// WaitInterval is Wait's retry period; zero means
+	// defaultWorkerAddWaitInterval.
+	WaitInterval time.Duration
+}
+
+// defaultWorkerAddWaitInterval is how often `worker add --wait` retries a
+// zone that does not exist yet.
+const defaultWorkerAddWaitInterval = 5 * time.Second
+
 // RunWorkerAdd implements `worker add`: resolve the zone, issue the worker
-// certificate, register the serial and print the PEM blocks. The zone slug
-// is resolved across organizations; when several organizations use it,
-// orgSlug disambiguates. stderr is for human-facing diagnostics only —
-// stdout carries key material and must stay pipeable, which is why nothing
-// here logs.
-func RunWorkerAdd(ctx context.Context, cfg config.Config, zoneSlug, orgSlug, name string, stdout io.Writer) error {
+// certificate, register the serial and print the PEM blocks (or write them
+// into opts.BundleDir). The zone slug is resolved across organizations;
+// when several organizations use it, opts.OrgSlug disambiguates. stderr is
+// for human-facing diagnostics only — stdout carries key material and must
+// stay pipeable, which is why nothing here logs.
+//
+// The zone is resolved before the instance CA is opened: a zone exists
+// only once a manager has started (and generated the CA), so an enrollment
+// that runs alongside a first manager start never races it to generate a
+// second CA.
+func RunWorkerAdd(ctx context.Context, cfg config.Config, opts WorkerAddOptions, stdout, stderr io.Writer) error {
 	d, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -73,6 +103,21 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, zoneSlug, orgSlug, nam
 	defer d.Close()
 	if err := d.Migrate(ctx); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
+	}
+
+	src := genZoneSource{q: gen.New(d.Pool())}
+	var z zoneRow
+	if opts.Wait {
+		interval := opts.WaitInterval
+		if interval <= 0 {
+			interval = defaultWorkerAddWaitInterval
+		}
+		z, err = waitForZone(ctx, src, opts.ZoneSlug, opts.OrgSlug, interval, stderr)
+	} else {
+		z, err = resolveZone(ctx, src, opts.ZoneSlug, opts.OrgSlug)
+	}
+	if err != nil {
+		return err
 	}
 
 	caInst, err := ca.New(ca.NewSQLStore(d), crypto.NewBox(cfg.MasterKey), ca.Config{
@@ -85,19 +130,31 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, zoneSlug, orgSlug, nam
 		return fmt.Errorf("ensure CA: %w", err)
 	}
 	_, caCert := caInst.Pool()
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
+	svc := workers.NewService(workers.NewSQLStore(d))
 
-	return workerAdd(ctx,
-		genZoneSource{q: gen.New(d.Pool())},
-		funcRegister{svc: workers.NewService(workers.NewSQLStore(d))},
-		caInst,
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}),
-		zoneSlug, orgSlug, name, stdout,
-	)
+	if opts.BundleDir != "" {
+		return enrollBundle(ctx, z, opts.Name, caPEM, opts.BundleDir, caInst, svc, funcRegister{svc: svc}, caInst, stderr)
+	}
+	return workerAdd(ctx, fixedZone{z}, funcRegister{svc: svc}, caInst, caPEM,
+		opts.ZoneSlug, opts.OrgSlug, opts.Name, cfg.CAListenHost(), stdout)
+}
+
+// fixedZone is a zoneSource that answers with the one zone RunWorkerAdd
+// already resolved.
+type fixedZone struct{ z zoneRow }
+
+// ZonesBySlug implements zoneSource.
+func (f fixedZone) ZonesBySlug(context.Context, string) ([]zoneRow, error) {
+	return []zoneRow{f.z}, nil
 }
 
 // workerAdd is the enrollment flow proper: resolve → issue → register →
-// print. Split from RunWorkerAdd so tests can inject fakes.
-func workerAdd(ctx context.Context, src zoneSource, reg workerRegistrar, issuer certIssuer, caPEM []byte, zoneSlug, orgSlug, name string, stdout io.Writer) error {
+// print. Split from RunWorkerAdd so tests can inject fakes. serverName is
+// the name the manager's gRPC server certificate carries, printed in the
+// usage note because a worker that dials an address other than that name
+// must present it explicitly.
+func workerAdd(ctx context.Context, src zoneSource, reg workerRegistrar, issuer certIssuer, caPEM []byte, zoneSlug, orgSlug, name, serverName string, stdout io.Writer) error {
 	z, err := resolveZone(ctx, src, zoneSlug, orgSlug)
 	if err != nil {
 		return err
@@ -109,7 +166,7 @@ func workerAdd(ctx context.Context, src zoneSource, reg workerRegistrar, issuer 
 	if err := reg.Register(ctx, z.OrgID, name, z.ID, serial); err != nil {
 		return fmt.Errorf("register worker: %w", err)
 	}
-	return writeEnrollmentOutput(stdout, certPEM, keyPEM, caPEM)
+	return writeEnrollmentOutput(stdout, certPEM, keyPEM, caPEM, serverName)
 }
 
 // writeEnrollmentOutput prints the three PEM blocks plus a usage note
@@ -117,18 +174,23 @@ func workerAdd(ctx context.Context, src zoneSource, reg workerRegistrar, issuer 
 // which the docs pin. The single checked write keeps stdout pipeable and
 // turns a broken pipe (the operator's terminal closed mid-paste) into the
 // error the CLI reports on stderr.
-func writeEnrollmentOutput(stdout io.Writer, certPEM, keyPEM, caPEM []byte) error {
+func writeEnrollmentOutput(stdout io.Writer, certPEM, keyPEM, caPEM []byte, serverName string) error {
 	// pem.EncodeToMemory terminates every block with a newline already.
 	_, err := fmt.Fprintf(stdout, "# client certificate\n%s# private key\n%s# CA certificate\n%s"+
 		"# usage: save each block above to a file (cert.pem, key.pem, ca.pem) and set on the worker host:\n"+
-		"#   PULSIX_MANAGER_ADDR (the manager's gRPC endpoint, e.g. manager.example.test:8444),\n"+
+		"#   PULSIX_MANAGER_ADDR (the manager's worker endpoint, e.g. manager.example.test:8444),\n"+
+		"#   PULSIX_MANAGER_SERVER_NAME=%s (the name the manager's endpoint certificate carries),\n"+
 		"#   PULSIX_WORKER_CERT, PULSIX_WORKER_KEY, PULSIX_CA_CERT (the file paths).\n",
-		certPEM, keyPEM, caPEM)
+		certPEM, keyPEM, caPEM, serverName)
 	if err != nil {
 		return fmt.Errorf("write enrollment output: %w", err)
 	}
 	return nil
 }
+
+// errZoneNotFound marks a zone slug that resolves to no zone (yet) — the
+// one resolution failure `worker add --wait` retries.
+var errZoneNotFound = errors.New("zone not found")
 
 // resolveZone picks the zone behind the slug: exactly one organization on
 // the instance (the common first-enrollment case) uses the single match;
@@ -140,7 +202,7 @@ func resolveZone(ctx context.Context, src zoneSource, zoneSlug, orgSlug string) 
 	}
 	switch {
 	case len(rows) == 0:
-		return zoneRow{}, fmt.Errorf("no zone with slug %q", zoneSlug)
+		return zoneRow{}, fmt.Errorf("%w: no zone with slug %q", errZoneNotFound, zoneSlug)
 	case len(rows) == 1 || orgSlug == "":
 		if len(rows) > 1 {
 			return zoneRow{}, fmt.Errorf(
@@ -153,7 +215,7 @@ func resolveZone(ctx context.Context, src zoneSource, zoneSlug, orgSlug string) 
 			return r, nil
 		}
 	}
-	return zoneRow{}, fmt.Errorf("organization %q has no zone with slug %q", orgSlug, zoneSlug)
+	return zoneRow{}, fmt.Errorf("%w: organization %q has no zone with slug %q", errZoneNotFound, orgSlug, zoneSlug)
 }
 
 // genZoneSource adapts the sqlc query (org-unscoped by design — the CLI

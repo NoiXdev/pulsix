@@ -188,6 +188,30 @@ func TestServeGRPCGracefulStopIsBounded(t *testing.T) {
 	}
 }
 
+// TestDispatchRejectsUnknownArguments (fix round 1): an argument list that
+// names no known subcommand is a usage error (exit 2) — it must never fall
+// through to starting a second manager server. The first case is exactly
+// what `docker compose run manager /pulsix-manager worker add …` passes,
+// since the image's ENTRYPOINT already is /pulsix-manager.
+func TestDispatchRejectsUnknownArguments(t *testing.T) {
+	cases := [][]string{
+		{"/pulsix-manager", "worker", "add", "--zone", "default", "--name", "w1"},
+		{"worker"},
+		{"worker", "remove"},
+		{"serve"},
+		{"--help"},
+	}
+	for _, args := range cases {
+		var stderr bytes.Buffer
+		if code := dispatch(args, io.Discard, &stderr); code != 2 {
+			t.Errorf("dispatch %v: exit code = %d, want 2 (usage error)", args, code)
+		}
+		if !strings.Contains(stderr.String(), "usage:") {
+			t.Errorf("dispatch %v: stderr = %q, want a usage message", args, stderr.String())
+		}
+	}
+}
+
 // TestWorkerAddFlagValidation: missing flags fail fast with exit 1, before
 // any database or configuration is touched.
 func TestWorkerAddFlagValidation(t *testing.T) {
@@ -195,6 +219,8 @@ func TestWorkerAddFlagValidation(t *testing.T) {
 		nil,
 		{"--zone", "fra-1"},
 		{"--name", "fra-1-a"},
+		// --wait only makes sense for the unattended bundle mode.
+		{"--zone", "default", "--name", "w1", "--wait"},
 	}
 	for _, args := range cases {
 		if code := runWorkerAdd(args, io.Discard, io.Discard); code != 1 {

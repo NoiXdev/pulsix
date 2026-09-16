@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,36 +42,52 @@ var version = "dev"
 // deeper in the function, per this repo's golangci-lint (gocritic
 // exitAfterDefer).
 func main() {
-	os.Exit(dispatch(os.Args[1:]))
+	os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 // dispatch routes to the "openapi" subcommand (writes the OpenAPI document
 // to stdout and exits, no server or database involved — see
 // api.Document's doc comment), the "worker add" enrollment subcommand (see
-// app.RunWorkerAdd), or, for any other argument list, starts the manager
-// server as before. Kept as its own function, separate from run(),
-// so run()'s existing shape (and main_test.go's coverage of
-// serveWithGracefulShutdown, which calls into what run() wires up) stays
-// untouched by these additions.
-func dispatch(args []string) int {
-	if len(args) > 0 && args[0] == "openapi" {
-		return runOpenAPI(os.Stdout)
+// app.RunWorkerAdd), or — with no arguments at all — starts the manager
+// server. Any other argument list is a usage error (exit 2), never a
+// server start: `docker compose run manager /pulsix-manager worker add …`
+// (the image's ENTRYPOINT already is /pulsix-manager, so the binary sees
+// its own path as the first argument) used to fall through to run() and
+// start a second manager against the same database.
+func dispatch(args []string, stdout, stderr io.Writer) int {
+	switch {
+	case len(args) == 0:
+		return run()
+	case args[0] == "openapi":
+		return runOpenAPI(stdout)
+	case len(args) >= 2 && args[0] == "worker" && args[1] == "add":
+		return runWorkerAdd(args[2:], stdout, stderr)
 	}
-	if len(args) >= 2 && args[0] == "worker" && args[1] == "add" {
-		return runWorkerAdd(args[2:], os.Stdout, os.Stderr)
-	}
-	return run()
+	_, _ = fmt.Fprintf(stderr, "pulsix-manager: unknown command %q\n%s", strings.Join(args, " "), usageText)
+	return 2
 }
+
+// usageText is the command synopsis a usage error prints.
+const usageText = `usage:
+  pulsix-manager                  start the manager (configuration from PULSIX_* variables)
+  pulsix-manager openapi          print the OpenAPI document
+  pulsix-manager worker add --zone <slug> --name <name> [--org <slug>] [--bundle-dir <dir> [--wait]]
+                                  enroll a worker
+`
 
 // runWorkerAdd parses `worker add`'s flags and enrolls a worker. Errors go
 // to stderr; exit 1. Nothing is logged to stdout but the PEM blocks, so the
-// command's output stays pipeable.
+// command's output stays pipeable. With --bundle-dir the blocks go into
+// files instead (the unattended compose enrollment service); --wait, only
+// valid together with --bundle-dir, retries until the zone exists.
 func runWorkerAdd(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("worker add", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	zoneSlug := fs.String("zone", "", "zone slug the worker serves (required)")
 	orgSlug := fs.String("org", "", "organization slug (required only when several organizations use the same zone slug)")
 	name := fs.String("name", "", "worker name, 1-63 lowercase letters, digits or hyphens (required)")
+	bundleDir := fs.String("bundle-dir", "", "write cert.pem, key.pem and ca.pem into this directory instead of printing them; a still-valid bundle there is reused")
+	wait := fs.Bool("wait", false, "with --bundle-dir: wait until the zone exists instead of failing")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -82,12 +99,27 @@ func runWorkerAdd(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 1
 	}
+	if *wait && *bundleDir == "" {
+		_, _ = fmt.Fprintln(stderr, "worker add: --wait requires --bundle-dir")
+		fs.Usage()
+		return 1
+	}
+	if fs.NArg() > 0 {
+		_, _ = fmt.Fprintf(stderr, "worker add: unexpected arguments %v\n", fs.Args())
+		fs.Usage()
+		return 1
+	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "worker add: configuration error: %v\n", err)
 		return 1
 	}
-	if err := app.RunWorkerAdd(context.Background(), cfg, *zoneSlug, *orgSlug, *name, stdout); err != nil {
+	// SIGTERM ends a --wait loop cleanly (docker compose down while the
+	// enrollment service still waits for the setup wizard).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	opts := app.WorkerAddOptions{ZoneSlug: *zoneSlug, OrgSlug: *orgSlug, Name: *name, BundleDir: *bundleDir, Wait: *wait}
+	if err := app.RunWorkerAdd(ctx, cfg, opts, stdout, stderr); err != nil {
 		_, _ = fmt.Fprintf(stderr, "worker add: %v\n", err)
 		return 1
 	}

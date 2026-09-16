@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"io"
 	"math/big"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestWorkerAddOutputShape(t *testing.T) {
 	orgID := uuid.Must(uuid.NewV7())
 	f := &fakeWorkerAdd{zones: []zoneRow{{OrgID: orgID, ID: zoneID, OrgSlug: "acme"}}}
 	var out bytes.Buffer
-	err := workerAdd(context.Background(), f, f, f, []byte("CA-PEM"), "fra-1", "", "fra-1-a", &out)
+	err := workerAdd(context.Background(), f, f, f, []byte("CA-PEM"), "fra-1", "", "fra-1-a", "pulsix-manager", &out)
 	if err != nil {
 		t.Fatalf("workerAdd: %v", err)
 	}
@@ -59,7 +60,10 @@ func TestWorkerAddOutputShape(t *testing.T) {
 		t.Fatalf("flow registered the wrong worker: issued=%d reg=(%s, %s, %s)", f.issued, f.regOrg, f.regName, f.regZone)
 	}
 	got := out.String()
-	for _, want := range []string{"# client certificate\nCERT-PEM", "# private key\nKEY-PEM", "# CA certificate\nCA-PEM", "PULSIX_MANAGER_ADDR", "PULSIX_WORKER_CERT", "PULSIX_WORKER_KEY", "PULSIX_CA_CERT"} {
+	for _, want := range []string{"# client certificate\nCERT-PEM", "# private key\nKEY-PEM", "# CA certificate\nCA-PEM", "PULSIX_MANAGER_ADDR", "PULSIX_WORKER_CERT", "PULSIX_WORKER_KEY", "PULSIX_CA_CERT",
+		// The server certificate names the configured server name, not the
+		// address the worker dials: without it the handshake fails.
+		"PULSIX_MANAGER_SERVER_NAME=pulsix-manager"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
@@ -117,7 +121,7 @@ func TestResolveZoneDisambiguation(t *testing.T) {
 func TestWorkerAddLookupError(t *testing.T) {
 	f := &fakeWorkerAdd{zonesErr: errors.New("db down")}
 	var out bytes.Buffer
-	err := workerAdd(context.Background(), f, f, f, nil, "fra-1", "", "fra-1-a", &out)
+	err := workerAdd(context.Background(), f, f, f, nil, "fra-1", "", "fra-1-a", "pulsix-manager", &out)
 	if err == nil || !errors.Is(err, f.zonesErr) {
 		t.Fatalf("err = %v, want the lookup error wrapped", err)
 	}
@@ -184,7 +188,7 @@ func TestRunWorkerAdd(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := RunWorkerAdd(ctx, cfg, "fra-1", "", "fra-1-a", &stdout); err != nil {
+	if err := RunWorkerAdd(ctx, cfg, WorkerAddOptions{ZoneSlug: "fra-1", Name: "fra-1-a"}, &stdout, io.Discard); err != nil {
 		t.Fatalf("RunWorkerAdd: %v", err)
 	}
 	out := stdout.String()
@@ -239,7 +243,7 @@ func TestRunWorkerAdd(t *testing.T) {
 func TestRunWorkerAddUnknownZone(t *testing.T) {
 	cfg := testConfig(t)
 	var stdout bytes.Buffer
-	err := RunWorkerAdd(t.Context(), cfg, "no-such-zone", "", "fra-1-a", &stdout)
+	err := RunWorkerAdd(t.Context(), cfg, WorkerAddOptions{ZoneSlug: "no-such-zone", Name: "fra-1-a"}, &stdout, io.Discard)
 	if err == nil {
 		t.Fatal("unknown zone must fail")
 	}
