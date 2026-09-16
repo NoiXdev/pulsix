@@ -45,8 +45,8 @@ export function validateYAML(inline: string): string | null {
   if (play.kind === 'skip') return null;
   if (play.kind !== 'map') return 'play 1: must be a mapping';
   const hosts = play.entries.find(([key]) => key === 'hosts');
-  if (!hosts || hosts[1].kind === 'null' || hosts[1].text === '') return 'play 1: missing hosts';
-  if (hosts[1].kind === 'nested' || hosts[1].type !== 'string') return 'play 1: hosts must be a string';
+  if (!hosts || hosts[1].kind === 'null' || (hosts[1].kind === 'scalar' && hosts[1].text === '')) return 'play 1: missing hosts';
+  if (hosts[1].kind === 'nested' || hosts[1].kind !== 'scalar' || hosts[1].type !== 'string') return 'play 1: hosts must be a string';
   return null;
 }
 
@@ -57,13 +57,13 @@ export function validateYAML(inline: string): string | null {
  * that continues on deeper lines — a sequence or mapping, never a string)
  * or skip (a construct outside the subset).
  */
-interface Node {
-  kind: 'map' | 'seq' | 'scalar' | 'null' | 'nested' | 'skip';
-  entries?: [string, Node][];
-  items?: Node[];
-  text?: string;
-  type?: 'string' | 'int' | 'float' | 'bool';
-}
+type MapNode = { kind: 'map'; entries: [string, Node][] };
+type SeqNode = { kind: 'seq'; items: Node[] };
+type ScalarNode = { kind: 'scalar'; text: string; type: 'string' | 'int' | 'float' | 'bool' };
+type NullNode = { kind: 'null' };
+type NestedNode = { kind: 'nested' };
+type SkipNode = { kind: 'skip' };
+type Node = MapNode | SeqNode | ScalarNode | NullNode | NestedNode | SkipNode;
 
 /**
  * firstDocument returns the first YAML document's lines, comments stripped,
@@ -139,7 +139,7 @@ function parseBlock(linesIn: string[]): Node {
   const first = lines[0].trim();
 
   if (first.startsWith('- ') || first === '-') return parseSequence(lines, base);
-  if (KEY_RE.test(first)) return { kind: 'map' }; // a mapping root is not a list of plays
+  if (KEY_RE.test(first)) return { kind: 'map', entries: [] }; // a mapping root is not a list of plays
   if (first.startsWith('{') || first.startsWith('[')) return parseFlow(lines.join(' '));
   return scalarNode(first);
 }

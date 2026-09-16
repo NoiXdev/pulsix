@@ -38,7 +38,7 @@ export function ReposPage() {
   const names = credentials.data?.credentials ?? [];
 
   function syncStarted(_name: string, jobId: string) {
-    void navigate({ to: '/o/$org/jobs/$id', params: { org, id: jobId } });
+    void navigate({ to: '/o/$org/runs/$id', params: { org, id: jobId } });
   }
 
   return (
