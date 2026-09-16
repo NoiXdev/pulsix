@@ -304,6 +304,32 @@ func TestInventoryPermissionsAndIsolation(t *testing.T) {
 	}
 }
 
+// TestInventoryGroupWriteRoutesRejectBadIDs is backlog 2.19: every
+// inventory-group write route must 404 a syntactically valid id belonging
+// to another organization and 400 (or 404, never 500) a malformed one.
+func TestInventoryGroupWriteRoutesRejectBadIDs(t *testing.T) {
+	f := newInvFixture(t, "inv-badid")
+
+	other := f.s.SeedUser("inv-badid-other@example.test", "correct horse battery")
+	f.s.SeedOrg("inv-badid-other", other)
+	otherClient := f.s.LoginAs(other)
+	otherBase := f.s.HTTP.URL + "/api/v1/orgs/inv-badid-other"
+	var foreign groupBody
+	decodeInto(t, postJSON(t, otherClient, otherBase+"/inventory/groups", map[string]any{"name": "foreign"}), &foreign)
+
+	url := f.base + "/inventory/groups/"
+	ifMatch1 := map[string]string{"If-Match": `"1"`}
+	cases := []badIDCase{
+		{"update group", http.MethodPatch, func(id string) string { return url + id }, map[string]any{"name": "web"}, ifMatch1, foreign.Group.ID},
+		{"delete group", http.MethodDelete, func(id string) string { return url + id }, nil, nil, foreign.Group.ID},
+		{"set schema", http.MethodPut, func(id string) string { return url + id + "/schema" }, map[string]any{"schema": map[string]any{"fields": []any{}}}, ifMatch1, foreign.Group.ID},
+		{"set vars", http.MethodPut, func(id string) string { return url + id + "/vars" }, map[string]any{"vars": map[string]any{}}, ifMatch1, foreign.Group.ID},
+	}
+	for _, tc := range cases {
+		assertRejectsBadIDs(t, f.c, tc)
+	}
+}
+
 // TestHostInventoryGroupsMasksSecrets pins that a host's group list returns
 // its membership secrets as {"$secret":"set"}, never plaintext or a sealed
 // envelope.

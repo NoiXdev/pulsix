@@ -135,6 +135,34 @@ func TestCredentialValidationAndConflicts(t *testing.T) {
 	}
 }
 
+// TestCredentialWriteRoutesRejectBadIDs is backlog 2.19: rotate, update and
+// delete must each 404 a foreign-organization credential id and 400 (or
+// 404, never 500) a malformed one. Create has no id path parameter and so
+// is not part of this table.
+func TestCredentialWriteRoutesRejectBadIDs(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("cred-badid-owner@example.test", "correct horse battery")
+	s.SeedOrg("cred-badid", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/cred-badid/credentials"
+
+	other := s.SeedUser("cred-badid-other@example.test", "correct horse battery")
+	s.SeedOrg("cred-badid-other", other)
+	otherBase := s.HTTP.URL + "/api/v1/orgs/cred-badid-other/credentials"
+	var foreign credentialBody
+	decodeInto(t, postJSON(t, s.LoginAs(other), otherBase, map[string]any{"name": "foreign", "kind": "git_token", "token": "x"}), &foreign)
+
+	url := base + "/"
+	cases := []badIDCase{
+		{"rotate", http.MethodPost, func(id string) string { return url + id + "/rotate" }, nil, nil, foreign.Credential.ID},
+		{"update", http.MethodPatch, func(id string) string { return url + id }, map[string]any{"name": "x", "username": "u"}, nil, foreign.Credential.ID},
+		{"delete", http.MethodDelete, func(id string) string { return url + id }, nil, nil, foreign.Credential.ID},
+	}
+	for _, tc := range cases {
+		assertRejectsBadIDs(t, c, tc)
+	}
+}
+
 func TestCredentialPermissions(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("cred-perm-owner@example.test", "correct horse battery")

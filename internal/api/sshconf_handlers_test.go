@@ -164,6 +164,35 @@ func TestHostSSHSettings(t *testing.T) {
 	}
 }
 
+// TestSSHWriteRoutesRejectBadIDs is backlog 2.19: bastion update/delete,
+// the zone default jump host and a host's SSH settings must each 404 a
+// foreign-organization id and 400 (or 404, never 500) a malformed one.
+// Bastion create has no id path parameter and so is not part of this
+// table.
+func TestSSHWriteRoutesRejectBadIDs(t *testing.T) {
+	f := newSSHFixture(t, "sshbadid-org")
+
+	other := f.s.SeedUser("sshbadid-other@example.test", "correct horse battery")
+	f.s.SeedOrg("sshbadid-other", other)
+	otherClient := f.s.LoginAs(other)
+	otherOrg := f.s.HTTP.URL + "/api/v1/orgs/sshbadid-other"
+	var foreignBastion bastionBody
+	decodeInto(t, postJSON(t, otherClient, otherOrg+"/bastions", map[string]any{"name": "foreign", "address": "f.example", "username": "ops"}), &foreignBastion)
+	foreignZone := decodeZone(t, postJSON(t, otherClient, otherOrg+"/zones", map[string]any{"slug": "fra", "name": "fra"}))
+	foreignHost := decodeHost(t, postJSON(t, otherClient, otherOrg+"/hosts", map[string]any{"name": "foreign-host", "zone_id": foreignZone.ID, "managed": true}))
+
+	bastionReqBody := map[string]any{"name": "a", "address": "a.example", "username": "ops"}
+	cases := []badIDCase{
+		{"update bastion", http.MethodPatch, func(id string) string { return f.org + "/bastions/" + id }, bastionReqBody, nil, foreignBastion.Bastion.ID},
+		{"delete bastion", http.MethodDelete, func(id string) string { return f.org + "/bastions/" + id }, nil, nil, foreignBastion.Bastion.ID},
+		{"zone default jump host", http.MethodPut, func(id string) string { return f.org + "/zones/" + id + "/bastion" }, map[string]any{}, nil, foreignZone.ID},
+		{"host ssh settings", http.MethodPut, func(id string) string { return f.org + "/hosts/" + id + "/ssh" }, map[string]any{"port": 22}, nil, foreignHost.ID},
+	}
+	for _, tc := range cases {
+		assertRejectsBadIDs(t, f.c, tc)
+	}
+}
+
 func TestSSHPermissionsAndIsolation(t *testing.T) {
 	f := newSSHFixture(t, "sshperm-org")
 
