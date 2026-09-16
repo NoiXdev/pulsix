@@ -7,20 +7,35 @@ RETURNING *;
 -- Scoped by org_id in the WHERE clause, not only relying on RLS (see
 -- GetZone's comment in hosts.sql): a job belonging to a different
 -- organization must be invisible, not merely forbidden.
-SELECT * FROM jobs WHERE org_id = $1 AND id = $2;
+--
+-- The three display joins resolve what the run view shows from ids the
+-- job row itself only carries: the actor's display name, the worker's
+-- name (both NULL when the id is), and the template's current name —
+-- which a deleted template (dangling template_id) leaves NULL; the API
+-- renders that as "(deleted)". All joins are LEFT: the job row must come
+-- back complete no matter what any of the three ids point at.
+SELECT j.*, u.display_name AS actor_name, w.name AS worker_name,
+       jt.name AS template_name
+FROM jobs AS j
+LEFT JOIN users AS u ON u.id = j.actor_id
+LEFT JOIN workers AS w ON w.id = j.worker_id
+LEFT JOIN job_templates AS jt ON jt.id = j.template_id
+WHERE j.org_id = $1 AND j.id = $2;
 
 -- name: ListJobs :many
--- Every optional filter (zone, status, kind, and the cursor's own
--- (created_at, id) keyset pair) is expressed as "param IS NULL OR
--- <condition>", the same one-query-serves-every-combination shape ListHosts
--- uses. Ordering is descending on (created_at, id) — newest runs first, id
--- as the tiebreaker — so the cursor condition resumes strictly before the
--- last row of the previous page.
+-- Every optional filter (zone, status, kind, template, run group, and the
+-- cursor's own (created_at, id) keyset pair) is expressed as "param IS
+-- NULL OR <condition>", the same one-query-serves-every-combination shape
+-- ListHosts uses. Ordering is descending on (created_at, id) — newest runs
+-- first, id as the tiebreaker — so the cursor condition resumes strictly
+-- before the last row of the previous page.
 SELECT * FROM jobs
 WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (
     sqlc.narg(cursor_at)::timestamptz IS NULL
     OR (created_at, id) < (sqlc.narg(cursor_at)::timestamptz, sqlc.narg(cursor_id)::uuid)

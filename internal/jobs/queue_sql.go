@@ -80,6 +80,12 @@ type SQLQueue struct {
 	// finalizes the rotation — sealing the pending new key onto the
 	// credential or leaving it untouched.
 	rotation RotationFinisher
+	// broker is the optional SSE fan-out the append path feeds
+	// (SetEventBroker): the jobs service owns the in-process subscriber
+	// registry and hands it over post-construction, the same circularity
+	// the sync sink has. Nil-safe: AppendEvent publishes through the nil
+	// receiver, which is a no-op.
+	broker *Broker
 }
 
 // SetSyncSink injects the sink RecordSyncResult calls flow through on the
@@ -88,6 +94,13 @@ type SQLQueue struct {
 // — the org-scoped jobs.Service — is built after the queue it reports
 // through. The queue's Finish never depends on it being set.
 func (q *SQLQueue) SetSyncSink(sink SyncSink) { q.sync = sink }
+
+// SetEventBroker injects the SSE subscriber registry the append path
+// fans events out through. It exists (rather than a constructor
+// parameter) for the same circularity SetSyncSink does: the broker is
+// owned by the org-scoped jobs.Service, which is built after the queue
+// it tails. The queue's AppendEvent never depends on it being set.
+func (q *SQLQueue) SetEventBroker(b *Broker) { q.broker = b }
 
 // SetRepoSource injects the repository resolver a repo playbook's claim
 // needs (see the repos field). A nil source makes every repo playbook's

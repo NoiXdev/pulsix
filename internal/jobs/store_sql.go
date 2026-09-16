@@ -79,7 +79,7 @@ func (s *SQLStore) GetJob(ctx context.Context, orgID, id uuid.UUID) (Job, error)
 	if err != nil {
 		return Job{}, mapErr(err)
 	}
-	return toJob(row), nil
+	return toJobDetail(row), nil
 }
 
 func (s *SQLStore) ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]Job, string, error) {
@@ -88,13 +88,15 @@ func (s *SQLStore) ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, curs
 		return nil, "", err
 	}
 	rows, err := s.q.ListJobs(ctx, gen.ListJobsParams{
-		OrgID:    orgID,
-		ZoneID:   uuidToPg(f.ZoneID),
-		Status:   textToPg(statusPtr(f.Status)),
-		Kind:     textToPg(kindPtr(f.Kind)),
-		CursorAt: timeToPg(cursor, cursorAt),
-		CursorID: uuidToPg(cursorIDPtr(cursor, cursorID)),
-		RowLimit: int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.List before it ever reaches here
+		OrgID:      orgID,
+		ZoneID:     uuidToPg(f.ZoneID),
+		Status:     textToPg(statusPtr(f.Status)),
+		Kind:       textToPg(kindPtr(f.Kind)),
+		TemplateID: uuidToPg(f.TemplateID),
+		RunGroupID: uuidToPg(f.RunGroupID),
+		CursorAt:   timeToPg(cursor, cursorAt),
+		CursorID:   uuidToPg(cursorIDPtr(cursor, cursorID)),
+		RowLimit:   int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.List before it ever reaches here
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("list jobs: %w", err)
@@ -180,6 +182,30 @@ func toJob(r gen.Job) Job {
 		Stats: stats, Error: r.Error, RunGroupID: r.RunGroupID, Trigger: r.Trigger,
 		ActorID: db.UUIDPtr(r.ActorID), CreatedAt: r.CreatedAt, Payload: json.RawMessage(r.Payload),
 	}
+}
+
+// toJobDetail is toJob for the GetJob row, whose three display joins add
+// the actor's, the worker's and the template's names. Empty when the
+// underlying id was NULL or the joined row is gone (a dangling
+// template_id reads as no template name; the API shows "(deleted)").
+func toJobDetail(r gen.GetJobRow) Job {
+	j := toJob(gen.Job{
+		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Kind: r.Kind, TemplateID: r.TemplateID,
+		HostIds: r.HostIds, Status: r.Status, WorkerID: r.WorkerID, ClaimedAt: r.ClaimedAt,
+		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Stats: r.Stats, Error: r.Error,
+		RunGroupID: r.RunGroupID, Trigger: r.Trigger, ActorID: r.ActorID, Payload: r.Payload,
+		CreatedAt: r.CreatedAt,
+	})
+	j.ActorName, j.WorkerName, j.TemplateName = deref(r.ActorName), deref(r.WorkerName), deref(r.TemplateName)
+	return j
+}
+
+// deref renders a nullable text join column as the empty string.
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // pgtype helpers for the optional ListJobs filters and cursor, mirroring

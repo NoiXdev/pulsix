@@ -168,6 +168,133 @@ func (s boundStream) Cancelled() <-chan struct{} { return s.entry.cancel }
 
 func (s boundStream) Close() { s.entry.markClosed() }
 
+// Broker fans the events appended to a job's stream out to that job's
+// in-process SSE subscribers (the run view's live log). It is fed by
+// SQLQueue.AppendEvent — the same call the gRPC EventRecorder port lands
+// on — so a subscriber sees exactly what the worker streamed, in stream
+// order. Like the stream and cancel registries it is in-process by
+// design (see SQLQueue's doc comment): a run view subscribed on another
+// manager instance polls /events instead.
+//
+// Delivery to one subscriber is best-effort, never blocking: a send onto
+// a subscriber whose buffer is full is dropped, because the publisher is
+// the worker's event stream — stalling it on a slow run view would
+// throttle the run itself. A subscriber that misses events recovers by
+// reading the poll fallback (GET /events?after=) with the last seq it
+// saw. Buffer capacity BrokerBufferCap is sized for a burst of ansible
+// output between reads.
+type Broker struct {
+	mu   sync.Mutex
+	subs map[uuid.UUID]map[*brokerSub]struct{}
+}
+
+// brokerSub is one subscriber: its channel and the seq floor it
+// subscribed with (it only ever sees events with seq > after).
+type brokerSub struct {
+	ch    chan Event
+	after int64
+}
+
+// BrokerBufferCap is each subscriber's buffer, in events: comfortably
+// more than a busy play's task callbacks between two SSE flushes, small
+// enough that a dead subscriber's memory is bounded.
+const BrokerBufferCap = 256
+
+// NewBroker builds an empty broker. The jobs service owns one; the queue
+// publishes into it through SetEventBroker.
+func NewBroker() *Broker {
+	return &Broker{subs: map[uuid.UUID]map[*brokerSub]struct{}{}}
+}
+
+// Subscribe registers a subscriber for jobID that receives only events
+// with seq > after (0 = everything from subscription time on), and the
+// function that unsubscribes it. The unsubscribe is idempotent, removes
+// the subscriber before anything else and closes the channel once — a
+// late Publish can neither block nor resurrect it.
+func (b *Broker) Subscribe(jobID uuid.UUID, after int64) (<-chan Event, func()) {
+	sub := &brokerSub{ch: make(chan Event, BrokerBufferCap), after: after}
+	b.mu.Lock()
+	if b.subs == nil {
+		b.subs = map[uuid.UUID]map[*brokerSub]struct{}{}
+	}
+	set := b.subs[jobID]
+	if set == nil {
+		set = map[*brokerSub]struct{}{}
+		b.subs[jobID] = set
+	}
+	set[sub] = struct{}{}
+	b.mu.Unlock()
+	var once sync.Once
+	return sub.ch, func() {
+		once.Do(func() {
+			b.mu.Lock()
+			if set, ok := b.subs[jobID]; ok {
+				delete(set, sub)
+				if len(set) == 0 {
+					delete(b.subs, jobID)
+				}
+			}
+			b.mu.Unlock()
+			close(sub.ch)
+		})
+	}
+}
+
+// Publish delivers one appended event to every current subscriber of the
+// job. Non-blocking: a full buffer drops the event for that subscriber
+// (never for the worker), see Broker's doc comment. Safe on a nil
+// receiver, so the append path needs no wiring check.
+func (b *Broker) Publish(jobID uuid.UUID, ev Event) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for sub := range b.subs[jobID] {
+		if int64(ev.Seq) <= sub.after {
+			continue // the subscriber asked to skip this seq range
+		}
+		select {
+		case sub.ch <- ev:
+		default: // slow subscriber: drop, it recovers via the poll fallback
+		}
+	}
+}
+
+// Len reports how many subscribers jobID currently has. It exists for the
+// no-leak assertion (a cancelled HTTP request unsubscribes); it is not
+// used by the append path.
+func (b *Broker) Len(jobID uuid.UUID) int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subs[jobID])
+}
+
+// Subscribe is the org-scoped live tail the run view's SSE stream is
+// built on: the job is resolved first, so a job id from another
+// organization is exactly as invisible as one that does not exist
+// (Events' own rule), and only then is the in-process broker — fed by the
+// gRPC append path — subscribed to. The returned cancel unsubscribes; a
+// caller that drops it without calling it (an SSE handler's deferred
+// cancel is the normal user) keeps the subscriber until the process
+// ends, so the transport always defers it.
+func (s *Service) Subscribe(ctx context.Context, orgID, jobID uuid.UUID, after int64) (<-chan Event, func(), error) {
+	if _, err := s.store.GetJob(ctx, orgID, jobID); err != nil {
+		return nil, nil, err
+	}
+	ch, cancel := s.broker.Subscribe(jobID, after)
+	return ch, cancel, nil
+}
+
+// EventsBroker exposes the Service's fan-out registry for the one
+// post-construction wiring step internal/app and the apitest harness do
+// (queue.SetEventBroker(svc.EventsBroker())). Nothing else should touch
+// the broker directly: Subscribe is the read surface.
+func (s *Service) EventsBroker() *Broker { return s.broker }
+
 // AppendEvent persists one streamed event for a job with a live claim
 // binding. Org-unscoped: the caller is the gRPC server, authenticated by
 // the binding token rather than a request context; the registry entry
@@ -186,6 +313,7 @@ func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) e
 	if err != nil {
 		return fmt.Errorf("append job event: %w", err)
 	}
+	q.broker.Publish(jobID, ev)
 	return nil
 }
 

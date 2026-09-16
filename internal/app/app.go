@@ -210,6 +210,11 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
 	jobsQueue.SetRepoSource(repoRefSource{reposSvc})
+	// The run events' SSE fan-out (Task 12): the jobs service owns the
+	// in-process subscriber registry the run view streams from, and the
+	// queue's append path — the gRPC EventRecorder port lands on it —
+	// feeds it. Same post-construction circularity as SetSyncSink above.
+	jobsQueue.SetEventBroker(jobsSvc.EventsBroker())
 	// Host keys and test history: the claim reads the pins from the hosts
 	// service, and a finished connection_test job records its outcome
 	// through it (org-scoped, so the wiring rides the same service).

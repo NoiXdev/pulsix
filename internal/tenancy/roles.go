@@ -37,6 +37,14 @@ const (
 
 	PermTemplatesRead  Permission = "templates.read"
 	PermTemplatesWrite Permission = "templates.write"
+
+	// Jobs is the run view (backlog 2.12): reading runs, their events and
+	// their live stream needs no more than reading the hosts and
+	// templates involved; triggering a run, cancelling one and retrying
+	// its failed hosts are operator actions, the same bar
+	// templates.write clears.
+	PermJobsRead Permission = "jobs.read"
+	PermJobsRun  Permission = "jobs.run"
 )
 
 // rank orders roles from least to most privileged. A role absent from this
@@ -72,6 +80,11 @@ var matrix = map[Permission]Role{
 	// following the repos/playbooks shape).
 	PermTemplatesRead:  RoleViewer,
 	PermTemplatesWrite: RoleOperator,
+	// Runs are read-only for a viewer and operator-drivable, mirroring
+	// templates: the run view shows what a run did, and operators trigger,
+	// cancel and retry runs.
+	PermJobsRead: RoleViewer,
+	PermJobsRun:  RoleOperator,
 }
 
 // Allows reports whether role may perform perm. It is total: an unknown role

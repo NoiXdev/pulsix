@@ -145,7 +145,13 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 }
 
 const getJob = `-- name: GetJob :one
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at FROM jobs WHERE org_id = $1 AND id = $2
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, u.display_name AS actor_name, w.name AS worker_name,
+       jt.name AS template_name
+FROM jobs AS j
+LEFT JOIN users AS u ON u.id = j.actor_id
+LEFT JOIN workers AS w ON w.id = j.worker_id
+LEFT JOIN job_templates AS jt ON jt.id = j.template_id
+WHERE j.org_id = $1 AND j.id = $2
 `
 
 type GetJobParams struct {
@@ -153,12 +159,43 @@ type GetJobParams struct {
 	ID    uuid.UUID `json:"id"`
 }
 
+type GetJobRow struct {
+	ID           uuid.UUID          `json:"id"`
+	OrgID        uuid.UUID          `json:"org_id"`
+	ZoneID       uuid.UUID          `json:"zone_id"`
+	Kind         string             `json:"kind"`
+	TemplateID   pgtype.UUID        `json:"template_id"`
+	HostIds      []uuid.UUID        `json:"host_ids"`
+	Status       string             `json:"status"`
+	WorkerID     pgtype.UUID        `json:"worker_id"`
+	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	FinishedAt   pgtype.Timestamptz `json:"finished_at"`
+	Stats        []byte             `json:"stats"`
+	Error        string             `json:"error"`
+	RunGroupID   uuid.UUID          `json:"run_group_id"`
+	Trigger      string             `json:"trigger"`
+	ActorID      pgtype.UUID        `json:"actor_id"`
+	Payload      []byte             `json:"payload"`
+	CreatedAt    time.Time          `json:"created_at"`
+	ActorName    *string            `json:"actor_name"`
+	WorkerName   *string            `json:"worker_name"`
+	TemplateName *string            `json:"template_name"`
+}
+
 // Scoped by org_id in the WHERE clause, not only relying on RLS (see
 // GetZone's comment in hosts.sql): a job belonging to a different
 // organization must be invisible, not merely forbidden.
-func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (Job, error) {
+//
+// The three display joins resolve what the run view shows from ids the
+// job row itself only carries: the actor's display name, the worker's
+// name (both NULL when the id is), and the template's current name —
+// which a deleted template (dangling template_id) leaves NULL; the API
+// renders that as "(deleted)". All joins are LEFT: the job row must come
+// back complete no matter what any of the three ids point at.
+func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, error) {
 	row := q.db.QueryRow(ctx, getJob, arg.OrgID, arg.ID)
-	var i Job
+	var i GetJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -178,6 +215,9 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (Job, error) {
 		&i.ActorID,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.ActorName,
+		&i.WorkerName,
+		&i.TemplateName,
 	)
 	return i, err
 }
@@ -273,36 +313,42 @@ WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
   AND ($4::text IS NULL OR kind = $4::text)
+  AND ($5::uuid IS NULL OR template_id = $5::uuid)
+  AND ($6::uuid IS NULL OR run_group_id = $6::uuid)
   AND (
-    $5::timestamptz IS NULL
-    OR (created_at, id) < ($5::timestamptz, $6::uuid)
+    $7::timestamptz IS NULL
+    OR (created_at, id) < ($7::timestamptz, $8::uuid)
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $7
+LIMIT $9
 `
 
 type ListJobsParams struct {
-	OrgID    uuid.UUID          `json:"org_id"`
-	ZoneID   pgtype.UUID        `json:"zone_id"`
-	Status   *string            `json:"status"`
-	Kind     *string            `json:"kind"`
-	CursorAt pgtype.Timestamptz `json:"cursor_at"`
-	CursorID pgtype.UUID        `json:"cursor_id"`
-	RowLimit int32              `json:"row_limit"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	ZoneID     pgtype.UUID        `json:"zone_id"`
+	Status     *string            `json:"status"`
+	Kind       *string            `json:"kind"`
+	TemplateID pgtype.UUID        `json:"template_id"`
+	RunGroupID pgtype.UUID        `json:"run_group_id"`
+	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
+	CursorID   pgtype.UUID        `json:"cursor_id"`
+	RowLimit   int32              `json:"row_limit"`
 }
 
-// Every optional filter (zone, status, kind, and the cursor's own
-// (created_at, id) keyset pair) is expressed as "param IS NULL OR
-// <condition>", the same one-query-serves-every-combination shape ListHosts
-// uses. Ordering is descending on (created_at, id) — newest runs first, id
-// as the tiebreaker — so the cursor condition resumes strictly before the
-// last row of the previous page.
+// Every optional filter (zone, status, kind, template, run group, and the
+// cursor's own (created_at, id) keyset pair) is expressed as "param IS
+// NULL OR <condition>", the same one-query-serves-every-combination shape
+// ListHosts uses. Ordering is descending on (created_at, id) — newest runs
+// first, id as the tiebreaker — so the cursor condition resumes strictly
+// before the last row of the previous page.
 func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, error) {
 	rows, err := q.db.Query(ctx, listJobs,
 		arg.OrgID,
 		arg.ZoneID,
 		arg.Status,
 		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
 		arg.CursorAt,
 		arg.CursorID,
 		arg.RowLimit,

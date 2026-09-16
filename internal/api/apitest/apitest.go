@@ -91,8 +91,12 @@ type Server struct {
 	Q        *gen.Queries
 	Sessions *auth.Sessions
 	Mail     *Mailer
-	Deps     api.Deps
-	HTTP     *httptest.Server
+	// Queue is the job queue itself, for the tests that drive Claim /
+	// Finish / AppendEvent directly (the claim-driven flows the API
+	// cannot reach): fixture-only, exactly like Q.
+	Queue *jobs.SQLQueue
+	Deps  api.Deps
+	HTTP  *httptest.Server
 }
 
 // Option customizes a Server's Deps before its httptest.Server starts.
@@ -228,11 +232,16 @@ func New(t *testing.T, opts ...Option) *Server {
 	// ports close the credential-rotation loop.
 	jobsQueue.SetKeyPins(hostsSvc)
 	jobsQueue.SetTestSink(hostsSvc)
+	// The run events' SSE fan-out: the service owns the subscriber
+	// registry, the queue's append path feeds it — the same post-
+	// construction wiring production uses (internal/app).
+	jobsQueue.SetEventBroker(jobsSvc.EventsBroker())
 	credsSvc.SetRotationEnqueuer(jobsSvc)
 	jobsQueue.SetRotationFinisher(credsSvc)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
+	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),

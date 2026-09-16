@@ -165,6 +165,15 @@ type Job struct {
 	Trigger    string
 	ActorID    *uuid.UUID
 	CreatedAt  time.Time
+	// ActorName, WorkerName and TemplateName are the display names the
+	// run view shows for those ids, resolved by SQLStore.GetJob's display
+	// joins (empty when the id is NULL or the referenced row is gone — a
+	// deleted template reads as no name; the API shows "(deleted)"). They
+	// are display-only: nothing writes them back, and every other read
+	// leaves them zero.
+	ActorName    string
+	WorkerName   string
+	TemplateName string
 	// Payload is the kind-specific JSON. For the host kinds that can carry
 	// secrets (bootstrap login, rotation keys) the service seals it with
 	// the box before insert and the queue opens it at claim time; the
@@ -193,6 +202,10 @@ type Filter struct {
 	ZoneID *uuid.UUID
 	Status *Status
 	Kind   *Kind
+	// TemplateID narrows to one template's jobs; RunGroupID to one
+	// trigger's per-zone group (the run view's grouped-run listing).
+	TemplateID *uuid.UUID
+	RunGroupID *uuid.UUID
 }
 
 // DefaultListLimit and MaxListLimit bound List's page size, the same
@@ -382,6 +395,10 @@ type Service struct {
 	// implements it with org-scoped reads); a queue that does not leaves
 	// rotation enqueueing fail-closed.
 	rotationTargets RotationTargets
+	// broker is the run events' in-process SSE fan-out, created here and
+	// handed to the queue after construction (SetEventBroker) so the
+	// append path feeds it. Subscribe is the only reader.
+	broker *Broker
 }
 
 // NewService wires the store, the claim queue, the template source, the
@@ -397,6 +414,7 @@ func NewService(store Store, queue Queue, templates TemplateSource, resolver Sco
 	if rt, ok := queue.(RotationTargets); ok {
 		s.rotationTargets = rt
 	}
+	s.broker = NewBroker()
 	return s
 }
 
