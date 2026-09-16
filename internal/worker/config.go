@@ -28,6 +28,7 @@ const (
 	envAnsibleBin    = "PULSIX_ANSIBLE_BIN"
 	envClaimInterval = "PULSIX_CLAIM_INTERVAL"
 	envMaxConcurrent = "PULSIX_MAX_CONCURRENT"
+	envServerName    = "PULSIX_MANAGER_SERVER_NAME"
 )
 
 // Defaults for the optional variables.
@@ -50,6 +51,20 @@ type Config struct {
 	CertPath    string
 	KeyPath     string
 	CAPath      string
+	// ServerName overrides the TLS ServerName the client verifies the
+	// manager's server certificate against (PULSIX_MANAGER_SERVER_NAME,
+	// optional). Dial otherwise derives it from ManagerAddr's own host,
+	// which is wrong whenever the dial address names no usable host at
+	// all — a loopback dial to a bind-all listener ("127.0.0.1:8444" to a
+	// manager listening on ":8444") is exactly that case: the server
+	// certificate's DNS SAN comes from the manager's independently
+	// configured PULSIX_GRPC_SERVER_NAME (see config.Config.CAListenHost),
+	// not from the address a client happens to dial it on, so the client
+	// needs this override to name the same value explicitly. The embedded
+	// worker (internal/app) always sets it; a standalone worker only needs
+	// it when ManagerAddr's host does not match the server certificate's
+	// SAN.
+	ServerName string
 	// DataDir is the worker's scratch root: per-job temp dirs and the
 	// persistent repo cache live under it.
 	DataDir string
@@ -101,6 +116,7 @@ func Load(env []string) (Config, error) {
 	cfg.CertPath = vals[envCertPath]
 	cfg.KeyPath = vals[envKeyPath]
 	cfg.CAPath = vals[envCAPath]
+	cfg.ServerName = vals[envServerName]
 
 	cfg.DataDir = vals[envDataDir]
 	if cfg.DataDir == "" {

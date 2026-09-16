@@ -53,10 +53,10 @@ const defaultKillGrace = 5 * time.Second
 // materializePlaybook) against the one-host inventory the executor built
 // from the kind payload.
 const (
-	kindRun        = "run"
-	kindAdhoc      = "adhoc"
-	kindBootstrap  = "bootstrap"
-	kindRotateKey  = "rotate_key"
+	kindRun       = "run"
+	kindAdhoc     = "adhoc"
+	kindBootstrap = "bootstrap"
+	kindRotateKey = "rotate_key"
 )
 
 // The runner's own bookend events; the state values are the manager's

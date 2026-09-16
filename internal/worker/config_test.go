@@ -48,6 +48,30 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.Zones) != 0 {
 		t.Errorf("Zones = %v, want none without PULSIX_WORKER_ZONES", cfg.Zones)
 	}
+	if cfg.ServerName != "" {
+		t.Errorf("ServerName = %q, want empty without PULSIX_MANAGER_SERVER_NAME", cfg.ServerName)
+	}
+}
+
+// TestLoadServerNameOverride (Task 17): PULSIX_MANAGER_SERVER_NAME is
+// optional and, when set, lands on Config.ServerName verbatim — Dial uses
+// it instead of deriving the TLS ServerName from ManagerAddr's host (see
+// client.go's dial and Config.ServerName's own doc comment for why the two
+// legitimately differ for a loopback dial to a bind-all listener).
+func TestLoadServerNameOverride(t *testing.T) {
+	cfg, err := Load([]string{
+		"PULSIX_MANAGER_ADDR=127.0.0.1:8444",
+		"PULSIX_WORKER_CERT=/etc/pulsix/cert.pem",
+		"PULSIX_WORKER_KEY=/etc/pulsix/key.pem",
+		"PULSIX_CA_CERT=/etc/pulsix/ca.pem",
+		"PULSIX_MANAGER_SERVER_NAME=pulsix-manager",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ServerName != "pulsix-manager" {
+		t.Errorf("ServerName = %q, want pulsix-manager", cfg.ServerName)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {

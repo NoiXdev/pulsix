@@ -198,9 +198,9 @@ func synthRunJob(orig *workerpb.Job, hostName string, doc map[string]any, connJS
 		Id: orig.GetId(), Kind: orig.GetKind(),
 		OrgId: orig.GetOrgId(), ZoneId: orig.GetZoneId(),
 		InventoryDoc: string(raw), Connections: map[string]string{hostName: connJSON},
-		Credentials:  creds,
-		ExtraVars:    extraVars,
-		SshUsername:  sshUser,
-		HostKeys:     orig.GetHostKeys(),
+		Credentials: creds,
+		ExtraVars:   extraVars,
+		SshUsername: sshUser,
+		HostKeys:    orig.GetHostKeys(),
 	}, nil
 }

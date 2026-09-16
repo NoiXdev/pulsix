@@ -189,6 +189,46 @@ func TestDialMismatchedKeyRejected(t *testing.T) {
 	}
 }
 
+// TestDialServerNameOverride (Task 17): a loopback-style ManagerAddr whose
+// host ("127.0.0.1") does not match the server certificate's DNS SAN
+// ("manager", the harness's ca.Config.ListenHost) fails the handshake
+// exactly as a real bind-all listener would — unless cfg.ServerName names
+// the SAN explicitly, in which case the same mismatched address succeeds.
+// This pins the fix internal/app's embedded worker (and compose's
+// PULSIX_MANAGER_SERVER_NAME) depend on.
+func TestDialServerNameOverride(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1-a", true)
+	cfg.ManagerAddr = "127.0.0.1:8444" // does not match the "manager" SAN
+
+	t.Run("without override, the mismatched address fails", func(t *testing.T) {
+		conn, err := h.dialWith(t, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		client := workerpb.NewWorkerServiceClient(conn)
+		_, err = client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "dev"})
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("code = %s (%v), want Unavailable (SAN mismatch)", status.Code(err), err)
+		}
+	})
+
+	t.Run("with the override naming the SAN, the same address succeeds", func(t *testing.T) {
+		withOverride := cfg
+		withOverride.ServerName = "manager"
+		conn, err := h.dialWith(t, withOverride)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		client := workerpb.NewWorkerServiceClient(conn)
+		if _, err := client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "dev"}); err != nil {
+			t.Fatalf("ClaimJob with ServerName override: %v", err)
+		}
+	})
+}
+
 // writeTempFile overwrites path with data and returns it.
 func writeTempFile(t *testing.T, path string, data []byte) string {
 	t.Helper()

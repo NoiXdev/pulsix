@@ -28,7 +28,9 @@ func Dial(ctx context.Context, cfg Config) (*grpc.ClientConn, error) {
 }
 
 // dial builds the connection; extra dial options exist for the bufconn
-// test harness. The TLS ServerName is the host part of ManagerAddr.
+// test harness. The TLS ServerName is cfg.ServerName when set, otherwise
+// the host part of ManagerAddr (see Config.ServerName's own doc comment
+// for why the two can legitimately differ).
 func dial(ctx context.Context, cfg Config, extra []grpc.DialOption) (*grpc.ClientConn, error) {
 	tlsCfg, err := loadTLS(cfg)
 	if err != nil {
@@ -39,6 +41,9 @@ func dial(ctx context.Context, cfg Config, extra []grpc.DialOption) (*grpc.Clien
 		return nil, fmt.Errorf("resolve server name from %q: %w", cfg.ManagerAddr, err)
 	}
 	tlsCfg.ServerName = host
+	if cfg.ServerName != "" {
+		tlsCfg.ServerName = cfg.ServerName
+	}
 
 	opts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
