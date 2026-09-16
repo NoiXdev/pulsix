@@ -26,6 +26,7 @@ const KIND_LABEL: Record<string, string> = {
   connection_test: 'connection test',
   bootstrap: 'bootstrap',
   rotate_key: 'key rotation',
+  revoke_key: 'old key removal',
   sync_repo: 'repo sync',
 };
 

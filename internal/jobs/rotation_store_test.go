@@ -167,16 +167,55 @@ func TestRotationGroupFinalizesThroughTheRealLoop(t *testing.T) {
 	if runs != 2 || tests != 2 {
 		t.Fatalf("group = %d runs / %d tests, want 2 / 2", runs, tests)
 	}
-	// Claim all four (any order): the claim is keyed by zone, so the
-	// queued jobs come out in whatever order the claimer serves them.
+	// Claim all four. The claim is keyed by zone, but each follow-up test
+	// depends on its host's rotate_key run: the two runs come out first,
+	// and the tests only once the runs succeeded.
 	claims := map[uuid.UUID]*jobs.Claim{}
-	for len(claims) < len(groupJobs) {
-		claim, err := w.queue.Claim(ctx, w.org, []uuid.UUID{w.zone(t)}, "v1")
-		if err != nil || claim == nil {
-			t.Fatalf("claim = %v, %v", claim, err)
+	claimAll := func() {
+		for {
+			claim, err := w.queue.Claim(ctx, w.org, []uuid.UUID{w.zone(t)}, "v1")
+			if err != nil {
+				t.Fatalf("claim: %v", err)
+			}
+			if claim == nil {
+				return
+			}
+			claims[uuid.MustParse(claim.Job.GetId())] = claim
 		}
-		claims[uuid.MustParse(claim.Job.GetId())] = claim
 	}
+	claimAll()
+	if len(claims) != 2 {
+		t.Fatalf("claimable before the runs finished = %d, want only the 2 rotate_key runs", len(claims))
+	}
+	for _, c := range claims {
+		if c.Job.GetKind() != "rotate_key" {
+			t.Fatalf("a %s was claimable before its rotation succeeded", c.Job.GetKind())
+		}
+	}
+
+	// The playbook runs succeed first; the follow-up tests are still
+	// queued → the credential is untouched (the finalize gate counts both
+	// kinds and waits for the whole group).
+	for _, j := range groupJobs {
+		if j.Kind != jobs.KindRotateKey {
+			continue
+		}
+		if err := w.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatalf("finish %s: %v", j.ID, err)
+		}
+	}
+	touched, err := w.credsSvc.Get(w.scoped, w.org, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if touched.PublicKey != created.PublicKey || touched.Fingerprint != created.Fingerprint {
+		t.Fatalf("the credential must stay untouched while a test is queued: %+v", touched)
+	}
+	claimAll()
+	if len(claims) != len(groupJobs) {
+		t.Fatalf("claimed %d of %d group jobs", len(claims), len(groupJobs))
+	}
+
 	claimedHosts := map[uuid.UUID]bool{}
 	for _, j := range groupJobs {
 		claim := claims[j.ID]
@@ -205,8 +244,8 @@ func TestRotationGroupFinalizesThroughTheRealLoop(t *testing.T) {
 		switch claim.Job.GetKind() {
 		case "rotate_key":
 			// The playbook run authenticates with the OLD credential and
-			// carries the pending new key.
-			if payload.Username != "ansible" || !strings.Contains(payload.OldCredential, "private_key") {
+			// installs the new public key (the private key stays home).
+			if payload.Username != "ansible" || !strings.Contains(payload.OldCredential, "private_key") || payload.NewPrivateKey != "" {
 				t.Fatalf("rotate claim of %s = %+v", j.ID, payload)
 			}
 		case "connection_test":
@@ -228,25 +267,6 @@ func TestRotationGroupFinalizesThroughTheRealLoop(t *testing.T) {
 	}
 	if len(claimedHosts) != 2 {
 		t.Fatalf("claimed hosts = %v", claimedHosts)
-	}
-
-	// The playbook runs succeed first; the follow-up tests are still
-	// queued → the credential is untouched (the finalize gate counts both
-	// kinds and waits for the whole group).
-	for _, j := range groupJobs {
-		if j.Kind != jobs.KindRotateKey {
-			continue
-		}
-		if err := w.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
-			t.Fatalf("finish %s: %v", j.ID, err)
-		}
-	}
-	touched, err := w.credsSvc.Get(w.scoped, w.org, created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if touched.PublicKey != created.PublicKey || touched.Fingerprint != created.Fingerprint {
-		t.Fatalf("the credential must stay untouched while a test is queued: %+v", touched)
 	}
 
 	// Then the follow-up tests succeed; the last finish finalizes exactly

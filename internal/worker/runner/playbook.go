@@ -24,11 +24,13 @@ import (
 // enqueue time (Task 15), the runner defends the same bound.
 const maxAdhocArgv = 8 << 10
 
-// The embedded system playbooks' names (internal/worker/playbooks).
-const (
-	sysBootstrap = "pulsix.bootstrap.yml"
-	sysRotateKey = "pulsix.rotate_key.yml"
-)
+// systemPlaybooks maps the system kinds to their embedded playbooks
+// (internal/worker/playbooks); their claims carry no playbook.
+var systemPlaybooks = map[string]string{
+	kindBootstrap: workerplaybooks.NameBootstrap,
+	kindRotateKey: workerplaybooks.NameRotateKey,
+	kindRevokeKey: workerplaybooks.NameRevokeKey,
+}
 
 // materializePlaybook resolves the run's playbook file and returns its
 // absolute path. An adhoc kind builds its inline playbook; a bootstrap or
@@ -51,11 +53,7 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 
 	// The two system playbooks ride inside the worker binary; their claims
 	// carry no playbook field, so the kind decides the file.
-	if job.GetKind() == kindBootstrap || job.GetKind() == kindRotateKey {
-		name := sysBootstrap
-		if job.GetKind() == kindRotateKey {
-			name = sysRotateKey
-		}
+	if name, ok := systemPlaybooks[job.GetKind()]; ok {
 		text, err := workerplaybooks.Get(name)
 		if err != nil {
 			return "", fmt.Errorf("embedded playbook: %w", err)

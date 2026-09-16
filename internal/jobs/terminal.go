@@ -91,6 +91,12 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 			}
 			return nil
 		}
+		// A job that did not succeed releases nothing that waits on it:
+		// its queued dependents are cancelled first, so the rotation
+		// group's completeness count below already sees them terminal.
+		if err := q.cancelDependents(ctx, t.jobID, t.status); err != nil {
+			return err
+		}
 		if err := q.recordSync(ctx, t.jobID, t.status, t.errText); err != nil {
 			return err
 		}

@@ -36,39 +36,67 @@ func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 // org_isolation policy the same way every org-scoped write does.
 func (s *SQLStore) CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
 	return s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		q := gen.New(tx)
-		for _, j := range jobs {
-			hostIDs := j.HostIDs
-			if hostIDs == nil {
-				hostIDs = []uuid.UUID{}
-			}
-			if _, err := q.CreateJob(ctx, gen.CreateJobParams{
-				ID: j.ID, OrgID: j.OrgID, ZoneID: j.ZoneID, Kind: string(j.Kind),
-				TemplateID: db.NullUUID(j.TemplateID), HostIds: hostIDs, Status: string(j.Status),
-				RunGroupID: j.RunGroupID, Trigger: j.Trigger, ActorID: db.NullUUID(j.ActorID),
-				Payload: payloads[j.ID],
-			}); err != nil {
-				return fmt.Errorf("create job %s: %w", j.ID, err)
-			}
-		}
-		return nil
+		return insertJobs(ctx, gen.New(tx), jobs, payloads)
 	})
 }
 
-func (s *SQLStore) CreateJob(ctx context.Context, j Job, payload json.RawMessage) error {
+// CreateRotationGroup is CreateJobGroup for a credential's rotation group,
+// exclusive per credential: under a per-credential advisory transaction
+// lock it refuses with ErrRotationInProgress while any job of an earlier
+// rotation group of the same credential is not terminal, and inserts the
+// group otherwise — two concurrent Rotate calls cannot both pass the check.
+func (s *SQLStore) CreateRotationGroup(ctx context.Context, orgID, credentialID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+	return s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, rotationLockKeyPrefix+credentialID.String()); err != nil {
+			return fmt.Errorf("lock credential rotation: %w", err)
+		}
+		q := gen.New(tx)
+		active, err := q.CountActiveRotationJobs(ctx, gen.CountActiveRotationJobsParams{
+			OrgID: orgID, RotationCredentialID: pgtype.UUID{Bytes: credentialID, Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("check active rotation: %w", err)
+		}
+		if active > 0 {
+			return ErrRotationInProgress
+		}
+		return insertJobs(ctx, q, jobs, payloads)
+	})
+}
+
+// rotationLockKeyPrefix namespaces the per-credential rotation lock within
+// hashtext's key space.
+const rotationLockKeyPrefix = "credential-rotation:"
+
+// insertJobs inserts jobs through q (a transaction's queries).
+func insertJobs(ctx context.Context, q *gen.Queries, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+	for _, j := range jobs {
+		if _, err := q.CreateJob(ctx, createJobParams(j, payloads[j.ID])); err != nil {
+			return fmt.Errorf("create job %s: %w", j.ID, err)
+		}
+	}
+	return nil
+}
+
+// createJobParams maps a job and its stored payload onto the insert.
+func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 	hostIDs := j.HostIDs
 	if hostIDs == nil {
 		// host_ids is NOT NULL DEFAULT '{}' — an explicit empty array, not
 		// NULL, keeps the column's contract.
 		hostIDs = []uuid.UUID{}
 	}
-	_, err := s.q.CreateJob(ctx, gen.CreateJobParams{
+	return gen.CreateJobParams{
 		ID: j.ID, OrgID: j.OrgID, ZoneID: j.ZoneID, Kind: string(j.Kind),
 		TemplateID: db.NullUUID(j.TemplateID), HostIds: hostIDs, Status: string(j.Status),
 		RunGroupID: j.RunGroupID, Trigger: j.Trigger, ActorID: db.NullUUID(j.ActorID),
-		Payload: payload,
-	})
-	if err != nil {
+		Payload:   payload,
+		DependsOn: db.NullUUID(j.DependsOn), RotationCredentialID: db.NullUUID(j.RotationCredentialID),
+	}
+}
+
+func (s *SQLStore) CreateJob(ctx context.Context, j Job, payload json.RawMessage) error {
+	if _, err := s.q.CreateJob(ctx, createJobParams(j, payload)); err != nil {
 		return fmt.Errorf("create job: %w", err)
 	}
 	return nil
@@ -177,7 +205,7 @@ func toJob(r gen.Job) Job {
 	return Job{
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Kind: Kind(r.Kind),
 		TemplateID: db.UUIDPtr(r.TemplateID), HostIDs: r.HostIds, Status: Status(r.Status),
-		Attempts:  int(r.Attempts),
+		Attempts: int(r.Attempts), DependsOn: db.UUIDPtr(r.DependsOn), RotationCredentialID: db.UUIDPtr(r.RotationCredentialID),
 		WorkerID:  db.UUIDPtr(r.WorkerID),
 		ClaimedAt: db.TimePtr(r.ClaimedAt), StartedAt: db.TimePtr(r.StartedAt), FinishedAt: db.TimePtr(r.FinishedAt),
 		Stats: stats, Error: r.Error, RunGroupID: r.RunGroupID, Trigger: r.Trigger,
@@ -195,7 +223,7 @@ func toJobDetail(r gen.GetJobRow) Job {
 		HostIds: r.HostIds, Status: r.Status, WorkerID: r.WorkerID, ClaimedAt: r.ClaimedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Stats: r.Stats, Error: r.Error,
 		RunGroupID: r.RunGroupID, Trigger: r.Trigger, ActorID: r.ActorID, Payload: r.Payload,
-		CreatedAt: r.CreatedAt, Attempts: r.Attempts,
+		CreatedAt: r.CreatedAt, Attempts: r.Attempts, DependsOn: r.DependsOn, RotationCredentialID: r.RotationCredentialID,
 	})
 	j.ActorName, j.WorkerName, j.TemplateName = deref(r.ActorName), deref(r.WorkerName), deref(r.TemplateName)
 	return j

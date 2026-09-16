@@ -67,3 +67,29 @@ func TestGetUnknownNameIsAnError(t *testing.T) {
 		t.Fatal("an unknown playbook name must error")
 	}
 }
+
+// TestRevokePlaybookRemovesOnlyThePreviousKey (final review I1): the
+// revocation's single task removes the PREVIOUS public key from the
+// account's authorized_keys — never adds anything, never touches the
+// account or sudo.
+func TestRevokePlaybookRemovesOnlyThePreviousKey(t *testing.T) {
+	raw, err := workerplaybooks.Get(workerplaybooks.NameRevokeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if err := playbooks.ValidateYAML(text); err != nil {
+		t.Fatalf("revoke playbook does not validate: %v", err)
+	}
+	for _, want := range []string{"hosts: all", "gather_facts: false", "ansible.builtin.authorized_key:",
+		`key: "{{ pulsix_old_public_key }}"`, "state: absent"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("revoke playbook lacks %q:\n%s", want, text)
+		}
+	}
+	for _, absent := range []string{"pulsix_public_key }}", "ansible.builtin.user:", "ansible.builtin.copy:", "NOPASSWD", "state: present"} {
+		if strings.Contains(text, absent) {
+			t.Errorf("revoke playbook must not carry %q", absent)
+		}
+	}
+}

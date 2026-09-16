@@ -1,6 +1,7 @@
 -- name: CreateJob :one
-INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
+                  depends_on, rotation_credential_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
 -- name: GetJob :one
@@ -83,9 +84,14 @@ ORDER BY seq;
 UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now(),
     attempts = attempts + 1
 WHERE id = (
-  SELECT id FROM jobs
-  WHERE status = 'queued' AND org_id = sqlc.arg(org_id)::uuid AND zone_id = ANY(sqlc.arg(zone_ids)::uuid[])
-  ORDER BY created_at
+  SELECT j.id FROM jobs AS j
+  WHERE j.status = 'queued' AND j.org_id = sqlc.arg(org_id)::uuid AND j.zone_id = ANY(sqlc.arg(zone_ids)::uuid[])
+    -- A dependent job waits until its dependency SUCCEEDED (any other end
+    -- cancels it in the dependency's terminal transition).
+    AND (j.depends_on IS NULL OR EXISTS (
+      SELECT 1 FROM jobs AS dep WHERE dep.id = j.depends_on AND dep.status = 'succeeded'
+    ))
+  ORDER BY j.created_at
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
@@ -128,3 +134,25 @@ SELECT id, claimed_at FROM jobs WHERE status = 'cancelling';
 -- — a repository deleted while its sync ran records nothing.
 UPDATE git_repos SET last_sync = @last_sync, last_sync_error = @last_sync_error
 WHERE org_id = @org_id AND id = @id;
+
+-- name: CancelQueuedDependents :many
+-- A job that ended without succeeding can never let its dependents run:
+-- they (and their own dependents, transitively) are cancelled in the same
+-- transaction, with the reason and their sealed payloads wiped. Runs inside
+-- the queue's org-bound terminal transaction.
+WITH RECURSIVE chain AS (
+  SELECT d.id FROM jobs AS d WHERE d.depends_on = sqlc.arg(job_id)::uuid AND d.status = 'queued'
+  UNION
+  SELECT d.id FROM jobs AS d JOIN chain ON d.depends_on = chain.id WHERE d.status = 'queued'
+)
+UPDATE jobs SET status = 'cancelled', finished_at = now(), payload = NULL,
+    error = sqlc.arg(reason)::text
+WHERE id IN (SELECT id FROM chain)
+RETURNING id;
+
+-- name: CountActiveRotationJobs :one
+-- The rotation exclusivity check: jobs of the credential's rotation groups
+-- that are not terminal yet.
+SELECT count(*) FROM jobs
+WHERE org_id = $1 AND rotation_credential_id = $2
+  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error');

@@ -17,7 +17,7 @@ import { kindLabel, shortId, statusTone } from './status.ts';
 const COLUMNS = '90px 120px 110px minmax(0, 0.7fr) 90px 80px 110px';
 
 const STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'error'];
-const KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'sync_repo'];
+const KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key', 'sync_repo'];
 
 /**
  * RunsPage is the org's run list (spec §7, backlog 2.12): keyset-paginated,

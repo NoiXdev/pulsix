@@ -38,7 +38,7 @@ import (
 type jobDTO struct {
 	ID         string    `json:"id"`
 	ZoneID     string    `json:"zone_id"`
-	Kind       string    `json:"kind" enum:"run,adhoc,connection_test,bootstrap,rotate_key,sync_repo"`
+	Kind       string    `json:"kind" enum:"run,adhoc,connection_test,bootstrap,rotate_key,revoke_key,sync_repo"`
 	Status     string    `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
 	TemplateID string    `json:"template_id,omitempty"`
 	RunGroupID string    `json:"run_group_id"`
@@ -83,7 +83,7 @@ type jobGroupMemberDTO struct {
 type jobDetailDTO struct {
 	ID         string                 `json:"id"`
 	ZoneID     string                 `json:"zone_id"`
-	Kind       string                 `json:"kind" enum:"run,adhoc,connection_test,bootstrap,rotate_key,sync_repo"`
+	Kind       string                 `json:"kind" enum:"run,adhoc,connection_test,bootstrap,rotate_key,revoke_key,sync_repo"`
 	Status     string                 `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
 	Template   *jobTemplateSummaryDTO `json:"template"`
 	RunGroupID string                 `json:"run_group_id"`
@@ -398,7 +398,7 @@ func parseJobListFilter(statusStr, kindStr, templateStr, groupStr string) (jobs.
 	if kindStr != "" {
 		k := jobs.Kind(kindStr)
 		if !k.Valid() {
-			return jobs.Filter{}, huma.Error400BadRequest("invalid kind: must be one of run, adhoc, connection_test, bootstrap, rotate_key, sync_repo")
+			return jobs.Filter{}, huma.Error400BadRequest("invalid kind: must be one of run, adhoc, connection_test, bootstrap, rotate_key, revoke_key, sync_repo")
 		}
 		f.Kind = &k
 	}

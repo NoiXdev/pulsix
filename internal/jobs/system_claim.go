@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -39,8 +40,11 @@ type bootstrapRequest struct {
 // login user), its jump chain with each hop's credential inline — the
 // same shapes the connection-test payload uses.
 func (q *SQLQueue) systemPayload(ctx context.Context, job Job) (string, claimPins, error) {
-	if job.Kind == KindRotateKey {
+	switch job.Kind {
+	case KindRotateKey:
 		return q.rotateSystemPayload(ctx, job)
+	case KindRevokeKey:
+		return q.revokeSystemPayload(ctx, job)
 	}
 	return q.bootstrapSystemPayload(ctx, job)
 }
@@ -78,8 +82,10 @@ func (q *SQLQueue) bootstrapSystemPayload(ctx context.Context, job Job) (string,
 }
 
 // rotateSystemPayload resolves the rotation job's target — a host through
-// the rendered snapshot, a jump host through its own via-chain — and
-// folds the old credential and the pending new key into the wire payload.
+// the rendered snapshot, a jump host through its own via-chain — and folds
+// the old credential and the new PUBLIC key into the wire payload (the
+// pending private key stays in the sealed job payload: the playbook run
+// never needs it).
 func (q *SQLQueue) rotateSystemPayload(ctx context.Context, job Job) (string, claimPins, error) {
 	opened, err := q.openKindPayload(job)
 	if err != nil {
@@ -89,18 +95,46 @@ func (q *SQLQueue) rotateSystemPayload(ctx context.Context, job Job) (string, cl
 	if err := json.Unmarshal([]byte(opened), &rp); err != nil {
 		return "", claimPins{}, fmt.Errorf("rotate_key %s: kind payload: %w", job.ID, err)
 	}
-	if rp.Target.Kind == rotationTargetBastion {
-		return q.rotateBastionPayload(ctx, job, rp)
+	return q.credentialTargetPayload(ctx, job, rp.Target, func(host systemHost, hops []systemHop) (string, error) {
+		return q.rotateKindPayload(ctx, job, rp, host, hops)
+	})
+}
+
+// revokeSystemPayload resolves a revoke_key job's target exactly like its
+// rotation's (a host through the rendered route, a jump host through its
+// via-chain) and builds the revocation's kind payload.
+func (q *SQLQueue) revokeSystemPayload(ctx context.Context, job Job) (string, claimPins, error) {
+	opened, err := q.openKindPayload(job)
+	if err != nil {
+		return "", claimPins{}, err
+	}
+	var rp revocationJobPayload
+	if err := json.Unmarshal([]byte(opened), &rp); err != nil || rp.CredentialID == uuid.Nil || rp.OldPublicKey == "" {
+		return "", claimPins{}, fmt.Errorf("revoke_key %s: kind payload carries no credential or previous key", job.ID)
+	}
+	return q.credentialTargetPayload(ctx, job, rp.Target, func(host systemHost, hops []systemHop) (string, error) {
+		return q.revokeKindPayload(ctx, job, rp, host, hops)
+	})
+}
+
+// credentialTargetPayload resolves the target of a job acting on one
+// credential's key (rotate_key, revoke_key): a jump host through its own
+// via-chain (no pin), a host through the rendered route — refused when its
+// key changed, with its pins shipped — and hands the resolved connection
+// to build for the kind payload.
+func (q *SQLQueue) credentialTargetPayload(ctx context.Context, job Job, target rotationTarget, build func(systemHost, []systemHop) (string, error)) (string, claimPins, error) {
+	if target.Kind == rotationTargetBastion {
+		return q.bastionTargetPayload(ctx, job, target.ID, build)
 	}
 	if len(job.HostIDs) != 1 {
-		return "", claimPins{}, fmt.Errorf("%w: rotate_key targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
+		return "", claimPins{}, fmt.Errorf("%w: %s targets exactly one host, job %s carries %d", ErrInvalidInput, job.Kind, job.ID, len(job.HostIDs))
 	}
 	if q.pins == nil {
-		return "", claimPins{}, fmt.Errorf("rotate_key claim: no host key pin source wired")
+		return "", claimPins{}, fmt.Errorf("%s claim: no host key pin source wired", job.Kind)
 	}
 	hostID := job.HostIDs[0]
-	if rp.Target.ID != hostID {
-		return "", claimPins{}, fmt.Errorf("rotate_key %s: kind payload names %s, the job targets %s", job.ID, rp.Target.ID, hostID)
+	if target.ID != hostID {
+		return "", claimPins{}, fmt.Errorf("%s %s: kind payload names %s, the job targets %s", job.Kind, job.ID, target.ID, hostID)
 	}
 	// A host whose key changed after the enqueue is not dialed.
 	if _, err := q.excludeChangedAtClaim(ctx, job); err != nil {
@@ -110,7 +144,7 @@ func (q *SQLQueue) rotateSystemPayload(ctx context.Context, job Job) (string, cl
 	if err != nil {
 		return "", claimPins{}, err
 	}
-	kindPayload, err := q.rotateKindPayload(ctx, job, rp, host, hops)
+	kindPayload, err := build(host, hops)
 	if err != nil {
 		return "", claimPins{}, err
 	}
@@ -121,15 +155,50 @@ func (q *SQLQueue) rotateSystemPayload(ctx context.Context, job Job) (string, cl
 	return kindPayload, pins, nil
 }
 
-// rotateBastionPayload resolves a jump host target: its own via-chain is
+// revokeKindPayload builds a revocation's wire kind payload: the target,
+// the credential's account, the credential's CURRENT secret as the login
+// (the new key the finalize sealed), and the previous public key to remove.
+func (q *SQLQueue) revokeKindPayload(ctx context.Context, job Job, rp revocationJobPayload, host systemHost, hops []systemHop) (string, error) {
+	login, err := q.creds.OpenSecret(ctx, job.OrgID, rp.CredentialID)
+	if err != nil {
+		return "", fmt.Errorf("open rotated credential %s: %w", rp.CredentialID, err)
+	}
+	cred, err := q.creds.Get(ctx, job.OrgID, rp.CredentialID)
+	if err != nil {
+		return "", fmt.Errorf("resolve rotated credential %s: %w", rp.CredentialID, err)
+	}
+	// Never remove the key the credential logs in with now.
+	if strings.TrimSpace(cred.PublicKey) == strings.TrimSpace(rp.OldPublicKey) {
+		return "", fmt.Errorf("revoke_key %s: the previous key is the credential's current key; refusing to revoke it", job.ID)
+	}
+	loginJSON, err := secretJSON(login)
+	if err != nil {
+		return "", err
+	}
+	username := cred.Username
+	if username == "" {
+		username = host.Username
+	}
+	payload := map[string]any{
+		"host": host, "username": username, "login_credential": loginJSON,
+		"old_public_key": rp.OldPublicKey, "pulsix_user": username, "bastions": hops,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode revoke-key kind payload: %w", err)
+	}
+	return string(b), nil
+}
+
+// bastionTargetPayload resolves a jump host target: its own via-chain is
 // walked in dial order (the outermost hop first), each hop's credential
-// opened; the target itself logs in with the old credential. Bastions carry
+// opened; build decides what the target itself logs in with. Bastions carry
 // no pin (see BACKLOG: bastion host-key pinning), so the claim ships no host
 // keys and the worker trusts the bastion's key on first use per run.
-func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotationJobPayload) (string, claimPins, error) {
-	target, err := q.bastions.GetBastion(ctx, job.OrgID, rp.Target.ID)
+func (q *SQLQueue) bastionTargetPayload(ctx context.Context, job Job, bastionID uuid.UUID, build func(systemHost, []systemHop) (string, error)) (string, claimPins, error) {
+	target, err := q.bastions.GetBastion(ctx, job.OrgID, bastionID)
 	if err != nil {
-		return "", claimPins{}, fmt.Errorf("resolve rotation bastion %s: %w", rp.Target.ID, err)
+		return "", claimPins{}, fmt.Errorf("resolve rotation bastion %s: %w", bastionID, err)
 	}
 	// Walk the via-chain up from the target, bounded by a seen-set.
 	var chain []sshconf.Bastion
@@ -172,7 +241,7 @@ func (q *SQLQueue) rotateBastionPayload(ctx context.Context, job Job, rp rotatio
 		ID: target.ID, Name: target.Name, Address: target.Address,
 		Port: target.Port, Username: target.Username,
 	}
-	kindPayload, err := q.rotateKindPayload(ctx, job, rp, host, hops)
+	kindPayload, err := build(host, hops)
 	if err != nil {
 		return "", claimPins{}, err
 	}
@@ -272,22 +341,17 @@ func (q *SQLQueue) bootstrapKindPayload(ctx context.Context, job Job, host syste
 	return string(b), nil
 }
 
-// rotateKindPayload folds the sealed enqueue payload (the pending new key)
-// and the old credential's opened secret into the wire kind payload. For a
-// host target the connection resolves through the rendered snapshot; for a
-// bastion target the jump host's own via-chain is walked, each hop's
-// credential opened, and the target itself logs in with the old
-// credential.
+// rotateKindPayload folds the sealed enqueue payload's new public key and
+// the old credential's opened secret (the login) into the wire kind
+// payload. The pending new PRIVATE key is deliberately not shipped: the
+// playbook installs a public key, and only the verification test (which
+// authenticates with it) and the manager's finalize use the private key.
 func (q *SQLQueue) rotateKindPayload(ctx context.Context, job Job, rp rotationJobPayload, host systemHost, hops []systemHop) (string, error) {
 	old, err := q.creds.OpenSecret(ctx, job.OrgID, rp.CredentialID)
 	if err != nil {
 		return "", fmt.Errorf("open rotating credential %s: %w", rp.CredentialID, err)
 	}
 	oldJSON, err := secretJSON(old)
-	if err != nil {
-		return "", err
-	}
-	newJSON, err := secretJSON(rp.NewPrivateKey)
 	if err != nil {
 		return "", err
 	}
@@ -306,8 +370,8 @@ func (q *SQLQueue) rotateKindPayload(ctx context.Context, job Job, rp rotationJo
 		"host": host, "username": username,
 		"old_credential": oldJSON, "new_public_key": rp.NewPublicKey,
 		"new_fingerprint": rp.NewFingerprint, "new_key_type": rp.NewKeyType,
-		"new_private_key": newJSON, "pulsix_user": username,
-		"bastions": hops,
+		"pulsix_user": username,
+		"bastions":    hops,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

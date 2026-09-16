@@ -1,0 +1,13 @@
+# pulsix.revoke_key.yml — the last phase of a key rotation: removes the
+# credential's PREVIOUS public key from the account's authorized_keys. It
+# runs only after every target of the rotation installed the new key and a
+# connection test authenticated with it, and it logs in with the new key.
+- hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove the previous public key
+      ansible.builtin.authorized_key:
+        user: "{{ pulsix_user | default('ansible') }}"
+        key: "{{ pulsix_old_public_key }}"
+        state: absent

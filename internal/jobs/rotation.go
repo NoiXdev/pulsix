@@ -24,6 +24,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ import (
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/sshconf"
 )
 
@@ -56,6 +58,20 @@ type rotationJobPayload struct {
 	NewFingerprint string             `json:"new_fingerprint"`
 	NewKeyType     string             `json:"new_key_type"`
 	NewPrivateKey  credentials.Secret `json:"new_private_key"`
+	// OldPublicKey is the credential's public key when the rotation
+	// started — what the group's revocations remove once it is verified.
+	OldPublicKey string `json:"old_public_key"`
+}
+
+// revocationJobPayload is the sealed payload of one revoke_key job: which
+// credential rotated, the target, and the previous public key to remove.
+// The login is the credential's CURRENT secret (the new key, sealed onto it
+// by the finalize that enqueued the revocation) — no key material rides in
+// the payload itself.
+type revocationJobPayload struct {
+	CredentialID uuid.UUID      `json:"credential_id"`
+	Target       rotationTarget `json:"target"`
+	OldPublicKey string         `json:"old_public_key"`
 }
 
 type rotationTarget struct {
@@ -106,12 +122,14 @@ func (q *SQLQueue) ListCredentialBastions(ctx context.Context, orgID, credential
 func (q *SQLQueue) SetRotationFinisher(finisher RotationFinisher) { q.rotation = finisher }
 
 // groupInserter is the store capability the rotation enqueue needs: the
-// whole group's inserts inside one transaction. The real SQLStore
-// implements it; a store that does not makes the enqueue fail closed —
-// per-row inserts would leave an orphaned partial group on a mid-loop
-// failure, whose jobs could run and finalize on their own.
+// whole group's inserts inside one transaction, refused with
+// ErrRotationInProgress while an earlier rotation group of the credential
+// is not finished. The real SQLStore implements it; a store that does not
+// makes the enqueue fail closed — per-row inserts would leave an orphaned
+// partial group on a mid-loop failure, whose jobs could run and finalize
+// on their own.
 type groupInserter interface {
-	CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error
+	CreateRotationGroup(ctx context.Context, orgID, credentialID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error
 }
 
 // EnqueueRotation enqueues the credential's rotation group: one rotate_key
@@ -165,40 +183,49 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 	// CreatedAt advances one microsecond per job, so the claim's
 	// created_at order always puts the playbook runs before the follow-up
 	// tests that verify them.
-	appendJob := func(kind Kind, zone uuid.UUID, hostIDs []uuid.UUID, target rotationTarget) error {
+	appendJob := func(kind Kind, zone uuid.UUID, hostIDs []uuid.UUID, target rotationTarget, dependsOn *uuid.UUID) (uuid.UUID, error) {
+		credID := credentialID
 		j := Job{
 			ID: s.newID(), OrgID: orgID, ZoneID: zone,
 			Kind: kind, HostIDs: hostIDs,
 			Status: StatusQueued, RunGroupID: group, Trigger: TriggerManual,
 			ActorID: actor, CreatedAt: now.Add(time.Duration(len(jobs)) * time.Microsecond),
+			DependsOn: dependsOn, RotationCredentialID: &credID,
 		}
 		payload, err := json.Marshal(rotationJobPayload{
 			CredentialID: credentialID, Target: target,
 			NewPublicKey: key.PublicKey, NewFingerprint: key.Fingerprint, NewKeyType: key.KeyType,
-			NewPrivateKey: key.PrivateKey,
+			NewPrivateKey: key.PrivateKey, OldPublicKey: key.PreviousPublicKey,
 		})
 		if err != nil {
-			return fmt.Errorf("encode rotation payload: %w", err)
+			return uuid.Nil, fmt.Errorf("encode rotation payload: %w", err)
 		}
 		stored, err := s.sealPayload(j, payload)
 		if err != nil {
-			return err
+			return uuid.Nil, err
 		}
 		payloads[j.ID] = stored
 		jobs = append(jobs, j)
-		return nil
+		return j.ID, nil
 	}
 	// The playbook runs first: one per host target, in the host's zone.
+	rotateJobOf := make(map[uuid.UUID]uuid.UUID, len(hosts))
 	for _, h := range hosts {
-		if err := appendJob(KindRotateKey, h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}); err != nil {
+		id, err := appendJob(KindRotateKey, h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}, nil)
+		if err != nil {
 			return uuid.Nil, uuid.Nil, 0, err
 		}
+		rotateJobOf[h.ID] = id
 	}
 	// Then the verification: one connection_test per host target, same
 	// group and zone, whose sealed payload carries the pending new key the
-	// probe authenticates with.
+	// probe authenticates with. Each depends on its host's rotate_key run:
+	// the claim holds it back until that run succeeded (with several
+	// workers a created_at offset alone orders nothing), and a run that
+	// ends otherwise cancels it.
 	for _, h := range hosts {
-		if err := appendJob(KindConnectionTest, h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}); err != nil {
+		rotateID := rotateJobOf[h.ID]
+		if _, err := appendJob(KindConnectionTest, h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}, &rotateID); err != nil {
 			return uuid.Nil, uuid.Nil, 0, err
 		}
 	}
@@ -211,12 +238,12 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 			return uuid.Nil, uuid.Nil, 0, fmt.Errorf("resolve rotation zone: %w", err)
 		}
 		for _, b := range bastions {
-			if err := appendJob(KindRotateKey, zone, []uuid.UUID{}, rotationTarget{Kind: rotationTargetBastion, ID: b.ID}); err != nil {
+			if _, err := appendJob(KindRotateKey, zone, []uuid.UUID{}, rotationTarget{Kind: rotationTargetBastion, ID: b.ID}, nil); err != nil {
 				return uuid.Nil, uuid.Nil, 0, err
 			}
 		}
 	}
-	if err := inserter.CreateJobGroup(ctx, orgID, jobs, payloads); err != nil {
+	if err := inserter.CreateRotationGroup(ctx, orgID, credentialID, jobs, payloads); err != nil {
 		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("insert rotation group: %w", err)
 	}
 	return group, jobs[0].ID, len(jobs), nil
@@ -295,17 +322,126 @@ func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status S
 		}
 		return fmt.Errorf("finalize rotation: %w", err)
 	}
+	if !allSucceeded {
+		return nil
+	}
+	return q.enqueueRevocations(ctx, orgID, groupID, rp)
+}
+
+// enqueueRevocations queues the group's last phase once every rotation and
+// verification succeeded and the new key is sealed onto the credential:
+// one revoke_key job per target currently referencing the credential (the
+// same source the rotation enqueue used), removing the PREVIOUS public key
+// from its authorized_keys. Removing it only now is what keeps a partial
+// rotation safe: while any host could not be verified, every host keeps the
+// old key the credential still holds. The revocations belong to the group
+// (and its credential), log in with the credential's current secret — the
+// new key — and run inside the finish's transaction, so a crash either
+// finalizes and queues them together or does neither. A group that already
+// has revocations (a second finalize observing the completed group) queues
+// none; a rotation without a recorded previous key (enqueued before
+// revocations existed) queues none either.
+func (q *SQLQueue) enqueueRevocations(ctx context.Context, orgID, groupID uuid.UUID, rp rotationJobPayload) error {
+	if rp.OldPublicKey == "" {
+		slog.WarnContext(ctx, "finalize rotation: no previous public key recorded; the old key is not revoked", "group", groupID)
+		return nil
+	}
+	var existing int
+	if err := q.db.QueryRow(ctx,
+		`SELECT count(*) FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind = 'revoke_key'`,
+		orgID, groupID).Scan(&existing); err != nil {
+		return fmt.Errorf("finalize rotation: count revocations: %w", err)
+	}
+	if existing > 0 {
+		return nil
+	}
+	hostTargets, err := q.ListCredentialHosts(ctx, orgID, rp.CredentialID)
+	if err != nil {
+		return fmt.Errorf("finalize rotation: %w", err)
+	}
+	bastionTargets, err := q.ListCredentialBastions(ctx, orgID, rp.CredentialID)
+	if err != nil {
+		return fmt.Errorf("finalize rotation: %w", err)
+	}
+	var defaultZone uuid.UUID
+	if len(bastionTargets) > 0 {
+		if err := q.db.QueryRow(ctx,
+			`SELECT id FROM zones WHERE org_id = $1 AND slug = $2`, orgID, hosts.DefaultZoneSlug).Scan(&defaultZone); err != nil {
+			return fmt.Errorf("finalize rotation: resolve default zone: %w", err)
+		}
+	}
+	now := q.now()
+	credID := rp.CredentialID
+	insert := func(zone uuid.UUID, hostIDs []uuid.UUID, target rotationTarget) error {
+		id, err := uuid.NewV7FromReader(q.rand)
+		if err != nil {
+			return fmt.Errorf("finalize rotation: new job id: %w", err)
+		}
+		j := Job{
+			ID: id, OrgID: orgID, ZoneID: zone, Kind: KindRevokeKey, HostIDs: hostIDs,
+			Status: StatusQueued, RunGroupID: groupID, Trigger: TriggerSystem, CreatedAt: now,
+			RotationCredentialID: &credID,
+		}
+		plain, err := json.Marshal(revocationJobPayload{CredentialID: rp.CredentialID, Target: target, OldPublicKey: rp.OldPublicKey})
+		if err != nil {
+			return fmt.Errorf("finalize rotation: encode revocation: %w", err)
+		}
+		sealed, err := q.box.SealAAD(plain, JobAAD(orgID, id))
+		if err != nil {
+			return fmt.Errorf("finalize rotation: seal revocation: %w", err)
+		}
+		stored := json.RawMessage(`"` + base64.StdEncoding.EncodeToString(sealed) + `"`)
+		if _, err := gen.New(q.db).CreateJob(ctx, createJobParams(j, stored)); err != nil {
+			return fmt.Errorf("finalize rotation: queue revocation: %w", err)
+		}
+		return nil
+	}
+	for _, h := range hostTargets {
+		if err := insert(h.ZoneID, []uuid.UUID{h.ID}, rotationTarget{Kind: rotationTargetHost, ID: h.ID}); err != nil {
+			return err
+		}
+	}
+	for _, b := range bastionTargets {
+		if err := insert(defaultZone, []uuid.UUID{}, rotationTarget{Kind: rotationTargetBastion, ID: b.ID}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // ClearTerminalPayload is the exported clear Service.Cancel reaches
 // through its payloadCleaner hook: a job cancelled before its claim never
-// ships, so its sealed payload's at-rest lifetime ends immediately. A
+// ships, so its sealed payload's at-rest lifetime ends immediately — and
+// the jobs depending on it can never run, so they are cancelled too. A
 // failure is logged — the cancel itself already stands.
 func (q *SQLQueue) ClearTerminalPayload(ctx context.Context, jobID uuid.UUID) {
 	if err := q.clearPayload(ctx, jobID); err != nil {
 		slog.ErrorContext(ctx, "clear terminal job payload", "err", err, "job", jobID)
 	}
+	var status string
+	if err := q.db.QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&status); err != nil {
+		slog.ErrorContext(ctx, "cancel dependents: look up job", "err", err, "job", jobID)
+		return
+	}
+	if err := q.cancelDependents(ctx, jobID, Status(status)); err != nil {
+		slog.ErrorContext(ctx, "cancel dependents of a cancelled job", "err", err, "job", jobID)
+	}
+}
+
+// cancelDependents cancels every queued job that (transitively) depends on
+// jobID when jobID ended without succeeding — they could never run. Their
+// sealed payloads are wiped with the cancel.
+func (q *SQLQueue) cancelDependents(ctx context.Context, jobID uuid.UUID, status Status) error {
+	if status == StatusSucceeded || !status.Terminal() {
+		return nil
+	}
+	if _, err := gen.New(q.db).CancelQueuedDependents(ctx, gen.CancelQueuedDependentsParams{
+		JobID:  jobID,
+		Reason: fmt.Sprintf("cancelled: the job it depends on (%s) ended %s", jobID, status),
+	}); err != nil {
+		return fmt.Errorf("cancel dependent jobs: %w", err)
+	}
+	return nil
 }
 
 // clearPayload wipes a terminal system job's sealed payload: the one-time
@@ -318,7 +454,7 @@ func (q *SQLQueue) ClearTerminalPayload(ctx context.Context, jobID uuid.UUID) {
 func (q *SQLQueue) clearPayload(ctx context.Context, jobID uuid.UUID) error {
 	if _, err := q.db.Exec(ctx,
 		`UPDATE jobs SET payload = NULL
-		 WHERE id = $1 AND kind IN ('connection_test','bootstrap','rotate_key') AND payload IS NOT NULL
+		 WHERE id = $1 AND kind IN ('connection_test','bootstrap','rotate_key','revoke_key') AND payload IS NOT NULL
 		   AND status IN ('succeeded','failed','cancelled','error')`,
 		jobID); err != nil {
 		return fmt.Errorf("clear terminal job payload: %w", err)

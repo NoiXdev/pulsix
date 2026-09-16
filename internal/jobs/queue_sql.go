@@ -263,7 +263,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// one-host run and drive the embedded system playbooks. The rendered
 	// route resolves the target's connection (address, port, jump chain);
 	// the inventory document is discarded.
-	if job.Kind == KindBootstrap || job.Kind == KindRotateKey {
+	if job.Kind == KindBootstrap || job.Kind == KindRotateKey || job.Kind == KindRevokeKey {
 		kindPayload, pins, err := q.systemPayload(ctx, job)
 		if err != nil {
 			return err

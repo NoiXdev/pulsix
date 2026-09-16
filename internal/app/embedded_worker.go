@@ -205,6 +205,7 @@ func runEmbeddedLoop(ctx context.Context, appDB *db.DB, caInst *ca.CA, zone zone
 			"run": runExec, "adhoc": runExec,
 			"bootstrap":       worker.NewBootstrapExecutor(runExec),
 			"rotate_key":      worker.NewRotateExecutor(runExec),
+			"revoke_key":      worker.NewRevokeExecutor(runExec),
 			"connection_test": probeExec,
 			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
 		}),

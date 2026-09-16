@@ -32,6 +32,10 @@ type PendingKey struct {
 	PublicKey   string
 	Fingerprint string
 	KeyType     string
+	// PreviousPublicKey is the credential's public key when the rotation
+	// started: the key the rotation's revocation step removes from every
+	// target once the new key is verified everywhere.
+	PreviousPublicKey string
 }
 
 // RotationEnqueuer is the port Rotate enqueues the rotation group through.
@@ -81,6 +85,8 @@ func (s *Service) Rotate(ctx context.Context, orgID, id uuid.UUID, actor *uuid.U
 		PublicKey:   k.publicKey,
 		Fingerprint: k.fingerprint,
 		KeyType:     k.keyType,
+
+		PreviousPublicKey: c.PublicKey,
 	}
 	groupID, firstJob, count, err := s.rotation.EnqueueRotation(ctx, orgID, id, key, actor)
 	if err != nil {

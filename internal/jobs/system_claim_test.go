@@ -103,7 +103,7 @@ func TestBuildPayloadBootstrapShipsOneTimeLogin(t *testing.T) {
 	}
 }
 
-func TestBuildPayloadRotateShipsOldCredentialAndPendingKey(t *testing.T) {
+func TestBuildPayloadRotateShipsOldCredentialAndNewPublicKeyOnly(t *testing.T) {
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	hostID, credID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 
@@ -156,8 +156,11 @@ func TestBuildPayloadRotateShipsOldCredentialAndPendingKey(t *testing.T) {
 	if payload.OldCredential != `{"password":"old-password"}` {
 		t.Fatalf("old credential = %q", payload.OldCredential)
 	}
-	if payload.NewPrivateKey != `{"private_key":"pending-new-key"}` || payload.NewPublicKey != "ssh-ed25519 AAAA new" {
-		t.Fatalf("pending key = %q / %q", payload.NewPrivateKey, payload.NewPublicKey)
+	// The playbook installs the new PUBLIC key; the pending private key is
+	// never shipped to the rotate_key run (only the verification test that
+	// authenticates with it, and the manager's finalize, use it).
+	if payload.NewPrivateKey != "" || strings.Contains(out.KindPayload, "pending-new-key") || payload.NewPublicKey != "ssh-ed25519 AAAA new" {
+		t.Fatalf("pending key = %q / %q; want only the public key shipped", payload.NewPrivateKey, payload.NewPublicKey)
 	}
 	if payload.Username != "ansible" || payload.PulsixUser != "ansible" || payload.NewFingerprint != "SHA256:new" {
 		t.Fatalf("account fields = %+v", payload)

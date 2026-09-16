@@ -316,6 +316,8 @@ func mapCredentialsErr(ctx context.Context, err error) error {
 	case errors.Is(err, jobs.ErrHostKeyChanged):
 		// A rotation target's host key changed: the rotation is refused.
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, jobs.ErrRotationInProgress):
+		return huma.Error409Conflict("a rotation of this credential is still in progress")
 	default:
 		slog.ErrorContext(ctx, "unmapped credentials error", "err", err)
 		return huma.Error500InternalServerError("internal error")

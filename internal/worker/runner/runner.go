@@ -57,6 +57,7 @@ const (
 	kindAdhoc     = "adhoc"
 	kindBootstrap = "bootstrap"
 	kindRotateKey = "rotate_key"
+	kindRevokeKey = "revoke_key"
 )
 
 // The runner's own bookend events; the state values are the manager's
@@ -105,7 +106,7 @@ func NewRunner(runnerBin, ansibleBin, gitBin string, killGrace time.Duration, lo
 // view is built on the stats, and a stats-less success would lie.
 func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, sink func(*workerpb.RunEvent) error) (worker.Status, map[string]any, error) {
 	switch job.GetKind() {
-	case kindRun, kindAdhoc, kindBootstrap, kindRotateKey:
+	case kindRun, kindAdhoc, kindBootstrap, kindRotateKey, kindRevokeKey:
 	default:
 		return worker.StatusError, nil, fmt.Errorf("job kind %q has no ansible-runner executor", job.GetKind())
 	}

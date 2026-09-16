@@ -222,25 +222,27 @@ type Invite struct {
 }
 
 type Job struct {
-	ID         uuid.UUID          `json:"id"`
-	OrgID      uuid.UUID          `json:"org_id"`
-	ZoneID     uuid.UUID          `json:"zone_id"`
-	Kind       string             `json:"kind"`
-	TemplateID pgtype.UUID        `json:"template_id"`
-	HostIds    []uuid.UUID        `json:"host_ids"`
-	Status     string             `json:"status"`
-	WorkerID   pgtype.UUID        `json:"worker_id"`
-	ClaimedAt  pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt  pgtype.Timestamptz `json:"started_at"`
-	FinishedAt pgtype.Timestamptz `json:"finished_at"`
-	Stats      []byte             `json:"stats"`
-	Error      string             `json:"error"`
-	RunGroupID uuid.UUID          `json:"run_group_id"`
-	Trigger    string             `json:"trigger"`
-	ActorID    pgtype.UUID        `json:"actor_id"`
-	Payload    []byte             `json:"payload"`
-	CreatedAt  time.Time          `json:"created_at"`
-	Attempts   int32              `json:"attempts"`
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	ZoneID               uuid.UUID          `json:"zone_id"`
+	Kind                 string             `json:"kind"`
+	TemplateID           pgtype.UUID        `json:"template_id"`
+	HostIds              []uuid.UUID        `json:"host_ids"`
+	Status               string             `json:"status"`
+	WorkerID             pgtype.UUID        `json:"worker_id"`
+	ClaimedAt            pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
+	Stats                []byte             `json:"stats"`
+	Error                string             `json:"error"`
+	RunGroupID           uuid.UUID          `json:"run_group_id"`
+	Trigger              string             `json:"trigger"`
+	ActorID              pgtype.UUID        `json:"actor_id"`
+	Payload              []byte             `json:"payload"`
+	CreatedAt            time.Time          `json:"created_at"`
+	Attempts             int32              `json:"attempts"`
+	DependsOn            pgtype.UUID        `json:"depends_on"`
+	RotationCredentialID pgtype.UUID        `json:"rotation_credential_id"`
 }
 
 type JobEvent struct {

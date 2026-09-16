@@ -29,7 +29,7 @@ func TestRotateExecutorRunsThePlaybookWithTheOldLogin(t *testing.T) {
 	host := map[string]any{"id": "host-uuid", "name": "web1", "address": "192.0.2.10", "port": 2222}
 	old := secretStr(t, credentials.Secret{PrivateKey: "old-key-material"})
 	status, _, err := NewRotateExecutor(cap).Run(context.Background(),
-		sysJob(t, "rotate_key", rotateClaim(t, host, "ansible", old, "ssh-ed25519 AAAA newpub", `{"private_key":"new-key-material"}`, "ansible"), nil),
+		sysJob(t, "rotate_key", rotateClaim(t, host, "ansible", old, "ssh-ed25519 AAAA newpub", "", "ansible"), nil),
 		RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
 	if err != nil || status != StatusSucceeded {
 		t.Fatalf("Run = %q, %v", status, err)

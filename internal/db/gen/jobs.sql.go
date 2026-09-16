@@ -39,17 +39,63 @@ func (q *Queries) CancelJob(ctx context.Context, arg CancelJobParams) (string, e
 	return status, err
 }
 
+const cancelQueuedDependents = `-- name: CancelQueuedDependents :many
+WITH RECURSIVE chain AS (
+  SELECT d.id FROM jobs AS d WHERE d.depends_on = $2::uuid AND d.status = 'queued'
+  UNION
+  SELECT d.id FROM jobs AS d JOIN chain ON d.depends_on = chain.id WHERE d.status = 'queued'
+)
+UPDATE jobs SET status = 'cancelled', finished_at = now(), payload = NULL,
+    error = $1::text
+WHERE id IN (SELECT id FROM chain)
+RETURNING id
+`
+
+type CancelQueuedDependentsParams struct {
+	Reason string    `json:"reason"`
+	JobID  uuid.UUID `json:"job_id"`
+}
+
+// A job that ended without succeeding can never let its dependents run:
+// they (and their own dependents, transitively) are cancelled in the same
+// transaction, with the reason and their sealed payloads wiped. Runs inside
+// the queue's org-bound terminal transaction.
+func (q *Queries) CancelQueuedDependents(ctx context.Context, arg CancelQueuedDependentsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, cancelQueuedDependents, arg.Reason, arg.JobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimJob = `-- name: ClaimJob :one
 UPDATE jobs SET status = 'running', worker_id = $1::uuid, claimed_at = now(), started_at = now(),
     attempts = attempts + 1
 WHERE id = (
-  SELECT id FROM jobs
-  WHERE status = 'queued' AND org_id = $2::uuid AND zone_id = ANY($3::uuid[])
-  ORDER BY created_at
+  SELECT j.id FROM jobs AS j
+  WHERE j.status = 'queued' AND j.org_id = $2::uuid AND j.zone_id = ANY($3::uuid[])
+    -- A dependent job waits until its dependency SUCCEEDED (any other end
+    -- cancels it in the dependency's terminal transition).
+    AND (j.depends_on IS NULL OR EXISTS (
+      SELECT 1 FROM jobs AS dep WHERE dep.id = j.depends_on AND dep.status = 'succeeded'
+    ))
+  ORDER BY j.created_at
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id
 `
 
 type ClaimJobParams struct {
@@ -94,28 +140,53 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.Payload,
 		&i.CreatedAt,
 		&i.Attempts,
+		&i.DependsOn,
+		&i.RotationCredentialID,
 	)
 	return i, err
 }
 
+const countActiveRotationJobs = `-- name: CountActiveRotationJobs :one
+SELECT count(*) FROM jobs
+WHERE org_id = $1 AND rotation_credential_id = $2
+  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
+`
+
+type CountActiveRotationJobsParams struct {
+	OrgID                uuid.UUID   `json:"org_id"`
+	RotationCredentialID pgtype.UUID `json:"rotation_credential_id"`
+}
+
+// The rotation exclusivity check: jobs of the credential's rotation groups
+// that are not terminal yet.
+func (q *Queries) CountActiveRotationJobs(ctx context.Context, arg CountActiveRotationJobsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveRotationJobs, arg.OrgID, arg.RotationCredentialID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createJob = `-- name: CreateJob :one
-INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts
+INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
+                  depends_on, rotation_credential_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id
 `
 
 type CreateJobParams struct {
-	ID         uuid.UUID   `json:"id"`
-	OrgID      uuid.UUID   `json:"org_id"`
-	ZoneID     uuid.UUID   `json:"zone_id"`
-	Kind       string      `json:"kind"`
-	TemplateID pgtype.UUID `json:"template_id"`
-	HostIds    []uuid.UUID `json:"host_ids"`
-	Status     string      `json:"status"`
-	RunGroupID uuid.UUID   `json:"run_group_id"`
-	Trigger    string      `json:"trigger"`
-	ActorID    pgtype.UUID `json:"actor_id"`
-	Payload    []byte      `json:"payload"`
+	ID                   uuid.UUID   `json:"id"`
+	OrgID                uuid.UUID   `json:"org_id"`
+	ZoneID               uuid.UUID   `json:"zone_id"`
+	Kind                 string      `json:"kind"`
+	TemplateID           pgtype.UUID `json:"template_id"`
+	HostIds              []uuid.UUID `json:"host_ids"`
+	Status               string      `json:"status"`
+	RunGroupID           uuid.UUID   `json:"run_group_id"`
+	Trigger              string      `json:"trigger"`
+	ActorID              pgtype.UUID `json:"actor_id"`
+	Payload              []byte      `json:"payload"`
+	DependsOn            pgtype.UUID `json:"depends_on"`
+	RotationCredentialID pgtype.UUID `json:"rotation_credential_id"`
 }
 
 func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, error) {
@@ -131,6 +202,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		arg.Trigger,
 		arg.ActorID,
 		arg.Payload,
+		arg.DependsOn,
+		arg.RotationCredentialID,
 	)
 	var i Job
 	err := row.Scan(
@@ -153,12 +226,14 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.Payload,
 		&i.CreatedAt,
 		&i.Attempts,
+		&i.DependsOn,
+		&i.RotationCredentialID,
 	)
 	return i, err
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, u.display_name AS actor_name, w.name AS worker_name,
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
@@ -173,28 +248,30 @@ type GetJobParams struct {
 }
 
 type GetJobRow struct {
-	ID           uuid.UUID          `json:"id"`
-	OrgID        uuid.UUID          `json:"org_id"`
-	ZoneID       uuid.UUID          `json:"zone_id"`
-	Kind         string             `json:"kind"`
-	TemplateID   pgtype.UUID        `json:"template_id"`
-	HostIds      []uuid.UUID        `json:"host_ids"`
-	Status       string             `json:"status"`
-	WorkerID     pgtype.UUID        `json:"worker_id"`
-	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt    pgtype.Timestamptz `json:"started_at"`
-	FinishedAt   pgtype.Timestamptz `json:"finished_at"`
-	Stats        []byte             `json:"stats"`
-	Error        string             `json:"error"`
-	RunGroupID   uuid.UUID          `json:"run_group_id"`
-	Trigger      string             `json:"trigger"`
-	ActorID      pgtype.UUID        `json:"actor_id"`
-	Payload      []byte             `json:"payload"`
-	CreatedAt    time.Time          `json:"created_at"`
-	Attempts     int32              `json:"attempts"`
-	ActorName    *string            `json:"actor_name"`
-	WorkerName   *string            `json:"worker_name"`
-	TemplateName *string            `json:"template_name"`
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	ZoneID               uuid.UUID          `json:"zone_id"`
+	Kind                 string             `json:"kind"`
+	TemplateID           pgtype.UUID        `json:"template_id"`
+	HostIds              []uuid.UUID        `json:"host_ids"`
+	Status               string             `json:"status"`
+	WorkerID             pgtype.UUID        `json:"worker_id"`
+	ClaimedAt            pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
+	Stats                []byte             `json:"stats"`
+	Error                string             `json:"error"`
+	RunGroupID           uuid.UUID          `json:"run_group_id"`
+	Trigger              string             `json:"trigger"`
+	ActorID              pgtype.UUID        `json:"actor_id"`
+	Payload              []byte             `json:"payload"`
+	CreatedAt            time.Time          `json:"created_at"`
+	Attempts             int32              `json:"attempts"`
+	DependsOn            pgtype.UUID        `json:"depends_on"`
+	RotationCredentialID pgtype.UUID        `json:"rotation_credential_id"`
+	ActorName            *string            `json:"actor_name"`
+	WorkerName           *string            `json:"worker_name"`
+	TemplateName         *string            `json:"template_name"`
 }
 
 // Scoped by org_id in the WHERE clause, not only relying on RLS (see
@@ -230,6 +307,8 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.Payload,
 		&i.CreatedAt,
 		&i.Attempts,
+		&i.DependsOn,
+		&i.RotationCredentialID,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
@@ -366,7 +445,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id FROM jobs
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -438,6 +517,8 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.Payload,
 			&i.CreatedAt,
 			&i.Attempts,
+			&i.DependsOn,
+			&i.RotationCredentialID,
 		); err != nil {
 			return nil, err
 		}

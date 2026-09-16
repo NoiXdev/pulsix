@@ -1,6 +1,6 @@
-// Package playbooks embeds the two system playbooks the worker's bootstrap
-// and rotate-key executors run (spec §5, backlog 2.7c part 2): the account
-// bootstrap and the key rotation. The YAML travels inside the worker
+// Package playbooks embeds the system playbooks the worker's bootstrap,
+// rotate-key and revoke-key executors run (spec §5, backlog 2.7c part 2):
+// the account bootstrap, the key rotation and the previous key's revocation. The YAML travels inside the worker
 // binary, so a worker always runs the playbook shape its manager version
 // paired with it — the claim carries no playbook for these kinds.
 package playbooks
@@ -20,6 +20,7 @@ var files embed.FS
 const (
 	NameBootstrap = "pulsix.bootstrap.yml"
 	NameRotateKey = "pulsix.rotate_key.yml"
+	NameRevokeKey = "pulsix.revoke_key.yml"
 )
 
 // Get returns one embedded playbook's bytes. An unknown name is an error —

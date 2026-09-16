@@ -284,6 +284,7 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 			"adhoc":           runExec,
 			"bootstrap":       worker.NewBootstrapExecutor(runExec),
 			"rotate_key":      worker.NewRotateExecutor(runExec),
+			"revoke_key":      worker.NewRevokeExecutor(runExec),
 			"connection_test": worker.NewSSHProbeExecutor(&sshprobe.Probe{}, testLogger(t)),
 			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
 		}),

@@ -278,6 +278,11 @@ func TestRotateRouteStartsTheRotationGroup(t *testing.T) {
 	if !found {
 		t.Fatalf("no rotate event in %+v", activity.Items)
 	}
+
+	// While that rotation is in flight, a second one is refused (409).
+	if resp := postJSON(t, f.ownerC, f.rotateURL(), nil); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("second rotate during the first: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
 }
 
 func TestRotateRouteImmediateReKey(t *testing.T) {

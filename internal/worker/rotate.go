@@ -39,8 +39,7 @@ func NewRotateExecutor(runner Executor) *RotateExecutor {
 }
 
 // rotatePayload is the claim's kind payload: the old credential (still
-// valid on the target) as the SSH login, the new public key to install,
-// and the pending new private key that rides sealed in the job payload.
+// valid on the target) as the SSH login and the new public key to install.
 type rotatePayload struct {
 	Host     sysHost `json:"host"`
 	Username string  `json:"username"`
@@ -48,10 +47,8 @@ type rotatePayload struct {
 	// SSH login for this run.
 	OldCredential string `json:"old_credential"`
 	NewPublicKey  string `json:"new_public_key"`
-	// NewPrivateKey is the pending key as Secret JSON ({"private_key":
-	// "…"}); consumed only by the manager's finalize step, never by this
-	// run.
-	NewPrivateKey  string   `json:"new_private_key"`
+	// The pending new private key is not part of the claim: the playbook
+	// installs the public key only.
 	NewFingerprint string   `json:"new_fingerprint"`
 	NewKeyType     string   `json:"new_key_type"`
 	PulsixUser     string   `json:"pulsix_user"`

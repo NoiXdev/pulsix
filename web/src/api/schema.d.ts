@@ -1944,7 +1944,7 @@ export interface components {
             created_at: string;
             id: string;
             /** @enum {string} */
-            kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "sync_repo";
+            kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "revoke_key" | "sync_repo";
             run_group_id: string;
             /** @enum {string} */
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
@@ -1970,7 +1970,7 @@ export interface components {
             hosts: string[] | null;
             id: string;
             /** @enum {string} */
-            kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "sync_repo";
+            kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "revoke_key" | "sync_repo";
             run_group_id: string;
             /** Format: date-time */
             started_at?: string;

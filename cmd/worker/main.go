@@ -88,6 +88,7 @@ func run(env []string) int {
 			"adhoc":           runExec,
 			"bootstrap":       worker.NewBootstrapExecutor(runExec),
 			"rotate_key":      worker.NewRotateExecutor(runExec),
+			"revoke_key":      worker.NewRevokeExecutor(runExec),
 			"connection_test": probeExec,
 			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
 		}),

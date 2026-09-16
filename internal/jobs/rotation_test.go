@@ -89,7 +89,7 @@ func (s *rotationOnlyStore) CreateJob(_ context.Context, j Job, payload json.Raw
 // all-or-nothing contract the real store's transaction gives: rows stage
 // into the group's own slice and only become visible when the whole call
 // succeeds, so a mid-group failure leaves nothing behind.
-func (s *rotationOnlyStore) CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+func (s *rotationOnlyStore) CreateRotationGroup(ctx context.Context, orgID, _ uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groupCalls++
@@ -163,6 +163,8 @@ func TestEnqueueRotationCreatesOneJobPerTarget(t *testing.T) {
 		PublicKey:   "ssh-ed25519 AAAA new",
 		Fingerprint: "SHA256:new",
 		KeyType:     "ed25519",
+
+		PreviousPublicKey: "ssh-ed25519 AAAA old",
 	}
 	actor := uuid.Must(uuid.NewV7())
 
@@ -223,9 +225,28 @@ func TestEnqueueRotationCreatesOneJobPerTarget(t *testing.T) {
 		if err := json.Unmarshal(plain, &rp); err != nil {
 			t.Fatal(err)
 		}
-		if rp.CredentialID != credID || rp.NewPrivateKey.PrivateKey != "new-pem" ||
+		if rp.CredentialID != credID || rp.NewPrivateKey.PrivateKey != "new-pem" || rp.OldPublicKey != "ssh-ed25519 AAAA old" ||
 			rp.NewPublicKey != "ssh-ed25519 AAAA new" || rp.NewFingerprint != "SHA256:new" || rp.NewKeyType != "ed25519" {
 			t.Fatalf("rotation payload of %s = %+v", j.ID, rp)
+		}
+		// Every job belongs to the credential's rotation (the exclusivity
+		// marker); only a verification depends on something — its host's
+		// rotate_key run.
+		if j.RotationCredentialID == nil || *j.RotationCredentialID != credID {
+			t.Fatalf("job %s rotation credential = %v", j.ID, j.RotationCredentialID)
+		}
+		if j.Kind == KindConnectionTest {
+			var dep *Job
+			for i := range store.jobs {
+				if j.DependsOn != nil && store.jobs[i].ID == *j.DependsOn {
+					dep = &store.jobs[i]
+				}
+			}
+			if dep == nil || dep.Kind != KindRotateKey || dep.HostIDs[0] != j.HostIDs[0] {
+				t.Fatalf("verification %s depends on %v, want its host's rotate_key run", j.ID, j.DependsOn)
+			}
+		} else if j.DependsOn != nil {
+			t.Fatalf("%s %s depends on %v, want nothing", j.Kind, j.ID, *j.DependsOn)
 		}
 		// Every job's payload carries the same pending key; the kind and
 		// host scope differ. The follow-up test of a host target is the

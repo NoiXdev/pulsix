@@ -18,6 +18,7 @@ describe('kindLabel', () => {
   it('labels the known kinds and passes unknown ones through', () => {
     expect(kindLabel('connection_test')).toBe('connection test');
     expect(kindLabel('sync_repo')).toBe('repo sync');
+    expect(kindLabel('revoke_key')).toBe('old key removal');
     expect(kindLabel('mystery')).toBe('mystery');
   });
 });

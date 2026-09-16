@@ -60,7 +60,11 @@ var (
 	// error only when none is left; ad-hoc, bootstrap and rotation enqueues
 	// refuse as soon as one explicitly targeted host is affected (the error
 	// names it).
-	ErrHostKeyChanged = errors.New("host key changed: jobs are blocked for the host until a connection test confirms its pinned key")
+	// ErrRotationInProgress means the credential already has a rotation
+	// group that is not finished (its rotations, verifications or
+	// revocations): a second rotation would race the first.
+	ErrRotationInProgress = errors.New("a rotation of this credential is still in progress")
+	ErrHostKeyChanged     = errors.New("host key changed: jobs are blocked for the host until a connection test confirms its pinned key")
 )
 
 // Kind is what a job does.
@@ -75,12 +79,16 @@ const (
 	KindBootstrap      Kind = "bootstrap"
 	KindRotateKey      Kind = "rotate_key"
 	KindSyncRepo       Kind = "sync_repo"
+	// KindRevokeKey removes a rotated credential's previous public key from
+	// one target, after the rotation group verified the new key everywhere
+	// (final review I1). The finalize step enqueues it; nothing else does.
+	KindRevokeKey Kind = "revoke_key"
 )
 
 // Valid reports whether k is a known kind.
 func (k Kind) Valid() bool {
 	switch k {
-	case KindRun, KindAdhoc, KindConnectionTest, KindBootstrap, KindRotateKey, KindSyncRepo:
+	case KindRun, KindAdhoc, KindConnectionTest, KindBootstrap, KindRotateKey, KindSyncRepo, KindRevokeKey:
 		return true
 	}
 	return false
@@ -158,13 +166,18 @@ type Job struct {
 	Status  Status
 	// Attempts counts how often the job was claimed (the claim increments
 	// it); the reaper stops requeuing a stale claim at the maximum.
-	Attempts   int
-	WorkerID   *uuid.UUID
-	ClaimedAt  *time.Time
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-	Stats      map[string]any
-	Error      string
+	Attempts int
+	// DependsOn names a job that must have succeeded before this one can
+	// be claimed; when it ends otherwise, this job is cancelled.
+	DependsOn *uuid.UUID
+	// RotationCredentialID marks a job of a credential's rotation group.
+	RotationCredentialID *uuid.UUID
+	WorkerID             *uuid.UUID
+	ClaimedAt            *time.Time
+	StartedAt            *time.Time
+	FinishedAt           *time.Time
+	Stats                map[string]any
+	Error                string
 	// RunGroupID groups the per-zone jobs of one trigger, so the run view
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID
@@ -576,8 +589,8 @@ func (s *Service) excludeKeyChanged(ctx context.Context, orgID uuid.UUID, target
 // the job in the queue — manual for operator actions, system for the
 // background scheduler.
 func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind, hostIDs []uuid.UUID, payload json.RawMessage, trigger string, actor *uuid.UUID) (Job, error) {
-	if !kind.IsHostKind() {
-		return Job{}, fmt.Errorf("%w: kind must be one of adhoc, connection_test, bootstrap, rotate_key, sync_repo (run goes through EnqueueRun)", ErrInvalidInput)
+	if !kind.IsHostKind() || kind == KindRevokeKey {
+		return Job{}, fmt.Errorf("%w: kind must be one of adhoc, connection_test, bootstrap, rotate_key, sync_repo (run goes through EnqueueRun; revoke_key only through a rotation's finalize)", ErrInvalidInput)
 	}
 	if len(hostIDs) == 0 {
 		return Job{}, fmt.Errorf("%w: at least one host is required", ErrInvalidInput)
