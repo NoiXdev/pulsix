@@ -305,6 +305,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
+			warnEmbeddedWorker(slog.Default())
 			stopEmbedded = startEmbeddedWorker(appDB, caInst, net.JoinHostPort("127.0.0.1", port), cfg.CAListenHost(), slog.Default())
 		}
 	}

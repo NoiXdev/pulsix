@@ -28,10 +28,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,5 +300,18 @@ func TestEmbeddedWorkerClaimsAndCompletesConnectionTest(t *testing.T) {
 	}
 	if status != "succeeded" {
 		t.Fatalf("connection test job = %q (error %q) — the embedded worker did not claim and complete it", status, jobErr)
+	}
+}
+
+// TestWarnEmbeddedWorker (fix round 1): enabling the embedded worker logs
+// a warning naming why it is only for trusted single-tenant setups.
+func TestWarnEmbeddedWorker(t *testing.T) {
+	var buf strings.Builder
+	warnEmbeddedWorker(slog.New(slog.NewTextHandler(&buf, nil)))
+	out := buf.String()
+	for _, want := range []string{"level=WARN", "PULSIX_EMBEDDED_WORKER", "master key", "trusted single-tenant"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("warning %q misses %q", out, want)
+		}
 	}
 }

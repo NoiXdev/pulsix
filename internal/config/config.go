@@ -36,11 +36,12 @@ type Config struct {
 	// (":8444") and therefore names no host of its own. See CAListenHost.
 	GRPCServerName string
 	// EmbeddedWorker runs an in-process worker inside the manager
-	// (PULSIX_EMBEDDED_WORKER, a bool, default false) — the compose
-	// single-node story's "zero extra services" default-zone worker (spec
-	// §2/§16). It requires GRPCListen to be set: the embedded worker is
-	// just another gRPC client, dialing the manager's own endpoint over
-	// loopback.
+	// (PULSIX_EMBEDDED_WORKER, a bool, default false). Opt-in only, for
+	// trusted single-tenant setups: its playbooks run next to the
+	// manager's master key and database credentials (spec §2/§16 — the
+	// default deployment runs a separate worker container instead). It
+	// requires GRPCListen to be set: the embedded worker is just another
+	// gRPC client, dialing the manager's own endpoint over loopback.
 	EmbeddedWorker bool
 	// RetestInterval is the connection re-test scheduler's pass period
 	// (PULSIX_RETEST_INTERVAL, a Go duration; the default 1h). The daily

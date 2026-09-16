@@ -1,26 +1,37 @@
-// The embedded worker (PULSIX_EMBEDDED_WORKER=1): the same worker package
-// cmd/worker drives, started in-process and authenticated over loopback
-// mTLS — the compose single-node story's "zero extra services" default-
-// zone worker (spec §2/§16). It enrolls itself through the exact
+// The embedded worker (PULSIX_EMBEDDED_WORKER=1, off by default): the same
+// worker package cmd/worker drives, started in-process and authenticated
+// over loopback mTLS. It enrolls itself through the exact
 // `pulsix-manager worker add` path (resolveZone, ca.CA.Issue,
 // workers.Service.Register — all defined in workeradd.go, reused
 // unchanged), so an embedded worker is indistinguishable from one an
 // operator enrolled by hand: same workers table row, same certificate
 // serial the gRPC interceptor checks on every call.
 //
+// Opt-in and only for trusted single-tenant setups (spec §2/§16): the
+// playbooks an embedded worker runs execute inside the manager process's
+// container, as the manager's user, next to its secrets — a `hosts:
+// localhost` task can read the manager's environment (the master key and
+// the schema-owner database URL). The default deployment therefore runs a
+// separate worker container that never holds those secrets; Build logs a
+// warning whenever this is turned on. The shipped manager image carries no
+// Ansible runtime, so in that image the embedded worker can run connection
+// tests only (pure Go); every other job kind fails.
+//
 // It targets the "default" zone every organization gets
 // (hosts.DefaultZoneSlug) — the zone `worker add --zone default` would
-// resolve to on a single-organization instance, which is the deployment
-// shape this feature exists for. A fresh instance has no organization at
-// Build time (the setup wizard runs after the manager starts serving
-// HTTP), so resolution retries on a timer instead of failing Build; an
-// instance with more than one organization is ambiguous by the same rule
-// `worker add` enforces (each organization has its own "default" zone),
-// so the embedded worker logs once and keeps waiting rather than
-// guessing which one to serve — multi-organization instances are expected
-// to enroll real workers per zone instead (spec's multi-instance/manager
-// story is v0.6; PULSIX_EMBEDDED_WORKER is deliberately the single-node
-// convenience path only).
+// resolve to on a single-organization instance. A fresh instance has no
+// organization at Build time (the setup wizard runs after the manager
+// starts serving HTTP), so resolution retries on a timer instead of
+// failing Build; an instance with more than one organization is ambiguous
+// by the same rule `worker add` enforces (each organization has its own
+// "default" zone), so the embedded worker logs once and keeps waiting
+// rather than guessing which one to serve. It never serves more than that
+// one zone of one organization.
+//
+// Known limits, accepted because it is opt-in: every manager start
+// registers a new worker row named "embedded" (the old rows stay until an
+// operator deletes them), and a failure after zone resolution (issuing,
+// registering, dialing) stops the embedded worker until the next restart.
 package app
 
 import (
@@ -41,6 +52,17 @@ import (
 	"github.com/noixdev/pulsix/internal/worker/sshprobe"
 	"github.com/noixdev/pulsix/internal/workers"
 )
+
+// embeddedWorkerWarning is the startup warning Build logs whenever the
+// embedded worker is enabled.
+const embeddedWorkerWarning = "PULSIX_EMBEDDED_WORKER is enabled: playbooks run inside the manager process " +
+	"next to its master key and database credentials — use it only for trusted single-tenant setups " +
+	"and run a separate worker container everywhere else"
+
+// warnEmbeddedWorker logs embeddedWorkerWarning.
+func warnEmbeddedWorker(log *slog.Logger) {
+	log.Warn(embeddedWorkerWarning)
+}
 
 // embeddedWorkerRetryInterval is how often the embedded worker retries
 // resolving its zone while no organization (or an ambiguous multiple) has
