@@ -223,30 +223,36 @@ func TestStraySealed(t *testing.T) {
 	sealed := schema.Sealed([]byte("ct"))
 	str := schema.Field{Name: "v", Type: schema.TypeString}
 	secret := schema.Field{Name: "v", Type: schema.TypeSecret}
+	leaf := func(path string) schema.StrayValue { return schema.StrayValue{Path: path} }
+	container := func(path string) schema.StrayValue { return schema.StrayValue{Path: path, Container: true} }
 	cases := []struct {
 		name   string
 		fields []schema.Field
 		values map[string]any
-		want   []string
+		want   []schema.StrayValue
 	}{
 		{"sealed under a secret", []schema.Field{secret}, map[string]any{"v": sealed}, nil},
 		{"plain under a secret", []schema.Field{secret}, map[string]any{"v": "plain"}, nil},
 		{"orphaned sealed value", []schema.Field{str}, map[string]any{"gone": sealed}, nil},
 		{"null value", []schema.Field{str}, map[string]any{"v": nil}, nil},
-		{"sealed under a string", []schema.Field{str}, map[string]any{"v": sealed}, []string{"v"}},
-		{"sealed under an int", []schema.Field{{Name: "v", Type: schema.TypeInt}}, map[string]any{"v": sealed}, []string{"v"}},
-		{"sealed under an object", []schema.Field{{Name: "v", Type: schema.TypeObject, Fields: []schema.Field{str}}}, map[string]any{"v": sealed}, []string{"v"}},
-		{"sealed inside a mismatched map", []schema.Field{str}, map[string]any{"v": map[string]any{"a": sealed}}, []string{"v.a"}},
+		{"sealed under a string", []schema.Field{str}, map[string]any{"v": sealed}, []schema.StrayValue{leaf("v")}},
+		{"sealed under an int", []schema.Field{{Name: "v", Type: schema.TypeInt}}, map[string]any{"v": sealed}, []schema.StrayValue{leaf("v")}},
+		// A container-typed field (Object/Repeater) holding a sealed
+		// envelope directly, instead of the structure it declares, is a
+		// container mismatch, not "this one field is no longer secret" —
+		// there is no longer a well-formed field there to describe that way.
+		{"sealed under an object", []schema.Field{{Name: "v", Type: schema.TypeObject, Fields: []schema.Field{str}}}, map[string]any{"v": sealed}, []schema.StrayValue{container("v")}},
+		{"sealed inside a mismatched map", []schema.Field{str}, map[string]any{"v": map[string]any{"a": sealed}}, []schema.StrayValue{container("v.a")}},
 		{"sealed list items", []schema.Field{{Name: "v", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeString}}},
-			map[string]any{"v": []any{"a", sealed, sealed}}, []string{"v[1]", "v[2]"}},
+			map[string]any{"v": []any{"a", sealed, sealed}}, []schema.StrayValue{container("v[1]"), container("v[2]")}},
 		{"nested field turned string", []schema.Field{{Name: "v", Type: schema.TypeRepeater, Fields: []schema.Field{
 			{Name: "domain", Type: schema.TypeString}, {Name: "password", Type: schema.TypeString}, {Name: "key", Type: schema.TypeSecret},
 		}}}, map[string]any{"v": []any{
 			map[string]any{"domain": "a.io", "password": sealed, "key": sealed, "old": sealed},
 			sealed,
-		}}, []string{"v[0].password", "v[1]"}},
+		}}, []schema.StrayValue{leaf("v[0].password"), container("v[1]")}},
 		{"object sub-field", []schema.Field{{Name: "o", Type: schema.TypeObject, Fields: []schema.Field{str, {Name: "s", Type: schema.TypeSecret}}}},
-			map[string]any{"o": map[string]any{"v": sealed, "s": sealed}}, []string{"o.v"}},
+			map[string]any{"o": map[string]any{"v": sealed, "s": sealed}}, []schema.StrayValue{leaf("o.v")}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

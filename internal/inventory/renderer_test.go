@@ -203,6 +203,34 @@ func TestSecretFieldTurnedStringNeverLeaksTheEnvelope(t *testing.T) {
 	}
 }
 
+// TestSecretFieldTurnedContainerNamesTheContainerPath is backlog 2.22's
+// message part: when the field above a stray sealed value changed to an
+// object or a repeater — not just to another scalar type — the sealed
+// value sits where a whole structure was expected, not at one field's own
+// slot. The error must name that container path and say so, not claim
+// "the field is no longer a secret field": there is no longer a
+// well-formed field there to call that.
+func TestSecretFieldTurnedContainerNamesTheContainerPath(t *testing.T) {
+	f, r, g := rendererFixture(t)
+	sc := webSchema()
+	sc.Fields[1].Type = schema.TypeObject
+	sc.Fields[1].Fields = []schema.Field{{Name: "x", Type: schema.TypeString}}
+	cur := f.store.groups[g.ID]
+	if _, _, err := f.svc.SetSchema(ctx, f.org, g.ID, cur.Revision, sc); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.Snapshot(ctx, f.org, render.Scope{})
+	if !errors.Is(err, inventory.ErrUnrenderable) {
+		t.Fatalf("snapshot with a sealed group value under an object field: %v", err)
+	}
+	if !strings.Contains(err.Error(), "db_password") || !strings.Contains(err.Error(), "its container is no longer an object with a secret field") {
+		t.Fatalf("error must name the container path and explain it is a container mismatch: %v", err)
+	}
+	if strings.Contains(err.Error(), "the field is no longer a secret field") {
+		t.Fatalf("a container mismatch must not use the leaf-field wording: %v", err)
+	}
+}
+
 // TestStringFieldTurnedSecretIsMaskedInThePreview pins the reverse change: a
 // value stored in plain text before its field became a secret is masked in
 // the preview like any other secret.

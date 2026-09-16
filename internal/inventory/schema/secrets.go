@@ -126,17 +126,37 @@ func replaceSealed(v any, with func() any) any {
 	}
 }
 
-// StraySealed returns, in field order, the paths of sealed values that sit
-// at a declared path whose field is not secret-typed — left behind when a
-// secret field changed type. Values of secret fields are not strays, and
-// undeclared (orphaned) keys are not looked at: rendering drops them.
-func StraySealed(fields []Field, values map[string]any) []string {
-	var out []string
+// StrayValue is one sealed value StraySealed found sitting somewhere it no
+// longer belongs (backlog 2.22). Container is false when Path names one
+// scalar-typed field's own value directly — "the field is no longer a
+// secret field" is an accurate, specific complaint there. Container is
+// true when Path names a spot that should hold a whole object or a
+// repeater item (the field is Object/Repeater-typed, or the stored value
+// simply is not shaped like anything the current schema at that point
+// describes) but instead holds a sealed envelope, or has one somewhere
+// inside it that no declared sub-field explains — "the field is no longer
+// secret" would misdescribe that: there is no longer any well-formed
+// field at Path to have a type at all, so the message needs different
+// wording (renderer.go's straySealedMessage builds it).
+type StrayValue struct {
+	Path      string
+	Container bool
+}
+
+// StraySealed returns, in field order, every sealed value that sits at a
+// declared path whose field is not secret-typed — left behind when a
+// secret field changed type, or when a field that used to be an object or
+// a repeater of secret sub-fields changed shape entirely, leaving a whole
+// stored structure (not one sub-field) as a stray sealed envelope. Values
+// of secret fields are not strays, and undeclared (orphaned) keys are not
+// looked at: rendering drops them.
+func StraySealed(fields []Field, values map[string]any) []StrayValue {
+	var out []StrayValue
 	strayObject(&out, "", fields, values)
 	return out
 }
 
-func strayObject(out *[]string, prefix string, fields []Field, values map[string]any) {
+func strayObject(out *[]StrayValue, prefix string, fields []Field, values map[string]any) {
 	for _, f := range fields {
 		if v, ok := values[f.Name]; ok && v != nil {
 			strayValue(out, join(prefix, f.Name), f, v)
@@ -144,12 +164,12 @@ func strayObject(out *[]string, prefix string, fields []Field, values map[string
 	}
 }
 
-func strayValue(out *[]string, path string, f Field, v any) {
+func strayValue(out *[]StrayValue, path string, f Field, v any) {
 	if f.Type == TypeSecret {
 		return
 	}
 	if _, ok := SealedBytes(v); ok {
-		*out = append(*out, path)
+		*out = append(*out, StrayValue{Path: path, Container: f.Type == TypeObject || f.Type == TypeRepeater})
 		return
 	}
 	switch t := v.(type) {
@@ -174,12 +194,17 @@ func strayValue(out *[]string, path string, f Field, v any) {
 }
 
 // sealedWithin appends the path of every sealed value inside v, which a
-// field of the wrong shape holds.
-func sealedWithin(out *[]string, path string, v any) {
+// field of the wrong shape holds. Every hit here is, by construction, a
+// container-shaped mismatch (StrayValue.Container = true): sealedWithin
+// only ever runs once strayValue has already established that v's own
+// shape does not match what f declares, so nothing found underneath it is
+// "one field that changed type" — it is inside a structure the current
+// schema no longer describes at all.
+func sealedWithin(out *[]StrayValue, path string, v any) {
 	switch t := v.(type) {
 	case map[string]any:
 		if _, ok := SealedBytes(t); ok {
-			*out = append(*out, path)
+			*out = append(*out, StrayValue{Path: path, Container: true})
 			return
 		}
 		keys := make([]string, 0, len(t))

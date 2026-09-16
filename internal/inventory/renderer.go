@@ -203,6 +203,17 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 // holds a sealed value: Ansible must neither receive the envelope nor
 // silently lose the value. Undeclared (orphaned) values stay sealed; the
 // renderer drops them.
+//
+// renderIn calls this for every group and every membership of the whole
+// organization while building render.Input, before render.Render narrows
+// anything down to Scope — a Snapshot for one group or host therefore
+// still fails on a stray sealed value that belongs to a group or host
+// entirely outside that scope (backlog 2.22's decision, recorded in the
+// v0.2b plan: fail closed stays the behavior; only this error message
+// changed). Narrowing secrets() to run only inside the requested scope
+// would need reordering renderIn around render.Render's own scope logic —
+// out of reach here without disturbing 2.16's one-transaction read, and
+// not what the plan asked for.
 func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[string]any, aad []byte, reveal bool) (map[string]any, error) {
 	if !reveal {
 		masked, err := schema.MapSecrets(fields, vars, func(string, any) (any, error) { return render.MaskedSecret, nil })
@@ -212,8 +223,7 @@ func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[strin
 		return schema.ReplaceSealed(masked, func() any { return render.MaskedSecret }), nil
 	}
 	if stray := schema.StraySealed(fields, vars); len(stray) > 0 {
-		return nil, fmt.Errorf("%w: %s: %s still holds a stored secret, but the field is no longer a secret field; enter the value again",
-			ErrUnrenderable, subject, strings.Join(stray, ", "))
+		return nil, fmt.Errorf("%w: %s: %s", ErrUnrenderable, subject, straySealedMessage(stray))
 	}
 	return schema.MapSecrets(fields, vars, func(_ string, v any) (any, error) {
 		ct, ok := schema.SealedBytes(v)
@@ -226,4 +236,33 @@ func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[strin
 		}
 		return string(plain), nil
 	})
+}
+
+// straySealedMessage builds secrets()'s ErrUnrenderable text from
+// StraySealed's findings (backlog 2.22): a leaf stray (one scalar-typed
+// field's own value is a sealed envelope) reads "the field is no longer a
+// secret field", same as before this change; a container stray (the
+// value sits where a whole object or repeater item was expected, or
+// inside a structure no declared field explains) names its own path
+// instead and says so — there is no longer a well-formed field at that
+// path to call "no longer secret". Multiple strays of the same kind share
+// one sentence; both kinds, when they occur together, get one sentence
+// each.
+func straySealedMessage(strays []schema.StrayValue) string {
+	var leaves, containers []string
+	for _, s := range strays {
+		if s.Container {
+			containers = append(containers, s.Path)
+		} else {
+			leaves = append(leaves, s.Path)
+		}
+	}
+	var sentences []string
+	if len(leaves) > 0 {
+		sentences = append(sentences, strings.Join(leaves, ", ")+" still holds a stored secret, but the field is no longer a secret field; enter the value again")
+	}
+	if len(containers) > 0 {
+		sentences = append(sentences, strings.Join(containers, ", ")+" holds a stored secret, but its container is no longer an object with a secret field; enter the value again")
+	}
+	return strings.Join(sentences, "; ")
 }
