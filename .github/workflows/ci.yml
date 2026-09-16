@@ -104,6 +104,69 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  e2e-ansible:
+    runs-on: ubuntu-latest
+    # The milestone gate (backlog 2.12a): internal/e2e's Ansible scenario —
+    # manager + worker fully wired in-process against a testcontainer
+    # database, a gliderlabs/ssh host behind a jump bastion, a fixture git
+    # server — runs on every PR. The default pass uses the deterministic
+    # fake ansible-runner fixture; the second pass runs the REAL
+    # ansible-runner (PULSIX_E2E_REAL_ANSIBLE=1) against the same
+    # fixtures, which is why ansible-runner 2.4.3 + ansible-core 2.21.4
+    # (the exact versions the worker image pins) are installed first.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with: { go-version: "1.27" }
+      # ansible-runner 2.4.3 and ansible-core 2.21.4 are the versions the
+      # worker image ships (the pinned runner invocation's environment);
+      # installing them here keeps the harness's real-ansible pass honest.
+      - run: pip install ansible-runner==2.4.3 ansible-core==2.21.4
+      # Fast, deterministic pass (fake runner): the gate itself.
+      - run: go test -race -count=1 ./internal/e2e/...
+      # The real end-to-end with actual ansible: the same scenario driven
+      # by the real ansible-runner binary; the harness skips this pass on
+      # machines without ansible-runner (e.g. local dev), never fails it.
+      - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 ./internal/e2e/...
+
+  # The compose + Playwright half of the Ansible E2E (web/e2e/ansible.spec.ts,
+  # project `ansible` in playwright.config.ts) CANNOT run yet: the compose
+  # test stack has no pulsix worker service until Task 17 lands the worker
+  # image (and with it the ssh-host / bastion / git-server fixtures and
+  # their enrollment plumbing). It activates on merges to main and the
+  # nightly schedule only, per the plan's merge-gate policy. To activate:
+  #   1. Task 17 adds the worker + ssh-host + bastion + git-server services
+  #      to deploy/compose (with the enrollment env from its own task).
+  #   2. Uncomment this job; web/e2e/ansible.spec.ts's
+  #      workerServiceAvailable() guard stops skipping on its own, and the
+  #      spec runs the same assertions the Go harness does, through the UI.
+  # e2e-ansible-ui:
+  #   if: github.event_name != 'pull_request'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 25
+  #   defaults:
+  #     run:
+  #       working-directory: web
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+  #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+  #       with: { go-version: "1.27" }
+  #     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+  #       with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
+  #     - run: npm ci
+  #     - run: npx playwright install --with-deps chromium
+  #     - run: npm run e2e
+  #     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+  #       if: always()
+  #       with:
+  #         name: playwright-ansible-report
+  #         path: |
+  #           web/playwright-report
+  #           web/test-results
+  #         retention-days: 14
+  #         if-no-files-found: ignore
+
   docker:
     # Builds the real release artifact — deploy/docker/Dockerfile.manager
     # — and runs it through scripts/smoke.sh on every push, so a broken
