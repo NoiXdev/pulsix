@@ -68,9 +68,15 @@ All connections are outbound from the more exposed side: agent → worker, worke
 No inbound port on hosts, no inbound port on workers. The manager exposes HTTPS (browser,
 API, status pages) and one gRPC port for workers.
 
-The manager image also contains the worker binary. In the single-node Compose setup an
-embedded worker for the `default` zone starts inside the manager container, so a fresh
-install works without a separate worker.
+Playbooks never run in a process or container that holds the master key or database
+credentials. The single-node Compose setup therefore runs a separate `worker` container
+for the first organization's `default` zone, enrolled automatically by a one-shot
+`worker-enroll` service (the manager image's `worker add --bundle-dir --wait`), which
+writes the certificate bundle into a volume the worker mounts read-only; the worker
+container itself has neither database access nor the master key. An embedded in-process
+worker (`PULSIX_EMBEDDED_WORKER`) exists as an opt-in for trusted single-tenant setups
+only; it is off by default, and the minimal manager image carries no Ansible runtime, so
+it runs connection tests only there. (Revised in the v0.2b review.)
 
 ## 3. Tenancy and access
 
@@ -500,8 +506,11 @@ Layered like Checkmk rulesets and Zabbix templates.
 - Images: `noixdev/pulsix-manager`, `noixdev/pulsix-worker`, plus agent binaries
   attached to GitHub releases. Multi-arch (amd64, arm64). Also pushed to
   `harbor.cloud.noidee.dev/noixdev/…` for internal deploys via Portainer.
-- `docker-compose.yml` for single node: `db` (timescale/timescaledb-ha), `manager`
-  (with embedded default worker), optional `worker` services per zone. Configuration by
+- `docker-compose.yml` for single node: `db` (timescale/timescaledb-ha), `manager`,
+  `worker-enroll` (one-shot enrollment into a bundle volume) and `worker` (the default
+  zone's worker, no database or master-key access); further workers per zone are
+  enrolled with `pulsix-manager worker add`. The manager's embedded worker is opt-in
+  (`PULSIX_EMBEDDED_WORKER`, trusted single-tenant setups only). Configuration by
   environment variables (`PULSIX_DATABASE_URL`, `PULSIX_MASTER_KEY`, `PULSIX_PUBLIC_URL`,
   `PULSIX_STATUS_DOMAIN`, SMTP settings).
 - Migrations run on manager start (goose), guarded by an advisory lock; additive only.
