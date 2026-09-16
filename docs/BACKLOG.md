@@ -90,9 +90,11 @@ the rest are follow-ups. Recorded 2026-09-11.
 
 Three plans cover this milestone. **v0.2a Inventory**
 (`docs/superpowers/plans/2026-09-11-v0.2a-inventory.md`) covers 2.1–2.7a and the
-key-generation half of 2.7b (visible public key + snippets). **v0.2b Execution** covers
-the rest of 2.7b (now 2.7c: bootstrap, connection test, host-key pinning), 2.8–2.12a.
-**v0.2c Automation** covers 2.13–2.14.
+key-generation half of 2.7b (visible public key + snippets) — shipped. **v0.2b
+Execution** (`docs/superpowers/plans/2026-09-14-v0.2b-execution.md`) covers the rest
+of 2.7b (now 2.7c: bootstrap, connection test, host-key pinning), 2.8–2.12a and 2.14 —
+shipped. **v0.2c Automation** covers 2.13, 2.13a–2.13c (schedules, schedule
+notifications, webhook triggers, the calendar view) — planned next.
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
@@ -101,22 +103,22 @@ the rest of 2.7b (now 2.7c: bootstrap, connection test, host-key pinning), 2.8�
 | 2.3 | Scope flag per field: `group` (set once) or `host` (asked on assignment) | done | |
 | 2.4 | Host-to-group assignment form generated from schema, validation | done | |
 | 2.5 | Host override of group values (optional per field) | done | |
-| 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | in progress | masked dynamic-inventory preview done (v0.2a); the worker's revealed snapshot and its delivery arrive with v0.2b |
-| 2.7 | Credentials & secrets page: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and key rotation via playbook | in progress | store, usage, expiry done (v0.2a); rotation via playbook in v0.2b |
+| 2.6 | Inventory export to Ansible (dynamic inventory JSON + group_vars/host_vars) | done | masked dynamic-inventory preview done (v0.2a); the worker's revealed snapshot (secrets included, host-key-mismatch hosts excluded) rides the job claim response (v0.2b) |
+| 2.7 | Credentials & secrets page: SSH keys/passwords, Git deploy keys/tokens, channel secrets in one encrypted store with usage, expiry warnings and key rotation via playbook | done | store, usage, expiry done (v0.2a); rotation via a per-host/bastion job group + follow-up connection test done (v0.2b) |
 | 2.7a | SSH jump hosts (bastions): org-level objects, chainable, inherited zone → group → host, rendered as ProxyJump | done | |
 | 2.7b | SSH onboarding: Pulsix-generated or imported keys with visible public key + snippets (authorized_keys, cloud-init, Terraform) | done | mockup: enrollment step 3 |
-| 2.7c | Bootstrap playbook, connection test from the worker, host-key TOFU + pinning, sudo/Python checks, daily re-test | planned | v0.2b |
-| 2.8 | Several Git repos per org (deploy key / token, branch, subpath), pull before run, `requirements.yml` install, push webhook for auto-sync, sync errors surfaced | planned | main path for playbooks |
-| 2.9 | Ad-hoc playbook editor in GUI | planned | small playbooks, stored in DB |
-| 2.10 | Job templates: playbook, inventory scope, limit, extra vars, credentials | planned | |
-| 2.11 | Worker: registers to manager, pulls jobs from Postgres queue, runs ansible-runner | planned | |
-| 2.12 | Run view: live log stream, per-host result, retry failed hosts | planned | |
-| 2.12a | E2E: playbook from Git fixture against SSH container via bastion, schema → inventory golden file | planned | milestone gate |
-| 2.13 | Schedules for job templates: cron or simple mode, timezone, guards (overlap, maintenance, catch-up), pause | planned | |
-| 2.13a | Schedule notifications: rules per schedule (failure / change / success / skipped → channels), weekly digest; every run in the activity feed | planned | |
-| 2.13b | Incoming webhook trigger per job template: URL + HMAC or token, IP allowlist, payload → extra vars mapping, rate limit | planned | |
-| 2.13c | Calendar view of scheduled runs and maintenance windows | planned | |
-| 2.14 | Ad-hoc command on hosts (`ansible -m shell`) | idea | |
+| 2.7c | Bootstrap playbook, connection test from the worker, host-key TOFU + pinning, sudo/Python checks, daily re-test | done | connection test is Go (`golang.org/x/crypto/ssh`), not ansible; TOFU pin + re-pin blocks jobs on mismatch; daily re-test is a staggered scheduler goroutine, also re-run after rotation; bootstrap materializes an embedded playbook with a one-time, never-stored login |
+| 2.8 | Several Git repos per org (deploy key / token, branch, subpath), pull before run, `requirements.yml` install, push webhook for auto-sync, sync errors surfaced | done | sync runs as its own job kind (`sync_repo`) on the worker before every run; push-webhook auto-sync deferred (no webhook trigger mechanism exists yet — see 2.13b) |
+| 2.9 | Ad-hoc playbook editor in GUI | done | validated at save time (parses as YAML, first element a mapping with `hosts`); full syntax check happens on the worker before a run |
+| 2.10 | Job templates: playbook, inventory scope, limit, extra vars, credentials | done | extra vars validated against an optional schema; zone selection derived from targeted hosts, not stored; no schedule field yet (2.13) |
+| 2.11 | Worker: registers to manager, pulls jobs from Postgres queue, runs ansible-runner | done | enrollment is a manager CLI command (`pulsix-manager worker add`) issuing a client certificate from the instance CA, not a UI token flow; `SELECT … FOR UPDATE SKIP LOCKED` claim; an embedded worker (same package, in-process, `PULSIX_EMBEDDED_WORKER=1`) covers the single-node "zero extra services" story |
+| 2.12 | Run view: live log stream, per-host result, retry failed hosts | done | SSE stream with poll fallback on gaps/errors; cancel also shipped (not separately tracked) |
+| 2.12a | E2E: playbook from Git fixture against SSH container via bastion, schema → inventory golden file | done | milestone gate: `internal/e2e` (Go harness, fake and real-ansible-runner modes) is green in CI (`e2e-ansible`); the Playwright UI half (`e2e-ansible-ui`) stays commented — the compose test stack has no ssh-host/bastion/git-server fixtures or worker-enrollment automation yet, see `.github/workflows/ci.yml`'s own comment for the exact remaining list |
+| 2.13 | Schedules for job templates: cron or simple mode, timezone, guards (overlap, maintenance, catch-up), pause | planned | v0.2c |
+| 2.13a | Schedule notifications: rules per schedule (failure / change / success / skipped → channels), weekly digest; every run in the activity feed | planned | v0.2c |
+| 2.13b | Incoming webhook trigger per job template: URL + HMAC or token, IP allowlist, payload → extra vars mapping, rate limit | planned | v0.2c |
+| 2.13c | Calendar view of scheduled runs and maintenance windows | planned | v0.2c |
+| 2.14 | Ad-hoc command on hosts (`ansible -m shell`) | done | `shell` module only in v0.2b; enqueued as its own job kind, runs and streams like any other job |
 
 ## v0.2a follow-ups for v0.2b
 
