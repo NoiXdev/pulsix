@@ -1,8 +1,8 @@
 # Running Pulsix with Docker Compose
 
-A single-node deployment: the manager (with an embedded worker for its
-default zone), a TimescaleDB database, an optional additional worker, and
-an optional Traefik reverse proxy for TLS.
+A single-node deployment: the manager, a TimescaleDB database, one zone
+worker in its own container (enrolled automatically), and an optional
+Traefik reverse proxy for TLS.
 
 ## Quick start
 
@@ -28,46 +28,129 @@ named volume `pulsix-db`, so it survives `docker compose down` (but not
 On first start, visit `PULSIX_PUBLIC_URL` in a browser: a fresh instance
 with no administrator yet redirects to the setup wizard.
 
-## The embedded worker
+## The worker
 
-By default (`PULSIX_EMBEDDED_WORKER=1`) the manager container also runs a
-worker in-process for the organization's default zone — this is what
-"zero extra services" means: create your first organization through the
-setup wizard and its default zone already has a worker to run jobs on,
-with nothing else to start. It enrolls itself automatically a few seconds
-after the first organization exists (it retries until one does) and shows
-up in Settings → Workers as "embedded".
+Jobs (playbook runs, ad-hoc commands, connection tests, bootstrap, key
+rotation, repository syncs) run on a **worker**, never in the manager.
+The stack ships one, in two services:
 
-Set `PULSIX_EMBEDDED_WORKER=0` in `.env` to turn it off — for example once
-you have enrolled dedicated per-zone workers and want the manager
-container to only ever serve HTTP.
+- `worker-enroll` — a one-shot service that runs the manager image's
+  `worker add` command. It waits until the zone it enrolls for exists (on
+  a fresh instance: until you have completed the setup wizard), issues the
+  worker's certificate, registers the worker, writes the certificate
+  bundle into the `pulsix-worker-bundle` volume and exits. On every later
+  `docker compose up` it finds the bundle still valid and exits without
+  registering another worker. It is the only service besides the manager
+  that holds the database credentials and the master key, and it runs no
+  playbooks.
+- `worker` — the long-running worker. It mounts the bundle read-only,
+  has **no** database access and **no** master key, and waits for the
+  bundle before it starts claiming jobs.
+
+By default the worker serves the `default` zone of the first
+organization. `PULSIX_WORKER_ZONE`, `PULSIX_WORKER_ORG` and
+`PULSIX_WORKER_NAME` in `.env` change that before the first enrollment.
+
+What v0.2 offers for workers today:
+
+- A worker's registry entry exists from the moment it is enrolled (the
+  `worker add` command registers it); it reports in on every job claim.
+- Zones are created per organization in the web interface; every
+  organization starts with a `default` zone.
+- Listing and revoking workers from the web interface is not available
+  yet (planned). Until then a worker is revoked by an operator removing
+  its registry row from the database; its certificate then stops working
+  immediately.
+
+A worker only ever claims jobs of the one zone of the one organization it
+was enrolled for.
+
+### Re-enrolling
+
+To enroll the bundled worker afresh (for example for another zone),
+remove its bundle and rerun the enrollment:
+
+```bash
+docker compose rm -sf worker worker-enroll
+docker volume rm <project>_pulsix-worker-bundle   # e.g. compose_pulsix-worker-bundle
+docker compose up -d
+```
 
 ## Additional workers
 
-The embedded worker only ever serves one organization's *default* zone.
-To add a worker for another zone, or a second worker for more throughput,
-enroll one and start the `worker` service:
+To add a worker for another zone, or a second worker for more
+throughput, enroll it with the manager image's `worker add` command. The
+image's entrypoint already is the manager binary, so pass only the
+subcommand:
 
 ```bash
-# 1. Enroll it (prints three PEM blocks + a usage note to stdout):
-docker compose run --rm manager /pulsix-manager worker add --zone <slug> --name <name>
-
-# 2. Save the three PEM blocks under ./worker-certs/, one file per block:
-mkdir -p worker-certs
-#   ./worker-certs/cert.pem  — the "# client certificate" block
-#   ./worker-certs/key.pem   — the "# private key" block
-#   ./worker-certs/ca.pem    — the "# CA certificate" block
-
-# 3. Start it:
-docker compose --profile worker up -d worker
+# Prints three PEM blocks and a usage note to stdout:
+docker compose run --rm --no-deps manager worker add --zone <slug> --name <name>
 ```
 
-`--zone` takes a zone slug (`default` is the one every organization gets
-automatically); pass `--org <org-slug>` too if more than one organization
-uses the same zone slug. Run the `worker add` step again, with a
-different `--name`, for each additional worker you want — each enrollment
-issues its own certificate and registers its own row in Settings →
-Workers.
+Pass `--org <org-slug>` too if more than one organization uses the same
+zone slug. Save the three blocks as `cert.pem` (the "# client
+certificate" block), `key.pem` (the "# private key" block) and `ca.pem`
+(the "# CA certificate" block) on the worker's machine, then run the
+worker image with:
+
+| Variable | Value |
+|---|---|
+| `PULSIX_MANAGER_ADDR` | the manager's worker endpoint, `host:8444` |
+| `PULSIX_MANAGER_SERVER_NAME` | the manager's `PULSIX_GRPC_SERVER_NAME` (default `pulsix-manager`) |
+| `PULSIX_WORKER_CERT`, `PULSIX_WORKER_KEY`, `PULSIX_CA_CERT` | the three file paths |
+
+A worker on this same compose network uses `manager:8444` as its address;
+copy the `worker` service in `docker-compose.yml` under a new name with
+its own bind-mounted bundle directory.
+
+### Workers on other machines
+
+The worker endpoint is not published on the host by default. To serve a
+worker elsewhere, publish it in a `docker-compose.override.yml`:
+
+```yaml
+services:
+  manager:
+    ports:
+      - "8444:8444"
+```
+
+and start the remote worker with:
+
+```bash
+docker run -d --name pulsix-worker \
+  -e PULSIX_MANAGER_ADDR=pulsix.example.com:8444 \
+  -e PULSIX_MANAGER_SERVER_NAME=pulsix-manager \
+  -e PULSIX_WORKER_CERT=/etc/pulsix-worker/cert.pem \
+  -e PULSIX_WORKER_KEY=/etc/pulsix-worker/key.pem \
+  -e PULSIX_CA_CERT=/etc/pulsix-worker/ca.pem \
+  -v /path/to/bundle:/etc/pulsix-worker:ro \
+  noixdev/pulsix-worker:latest
+```
+
+`PULSIX_MANAGER_SERVER_NAME` is required whenever the address you dial is
+not the manager's `PULSIX_GRPC_SERVER_NAME` itself: the endpoint's
+certificate carries that name, not your public hostname. The endpoint
+only accepts workers presenting a certificate this instance issued.
+
+## The embedded worker (opt-in, trusted single-tenant setups only)
+
+`PULSIX_EMBEDDED_WORKER=1` runs a worker inside the manager process
+instead of (or in addition to) the `worker` service. **Leave it off
+unless every person who can write playbooks on this instance is trusted
+with the whole instance:** an embedded worker runs playbooks inside the
+manager container, as the manager's user, next to `PULSIX_MASTER_KEY` and
+the database credentials — a playbook task on `localhost` can read them.
+The manager logs a warning at startup whenever it is on. Further limits:
+
+- The manager image has no Ansible runtime, so an embedded worker can run
+  connection tests only; every other job kind fails.
+- It serves only the `default` zone, and only on an instance with a
+  single organization.
+- Every manager start registers a new worker entry named `embedded`, and
+  if enrollment fails after startup it stays stopped until the next
+  restart.
 
 ## TLS with the bundled Traefik (optional)
 
@@ -90,19 +173,19 @@ steps.
 
 ```bash
 # in .env: set PULSIX_VERSION to the release you want (e.g. v0.2.0)
-docker compose pull manager
-docker compose up -d manager
+docker compose pull
+docker compose up -d
 ```
 
 The manager runs its own migrations on every start, so an upgrade is just
-"pull the new image, restart the container" — there is no separate
+"pull the new images, restart the containers" — there is no separate
 migration step to run by hand.
 
 ## Tearing down
 
 ```bash
-docker compose down       # stop everything, keep the database volume
-docker compose down -v    # stop everything AND discard the database volume
+docker compose down       # stop everything, keep the database and worker volumes
+docker compose down -v    # stop everything AND discard all volumes (database included)
 ```
 
 ## Files

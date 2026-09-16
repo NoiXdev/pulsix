@@ -193,8 +193,8 @@ jobs:
   #         if-no-files-found: ignore
 
   docker:
-    # Builds the real release artifact — deploy/docker/Dockerfile.manager
-    # — and runs it through scripts/smoke.sh on every push, so a broken
+    # Builds the real release artifacts — deploy/docker/Dockerfile.manager
+    # and deploy/worker/Dockerfile — and runs them through scripts/smoke.sh on every push, so a broken
     # image fails here before a release tag ever reaches release.yml,
     # which builds and pushes from the exact same Dockerfile. Only the
     # amd64 image is built here (the runner's own architecture, loadable
@@ -222,7 +222,16 @@ jobs:
           docker build -f deploy/docker/Dockerfile.manager \
             -t "noixdev/pulsix-manager:$IMAGE_TAG" \
             --build-arg VERSION="$IMAGE_TAG" .
-      - name: Run the release smoke test against it
+      # The compose stack's default worker container runs this image, so
+      # the smoke test needs it under the same tag.
+      - name: Build the worker image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f deploy/worker/Dockerfile \
+            -t "noixdev/pulsix-worker:$IMAGE_TAG" \
+            --build-arg VERSION="$IMAGE_TAG" .
+      - name: Run the release smoke test against them
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |

@@ -1,10 +1,10 @@
-# Cuts a Pulsix release: one `vX.Y.Z` tag on `main` builds and pushes one
-# multi-arch manager image, tagged with that version and `latest`, to both
-# registries. This is the project's single-version-for-everything rule
-# (see the v0.1 core plan) applied to the manager for this milestone —
-# later milestones extend this same workflow to the worker image and
-# agent binaries under the same tag, rather than introducing per-component
-# tags.
+# Cuts a Pulsix release: one `vX.Y.Z` tag on `main` builds and pushes the
+# multi-arch manager and worker images, each tagged with that version and
+# `latest`, to both registries. This is the project's
+# single-version-for-everything rule (see the v0.1 core plan): the compose
+# stack runs both images under one PULSIX_VERSION, so they must always be
+# released together; later milestones add the agent binaries under the
+# same tag rather than introducing per-component tags.
 name: release
 on:
   push:
@@ -82,3 +82,18 @@ jobs:
             noixdev/pulsix-manager:latest
             harbor.cloud.noidee.dev/noixdev/pulsix-manager:${{ steps.version.outputs.version }}
             harbor.cloud.noidee.dev/noixdev/pulsix-manager:latest
+
+      - name: Build and push the worker image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/worker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            noixdev/pulsix-worker:${{ steps.version.outputs.version }}
+            noixdev/pulsix-worker:latest
+            harbor.cloud.noidee.dev/noixdev/pulsix-worker:${{ steps.version.outputs.version }}
+            harbor.cloud.noidee.dev/noixdev/pulsix-worker:latest
