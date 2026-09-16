@@ -34,5 +34,7 @@ CREATE TABLE workers (
 );
 
 -- +goose Down
-ALTER TABLE zones DROP CONSTRAINT zones_org_id_id_key;
+-- The workers table's foreign key depends on the constraint: drop the table
+-- first.
 DROP TABLE workers;
+ALTER TABLE zones DROP CONSTRAINT zones_org_id_id_key;
