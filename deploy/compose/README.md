@@ -1,7 +1,8 @@
 # Running Pulsix with Docker Compose
 
-A single-node deployment: the manager, a TimescaleDB database, and an
-optional Traefik reverse proxy for TLS.
+A single-node deployment: the manager (with an embedded worker for its
+default zone), a TimescaleDB database, an optional additional worker, and
+an optional Traefik reverse proxy for TLS.
 
 ## Quick start
 
@@ -26,6 +27,47 @@ named volume `pulsix-db`, so it survives `docker compose down` (but not
 
 On first start, visit `PULSIX_PUBLIC_URL` in a browser: a fresh instance
 with no administrator yet redirects to the setup wizard.
+
+## The embedded worker
+
+By default (`PULSIX_EMBEDDED_WORKER=1`) the manager container also runs a
+worker in-process for the organization's default zone — this is what
+"zero extra services" means: create your first organization through the
+setup wizard and its default zone already has a worker to run jobs on,
+with nothing else to start. It enrolls itself automatically a few seconds
+after the first organization exists (it retries until one does) and shows
+up in Settings → Workers as "embedded".
+
+Set `PULSIX_EMBEDDED_WORKER=0` in `.env` to turn it off — for example once
+you have enrolled dedicated per-zone workers and want the manager
+container to only ever serve HTTP.
+
+## Additional workers
+
+The embedded worker only ever serves one organization's *default* zone.
+To add a worker for another zone, or a second worker for more throughput,
+enroll one and start the `worker` service:
+
+```bash
+# 1. Enroll it (prints three PEM blocks + a usage note to stdout):
+docker compose run --rm manager /pulsix-manager worker add --zone <slug> --name <name>
+
+# 2. Save the three PEM blocks under ./worker-certs/, one file per block:
+mkdir -p worker-certs
+#   ./worker-certs/cert.pem  — the "# client certificate" block
+#   ./worker-certs/key.pem   — the "# private key" block
+#   ./worker-certs/ca.pem    — the "# CA certificate" block
+
+# 3. Start it:
+docker compose --profile worker up -d worker
+```
+
+`--zone` takes a zone slug (`default` is the one every organization gets
+automatically); pass `--org <org-slug>` too if more than one organization
+uses the same zone slug. Run the `worker add` step again, with a
+different `--name`, for each additional worker you want — each enrollment
+issues its own certificate and registers its own row in Settings →
+Workers.
 
 ## TLS with the bundled Traefik (optional)
 

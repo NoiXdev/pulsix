@@ -58,11 +58,36 @@ services:
       PULSIX_MASTER_KEY: "${PULSIX_MASTER_KEY:?run: openssl rand -hex 32}"
       PULSIX_PUBLIC_URL: "${PULSIX_PUBLIC_URL:?e.g. https://pulsix.example.com}"
       PULSIX_STATUS_DOMAIN: "${PULSIX_STATUS_DOMAIN:-}"
+      # The worker gRPC endpoint (spec §17): bound on every interface
+      # inside the container, so both the embedded worker below (over
+      # loopback) and an external `worker` service on the compose network
+      # (over the service name "manager") can reach it. PULSIX_GRPC_SERVER_NAME
+      # gives the server certificate's SAN a fixed, deployment-independent
+      # name — the manager binds ":8444" (no host of its own to name), so
+      # without this the certificate would carry no usable SAN at all (see
+      # config.Config.CAListenHost's own doc comment). Every client that
+      # dials this endpoint, embedded or external, must present this same
+      # name as its own PULSIX_MANAGER_SERVER_NAME.
+      PULSIX_GRPC_LISTEN: "${PULSIX_GRPC_LISTEN:-:8444}"
+      PULSIX_GRPC_SERVER_NAME: "${PULSIX_GRPC_SERVER_NAME:-pulsix-manager}"
+      # The "zero extra services" default (spec §2/§16): an in-process
+      # worker for the organization's default zone, enrolled automatically
+      # on first start. Set to "0" in .env to disable it (e.g. once you
+      # enroll dedicated zone workers and want the manager to only ever
+      # serve HTTP). See deploy/worker/Dockerfile and this file's `worker`
+      # service for adding more workers beyond the embedded one.
+      PULSIX_EMBEDDED_WORKER: "${PULSIX_EMBEDDED_WORKER:-1}"
     ports:
       # Host-side port is overridable (default 8080) for a machine that
       # already has something bound to 8080 — the container always
       # listens on 8080 internally, matching PULSIX_LISTEN's own default.
       - "${PULSIX_HOST_PORT:-8080}:8080"
+      # The worker gRPC endpoint, published only so an OPERATOR-RUN
+      # `pulsix-manager worker add` on the host (or a worker outside this
+      # compose network entirely) can reach it; a worker service inside
+      # this same compose network (see `worker` below) talks to
+      # "manager:8444" directly and never needs this published port.
+      - "${PULSIX_GRPC_HOST_PORT:-8444}:8444"
     restart: unless-stopped
     # Traefik reads its routing entirely from labels on the container it
     # routes to. These labels are inert unless the `proxy` profile is
@@ -75,6 +100,44 @@ services:
       - traefik.http.routers.pulsix.entrypoints=websecure
       - traefik.http.routers.pulsix.tls.certresolver=letsencrypt
       - traefik.http.services.pulsix.loadbalancer.server.port=8080
+
+  # An additional zone worker, beyond the manager's own embedded one —
+  # optional, only started with:
+  #   docker compose --profile worker up -d
+  # Not part of the default `docker compose up`: the embedded worker
+  # already covers the "zero extra services" single-node case; this is for
+  # scaling a zone's job throughput beyond one worker, or a zone the
+  # embedded worker (which only ever serves the organization's *default*
+  # zone) does not cover.
+  #
+  # It must be enrolled before it can start (see README.md's "Additional
+  # workers" section): run
+  #   docker compose run --rm manager /pulsix-manager worker add --zone <slug> --name <name>
+  # and save the three printed PEM blocks as ./worker-certs/{cert,key,ca}.pem
+  # — the bind mount below expects exactly those three files.
+  worker:
+    image: noixdev/pulsix-worker:${PULSIX_VERSION:-latest}
+    profiles: [worker]
+    depends_on:
+      manager:
+        condition: service_started
+    environment:
+      # "manager" resolves to this container on the compose network — the
+      # gRPC endpoint PULSIX_GRPC_LISTEN binds inside it (":8444", every
+      # interface). PULSIX_MANAGER_SERVER_NAME must be exactly the
+      # manager's own PULSIX_GRPC_SERVER_NAME: the server certificate's
+      # SAN names that value, not "manager", so the handshake only
+      # succeeds when the two agree (see config.Config.CAListenHost's own
+      # doc comment).
+      PULSIX_MANAGER_ADDR: "manager:8444"
+      PULSIX_MANAGER_SERVER_NAME: "${PULSIX_GRPC_SERVER_NAME:-pulsix-manager}"
+      PULSIX_WORKER_CERT: /etc/pulsix-worker/cert.pem
+      PULSIX_WORKER_KEY: /etc/pulsix-worker/key.pem
+      PULSIX_CA_CERT: /etc/pulsix-worker/ca.pem
+    volumes:
+      - ./worker-certs:/etc/pulsix-worker:ro
+      - pulsix-worker-data:/var/lib/pulsix-worker
+    restart: unless-stopped
 
   # Optional TLS-terminating reverse proxy, only started with:
   #   docker compose --profile proxy up -d
@@ -117,3 +180,4 @@ services:
 volumes:
   pulsix-db:
   pulsix-letsencrypt:
+  pulsix-worker-data:
