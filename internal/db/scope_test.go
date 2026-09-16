@@ -353,6 +353,162 @@ func TestScopedQueryFailuresSurface(t *testing.T) {
 	}
 }
 
+// TestWithReadTxScopesAndSharesOneTransaction is backlog 2.16's guarantee
+// at the db package level: reads through Exec, QueryRow and Query, all
+// driven by the ctx WithReadTx hands its callback, see only the bound
+// organization's rows (the same org_isolation policy WithOrg uses, not
+// the bypass), and all three run on the very same backend connection —
+// proof they share one transaction rather than each opening its own.
+func TestWithReadTxScopesAndSharesOneTransaction(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, orgB := seedTwoOrgs(t, d)
+	seedEveryOrgTable(t, d, orgA)
+	seedEveryOrgTable(t, d, orgB)
+	ctx := context.Background()
+
+	var pids []int32
+	err := d.WithReadTx(ctx, orgA, func(ctx context.Context) error {
+		var pid int32
+		if err := d.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+			return err
+		}
+		pids = append(pids, pid)
+
+		rows, err := d.Query(ctx, `SELECT org_id FROM org_memberships`)
+		if err != nil {
+			return err
+		}
+		var seen []uuid.UUID
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			seen = append(seen, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(seen) != 1 || seen[0] != orgA {
+			t.Fatalf("Query inside WithReadTx saw %v, want only %s", seen, orgA)
+		}
+
+		if _, err := d.Exec(ctx, `SELECT 1 FROM hosts`); err != nil {
+			return err
+		}
+		var pid2 int32
+		if err := d.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid2); err != nil {
+			return err
+		}
+		pids = append(pids, pid2)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pids) != 2 || pids[0] != pids[1] {
+		t.Fatalf("backend pids across Exec/Query/QueryRow inside WithReadTx = %v, want the same connection throughout", pids)
+	}
+}
+
+// TestWithReadTxIsolatesFromConcurrentWrites is WithReadTx's actual point
+// (backlog 2.16): a REPEATABLE READ transaction's snapshot is fixed by its
+// first statement (WithReadTx's own set_config), so a write that commits,
+// on a fully separate connection, after that but before the callback's own
+// read runs is still invisible to it.
+func TestWithReadTxIsolatesFromConcurrentWrites(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, _ := seedTwoOrgs(t, d)
+	zoneID := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(context.Background(), `INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'before', 'before')`, zoneID, orgA); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	var sawBefore, sawAfter string
+	err := d.WithReadTx(ctx, orgA, func(ctx context.Context) error {
+		// set_config, WithReadTx's first statement, already fixed this
+		// transaction's snapshot; commit a change from a separate,
+		// already-committed transaction now, before this callback's own
+		// read of the row runs.
+		if _, err := d.Pool().Exec(context.Background(), `UPDATE zones SET name = 'after' WHERE id = $1`, zoneID); err != nil {
+			return err
+		}
+		return d.QueryRow(ctx, `SELECT name FROM zones WHERE id = $1`, zoneID).Scan(&sawBefore)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawBefore != "before" {
+		t.Fatalf("in-flight WithReadTx read = %q, want the pre-write snapshot value %q", sawBefore, "before")
+	}
+
+	// A fresh, later WithReadTx call must see the write: proves it really
+	// landed and the value above was isolation, not a bug that misses
+	// writes forever.
+	if err := d.WithReadTx(ctx, orgA, func(ctx context.Context) error {
+		return d.QueryRow(ctx, `SELECT name FROM zones WHERE id = $1`, zoneID).Scan(&sawAfter)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sawAfter != "after" {
+		t.Fatalf("later WithReadTx read = %q, want %q", sawAfter, "after")
+	}
+}
+
+// TestWithReadTxRollsBackOnCallbackError propagates fn's error unchanged,
+// the same contract WithOrg documents.
+func TestWithReadTxRollsBackOnCallbackError(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, _ := seedTwoOrgs(t, d)
+	sentinel := errors.New("callback failed")
+	err := d.WithReadTx(context.Background(), orgA, func(context.Context) error { return sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("WithReadTx error = %v, want %v", err, sentinel)
+	}
+}
+
+// TestWithReadTxBeginReturnsTheSharedTransaction covers Begin's readTx
+// branch (internal/db/scope.go): a store that calls d.Begin(ctx) while ctx
+// is bound by WithReadTx gets back the very same transaction, not a new
+// one — committing it through that handle ends WithReadTx's transaction
+// for every other store still reading through the same ctx, which is
+// exactly what the doc comment on that branch warns about and this proves.
+func TestWithReadTxBeginReturnsTheSharedTransaction(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, _ := seedTwoOrgs(t, d)
+	ctx := context.Background()
+	var execErr error
+
+	// WithReadTx itself ends up returning an error here too: its own
+	// final tx.Commit(ctx) runs against the same transaction the callback
+	// already committed and closed, exactly the hazard the doc comment on
+	// Begin's readTx branch describes — this is the proof, not an
+	// incidental test failure to work around.
+	err := d.WithReadTx(ctx, orgA, func(ctx context.Context) error {
+		tx, err := d.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		// The shared transaction is now closed; a further statement
+		// through the same bound ctx must fail, not silently open a new
+		// transaction of its own.
+		_, execErr = d.Exec(ctx, `SELECT 1`)
+		return nil
+	})
+	if execErr == nil {
+		t.Fatal("Exec succeeded after Begin's returned transaction was committed out from under it")
+	}
+	if err == nil {
+		t.Fatal("WithReadTx succeeded even though its transaction was already closed by the time its own Commit ran")
+	}
+}
+
 func TestScopedStatementsFailWhenTheDatabaseIsGone(t *testing.T) {
 	url := testdb.URL(t)
 	ctx := context.Background()
