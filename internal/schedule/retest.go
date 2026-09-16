@@ -256,14 +256,20 @@ func (l *AdvisoryLocker) TryLock(ctx context.Context) (bool, error) {
 }
 
 // Unlock releases the advisory lock and its dedicated session. A locker
-// that holds nothing is a no-op.
+// that holds nothing is a no-op. The unlock runs on a context detached from
+// ctx's cancellation (the scheduler hands its tick context, which shutdown
+// cancels): a cancelled unlock would return the pooled session to the pool
+// still holding the lock, locking every other holder out until that
+// session happens to close.
 func (l *AdvisoryLocker) Unlock(ctx context.Context) {
 	if l.conn == nil {
 		return
 	}
 	conn := l.conn
 	l.conn = nil
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, l.key); err != nil {
+	unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if _, err := conn.Exec(unlockCtx, `SELECT pg_advisory_unlock($1)`, l.key); err != nil {
 		// The session itself is about to go back to the pool; a failed
 		// unlock there leaves the lock held until the session closes —
 		// logged so an operator sees the gap.
