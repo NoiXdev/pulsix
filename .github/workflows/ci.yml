@@ -131,16 +131,41 @@ jobs:
       - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 ./internal/e2e/...
 
   # The compose + Playwright half of the Ansible E2E (web/e2e/ansible.spec.ts,
-  # project `ansible` in playwright.config.ts) CANNOT run yet: the compose
-  # test stack has no pulsix worker service until Task 17 lands the worker
-  # image (and with it the ssh-host / bastion / git-server fixtures and
-  # their enrollment plumbing). It activates on merges to main and the
-  # nightly schedule only, per the plan's merge-gate policy. To activate:
-  #   1. Task 17 adds the worker + ssh-host + bastion + git-server services
-  #      to deploy/compose (with the enrollment env from its own task).
-  #   2. Uncomment this job; web/e2e/ansible.spec.ts's
-  #      workerServiceAvailable() guard stops skipping on its own, and the
-  #      spec runs the same assertions the Go harness does, through the UI.
+  # project `ansible` in playwright.config.ts) STILL CANNOT run: Task 17
+  # shipped the worker image (deploy/worker/Dockerfile, builds clean,
+  # confirmed against a real compose stack — see task-17-report.md) and
+  # wired PULSIX_GRPC_LISTEN/PULSIX_EMBEDDED_WORKER/PULSIX_GRPC_SERVER_NAME
+  # plus an optional `worker` service into the PRODUCTION stack
+  # (deploy/compose/docker-compose.yml). That is not the stack this job
+  # would run against, though: web/e2e/global-setup.ts runs the manager as
+  # a **host binary** (localhost:MANAGER_PORT), not a compose service —
+  # docker-compose.test.yml only ever ran `db` and `mailpit` as containers
+  # (see that file's own header comment) — so a `worker` *container* in
+  # docker-compose.test.yml cannot dial "manager:8444" the way the
+  # production stack's worker does; it would need host-gateway networking
+  # (host.docker.internal / --add-host on Linux) instead. Genuinely still
+  # missing, none of it attempted here:
+  #   1. docker-compose.test.yml: add `worker`, `ssh-host`, `bastion` and
+  #      `git-server` services. ssh-host/bastion/git-server have no Task-17
+  #      deliverable to build on at all — internal/e2e's own fixtures
+  #      (internal/e2e/harness_test.go) are in-process Go servers
+  #      (gliderlabs/ssh, a bare x/crypto SSH server, a custom git-over-ssh
+  #      handler), not standalone images; turning them into ones would be
+  #      new work, not a reuse of anything this task built.
+  #   2. web/e2e/global-setup.ts: set PULSIX_GRPC_LISTEN (and
+  #      PULSIX_EMBEDDED_WORKER=0 — the UI spec drives one named worker
+  #      deliberately, not the embedded one) on the manager's env, run
+  #      `pulsix-manager worker add` against the same test database after
+  #      the manager is up, and write the three PEM blocks somewhere the
+  #      `worker` container can mount them.
+  #   3. Decide how the fixture host's authorized_keys learns the freshly
+  #      *generated* credential's public key each run — ansible.spec.ts
+  #      calls addGeneratedCredential, not a fixed key baked into an image;
+  #      Pulsix's own bootstrap flow (a one-time password login installing
+  #      a new key) is one candidate, but the spec does not drive it today,
+  #      so this needs a design decision, not just wiring.
+  #   4. Uncomment this job once 1–3 land; web/e2e/ansible.spec.ts's
+  #      workerServiceAvailable() guard stops skipping on its own.
   # e2e-ansible-ui:
   #   if: github.event_name != 'pull_request'
   #   runs-on: ubuntu-latest

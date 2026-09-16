@@ -64,7 +64,15 @@ if [ "${#generated_pkgs[@]}" -gt 0 ]; then
 	generated_list=$(printf '%s\n' "${generated_pkgs[@]}")
 fi
 
-go test -race -cover ./... 2>&1 | awk -v module="$module" -v generated="$generated_list" '
+# -timeout 900s (Task 17): go test's per-package default is 600s, and
+# internal/api -race alone exceeds it on some machines (its ~190 handler
+# tests each build a full apitest.New app against the shared testcontainer
+# database) — a package hitting the default timeout panics the whole test
+# binary instead of failing cleanly, which would abort this gate and every
+# `go test -race ./...` invocation (Makefile's `test` target does the
+# same). 900s is a generous margin over the slowest observed run, not a
+# tuned minimum.
+go test -race -cover -timeout 900s ./... 2>&1 | awk -v module="$module" -v generated="$generated_list" '
 	BEGIN {
 		FS = "\t"
 		default_floor = 80
