@@ -7,8 +7,17 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"time"
 )
+
+// defaultCAListenHost is the DNS SAN the gRPC server certificate falls
+// back to when neither PULSIX_GRPC_SERVER_NAME nor GRPCListen's own host
+// part name one — a bind-all listener like ":8444" has no host at all.
+// It must match internal/app's caCommonName (the CA's CommonName): both
+// name "the manager", and keeping them identical means a loopback client
+// that pins the CommonName-shaped default needs no separate constant.
+const defaultCAListenHost = "pulsix-manager"
 
 // Config is the validated manager configuration.
 type Config struct {
@@ -21,6 +30,18 @@ type Config struct {
 	// (PULSIX_GRPC_LISTEN, e.g. ":8444"). Empty — the default — means the
 	// gRPC endpoint is disabled.
 	GRPCListen string
+	// GRPCServerName overrides the gRPC server certificate's DNS SAN
+	// (PULSIX_GRPC_SERVER_NAME), independent of what GRPCListen's own host
+	// part says — useful precisely when GRPCListen binds every interface
+	// (":8444") and therefore names no host of its own. See CAListenHost.
+	GRPCServerName string
+	// EmbeddedWorker runs an in-process worker inside the manager
+	// (PULSIX_EMBEDDED_WORKER, a bool, default false) — the compose
+	// single-node story's "zero extra services" default-zone worker (spec
+	// §2/§16). It requires GRPCListen to be set: the embedded worker is
+	// just another gRPC client, dialing the manager's own endpoint over
+	// loopback.
+	EmbeddedWorker bool
 	// RetestInterval is the connection re-test scheduler's pass period
 	// (PULSIX_RETEST_INTERVAL, a Go duration; the default 1h). The daily
 	// re-test's 24 h window is a plan constant, not configuration.
@@ -54,6 +75,17 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	cfg.StatusDomain = getenv("PULSIX_STATUS_DOMAIN")
 	cfg.GRPCListen = getenv("PULSIX_GRPC_LISTEN") // empty = the gRPC endpoint stays disabled
+	cfg.GRPCServerName = getenv("PULSIX_GRPC_SERVER_NAME")
+	if raw := getenv("PULSIX_EMBEDDED_WORKER"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("PULSIX_EMBEDDED_WORKER %q is not a boolean: %v", raw, err)
+		}
+		cfg.EmbeddedWorker = b
+	}
+	if cfg.EmbeddedWorker && cfg.GRPCListen == "" {
+		return cfg, errors.New("PULSIX_EMBEDDED_WORKER requires PULSIX_GRPC_LISTEN to be set")
+	}
 	cfg.RetestInterval = DefaultRetestInterval
 	if raw := getenv("PULSIX_RETEST_INTERVAL"); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -104,4 +136,21 @@ func (c Config) GRPCHost() string {
 		return ""
 	}
 	return host
+}
+
+// CAListenHost is the name Build actually issues the gRPC server
+// certificate's DNS SAN with: GRPCServerName when the operator set one,
+// otherwise GRPCHost's derived host, otherwise defaultCAListenHost — so a
+// bind-all listener (the common case, ":8444") still produces a
+// certificate a client can verify against with an explicit ServerName
+// (internal/worker's PULSIX_MANAGER_SERVER_NAME), rather than a SAN-less
+// certificate no ServerName could ever match.
+func (c Config) CAListenHost() string {
+	if c.GRPCServerName != "" {
+		return c.GRPCServerName
+	}
+	if h := c.GRPCHost(); h != "" {
+		return h
+	}
+	return defaultCAListenHost
 }

@@ -93,3 +93,106 @@ func TestGRPCListenAndHost(t *testing.T) {
 		t.Errorf("GRPCHost = %q, want manager.example.test", got)
 	}
 }
+
+// TestCAListenHostFallback (Task 17): CAListenHost prefers
+// PULSIX_GRPC_SERVER_NAME, then GRPCHost's derived host, then the
+// package's own default — a bind-all listener like ":8444" must still
+// produce a usable SAN name, not an empty one.
+func TestCAListenHostFallback(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	withKeys := func(extra map[string]string) map[string]string {
+		m := make(map[string]string, len(base)+len(extra))
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+
+	cases := []struct {
+		name  string
+		extra map[string]string
+		want  string
+	}{
+		{"bind-all listener falls back to the package default", map[string]string{"PULSIX_GRPC_LISTEN": ":8444"}, "pulsix-manager"},
+		{"explicit host wins over the default", map[string]string{"PULSIX_GRPC_LISTEN": "manager.example.test:8444"}, "manager.example.test"},
+		{"PULSIX_GRPC_SERVER_NAME overrides even an explicit host", map[string]string{
+			"PULSIX_GRPC_LISTEN": "manager.example.test:8444", "PULSIX_GRPC_SERVER_NAME": "pulsix.internal",
+		}, "pulsix.internal"},
+		{"PULSIX_GRPC_SERVER_NAME alone, no listener host", map[string]string{
+			"PULSIX_GRPC_LISTEN": ":8444", "PULSIX_GRPC_SERVER_NAME": "pulsix.internal",
+		}, "pulsix.internal"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := config.Load(env(withKeys(tc.extra)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.CAListenHost(); got != tc.want {
+				t.Errorf("CAListenHost() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmbeddedWorkerRequiresGRPCListen (Task 17): PULSIX_EMBEDDED_WORKER
+// is only meaningful once the gRPC endpoint the embedded worker dials
+// actually exists — enabling it without PULSIX_GRPC_LISTEN is a
+// configuration error, not a silent no-op.
+func TestEmbeddedWorkerRequiresGRPCListen(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL":    "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":      strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":      "https://pulsix.example.test",
+		"PULSIX_EMBEDDED_WORKER": "1",
+	}
+	if _, err := config.Load(env(base)); err == nil {
+		t.Fatal("PULSIX_EMBEDDED_WORKER without PULSIX_GRPC_LISTEN must fail")
+	}
+
+	withListen := map[string]string{}
+	for k, v := range base {
+		withListen[k] = v
+	}
+	withListen["PULSIX_GRPC_LISTEN"] = ":8444"
+	cfg, err := config.Load(env(withListen))
+	if err != nil {
+		t.Fatalf("PULSIX_EMBEDDED_WORKER with PULSIX_GRPC_LISTEN set: %v", err)
+	}
+	if !cfg.EmbeddedWorker {
+		t.Error("EmbeddedWorker = false, want true")
+	}
+}
+
+// TestEmbeddedWorkerParsesBool: an unparseable value is rejected, and the
+// default (unset) is false.
+func TestEmbeddedWorkerParsesBool(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cfg, err := config.Load(env(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EmbeddedWorker {
+		t.Error("EmbeddedWorker default = true, want false")
+	}
+
+	bad := map[string]string{}
+	for k, v := range base {
+		bad[k] = v
+	}
+	bad["PULSIX_EMBEDDED_WORKER"] = "not-a-bool"
+	if _, err := config.Load(env(bad)); err == nil {
+		t.Fatal("PULSIX_EMBEDDED_WORKER=not-a-bool must fail")
+	}
+}
