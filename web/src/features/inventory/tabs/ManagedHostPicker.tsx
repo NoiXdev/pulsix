@@ -21,15 +21,20 @@ export function ManagedHostPicker({
   const [q, setQ] = useState('');
   const hosts = useHosts(org, { managed: true, q });
   const assignable = (hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? []).filter((h) => !existing.includes(h.id));
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = hosts;
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = hosts;
 
   // A loaded page may hold members only; fetch on until a candidate shows
   // up or the pages run out, so an empty list always means "none left".
+  // A failed page fetch must stop this, not retry it forever (backlog
+  // 2.20): isFetchNextPageError stays true — and hasNextPage stays true
+  // too, since it is still computed from the last *successful* page —
+  // until fetchNextPage is called again, which the effect itself must
+  // never do on its own once a fetch has failed.
   useEffect(() => {
-    if (hosts.data && assignable.length === 0 && hasNextPage && !isFetchingNextPage) void fetchNextPage();
-  }, [hosts.data, assignable.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
+    if (hosts.data && assignable.length === 0 && hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
+  }, [hosts.data, assignable.length, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
-  const exhausted = !!hosts.data && !hasNextPage && assignable.length === 0;
+  const exhausted = !!hosts.data && !hasNextPage && assignable.length === 0 && !isFetchNextPageError;
 
   return (
     <div className="flex flex-col gap-1">
@@ -53,7 +58,20 @@ export function ManagedHostPicker({
           </option>
         ))}
       </select>
-      {hasNextPage && assignable.length > 0 && (
+      {!hosts.data && hosts.isError && (
+        <span role="alert" className="text-[11px] text-destructive">
+          Could not load managed hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
+        </span>
+      )}
+      {isFetchNextPageError && (
+        <div className="flex items-center justify-between gap-2 text-[11px]">
+          <span role="alert" className="text-destructive">
+            Could not load more managed hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
+          </span>
+          <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />
+        </div>
+      )}
+      {!isFetchNextPageError && hasNextPage && assignable.length > 0 && (
         <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
           <span>More managed hosts match. Search to narrow the list, or load more.</span>
           <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />
