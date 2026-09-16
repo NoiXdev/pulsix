@@ -1,0 +1,200 @@
+import { describe, expect, it } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { ToastProvider } from '../../ui/toast.tsx';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { TemplatesPage } from './TemplatesPage.tsx';
+
+const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
+const playbookRow = { id: 'pb1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' };
+const sshKey = { id: 'c1', name: 'host-login', kind: 'ssh_key', username: 'ansible', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
+const groupRow = { id: 'g1', name: 'webserver', description: '', parent_id: null, members: 0, group_fields: 0, host_fields: 0, complete: true, revision: 1 };
+
+const template = (over: Record<string, unknown> = {}) => ({
+  id: 't1', name: 'deploy-site', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] },
+  limit: '', extra_vars: {}, created_at: '', updated_at: '', ...over,
+});
+
+const withSchema = {
+  extra_vars_schema: {
+    fields: [
+      { name: 'region', type: 'string', required: true },
+      { name: 'token', type: 'secret', required: true },
+    ],
+  },
+  extra_vars: { region: 'eu', token: { $secret: 'set' } },
+};
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const rootRoute = createRootRoute();
+  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
+  const listRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
+  const jobRoute = createRoute({ getParentRoute: () => orgRoute, path: '/jobs/$id', component: () => <div>RUN VIEW</div> });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, jobRoute])]),
+    history: createMemoryHistory({ initialEntries: ['/o/acme/templates'] }),
+  });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe('TemplatesPage', () => {
+  it('lists templates with playbook, scope chip and credential', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': {
+        templates: [template({ credential_id: 'c1', scope: { group_id: 'g1', host_ids: [] } })],
+      },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [groupRow] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+    });
+    renderPage();
+    expect(await screen.findByText('deploy-site')).toBeInTheDocument();
+    expect(screen.getByText('Install nginx')).toBeInTheDocument();
+    expect(screen.getByText('webserver')).toBeInTheDocument();
+    expect(await screen.findByText('host-login')).toBeInTheDocument();
+  });
+
+  it('creates a template with scope and posts the scope halves', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    const templates: Record<string, unknown>[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': () => ({ templates }),
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [groupRow] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h1', name: 'web-01', zone_id: 'z1', managed: true, monitored: false, last_seen_at: '', facts: {} }], next_cursor: '' },
+      'POST /api/v1/orgs/acme/job-templates': (req: MockRequest) => {
+        posted = req.body;
+        const created = template({ name: 'deploy-site', scope: { group_id: 'g1', host_ids: ['h1'] }, credential_id: 'c1' });
+        templates.push(created);
+        return { template: created };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add template' }));
+    await user.type(screen.getByLabelText('Name'), 'deploy-site');
+    await user.selectOptions(screen.getByLabelText('Playbook'), 'pb1');
+    await user.selectOptions(screen.getByLabelText('Group'), 'g1');
+    await user.click(screen.getByLabelText('Include web-01'));
+    await user.selectOptions(screen.getByLabelText('Default SSH credential'), 'c1');
+    await user.click(screen.getByRole('button', { name: 'Create template' }));
+    expect(await screen.findByText('deploy-site')).toBeInTheDocument();
+    expect(posted).toEqual({
+      name: 'deploy-site',
+      playbook_id: 'pb1',
+      scope: { group_id: 'g1', host_ids: ['h1'] },
+      extra_vars: {},
+      credential_id: 'c1',
+    });
+  });
+
+  it('runs a template and lands on the run view', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'POST /api/v1/orgs/acme/job-templates/t1/run': { jobs: [{ id: 'job-9', zone_id: 'z1', kind: 'run', status: 'queued', run_group_id: 'rg1', trigger: 'manual', created_at: '' }] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Run deploy-site' }));
+    expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+  });
+
+  it('shows an unchanged secret display-only and omits it from the PUT', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withSchema, credential_id: 'c1' }) },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+        put = req.body;
+        return { template: template({ ...withSchema, credential_id: 'c1' }) };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    const tokenField = await within(dialog).findByLabelText(/token/i);
+    expect(tokenField).toHaveAttribute('readonly');
+    expect(within(dialog).getByDisplayValue('•••••••• stored')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    expect(put).toEqual({
+      name: 'deploy-site',
+      playbook_id: 'pb1',
+      scope: undefined,
+      extra_vars: { region: 'eu' },
+      extra_vars_schema: withSchema.extra_vars_schema,
+      credential_id: 'c1',
+    });
+  });
+
+  it('sends a replaced secret as plaintext and shows the 422 problems at their fields', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withSchema, credential_id: 'c1' }) },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+        put = req.body;
+        return { template: template({ ...withSchema, credential_id: 'c1' }) };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.click(within(dialog).getByRole('button', { name: 'Replace' }));
+    const token = await within(dialog).findByLabelText(/token/i);
+    expect(token).toBeEnabled();
+    await user.type(token, 'hunter2');
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    const body = put as { extra_vars?: Record<string, unknown>; scope?: unknown };
+    expect(body.extra_vars).toEqual({ region: 'eu', token: 'hunter2' });
+    expect(body.scope).toBeUndefined();
+  });
+
+  it('surfaces a 422 problem at the extra var field it names', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withSchema, extra_vars: { region: '' } }) },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'PUT /api/v1/orgs/acme/job-templates/t1': () =>
+        new Response(
+          JSON.stringify({ status: 422, title: 'validation failed', errors: [{ location: 'body.extra_vars.region', message: 'is required' }] }),
+          { status: 422, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    expect(await within(dialog).findByText('is required')).toBeInTheDocument();
+  });
+});
