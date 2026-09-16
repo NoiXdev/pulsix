@@ -100,7 +100,11 @@ services:
   # organization), issues and registers the worker's certificate, writes
   # the bundle into the pulsix-worker-bundle volume and exits. On every
   # later `docker compose up` it finds the bundle still valid and exits
-  # without registering another worker.
+  # without registering another worker — checked before the zone is looked
+  # up, so a later second organization does not break it. A first
+  # enrollment on an instance where several organizations have the zone
+  # slug fails with a message asking for PULSIX_WORKER_ORG; the bounded
+  # restart policy keeps that from spinning forever.
   worker-enroll:
     image: noixdev/pulsix-manager:${PULSIX_VERSION:-latest}
     depends_on:
@@ -123,7 +127,7 @@ services:
       PULSIX_GRPC_SERVER_NAME: "${PULSIX_GRPC_SERVER_NAME:-pulsix-manager}"
     volumes:
       - pulsix-worker-bundle:/var/lib/pulsix/worker-bundle
-    restart: on-failure
+    restart: on-failure:3
 
   # The zone worker that runs the playbooks. It holds no database access
   # and no master key — only its own certificate bundle (read-only) and

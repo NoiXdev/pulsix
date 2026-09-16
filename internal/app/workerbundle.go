@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -68,24 +69,51 @@ func waitForZone(ctx context.Context, src zoneSource, zoneSlug, orgSlug string, 
 	}
 }
 
-// enrollBundle reuses the bundle in dir when it is still valid for zone z,
-// and otherwise issues and registers a new worker certificate and writes
-// the bundle. ca.pem is refreshed whenever it differs from the instance
-// CA. Key material never reaches stdout or stderr.
-func enrollBundle(ctx context.Context, z zoneRow, name string, caPEM []byte, dir string,
-	verifier clientVerifier, lookup serialLookup, reg workerRegistrar, issuer certIssuer, stderr io.Writer,
-) error {
-	reusable, err := bundleReusable(ctx, dir, z, verifier, lookup)
+// reuseBundle reports whether dir already holds a valid enrollment and,
+// if so, refreshes ca.pem and keeps it. It runs before any zone slug is
+// resolved (see RunWorkerAdd) and never generates a CA: without a stored
+// CA no bundle can be valid, and generation is left to the normal path,
+// which only runs once a zone exists (i.e. once a manager has started).
+func reuseBundle(ctx context.Context, store ca.Store, cfg config.Config, dir string, lookup serialLookup, stderr io.Writer) (bool, error) {
+	if !bundlePresent(dir) {
+		return false, nil
+	}
+	if _, found, err := store.Load(ctx); err != nil {
+		return false, fmt.Errorf("load CA: %w", err)
+	} else if !found {
+		return false, nil
+	}
+	caInst, err := openCA(ctx, store, cfg)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if reusable {
-		if err := writeFileAtomic(dir, bundleCAFile, caPEM, 0o644); err != nil {
-			return err
+	reusable, err := bundleReusable(ctx, dir, caInst, lookup)
+	if err != nil || !reusable {
+		return false, err
+	}
+	if err := writeFileAtomic(dir, bundleCAFile, caPEMOf(caInst), 0o644); err != nil {
+		return false, err
+	}
+	_, _ = fmt.Fprintf(stderr, "worker add: the certificate bundle in %s is still valid; reusing it\n", dir)
+	return true, nil
+}
+
+// bundlePresent reports whether dir has both the certificate and the key.
+func bundlePresent(dir string) bool {
+	for _, name := range []string{bundleCertFile, bundleKeyFile} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return false
 		}
-		_, _ = fmt.Fprintf(stderr, "worker add: the certificate bundle in %s is still valid; reusing it\n", dir)
-		return nil
 	}
+	return true
+}
+
+// enrollBundle issues and registers a new worker certificate for zone z
+// and writes the bundle into dir. Key material never reaches stdout or
+// stderr.
+func enrollBundle(ctx context.Context, z zoneRow, name string, caPEM []byte, dir string,
+	reg workerRegistrar, issuer certIssuer, stderr io.Writer,
+) error {
 	certPEM, keyPEM, serial, err := issuer.Issue(ctx, &z.OrgID, z.ID, name)
 	if err != nil {
 		return fmt.Errorf("issue worker certificate: %w", err)
@@ -113,11 +141,11 @@ func enrollBundle(ctx context.Context, z zoneRow, name string, caPEM []byte, dir
 }
 
 // bundleReusable reports whether dir holds a complete bundle whose key
-// pair matches, whose certificate verifies against the instance CA for
-// zone z, and whose serial is still registered. A missing or invalid
-// bundle is simply not reusable; only an unexpected registry failure is an
-// error.
-func bundleReusable(ctx context.Context, dir string, z zoneRow, verifier clientVerifier, lookup serialLookup) (bool, error) {
+// pair matches, whose certificate verifies against the instance CA, and
+// whose serial is still registered for the zone the certificate names. A
+// missing or invalid bundle is simply not reusable; only an unexpected
+// registry failure is an error.
+func bundleReusable(ctx context.Context, dir string, verifier clientVerifier, lookup serialLookup) (bool, error) {
 	certPEM, errCert := os.ReadFile(filepath.Join(dir, bundleCertFile))
 	keyPEM, errKey := os.ReadFile(filepath.Join(dir, bundleKeyFile))
 	if errCert != nil || errKey != nil {
@@ -128,7 +156,7 @@ func bundleReusable(ctx context.Context, dir string, z zoneRow, verifier clientV
 		return false, nil
 	}
 	identity, err := verifier.VerifyClient(pair.Certificate)
-	if err != nil || identity.ZoneID != z.ID {
+	if err != nil {
 		return false, nil
 	}
 	w, err := lookup.GetBySerial(ctx, identity.Serial)
@@ -138,7 +166,7 @@ func bundleReusable(ctx context.Context, dir string, z zoneRow, verifier clientV
 	if err != nil {
 		return false, fmt.Errorf("look up bundle worker: %w", err)
 	}
-	return w.ZoneID == z.ID, nil
+	return w.ZoneID == identity.ZoneID, nil
 }
 
 // writeFileAtomic writes content to dir/name through a temp file and a

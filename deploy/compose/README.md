@@ -51,6 +51,15 @@ By default the worker serves the `default` zone of the first
 organization. `PULSIX_WORKER_ZONE`, `PULSIX_WORKER_ORG` and
 `PULSIX_WORKER_NAME` in `.env` change that before the first enrollment.
 
+**`PULSIX_WORKER_ORG` must be set whenever more than one organization
+exists at the time of enrollment** (every organization has its own
+`default` zone, so the slug alone is ambiguous). Without it `worker-enroll`
+exits with `zone slug "default" is used by N organizations; pass --org
+<org-slug>`, retries at most three times and then stays stopped — set
+`PULSIX_WORKER_ORG` in `.env` and run `docker compose up -d` again. A worker
+that is already enrolled is not affected: its valid bundle is reused
+before the zone is looked up.
+
 What v0.2 offers for workers today:
 
 - A worker's registry entry exists from the moment it is enrolled (the

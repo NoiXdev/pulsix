@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,5 +185,44 @@ func TestWaitForZoneStopsOnAmbiguity(t *testing.T) {
 	defer cancel()
 	if _, err := waitForZone(ctx, f, "default", "", time.Millisecond, io.Discard); err == nil || ctx.Err() != nil {
 		t.Fatalf("waitForZone on an ambiguous slug = %v (ctx %v), want an immediate error", err, ctx.Err())
+	}
+}
+
+// TestRunWorkerAddReusesBundleBeforeResolvingTheZone (fix round 2): a
+// valid bundle is reused before the zone slug is resolved, so the compose
+// enrollment service keeps succeeding once a second organization (with its
+// own "default" zone) exists and PULSIX_WORKER_ORG is empty — the slug is
+// ambiguous by then, but the worker is already enrolled.
+func TestRunWorkerAddReusesBundleBeforeResolvingTheZone(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+	_, zoneID := seedDefaultZone(t, cfg.DatabaseURL)
+	dir := t.TempDir()
+	opts := WorkerAddOptions{ZoneSlug: "default", Name: "worker-1", BundleDir: dir, Wait: true, WaitInterval: 50 * time.Millisecond}
+	if err := RunWorkerAdd(ctx, cfg, opts, io.Discard, io.Discard); err != nil {
+		t.Fatalf("first enrollment: %v", err)
+	}
+	certPEM, _, _ := readBundle(t, dir)
+
+	// A second organization makes "default" ambiguous.
+	seedDefaultZone(t, cfg.DatabaseURL)
+	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var stderr bytes.Buffer
+	if err := RunWorkerAdd(runCtx, cfg, opts, io.Discard, &stderr); err != nil {
+		t.Fatalf("rerun with a second organization: %v (stderr %q)", err, stderr.String())
+	}
+	if cert2, _, _ := readBundle(t, dir); !bytes.Equal(cert2, certPEM) {
+		t.Fatal("the valid bundle was replaced")
+	}
+	if n := workerRows(t, cfg.DatabaseURL, zoneID); n != 1 {
+		t.Fatalf("worker rows = %d, want 1", n)
+	}
+
+	// Without a bundle the ambiguity is a clear, immediate failure (even
+	// with --wait) naming the flag that resolves it.
+	err := RunWorkerAdd(runCtx, cfg, WorkerAddOptions{ZoneSlug: "default", Name: "worker-2", BundleDir: t.TempDir(), Wait: true, WaitInterval: 50 * time.Millisecond}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--org") || runCtx.Err() != nil {
+		t.Fatalf("ambiguous enrollment = %v (ctx %v), want an immediate error naming --org", err, runCtx.Err())
 	}
 }

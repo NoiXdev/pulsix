@@ -105,6 +105,18 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, opts WorkerAddOptions,
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
+	svc := workers.NewService(workers.NewSQLStore(d))
+	// A bundle directory that already holds a valid enrollment is reused
+	// before anything is resolved: the zone slug may have become ambiguous
+	// since (a second organization with its own "default" zone), but this
+	// worker is enrolled already and must keep starting.
+	if opts.BundleDir != "" {
+		reused, err := reuseBundle(ctx, ca.NewSQLStore(d), cfg, opts.BundleDir, svc, stderr)
+		if err != nil || reused {
+			return err
+		}
+	}
+
 	src := genZoneSource{q: gen.New(d.Pool())}
 	var z zoneRow
 	if opts.Wait {
@@ -120,24 +132,37 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, opts WorkerAddOptions,
 		return err
 	}
 
-	caInst, err := ca.New(ca.NewSQLStore(d), crypto.NewBox(cfg.MasterKey), ca.Config{
-		CommonName: caCommonName, ListenHost: cfg.CAListenHost(),
-	})
+	caInst, err := openCA(ctx, ca.NewSQLStore(d), cfg)
 	if err != nil {
-		return fmt.Errorf("open CA: %w", err)
+		return err
 	}
-	if err := caInst.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure CA: %w", err)
-	}
-	_, caCert := caInst.Pool()
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
-	svc := workers.NewService(workers.NewSQLStore(d))
+	caPEM := caPEMOf(caInst)
 
 	if opts.BundleDir != "" {
-		return enrollBundle(ctx, z, opts.Name, caPEM, opts.BundleDir, caInst, svc, funcRegister{svc: svc}, caInst, stderr)
+		return enrollBundle(ctx, z, opts.Name, caPEM, opts.BundleDir, funcRegister{svc: svc}, caInst, stderr)
 	}
 	return workerAdd(ctx, fixedZone{z}, funcRegister{svc: svc}, caInst, caPEM,
 		opts.ZoneSlug, opts.OrgSlug, opts.Name, cfg.CAListenHost(), stdout)
+}
+
+// openCA opens (or, on a brand-new instance, generates) the instance CA.
+func openCA(ctx context.Context, store ca.Store, cfg config.Config) (*ca.CA, error) {
+	caInst, err := ca.New(store, crypto.NewBox(cfg.MasterKey), ca.Config{
+		CommonName: caCommonName, ListenHost: cfg.CAListenHost(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open CA: %w", err)
+	}
+	if err := caInst.Ensure(ctx); err != nil {
+		return nil, fmt.Errorf("ensure CA: %w", err)
+	}
+	return caInst, nil
+}
+
+// caPEMOf encodes the instance CA's certificate.
+func caPEMOf(caInst *ca.CA) []byte {
+	_, caCert := caInst.Pool()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
 }
 
 // fixedZone is a zoneSource that answers with the one zone RunWorkerAdd

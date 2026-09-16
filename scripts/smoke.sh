@@ -6,7 +6,8 @@
 # the worker-enroll service enrolls the worker container, which holds
 # neither the master key nor the database credentials, heartbeats and
 # runs a job to its terminal state; the documented `worker add` CLI form
-# prints a bundle; and a full stack restart registers no second worker. This is the last gate before an
+# prints a bundle; a full stack restart registers no second worker; and a
+# second organization does not break the already enrolled worker. This is the last gate before an
 # image is trusted — the CI "docker" job runs this on every push, and the
 # release workflow depends on that job passing before it ever builds and
 # pushes a tagged image.
@@ -218,5 +219,17 @@ if [ "$rows" != "1" ]; then
 fi
 echo "smoke: enrollment service log after the restart: $(compose logs --no-log-prefix worker-enroll 2>&1 | grep 'worker add:' | tail -n 1)"
 echo "smoke: restart reused the enrollment (one worker row)"
+
+echo "smoke: adding a second organization (\"default\" becomes ambiguous) and rerunning the enrollment …"
+psql "INSERT INTO organizations (id, slug, name) VALUES (gen_random_uuid(), 'smoke-two', 'Smoke Two')" >/dev/null
+psql "INSERT INTO zones (id, org_id, slug, name) SELECT gen_random_uuid(), id, 'default', 'Default' FROM organizations WHERE slug = 'smoke-two'" >/dev/null
+compose up -d --force-recreate --no-deps worker-enroll
+wait_for "the enrollment service to reuse the bundle despite two organizations" 120 enroll_exited_ok
+rows="$(psql "SELECT count(*) FROM workers WHERE name = 'worker-1'")"
+if [ "$rows" != "1" ]; then
+	echo "smoke: $rows worker rows named worker-1 after the second organization, want 1" >&2
+	exit 1
+fi
+echo "smoke: enrollment reused the bundle with two organizations (one worker row)"
 
 echo "smoke: ok"
