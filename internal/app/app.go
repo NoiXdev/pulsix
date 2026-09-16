@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -59,6 +60,9 @@ type App struct {
 	stopReaper func()
 	// stopRetest cancels the connection re-test scheduler's goroutine.
 	stopRetest func()
+	// stopEmbedded cancels the embedded worker's goroutine (nil unless
+	// cfg.EmbeddedWorker was set); Close calls it.
+	stopEmbedded func()
 }
 
 // Close releases the application's database pool and stops the reaper. It
@@ -71,6 +75,9 @@ func (a *App) Close() {
 	}
 	if a.stopRetest != nil {
 		a.stopRetest()
+	}
+	if a.stopEmbedded != nil {
+		a.stopEmbedded()
 	}
 	a.db.Close()
 }
@@ -259,9 +266,10 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	go schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run(retestCtx)
 
 	var grpcServer *grpc.Server
+	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
 		caInst, err := ca.New(ca.NewSQLStore(appDB), box, ca.Config{
-			CommonName: caCommonName, ListenHost: cfg.GRPCHost(),
+			CommonName: caCommonName, ListenHost: cfg.CAListenHost(),
 		})
 		if err != nil {
 			reaperStop()
@@ -280,9 +288,31 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
+
+		// The embedded worker (PULSIX_EMBEDDED_WORKER): config.Load
+		// already refuses EmbeddedWorker without GRPCListen, so this only
+		// guards a Config built directly in a test. It dials the gRPC
+		// endpoint's own port over loopback — cmd/manager's serve() binds
+		// exactly cfg.GRPCListen after Build returns, so the port derived
+		// here (":8444" → "8444") is the one that will actually be
+		// listening; the dial is lazy (see worker.Dial's own doc comment),
+		// so it tolerates the brief window before that bind happens.
+		if cfg.EmbeddedWorker {
+			_, port, splitErr := net.SplitHostPort(cfg.GRPCListen)
+			if splitErr != nil {
+				reaperStop()
+				retestStop()
+				appDB.Close()
+				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
+			}
+			stopEmbedded = startEmbeddedWorker(appDB, caInst, net.JoinHostPort("127.0.0.1", port), cfg.CAListenHost(), slog.Default())
+		}
 	}
 
-	return &App{Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, stopReaper: reaperStop, stopRetest: retestStop}, nil
+	return &App{
+		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
+		stopReaper: reaperStop, stopRetest: retestStop, stopEmbedded: stopEmbedded,
+	}, nil
 }
 
 // publicURLIsHTTPS reports whether cfg.PublicURL uses the https scheme, so

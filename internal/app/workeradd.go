@@ -76,7 +76,7 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, zoneSlug, orgSlug, nam
 	}
 
 	caInst, err := ca.New(ca.NewSQLStore(d), crypto.NewBox(cfg.MasterKey), ca.Config{
-		CommonName: caCommonName, ListenHost: cfg.GRPCHost(),
+		CommonName: caCommonName, ListenHost: cfg.CAListenHost(),
 	})
 	if err != nil {
 		return fmt.Errorf("open CA: %w", err)
