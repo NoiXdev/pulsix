@@ -115,6 +115,10 @@ func New(ctx context.Context, deps Deps) (*grpc.Server, error) {
 func (s *Server) newGRPCServer() *grpc.Server {
 	gs := grpc.NewServer(
 		grpc.Creds(s.deps.tls),
+		// Explicit, documented message limits (workerpb/limits.go): claims
+		// carry whole inventory snapshots, far past gRPC's 4 MiB default.
+		grpc.MaxSendMsgSize(workerpb.MaxManagerToWorkerBytes),
+		grpc.MaxRecvMsgSize(workerpb.MaxWorkerToManagerBytes),
 		grpc.ChainUnaryInterceptor(s.authUnaryInterceptor),
 		grpc.ChainStreamInterceptor(s.authStreamInterceptor),
 	)

@@ -15,6 +15,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
 
 // Dial opens the manager's gRPC endpoint with the credentials cfg names:
@@ -47,6 +49,12 @@ func dial(ctx context.Context, cfg Config, extra []grpc.DialOption) (*grpc.Clien
 
 	opts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		// The same explicit limits the manager's server sets
+		// (workerpb/limits.go): a claim embeds the inventory snapshot.
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(workerpb.MaxManagerToWorkerBytes),
+			grpc.MaxCallSendMsgSize(workerpb.MaxWorkerToManagerBytes),
+		),
 	}, extra...)
 	conn, err := grpc.NewClient("passthrough:///"+cfg.ManagerAddr, opts...)
 	if err != nil {

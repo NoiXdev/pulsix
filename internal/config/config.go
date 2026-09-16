@@ -47,6 +47,11 @@ type Config struct {
 	// (PULSIX_RETEST_INTERVAL, a Go duration; the default 1h). The daily
 	// re-test's 24 h window is a plan constant, not configuration.
 	RetestInterval time.Duration
+	// JobMaxAttempts is how often a job may be claimed before the reaper
+	// fails a stale claim instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS,
+	// a positive integer; default DefaultJobMaxAttempts). It stops a job
+	// whose claim a worker can never complete from looping forever.
+	JobMaxAttempts int
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -57,6 +62,9 @@ type Config struct {
 
 // DefaultRetestInterval is the connection re-test scheduler's pass period.
 const DefaultRetestInterval = time.Hour
+
+// DefaultJobMaxAttempts is the default PULSIX_JOB_MAX_ATTEMPTS.
+const DefaultJobMaxAttempts = 3
 
 // Load reads and validates configuration. getenv is injected for tests.
 func Load(getenv func(string) string) (Config, error) {
@@ -94,6 +102,14 @@ func Load(getenv func(string) string) (Config, error) {
 			return cfg, errors.New("PULSIX_RETEST_INTERVAL must be a positive duration (e.g. 30m, 2h)")
 		}
 		cfg.RetestInterval = d
+	}
+	cfg.JobMaxAttempts = DefaultJobMaxAttempts
+	if raw := getenv("PULSIX_JOB_MAX_ATTEMPTS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			return cfg, errors.New("PULSIX_JOB_MAX_ATTEMPTS must be a positive integer")
+		}
+		cfg.JobMaxAttempts = n
 	}
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {

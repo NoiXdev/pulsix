@@ -258,7 +258,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// their stale claims swept even before a worker ever connects. It is
 	// stopped in Close.
 	reaperCtx, reaperStop := context.WithCancel(context.Background())
-	go jobs.NewReaper(jobsQueue, 0).Run(reaperCtx)
+	go jobs.NewReaper(jobsQueue, 0, cfg.JobMaxAttempts).Run(reaperCtx)
 
 	// The daily connection re-test: one pass per interval (default 1h),
 	// staggered per host, under its own advisory lock. Stopped in Close.

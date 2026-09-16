@@ -238,6 +238,7 @@ type Job struct {
 	ActorID    pgtype.UUID        `json:"actor_id"`
 	Payload    []byte             `json:"payload"`
 	CreatedAt  time.Time          `json:"created_at"`
+	Attempts   int32              `json:"attempts"`
 }
 
 type JobEvent struct {
@@ -249,6 +250,7 @@ type JobEvent struct {
 	Task    string    `json:"task"`
 	State   string    `json:"state"`
 	Payload []byte    `json:"payload"`
+	Attempt int32     `json:"attempt"`
 }
 
 type JobTemplate struct {

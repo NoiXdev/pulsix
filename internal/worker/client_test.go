@@ -5,6 +5,7 @@ package worker
 
 import (
 	"encoding/pem"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/noixdev/pulsix/internal/grpcsrv"
@@ -236,4 +238,52 @@ func writeTempFile(t *testing.T, path string, data []byte) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestDialCarriesRealisticMessageSizes: a claim whose inventory snapshot
+// is far above gRPC's 4 MiB default reaches the worker, and a run event
+// above that default reaches the manager — both ends set explicit limits
+// (workerpb's message limits) instead of the library defaults, under which
+// an oversized claim was requeued forever.
+func TestDialCarriesRealisticMessageSizes(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1-big", true)
+	jobID := uuid.Must(uuid.NewV7())
+	bigDoc := `{"blob":"` + strings.Repeat("x", 12<<20) + `"}`
+	h.claims.Enqueue(&grpcsrv.JobClaim{
+		Job:   workerpb.Job{Id: jobID.String(), Kind: "run", OrgId: orgID.String(), ZoneId: zoneID.String(), InventoryDoc: bigDoc},
+		Token: "tok-" + jobID.String(),
+	})
+	conn, err := h.dialWith(t, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := workerpb.NewWorkerServiceClient(conn)
+	resp, err := client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "dev-test", ZoneIds: []string{zoneID.String()}})
+	if err != nil {
+		t.Fatalf("a 12 MiB claim must reach the worker: %v", err)
+	}
+	if len(resp.GetJob().GetInventoryDoc()) != len(bigDoc) {
+		t.Fatalf("inventory doc = %d bytes, want %d", len(resp.GetJob().GetInventoryDoc()), len(bigDoc))
+	}
+
+	ctx := metadata.AppendToOutgoingContext(t.Context(), metadataJobID, jobID.String(), metadataWorkerToken, "tok-"+jobID.String())
+	stream, err := client.RunEvents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigPayload := `{"text":"` + strings.Repeat("y", 6<<20) + `"}`
+	if err := stream.Send(&workerpb.RunEvent{JobId: jobID.String(), Seq: 1, State: "stdout", Payload: bigPayload}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil && err != io.EOF {
+		t.Fatalf("a 6 MiB event must reach the manager: %v", err)
+	}
+	if evs := h.events.Events(); len(evs) != 1 || len(evs[0].Payload) != len(bigPayload) {
+		t.Fatalf("manager recorded %d events", len(evs))
+	}
 }

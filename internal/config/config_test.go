@@ -196,3 +196,42 @@ func TestEmbeddedWorkerParsesBool(t *testing.T) {
 		t.Fatal("PULSIX_EMBEDDED_WORKER=not-a-bool must fail")
 	}
 }
+
+// TestJobMaxAttempts: PULSIX_JOB_MAX_ATTEMPTS bounds how often a job is
+// claimed before the reaper fails a stale claim instead of requeuing it;
+// the default is 3 and only a positive integer is accepted.
+func TestJobMaxAttempts(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cases := []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{raw: "", want: 3},
+		{raw: "5", want: 5},
+		{raw: "1", want: 1},
+		{raw: "0", wantErr: true},
+		{raw: "-2", wantErr: true},
+		{raw: "many", wantErr: true},
+	}
+	for _, c := range cases {
+		m := map[string]string{"PULSIX_JOB_MAX_ATTEMPTS": c.raw}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := config.Load(env(m))
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("PULSIX_JOB_MAX_ATTEMPTS=%q: expected an error", c.raw)
+			}
+			continue
+		}
+		if err != nil || cfg.JobMaxAttempts != c.want {
+			t.Errorf("PULSIX_JOB_MAX_ATTEMPTS=%q: got %d, %v; want %d", c.raw, cfg.JobMaxAttempts, err, c.want)
+		}
+	}
+}

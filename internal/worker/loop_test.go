@@ -937,3 +937,54 @@ func TestLoopEndToEndCancel(t *testing.T) {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 }
+
+// TestLoopTruncatesOversizedEventPayloads: an event whose payload exceeds
+// the per-event limit is still sent — the run's record keeps the event —
+// but its payload is replaced by a bounded JSON document that says it was
+// truncated, how big it was, and carries the payload's head. Events under
+// the limit pass untouched.
+func TestLoopTruncatesOversizedEventPayloads(t *testing.T) {
+	cfg := cfgFor(t.TempDir(), zoneID)
+	client := &fakeWorkerClient{claimQueue: []*workerpb.ClaimJobResponse{jobFor(uuid.Must(uuid.NewV7()), "tok-big")}}
+	huge := `{"text":"` + strings.Repeat("z", 3<<20) + `"}`
+	exec := &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, sink func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		if err := sink(&workerpb.RunEvent{Host: "web-1", Task: "big", State: "ok", Payload: huge}); err != nil {
+			return StatusError, nil, err
+		}
+		if err := sink(&workerpb.RunEvent{Host: "web-1", Task: "small", State: "ok", Payload: `{"x":1}`}); err != nil {
+			return StatusError, nil, err
+		}
+		return StatusSucceeded, map[string]any{}, nil
+	}}
+	l := NewLoop(cfg, client, exec)
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
+	cancel()
+	<-done
+
+	events := client.streamsNow()[0].events()
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want both kept", len(events))
+	}
+	big := events[0]
+	if len(big.GetPayload()) > workerpb.MaxEventPayloadBytes {
+		t.Fatalf("truncated payload is %d bytes, over the %d limit", len(big.GetPayload()), workerpb.MaxEventPayloadBytes)
+	}
+	var doc struct {
+		Truncated     bool   `json:"truncated"`
+		OriginalBytes int    `json:"original_bytes"`
+		Head          string `json:"head"`
+	}
+	if err := json.Unmarshal([]byte(big.GetPayload()), &doc); err != nil {
+		t.Fatalf("truncated payload is not JSON: %v", err)
+	}
+	if !doc.Truncated || doc.OriginalBytes != len(huge) || !strings.HasPrefix(huge, doc.Head) || doc.Head == "" {
+		t.Fatalf("truncated payload = truncated:%v original:%d head:%d bytes", doc.Truncated, doc.OriginalBytes, len(doc.Head))
+	}
+	if big.GetHost() != "web-1" || big.GetTask() != "big" || big.GetState() != "ok" {
+		t.Fatalf("the truncated event lost its fields: %+v", big)
+	}
+	if events[1].GetPayload() != `{"x":1}` {
+		t.Fatalf("a small payload must pass untouched: %q", events[1].GetPayload())
+	}
+}

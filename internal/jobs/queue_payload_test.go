@@ -520,7 +520,7 @@ func TestReaperFallbackAnchorsOnClaimedAt(t *testing.T) {
 	if _, err := store.CancelJob(db.WithOrgScope(context.Background(), org.ID), org.ID, jobID); err != nil {
 		t.Fatal(err)
 	}
-	requeued, failed, err := NewReaper(q, 0).Sweep(context.Background())
+	requeued, failed, err := NewReaper(q, 0, 0).Sweep(context.Background())
 	if err != nil || requeued != 0 || failed != 1 {
 		t.Fatalf("Sweep = %d/%d, %v", requeued, failed, err)
 	}

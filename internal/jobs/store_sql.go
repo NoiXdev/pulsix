@@ -177,6 +177,7 @@ func toJob(r gen.Job) Job {
 	return Job{
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Kind: Kind(r.Kind),
 		TemplateID: db.UUIDPtr(r.TemplateID), HostIDs: r.HostIds, Status: Status(r.Status),
+		Attempts:  int(r.Attempts),
 		WorkerID:  db.UUIDPtr(r.WorkerID),
 		ClaimedAt: db.TimePtr(r.ClaimedAt), StartedAt: db.TimePtr(r.StartedAt), FinishedAt: db.TimePtr(r.FinishedAt),
 		Stats: stats, Error: r.Error, RunGroupID: r.RunGroupID, Trigger: r.Trigger,
@@ -194,7 +195,7 @@ func toJobDetail(r gen.GetJobRow) Job {
 		HostIds: r.HostIds, Status: r.Status, WorkerID: r.WorkerID, ClaimedAt: r.ClaimedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Stats: r.Stats, Error: r.Error,
 		RunGroupID: r.RunGroupID, Trigger: r.Trigger, ActorID: r.ActorID, Payload: r.Payload,
-		CreatedAt: r.CreatedAt,
+		CreatedAt: r.CreatedAt, Attempts: r.Attempts,
 	})
 	j.ActorName, j.WorkerName, j.TemplateName = deref(r.ActorName), deref(r.WorkerName), deref(r.TemplateName)
 	return j

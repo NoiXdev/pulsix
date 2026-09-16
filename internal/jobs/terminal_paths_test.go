@@ -66,7 +66,7 @@ func TestTerminalPathsWipePayloadAndRunSinks(t *testing.T) {
 					t.Fatal(err)
 				}
 				w.q.NoteCancelRequested(j.ID, time.Now().Add(-2*cancelConfirmAfter))
-				if _, failed, err := NewReaper(w.q, 0).Sweep(context.Background()); err != nil || failed != 1 {
+				if _, failed, err := NewReaper(w.q, 0, 0).Sweep(context.Background()); err != nil || failed != 1 {
 					t.Fatalf("Sweep failed=%d, %v", failed, err)
 				}
 				return j.ID, StatusFailed

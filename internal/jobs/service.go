@@ -153,6 +153,9 @@ type Job struct {
 	// per-zone subset of the template's scope the job covers.
 	HostIDs    []uuid.UUID
 	Status     Status
+	// Attempts counts how often the job was claimed (the claim increments
+	// it); the reaper stops requeuing a stale claim at the maximum.
+	Attempts   int
 	WorkerID   *uuid.UUID
 	ClaimedAt  *time.Time
 	StartedAt  *time.Time

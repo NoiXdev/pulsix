@@ -40,7 +40,8 @@ func (q *Queries) CancelJob(ctx context.Context, arg CancelJobParams) (string, e
 }
 
 const claimJob = `-- name: ClaimJob :one
-UPDATE jobs SET status = 'running', worker_id = $1::uuid, claimed_at = now(), started_at = now()
+UPDATE jobs SET status = 'running', worker_id = $1::uuid, claimed_at = now(), started_at = now(),
+    attempts = attempts + 1
 WHERE id = (
   SELECT id FROM jobs
   WHERE status = 'queued' AND org_id = $2::uuid AND zone_id = ANY($3::uuid[])
@@ -48,7 +49,7 @@ WHERE id = (
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts
 `
 
 type ClaimJobParams struct {
@@ -92,6 +93,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.ActorID,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.Attempts,
 	)
 	return i, err
 }
@@ -99,7 +101,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 const createJob = `-- name: CreateJob :one
 INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts
 `
 
 type CreateJobParams struct {
@@ -150,12 +152,13 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.ActorID,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.Attempts,
 	)
 	return i, err
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, u.display_name AS actor_name, w.name AS worker_name,
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
@@ -188,6 +191,7 @@ type GetJobRow struct {
 	ActorID      pgtype.UUID        `json:"actor_id"`
 	Payload      []byte             `json:"payload"`
 	CreatedAt    time.Time          `json:"created_at"`
+	Attempts     int32              `json:"attempts"`
 	ActorName    *string            `json:"actor_name"`
 	WorkerName   *string            `json:"worker_name"`
 	TemplateName *string            `json:"template_name"`
@@ -225,6 +229,7 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.ActorID,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.Attempts,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
@@ -264,8 +269,49 @@ func (q *Queries) ListCancellingJobs(ctx context.Context) ([]ListCancellingJobsR
 	return items, nil
 }
 
+const listExhaustedStaleJobs = `-- name: ListExhaustedStaleJobs :many
+SELECT id, attempts FROM jobs
+WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
+  AND NOT (id = ANY($2::uuid[]))
+  AND attempts >= $3::integer
+`
+
+type ListExhaustedStaleJobsParams struct {
+	StaleBefore time.Time   `json:"stale_before"`
+	Live        []uuid.UUID `json:"live"`
+	MaxAttempts int32       `json:"max_attempts"`
+}
+
+type ListExhaustedStaleJobsRow struct {
+	ID       uuid.UUID `json:"id"`
+	Attempts int32     `json:"attempts"`
+}
+
+// Reaper pass 1b (org-unscoped, raw pool): stale claims that used up their
+// attempts. The reaper fails each through the queue's terminal transition
+// instead of requeuing it again.
+func (q *Queries) ListExhaustedStaleJobs(ctx context.Context, arg ListExhaustedStaleJobsParams) ([]ListExhaustedStaleJobsRow, error) {
+	rows, err := q.db.Query(ctx, listExhaustedStaleJobs, arg.StaleBefore, arg.Live, arg.MaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExhaustedStaleJobsRow
+	for rows.Next() {
+		var i ListExhaustedStaleJobsRow
+		if err := rows.Scan(&i.ID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listJobEvents = `-- name: ListJobEvents :many
-SELECT seq, at, host, task, state, payload
+SELECT seq, at, host, task, state, payload, attempt
 FROM job_events
 WHERE org_id = $1 AND job_id = $2 AND seq > $3
 ORDER BY seq
@@ -284,6 +330,7 @@ type ListJobEventsRow struct {
 	Task    string    `json:"task"`
 	State   string    `json:"state"`
 	Payload []byte    `json:"payload"`
+	Attempt int32     `json:"attempt"`
 }
 
 // The run view's event log. job_events has no row-level security (see
@@ -306,6 +353,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 			&i.Task,
 			&i.State,
 			&i.Payload,
+			&i.Attempt,
 		); err != nil {
 			return nil, err
 		}
@@ -318,7 +366,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts FROM jobs
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -389,6 +437,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.ActorID,
 			&i.Payload,
 			&i.CreatedAt,
+			&i.Attempts,
 		); err != nil {
 			return nil, err
 		}
@@ -404,20 +453,24 @@ const requeueStaleJobs = `-- name: RequeueStaleJobs :many
 UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
   AND NOT (id = ANY($2::uuid[]))
+  AND attempts < $3::integer
 RETURNING id
 `
 
 type RequeueStaleJobsParams struct {
 	StaleBefore time.Time   `json:"stale_before"`
 	Live        []uuid.UUID `json:"live"`
+	MaxAttempts int32       `json:"max_attempts"`
 }
 
 // Reaper pass 1 (org-unscoped, raw pool): claims whose worker went away
-// go back to queued for the next claim round. The live ids — the jobs
-// whose bound stream still shows signs of life — are excluded; an empty
-// array excludes nothing (id = ANY('{}') is false for every row).
+// go back to queued for the next claim round — but only while the job has
+// attempts left (attempts counts claims; see ListExhaustedStaleJobs for the
+// rest). The live ids — the jobs whose bound stream still shows signs of
+// life — are excluded; an empty array excludes nothing (id = ANY('{}') is
+// false for every row).
 func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, requeueStaleJobs, arg.StaleBefore, arg.Live)
+	rows, err := q.db.Query(ctx, requeueStaleJobs, arg.StaleBefore, arg.Live, arg.MaxAttempts)
 	if err != nil {
 		return nil, err
 	}

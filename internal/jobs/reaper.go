@@ -23,6 +23,9 @@ const (
 	claimStaleAfter       = 60 * time.Second
 	cancelConfirmAfter    = 60 * time.Second
 	DefaultReaperInterval = 10 * time.Second
+	// DefaultMaxAttempts is how often a job may be claimed before a stale
+	// claim fails it instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS).
+	DefaultMaxAttempts = 3
 )
 
 // Reaper sweeps the queue on an interval. It is part of the queue, not the
@@ -31,16 +34,21 @@ const (
 // attached" (multi-instance managers are v0.6; a restart unbinds every
 // stream, and the next sweep requeues whatever was mid-run).
 type Reaper struct {
-	q        *SQLQueue
-	interval time.Duration
+	q           *SQLQueue
+	interval    time.Duration
+	maxAttempts int
 }
 
-// NewReaper builds the reaper; interval <= 0 keeps DefaultReaperInterval.
-func NewReaper(q *SQLQueue, interval time.Duration) *Reaper {
+// NewReaper builds the reaper; interval <= 0 keeps DefaultReaperInterval,
+// maxAttempts <= 0 keeps DefaultMaxAttempts.
+func NewReaper(q *SQLQueue, interval time.Duration, maxAttempts int) *Reaper {
 	if interval <= 0 {
 		interval = DefaultReaperInterval
 	}
-	return &Reaper{q: q, interval: interval}
+	if maxAttempts <= 0 {
+		maxAttempts = DefaultMaxAttempts
+	}
+	return &Reaper{q: q, interval: interval, maxAttempts: maxAttempts}
 }
 
 // Run sweeps every interval until ctx is done.
@@ -75,12 +83,18 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 	g := gen.New(tx)
 
 	stale, err := g.RequeueStaleJobs(ctx, gen.RequeueStaleJobsParams{
-		StaleBefore: now.Add(-claimStaleAfter), Live: live,
+		StaleBefore: now.Add(-claimStaleAfter), Live: live, MaxAttempts: int32(r.maxAttempts),
 	})
 	if err != nil {
 		return 0, 0, fmt.Errorf("requeue stale claims: %w", err)
 	}
 	requeued = len(stale)
+	exhausted, err := g.ListExhaustedStaleJobs(ctx, gen.ListExhaustedStaleJobsParams{
+		StaleBefore: now.Add(-claimStaleAfter), Live: live, MaxAttempts: int32(r.maxAttempts),
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("list exhausted stale claims: %w", err)
+	}
 
 	cancelling, err := g.ListCancellingJobs(ctx)
 	if err != nil {
@@ -112,6 +126,22 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 	// sinks run exactly as on a worker's finish. One job's failure does not
 	// stop the others; the first error is reported after the pass.
 	var firstErr error
+	for _, e := range exhausted {
+		applied, err := r.q.terminate(ctx, terminalTransition{
+			jobID: e.ID, status: StatusError,
+			errText: fmt.Sprintf("the job was claimed %d times and its worker never reported a result; giving up (the claim may be too large for the worker, or the run crashes it)", e.Attempts),
+			from:    []Status{StatusClaimed, StatusRunning},
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("fail exhausted job %s: %w", e.ID, err)
+			}
+			continue
+		}
+		if applied {
+			failed++
+		}
+	}
 	for _, id := range expired {
 		applied, err := r.q.terminate(ctx, terminalTransition{
 			jobID: id, status: StatusFailed, errText: "cancel was requested but the worker never confirmed it",

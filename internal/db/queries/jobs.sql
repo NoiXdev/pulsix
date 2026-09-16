@@ -61,7 +61,7 @@ RETURNING status;
 -- 00018_jobs.sql), so the org filter here — after Service.Events has
 -- resolved the job and its organization — is what keeps one tenant from
 -- reading another's events.
-SELECT seq, at, host, task, state, payload
+SELECT seq, at, host, task, state, payload, attempt
 FROM job_events
 WHERE org_id = $1 AND job_id = $2 AND seq > $3
 ORDER BY seq;
@@ -80,7 +80,8 @@ ORDER BY seq;
 -- organization (from its registry row, never from the request): zone ids
 -- are visible through each organization's API, so the zone filter alone
 -- must never be what keeps another organization's jobs out of reach.
-UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now()
+UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now(),
+    attempts = attempts + 1
 WHERE id = (
   SELECT id FROM jobs
   WHERE status = 'queued' AND org_id = sqlc.arg(org_id)::uuid AND zone_id = ANY(sqlc.arg(zone_ids)::uuid[])
@@ -92,13 +93,25 @@ RETURNING *;
 
 -- name: RequeueStaleJobs :many
 -- Reaper pass 1 (org-unscoped, raw pool): claims whose worker went away
--- go back to queued for the next claim round. The live ids — the jobs
--- whose bound stream still shows signs of life — are excluded; an empty
--- array excludes nothing (id = ANY('{}') is false for every row).
+-- go back to queued for the next claim round — but only while the job has
+-- attempts left (attempts counts claims; see ListExhaustedStaleJobs for the
+-- rest). The live ids — the jobs whose bound stream still shows signs of
+-- life — are excluded; an empty array excludes nothing (id = ANY('{}') is
+-- false for every row).
 UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamptz
   AND NOT (id = ANY(@live::uuid[]))
+  AND attempts < @max_attempts::integer
 RETURNING id;
+
+-- name: ListExhaustedStaleJobs :many
+-- Reaper pass 1b (org-unscoped, raw pool): stale claims that used up their
+-- attempts. The reaper fails each through the queue's terminal transition
+-- instead of requeuing it again.
+SELECT id, attempts FROM jobs
+WHERE status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamptz
+  AND NOT (id = ANY(@live::uuid[]))
+  AND attempts >= @max_attempts::integer;
 
 -- name: ListCancellingJobs :many
 -- Reaper pass 2 candidates (org-unscoped, raw pool): every job waiting for
