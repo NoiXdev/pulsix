@@ -91,8 +91,11 @@ func (s *scenario) drive() {
 		"greeting": s.greeting,
 	})
 	runID := s.runTemplate(s.helloTID)
-	streamDone := make(chan []sseFrame, 1)
-	go func() { streamDone <- s.sseStream(runID, 30*time.Second) }()
+	streamDone := make(chan sseResult, 1)
+	go func() {
+		frames, err := s.sseStream(runID, 30*time.Second)
+		streamDone <- sseResult{frames: frames, err: err}
+	}()
 	run := s.awaitJob(runID, "run", 90*time.Second)
 	if run.Job.Status != "succeeded" {
 		s.t.Fatalf("run job = %q (error %q)", run.Job.Status, run.Job.Error)
@@ -114,8 +117,13 @@ func (s *scenario) drive() {
 	s.assertRunEvents(events)
 
 	// The live stream: the frames a subscriber saw while the run executed.
-	frames := <-streamDone
-	s.assertSSE(frames, "succeeded")
+	// The collector goroutine hands back an error with the frames, so a
+	// stuck or broken stream fails the test here instead of hanging.
+	collected := <-streamDone
+	if collected.err != nil {
+		s.t.Fatalf("collect SSE stream for job %s: %v", runID, collected.err)
+	}
+	s.assertSSE(collected.frames, "succeeded")
 
 	// The failure path uses the same stream contract; the retry below
 	// covers the second template's runs.

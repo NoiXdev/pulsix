@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -332,21 +333,35 @@ type sseFrame struct {
 	Data  string
 }
 
+// sseResult is one collected stream: frames or the reason the collection
+// failed. The collector goroutine drive() spawns hands the main goroutine
+// this value, so every failure — including sseStream's timeout — surfaces
+// on the goroutine that owns the test, never as a t.Fatal on the collector
+// (which would terminate only that goroutine and hang the harness).
+type sseResult struct {
+	frames []sseFrame
+	err    error
+}
+
 // sseStream subscribes to the run view's live stream and records frames
 // until the server ends it (the terminal status frame) or the timeout.
-func (s *scenario) sseStream(jobID string, timeout time.Duration) []sseFrame {
-	s.t.Helper()
+//
+// It returns an error instead of calling t.Fatal because drive() runs it
+// on a spawned goroutine: t.Fatal from a non-test goroutine terminates
+// only that goroutine, and the main goroutine would block on the result
+// channel forever — the harness would hang instead of failing.
+func (s *scenario) sseStream(jobID string, timeout time.Duration) ([]sseFrame, error) {
 	req, err := http.NewRequest(http.MethodGet,
 		s.api.base+"/api/v1/"+s.apiPath()+"/jobs/"+jobID+"/stream", nil)
 	if err != nil {
-		s.t.Fatal(err)
+		return nil, fmt.Errorf("build SSE stream request for job %s: %w", jobID, err)
 	}
 	if cookie, ok := s.api.sessionCookie(); ok {
 		req.Header.Set("Cookie", cookie)
 	}
 	resp, err := s.api.http.Do(req)
 	if err != nil {
-		s.t.Fatalf("open SSE stream for job %s: %v", jobID, err)
+		return nil, fmt.Errorf("open SSE stream for job %s: %w", jobID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -367,7 +382,7 @@ func (s *scenario) sseStream(jobID string, timeout time.Duration) []sseFrame {
 				if strings.TrimSpace(cur.Data) != "" {
 					frames = append(frames, cur)
 				}
-				return frames
+				return frames, nil
 			}
 			line := scanner.Text()
 			switch {
@@ -380,7 +395,42 @@ func (s *scenario) sseStream(jobID string, timeout time.Duration) []sseFrame {
 				cur = sseFrame{}
 			}
 		case <-deadline:
-			s.t.Fatalf("SSE stream for job %s did not end within %s; frames so far: %d", jobID, timeout, len(frames))
+			// The deadline is the caller's signal, not a test failure: the
+			// error travels back through the result channel and the main
+			// goroutine fails the test from there.
+			return frames, fmt.Errorf("SSE stream for job %s did not end within %s; frames so far: %d", jobID, timeout, len(frames))
 		}
+	}
+}
+
+// TestSSEStreamTimeoutReturnsErrorNotFatalf pins the fix the review asked
+// for: sseStream runs on drive()'s spawned collector goroutine, so it must
+// RETURN its failure instead of calling t.Fatal (which only terminates the
+// calling goroutine and would leave the main goroutine blocked on the
+// result channel forever). A server that opens an SSE stream and never
+// ends it forces the timeout; the shortened deadline keeps the test cheap.
+func TestSSEStreamTimeoutReturnsErrorNotFatally(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Never write another frame: hold until the client goes away, so
+		// the only way out for sseStream is its own deadline.
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	s := &scenario{t: t, api: newAPIClient(t, srv.URL)}
+	frames, err := s.sseStream("job-1", 250*time.Millisecond)
+	if err == nil {
+		t.Fatal("sseStream returned no error on a stream that never ends")
+	}
+	if !strings.Contains(err.Error(), "did not end within") {
+		t.Fatalf("timeout error = %v, want the did-not-end reason", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("frames = %v, want none", frames)
 	}
 }
