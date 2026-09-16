@@ -367,8 +367,11 @@ func TestAdhocPlaybookTextIsYAMLSafe(t *testing.T) {
 	if got := task["ansible.builtin.shell"]; got != argv {
 		t.Errorf("shell = %#v, want the argv verbatim", got)
 	}
-	if plays[0]["changed_when"] != true {
-		t.Error("changed_when: true is part of the ad-hoc shape")
+	if task["changed_when"] != true {
+		t.Error("changed_when: true is part of the ad-hoc task shape")
+	}
+	if _, ok := plays[0]["changed_when"]; ok {
+		t.Error("changed_when must not sit at play level: it is not a valid play attribute")
 	}
 }
 

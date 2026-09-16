@@ -592,10 +592,23 @@ func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind
 			byZone[h.ZoneID] = append(byZone[h.ZoneID], id)
 		}
 	}
+	created, err := s.insertHostJobs(ctx, orgID, kind, byZone, zoneOrder, payload, trigger, actor)
+	if err != nil {
+		return Job{}, err
+	}
+	return created[0], nil
+}
+
+// insertHostJobs is the per-zone insert core EnqueueHostJob and
+// EnqueueAdhoc share: one job per zone in zoneOrder's order, all sharing a
+// fresh run group, the kind payload (when any) sealed with the box under
+// the job's own AAD before insert. Callers have already validated their
+// targets; zoneOrder is never empty for a validated enqueue.
+func (s *Service) insertHostJobs(ctx context.Context, orgID uuid.UUID, kind Kind, byZone map[uuid.UUID][]uuid.UUID, zoneOrder []uuid.UUID, payload json.RawMessage, trigger string, actor *uuid.UUID) ([]Job, error) {
 	group := s.newID()
 	now := s.now()
-	var first Job
-	for i, zoneID := range zoneOrder {
+	created := make([]Job, 0, len(zoneOrder))
+	for _, zoneID := range zoneOrder {
 		j := Job{
 			ID: s.newID(), OrgID: orgID, ZoneID: zoneID,
 			Kind: kind, HostIDs: byZone[zoneID],
@@ -606,18 +619,16 @@ func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind
 		if len(payload) > 0 {
 			sealed, err := s.sealPayload(j, payload)
 			if err != nil {
-				return Job{}, err
+				return nil, err
 			}
 			stored = sealed
 		}
 		if err := s.store.CreateJob(ctx, j, stored); err != nil {
-			return Job{}, err
+			return nil, err
 		}
-		if i == 0 {
-			first = j
-		}
+		created = append(created, j)
 	}
-	return first, nil
+	return created, nil
 }
 
 // sealPayload seals the kind-specific JSON and returns the stored jsonb

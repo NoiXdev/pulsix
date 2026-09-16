@@ -171,11 +171,14 @@ func adhocPlaybookText(kindPayload string) (string, error) {
 	playbook := []map[string]any{{
 		"hosts":        "all",
 		"gather_facts": false,
-		"changed_when": true,
 		"tasks": []map[string]any{{
 			"name":                  "Ad-hoc command",
 			"ansible.builtin.shell": argv,
 			"args":                  map[string]any{"executable": "/bin/bash"},
+			// Task level, exactly the plan's Task 15 shape — changed_when
+			// is a task attribute, not a play attribute; at play level
+			// ansible-playbook rejects the playbook outright.
+			"changed_when": true,
 		}},
 	}}
 	b, err := yaml.Marshal(playbook)
