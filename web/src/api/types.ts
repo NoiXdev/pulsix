@@ -27,3 +27,16 @@ export type InventoryMember = components['schemas']['InventoryMemberDTO'];
 export type Credential = components['schemas']['CredentialDTO'];
 export type Bastion = components['schemas']['BastionDTO'];
 export type HostSSH = components['schemas']['HostSSHDTO'];
+
+export type Repo = components['schemas']['RepoDTO'];
+export type Playbook = components['schemas']['PlaybookDTO'];
+export type Template = components['schemas']['TemplateDTO'];
+export type Job = components['schemas']['JobDTO'];
+export type JobDetail = components['schemas']['JobDetailDTO'];
+export type JobEvent = components['schemas']['JobEventDTO'];
+export type JobTemplateSummary = components['schemas']['JobTemplateSummaryDTO'];
+export type HostTest = components['schemas']['HostTestDTO'];
+
+export type RepoInput = components['schemas']['RepoCreateInputBody'];
+export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
+export type BootstrapInput = components['schemas']['BootstrapInputBody'];

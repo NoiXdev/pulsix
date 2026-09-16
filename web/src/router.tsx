@@ -16,6 +16,11 @@ import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
+import { ReposPage } from './features/repos/ReposPage.tsx';
+import { PlaybooksPage } from './features/playbooks/PlaybooksPage.tsx';
+import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
+import { RunsPage } from './features/runs/RunsPage.tsx';
+import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -98,6 +103,20 @@ const groupDetailRoute = createRoute({
   component: GroupDetailPage,
 });
 
+const reposRoute = createRoute({ getParentRoute: () => orgRoute, path: '/repos', component: ReposPage });
+const playbooksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks', component: PlaybooksPage });
+const templatesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
+const runsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/runs',
+  validateSearch: (search: Record<string, unknown>) => ({
+    status: typeof search.status === 'string' ? search.status : undefined,
+    kind: typeof search.kind === 'string' ? search.kind : undefined,
+  }),
+  component: RunsPage,
+});
+const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: RunDetailPage });
+
 /**
  * settingsRoute is the layout route for Members, Activity and API tokens —
  * finding "Important 6": the mockup (Members.dc.html, Activity.dc.html)
@@ -142,6 +161,11 @@ const routeTree = rootRoute.addChildren([
     hostDetailRoute,
     groupsRoute,
     groupDetailRoute,
+    reposRoute,
+    playbooksRoute,
+    templatesRoute,
+    runsRoute,
+    runDetailRoute,
     settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, credentialsRoute, jumpHostsRoute, mailRoute]),
   ]),
 ]);

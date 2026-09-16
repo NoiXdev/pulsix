@@ -24,11 +24,11 @@ function useInvalidate(org: string) {
   };
 }
 
-export function useCredentials(org: string) {
+export function useCredentials(org: string, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['credentials', org],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/credentials', { params: { path: { org } } })),
-    enabled: !!org,
+    enabled: !!org && (opts.enabled ?? true),
   });
 }
 
@@ -65,6 +65,19 @@ export function useDeleteCredential(org: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
     mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/orgs/{org}/credentials/{id}', { params: { path: { org, id } } })),
+    onSuccess: invalidate,
+  });
+}
+
+/** useRotateCredential re-keys an ssh_key credential (202, { job_id,
+ * job_count }): job_count 0 means nothing referenced it and the new
+ * fingerprint is already live; otherwise the rotation group runs first and
+ * the fingerprint changes only when its jobs succeed. */
+export function useRotateCredential(org: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.POST('/api/v1/orgs/{org}/credentials/{id}/rotate', { params: { path: { org, id } } })),
+    gcTime: 0,
     onSuccess: invalidate,
   });
 }

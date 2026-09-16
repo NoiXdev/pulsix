@@ -6,6 +6,10 @@ const SEGMENT_LABEL: Record<string, string> = {
   tokens: 'Tokens',
   mail: 'Outgoing mail',
   groups: 'Groups',
+  repos: 'Repositories',
+  playbooks: 'Playbooks',
+  templates: 'Templates',
+  runs: 'Runs',
   credentials: 'Credentials',
   'jump-hosts': 'Jump hosts',
 };
