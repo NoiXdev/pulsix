@@ -1,0 +1,1 @@
+{"_meta":{"hostvars":{"e2e-host.fra":{"ansible_host":"{{HOST}}","ansible_port":0,"ansible_ssh_common_args":"{{BASTION}}","ansible_user":"ansible"}}},"all":{"children":["web"]},"web":{"hosts":["e2e-host.fra"]}}

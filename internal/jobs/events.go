@@ -300,21 +300,50 @@ func (s *Service) EventsBroker() *Broker { return s.broker }
 // the binding token rather than a request context; the registry entry
 // carries the organization the claim belongs to, and that is the org_id
 // the row is stamped with.
+//
+// A binding that is already gone is not an error: the terminal result
+// report and the stream's last events (the run_end bookend, a task's
+// stdout follow-up) are independent server-side paths, so the result can
+// land — and Finish remove the binding — before the stream handler has
+// drained its last events. Those events are part of the run's record (the
+// same intent the cancel path's "events after the directive are still
+// recorded" comment states), so the org is resolved from the job row
+// instead and the event lands like any other. The gRPC transport is what
+// authenticates this path — every append arrives on a stream whose
+// binding token was validated and consumed before the first event.
 func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) error {
-	e, ok := q.streams.get(jobID)
-	if !ok {
-		return ErrUnknownStream
+	orgID, err := q.eventOrg(ctx, jobID)
+	if err != nil {
+		return err
 	}
-	e.touch(q.now())
-	_, err := q.db.Pool().Exec(ctx,
+	_, err = q.db.Pool().Exec(ctx,
 		`INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		jobID, int64(ev.Seq), e.orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload))
+		jobID, int64(ev.Seq), orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload))
 	if err != nil {
 		return fmt.Errorf("append job event: %w", err)
 	}
 	q.broker.Publish(jobID, ev)
 	return nil
+}
+
+// eventOrg resolves the organization an event row is stamped with: the
+// live claim binding's org when the stream is still bound (its touch also
+// feeds the reaper's liveness marks), the job row's own org otherwise.
+func (q *SQLQueue) eventOrg(ctx context.Context, jobID uuid.UUID) (uuid.UUID, error) {
+	if e, ok := q.streams.get(jobID); ok {
+		e.touch(q.now())
+		return e.orgID, nil
+	}
+	var orgID uuid.UUID
+	if err := q.db.Pool().QueryRow(ctx,
+		`SELECT org_id FROM jobs WHERE id = $1`, jobID).Scan(&orgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrUnknownStream
+		}
+		return uuid.Nil, fmt.Errorf("resolve event org: %w", err)
+	}
+	return orgID, nil
 }
 
 // normalizePayload stores the event payload as jsonb: valid JSON passes

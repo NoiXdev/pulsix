@@ -44,5 +44,10 @@ export default defineConfig({
     { name: 'activity', testMatch: /activity\.spec\.ts/, dependencies: ['members'] },
     { name: 'tenancy', testMatch: /tenancy\.spec\.ts/, dependencies: ['activity'] },
     { name: 'inventory', testMatch: /inventory\.spec\.ts/, dependencies: ['tenancy'] },
+    // The Ansible E2E (backlog 2.12a) rides on the pulsix worker service
+    // in the compose test stack — Task 17's image — so its spec self-skips
+    // (with a visible reason, via web/e2e/worker.ts) until that merge;
+    // the project is wired so it activates without config changes then.
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['inventory'] },
   ],
 });

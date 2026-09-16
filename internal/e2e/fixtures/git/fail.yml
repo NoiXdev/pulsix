@@ -1,0 +1,14 @@
+# The milestone gate's failure playbook (backlog 2.12a): fails the run
+# deliberately. The failure is controlled by the `should_fail` extra var so
+# the retry-failed path can flip it through the template update API and the
+# second attempt succeeds; without the var it fails, which is what the
+# first run always sees. `fail` is a controller-side action plugin, so the
+# fixture also runs against an exec-only SSH server.
+- name: Pulsix deliberate failure
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Pulsix deliberate failure
+      ansible.builtin.fail:
+        msg: "pulsix e2e deliberate failure"
+      when: should_fail | default('true') | bool

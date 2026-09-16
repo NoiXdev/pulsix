@@ -86,6 +86,7 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 	if err != nil || len(tail) != 1 || tail[0].Seq != 3 {
 		t.Fatalf("Events(after 2) = %+v, %v", tail, err)
 	}
+	_ = tail
 
 	// Another organization must neither see the job nor its events.
 	if _, err := svc.Events(db.WithOrgScope(ctx, other), other, jobID, 0); !errors.Is(err, jobs.ErrNotFound) {
@@ -95,6 +96,23 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 	// Events for a job with no live claim binding are rejected.
 	if err := queue.AppendEvent(ctx, uuid.Must(uuid.NewV7()), jobs.Event{Seq: 1, At: time.Now()}); !errors.Is(err, jobs.ErrUnknownStream) {
 		t.Fatalf("unknown stream: %v", err)
+	}
+
+	// A binding Finish already removed is not an error: the terminal
+	// result report and the stream's last events are independent server
+	// paths, so the run_end bookend can arrive after the binding is gone —
+	// and it is part of the run's record. The org comes from the job row.
+	if err := jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader).
+		Finish(ctx, jobID, jobs.StatusSucceeded, map[string]any{}, ""); err != nil {
+		t.Fatalf("finish job for the late-event case: %v", err)
+	}
+	late := jobs.Event{Seq: 9, State: "run_end", Payload: []byte(`{"status":"succeeded"}`), At: time.Now()}
+	if err := queue.AppendEvent(ctx, jobID, late); err != nil {
+		t.Fatalf("event after finish: %v", err)
+	}
+	tail, err = svc.Events(db.WithOrgScope(ctx, org), org, jobID, 3)
+	if err != nil || len(tail) != 1 || tail[0].Seq != 9 {
+		t.Fatalf("Events(after finish) = %+v, %v", tail, err)
 	}
 }
 
@@ -164,8 +182,13 @@ func TestCancelFlowAndFinishIdempotency(t *testing.T) {
 		t.Fatalf("error = %q", got.Error)
 	}
 
-	// After the finish the binding is gone: no more events, no more polls.
-	if err := stream.Append(ctx, jobs.Event{Seq: 2, At: time.Now()}); !errors.Is(err, jobs.ErrUnknownStream) {
+	// After the finish the binding is gone: no more stream binds, and a
+	// bound stream's late events still land (the result report and the
+	// stream's last events are independent server paths; the run_end
+	// bookend is part of the run's record — see
+	// TestAppendPersistsMonotonicSeqsAndEventsPaginate). Only a job that
+	// does not exist at all is rejected.
+	if err := stream.Append(ctx, jobs.Event{Seq: 2, At: time.Now()}); err != nil {
 		t.Fatalf("append after finish: %v", err)
 	}
 	if _, err := queue.BindStream(ctx, jobID, claim.Token); !errors.Is(err, jobs.ErrUnknownStream) {

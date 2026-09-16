@@ -1,0 +1,15 @@
+# The milestone gate's greeting playbook (backlog 2.12a): prints the
+# template's `greeting` extra var and drops a marker file on the target.
+# Exec-only tasks (debug is a controller-side action plugin, raw ships no
+# module file), so the fixture also runs against an SSH server that serves
+# exec sessions only.
+- name: Pulsix greeting
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Pulsix greeting
+      ansible.builtin.debug:
+        msg: "{{ greeting }}"
+    - name: Pulsix marker
+      ansible.builtin.raw: echo "{{ greeting }}" > /tmp/pulsix-e2e-hello
+      changed_when: true
