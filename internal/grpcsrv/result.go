@@ -60,12 +60,15 @@ func (s *Server) ReportResult(ctx context.Context, req *workerpb.ReportResultReq
 		}
 		return nil, status.Errorf(codes.Internal, "record job result: %v", err)
 	}
-	// The org is not carried on the wire: ResultRecorder.Finish resolves
-	// the job org-unscoped, and the audit event names the job id instead.
+	// The recorder accepted the result only for a job of the authenticated
+	// worker's own organization (bound at claim), so that organization is
+	// the audit row's: the result shows up in the org's activity feed next
+	// to its job.claim row.
 	if err := s.deps.Audit.Record(ctx, SystemEvent{
 		Operation:  "job.result",
 		ObjectType: "job",
 		ObjectID:   jobID.String(),
+		OrgID:      worker.OrgID.String(),
 		Summary:    "job finished with status " + res.Status,
 	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "audit job result: %v", err)

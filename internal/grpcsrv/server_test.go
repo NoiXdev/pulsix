@@ -46,6 +46,12 @@ func TestReportResultHappyPath(t *testing.T) {
 	if len(events) != 1 || events[0].Operation != "job.result" || events[0].ObjectID != jobID.String() {
 		t.Fatalf("audit events = %+v, want one job.result", events)
 	}
+	// The result row belongs to the organization's activity feed: it
+	// carries the reporting worker's organization (the recorder only
+	// accepts a job of that organization).
+	if events[0].OrgID != orgID.String() {
+		t.Fatalf("job.result audit org = %q, want %s", events[0].OrgID, orgID)
+	}
 }
 
 // TestReportResultBoundToClaimingWorker (fix round 2): a worker may finish
