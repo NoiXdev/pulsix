@@ -110,17 +110,25 @@ function TemplateForm({
   const toast = useToast();
   const create = useCreateTemplate(org);
   const update = useUpdateTemplate(org, existing?.id ?? '');
-  const fields = existing?.schema?.fields ?? [];
 
   const [name, setName] = useState(existing?.name ?? '');
   const [playbookId, setPlaybookId] = useState(existing?.playbookId ?? '');
   const [scope, setScope] = useState<Scope>(existing?.scope ?? { group_id: '', host_ids: [] });
   const [limit, setLimit] = useState(existing?.limit ?? '');
   const [schema, setSchema] = useState<VarSchema | null>(existing?.schema ?? null);
+  // The extra-vars form follows the LIVE schema state: a schema built in
+  // this dialog — a create, or an edit that adds one — must produce its
+  // fields immediately, not only after the template round-trips (the
+  // stored-schema derivation left the form hidden and a strict-validation
+  // 422 nowhere to be shown).
+  const fields = schema?.fields ?? [];
   // With a schema the loaded vars go through the keep-marker conversion
   // (declared secret fields display-only); without one they pass through
   // unchanged — varsForPut strips any set-marker either way.
-  const [vars, setVars] = useState<Vars>(() => (existing ? (fields.length > 0 ? toEditableVars(fields, existing.vars) : existing.vars) : {}));
+  const [vars, setVars] = useState<Vars>(() => {
+    const loaded = existing?.schema?.fields ?? [];
+    return existing ? (loaded.length > 0 ? toEditableVars(loaded, existing.vars) : existing.vars) : {};
+  });
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
   const [varProblems, setVarProblems] = useState<Problem[]>([]);
   const [schemaProblems, setSchemaProblems] = useState<Problem[]>([]);

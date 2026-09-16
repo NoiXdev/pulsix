@@ -176,8 +176,7 @@ describe('TemplatesPage', () => {
     expect(body.scope).toBeUndefined();
   });
 
-  it('surfaces a 422 problem at the extra var field it names', async () => {
-    const user = userEvent.setup();
+  it('surfaces a 422 problem at the extra var field it names', async () => {    const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
@@ -195,6 +194,81 @@ describe('TemplatesPage', () => {
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    expect(await within(dialog).findByText('is required')).toBeInTheDocument();
+  });
+
+  it('builds the extra-vars form from a schema created in the dialog (live state)', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    const templates: Record<string, unknown>[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': () => ({ templates }),
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'POST /api/v1/orgs/acme/job-templates': (req: MockRequest) => {
+        posted = req.body;
+        const created = template({ name: 'deploy-site' });
+        templates.push(created);
+        return { template: created };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add template' }));
+    await user.type(screen.getByLabelText('Name'), 'deploy-site');
+    await user.selectOptions(screen.getByLabelText('Playbook'), 'pb1');
+
+    // Build a schema in the dialog itself: expand it, add a field, rename
+    // it, mark it required.
+    await user.click(screen.getByText('Extra vars schema'));
+    await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
+    const fieldGroup = screen.getByRole('group', { name: 'Field field_1' });
+    const nameInput = within(fieldGroup).getByLabelText('Name');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'region');
+    await user.click(within(fieldGroup).getByLabelText('Required'));
+
+    // The vars form appeared from the LIVE schema — the field is fillable.
+    const dialog = screen.getByRole('dialog', { name: 'New job template' });
+    const region = await within(dialog).findByLabelText('region');
+    await user.type(region, 'eu');
+    await user.click(within(dialog).getByRole('button', { name: 'Create template' }));
+    const body = posted as { extra_vars?: Record<string, unknown>; extra_vars_schema?: { fields: unknown[] } };
+    expect(body.extra_vars).toEqual({ region: 'eu' });
+    expect(body.extra_vars_schema).toEqual({ fields: [{ name: 'region', type: 'string', required: true }] });
+  });
+
+  it('renders a strict-validation 422 at the field when a built schema is left unfilled', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'POST /api/v1/orgs/acme/job-templates': () =>
+        new Response(
+          JSON.stringify({ status: 422, title: 'validation failed', errors: [{ location: 'body.extra_vars.region', message: 'is required' }] }),
+          { status: 422, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add template' }));
+    await user.type(screen.getByLabelText('Name'), 'deploy-site');
+    await user.selectOptions(screen.getByLabelText('Playbook'), 'pb1');
+    await user.click(screen.getByText('Extra vars schema'));
+    await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
+    const fieldGroup = screen.getByRole('group', { name: 'Field field_1' });
+    const nameInput = within(fieldGroup).getByLabelText('Name');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'region');
+    await user.click(within(fieldGroup).getByLabelText('Required'));
+
+    // The required field stays empty: the 422's problem must be VISIBLE at
+    // its field, not swallowed by a vars section that never rendered.
+    const dialog = screen.getByRole('dialog', { name: 'New job template' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create template' }));
     expect(await within(dialog).findByText('is required')).toBeInTheDocument();
   });
 });
