@@ -8,12 +8,12 @@ import { HostSshCard } from './HostSshCard.tsx';
 
 const KEY = { id: 'c1', name: 'inv-deploy', kind: 'ssh_key', username: 'ansible', public_key: 'ssh-ed25519 AAAA pulsix:acme:inv-deploy', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
 
-function renderCard(managed: boolean) {
+function renderCard(managed: boolean, canWrite = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <HostSshCard org="acme" hostId="h1" managed={managed} />
+        <HostSshCard org="acme" hostId="h1" managed={managed} canWrite={canWrite} />
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -65,5 +65,18 @@ describe('HostSshCard', () => {
     await user.click(screen.getByRole('button', { name: 'Save SSH settings' }));
     expect(await screen.findByText('SSH settings saved')).toBeInTheDocument();
     expect(put).toEqual({ port: 22, credential_id: 'c1', bastion_mode: 'explicit', bastion_id: 'b1' });
+  });
+
+  it('is read-only for a viewer: no save button, every field disabled', async () => {
+    mockApi(base);
+    renderCard(true, false);
+    expect(await screen.findByLabelText('Effective route')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save SSH settings' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('User')).toBeDisabled();
+    expect(screen.getByLabelText('Port')).toBeDisabled();
+    expect(screen.getByLabelText('Credential')).toBeDisabled();
+    expect(screen.getByLabelText(/Inherit/)).toBeDisabled();
+    expect(screen.getByLabelText(/Direct connection/)).toBeDisabled();
+    expect(screen.getByLabelText(/This jump host/)).toBeDisabled();
   });
 });

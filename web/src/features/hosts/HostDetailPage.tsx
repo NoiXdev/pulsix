@@ -182,7 +182,7 @@ export function HostDetailPage() {
       </div>
 
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
-      <HostSshCard org={org} hostId={h.id} managed={h.managed} />
+      <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} />
       {h.managed && <ConnectionTestCard org={org} hostId={h.id} canWrite={canWrite} />}
       {bootstrapOpen && <BootstrapDialog org={org} hostId={h.id} hostName={h.name} onClose={() => setBootstrapOpen(false)} />}
 

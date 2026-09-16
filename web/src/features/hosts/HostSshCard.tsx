@@ -15,8 +15,15 @@ const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 te
 
 /** HostSshCard is the SSH access step of the enrollment mockup for a
  * managed host: how Pulsix logs in, which jump host it goes through (and
- * why), and the public key to install. */
-export function HostSshCard({ org, hostId, managed }: { org: string; hostId: string; managed: boolean }) {
+ * why), and the public key to install. Read-only for a viewer (backlog
+ * 2.18): `canWrite` mirrors the server's `inventory.write` permission —
+ * the same permission PUT .../hosts/{id}/ssh requires — from the caller's
+ * org role, the same way ConnectionTestCard and HostDetailPage already
+ * gate their own inventory writes. The SPA session carries only the org
+ * role, not a permission list (see lib/roles.ts's doc comment), so this
+ * mirrors the role→permission matrix client-side rather than reading a
+ * permission list that does not exist. */
+export function HostSshCard({ org, hostId, managed, canWrite }: { org: string; hostId: string; managed: boolean; canWrite: boolean }) {
   const ssh = useHostSSH(org, managed ? hostId : '');
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
@@ -30,11 +37,12 @@ export function HostSshCard({ org, hostId, managed }: { org: string; hostId: str
       current={ssh.data.ssh}
       bastions={bastions.data?.bastions ?? []}
       credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+      canWrite={canWrite}
     />
   );
 }
 
-function HostSshForm({ org, hostId, current, bastions, credentials }: { org: string; hostId: string; current: HostSSH; bastions: readonly Bastion[]; credentials: readonly Credential[] }) {
+function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: { org: string; hostId: string; current: HostSSH; bastions: readonly Bastion[]; credentials: readonly Credential[]; canWrite: boolean }) {
   const toast = useToast();
   const save = useSetHostSSH(org, hostId);
   const preview = useHostInventoryPreview(org, hostId);
@@ -50,6 +58,7 @@ function HostSshForm({ org, hostId, current, bastions, credentials }: { org: str
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!canWrite) return;
     try {
       await save.mutateAsync({
         username: username || undefined, port: Number(port) || 22, credential_id: credentialId || undefined,
@@ -68,16 +77,16 @@ function HostSshForm({ org, hostId, current, bastions, credentials }: { org: str
         <div className="grid grid-cols-[1fr_90px] gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="ssh-user">User</Label>
-            <Input id="ssh-user" className="font-mono" placeholder={selected?.username || 'from the credential'} value={username} onChange={(e) => setUsername(e.target.value)} />
+            <Input id="ssh-user" className="font-mono" placeholder={selected?.username || 'from the credential'} value={username} onChange={(e) => setUsername(e.target.value)} disabled={!canWrite} />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="ssh-port">Port</Label>
-            <Input id="ssh-port" className="font-mono" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />
+            <Input id="ssh-port" className="font-mono" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} disabled={!canWrite} />
           </div>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="ssh-credential">Credential</Label>
-          <select id="ssh-credential" className={SELECT} value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
+          <select id="ssh-credential" className={SELECT} value={credentialId} onChange={(e) => setCredentialId(e.target.value)} disabled={!canWrite}>
             <option value="">— none —</option>
             {credentials.map((c) => (
               <option key={c.id} value={c.id}>
@@ -89,16 +98,16 @@ function HostSshForm({ org, hostId, current, bastions, credentials }: { org: str
         <fieldset className="flex flex-col gap-1">
           <legend className="text-[11px] font-medium text-muted-foreground">Jump host</legend>
           <label className="flex items-center gap-2 text-xs">
-            <input type="radio" name="ssh-mode" checked={mode === 'inherit'} onChange={() => setMode('inherit')} /> Inherit (inventory group, then zone)
+            <input type="radio" name="ssh-mode" checked={mode === 'inherit'} onChange={() => setMode('inherit')} disabled={!canWrite} /> Inherit (inventory group, then zone)
           </label>
           <label className="flex items-center gap-2 text-xs">
-            <input type="radio" name="ssh-mode" checked={mode === 'none'} onChange={() => setMode('none')} /> Direct connection
+            <input type="radio" name="ssh-mode" checked={mode === 'none'} onChange={() => setMode('none')} disabled={!canWrite} /> Direct connection
           </label>
           <label className="flex items-center gap-2 text-xs">
-            <input type="radio" name="ssh-mode" checked={mode === 'explicit'} onChange={() => setMode('explicit')} /> This jump host
+            <input type="radio" name="ssh-mode" checked={mode === 'explicit'} onChange={() => setMode('explicit')} disabled={!canWrite} /> This jump host
           </label>
           {mode === 'explicit' && (
-            <select aria-label="Jump host for this host" className={SELECT} value={bastionId} onChange={(e) => setBastionId(e.target.value)}>
+            <select aria-label="Jump host for this host" className={SELECT} value={bastionId} onChange={(e) => setBastionId(e.target.value)} disabled={!canWrite}>
               <option value="">Choose…</option>
               {bastions.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -114,11 +123,13 @@ function HostSshForm({ org, hostId, current, bastions, credentials }: { org: str
             {names.length > 0 && <span className="font-mono"> · {names.join(' → ')} → host</span>}
           </p>
         )}
-        <div className="flex justify-end">
-          <Button type="submit" variant="primary" disabled={save.isPending}>
-            Save SSH settings
-          </Button>
-        </div>
+        {canWrite && (
+          <div className="flex justify-end">
+            <Button type="submit" variant="primary" disabled={save.isPending}>
+              Save SSH settings
+            </Button>
+          </div>
+        )}
       </form>
       {keyDetail.data?.credential.public_key && (
         <div className="mt-4 border-t border-border pt-4">
