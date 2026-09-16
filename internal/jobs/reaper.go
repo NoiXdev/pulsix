@@ -1,7 +1,7 @@
 // The reaper: the manager-side safety net for claims whose worker went
-// away. One sweep, one transaction: requeue claimed/running jobs whose
-// claim is stale and whose stream is not alive, and fail cancelling jobs
-// whose worker never confirmed the cancel within the deadline.
+// away. One sweep: requeue claimed/running jobs whose claim is stale and
+// whose stream is not alive, and fail cancelling jobs whose worker never
+// confirmed the cancel within the deadline.
 package jobs
 
 import (
@@ -57,8 +57,9 @@ func (r *Reaper) Run(ctx context.Context) {
 	}
 }
 
-// Sweep does one pass in one transaction and returns how many jobs were
-// requeued and how many failed. A requeued or failed job loses its stream
+// Sweep does one pass and returns how many jobs were requeued and how many
+// failed: the stale requeue in one transaction, then every failure through
+// the queue's terminal transition (payload wipe and sinks included). A requeued or failed job loses its stream
 // binding and cancel-deadline record: the old claim is void either way.
 func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 	now := r.q.now()
@@ -99,16 +100,6 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 			expired = append(expired, c.ID)
 		}
 	}
-	if len(expired) > 0 {
-		tag, err := tx.Exec(ctx,
-			`UPDATE jobs SET status = 'failed', error = $2, finished_at = $3
-			 WHERE id = ANY($1::uuid[]) AND status = 'cancelling'`,
-			expired, "cancel was requested but the worker never confirmed it", now)
-		if err != nil {
-			return 0, 0, fmt.Errorf("fail unconfirmed cancels: %w", err)
-		}
-		failed = int(tag.RowsAffected())
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, 0, fmt.Errorf("commit reaper sweep: %w", err)
 	}
@@ -116,9 +107,28 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 		r.q.streams.remove(id)
 		r.q.cancels.remove(id)
 	}
+	// Unconfirmed cancels fail through the one terminal transition, each in
+	// its own org-bound transaction: the sealed payload is wiped and the
+	// sinks run exactly as on a worker's finish. One job's failure does not
+	// stop the others; the first error is reported after the pass.
+	var firstErr error
 	for _, id := range expired {
-		r.q.streams.remove(id)
-		r.q.cancels.remove(id)
+		applied, err := r.q.terminate(ctx, terminalTransition{
+			jobID: id, status: StatusFailed, errText: "cancel was requested but the worker never confirmed it",
+			from: []Status{StatusCancelling},
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("fail unconfirmed cancel %s: %w", id, err)
+			}
+			continue
+		}
+		if applied {
+			failed++
+		}
+	}
+	if firstErr != nil {
+		return requeued, failed, firstErr
 	}
 	return requeued, failed, nil
 }

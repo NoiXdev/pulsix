@@ -210,15 +210,18 @@ func (q *SQLQueue) newToken() (string, error) {
 
 // failJob marks a claimed job errored after a failed payload build. The
 // error text names hosts, groups and ids only — the payload builders never
-// put secret material into an error.
+// put secret material into an error. It is a terminal transition like any
+// other (see terminate): the sealed payload is wiped and the sinks run, so
+// an unbuildable bootstrap or rotation job neither keeps its secret at rest
+// nor leaves its rotation group unfinalized.
 func (q *SQLQueue) failJob(ctx context.Context, jobID uuid.UUID, cause error) error {
-	_, err := q.db.Pool().Exec(ctx,
-		`UPDATE jobs SET status = 'error', error = $2, finished_at = $3 WHERE id = $1 AND status = 'running'`,
-		jobID, cause.Error(), q.now())
+	_, err := q.terminate(ctx, terminalTransition{
+		jobID: jobID, status: StatusError, errText: cause.Error(),
+		from: []Status{StatusRunning},
+	})
 	if err != nil {
 		return fmt.Errorf("mark job errored: %w", err)
 	}
-	q.streams.remove(jobID)
 	return nil
 }
 
@@ -876,14 +879,13 @@ func (q *SQLQueue) finish(ctx context.Context, worker *WorkerRef, jobID uuid.UUI
 		}
 		statsJSON = b
 	}
-	// org_id, kind and run_group_id never change after insert, so reading
-	// them before the transaction is safe; the org binds the transaction.
-	var orgID, zoneID, groupID uuid.UUID
-	var kind string
+	// org_id and the claiming worker are read before the transaction; the
+	// binding is enforced again in the status UPDATE's WHERE clause.
+	var orgID, zoneID uuid.UUID
 	var claimedBy *uuid.UUID
 	if err := q.db.Pool().QueryRow(ctx,
-		`SELECT org_id, zone_id, kind, run_group_id, worker_id FROM jobs WHERE id = $1`, jobID,
-	).Scan(&orgID, &zoneID, &kind, &groupID, &claimedBy); err != nil {
+		`SELECT org_id, zone_id, worker_id FROM jobs WHERE id = $1`, jobID,
+	).Scan(&orgID, &zoneID, &claimedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if worker != nil {
 				return ErrNotClaimedByWorker
@@ -902,24 +904,13 @@ func (q *SQLQueue) finish(ctx context.Context, worker *WorkerRef, jobID uuid.UUI
 	if worker != nil {
 		boundWorker = &worker.ID
 	}
-
-	finished := false
-	err := q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
-		if Kind(kind) == KindRotateKey || Kind(kind) == KindConnectionTest {
-			if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
-				finishGroupLockKeyPrefix+groupID.String()); err != nil {
-				return fmt.Errorf("lock run group: %w", err)
-			}
-		}
-		tag, err := q.db.Exec(ctx,
-			`UPDATE jobs SET status = $2, stats = $3, error = $4, finished_at = $5
-			 WHERE id = $1 AND status IN ('running', 'cancelling')
-			   AND ($6::uuid IS NULL OR worker_id = $6::uuid)`,
-			jobID, string(status), statsJSON, errText, q.now(), boundWorker)
-		if err != nil {
-			return fmt.Errorf("finish job: %w", err)
-		}
-		if tag.RowsAffected() == 0 {
+	_, err := q.terminate(ctx, terminalTransition{
+		jobID: jobID, status: status, stats: statsJSON, errText: errText,
+		from:   []Status{StatusRunning, StatusCancelling},
+		worker: boundWorker,
+		// Nothing matched: an already terminal job is the idempotent no-op,
+		// a re-claimed one refuses the stranger, anything else did not run.
+		onMiss: func(ctx context.Context) error {
 			var current string
 			var nowClaimedBy *uuid.UUID
 			if err := q.db.QueryRow(ctx, `SELECT status, worker_id FROM jobs WHERE id = $1`, jobID).Scan(&current, &nowClaimedBy); err != nil {
@@ -932,33 +923,9 @@ func (q *SQLQueue) finish(ctx context.Context, worker *WorkerRef, jobID uuid.UUI
 				return nil
 			}
 			return fmt.Errorf("%w: job is %s", ErrNotRunning, current)
-		}
-		if err := q.recordSync(ctx, jobID, status, errText); err != nil {
-			return err
-		}
-		if err := q.recordTest(ctx, jobID, status); err != nil {
-			return err
-		}
-		if err := q.recordRotation(ctx, jobID, status); err != nil {
-			return err
-		}
-		// The terminal payload's at-rest lifetime ends here: the sealed
-		// one-time login / pending rotation key drops once the job is
-		// terminal (see clearPayload).
-		if err := q.clearPayload(ctx, jobID); err != nil {
-			return err
-		}
-		finished = true
-		return nil
+		},
 	})
-	if err != nil {
-		return err
-	}
-	if finished {
-		q.streams.remove(jobID)
-		q.cancels.remove(jobID)
-	}
-	return nil
+	return err
 }
 
 // finishGroupLockKeyPrefix namespaces the per-run-group finish lock within

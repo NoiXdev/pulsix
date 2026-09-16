@@ -738,8 +738,14 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 			cr.NoteCancelRequested(id, s.now())
 		}
 	}
-	if cp, ok := s.queue.(payloadCleaner); ok {
-		cp.ClearTerminalPayload(ctx, id)
+	// Only a job the cancel made terminal loses its payload here: a running
+	// job in cancelling may still finish (a rotation or a test the worker
+	// completes before it sees the directive), and its own terminal
+	// transition wipes the payload when it ends.
+	if status == StatusCancelled {
+		if cp, ok := s.queue.(payloadCleaner); ok {
+			cp.ClearTerminalPayload(ctx, id)
+		}
 	}
 	return nil
 }

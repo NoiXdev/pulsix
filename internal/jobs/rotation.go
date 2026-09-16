@@ -308,7 +308,8 @@ func (q *SQLQueue) ClearTerminalPayload(ctx context.Context, jobID uuid.UUID) {
 func (q *SQLQueue) clearPayload(ctx context.Context, jobID uuid.UUID) error {
 	if _, err := q.db.Exec(ctx,
 		`UPDATE jobs SET payload = NULL
-		 WHERE id = $1 AND kind IN ('connection_test','bootstrap','rotate_key') AND payload IS NOT NULL`,
+		 WHERE id = $1 AND kind IN ('connection_test','bootstrap','rotate_key') AND payload IS NOT NULL
+		   AND status IN ('succeeded','failed','cancelled','error')`,
 		jobID); err != nil {
 		return fmt.Errorf("clear terminal job payload: %w", err)
 	}
