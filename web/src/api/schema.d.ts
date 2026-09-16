@@ -490,6 +490,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/hosts/command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org hosts command */
+        post: operations["runAdhocCommand"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts/query": {
         parameters: {
             query?: never;
@@ -1222,6 +1239,20 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["EventDTO"][] | null;
             next_cursor: string;
+        };
+        AdhocInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AdhocInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The shell command, at most 8 KiB */
+            argv: string;
+            /** @description The ids of the managed hosts to run on */
+            host_ids: string[] | null;
+            /** @description Only shell is supported in v0.2b */
+            module: string;
         };
         BastionBodyDTO: {
             /**
@@ -3899,6 +3930,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostCreateOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    runAdhocCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdhocInputBody"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStartOutputBody"];
                 };
             };
             /** @description Error */

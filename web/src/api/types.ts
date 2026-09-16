@@ -40,3 +40,4 @@ export type HostTest = components['schemas']['HostTestDTO'];
 export type RepoInput = components['schemas']['RepoCreateInputBody'];
 export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
 export type BootstrapInput = components['schemas']['BootstrapInputBody'];
+export type AdhocInput = components['schemas']['AdhocInputBody'];

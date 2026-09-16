@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
-import type { JobEvent } from '../types.ts';
+import type { AdhocInput, JobEvent } from '../types.ts';
 
 export const JOBS_PAGE_SIZE = 50;
 
@@ -74,6 +74,17 @@ export function useRetryFailedJobs(org: string, id: string) {
   const invalidate = useInvalidateJobs(org);
   return useMutation({
     mutationFn: () => unwrap(api.POST('/api/v1/orgs/{org}/jobs/{id}/retry-failed', { params: { path: { org, id } } })),
+    onSuccess: invalidate,
+  });
+}
+
+/** useRunAdhocCommand starts an ad-hoc shell command on explicit hosts
+ * (backlog 2.14, 202, { jobs }) — one job per zone the targets live in,
+ * sharing a run group, the same shape a template run takes. */
+export function useRunAdhocCommand(org: string) {
+  const invalidate = useInvalidateJobs(org);
+  return useMutation({
+    mutationFn: (body: AdhocInput) => unwrap(api.POST('/api/v1/orgs/{org}/hosts/command', { params: { path: { org } }, body })),
     onSuccess: invalidate,
   });
 }

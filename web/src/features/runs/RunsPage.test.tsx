@@ -39,9 +39,13 @@ function renderPage(initial = '/o/acme/runs') {
   );
 }
 
+const ORG_OPERATOR = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
+const ORG_VIEWER = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } };
+
 describe('RunsPage', () => {
   it('lists runs with kind, status colours, template, zone and trigger', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': {
         jobs: [
           job({ template_id: '0197c0c1-0000-7000-8000-000000000003' }),
@@ -65,6 +69,7 @@ describe('RunsPage', () => {
     const user = userEvent.setup();
     const seen: string[] = [];
     mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': (req: { search: URLSearchParams }) => {
         seen.push(req.search.toString());
         return { jobs: [], next_cursor: '' };
@@ -79,6 +84,7 @@ describe('RunsPage', () => {
   it('loads the next page through the cursor', async () => {
     const user = userEvent.setup();
     mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': (req: { search: URLSearchParams }) =>
         req.search.get('cursor')
           ? { jobs: [job({ id: '0197ffff-0000-7000-8000-00000000000b' })], next_cursor: '' }
@@ -87,5 +93,27 @@ describe('RunsPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Load more' }));
     expect(await screen.findByText('0197ffff')).toBeInTheDocument();
+  });
+
+  it('offers Run command to an operator and opens the ad-hoc dialog', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Run command' }));
+    expect(await screen.findByRole('dialog', { name: 'Run command' })).toBeInTheDocument();
+  });
+
+  it('hides Run command from a viewer', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_VIEWER,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
+    });
+    renderPage();
+    await screen.findByText('No runs match.');
+    expect(screen.queryByRole('button', { name: 'Run command' })).not.toBeInTheDocument();
   });
 });

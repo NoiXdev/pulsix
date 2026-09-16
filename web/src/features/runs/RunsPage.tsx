@@ -1,11 +1,17 @@
+import { useState } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Link } from '@tanstack/react-router';
+import { Terminal } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
+import { Button } from '../../ui/button.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useJobs } from '../../api/hooks/useJobs.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { may } from '../../lib/roles.ts';
+import { AdhocDialog } from './AdhocDialog.tsx';
 import { kindLabel, shortId, statusTone } from './status.ts';
 
 const COLUMNS = '90px 120px 110px minmax(0, 0.7fr) 90px 80px 110px';
@@ -23,6 +29,9 @@ export function RunsPage() {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { status?: string; kind?: string };
   const jobs = useJobs(org, { status: search.status, kind: search.kind });
+  const orgInfo = useOrg(org);
+  const canRun = may(orgInfo.data?.org.role, 'jobs.run');
+  const [adhocOpen, setAdhocOpen] = useState(false);
 
   const guard = useQueryGuard(jobs);
   if (guard) return guard;
@@ -60,6 +69,11 @@ export function RunsPage() {
               <option key={k} value={k}>{kindLabel(k)}</option>
             ))}
           </select>
+          {canRun && (
+            <Button variant="primary" onClick={() => setAdhocOpen(true)}>
+              <Terminal size={15} /> Run command
+            </Button>
+          )}
         </div>
       </div>
       <Card>
@@ -86,6 +100,7 @@ export function RunsPage() {
         {rows.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No runs match.</p>}
       </Card>
       {jobs.hasNextPage && <LoadMoreButton onClick={() => void jobs.fetchNextPage()} loading={jobs.isFetchingNextPage} />}
+      {adhocOpen && <AdhocDialog org={org} onClose={() => setAdhocOpen(false)} />}
     </>
   );
 }
