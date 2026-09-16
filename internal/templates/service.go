@@ -337,19 +337,16 @@ func masked(t Template) Template {
 	return t
 }
 
+// maskExtraVars delegates to schema.MaskDeclared, the shared
+// fields-aware masking backlog 2.21 introduced (also used by inventory
+// group and membership reads): with no schema, fields is empty and
+// MaskDeclared's declared-field pass has nothing to declare, so it
+// degrades to exactly MaskVars's sealed-only behavior — the same fallback
+// this function used to implement by hand.
 func maskExtraVars(sc *schema.Schema, vars map[string]any) map[string]any {
-	out := schema.MaskVars(vars)
-	if sc == nil || len(out) == 0 {
-		return out
+	var fields []schema.Field
+	if sc != nil {
+		fields = sc.Fields
 	}
-	masked, err := schema.MapSecrets(sc.Fields, out, func(_ string, v any) (any, error) {
-		if s, ok := v.(string); ok && s != "" {
-			return schema.Mask(), nil
-		}
-		return v, nil
-	})
-	if err != nil {
-		return out
-	}
-	return masked
+	return schema.MaskDeclared(fields, vars)
 }

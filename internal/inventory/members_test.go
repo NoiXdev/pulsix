@@ -124,3 +124,42 @@ func TestMembersReportCompleteness(t *testing.T) {
 		t.Fatalf("second Unassign: %v", err)
 	}
 }
+
+// TestMemberReadMasksLeftoverPlainValueAfterSchemaChangeToSecret is
+// backlog 2.21's string→secret case, for a membership instead of a group:
+// a host-scoped field's value set while it was still a plain string sits
+// unsealed after the field becomes secret-typed, until the member is
+// saved again. Members and HostGroups must mask it anyway.
+func TestMemberReadMasksLeftoverPlainValueAfterSchemaChangeToSecret(t *testing.T) {
+	f := newFixture()
+	g := f.group(t, "webserver", nil)
+	stringSchema := schema.Schema{Fields: []schema.Field{{Name: "tag", Type: schema.TypeString, Scope: schema.ScopeHost}}}
+	v, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, stringSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Assign(ctx, f.org, g.ID, f.web01, map[string]any{"tag": "still-plaintext"}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	secretSchema := schema.Schema{Fields: []schema.Field{{Name: "tag", Type: schema.TypeSecret, Scope: schema.ScopeHost}}}
+	if _, _, err := f.svc.SetSchema(ctx, f.org, g.ID, v.Revision, secretSchema); err != nil {
+		t.Fatal(err)
+	}
+
+	members, err := f.svc.Members(ctx, f.org, g.ID)
+	if err != nil || len(members) != 1 {
+		t.Fatalf("Members = %v, %v", members, err)
+	}
+	if m, ok := members[0].Vars["tag"].(map[string]any); !ok || m["$secret"] != "set" {
+		t.Fatalf("Members must mask the leftover plain value now that the field is secret, got %#v", members[0].Vars["tag"])
+	}
+
+	groups, err := f.svc.HostGroups(ctx, f.org, f.web01)
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("HostGroups = %v, %v", groups, err)
+	}
+	if m, ok := groups[0].Vars["tag"].(map[string]any); !ok || m["$secret"] != "set" {
+		t.Fatalf("HostGroups must mask it too, got %#v", groups[0].Vars["tag"])
+	}
+}

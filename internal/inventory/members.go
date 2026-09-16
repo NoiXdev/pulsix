@@ -116,7 +116,7 @@ func (s *Service) HostGroups(ctx context.Context, orgID, hostID uuid.UUID) ([]Me
 func memberView(g Group, m Membership) MemberView {
 	fields := g.Schema.MembershipFields()
 	v := MemberView{Membership: m, Complete: true, Orphaned: schema.Orphans(fields, m.Vars)}
-	v.Vars = schema.MaskVars(m.Vars)
+	v.Vars = schema.MaskDeclared(fields, m.Vars)
 	if err := schema.ValidateStored(fields, m.Vars); err != nil {
 		var ve *schema.ValidationError
 		if errors.As(err, &ve) {

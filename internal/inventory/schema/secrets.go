@@ -58,6 +58,45 @@ func MaskVars(values map[string]any) map[string]any {
 	return ReplaceSealed(values, func() any { return Mask() })
 }
 
+// MaskDeclared returns a deep copy of values with every non-empty value
+// under a field fields currently declares secret-typed replaced by Mask(),
+// whether or not that value is actually sealed (backlog 2.21) — a plain
+// string left over from before the field became secret (a string → secret
+// schema change reseals nothing; only the next SetVars/Assign does) is
+// masked exactly like a real sealed value, so a read never shows it in the
+// clear. Every sealed value MaskVars would have caught — undeclared keys,
+// and a value sitting under a field whose type changed away from secret —
+// is still masked too, by the same ReplaceSealed sweep MaskVars uses,
+// applied as a second pass so this is a strict superset of MaskVars's
+// guarantee, not a replacement of it.
+func MaskDeclared(fields []Field, values map[string]any) map[string]any {
+	masked, err := MapSecrets(fields, values, func(_ string, v any) (any, error) {
+		if isEmptySecret(v) {
+			return v, nil
+		}
+		return Mask(), nil
+	})
+	if err != nil {
+		// MapSecrets only ever errors through fn, and fn above never
+		// returns one; unreachable in practice, but fail toward masking
+		// everything rather than panicking or leaking values unmasked.
+		return ReplaceSealed(values, func() any { return Mask() })
+	}
+	return ReplaceSealed(masked, func() any { return Mask() })
+}
+
+// isEmptySecret reports whether v is "nothing to hide": absent, or an
+// empty string. Every other value — including a non-empty plain string, a
+// sealed envelope, or any other shape a secret field should not hold but
+// might because of a schema change — counts as set and is masked.
+func isEmptySecret(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
+}
+
 // ReplaceSealed returns a deep copy of values with every sealed value, at
 // any depth and whether or not a schema still declares it, replaced by what
 // with returns.

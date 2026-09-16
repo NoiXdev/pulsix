@@ -113,6 +113,59 @@ func TestMaskVarsReplacesSealedValuesAtAnyDepth(t *testing.T) {
 	}
 }
 
+// TestMaskDeclaredMasksPlainValuesUnderSecretFields is backlog 2.21's
+// regression from the v0.2a review: SetSchema changing a field from
+// string to secret does not reseal anything already stored — the plain
+// value sits there until the next SetVars/Assign. MaskVars alone (which
+// only recognizes an actual {"$sealed": …} envelope) would show that
+// plain value on every read until then; MaskDeclared must mask it too,
+// because the field is secret-typed *now*, whether the stored value has
+// caught up or not.
+func TestMaskDeclaredMasksPlainValuesUnderSecretFields(t *testing.T) {
+	fields := []schema.Field{
+		{Name: "db_password", Type: schema.TypeSecret},
+		{Name: "env", Type: schema.TypeString},
+	}
+	in := map[string]any{
+		"db_password": "still-plaintext-from-before-the-schema-change",
+		"env":         "prod",
+	}
+	got := schema.MaskDeclared(fields, in)
+	want := map[string]any{"db_password": schema.Mask(), "env": "prod"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("MaskDeclared = %v, want %v", got, want)
+	}
+	if in["db_password"] != "still-plaintext-from-before-the-schema-change" {
+		t.Fatal("MaskDeclared must not mutate its input")
+	}
+
+	// An actually-sealed value under a secret field is masked exactly as
+	// before (MaskDeclared is a superset of MaskVars, not a replacement).
+	sealed := map[string]any{"db_password": schema.Sealed([]byte{1}), "env": "prod"}
+	if got := schema.MaskDeclared(fields, sealed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sealed value: MaskDeclared = %v, want %v", got, want)
+	}
+
+	// An empty or absent secret value is not "set" and stays as-is.
+	empty := map[string]any{"db_password": "", "env": "prod"}
+	if got := schema.MaskDeclared(fields, empty); !reflect.DeepEqual(got, empty) {
+		t.Fatalf("empty value: MaskDeclared = %v, want unchanged %v", got, empty)
+	}
+	absent := map[string]any{"env": "prod"}
+	if got := schema.MaskDeclared(fields, absent); !reflect.DeepEqual(got, absent) {
+		t.Fatalf("absent value: MaskDeclared = %v, want unchanged %v", got, absent)
+	}
+
+	// A sealed value that MapSecrets never visits (undeclared, or a field
+	// that changed type away from secret) is still caught, same as
+	// MaskVars.
+	stray := map[string]any{"env": "prod", "orphan": schema.Sealed([]byte{2})}
+	strayWant := map[string]any{"env": "prod", "orphan": schema.Mask()}
+	if got := schema.MaskDeclared(fields, stray); !reflect.DeepEqual(got, strayWant) {
+		t.Fatalf("stray sealed value: MaskDeclared = %v, want %v", got, strayWant)
+	}
+}
+
 func TestLookup(t *testing.T) {
 	doc := map[string]any{
 		"vhosts":  []any{vhost("a.io", nil), vhost("b.io", map[string]any{"basic_auth": map[string]any{"password": "p"}})},

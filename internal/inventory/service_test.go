@@ -233,6 +233,44 @@ func TestSetSchema(t *testing.T) {
 	}
 }
 
+// TestGroupReadMasksLeftoverPlainValueAfterSchemaChangeToSecret is
+// backlog 2.21's string→secret case: SetSchema never rewrites stored
+// values, so a value set while a field was still a plain string sits
+// there, unsealed, after the field becomes secret-typed — until the next
+// SetVars reseals it. Every read (GetGroup here) must mask it anyway,
+// because the field is secret *now*.
+func TestGroupReadMasksLeftoverPlainValueAfterSchemaChangeToSecret(t *testing.T) {
+	f := newFixture()
+	g := f.group(t, "webserver", nil)
+	v, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: []schema.Field{{Name: "note", Type: schema.TypeString}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = f.svc.SetVars(ctx, f.org, g.ID, v.Revision, map[string]any{"note": "still-plaintext"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Vars["note"] != "still-plaintext" {
+		t.Fatalf("a plain string field must read as plain: %v", v.Vars)
+	}
+
+	v, _, err = f.svc.SetSchema(ctx, f.org, g.ID, v.Revision, schema.Schema{Fields: []schema.Field{{Name: "note", Type: schema.TypeSecret}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.store.groups[g.ID].Vars["note"] != "still-plaintext" {
+		t.Fatalf("SetSchema must not touch stored values: %v", f.store.groups[g.ID].Vars)
+	}
+
+	got, err := f.svc.GetGroup(ctx, f.org, g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := got.Vars["note"].(map[string]any); !ok || m["$secret"] != "set" {
+		t.Fatalf("a read must mask the leftover plain value now that the field is secret, got %#v", got.Vars["note"])
+	}
+}
+
 func TestSetVarsSealsKeepsAndMasks(t *testing.T) {
 	f := newFixture()
 	g := f.group(t, "webserver", nil)

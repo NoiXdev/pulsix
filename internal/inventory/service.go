@@ -407,7 +407,7 @@ func errTooDeep() error {
 func groupView(g Group) GroupView {
 	fields := g.Schema.GroupFields()
 	v := GroupView{Group: g, Orphaned: schema.Orphans(fields, g.Vars)}
-	v.Vars = schema.MaskVars(g.Vars)
+	v.Vars = schema.MaskDeclared(fields, g.Vars)
 	if err := schema.ValidateStored(fields, g.Vars); err != nil {
 		var ve *schema.ValidationError
 		if errors.As(err, &ve) {
