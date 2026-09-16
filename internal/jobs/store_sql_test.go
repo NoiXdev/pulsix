@@ -44,8 +44,12 @@ func newJob(org, zone uuid.UUID, kind jobs.Kind, status jobs.Status) jobs.Job {
 		Status: status, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual,
 		ActorID: &actor, CreatedAt: time.Now(),
 	}
-	if kind == jobs.KindRun {
+	switch kind {
+	case jobs.KindRun:
 		j.TemplateID = &tid
+		j.HostIDs = []uuid.UUID{hostID}
+	case jobs.KindAdhoc:
+		// A host-bound claim renders exactly its hosts; none fails closed.
 		j.HostIDs = []uuid.UUID{hostID}
 	}
 	return j
@@ -79,6 +83,10 @@ func (emptySources) GetBastion(context.Context, uuid.UUID, uuid.UUID) (sshconf.B
 // emptyPins is the KeyPinSource fake the integration queues wire: no host
 // carries a pin.
 type emptyPins struct{}
+
+func (emptyPins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
 
 func (emptyPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
 	return map[uuid.UUID]string{}, nil
@@ -192,6 +200,7 @@ func TestQueueClaimIsScopedToTheWorkersOrganization(t *testing.T) {
 	orgB := seedOrg(t, q, "jobs-claim-scope-b")
 	store := jobs.NewSQLStore(d)
 	queue := jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+	queue.SetKeyPins(emptyPins{})
 
 	zoneB := uuid.Must(uuid.NewV7())
 	jobB := newJob(orgB, zoneB, jobs.KindAdhoc, jobs.StatusQueued)
@@ -228,6 +237,7 @@ func TestQueueClaimConcurrency(t *testing.T) {
 	org := seedOrg(t, q, "jobs-claim-org")
 	store := jobs.NewSQLStore(d)
 	queue := jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+	queue.SetKeyPins(emptyPins{})
 
 	claimN := func(zones []uuid.UUID, n int) map[uuid.UUID]int {
 		var mu sync.Mutex

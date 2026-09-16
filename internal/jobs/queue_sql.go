@@ -63,6 +63,10 @@ type SQLQueue struct {
 	// fails closed — the probe could not run trust on first use against
 	// the pin — while run and ad-hoc claims simply ship no host keys.
 	pins KeyPinSource
+	// keyGuard is the changed-host-key read the host-bound claims re-apply
+	// (the pins source implements it — hosts.Service does); nil fails
+	// run and ad-hoc claims closed.
+	keyGuard KeyGuardSource
 	// test is the optional sink a finished connection_test job's outcome is
 	// recorded through (SetTestSink, the same post-construction wiring the
 	// sync sink has; the concrete sink is the hosts service).
@@ -113,7 +117,13 @@ func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
 // SetKeyPins injects the host-key fingerprint source the claim needs. A
 // nil source makes every connection_test claim fail closed (see the pins
 // field); run and ad-hoc jobs then ship no host keys.
-func (q *SQLQueue) SetKeyPins(source KeyPinSource) { q.pins = source }
+func (q *SQLQueue) SetKeyPins(source KeyPinSource) {
+	q.pins = source
+	q.keyGuard = nil
+	if g, ok := source.(KeyGuardSource); ok {
+		q.keyGuard = g
+	}
+}
 
 // SetTestSink injects the sink RecordTest flows through on the finish path,
 // the connection-test sibling of SetSyncSink. A nil sink records nothing —
@@ -276,7 +286,20 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		}
 		return nil
 	}
-	scope := render.Scope{HostIDs: job.HostIDs}
+	// The claim renders EXACTLY the job's own hosts (final review C1). The
+	// template's scope was resolved at enqueue time and split per zone into
+	// job.HostIDs — rendering the template scope again here would run every
+	// zone's job against every zone's hosts, widen a retry back to the whole
+	// template and resurrect hosts the enqueue excluded for a changed host
+	// key. An empty host list is a corrupt row, never "the whole org".
+	if len(job.HostIDs) == 0 {
+		return fmt.Errorf("%w: %s job %s carries no target hosts", ErrInvalidInput, job.Kind, job.ID)
+	}
+	hostIDs, err := q.excludeChangedAtClaim(ctx, job)
+	if err != nil {
+		return err
+	}
+	scope := render.Scope{HostIDs: hostIDs}
 	playbook, limit, sshUser := "", "", ""
 	var extraVars map[string]string
 	var defaultCred *uuid.UUID
@@ -288,11 +311,10 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err != nil {
 			return fmt.Errorf("look up template: %w", err)
 		}
-		scope, err = parseScope(tmpl.Scope)
-		if err != nil {
-			return fmt.Errorf("template scope: %w", err)
-		}
 		playbook = playbookRef(tmpl)
+		// The template's limit stays an ansible host pattern applied on top
+		// of the job's rendered hosts: it can only narrow a job, never widen
+		// it past job.HostIDs (the inventory holds nothing else).
 		limit = tmpl.Limit
 		if extraVars, err = stringMap(tmpl.ExtraVars); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
@@ -400,6 +422,32 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		KindPayload: kindPayload,
 	}
 	return nil
+}
+
+// excludeChangedAtClaim re-applies the enqueue's block-on-mismatch (spec §5)
+// at claim time: a host whose latest connection test reports a changed key
+// after the job was enqueued must not be dialed. Hosts are dropped from the
+// job's scope; when none is left the claim fails the job with
+// ErrHostKeyChanged. The guard is mandatory for host-bound claims — an
+// unwired guard fails closed.
+func (q *SQLQueue) excludeChangedAtClaim(ctx context.Context, job Job) ([]uuid.UUID, error) {
+	if q.keyGuard == nil {
+		return nil, fmt.Errorf("%s claim %s: no host key guard wired", job.Kind, job.ID)
+	}
+	changed, err := q.keyGuard.ChangedHosts(ctx, job.OrgID, job.HostIDs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve changed host keys: %w", err)
+	}
+	kept := make([]uuid.UUID, 0, len(job.HostIDs))
+	for _, id := range job.HostIDs {
+		if !changed[id] {
+			kept = append(kept, id)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("%w: job %s", ErrHostKeyChanged, job.ID)
+	}
+	return kept, nil
 }
 
 // claimHostKeys collects the pinned fingerprints of the job's hosts into

@@ -60,6 +60,18 @@ func (stubCreds) Get(context.Context, uuid.UUID, uuid.UUID) (credentials.Credent
 	return credentials.Credential{}, credentials.ErrNotFound
 }
 
+// stubPins pins nothing and reports no changed host key: a host-bound
+// claim needs the key guard wired, or it fails closed.
+type stubPins struct{}
+
+func (stubPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
+}
+
+func (stubPins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 type stubBastions struct{}
 
 func (stubBastions) GetBastion(context.Context, uuid.UUID, uuid.UUID) (sshconf.Bastion, error) {
@@ -76,12 +88,13 @@ func TestGRPCPortAdapters(t *testing.T) {
 	}
 	zone := uuid.Must(uuid.NewV7())
 	queue := jobs.NewSQLQueue(d, stubBox{}, stubSnapshot{}, stubCreds{}, stubTemplates{}, stubBastions{}, time.Now, rand.Reader)
+	queue.SetKeyPins(stubPins{})
 	store := jobs.NewSQLStore(d)
 	// The claim path under test is kind-agnostic; adhoc keeps the claim
 	// from depending on a rendered probe target the way a (fail-closed)
 	// connection_test claim would.
 	j := jobs.Job{
-		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: jobs.KindAdhoc,
+		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: jobs.KindAdhoc, HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())},
 		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, CreatedAt: time.Now(),
 	}
 	if err := store.CreateJob(db.WithOrgScope(ctx, org.ID), j, nil); err != nil {

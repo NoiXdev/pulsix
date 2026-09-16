@@ -112,10 +112,18 @@ func (f fakeRepos) Get(_ context.Context, _, id uuid.UUID) (RepoRef, error) {
 	return r, nil
 }
 
+// testHosts is the target list the white-box payload tests give their
+// host-bound jobs: a claim renders exactly job.HostIDs, and an empty list
+// fails closed.
+var testHosts = []uuid.UUID{uuid.MustParse("01a0ac45-0000-7000-8000-000000000001")}
+
 func newTestQueue(renderer SnapshotSource, creds CredentialSource, templates TemplateSource, bastions BastionSource) *SQLQueue {
 	return &SQLQueue{
 		box: fakeBox{}, renderer: renderer, creds: creds, templates: templates, bastions: bastions,
-		now: time.Now, rand: rand.Reader, streams: newStreamRegistry(), cancels: newCancelRegistry(),
+		// The key guard defaults to "nothing changed"; the pins source
+		// stays unwired so the fail-closed probe paths remain testable.
+		keyGuard: fakePins{},
+		now:      time.Now, rand: rand.Reader, streams: newStreamRegistry(), cancels: newCancelRegistry(),
 	}
 }
 
@@ -159,7 +167,7 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 		repoID: {ID: repoID, URL: "ssh://git@example.org/ansible.git", Branch: "main", Subpath: "ansible", CredentialID: &gitCredID},
 	}})
 
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID}
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
 	out := &workerpb.Job{}
 	if err := q.buildPayload(context.Background(), job, out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
@@ -231,7 +239,7 @@ func TestBuildPayloadHostJobOpensSealedKindPayload(t *testing.T) {
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	q := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{})
 
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindAdhoc}
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindAdhoc, HostIDs: testHosts}
 	sealed, err := q.box.SealAAD([]byte(`{"login":"ansible"}`), JobAAD(org, job.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -288,21 +296,22 @@ func TestBuildPayloadFailsClosed(t *testing.T) {
 	}
 
 	// An unknown template.
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); !errors.Is(err, ErrNotFound) {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, &workerpb.Job{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown template: %v", err)
 	}
 
-	// A broken scope document.
+	// A broken template scope no longer matters at claim time: the claim
+	// renders the job's own hosts (the enqueue parsed the scope).
 	q = newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{byID: map[uuid.UUID]TemplateRow{
-		templateID: {ID: templateID, Scope: json.RawMessage(`{oops`)},
+		templateID: {ID: templateID, Scope: json.RawMessage(`{oops`), PlaybookInline: "- hosts: all"},
 	}}, fakeBastions{})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("broken scope: %v", err)
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, &workerpb.Job{}); err != nil {
+		t.Fatalf("a broken stored scope must not affect the claim: %v", err)
 	}
 
 	// A failing renderer.
 	q = newTestQueue(fakeRenderer{err: errors.New("boom")}, fakeCreds{}, fakeTemplates{}, fakeBastions{})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindAdhoc}, &workerpb.Job{}); err == nil {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindAdhoc, HostIDs: testHosts}, &workerpb.Job{}); err == nil {
 		t.Fatal("failing renderer must fail the payload")
 	}
 
@@ -311,7 +320,7 @@ func TestBuildPayloadFailsClosed(t *testing.T) {
 	q = newTestQueue(fakeRenderer{inv: render.Inventory{Connections: map[string]render.Connection{
 		"web1": {HostID: hostID, CredentialID: &credID},
 	}}}, fakeCreds{err: errors.New("locked")}, fakeTemplates{}, fakeBastions{})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindAdhoc}, &workerpb.Job{}); err == nil {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindAdhoc, HostIDs: testHosts}, &workerpb.Job{}); err == nil {
 		t.Fatal("unopenable credential must fail the payload")
 	}
 
@@ -319,7 +328,7 @@ func TestBuildPayloadFailsClosed(t *testing.T) {
 	q = newTestQueue(fakeRenderer{inv: render.Inventory{Connections: map[string]render.Connection{
 		"web1": {HostID: hostID, Bastions: []uuid.UUID{uuid.Must(uuid.NewV7())}},
 	}}}, fakeCreds{}, fakeTemplates{}, fakeBastions{})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindAdhoc}, &workerpb.Job{}); err == nil {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindAdhoc, HostIDs: testHosts}, &workerpb.Job{}); err == nil {
 		t.Fatal("unknown bastion must fail the payload")
 	}
 }
@@ -491,7 +500,8 @@ func TestReaperFallbackAnchorsOnClaimedAt(t *testing.T) {
 	// Kind-agnostic reaper bookkeeping; adhoc claims do not depend on a
 	// rendered probe target the way a (fail-closed) connection_test
 	// claim would.
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: KindAdhoc,
+	q.SetKeyPins(fakePins{})
+	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: KindAdhoc, HostIDs: testHosts,
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, CreatedAt: time.Now()}
 	if err := store.CreateJob(db.WithOrgScope(context.Background(), org.ID), j, nil); err != nil {
 		t.Fatal(err)
@@ -527,7 +537,7 @@ func TestBuildPayloadEditorPlaybookCarriesNoRepoPayload(t *testing.T) {
 	q := newTestQueue(fakeRenderer{}, fakeCreds{}, templates, fakeBastions{})
 	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{}})
 
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID}
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
 	out := &workerpb.Job{}
 	if err := q.buildPayload(context.Background(), job, out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
@@ -550,7 +560,7 @@ func TestBuildPayloadRepoPlaybookFailsClosed(t *testing.T) {
 	q := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{byID: map[uuid.UUID]TemplateRow{
 		templateID: {ID: templateID, PlaybookRepo: &repoID, PlaybookPath: "site.yml", Scope: json.RawMessage(`{}`)},
 	}}, fakeBastions{})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); err == nil {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, &workerpb.Job{}); err == nil {
 		t.Fatal("a repo playbook without a repo source must fail")
 	}
 
@@ -559,7 +569,7 @@ func TestBuildPayloadRepoPlaybookFailsClosed(t *testing.T) {
 		templateID: {ID: templateID, PlaybookRepo: &repoID, PlaybookPath: "site.yml", Scope: json.RawMessage(`{}`)},
 	}}, fakeBastions{})
 	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{}})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); !errors.Is(err, ErrNotFound) {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, &workerpb.Job{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown repo: %v", err)
 	}
 
@@ -571,7 +581,7 @@ func TestBuildPayloadRepoPlaybookFailsClosed(t *testing.T) {
 	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{
 		repoID: {ID: repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &gitCredID},
 	}})
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID}, &workerpb.Job{}); err == nil {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, &workerpb.Job{}); err == nil {
 		t.Fatal("an unopenable git credential must fail")
 	}
 }
@@ -602,7 +612,7 @@ func TestBuildPayloadShipsEffectiveCredentialForTemplateDefault(t *testing.T) {
 	q := newTestQueue(renderer, creds, templates, fakeBastions{})
 
 	out := &workerpb.Job{}
-	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID}, out); err != nil {
+	if err := q.buildPayload(context.Background(), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}, out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
 	}
 	var conn map[string]any

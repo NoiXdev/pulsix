@@ -43,6 +43,12 @@ type fakePins struct {
 	err  error
 }
 
+// ChangedHosts reports no changed host: fakePins doubles as the claim's
+// key guard (hosts.Service implements both).
+func (fakePins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 func (f fakePins) PinnedKeys(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -267,7 +273,7 @@ func TestBuildPayloadRunShipsPinnedHostKeys(t *testing.T) {
 	q.SetKeyPins(fakePins{byID: map[uuid.UUID]string{hostID: "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}})
 	out := &workerpb.Job{}
 	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{
-		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID,
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: []uuid.UUID{hostID},
 	}, out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
 	}
@@ -276,7 +282,7 @@ func TestBuildPayloadRunShipsPinnedHostKeys(t *testing.T) {
 	}
 }
 
-func TestBuildPayloadRunWithoutPinsSourceShipsNoKeys(t *testing.T) {
+func TestBuildPayloadRunWithoutKeyGuardFailsClosed(t *testing.T) {
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	hostID := uuid.Must(uuid.NewV7())
 	templateID := uuid.Must(uuid.NewV7())
@@ -288,16 +294,14 @@ func TestBuildPayloadRunWithoutPinsSourceShipsNoKeys(t *testing.T) {
 		Doc:         map[string]any{"all": map[string]any{}},
 		Connections: map[string]render.Connection{"web1": {HostID: hostID}},
 	}}
-	// No SetKeyPins: run claims still build, carrying no pins.
+	// No pins source and no key guard: a host-bound claim could neither
+	// exclude changed keys nor ship pins, so it fails closed.
 	q := newTestQueue(renderer, fakeCreds{}, templates, fakeBastions{})
-	out := &workerpb.Job{}
+	q.keyGuard = nil
 	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{
-		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID,
-	}, out); err != nil {
-		t.Fatalf("buildPayload: %v", err)
-	}
-	if len(out.HostKeys) != 0 {
-		t.Fatalf("unwired pins source must ship no keys: %v", out.HostKeys)
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: []uuid.UUID{hostID},
+	}, &workerpb.Job{}); err == nil {
+		t.Fatal("a run claim without a key guard must fail closed")
 	}
 }
 

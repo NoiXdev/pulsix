@@ -110,6 +110,7 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 
 	created, err := svc.EnqueueRun(scoped, org, templateID, nil)
@@ -201,6 +202,7 @@ func TestQueueClaimFailsUnbuildableJobs(t *testing.T) {
 
 	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
 	zone := uuid.Must(uuid.NewV7())
 	j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
 	j.TemplateID = &templateID
@@ -281,6 +283,7 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 
 	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 	// The claim-time enrichment resolves the repository through the same
@@ -478,6 +481,7 @@ func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
 
 	scoped := db.WithOrgScope(ctx, org)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 	queue.SetSyncSink(svc)
 
