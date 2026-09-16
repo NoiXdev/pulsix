@@ -111,7 +111,9 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 		t.Fatalf("event after finish: %v", err)
 	}
 	tail, err = svc.Events(db.WithOrgScope(ctx, org), org, jobID, 3)
-	if err != nil || len(tail) != 1 || tail[0].Seq != 9 {
+	// The worker's seq 9 is not what is stored: the manager assigns the
+	// next seq of the job's log.
+	if err != nil || len(tail) != 1 || tail[0].Seq != 4 || tail[0].State != "run_end" {
 		t.Fatalf("Events(after finish) = %+v, %v", tail, err)
 	}
 }
@@ -221,5 +223,67 @@ func TestCancelFlowAndFinishIdempotency(t *testing.T) {
 	got, err = svc.Get(db.WithOrgScope(ctx, org), org, failed.ID)
 	if err != nil || got.Status != jobs.StatusError || got.Error != "worker exploded" {
 		t.Fatalf("errored job = %+v, %v", got, err)
+	}
+}
+
+// TestAppendKeepsSeqMonotonicAcrossAttempts (final review I5): a worker
+// numbers its events per run from 1, so a job the reaper requeued streams
+// seq 1.. again on its second attempt. The manager assigns the stored seq
+// itself — strictly increasing per job across attempts — and stamps every
+// event with the attempt that produced it, so the second attempt's log is
+// neither hidden behind the first's seqs nor merged into it.
+func TestAppendKeepsSeqMonotonicAcrossAttempts(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-events-attempts")
+	zone := uuid.Must(uuid.NewV7())
+	queue := newTestQueue(d)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+
+	claim := claimOne(t, d, org, zone, queue)
+	jobID := uuid.MustParse(claim.Job.GetId())
+	for _, seq := range []uint64{1, 2} {
+		if err := queue.AppendEvent(ctx, jobID, jobs.Event{Seq: seq, State: "ok", Task: "first", At: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The worker vanished: the reaper requeues, a worker claims again and
+	// streams its own seq 1, 2 for the second attempt.
+	// (The reaper's own requeue statement; its stream-liveness bookkeeping
+	// is in-process and covered by the reaper tests.)
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = $1`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := queue.Claim(ctx, org, []uuid.UUID{zone}, "v1")
+	if err != nil || again == nil {
+		t.Fatalf("second claim = %v, %v", again, err)
+	}
+	for _, seq := range []uint64{1, 2} {
+		if err := queue.AppendEvent(ctx, jobID, jobs.Event{Seq: seq, State: "ok", Task: "second", At: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want both attempts' four", len(events))
+	}
+	wantTask := []string{"first", "first", "second", "second"}
+	wantAttempt := []int{1, 1, 2, 2}
+	for i, e := range events {
+		if e.Seq != uint64(i+1) || e.Task != wantTask[i] || e.Attempt != wantAttempt[i] {
+			t.Fatalf("event %d = seq %d task %q attempt %d; want seq %d task %q attempt %d",
+				i, e.Seq, e.Task, e.Attempt, i+1, wantTask[i], wantAttempt[i])
+		}
+	}
+	// The poll cursor after the first attempt's last seq returns exactly
+	// the second attempt.
+	tail, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 2)
+	if err != nil || len(tail) != 2 || tail[0].Task != "second" {
+		t.Fatalf("Events(after 2) = %+v, %v", tail, err)
 	}
 }

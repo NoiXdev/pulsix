@@ -135,7 +135,7 @@ func (s *SQLStore) ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, af
 	}
 	out := make([]Event, len(rows))
 	for i, r := range rows {
-		out[i] = Event{Seq: uint64(r.Seq), Host: r.Host, Task: r.Task, State: r.State, Payload: json.RawMessage(r.Payload), At: r.At}
+		out[i] = Event{Seq: uint64(r.Seq), Attempt: int(r.Attempt), Host: r.Host, Task: r.Task, State: r.State, Payload: json.RawMessage(r.Payload), At: r.At}
 	}
 	return out, nil
 }

@@ -1955,6 +1955,11 @@ export interface components {
         };
         JobDetailDTO: {
             actor_name?: string;
+            /**
+             * Format: int64
+             * @description How often the job was claimed; a requeued job's events carry their attempt
+             */
+            attempts: number;
             /** Format: date-time */
             created_at: string;
             error?: string;
@@ -1992,12 +1997,20 @@ export interface components {
         JobEventDTO: {
             /** Format: date-time */
             at: string;
+            /**
+             * Format: int64
+             * @description The claim attempt that produced the event (0 for events recorded before attempts were counted)
+             */
+            attempt: number;
             host: string;
             /** @description The event payload as stored (a bare stdout line reads as {"text": "..."}) */
             payload: {
                 [key: string]: unknown;
             };
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The event's position in the job's log, strictly increasing across attempts
+             */
             seq: number;
             state: string;
             task: string;

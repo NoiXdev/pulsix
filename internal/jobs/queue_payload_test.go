@@ -377,7 +377,7 @@ func TestStreamRegistryLifecycle(t *testing.T) {
 	r := newStreamRegistry()
 	jobID, orgID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	now := time.Now()
-	r.register(jobID, orgID, "tok", now)
+	r.register(jobID, orgID, "tok", 1, now)
 
 	e, ok := r.get(jobID)
 	if !ok || e.token != "tok" || e.orgID != orgID {

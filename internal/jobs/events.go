@@ -29,6 +29,9 @@ type Stream interface {
 type streamEntry struct {
 	orgID uuid.UUID
 	token string
+	// attempt is the claim attempt this binding belongs to (jobs.attempts
+	// right after the claim); every event appended through it carries it.
+	attempt int
 	// cancel is closed exactly once, when a Cancelled poll first observes
 	// the job in cancelling state.
 	cancel     chan struct{}
@@ -76,10 +79,10 @@ func newStreamRegistry() *streamRegistry {
 	return &streamRegistry{entries: map[uuid.UUID]*streamEntry{}}
 }
 
-func (r *streamRegistry) register(jobID, orgID uuid.UUID, token string, now time.Time) {
+func (r *streamRegistry) register(jobID, orgID uuid.UUID, token string, attempt int, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.entries[jobID] = &streamEntry{orgID: orgID, token: token, cancel: make(chan struct{}), bound: false, lastSeen: now}
+	r.entries[jobID] = &streamEntry{orgID: orgID, token: token, attempt: attempt, cancel: make(chan struct{}), bound: false, lastSeen: now}
 }
 
 func (r *streamRegistry) get(jobID uuid.UUID) (*streamEntry, bool) {
@@ -301,49 +304,79 @@ func (s *Service) EventsBroker() *Broker { return s.broker }
 // carries the organization the claim belongs to, and that is the org_id
 // the row is stamped with.
 //
+// The stored seq is the MANAGER's (final review I5): a worker numbers its
+// events per run from 1, so a requeued job's next attempt would repeat the
+// first attempt's seqs — hidden behind the run view's seq cursor and
+// deduplicated away. The append assigns max(seq)+1 for the job instead,
+// under a per-job advisory transaction lock, so seqs stay strictly
+// increasing across attempts (the worker's own seq only orders a stream,
+// which one gRPC stream delivers in order anyway), and stamps the event
+// with the attempt its binding belongs to. The broker publishes the event
+// with the stored seq and attempt.
+//
 // A binding that is already gone is not an error: the terminal result
 // report and the stream's last events (the run_end bookend, a task's
 // stdout follow-up) are independent server-side paths, so the result can
 // land — and Finish remove the binding — before the stream handler has
 // drained its last events. Those events are part of the run's record (the
 // same intent the cancel path's "events after the directive are still
-// recorded" comment states), so the org is resolved from the job row
-// instead and the event lands like any other. The gRPC transport is what
-// authenticates this path — every append arrives on a stream whose
+// recorded" comment states), so the org and attempt are resolved from the
+// job row instead and the event lands like any other. The gRPC transport
+// is what authenticates this path — every append arrives on a stream whose
 // binding token was validated and consumed before the first event.
 func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) error {
-	orgID, err := q.eventOrg(ctx, jobID)
+	orgID, attempt, err := q.eventBinding(ctx, jobID)
 	if err != nil {
 		return err
 	}
-	_, err = q.db.Pool().Exec(ctx,
-		`INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		jobID, int64(ev.Seq), orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload))
+	tx, err := q.db.Pool().Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin event append: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, eventSeqLockKeyPrefix+jobID.String()); err != nil {
+		return fmt.Errorf("lock job event sequence: %w", err)
+	}
+	var seq int64
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
+		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1), 0) + 1, $2, $3, $4, $5, $6, $7, $8
+		 RETURNING seq`,
+		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt,
+	).Scan(&seq); err != nil {
 		return fmt.Errorf("append job event: %w", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit job event: %w", err)
+	}
+	ev.Seq, ev.Attempt = uint64(seq), attempt
 	q.broker.Publish(jobID, ev)
 	return nil
 }
 
-// eventOrg resolves the organization an event row is stamped with: the
-// live claim binding's org when the stream is still bound (its touch also
-// feeds the reaper's liveness marks), the job row's own org otherwise.
-func (q *SQLQueue) eventOrg(ctx context.Context, jobID uuid.UUID) (uuid.UUID, error) {
+// eventSeqLockKeyPrefix namespaces the per-job event sequence lock within
+// hashtext's key space.
+const eventSeqLockKeyPrefix = "job-event-seq:"
+
+// eventBinding resolves the organization and attempt an event row is
+// stamped with: the live claim binding's when the stream is still bound
+// (its touch also feeds the reaper's liveness marks), the job row's own
+// otherwise.
+func (q *SQLQueue) eventBinding(ctx context.Context, jobID uuid.UUID) (uuid.UUID, int, error) {
 	if e, ok := q.streams.get(jobID); ok {
 		e.touch(q.now())
-		return e.orgID, nil
+		return e.orgID, e.attempt, nil
 	}
 	var orgID uuid.UUID
+	var attempts int
 	if err := q.db.Pool().QueryRow(ctx,
-		`SELECT org_id FROM jobs WHERE id = $1`, jobID).Scan(&orgID); err != nil {
+		`SELECT org_id, attempts FROM jobs WHERE id = $1`, jobID).Scan(&orgID, &attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return uuid.Nil, ErrUnknownStream
+			return uuid.Nil, 0, ErrUnknownStream
 		}
-		return uuid.Nil, fmt.Errorf("resolve event org: %w", err)
+		return uuid.Nil, 0, fmt.Errorf("resolve event org: %w", err)
 	}
-	return orgID, nil
+	return orgID, attempts, nil
 }
 
 // normalizePayload stores the event payload as jsonb: valid JSON passes

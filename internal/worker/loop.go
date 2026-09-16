@@ -10,12 +10,12 @@
 // after the previous run's result is reported — "claims pause while a job
 // runs", per the plan.
 //
-// Seq numbering: the loop numbers events per run, starting at 1. One run
-// owns one stream — a job the manager requeues (at-least-once after a dead
-// worker) is claimed into a NEW runOne with a NEW stream, whose seq starts
-// fresh at 1. The manager's job_events seq uniqueness therefore holds per
-// stream/attempt; Task 5's review note about seq duplication concerns the
-// DB's cross-attempt handling, not this stream.
+// Seq numbering: the loop numbers events per run, starting at 1, which
+// orders one stream. A job the manager requeues (at-least-once after a dead
+// worker) is claimed into a NEW runOne with a NEW stream whose seq starts
+// fresh at 1 — the manager therefore assigns the STORED seq itself
+// (strictly increasing per job across attempts) and stamps each event with
+// its claim attempt (internal/jobs AppendEvent).
 package worker
 
 import (

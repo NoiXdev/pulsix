@@ -186,7 +186,12 @@ type Job struct {
 
 // Event is one run event a worker streamed in, as stored in job_events.
 type Event struct {
-	Seq     uint64
+	// Seq is the event's position in the job's log: assigned by the
+	// manager at append time, strictly increasing per job across attempts.
+	Seq uint64
+	// Attempt is the claim attempt that produced the event (jobs.attempts
+	// at the time of that claim; 0 for events that predate the counter).
+	Attempt int
 	Host    string
 	Task    string
 	State   string

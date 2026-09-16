@@ -197,7 +197,7 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		return nil, err
 	}
 	claim.Token = token
-	q.streams.register(job.ID, job.OrgID, token, q.now())
+	q.streams.register(job.ID, job.OrgID, token, job.Attempts, q.now())
 	return claim, nil
 }
 func (q *SQLQueue) newToken() (string, error) {

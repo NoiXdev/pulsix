@@ -741,6 +741,7 @@ func TestJobEventsEndpointAfterFilter(t *testing.T) {
 	var out struct {
 		Events []struct {
 			Seq     uint64         `json:"seq"`
+			Attempt int            `json:"attempt"`
 			Host    string         `json:"host"`
 			Task    string         `json:"task"`
 			State   string         `json:"state"`
@@ -761,6 +762,11 @@ func TestJobEventsEndpointAfterFilter(t *testing.T) {
 	decodeInto(t, requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+jobID.String()+"/events", nil), &out)
 	if len(out.Events) != 3 || out.Events[0].Seq != 1 || out.Events[2].Seq != 3 {
 		t.Fatalf("events = %+v", out.Events)
+	}
+	for _, e := range out.Events {
+		if e.Attempt != 1 {
+			t.Fatalf("event %d attempt = %d, want the first claim's 1", e.Seq, e.Attempt)
+		}
 	}
 
 	// after=<seq> resumes strictly past it, in seq order.

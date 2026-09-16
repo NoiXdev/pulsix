@@ -93,6 +93,7 @@ type jobDetailDTO struct {
 	Hosts      []string               `json:"hosts" doc:"The job's target host ids"`
 	Stats      map[string]any         `json:"stats"`
 	Error      string                 `json:"error,omitempty"`
+	Attempts   int                    `json:"attempts" doc:"How often the job was claimed; a requeued job's events carry their attempt"`
 	StartedAt  *time.Time             `json:"started_at,omitempty"`
 	FinishedAt *time.Time             `json:"finished_at,omitempty"`
 	CreatedAt  time.Time              `json:"created_at"`
@@ -106,7 +107,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		ID: j.ID.String(), ZoneID: j.ZoneID.String(), Kind: string(j.Kind),
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(), Trigger: j.Trigger,
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
-		Stats: j.Stats, Error: j.Error, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
+		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
 	}
 	out.Hosts = make([]string, len(j.HostIDs))
 	for i, h := range j.HostIDs {
@@ -187,7 +188,8 @@ type jobEventsInput struct {
 }
 
 type jobEventDTO struct {
-	Seq     uint64         `json:"seq"`
+	Seq     uint64         `json:"seq" doc:"The event's position in the job's log, strictly increasing across attempts"`
+	Attempt int            `json:"attempt" doc:"The claim attempt that produced the event (0 for events recorded before attempts were counted)"`
 	At      time.Time      `json:"at"`
 	Host    string         `json:"host"`
 	Task    string         `json:"task"`
@@ -197,7 +199,7 @@ type jobEventDTO struct {
 
 func toJobEventDTO(e jobs.Event) jobEventDTO {
 	return jobEventDTO{
-		Seq: e.Seq, At: e.At, Host: e.Host, Task: e.Task, State: e.State,
+		Seq: e.Seq, Attempt: e.Attempt, At: e.At, Host: e.Host, Task: e.Task, State: e.State,
 		Payload: normalizeEventPayload(e.Payload),
 	}
 }
