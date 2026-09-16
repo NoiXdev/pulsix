@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -96,7 +97,7 @@ func writeJobStream(hctx huma.Context, rctx context.Context, deps Deps, orgID, j
 		// failure): the SSE framing cannot carry a clean 404 anymore, so
 		// say so in one error frame and end — the SPA falls back to
 		// polling, which answers 404 properly.
-		_ = writeFrame("error", map[string]any{"error": err.Error()})
+		streamError(rctx, writeFrame, "subscribe", err)
 		return
 	}
 	defer cancel() // a returning stream unsubscribes; so does a cancelled request, below
@@ -105,7 +106,7 @@ func writeJobStream(hctx huma.Context, rctx context.Context, deps Deps, orgID, j
 	// whatever it is — the late subscriber renders immediately.
 	j, err := deps.Jobs.Get(rctx, orgID, jobID)
 	if err != nil {
-		_ = writeFrame("error", map[string]any{"error": err.Error()})
+		streamError(rctx, writeFrame, "read initial job status", err)
 		return
 	}
 	lastStatus := j.Status
@@ -140,7 +141,7 @@ func writeJobStream(hctx huma.Context, rctx context.Context, deps Deps, orgID, j
 				// The job vanished mid-stream (it does not happen — jobs
 				// are not deleted — but a stream must not spin on an
 				// error either): end the stream after one error frame.
-				_ = writeFrame("error", map[string]any{"error": err.Error()})
+				streamError(rctx, writeFrame, "poll job status", err)
 				return
 			}
 			if j.Status != lastStatus {
@@ -171,4 +172,14 @@ func writeSSEFrame(w io.Writer, event string, data any) error {
 		return fmt.Errorf("write %s frame: %w", event, err)
 	}
 	return nil
+}
+
+// streamError is a running stream's failure: the detail goes to the server
+// log, the client gets one generic error frame. Nothing internal — database
+// messages, addresses, other rows' ids — ever reaches the browser; the SPA
+// answers any error frame by falling back to polling, which reports proper
+// HTTP statuses.
+func streamError(ctx context.Context, writeFrame func(string, any) error, stage string, err error) {
+	slog.ErrorContext(ctx, "job event stream failed", "stage", stage, "err", err)
+	_ = writeFrame("error", map[string]any{"error": "the event stream failed; reload to continue"})
 }
