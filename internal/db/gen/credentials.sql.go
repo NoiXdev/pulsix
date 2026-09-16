@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -83,7 +84,8 @@ func (q *Queries) DeleteCredential(ctx context.Context, arg DeleteCredentialPara
 }
 
 const getCredential = `-- name: GetCredential :one
-SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, secret, expires_at, created_by, created_at, updated_at FROM credentials WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, expires_at, created_by, created_at, updated_at
+FROM credentials WHERE org_id = $1 AND id = $2
 `
 
 type GetCredentialParams struct {
@@ -91,9 +93,27 @@ type GetCredentialParams struct {
 	ID    uuid.UUID `json:"id"`
 }
 
-func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (Credential, error) {
+type GetCredentialRow struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	Name        string             `json:"name"`
+	Kind        string             `json:"kind"`
+	Username    string             `json:"username"`
+	PublicKey   string             `json:"public_key"`
+	Fingerprint string             `json:"fingerprint"`
+	KeyType     string             `json:"key_type"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+}
+
+// Metadata only (backlog 2.17): every column except the sealed secret. The
+// only place that column belongs on the wire is GetCredentialSecret's much
+// narrower select, for the worker's claim path.
+func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (GetCredentialRow, error) {
 	row := q.db.QueryRow(ctx, getCredential, arg.OrgID, arg.ID)
-	var i Credential
+	var i GetCredentialRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -103,7 +123,6 @@ func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (C
 		&i.PublicKey,
 		&i.Fingerprint,
 		&i.KeyType,
-		&i.Secret,
 		&i.ExpiresAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -261,18 +280,38 @@ func (q *Queries) ListCredentialUsage(ctx context.Context, orgID uuid.UUID) ([]L
 }
 
 const listCredentials = `-- name: ListCredentials :many
-SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, secret, expires_at, created_by, created_at, updated_at FROM credentials WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, expires_at, created_by, created_at, updated_at
+FROM credentials WHERE org_id = $1 ORDER BY name
 `
 
-func (q *Queries) ListCredentials(ctx context.Context, orgID uuid.UUID) ([]Credential, error) {
+type ListCredentialsRow struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	Name        string             `json:"name"`
+	Kind        string             `json:"kind"`
+	Username    string             `json:"username"`
+	PublicKey   string             `json:"public_key"`
+	Fingerprint string             `json:"fingerprint"`
+	KeyType     string             `json:"key_type"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+}
+
+// Metadata only (backlog 2.17): see GetCredential's comment above — the
+// same narrowing applies here, and matters more, since this is the query
+// that runs once per credentials-page load rather than once per detail
+// view.
+func (q *Queries) ListCredentials(ctx context.Context, orgID uuid.UUID) ([]ListCredentialsRow, error) {
 	rows, err := q.db.Query(ctx, listCredentials, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Credential
+	var items []ListCredentialsRow
 	for rows.Next() {
-		var i Credential
+		var i ListCredentialsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -282,7 +321,6 @@ func (q *Queries) ListCredentials(ctx context.Context, orgID uuid.UUID) ([]Crede
 			&i.PublicKey,
 			&i.Fingerprint,
 			&i.KeyType,
-			&i.Secret,
 			&i.ExpiresAt,
 			&i.CreatedBy,
 			&i.CreatedAt,

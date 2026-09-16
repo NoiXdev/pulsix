@@ -4,7 +4,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: GetCredential :one
-SELECT * FROM credentials WHERE org_id = $1 AND id = $2;
+-- Metadata only (backlog 2.17): every column except the sealed secret. The
+-- only place that column belongs on the wire is GetCredentialSecret's much
+-- narrower select, for the worker's claim path.
+SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, expires_at, created_by, created_at, updated_at
+FROM credentials WHERE org_id = $1 AND id = $2;
 
 -- name: GetCredentialSecret :one
 -- The ONE read that returns the sealed secret bytes, for the job-claim path
@@ -16,7 +20,12 @@ SELECT * FROM credentials WHERE org_id = $1 AND id = $2;
 SELECT kind, secret FROM credentials WHERE org_id = $1 AND id = $2;
 
 -- name: ListCredentials :many
-SELECT * FROM credentials WHERE org_id = $1 ORDER BY name;
+-- Metadata only (backlog 2.17): see GetCredential's comment above — the
+-- same narrowing applies here, and matters more, since this is the query
+-- that runs once per credentials-page load rather than once per detail
+-- view.
+SELECT id, org_id, name, kind, username, public_key, fingerprint, key_type, expires_at, created_by, created_at, updated_at
+FROM credentials WHERE org_id = $1 ORDER BY name;
 
 -- name: UpdateCredential :one
 -- A NULL secret keeps the stored one: renaming a credential or changing its
