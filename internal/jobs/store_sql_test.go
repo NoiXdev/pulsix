@@ -180,6 +180,44 @@ func TestSQLStoreJobCRUD(t *testing.T) {
 	}
 }
 
+// TestQueueClaimIsScopedToTheWorkersOrganization (fix round 1, Critical):
+// the org-unscoped claim is still bound to the claiming worker's
+// organization. A worker of org A naming org B's zone id claims nothing —
+// org B's job stays queued and its payload never leaves the database —
+// while org B's own worker claims it normally.
+func TestQueueClaimIsScopedToTheWorkersOrganization(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	orgA := seedOrg(t, q, "jobs-claim-scope-a")
+	orgB := seedOrg(t, q, "jobs-claim-scope-b")
+	store := jobs.NewSQLStore(d)
+	queue := jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+
+	zoneB := uuid.Must(uuid.NewV7())
+	jobB := newJob(orgB, zoneB, jobs.KindAdhoc, jobs.StatusQueued)
+	scopedB := db.WithOrgScope(ctx, orgB)
+	if err := store.CreateJob(scopedB, jobB, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	claim, err := queue.Claim(ctx, orgA, []uuid.UUID{zoneB}, "v1")
+	if err != nil {
+		t.Fatalf("foreign claim: %v", err)
+	}
+	if claim != nil {
+		t.Fatalf("a worker of org A claimed org B's job %s", claim.Job.GetId())
+	}
+	row, err := store.GetJob(scopedB, orgB, jobB.ID)
+	if err != nil || row.Status != jobs.StatusQueued {
+		t.Fatalf("org B's job after the foreign claim = %+v, %v; want still queued", row, err)
+	}
+
+	claim, err = queue.Claim(ctx, orgB, []uuid.UUID{zoneB}, "v1")
+	if err != nil || claim == nil || claim.Job.GetId() != jobB.ID.String() {
+		t.Fatalf("org B's own claim = %+v, %v; want job %s", claim, err, jobB.ID)
+	}
+}
+
 // TestQueueClaimConcurrency is the brief's required test: eight parallel
 // claimers against eight queued jobs of one zone claim exactly eight
 // distinct jobs with no double claim; a drained queue claims nothing; and
@@ -199,7 +237,7 @@ func TestQueueClaimConcurrency(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				c, err := queue.Claim(ctx, zones, "v1")
+				c, err := queue.Claim(ctx, org, zones, "v1")
 				if err != nil {
 					t.Errorf("Claim: %v", err)
 					return

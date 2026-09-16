@@ -171,7 +171,7 @@ func TestRotationGroupFinalizesThroughTheRealLoop(t *testing.T) {
 	// queued jobs come out in whatever order the claimer serves them.
 	claims := map[uuid.UUID]*jobs.Claim{}
 	for len(claims) < len(groupJobs) {
-		claim, err := w.queue.Claim(ctx, []uuid.UUID{w.zone(t)}, "v1")
+		claim, err := w.queue.Claim(ctx, w.org, []uuid.UUID{w.zone(t)}, "v1")
 		if err != nil || claim == nil {
 			t.Fatalf("claim = %v, %v", claim, err)
 		}
@@ -350,13 +350,13 @@ func TestRotationGroupFailureLeavesTheCredentialUntouched(t *testing.T) {
 	// claimed next and FAILS: the new key did not get the host in. The
 	// probe's result event rides the bound stream, exactly like any
 	// connection test.
-	if _, err := w.queue.Claim(ctx, []uuid.UUID{run.ZoneID}, "v1"); err != nil {
+	if _, err := w.queue.Claim(ctx, w.org, []uuid.UUID{run.ZoneID}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.queue.Finish(ctx, run.ID, jobs.StatusSucceeded, nil, ""); err != nil {
 		t.Fatalf("finish the run: %v", err)
 	}
-	testClaim, err := w.queue.Claim(ctx, []uuid.UUID{test.ZoneID}, "v1")
+	testClaim, err := w.queue.Claim(ctx, w.org, []uuid.UUID{test.ZoneID}, "v1")
 	if err != nil || testClaim == nil {
 		t.Fatalf("claim the test: %v, %v", testClaim, err)
 	}
@@ -451,7 +451,7 @@ func TestRotationGroupFinalizesOnlyWhenTheGroupIsDone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.queue.Claim(ctx, []uuid.UUID{w.zone(t)}, "v1"); err != nil {
+	if _, err := w.queue.Claim(ctx, w.org, []uuid.UUID{w.zone(t)}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.queue.Finish(ctx, result.FirstJobID, jobs.StatusSucceeded, nil, ""); err != nil {
@@ -489,7 +489,7 @@ func TestRotationFinishErrorPathsAreLoggedNotFatal(t *testing.T) {
 	if err := store.CreateJob(db.WithOrgScope(ctx, w.org), j, json.RawMessage(`{"nope":1}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.queue.Claim(ctx, []uuid.UUID{j.ZoneID}, "v1"); err != nil {
+	if _, err := w.queue.Claim(ctx, w.org, []uuid.UUID{j.ZoneID}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
@@ -502,7 +502,7 @@ func TestRotationFinishErrorPathsAreLoggedNotFatal(t *testing.T) {
 	if err := store.CreateJob(db.WithOrgScope(ctx, w.org), runJob, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.queue.Claim(ctx, []uuid.UUID{runJob.ZoneID}, "v1"); err != nil {
+	if _, err := w.queue.Claim(ctx, w.org, []uuid.UUID{runJob.ZoneID}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.queue.Finish(ctx, runJob.ID, jobs.StatusSucceeded, nil, ""); err != nil {
@@ -731,7 +731,7 @@ func TestFinishClearsSystemPayloads(t *testing.T) {
 		return payload
 	}
 	finishCleared := func(j jobs.Job, kind string, status jobs.Status) {
-		claim, err := w.queue.Claim(ctx, []uuid.UUID{j.ZoneID}, "v1")
+		claim, err := w.queue.Claim(ctx, w.org, []uuid.UUID{j.ZoneID}, "v1")
 		if err != nil || claim == nil {
 			t.Fatalf("claim %s: %v, %v", kind, claim, err)
 		}

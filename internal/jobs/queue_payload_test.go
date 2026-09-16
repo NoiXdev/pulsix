@@ -496,7 +496,7 @@ func TestReaperFallbackAnchorsOnClaimedAt(t *testing.T) {
 	if err := store.CreateJob(db.WithOrgScope(context.Background(), org.ID), j, nil); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := q.Claim(context.Background(), org.ID, []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}

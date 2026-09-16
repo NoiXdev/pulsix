@@ -166,7 +166,7 @@ func runJob(t *testing.T, c *http.Client, url string) []jobDTO {
 // zone queue must hand back this job) and report the finish.
 func finishJob(t *testing.T, s *apitest.Server, zone, jobID uuid.UUID, status jobs.Status, stats map[string]any, errText string) {
 	t.Helper()
-	claim, err := s.Queue.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := s.Queue.Claim(context.Background(), zoneOrg(t, s, zone), []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim: %v, %v", claim, err)
 	}
@@ -178,12 +178,24 @@ func finishJob(t *testing.T, s *apitest.Server, zone, jobID uuid.UUID, status jo
 	}
 }
 
+// zoneOrg reads the organization a zone belongs to: the claim is scoped
+// to the claiming worker's organization, and these helpers only know the
+// zone.
+func zoneOrg(t *testing.T, s *apitest.Server, zone uuid.UUID) uuid.UUID {
+	t.Helper()
+	var org uuid.UUID
+	if err := s.DB.Pool().QueryRow(context.Background(), `SELECT org_id FROM zones WHERE id = $1`, zone).Scan(&org); err != nil {
+		t.Fatalf("zone org: %v", err)
+	}
+	return org
+}
+
 // appendEvents drives events into a job's stream through the real
 // queue, exactly like the gRPC EventRecorder port's Append calls do
 // (claim first, so the live binding exists).
 func appendEvents(t *testing.T, s *apitest.Server, zone, jobID uuid.UUID, events []jobs.Event) {
 	t.Helper()
-	claim, err := s.Queue.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := s.Queue.Claim(context.Background(), zoneOrg(t, s, zone), []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim: %v, %v", claim, err)
 	}

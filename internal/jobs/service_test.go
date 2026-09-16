@@ -146,7 +146,7 @@ type fakeQueue struct {
 	claimErr error
 }
 
-func (f *fakeQueue) Claim(context.Context, []uuid.UUID, string) (*jobs.Claim, error) {
+func (f *fakeQueue) Claim(context.Context, uuid.UUID, []uuid.UUID, string) (*jobs.Claim, error) {
 	return nil, f.claimErr
 }
 

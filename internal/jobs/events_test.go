@@ -25,7 +25,7 @@ func claimOne(t *testing.T, d *db.DB, org, zone uuid.UUID, q *jobs.SQLQueue) *jo
 	if err := jobs.NewSQLStore(d).CreateJob(db.WithOrgScope(ctx, org), j, nil); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := q.Claim(ctx, []uuid.UUID{zone}, "v1")
+	claim, err := q.Claim(ctx, org, []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}

@@ -29,13 +29,24 @@ type JobClaim struct {
 	Token string       // random 128-bit hex binding token
 }
 
-// Claimer picks one queued job for a worker's zones. Org-unscoped by
-// design: the claim is keyed by zone, and the worker's zones are trusted
-// because the connection already authenticated as a registered worker.
+// ClaimScope is what a claim may take from: the authenticated worker's own
+// organization and the zones it is authorized for (today exactly its
+// enrolled zone). The server builds it from the registry row the auth
+// interceptor resolved, never from the request alone.
+type ClaimScope struct {
+	OrgID   uuid.UUID
+	ZoneIDs []uuid.UUID
+}
+
+// Claimer picks one queued job for a worker. Org-unscoped at the database
+// level by design (the claim runs outside pulsix.org_id), which is why the
+// scope carries the worker's organization explicitly: an implementation
+// must only ever return a job whose org and zone are inside scope.
 type Claimer interface {
-	// Claim picks one queued job for any of the zones, marks it claimed and
-	// returns its payload plus a fresh binding token. nil claim = queue empty.
-	Claim(ctx context.Context, zones []uuid.UUID, version string) (*JobClaim, error)
+	// Claim picks one queued job for any of the scope's zones inside the
+	// scope's organization, marks it claimed and returns its payload plus a
+	// fresh binding token. nil claim = queue empty.
+	Claim(ctx context.Context, scope ClaimScope, version string) (*JobClaim, error)
 }
 
 // Event is one run event a worker streams in mid-run.

@@ -360,7 +360,7 @@ func TestFinishRecordsConnectionTest(t *testing.T) {
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
@@ -409,7 +409,7 @@ func TestFinishConnectionTestCancelledRecordsNothing(t *testing.T) {
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1"); err != nil {
+	if _, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Finish(context.Background(), j.ID, StatusCancelled, nil, ""); err != nil {
@@ -437,7 +437,7 @@ func TestFinishConnectionTestWithoutEventRecordsNothing(t *testing.T) {
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
-	if claim, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1"); err != nil || claim != nil {
+	if claim, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1"); err != nil || claim != nil {
 		t.Fatalf("Claim = %v, %v — the unbuildable claim must silently fail the job", claim, err)
 	}
 	// The failed claim already marked the job terminal, so finishing it is
@@ -473,10 +473,10 @@ func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1"); err != nil || claimJobID(t, d, org, zone) != uuid.Nil {
+	if _, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1"); err != nil || claimJobID(t, d, org, zone) != uuid.Nil {
 		t.Fatal("the unbuildable claim must fail the job")
 	}
-	if _, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1"); err != nil {
+	if _, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1"); err != nil {
 		t.Fatalf("empty queue: %v", err)
 	}
 	// The job errored at claim; no events → recordTest (never called from
@@ -493,7 +493,7 @@ func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 	if err := store.CreateJob(scoped, j2, nil); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
@@ -553,7 +553,7 @@ func TestFinishConnectionTestTwoHostsRecordsNothing(t *testing.T) {
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1")
 	if err != nil || claim != nil {
 		t.Fatalf("a multi-host connection_test claim must fail closed: %v, %v", claim, err)
 	}
@@ -593,7 +593,7 @@ func TestFinishConnectionTestSinkFailureIsLoggedNotFatal(t *testing.T) {
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := q.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}

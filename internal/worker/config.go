@@ -68,9 +68,11 @@ type Config struct {
 	// DataDir is the worker's scratch root: per-job temp dirs and the
 	// persistent repo cache live under it.
 	DataDir string
-	// Zones are the zone ids to claim for. Empty means the claim sends no
-	// zone ids and the manager resolves them from the certificate's
-	// urn:pulsix:zone SAN.
+	// Zones are the zone ids the claim names. Empty (the normal setting)
+	// means the claim sends no zone ids and the manager uses the zone the
+	// worker's certificate was enrolled for. A worker may only ever claim
+	// for that one zone: the manager refuses a claim naming any other zone
+	// (PermissionDenied), so a non-empty value is only a self-check.
 	Zones []uuid.UUID
 	// AnsibleRunnerBin and AnsibleBin name the pinned binaries the runner
 	// (Task 9) executes.

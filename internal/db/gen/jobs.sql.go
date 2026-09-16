@@ -43,13 +43,18 @@ const claimJob = `-- name: ClaimJob :one
 UPDATE jobs SET status = 'running', worker_id = NULL, claimed_at = now(), started_at = now()
 WHERE id = (
   SELECT id FROM jobs
-  WHERE status = 'queued' AND zone_id = ANY($1::uuid[])
+  WHERE status = 'queued' AND org_id = $1::uuid AND zone_id = ANY($2::uuid[])
   ORDER BY created_at
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
 RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at
 `
+
+type ClaimJobParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	ZoneIds []uuid.UUID `json:"zone_ids"`
+}
 
 // THE org-unscoped claim (plan Global Constraints): runs on the raw pool,
 // outside any pulsix.org_id scope, keyed by the worker's zones. FOR UPDATE
@@ -59,9 +64,12 @@ RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, c
 // claimed_at and started_at set together: nothing between the two states
 // ever observes a job, and the schema's CHECK keeps both spellings legal.
 // worker_id stays NULL: the Claimer port carries no worker identity (see
-// SQLQueue's doc comment).
-func (q *Queries) ClaimJob(ctx context.Context, dollar_1 []uuid.UUID) (Job, error) {
-	row := q.db.QueryRow(ctx, claimJob, dollar_1)
+// SQLQueue's doc comment). org_id is the claiming worker's own
+// organization (from its registry row, never from the request): zone ids
+// are visible through each organization's API, so the zone filter alone
+// must never be what keeps another organization's jobs out of reach.
+func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error) {
+	row := q.db.QueryRow(ctx, claimJob, arg.OrgID, arg.ZoneIds)
 	var i Job
 	err := row.Scan(
 		&i.ID,

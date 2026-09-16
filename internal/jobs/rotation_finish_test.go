@@ -135,7 +135,7 @@ func TestRecordRotationBranches(t *testing.T) {
 	if err := store.CreateJob(scoped, job, mustSeal(q.box, org, job.ID, payload)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Claim(context.Background(), []uuid.UUID{job.ZoneID}, "v1"); err != nil {
+	if _, err := q.Claim(context.Background(), org, []uuid.UUID{job.ZoneID}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	finishErr := q.Finish(context.Background(), job.ID, StatusSucceeded, nil, "")
@@ -232,7 +232,7 @@ func TestRecordRotationFinisherErrorIsLoggedNotFatal(t *testing.T) {
 	if err := NewSQLStore(d).CreateJob(db.WithOrgScope(context.Background(), orgID), job, mustSeal(q.box, orgID, job.ID, payload)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Claim(context.Background(), []uuid.UUID{job.ZoneID}, "v1"); err != nil {
+	if _, err := q.Claim(context.Background(), orgID, []uuid.UUID{job.ZoneID}, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Finish(context.Background(), job.ID, StatusSucceeded, nil, ""); err != nil {

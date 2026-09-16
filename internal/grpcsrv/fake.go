@@ -13,7 +13,7 @@ import (
 
 // FakeClaimer serves claims from an in-memory queue: Claim pops the first
 // enqueued claim or returns nil when the queue is empty. Every call is
-// recorded so tests can assert the zones and version a worker presented.
+// recorded so tests can assert the scope and version a worker presented.
 type FakeClaimer struct {
 	mu     sync.Mutex
 	claims []*JobClaim
@@ -22,15 +22,15 @@ type FakeClaimer struct {
 
 // FakeClaimCall is one recorded Claim invocation.
 type FakeClaimCall struct {
-	Zones   []uuid.UUID
+	Scope   ClaimScope
 	Version string
 }
 
 // Claim implements Claimer.
-func (f *FakeClaimer) Claim(_ context.Context, zones []uuid.UUID, version string) (*JobClaim, error) {
+func (f *FakeClaimer) Claim(_ context.Context, scope ClaimScope, version string) (*JobClaim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, FakeClaimCall{Zones: zones, Version: version})
+	f.calls = append(f.calls, FakeClaimCall{Scope: scope, Version: version})
 	if len(f.claims) == 0 {
 		return nil, nil
 	}

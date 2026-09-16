@@ -25,10 +25,11 @@ import (
 )
 
 // SQLQueue is the claim half of the job queue and the ONE org-unscoped
-// store in the system (plan Global Constraints): a worker claims across
-// organizations, so the claim, the event append, the finish and the reaper
-// run on the raw pool (db.Pool()) with explicit ids and no
-// row-level-security scope. The org-scoped reads the payload build needs —
+// store in the system (plan Global Constraints): the claim path is not bound
+// to a request's organization, so the claim, the event append, the finish
+// and the reaper run on the raw pool (db.Pool()) with explicit ids and no
+// row-level-security scope — the claim filters on the claiming worker's
+// own organization explicitly (see Claim). The org-scoped reads the payload build needs —
 // inventory, credentials, bastions, the template row — run through q.db
 // inside a db.WithOrgScope bound to the claimed job's organization, so RLS
 // still applies to them.
@@ -127,7 +128,9 @@ func NewSQLQueue(d *db.DB, box Sealer, renderer SnapshotSource, creds Credential
 	}
 }
 
-// Claim picks one queued job for any of the zones and ships its payload.
+// Claim picks one queued job of orgID for any of the zones and ships its
+// payload. orgID is the claiming worker's own organization: the statement
+// filters on it, so a zone id of another organization matches nothing.
 //
 // One transaction claims the row (FOR UPDATE SKIP LOCKED, see ClaimJob in
 // queries/jobs.sql) and marks it running — the brief's claimed state is
@@ -139,7 +142,7 @@ func NewSQLQueue(d *db.DB, box Sealer, renderer SnapshotSource, creds Credential
 // fails the job with the reason instead of shipping a partial one, and the
 // claim reports an empty queue — the worker polls again and gets the next
 // job.
-func (q *SQLQueue) Claim(ctx context.Context, zones []uuid.UUID, _ string) (*Claim, error) {
+func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, _ string) (*Claim, error) {
 	if len(zones) == 0 {
 		return nil, nil
 	}
@@ -148,7 +151,7 @@ func (q *SQLQueue) Claim(ctx context.Context, zones []uuid.UUID, _ string) (*Cla
 		return nil, fmt.Errorf("begin claim transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	row, err := gen.New(tx).ClaimJob(ctx, zones)
+	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{OrgID: orgID, ZoneIds: zones})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

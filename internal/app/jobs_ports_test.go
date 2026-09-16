@@ -88,14 +88,14 @@ func TestGRPCPortAdapters(t *testing.T) {
 	}
 
 	// Claim: the adapter maps the queue's claim onto grpcsrv's.
-	claim, err := jobsClaimer{queue}.Claim(ctx, []uuid.UUID{zone}, "v1")
+	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
 	if claim.Token == "" || claim.Job.GetId() != j.ID.String() {
 		t.Fatalf("claim = %+v", claim)
 	}
-	empty, err := jobsClaimer{queue}.Claim(ctx, []uuid.UUID{zone}, "v1")
+	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1")
 	if err != nil || empty != nil {
 		t.Fatalf("drained claim = %v, %v", empty, err)
 	}

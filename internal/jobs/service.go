@@ -301,10 +301,12 @@ type Claim struct {
 // worker's zones are trusted because the connection already authenticated
 // as a registered worker.
 type Queue interface {
-	// Claim picks one queued job for any of the zones, marks it running
-	// and returns its payload plus a fresh binding token. A nil claim
-	// means the queues behind the zones are empty.
-	Claim(ctx context.Context, zones []uuid.UUID, version string) (*Claim, error)
+	// Claim picks one queued job of orgID for any of the zones, marks it
+	// running and returns its payload plus a fresh binding token. A nil
+	// claim means the queues behind the zones are empty. orgID is the
+	// claiming worker's own organization: a job of any other organization
+	// is never returned, whatever zone ids the caller names.
+	Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error)
 	// BindStream validates a claim's binding token and returns the stream
 	// the run writes into. ErrUnknownStream for an unknown, expired or
 	// already-consumed token.

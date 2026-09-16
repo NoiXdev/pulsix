@@ -49,8 +49,8 @@ func TestDialClaimRoundTrip(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("claims = %d, want 1", len(calls))
 	}
-	if len(calls[0].Zones) != 1 || calls[0].Zones[0] != zoneID {
-		t.Errorf("claimed for zones %v, want just %s", calls[0].Zones, zoneID)
+	if len(calls[0].Scope.ZoneIDs) != 1 || calls[0].Scope.ZoneIDs[0] != zoneID || calls[0].Scope.OrgID != orgID {
+		t.Errorf("claimed for scope %+v, want org %s zone %s", calls[0].Scope, orgID, zoneID)
 	}
 	if calls[0].Version != "dev-test" {
 		t.Errorf("version = %q, want the claimed one", calls[0].Version)

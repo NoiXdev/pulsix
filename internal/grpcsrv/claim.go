@@ -1,5 +1,6 @@
-// ClaimJob: parse the request, refresh the worker's heartbeat, hand the
-// zones to the Claimer port, bind the returned job to its stream token and
+// ClaimJob: authorize the requested zones against the authenticated
+// worker, refresh the worker's heartbeat, hand the worker's claim scope
+// (its own organization and zone) to the Claimer port, bind the returned job to its stream token and
 // audit the claim as a system event.
 package grpcsrv
 
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/workers"
 )
 
 // ClaimJob implements workerpb.WorkerServiceServer.ClaimJob. An empty
@@ -21,18 +23,13 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	zones, err := parseZoneIDs(req.GetZoneIds())
+	zones, err := authorizedZones(worker, req.GetZoneIds())
 	if err != nil {
+		if status.Code(err) == codes.PermissionDenied {
+			slog.WarnContext(ctx, "worker claim refused: zone outside the worker's enrollment",
+				"worker", worker.Name, "org", worker.OrgID, "zone", worker.ZoneID)
+		}
 		return nil, err
-	}
-	// An empty request (internal/worker's Config.Zones doc: "empty means
-	// the claim sends no zone ids and the manager resolves them from the
-	// certificate's urn:pulsix:zone SAN") resolves to the registered
-	// worker's own zone — worker.ZoneID is exactly that SAN, already
-	// verified and looked up by the auth interceptor, so this is a plain
-	// registry read, not a second certificate parse.
-	if len(zones) == 0 {
-		zones = []uuid.UUID{worker.ZoneID}
 	}
 
 	// The claim doubles as the worker's heartbeat: Touch records last_seen
@@ -41,7 +38,7 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 		return nil, status.Errorf(codes.Internal, "touch worker: %v", err)
 	}
 
-	claim, err := s.deps.Claims.Claim(ctx, zones, req.GetVersion())
+	claim, err := s.deps.Claims.Claim(ctx, ClaimScope{OrgID: worker.OrgID, ZoneIDs: zones}, req.GetVersion())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "claim job: %v", err)
 	}
@@ -78,16 +75,32 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 	return &workerpb.ClaimJobResponse{Job: job}, nil
 }
 
-// parseZoneIDs converts the request's zone ids; an unparseable one is the
-// caller's error, not the queue's.
-func parseZoneIDs(raw []string) ([]uuid.UUID, error) {
-	zones := make([]uuid.UUID, 0, len(raw))
+// authorizedZones turns the request's zone ids into the zones the worker
+// may claim for. A worker certificate is enrolled for exactly one zone of
+// one organization (worker.ZoneID/OrgID, resolved from the registry by the
+// auth interceptor), and that zone is the only one it may claim from:
+//
+//   - an empty list (the documented default — PULSIX_WORKER_ZONES unset)
+//     resolves to the worker's own zone;
+//   - a list naming only the worker's own zone (possibly repeated) is
+//     accepted;
+//   - any other zone — another organization's (zone ids are visible
+//     through that organization's API) or a sibling zone of the worker's
+//     own organization — refuses the whole claim with PermissionDenied.
+//
+// Refusing instead of silently dropping the foreign ids makes a
+// misconfigured worker visible in its own logs rather than idling forever;
+// nothing about the foreign zone's queue is revealed either way.
+func authorizedZones(worker workers.Worker, raw []string) ([]uuid.UUID, error) {
 	for _, r := range raw {
 		id, err := uuid.Parse(r)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "zone id %q: %v", r, err)
 		}
-		zones = append(zones, id)
+		if id != worker.ZoneID {
+			return nil, status.Errorf(codes.PermissionDenied,
+				"worker %q is not enrolled for zone %s (it may only claim for its own zone)", worker.Name, id)
+		}
 	}
-	return zones, nil
+	return []uuid.UUID{worker.ZoneID}, nil
 }

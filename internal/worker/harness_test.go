@@ -87,10 +87,10 @@ type fakeClaims struct {
 	calls []grpcsrv.FakeClaimCall
 }
 
-func (f *fakeClaims) Claim(_ context.Context, zones []uuid.UUID, version string) (*grpcsrv.JobClaim, error) {
+func (f *fakeClaims) Claim(_ context.Context, scope grpcsrv.ClaimScope, version string) (*grpcsrv.JobClaim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, grpcsrv.FakeClaimCall{Zones: zones, Version: version})
+	f.calls = append(f.calls, grpcsrv.FakeClaimCall{Scope: scope, Version: version})
 	if len(f.queue) == 0 {
 		return nil, nil
 	}

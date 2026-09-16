@@ -40,7 +40,9 @@ func (f fakeRotationTargets) ListCredentialBastions(_ context.Context, _, _ uuid
 // noQueue is the minimal Queue a rotation-enqueue-only Service needs.
 type noQueue struct{}
 
-func (noQueue) Claim(context.Context, []uuid.UUID, string) (*Claim, error) { return nil, nil }
+func (noQueue) Claim(context.Context, uuid.UUID, []uuid.UUID, string) (*Claim, error) {
+	return nil, nil
+}
 func (noQueue) BindStream(context.Context, uuid.UUID, string) (Stream, error) {
 	return nil, errors.New("not wired")
 }

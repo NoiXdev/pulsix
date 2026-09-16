@@ -88,7 +88,7 @@ func TestAdhocRouteClaimCarriesTheRunnerPayload(t *testing.T) {
 	decodeInto(t, resp, &out)
 
 	zone := mustUUID(t, out.Jobs[0].ZoneID)
-	claim, err := f.s.Queue.Claim(context.Background(), []uuid.UUID{zone}, "v1")
+	claim, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{zone}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim: %v, %v", claim, err)
 	}

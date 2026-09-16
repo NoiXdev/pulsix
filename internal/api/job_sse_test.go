@@ -97,7 +97,7 @@ func TestJobStreamFramesInOrder(t *testing.T) {
 
 	// The worker claims the job first: the subscriber joins a RUNNING
 	// run, and every event it appends lands on the stream.
-	claim, err := f.s.Queue.Claim(context.Background(), []uuid.UUID{f.zoneA}, "v1")
+	claim, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{f.zoneA}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim: %v, %v", claim, err)
 	}

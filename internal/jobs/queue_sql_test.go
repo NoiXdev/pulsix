@@ -120,7 +120,7 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 		t.Fatalf("enqueued = %+v", created)
 	}
 
-	claim, err := queue.Claim(ctx, []uuid.UUID{zone.ID}, "v1")
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{zone.ID}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
@@ -167,7 +167,7 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 	}
 
 	// The queue is drained.
-	if second, err := queue.Claim(ctx, []uuid.UUID{zone.ID}, "v1"); err != nil || second != nil {
+	if second, err := queue.Claim(ctx, org, []uuid.UUID{zone.ID}, "v1"); err != nil || second != nil {
 		t.Fatalf("second claim = %v, %v", second, err)
 	}
 }
@@ -208,7 +208,7 @@ func TestQueueClaimFailsUnbuildableJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claim, err := queue.Claim(ctx, []uuid.UUID{zone}, "v1")
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{zone}, "v1")
 	if err != nil || claim != nil {
 		t.Fatalf("Claim = %v, %v, want an empty queue", claim, err)
 	}
@@ -292,7 +292,7 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnqueueSync: %v", err)
 	}
-	claim, err := queue.Claim(ctx, []uuid.UUID{job.ZoneID}, "v1")
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{job.ZoneID}, "v1")
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
