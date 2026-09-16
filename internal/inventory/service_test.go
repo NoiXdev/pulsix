@@ -136,6 +136,10 @@ func TestUpdateGroup(t *testing.T) {
 		{"unknown bastion", web.ID, web.Revision, inventory.GroupPatch{Name: "webserver", ParentID: &prod.ID, BastionID: &unknown}, inventory.ErrInvalidInput, "jump host"},
 		{"stale revision", web.ID, web.Revision + 5, inventory.GroupPatch{Name: "webserver", ParentID: &prod.ID}, inventory.ErrRevisionMismatch, ""},
 		{"unknown group", unknown, 1, inventory.GroupPatch{Name: "x"}, inventory.ErrNotFound, ""},
+		// Not-found must win even when the patch also names a bastion that
+		// does not exist: the group's own existence is checked first, so
+		// this must not come back as ErrInvalidInput instead.
+		{"unknown group with unknown bastion", unknown, 1, inventory.GroupPatch{Name: "x", BastionID: &unknown}, inventory.ErrNotFound, ""},
 		{"bad name", web.ID, web.Revision, inventory.GroupPatch{Name: "all"}, inventory.ErrInvalidInput, "reserved"},
 		{"rename to _meta", web.ID, web.Revision, inventory.GroupPatch{Name: "_meta"}, inventory.ErrInvalidInput, "reserved"},
 	}

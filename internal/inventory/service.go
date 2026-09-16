@@ -258,18 +258,22 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 	if err := validateGroupMeta(in.Name, in.Description); err != nil {
 		return GroupView{}, err
 	}
-	if in.BastionID != nil {
-		if _, err := s.bastions.GetBastion(ctx, orgID, *in.BastionID); errors.Is(err, sshconf.ErrNotFound) {
-			return GroupView{}, fmt.Errorf("%w: jump host does not exist", ErrInvalidInput)
-		} else if err != nil {
-			return GroupView{}, err
-		}
-	}
 	var result GroupView
 	err := s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
+		// GetGroup runs before the bastion check, same as every other
+		// reference check below it: an update to a group that does not
+		// exist must 404, never 400, regardless of what else about the
+		// request is also wrong.
 		cur, err := txStore.GetGroup(ctx, orgID, id)
 		if err != nil {
 			return err
+		}
+		if in.BastionID != nil {
+			if _, err := s.bastions.GetBastion(ctx, orgID, *in.BastionID); errors.Is(err, sshconf.ErrNotFound) {
+				return fmt.Errorf("%w: jump host does not exist", ErrInvalidInput)
+			} else if err != nil {
+				return err
+			}
 		}
 		t, err := treeVia(ctx, txStore, orgID)
 		if err != nil {

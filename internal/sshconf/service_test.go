@@ -238,6 +238,11 @@ func TestUpdateBastionRejectsCycles(t *testing.T) {
 	if _, err := f.svc.UpdateBastion(ctx, f.org, uuid.Must(uuid.NewV7()), sshconf.BastionInput{Name: "x", Address: "x", Username: "ops"}); !errors.Is(err, sshconf.ErrNotFound) {
 		t.Fatalf("unknown: %v", err)
 	}
+	// Not-found must win even when the input is also invalid: the target's
+	// existence is checked before field validation.
+	if _, err := f.svc.UpdateBastion(ctx, f.org, uuid.Must(uuid.NewV7()), sshconf.BastionInput{Name: "Not Valid!", Address: "x", Username: "ops"}); !errors.Is(err, sshconf.ErrNotFound) {
+		t.Fatalf("unknown with invalid input: %v", err)
+	}
 	if list, err := f.svc.ListBastions(ctx, f.org); err != nil || len(list) != 2 {
 		t.Fatalf("ListBastions = %v, %v", list, err)
 	}

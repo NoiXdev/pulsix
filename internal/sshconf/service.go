@@ -186,23 +186,24 @@ func (s *Service) ListBastions(ctx context.Context, orgID uuid.UUID) ([]Bastion,
 // own chain, or the chain of any other jump host of the organization, would
 // become cyclic or too long.
 func (s *Service) UpdateBastion(ctx context.Context, orgID, id uuid.UUID, in BastionInput) (Bastion, error) {
+	// The existence check runs before field validation, same as before
+	// this method gained a chain lock: an update to a jump host that does
+	// not exist must 404, never 400, regardless of what else about the
+	// request is also wrong.
+	if _, err := s.store.GetBastion(ctx, orgID, id); err != nil {
+		return Bastion{}, err
+	}
 	b := bastionFrom(id, orgID, in)
 	if err := s.checkBastionBasics(ctx, b); err != nil {
 		return Bastion{}, err
 	}
 	if b.ViaBastionID == nil {
-		// Clearing or never setting a via cannot create a cycle: check the
-		// row exists and write it, no chain lock needed.
-		if _, err := s.store.GetBastion(ctx, orgID, id); err != nil {
-			return Bastion{}, err
-		}
+		// Clearing or never setting a via cannot create a cycle: no chain
+		// lock needed, just write it.
 		return s.store.UpdateBastion(ctx, b)
 	}
 	var result Bastion
 	err := s.store.WithChainLock(ctx, orgID, func(txStore Store) error {
-		if _, err := txStore.GetBastion(ctx, orgID, id); err != nil {
-			return err
-		}
 		if err := s.checkChain(ctx, txStore, b); err != nil {
 			return err
 		}
