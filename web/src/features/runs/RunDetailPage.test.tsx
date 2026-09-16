@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -49,7 +49,7 @@ class FakeEventSource {
     this.listeners.set(type, list);
   }
   emit(type: string, data: unknown) {
-    for (const fn of this.listeners.get(type) ?? []) fn({ data: JSON.stringify(data) });
+    for (const fn of this.listeners.get(type) ?? []) act(() => fn({ data: JSON.stringify(data) }));
   }
   close() {
     this.closed = true;

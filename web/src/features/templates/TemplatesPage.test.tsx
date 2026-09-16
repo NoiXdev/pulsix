@@ -32,7 +32,7 @@ function renderPage() {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const listRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
-  const jobRoute = createRoute({ getParentRoute: () => orgRoute, path: '/jobs/$id', component: () => <div>RUN VIEW</div> });
+  const jobRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: () => <div>RUN VIEW</div> });
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, jobRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/templates'] }),

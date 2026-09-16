@@ -12,9 +12,9 @@ export interface JobListFilter {
 
 /** useJobs is the keyset-paginated runs list; the filters are part of the
  * query key (changing one starts over from the first page) and validated
- * server-side — an invalid value is a 400, so the select options here must
+ * server-side — an invalid value is a 400, so the UI's filter options must
  * stay the server's own vocabulary. */
-export function useJobs(org: string, filter: { status?: string; kind?: string } = {}) {
+export function useJobs(org: string, filter: JobListFilter = {}) {
   return useInfiniteQuery({
     queryKey: ['jobs', org, filter],
     initialPageParam: '',
@@ -84,10 +84,9 @@ export function isTerminal(status: string | undefined | null): boolean {
   return status !== undefined && status !== null && TERMINAL.has(status);
 }
 
-/** useJobEventsPage fetches one page of a run's events after a sequence
- * number — the polling fallback's fetch primitive. Exposed as a plain
- * async function (not a hook) so the SSE hook can call it from its poll
- * interval. */
+/** fetchJobEvents fetches one page of a run's events after a sequence
+ * number — the poll fallback's and the seed's fetch primitive (a plain
+ * async function, so an interval can drive it). */
 export async function fetchJobEvents(org: string, id: string, after: number): Promise<JobEvent[]> {
   const body = await unwrap(
     api.GET('/api/v1/orgs/{org}/jobs/{id}/events', { params: { path: { org, id }, query: { after } } }),
@@ -103,65 +102,70 @@ export interface RunLog {
   transport: RunLogTransport | null;
 }
 
+interface RunLogState {
+  org: string;
+  id: string;
+  events: JobEvent[];
+  status: string | null;
+  transport: RunLogTransport | null;
+}
+
 /**
  * useRunLog is the run view's live event log: it seeds the event history
  * with one plain fetch, then subscribes to the org-scoped SSE stream
- * (GET /orgs/{org}/jobs/{id}/stream). The SSE contract (Task 12) is what
- * shapes this hook:
+ * (GET /orgs/{org}/jobs/{id}/stream). The SSE contract (Task 12) shapes
+ * this hook:
  *
  *  - `event: log` frames carry the event JSON (seq, host, task, state,
- *    payload); a server under load may silently DROP frames (drop-on-full),
- *    so the client detects seq gaps — any event whose seq is greater than
- *    last+1 means frames were lost — closes the stream and falls back to
- *    polling GET /events?after=<seq>, which replays the gap.
+ *    payload); the server may silently DROP frames under load
+ *    (drop-on-full), so the client detects seq gaps — any event whose seq
+ *    is greater than last+1 — closes the stream and falls back to polling
+ *    GET /events?after=<seq>, which replays exactly what was lost.
  *  - `event: status` frames carry {id, status}; the terminal status frame
  *    ends the stream, and the hook stops connecting.
  *  - the server ends the stream on transient errors; EventSource
  *    reconnects by itself, and a reconnect's missed frames surface as a
  *    seq gap → the same polling fallback.
  *
- * Polling keeps the events fresh (and, with the page's own job-detail
- * polling, the status) until the run reaches a terminal state.
+ * State is keyed by (org, id): navigating to another run resets it
+ * render-time (the "adjust state when a prop changes" pattern), and the
+ * seed refetches for the new key.
  */
 export function useRunLog(org: string, id: string): RunLog {
-  const [events, setEvents] = useState<JobEvent[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
-  const [transport, setTransport] = useState<RunLogTransport | null>(null);
+  const [state, setState] = useState<RunLogState>({ org, id, events: [], status: null, transport: null });
+  if (state.org !== org || state.id !== id) {
+    setState({ org, id, events: [], status: null, transport: null });
+  }
   // lastSeq lives in a ref so the SSE handlers and the poll timer read the
   // freshest value without re-subscribing on every event.
   const lastSeq = useRef(0);
 
-  // Seed the history once: everything already streamed before this page
-  // opened. A later SSE reconnect replays from the subscription point, not
-  // from lastSeq — the seed plus the dedup below covers both.
+  // Seed the history once per key: everything already streamed before this
+  // page opened (a late subscriber otherwise only sees the live tail).
   useEffect(() => {
     if (!org || !id) return;
     let alive = true;
-    lastSeq.current = 0;
-    setEvents([]);
-    setStatus(null);
     void fetchJobEvents(org, id, 0)
       .then((seed) => {
         if (!alive) return;
         const last = seed.length > 0 ? seed[seed.length - 1].seq : 0;
         lastSeq.current = last;
-        setEvents(mergeEvents([], seed));
-        setTransport('sse');
+        setState((s) => (s.org === org && s.id === id ? { ...s, events: mergeEvents([], seed), transport: 'sse' } : s));
       })
       .catch(() => {
-        if (alive) setTransport('poll');
+        if (alive) setState((s) => (s.org === org && s.id === id ? { ...s, transport: 'poll' } : s));
       });
     return () => {
       alive = false;
     };
   }, [org, id]);
 
-  // The live tail. mode sse → EventSource; poll → interval fetch.
+  // The live tail. transport sse → EventSource; poll → interval fetch.
   useEffect(() => {
     if (!org || !id) return;
-    if (transport === 'sse') {
+    if (state.transport === 'sse') {
       const es = new EventSource(`/api/v1/orgs/${org}/jobs/${id}/stream`);
-      const close = () => es.close();
+      const patch = (next: (s: RunLogState) => RunLogState) => setState((s) => (s.org === org && s.id === id ? next(s) : s));
 
       es.addEventListener('log', (e) => {
         let ev: JobEvent;
@@ -172,44 +176,44 @@ export function useRunLog(org: string, id: string): RunLog {
         }
         if (ev.seq <= lastSeq.current) return; // replay or duplicate
         if (ev.seq > lastSeq.current + 1) {
-          // A gap: the stream dropped frames (drop-on-full) or we
-          // disconnected mid-run. Polling replays exactly what is missing.
-          close();
-          setTransport('poll');
+          // A gap: frames were dropped (drop-on-full) or missed across a
+          // reconnect. Polling replays exactly what was lost.
+          es.close();
+          patch((s) => ({ ...s, transport: 'poll' }));
           return;
         }
         lastSeq.current = ev.seq;
-        setEvents((prev) => mergeEvents(prev, [ev]));
+        patch((s) => ({ ...s, events: mergeEvents(s.events, [ev]) }));
       });
 
       es.addEventListener('status', (e) => {
         try {
           const frame = JSON.parse((e as MessageEvent<string>).data) as { status?: string };
           if (frame.status) {
-            setStatus(frame.status);
-            if (isTerminal(frame.status)) close(); // terminal frame ends the stream
+            if (isTerminal(frame.status)) es.close(); // terminal frame ends the stream
+            patch((s) => ({ ...s, status: frame.status ?? null }));
           }
         } catch {
-          /* ignore an unreadable status frame */
+          /* an unreadable status frame is ignored */
         }
       });
 
       es.addEventListener('error', () => {
-        // The server's error frame (or a broken connection): fall back to
-        // polling, which answers errors properly (404 and such).
-        close();
-        setTransport('poll');
+        // The server's error frame or a broken connection: polling answers
+        // errors properly (404 and such), the stream does not.
+        es.close();
+        patch((s) => ({ ...s, transport: 'poll' }));
       });
 
-      return close;
+      return () => es.close();
     }
-    if (transport === 'poll') {
+    if (state.transport === 'poll') {
       const poll = async () => {
         try {
           const next = await fetchJobEvents(org, id, lastSeq.current);
           if (next.length > 0) {
             lastSeq.current = next[next.length - 1].seq;
-            setEvents((prev) => mergeEvents(prev, next));
+            setState((s) => (s.org === org && s.id === id ? { ...s, events: mergeEvents(s.events, next) } : s));
           }
         } catch {
           // Transient: the next tick tries again.
@@ -219,9 +223,9 @@ export function useRunLog(org: string, id: string): RunLog {
       void poll();
       return () => window.clearInterval(timer);
     }
-  }, [org, id, transport]);
+  }, [org, id, state.transport]);
 
-  return { events, status, transport };
+  return { events: state.events, status: state.status, transport: state.transport };
 }
 
 /** mergeEvents folds a fetched batch into the existing list, keeping the
