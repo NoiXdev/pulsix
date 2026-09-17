@@ -34,7 +34,9 @@ func TestExecutionMigrationsRollBackAndReapply(t *testing.T) {
 	if _, err := admin.Pool().Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = admin.Pool().Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)") })
+	t.Cleanup(func() {
+		_, _ = admin.Pool().Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+	})
 
 	u, err := url.Parse(adminURL)
 	if err != nil {

@@ -165,6 +165,10 @@ func TestCreateValidation(t *testing.T) {
 		{"relative url", repos.CreateInput{Name: "infra", URL: "../repo"}, "invalid url"},
 		{"branch with dotdot", repos.CreateInput{Name: "infra", URL: "https://git.example.com/x", Branch: "a..b"}, "invalid branch"},
 		{"branch with space", repos.CreateInput{Name: "infra", URL: "https://git.example.com/x", Branch: "a b"}, "invalid branch"},
+		// A leading dash would reach git's argument parser as an option
+		// (--upload-pack=…, -oProxyCommand=…).
+		{"branch with leading dash", repos.CreateInput{Name: "infra", URL: "https://git.example.com/x", Branch: "--upload-pack=touch"}, "invalid branch"},
+		{"scp-like url with leading dash", repos.CreateInput{Name: "infra", URL: "-oProxyCommand=touch@evil:x"}, "invalid url"},
 		{"subpath with dotdot", repos.CreateInput{Name: "infra", URL: "https://git.example.com/x", Subpath: "playbooks/../site.yml"}, "invalid subpath"},
 		{"subpath bad chars", repos.CreateInput{Name: "infra", URL: "https://git.example.com/x", Subpath: "pl*ys"}, "invalid subpath"},
 	}

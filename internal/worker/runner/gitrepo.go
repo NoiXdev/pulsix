@@ -95,6 +95,11 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 	if spec.Branch == "" {
 		return "", errors.New("repo has no branch")
 	}
+	// A value starting with "-" would reach git's argument parser as an
+	// option; the manager refuses such values, the worker defends again.
+	if strings.HasPrefix(spec.URL, "-") || strings.HasPrefix(spec.Branch, "-") {
+		return "", errors.New(`repo url or branch must not start with "-"`)
+	}
 
 	var cred gitCredential
 	if secretJSON != "" {
@@ -146,7 +151,7 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 	if _, statErr := os.Stat(filepath.Join(target, ".git")); statErr == nil {
 		// Present: bring it to the branch's tip — the run must see the
 		// branch's current state, not a stale cache.
-		if err := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "origin", spec.Branch); err != nil {
+		if err := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "--", "origin", spec.Branch); err != nil {
 			return "", err
 		}
 		if err := runGit(ctx, gitBin, target, env, spec.URL, "reset", "--hard", "FETCH_HEAD"); err != nil {
@@ -164,7 +169,7 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 			}
 		}
 		if err := runGit(ctx, gitBin, cacheRoot, env, spec.URL,
-			"clone", "--quiet", "--branch", spec.Branch, "--single-branch", spec.URL, target); err != nil {
+			"clone", "--quiet", "--branch="+spec.Branch, "--single-branch", "--", spec.URL, target); err != nil {
 			_ = os.RemoveAll(target) // a partial clone must not linger
 			return "", err
 		}

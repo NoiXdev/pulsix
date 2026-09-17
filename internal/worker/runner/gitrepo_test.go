@@ -277,3 +277,55 @@ func TestFetchRepoErrorTextNeverNamesTheURL(t *testing.T) {
 		t.Errorf("the error still names command and exit code: %v", err)
 	}
 }
+
+// TestFetchRepoNeverPassesOptionShapedArguments (final review triage): a
+// URL or branch starting with "-" is refused before git runs, and every
+// git invocation separates options from the URL, branch and paths with
+// "--", so a stored value can never become a git option.
+func TestFetchRepoNeverPassesOptionShapedArguments(t *testing.T) {
+	realGit := gitOnPATH(t)
+	argsLog := filepath.Join(t.TempDir(), "git-args")
+	wrapper := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + argsLog + "'\nexec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{GitBin: wrapper}
+	source := gitFixture(t)
+
+	for name, spec := range map[string]gitRepoSpec{
+		"url":    {OrgID: orgID, RepoID: repoID, URL: "-oProxyCommand=touch@evil:x", Branch: "main", Subpath: "playbooks/site.yml"},
+		"branch": {OrgID: orgID, RepoID: repoID, URL: source, Branch: "--upload-pack=touch", Subpath: "playbooks/site.yml"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_ = os.Remove(argsLog)
+			if _, err := r.fetchRepo(context.Background(), spec, "", t.TempDir(), t.TempDir()); err == nil {
+				t.Fatal("an option-shaped value must be refused")
+			}
+			if _, err := os.Stat(argsLog); err == nil {
+				t.Fatal("git ran with an option-shaped value")
+			}
+		})
+	}
+
+	// A normal clone and update separate the options from the values.
+	_ = os.Remove(argsLog)
+	cacheRoot := t.TempDir()
+	spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: source, Branch: "main", Subpath: "playbooks/site.yml"}
+	for i := 0; i < 2; i++ { // clone, then fetch + reset
+		if _, err := r.fetchRepo(context.Background(), spec, "", cacheRoot, t.TempDir()); err != nil {
+			t.Fatalf("fetch %d: %v", i, err)
+		}
+	}
+	raw, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.HasPrefix(line, "clone") || strings.HasPrefix(line, "fetch") {
+			if !strings.Contains(line, " -- ") {
+				t.Errorf("git %q runs without a -- separator", line)
+			}
+		}
+	}
+}

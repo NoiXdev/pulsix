@@ -185,8 +185,8 @@ func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID *u
 	if err := validateURL(url); err != nil {
 		return err
 	}
-	if branch != "" && (strings.Contains(branch, "..") || !branchPattern.MatchString(branch)) {
-		return fmt.Errorf("%w: invalid branch: may contain letters, digits, dots, slashes and hyphens (1–100 characters), no \"..\"", ErrInvalidInput)
+	if branch != "" && (strings.Contains(branch, "..") || strings.HasPrefix(branch, "-") || !branchPattern.MatchString(branch)) {
+		return fmt.Errorf("%w: invalid branch: may contain letters, digits, dots, slashes and hyphens (1–100 characters), no \"..\", not starting with \"-\"", ErrInvalidInput)
 	}
 	if strings.Contains(subpath, "..") || !subpathPattern.MatchString(subpath) {
 		return fmt.Errorf("%w: invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no \"..\"", ErrInvalidInput)
@@ -211,6 +211,9 @@ func validateURL(raw string) error {
 	switch {
 	case raw == "":
 		return fmt.Errorf("%w: invalid url: must be an https:// URL, an ssh:// URL or an SCP-like git URL", ErrInvalidInput)
+	case strings.HasPrefix(raw, "-"):
+		// git would parse it as an option (-oProxyCommand=…).
+		return fmt.Errorf("%w: invalid url: must not start with \"-\"", ErrInvalidInput)
 	case strings.ContainsAny(raw, " \t\n\r"):
 		return fmt.Errorf("%w: invalid url: must not contain whitespace", ErrInvalidInput)
 	case len(raw) > MaxURLLength:
