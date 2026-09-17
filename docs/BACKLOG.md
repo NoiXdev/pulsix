@@ -155,13 +155,19 @@ Shipped items first, then what was deliberately deferred.
 | 2.33 | The real-ansible gate runs | done | found and fixed: ansible-runner `-b` dropped the playbook; errored runs reported no reason |
 | 2.34 | Secret-typed template extra vars sealed at rest | done | keep/masked markers keep the stored value; the SPA sends keep markers |
 | 2.35 | Smaller review items | done | generic SSE error frames; retest lock released on cancelled context; `job.result` audit carries the org; 00017 down order; `jobs (org_id, zone_id)` foreign key (migration 00023); git `--` separators and no leading `-` in repo URL/branch; rotate_key claim no longer ships the pending private key; ansible exit code 4 maps to failed |
+| 2.36 | Template extra vars and claims cannot weaken host-key enforcement | done | re-review N1: connection-security vars refused (422) and forced by the worker as extra vars |
 | 2.40 | Pin jump-host (bastion) host keys | planned | today a jump host's key is trusted on first use per job; a pinned target is still verified end to end through it |
 | 2.41 | Pin Git server host keys | planned | repo fetches accept a new server key per job (`accept-new` in the run's home) |
 | 2.42 | Run playbooks under a separate uid from the worker process | planned | hardening: a `localhost` task can read the worker's client key today (documented trust model, spec §14); needs a setuid helper or CAP_SETUID in the worker image |
 | 2.43 | Show "pin not enforceable" for fingerprint-only pins in the API/UI | planned | pins made before migration 00021 have no full key; claims for such hosts fail with a message asking for a connection test, and the next confirming test completes the pin (the daily re-test does it within a day). Documented, not yet visible as a state |
 | 2.44 | Option to refuse jobs against unpinned hosts | planned | decision for now: unpinned hosts are trusted on first use for one job only (pinning happens on the connection test, spec §5) |
 | 2.45 | Evaluate the template `limit` per zone at enqueue | planned | a limit that matches no host of one zone makes that zone's job error in ansible |
-| 2.46 | Revocation targets snapshot | planned | revocations go to the hosts and jump hosts referencing the credential when the rotation verified; a target that stopped referencing it in between keeps the old key |
+| 2.46 | Revocation targets snapshot | planned | sign-off 3 (accepted for v0.2b): revocations go to the hosts and jump hosts referencing the credential when the rotation verified; a target that stopped referencing it in between keeps the old key |
+| 2.49 | Events of an old attempt's still-open stream are stamped with the new attempt and keep its binding alive | planned | re-review N2: carry the bound token or attempt from the stream into the append |
+| 2.50 | Event append scans every hypertable chunk for max(seq) | planned | re-review N3: bound on the job's created_at or keep a per-job counter on jobs |
+| 2.51 | Event payload truncation's UTF-8 back-off is quadratic and can empty the head | planned | re-review N4: back off at most 3 bytes or use strings.ToValidUTF8 |
+| 2.52 | Templates with legacy plaintext secret extra vars cannot be saved with keep markers | planned | re-review N5: accept a plaintext stored value under a secret field as keepable and seal it (makes 2.47 hold) |
+| 2.53 | Reaper exhaustion does not re-check staleness at the transition | planned | re-review N6: add the staleness predicate to the transition or re-check stream liveness before failing |
 | 2.47 | Re-seal legacy plaintext template secrets without a save | planned | values stored before sealing are sealed on the next save of the template |
 | 2.48 | Redaction limits | planned | values shorter than 4 characters and transformed secrets (base64, hashes) are not recognized; `no_log` stays the playbook author's tool |
 
