@@ -104,7 +104,6 @@ func TestBootstrapExecutorDelegatesToTheRunner(t *testing.T) {
 		"--playbook", filepath.Join(workDir, "project", "playbook.yml"),
 		"--inventory", filepath.Join(workDir, "inventory"),
 		"--ident", "01900000",
-		"-b", "ansible-playbook",
 	)
 	if got := mustRead(t, filepath.Join(workDir, "project", "playbook.yml")); got != string(mustReadEmbedded(t, playbooks.NameBootstrap)) {
 		t.Error("the bootstrap did not materialize the embedded playbook verbatim")

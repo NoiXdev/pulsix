@@ -307,19 +307,25 @@ func TestRunArgvShapeIsPinned(t *testing.T) {
 	t.Setenv(fakeEnvExit, "0")
 
 	env := runEnv(t)
+	env.Config.AnsibleBin = "/opt/ansible/bin/ansible-playbook"
 	if _, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), runJob(t), env, func(*workerpb.RunEvent) error { return nil }); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	// The invocation is the pinned contract (the Dockerfile pins a
-	// compatible ansible-runner version against it).
+	// compatible ansible-runner version against it). A configured
+	// ansible-playbook is NOT passed as -b/--binary: ansible-runner 2.4.3
+	// then runs the binary without the playbook argument (found by the
+	// real-ansible E2E); its directory leads the run's PATH instead.
 	assertArgs(t, string(mustRead(t, os.Getenv(fakeEnvArgs))),
 		"run", env.WorkDir, "--json",
 		"--playbook", filepath.Join(env.WorkDir, "project", "playbook.yml"),
 		"--inventory", filepath.Join(env.WorkDir, "inventory"),
 		"--ident", "01900000",
-		"-b", "ansible-playbook",
 		"--limit", "web*",
 	)
+	if envText := string(mustRead(t, os.Getenv(fakeEnvDump))); !strings.Contains(envText, "PATH=/opt/ansible/bin:") {
+		t.Errorf("the configured ansible-playbook's directory does not lead PATH:\n%s", envText)
+	}
 }
 
 // TestRunFallsBackToConfiguredRunnerBin pins the PULSIX_ANSIBLE_RUNNER_BIN
@@ -367,7 +373,13 @@ func TestRunExitCodeMapping(t *testing.T) {
 			t.Setenv(fakeEnvEvents, c.fixture(t))
 			t.Setenv(fakeEnvExit, c.rc)
 			status, stats, err := (&Runner{RunnerBin: fake}).Run(context.Background(), runJob(t), runEnv(t), func(*workerpb.RunEvent) error { return nil })
-			if err != nil {
+			// An errored run says why (the exit code), so the job's error
+			// is never empty; every other outcome has no error.
+			if c.status == worker.StatusError {
+				if err == nil || !strings.Contains(err.Error(), "exited with code "+c.rc) {
+					t.Fatalf("Run error = %v, want the exit code named", err)
+				}
+			} else if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			if status != c.status {
@@ -387,8 +399,8 @@ func TestRunWithoutStatsIsAnError(t *testing.T) {
 	t.Setenv(fakeEnvExit, "0")
 
 	status, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), runJob(t), runEnv(t), func(*workerpb.RunEvent) error { return nil })
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no run stats") {
+		t.Fatalf("Run error = %v, want the missing stats named", err)
 	}
 	if status != worker.StatusError {
 		t.Errorf("status = %q, want error (a stats-less success would lie)", status)
@@ -446,7 +458,6 @@ func TestRunAdhocBuildsTheOneTaskPlaybook(t *testing.T) {
 		"--playbook", filepath.Join(env.WorkDir, "project", "playbook.yml"),
 		"--inventory", filepath.Join(env.WorkDir, "inventory"),
 		"--ident", "01900000",
-		"-b", "ansible-playbook",
 	)
 
 	// The run view still gets its bookends and the fixture's events.
@@ -515,7 +526,6 @@ func TestRunRepoPlaybookResolvesThroughTheCache(t *testing.T) {
 		"--playbook", filepath.Join(clone, "playbooks", "site.yml"),
 		"--inventory", filepath.Join(env.WorkDir, "inventory"),
 		"--ident", "01900000",
-		"-b", "ansible-playbook",
 		"--limit", "web*",
 	)
 

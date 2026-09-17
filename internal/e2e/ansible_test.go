@@ -7,9 +7,9 @@
 //
 // Runner modes: fake (default — the Task 9 fixture pattern, fast and
 // deterministic) and real (PULSIX_E2E_REAL_ANSIBLE=1 — the real
-// ansible-runner drives ansible-playbook against the fixtures; skipped
-// when ansible-runner is absent, e.g. a plain laptop without it — CI
-// installs ansible-runner 2.4.3 + ansible-core 2.21.4 and runs both).
+// ansible-runner drives ansible-playbook against the fixtures; the test
+// FAILS when either binary is missing — CI installs ansible-runner 2.4.3 +
+// ansible-core 2.21.4 and runs both).
 package e2e
 
 import (
@@ -106,13 +106,15 @@ func resolveRunner(t *testing.T) (runnerBin, ansibleBin string) {
 	if os.Getenv("PULSIX_E2E_REAL_ANSIBLE") != "1" {
 		return writeFakeRunner(t), ""
 	}
+	// The real mode is the milestone gate: asked for and not runnable is a
+	// failure, never a silent skip that reads as a pass.
 	bin, err := exec.LookPath("ansible-runner")
 	if err != nil {
-		t.Skipf("PULSIX_E2E_REAL_ANSIBLE=1 but ansible-runner is not installed: %v", err)
+		t.Fatalf("PULSIX_E2E_REAL_ANSIBLE=1 but ansible-runner is not installed: %v", err)
 	}
 	ansible, err := exec.LookPath("ansible-playbook")
 	if err != nil {
-		t.Skipf("PULSIX_E2E_REAL_ANSIBLE=1 but ansible-playbook is not installed: %v", err)
+		t.Fatalf("PULSIX_E2E_REAL_ANSIBLE=1 but ansible-playbook is not installed: %v", err)
 	}
 	return bin, ansible
 }

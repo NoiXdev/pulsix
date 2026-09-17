@@ -151,11 +151,21 @@ func (h *hostSSHServer) rekey(t *testing.T) {
 // runRealCommand executes the session's command through /bin/sh, wired to
 // the channel — the shape a real exec-only SSH host shows the raw module
 // and the probe's fallback paths.
+//
+// Stdin rides a pipe copied in the background: with cmd.Stdin = sess,
+// cmd.Wait would block until the CLIENT closed its stdin — ansible's ssh
+// connection (-tt) keeps it open, so a finished command would never exit,
+// unlike on a real sshd.
 func runRealCommand(sess glssh.Session) {
 	cmd := exec.Command("/bin/sh", "-c", sess.RawCommand())
 	cmd.Stdout = sess
 	cmd.Stderr = sess.Stderr()
-	cmd.Stdin = sess
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		_ = sess.Exit(1)
+		return
+	}
+	go func() { _, _ = io.Copy(stdin, sess); _ = stdin.Close() }()
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {

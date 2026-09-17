@@ -28,6 +28,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -141,19 +142,13 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		"--inventory", filepath.Join(env.WorkDir, inventoryWrapperName),
 		"--ident", ident(job.GetId()),
 	}
-	if ansibleBin != "" {
-		// An explicitly pinned ansible-playbook rides ansible-runner's
-		// -b/--binary; an empty config lets the runner discover it via
-		// PATH.
-		args = append(args, "-b", ansibleBin)
-	}
 	if limit := job.GetLimit(); limit != "" {
 		args = append(args, "--limit", limit)
 	}
 
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = env.WorkDir
-	cmd.Env = r.subprocessEnv(env)
+	cmd.Env = r.subprocessEnv(env, ansibleBin)
 	// A private process group: the cancel path signals the runner and the
 	// ansible-playbook child together, whatever ansible-runner forwards
 	// itself.
@@ -214,6 +209,11 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if err := sink(runEvent(evStateRunEnd, "", "", runEndPayload(status))); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("send run end event: %w", err)
 	}
+	if status == worker.StatusError && errText != "" {
+		// An errored run reports why (exit code or signal — never output)
+		// instead of an empty error on the job.
+		return status, statsMap, errors.New(errText)
+	}
 	return status, statsMap, nil
 }
 
@@ -258,8 +258,20 @@ func (r *Runner) streamEvents(ctx context.Context, stdout io.Reader, sink func(*
 // worker's own settings must never leak into a run), plus the fixed private
 // set. HOME points into the work dir so ansible's scratch files (connection
 // sockets, the fact cache) land in the dir the loop wipes.
-func (r *Runner) subprocessEnv(env worker.RunEnv) []string {
+//
+// A configured ansible-playbook (PULSIX_ANSIBLE_BIN) is found through PATH:
+// its directory leads the run's PATH. It is deliberately NOT passed as
+// ansible-runner's -b/--binary — ansible-runner 2.4.3 then invokes the
+// binary without the playbook argument (the real-ansible E2E caught it).
+func (r *Runner) subprocessEnv(env worker.RunEnv, ansibleBin string) []string {
 	out := stripPrivateEnv(os.Environ())
+	if dir := filepath.Dir(ansibleBin); ansibleBin != "" && strings.ContainsRune(ansibleBin, os.PathSeparator) {
+		for i, kv := range out {
+			if strings.HasPrefix(kv, "PATH=") {
+				out[i] = "PATH=" + dir + string(os.PathListSeparator) + strings.TrimPrefix(kv, "PATH=")
+			}
+		}
+	}
 	return append(out,
 		// Host key checking stays on: pinned hosts are checked strictly
 		// against the run's known_hosts, everything else is trusted on
