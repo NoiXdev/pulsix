@@ -236,3 +236,45 @@ func TestRotationRefusedWhileOneIsInFlight(t *testing.T) {
 		t.Fatalf("Rotate after the first rotation ended = %v", err)
 	}
 }
+
+// TestRotationRevokesOnJumpHostsToo: a jump host referencing the credential
+// gets its own revocation, in the organization's default zone, once the
+// whole group verified.
+func TestRotationRevokesOnJumpHostsToo(t *testing.T) {
+	f := newRotationFixture(t, "jobs-rotation-revoke-bastion")
+	bastion, err := f.w.sshSvc.CreateBastion(f.w.scoped, f.w.org, sshconf.BastionInput{
+		Name: "jump", Address: "10.0.0.9", Username: "ops", CredentialID: &f.cred.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.w.credsSvc.Rotate(f.w.scoped, f.w.org, f.cred.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		c := f.claim(t)
+		if c == nil {
+			break
+		}
+		if c.Job.GetKind() == string(jobs.KindRevokeKey) {
+			continue // leave the revocations queued-then-running; only count them
+		}
+		if err := f.w.queue.Finish(ctx, uuid.MustParse(c.Job.GetId()), jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revokes := f.groupJobs(t, result.GroupID)[jobs.KindRevokeKey]
+	if len(revokes) != 2 {
+		t.Fatalf("revocations = %d, want the host and the jump host", len(revokes))
+	}
+	var bastionRevoke *jobs.Job
+	for i := range revokes {
+		if len(revokes[i].HostIDs) == 0 {
+			bastionRevoke = &revokes[i]
+		}
+	}
+	if bastionRevoke == nil || bastionRevoke.ZoneID != f.w.zone(t) || bastionRevoke.Trigger != jobs.TriggerSystem {
+		t.Fatalf("jump-host revocation = %+v (bastion %s)", bastionRevoke, bastion.ID)
+	}
+}
