@@ -98,7 +98,7 @@ func (s *scenario) drive() {
 	}()
 	run := s.awaitJob(runID, "run", 90*time.Second)
 	if run.Job.Status != "succeeded" {
-		s.t.Fatalf("run job = %q (error %q)", run.Job.Status, run.Job.Error)
+		s.t.Fatalf("run job = %q (error %q)%s", run.Job.Status, run.Job.Error, s.runnerOutput())
 	}
 	// The claim records the claiming worker (worker_id binds the result to
 	// it), so the detail names the enrolled worker.
@@ -135,7 +135,7 @@ func (s *scenario) drive() {
 	failID := s.runTemplate(s.failTID)
 	failed := s.awaitJob(failID, "run", 90*time.Second)
 	if failed.Job.Status != "failed" {
-		s.t.Fatalf("deliberate failure run = %q, want failed", failed.Job.Status)
+		s.t.Fatalf("deliberate failure run = %q (error %q), want failed%s", failed.Job.Status, failed.Job.Error, s.runnerOutput())
 	}
 	hostUUID := s.hostID
 	failedList, _ := failed.Job.Stats["failed_hosts"].([]any)
@@ -154,7 +154,7 @@ func (s *scenario) drive() {
 	retryOut := s.retryFailed(failID)
 	retry := s.awaitJob(retryOut.Jobs[0].ID, "run", 90*time.Second)
 	if retry.Job.Status != "succeeded" {
-		s.t.Fatalf("retry run = %q (error %q)", retry.Job.Status, retry.Job.Error)
+		s.t.Fatalf("retry run = %q (error %q)%s", retry.Job.Status, retry.Job.Error, s.runnerOutput())
 	}
 	// The retry's scope is only what failed before: this one host.
 	if len(retry.Job.Hosts) != 1 || retry.Job.Hosts[0] != hostUUID {
@@ -182,8 +182,8 @@ func (s *scenario) hostKeyChanges() {
 	}
 	unreachable, _ := run.Job.Stats["unreachable_hosts"].([]any)
 	if run.Job.Status != "failed" || len(unreachable) != 1 || unreachable[0] != s.hostID {
-		s.t.Fatalf("changed-key run = %q, unreachable_hosts %v (error %q); want failed with the host unreachable",
-			run.Job.Status, run.Job.Stats["unreachable_hosts"], run.Job.Error)
+		s.t.Fatalf("changed-key run = %q, unreachable_hosts %v (error %q); want failed with the host unreachable%s",
+			run.Job.Status, run.Job.Stats["unreachable_hosts"], run.Job.Error, s.runnerOutput())
 	}
 	events := s.awaitEvents(runID, 30*time.Second, func(e jobEventsOut) bool { return hasEvent(e, "run_end", "") })
 	sawUnreachable := false

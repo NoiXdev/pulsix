@@ -87,6 +87,8 @@ type scenario struct {
 	host     *hostSSHServer
 	bastionS *bastionServer
 	greeting string
+
+	runnerLog string // the capture wrapper's log (see captureRunnerOutput)
 }
 
 func TestAnsibleEndToEnd(t *testing.T) {
@@ -106,6 +108,13 @@ func resolveRunner(t *testing.T) (runnerBin, ansibleBin string) {
 	if os.Getenv("PULSIX_E2E_REAL_ANSIBLE") != "1" {
 		return writeFakeRunner(t), ""
 	}
+	return resolveRealRunner(t)
+}
+
+// resolveRealRunner locates the installed ansible-runner and
+// ansible-playbook binaries.
+func resolveRealRunner(t *testing.T) (runnerBin, ansibleBin string) {
+	t.Helper()
 	// The real mode is the milestone gate: asked for and not runnable is a
 	// failure, never a silent skip that reads as a pass.
 	bin, err := exec.LookPath("ansible-runner")
@@ -262,6 +271,11 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 
 	// --- The worker's claim loop, in-process ------------------------------
 	runnerBin, ansibleBin := resolveRunner(t)
+	// The worker never puts runner output on the job (it can carry
+	// secrets), so a run that errors reads only "exited with code N". The
+	// capture wrapper keeps the runner's stdout and stderr in a test-owned
+	// log that the run assertions print on failure (runnerOutput).
+	runnerBin, s.runnerLog = captureRunnerOutput(t, runnerBin)
 	workerCfg := worker.Config{
 		ManagerAddr:      "localhost:" + portOf(grpcLis.Addr().String()),
 		CertPath:         filepath.Join(dir, "worker.crt"),
