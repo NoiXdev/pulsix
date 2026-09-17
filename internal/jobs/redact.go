@@ -8,6 +8,8 @@ package jobs
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
@@ -73,7 +75,10 @@ func (r *redactSet) addKindPayload(payload string) {
 	walk = func(v any) {
 		switch t := v.(type) {
 		case map[string]any:
-			for k, e := range t {
+			// Sorted keys: map order is random, and the claim's redact list
+			// must come out the same for the same payload.
+			for _, k := range slices.Sorted(maps.Keys(t)) {
+				e := t[k]
 				if s, ok := e.(string); ok && secretPayloadKeys[k] {
 					r.addSecretJSON(s)
 					continue
