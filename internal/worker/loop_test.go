@@ -863,9 +863,10 @@ func TestLoopEndToEndHappy(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 
 	cancel, done := runLoop(t, NewLoop(cfg, workerpb.NewWorkerServiceClient(conn), exec))
-	// ReportResult and the RunEvents stream are independent RPCs: the
-	// result can land at the manager before its stream handler has drained
-	// the tail of the events. Both must be there before the assertions.
+	// ReportResult and the RunEvents stream are independent RPCs; the loop
+	// reports only after the manager ended the stream (see
+	// TestLoopReportsAfterEventStreamDrained). Both must be there before
+	// the assertions.
 	waitFor(t, 2*time.Second, func() bool {
 		return len(h.results.Results()) == 1 && len(h.events.Events()) == 2
 	})
@@ -893,6 +894,51 @@ func TestLoopEndToEndHappy(t *testing.T) {
 	}
 	if res.Stats["web-1"] == nil {
 		t.Fatalf("stats = %v", res.Stats)
+	}
+}
+
+// TestLoopReportsAfterEventStreamDrained: the manager's Finish reads the
+// run's stored events (a connection test's result event, the sync and
+// rotation outcomes), so the terminal ReportResult must not overtake the
+// stream handler still storing the tail of the events. With a slow event
+// store, every event is stored by the time the result lands.
+func TestLoopReportsAfterEventStreamDrained(t *testing.T) {
+	h := newHarness(t)
+	h.events.setAppendDelay(150 * time.Millisecond)
+	h.results.events = h.events
+	cfg := h.issue("fra-1-a", true)
+	cfg.ClaimInterval = 10 * time.Millisecond
+	jobID := uuid.Must(uuid.NewV7())
+	h.claims.Enqueue(&grpcsrv.JobClaim{
+		Job: workerpb.Job{
+			Id: jobID.String(), Kind: "connection_test", OrgId: orgID.String(), ZoneId: zoneID.String(),
+			WorkerToken: "tok-" + jobID.String(),
+		},
+		Token: "tok-" + jobID.String(),
+	})
+	exec := &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, sink func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		for _, state := range []string{"started", "ok"} {
+			if err := sink(&workerpb.RunEvent{Host: "web-1", Task: "connection_test", State: state}); err != nil {
+				return StatusError, nil, err
+			}
+		}
+		return StatusSucceeded, nil, nil
+	}}
+
+	conn, err := h.dialWith(t, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	cancel, done := runLoop(t, NewLoop(cfg, workerpb.NewWorkerServiceClient(conn), exec))
+	waitFor(t, 5*time.Second, func() bool { return len(h.results.Results()) == 1 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if got := h.results.storedEventsAtFinish(); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("events stored when the result landed = %v, want [2]", got)
 	}
 }
 

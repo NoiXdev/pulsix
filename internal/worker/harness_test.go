@@ -113,16 +113,27 @@ func (f *fakeClaims) Calls() []grpcsrv.FakeClaimCall {
 
 // fakeEvents implements grpcsrv.EventRecorder.
 type fakeEvents struct {
-	mu         sync.Mutex
-	events     []grpcsrv.Event
-	cancelling map[uuid.UUID]bool
+	mu          sync.Mutex
+	events      []grpcsrv.Event
+	cancelling  map[uuid.UUID]bool
+	appendDelay time.Duration // a slow event store: each Append takes this long
 }
 
 func (f *fakeEvents) Append(_ context.Context, ev grpcsrv.Event) error {
 	f.mu.Lock()
+	delay := f.appendDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.events = append(f.events, ev)
 	return nil
+}
+
+func (f *fakeEvents) setAppendDelay(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appendDelay = d
 }
 
 func (f *fakeEvents) Cancelled(_ context.Context, jobID uuid.UUID) (bool, error) {
@@ -150,13 +161,27 @@ func (f *fakeEvents) Events() []grpcsrv.Event {
 type fakeResults struct {
 	mu      sync.Mutex
 	results []grpcsrv.Result
+
+	events         *fakeEvents // when set, Finish notes how many events were stored
+	eventsAtFinish []int
 }
 
 func (f *fakeResults) Finish(_ context.Context, res grpcsrv.Result) error {
+	stored := -1
+	if f.events != nil {
+		stored = len(f.events.Events())
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.results = append(f.results, res)
+	f.eventsAtFinish = append(f.eventsAtFinish, stored)
 	return nil
+}
+
+func (f *fakeResults) storedEventsAtFinish() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.eventsAtFinish...)
 }
 
 func (f *fakeResults) Results() []grpcsrv.Result {

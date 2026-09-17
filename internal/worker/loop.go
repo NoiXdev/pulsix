@@ -77,6 +77,7 @@ type Executor interface {
 const (
 	maxBackoff       = 30 * time.Second
 	reportTimeout    = 10 * time.Second
+	streamDrainWait  = 10 * time.Second
 	repoCacheDirName = "repo-cache"
 )
 
@@ -250,8 +251,11 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 
 	// The manager sends at most one cancel directive; applying it cancels
 	// the executor's derived context. Recv runs on its own goroutine —
-	// Send (in the sink) and Recv may run concurrently.
+	// Send (in the sink) and Recv may run concurrently. recvDone closes
+	// when the manager has ended the stream.
+	recvDone := make(chan struct{})
 	go func() {
+		defer close(recvDone)
 		for {
 			d, err := stream.Recv()
 			if err != nil {
@@ -299,6 +303,16 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 
 	if err := stream.CloseSend(); err != nil {
 		l.log.WarnContext(ctx, "close run event stream", "job_id", jobID, "err", err)
+	}
+	// ReportResult and RunEvents are independent RPCs, and the manager's
+	// finish reads the stored events (a connection test's result event, a
+	// sync or rotation outcome). The manager ends the stream only after it
+	// has stored every event the worker sent, so the report waits for that
+	// — bounded, so a stuck stream still gets its result reported.
+	select {
+	case <-recvDone:
+	case <-time.After(streamDrainWait):
+		l.log.WarnContext(ctx, "run event stream did not end before the result report", "job_id", jobID, "waited", streamDrainWait)
 	}
 	return l.report(ctx, job, final, stats, errText)
 }
