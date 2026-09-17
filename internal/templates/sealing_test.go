@@ -107,3 +107,28 @@ func equalJSON(a, b any) bool {
 	jb, errB := json.Marshal(b)
 	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
+
+// TestConnectionSecurityExtraVarsAreRefused (re-review N1): extra vars have
+// the highest precedence in a run, so a template must not be able to switch
+// host key checking off or replace the SSH arguments that enforce a pin —
+// with or without a schema.
+func TestConnectionSecurityExtraVarsAreRefused(t *testing.T) {
+	for _, vars := range []map[string]any{
+		{"ansible_ssh_args": "-o StrictHostKeyChecking=no"},
+		{"ansible_host_key_checking": false},
+		{"ansible_ssh_common_args": "-o UserKnownHostsFile=/tmp/x"},
+		{"pulsix_ssh_common_args": ""},
+	} {
+		f := newFixture()
+		in := f.in()
+		in.ExtraVars = vars
+		_, err := f.svc.Create(ctx, f.org, in)
+		var ve *schema.ValidationError
+		if !errors.As(err, &ve) || len(ve.Problems) != 1 {
+			t.Fatalf("Create with %v = %v, want one validation problem", vars, err)
+		}
+		if len(f.store.byID) != 0 {
+			t.Fatalf("a template with %v was stored", vars)
+		}
+	}
+}

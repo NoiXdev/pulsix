@@ -513,7 +513,15 @@ Layered like Checkmk rulesets and Zabbix templates.
   a connection test reports the change such jobs are refused until a test confirms a
   pinned key again. Unpinned hosts and jump hosts are trusted on first use for the
   duration of one job only (jump hosts carry no pin yet; a pinned target is still
-  verified end to end through them).
+  verified end to end through them). The connection-security variables (host key
+  checking, the SSH argument lists, the SSH executable, the connection plugin, the
+  paramiko host-key options, the `pulsix_` namespace) are refused in template extra
+  vars (422) and at claim time, inventory schemas reserve the `ansible_`/`pulsix_`
+  prefixes, and the worker forces them as extra vars — Ansible's highest precedence,
+  above inventory, play and task vars — with each host's pinned options read from
+  `pulsix_ssh_common_args`. A playbook that redefines `pulsix_ssh_common_args` in its
+  own vars can still weaken its own run: playbook authors run code on the worker by
+  design (above).
 - Rate limits on auth endpoints, WebAuthn user verification required, TOTP with
   replay protection, API tokens hashed (argon2id) at rest.
 - OWASP audit before v1.0 (`owasp-audit` skill).

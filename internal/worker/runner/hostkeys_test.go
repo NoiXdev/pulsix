@@ -9,6 +9,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,5 +160,61 @@ func TestRunFailsClosedOnAnUnenforceablePin(t *testing.T) {
 	job.HostKeys = map[string]string{"app1": "SHA256:pinned"} // no known_hosts entry
 	if status, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), job, runEnv(t), func(*workerpb.RunEvent) error { return nil }); err == nil {
 		t.Fatalf("Run = %s, nil; want a closed failure before anything runs", status)
+	}
+}
+
+// TestRunForcesTheConnectionSecurityVars (re-review N1): extra vars carry
+// ansible's highest precedence, so the run writes the SSH arguments, host
+// key checking and each host's pinned common args as forced extra vars —
+// overriding inventory, play and task vars — and moves the rendered
+// per-host common args into pulsix_ssh_common_args, which the forced
+// ansible_ssh_common_args references. A claim whose own extra vars try to
+// set any of them fails closed.
+func TestRunForcesTheConnectionSecurityVars(t *testing.T) {
+	fake := writeFakeRunner(t)
+	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
+	t.Setenv(fakeEnvEvents, fixtureAbs(t))
+	t.Setenv(fakeEnvExit, "0")
+	job := runJob(t)
+	job.HostKeys = map[string]string{"app1": "SHA256:pinned"}
+	job.KnownHosts = map[string]string{"app1": testPinnedPub}
+	env := runEnv(t)
+	if _, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), job, env, func(*workerpb.RunEvent) error { return nil }); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var extra map[string]any
+	if err := json.Unmarshal(mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), &extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra["ansible_ssh_args"] != sshArgs(env.WorkDir) || extra["ansible_host_key_checking"] != true ||
+		extra["ansible_ssh_host_key_checking"] != true || extra["ansible_ssh_extra_args"] != "" ||
+		extra["ansible_ssh_common_args"] != "{{ pulsix_ssh_common_args | default('') }}" || extra["run"] != "smoke" {
+		t.Fatalf("extravars = %v", extra)
+	}
+	var doc struct {
+		Meta struct {
+			Hostvars map[string]map[string]any `json:"hostvars"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(mustRead(t, filepath.Join(env.WorkDir, "inventory.json")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	app := doc.Meta.Hostvars["app1"]
+	if _, has := app["ansible_ssh_common_args"]; has {
+		t.Fatalf("hostvars still carry ansible_ssh_common_args: %v", app)
+	}
+	if s, _ := app["pulsix_ssh_common_args"].(string); !strings.HasPrefix(s, "-o StrictHostKeyChecking=yes -o HostKeyAlias=pulsix-host-"+appUUID) {
+		t.Fatalf("pulsix_ssh_common_args = %v", app["pulsix_ssh_common_args"])
+	}
+	if s, _ := doc.Meta.Hostvars["web1"]["pulsix_ssh_common_args"].(string); !strings.Contains(s, "ProxyJump=pulsix-jump-b1") {
+		t.Fatalf("web1 lost its jump chain: %v", doc.Meta.Hostvars["web1"])
+	}
+
+	for _, name := range []string{"ansible_ssh_args", "ansible_host_key_checking", "pulsix_ssh_common_args"} {
+		bad := runJob(t)
+		bad.ExtraVars[name] = `"-o StrictHostKeyChecking=no"`
+		if status, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), bad, runEnv(t), func(*workerpb.RunEvent) error { return nil }); err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatalf("a claim with extra var %s = %s, %v; want a closed failure naming it", name, status, err)
+		}
 	}
 }

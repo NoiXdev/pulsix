@@ -32,6 +32,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
@@ -280,6 +281,16 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, p
 	}
 	if vars == nil {
 		vars = map[string]any{}
+	}
+	// Extra vars carry Ansible's highest precedence: the variables that
+	// decide whether a pinned host key is checked (and with which SSH
+	// arguments) are reserved for the worker (re-review N1).
+	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {
+		problems := make([]schema.Problem, len(names))
+		for i, n := range names {
+			problems[i] = schema.Problem{Path: n, Message: "this variable controls connection security and is set by Pulsix itself; remove it"}
+		}
+		return Template{}, &schema.ValidationError{Problems: problems}
 	}
 	if sc != nil {
 		if sc.Fields == nil {

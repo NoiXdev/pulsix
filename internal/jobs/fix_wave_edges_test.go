@@ -166,3 +166,18 @@ func TestRefuseChangedHostsGuardFailure(t *testing.T) {
 		t.Fatalf("no guard wired: %v", err)
 	}
 }
+
+// TestClaimRefusesALegacyTemplateWithConnectionSecurityVars (re-review
+// N1): a template stored before such extra vars were refused cannot run
+// with them.
+func TestClaimRefusesALegacyTemplateWithConnectionSecurityVars(t *testing.T) {
+	org, host, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Connections: map[string]render.Connection{"web1": {HostID: host}}}}, fakeCreds{},
+		fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {ID: templateID, PlaybookInline: "- hosts: all", Scope: json.RawMessage(`{}`),
+			ExtraVars: json.RawMessage(`{"ansible_ssh_args":"-o StrictHostKeyChecking=no"}`)}}}, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: KindRun, TemplateID: &templateID, HostIDs: []uuid.UUID{host}}, &workerpb.Job{})
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "ansible_ssh_args") {
+		t.Fatalf("buildPayload = %v, want the forbidden extra var refused", err)
+	}
+}

@@ -233,6 +233,14 @@ func TestTemplateValidation(t *testing.T) {
 			b["extra_vars"] = map[string]any{"greeting": 123}
 			return b
 		}(), http.StatusUnprocessableEntity, "validation failed"},
+		// Re-review N1: extra vars carry ansible's highest precedence; a
+		// schema-less template must not switch host key checking off.
+		{"connection-security extra var", func() map[string]any {
+			b := f.body()
+			delete(b, "extra_vars_schema")
+			b["extra_vars"] = map[string]any{"ansible_ssh_args": "-o StrictHostKeyChecking=no"}
+			return b
+		}(), http.StatusUnprocessableEntity, "body.extra_vars.ansible_ssh_args"},
 		{"malformed schema", func() map[string]any {
 			b := f.body()
 			b["extra_vars_schema"] = map[string]any{"fields": []any{map[string]any{"name": "Greeting", "type": "string"}}}

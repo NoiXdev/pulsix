@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
@@ -181,6 +182,7 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 	if err != nil {
 		return err
 	}
+	moveCommonArgs(merged)
 	invJSON, err := json.Marshal(merged)
 	if err != nil {
 		return fmt.Errorf("encode inventory document: %w", err)
@@ -219,27 +221,78 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir), 0o600); err != nil {
 		return err
 	}
-	if extraVars := job.GetExtraVars(); len(extraVars) > 0 {
-		vars := make(map[string]any, len(extraVars))
-		for k, v := range extraVars {
-			// The claim's extra var values are JSON-encoded; a value that
-			// is not JSON fails the run instead of being pasted into the
-			// document.
-			var raw any
-			if err := json.Unmarshal([]byte(v), &raw); err != nil {
-				return fmt.Errorf("extra var %s: %w", k, err)
-			}
-			vars[k] = raw
+	extraVars := job.GetExtraVars()
+	vars := make(map[string]any, len(extraVars)+len(forcedConnectionVars(env.WorkDir)))
+	for k, v := range extraVars {
+		// A claim must not set the connection-security variables the run
+		// forces below (the manager refuses them; this is the worker's own
+		// guard, re-review N1). System jobs' pulsix_ inputs are exempt —
+		// only the variable carrying the pinned options is refused.
+		if ansiblevars.Forbidden(k) && (!strings.HasPrefix(k, "pulsix_") || k == pinnedCommonArgsVar) {
+			return fmt.Errorf("extra var %s controls connection security and is set by the worker; refusing the run", k)
 		}
-		b, err := json.Marshal(vars)
-		if err != nil {
-			return fmt.Errorf("encode extra vars: %w", err)
+		// The claim's extra var values are JSON-encoded; a value that is
+		// not JSON fails the run instead of being pasted into the document.
+		var raw any
+		if err := json.Unmarshal([]byte(v), &raw); err != nil {
+			return fmt.Errorf("extra var %s: %w", k, err)
 		}
-		if err := writeTextFile(filepath.Join(env.WorkDir, envDirName, extraVarsName), string(b), 0o600); err != nil {
-			return err
+		vars[k] = raw
+	}
+	for k, v := range forcedConnectionVars(env.WorkDir) {
+		vars[k] = v
+	}
+	b, err := json.Marshal(vars)
+	if err != nil {
+		return fmt.Errorf("encode extra vars: %w", err)
+	}
+	return writeTextFile(filepath.Join(env.WorkDir, envDirName, extraVarsName), string(b), 0o600)
+}
+
+// pinnedCommonArgsVar is the hostvar each host's SSH common args (the
+// pinned host-key options and the jump chain) move into; the forced
+// ansible_ssh_common_args extra var reads it back per host.
+const pinnedCommonArgsVar = "pulsix_ssh_common_args"
+
+// forcedConnectionVars are the connection-security variables every run
+// forces as extra vars — Ansible's highest precedence, above inventory,
+// play and task vars — so nothing in the inventory or a playbook's vars
+// can switch host key checking off or put other SSH options ahead of the
+// pinned ones (OpenSSH keeps the first value it sees). The per-host common
+// args ride a template reference to pulsix_ssh_common_args, because extra
+// vars are global. What stays possible is a playbook redefining
+// pulsix_ssh_common_args itself in its own vars: playbook authors run code
+// on the worker by design (spec §14). The paramiko connection's checking
+// is forced on as well; its known hosts file is the run's empty home, so
+// a paramiko connection fails closed.
+func forcedConnectionVars(workDir string) map[string]any {
+	return map[string]any{
+		"ansible_ssh_args":                   sshArgs(workDir),
+		"ansible_host_key_checking":          true,
+		"ansible_ssh_host_key_checking":      true,
+		"ansible_paramiko_host_key_checking": true,
+		"ansible_ssh_common_args":            "{{ " + pinnedCommonArgsVar + " | default('') }}",
+		"ansible_ssh_extra_args":             "",
+		"ansible_ssh_executable":             "ssh",
+	}
+}
+
+// moveCommonArgs moves every host's rendered ansible_ssh_common_args (jump
+// chain plus pinned options) into pulsix_ssh_common_args, the hostvar the
+// forced extra var references.
+func moveCommonArgs(doc map[string]any) {
+	meta, _ := doc["_meta"].(map[string]any)
+	hostvars, _ := meta["hostvars"].(map[string]any)
+	for _, hv := range hostvars {
+		vars, ok := hv.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, has := vars["ansible_ssh_common_args"]; has {
+			vars[pinnedCommonArgsVar] = v
+			delete(vars, "ansible_ssh_common_args")
 		}
 	}
-	return nil
 }
 
 // hostKeyAlias is the known_hosts name a pinned host's key is recorded

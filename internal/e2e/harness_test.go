@@ -387,8 +387,16 @@ except FileNotFoundError:
 def emit(event, data, stdout=""):
     print(json.dumps({"event": event, "stdout": stdout, "event_data": data}), flush=True)
 
-cmd = ["ssh"] + shlex.split(os.environ.get("ANSIBLE_SSH_ARGS", ""))
-if os.environ.get("ANSIBLE_HOST_KEY_CHECKING", "True").lower() in ("false", "0", "no"):
+# Variable precedence as ansible applies it: extra vars beat hostvars, and
+# the worker forces the connection-security vars as extra vars (a
+# "{{ pulsix_ssh_common_args ... }}" reference resolves to that hostvar).
+def effective(name, default=""):
+    v = extravars.get(name, hv.get(name, default))
+    if isinstance(v, str) and v.startswith("{{"):
+        return hv.get("pulsix_ssh_common_args", "")
+    return v
+cmd = ["ssh"] + shlex.split(effective("ansible_ssh_args", os.environ.get("ANSIBLE_SSH_ARGS", "")))
+if str(effective("ansible_host_key_checking", os.environ.get("ANSIBLE_HOST_KEY_CHECKING", "True"))).lower() in ("false", "0", "no"):
     cmd += ["-o", "StrictHostKeyChecking=no"]  # what ansible adds when checking is off
 if "ansible_port" in hv:
     cmd += ["-o", "Port=%s" % hv["ansible_port"]]
@@ -398,7 +406,8 @@ cmd += ["-o", "KbdInteractiveAuthentication=no", "-o", "PasswordAuthentication=n
 if "ansible_user" in hv:
     cmd += ["-o", "User=%s" % hv["ansible_user"]]
 cmd += ["-o", "ConnectTimeout=10"]
-cmd += shlex.split(hv.get("ansible_ssh_common_args", ""))
+cmd += shlex.split(effective("ansible_ssh_common_args"))
+cmd += shlex.split(effective("ansible_ssh_extra_args"))
 cmd += [hv.get("ansible_host", host), "true"]
 
 emit("playbook_on_start", {}, "PLAY [all]")

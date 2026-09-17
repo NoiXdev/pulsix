@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -339,6 +340,13 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		limit = tmpl.Limit
 		if extraVars, err = stringMap(tmpl.ExtraVars); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
+		}
+		// A template stored before the connection-security variables were
+		// refused must not run with them (re-review N1).
+		for name := range extraVars {
+			if ansiblevars.Forbidden(name) {
+				return fmt.Errorf("%w: template extra var %s controls connection security; remove it from the template", ErrInvalidInput, name)
+			}
 		}
 		if err := redact.addExtraVarSecrets(tmpl.ExtraVarsSchema, tmpl.ExtraVars); err != nil {
 			return err
