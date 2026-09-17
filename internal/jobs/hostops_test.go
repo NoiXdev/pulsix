@@ -389,7 +389,10 @@ func TestFinishRecordsConnectionTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now().Add(-time.Minute)
+	// Postgres stores timestamps at microsecond precision; time.Now() on
+	// Linux carries nanoseconds, so the round-tripped time would never be
+	// Equal to an untruncated one (macOS clocks hide this: they tick in µs).
+	at := time.Now().Add(-time.Minute).Truncate(time.Microsecond)
 	// A failed test: reachable and observed, but authentication refused.
 	result := `{"reachable":true,"host_key":"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","host_key_state":"unpinned","auth":false,"sudo":false,"python":false,"checks":[{"name":"reachability","detail":"connected","ok":true},{"name":"auth","detail":"unable to authenticate","ok":false}]}`
 	if err := stream.Append(context.Background(), Event{Seq: 1, Host: "web1", Task: "connection_test", State: "failed", Payload: json.RawMessage(result), At: at}); err != nil {

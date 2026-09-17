@@ -146,8 +146,10 @@ func TestGetLatestConnectionTest(t *testing.T) {
 		t.Fatalf("GET on untested host: %d", resp.StatusCode)
 	}
 	// Two outcomes: the newest wins.
-	at1 := time.Now().Add(-2 * time.Hour)
-	at2 := time.Now().Add(-time.Hour)
+	// Microsecond precision, like the Postgres column: an untruncated
+	// Linux time.Now() carries nanoseconds and never round-trips Equal.
+	at1 := time.Now().Add(-2 * time.Hour).Truncate(time.Microsecond)
+	at2 := time.Now().Add(-time.Hour).Truncate(time.Microsecond)
 	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), at1, true, observedKey, "", "unpinned",
 		[]hosts.HostTestCheck{{Name: "reachability", Detail: "connected", OK: true}}); err != nil {
 		t.Fatal(err)
