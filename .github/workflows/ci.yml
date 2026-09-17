@@ -3,30 +3,72 @@ on: [push, pull_request]
 jobs:
   go:
     runs-on: ubuntu-latest
-    # Third-party actions are pinned to the commit SHA of each action's
-    # newest stable release (repo constraint, backlog 1.32), resolved from
-    # the release tags via git ls-remote on 2026-09-14:
-    #   actions/checkout v7.0.1   3d3c42e5aac5ba805825da76410c181273ba90b1
-    #   actions/setup-go v7.0.0   b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-    #   actions/setup-node v7.0.0  820762786026740c76f36085b0efc47a31fe5020
+    # Every action is pinned to the full commit SHA of its newest stable
+    # release (repo constraint, backlog 1.32), each with a version comment.
+    # Re-verified 2026-09-17 against `gh api repos/<owner>/<repo>/releases/latest`
+    # and `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (annotated tags
+    # dereferenced to their commit):
+    #   actions/checkout v7.0.1         3d3c42e5aac5ba805825da76410c181273ba90b1
+    #   actions/setup-go v7.0.0         b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    #   actions/setup-node v7.0.0       820762786026740c76f36085b0efc47a31fe5020
+    #   actions/setup-python v7.0.0     5fda3b95a4ea91299a34e894583c3862153e4b97
     #   actions/upload-artifact v7.0.1  043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-    #   golangci-lint-action v9.3.0  ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
-    #   bufbuild/buf-action v1.5.0  8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3
+    #   golangci-lint-action v9.3.0     ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a (annotated tag)
+    #   bufbuild/buf-action v1.5.0      8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3
+    # (Run 34651823450's Node 20 deprecation notices and its go1.24-built
+    # golangci-lint v1.64.8 came from the older @v4/@v5/@v6 tag refs; these
+    # pins run on Node 24 and install golangci-lint v2.)
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27" }
-      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
-        with: { version: latest }
+      # golangci-lint v2.13.2 (newest stable, built with go1.27; the repo's
+      # .golangci.yml is `version: "2"`): an explicit version instead of
+      # `latest`, so a new linter release cannot turn main red on its own.
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with: { version: v2.13.2 }
+      # The gate runs `go test -race -cover -timeout 900s ./...`, prints a
+      # per-package table and, when anything fails, the failing packages'
+      # own go test output.
       - run: scripts/coverage-gate.sh
   proto:
     runs-on: ubuntu-latest
     steps:
-      # fetch-depth: 0 so `buf breaking --against '.git#branch=main'` can
-      # clone the main branch out of the local .git dir (same need as the
-      # commits job below).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # fetch-depth: 0 so `buf breaking` can read the baseline commit out of
+      # the local .git dir (same need as the commits job below).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
+      # The breaking-change baseline is the state the change is applied to:
+      #   - pull_request: the PR's base commit;
+      #   - push: the branch tip before the push (github.event.before), so a
+      #     push to main compares against the previous main instead of
+      #     against itself (".git#branch=main" on a main push was a no-op
+      #     comparison of main with main).
+      # A push that has no usable baseline — a new branch (before is all
+      # zeros) or a force push whose old tip is not in the clone — skips
+      # the breaking check rather than guessing one; build and lint still
+      # run. The SHAs come from the event payload and reach the shell only
+      # through env vars.
+      - name: Resolve the breaking-change baseline
+        id: baseline
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$PUSH_BEFORE_SHA"
+          fi
+          if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$base" =~ ^0+$ ]] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "breaking=true" >> "$GITHUB_OUTPUT"
+            echo "sha=$base" >> "$GITHUB_OUTPUT"
+            echo "buf breaking baseline: $base"
+          else
+            echo "breaking=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no breaking-change baseline for this $EVENT_NAME event (base '${base}'); buf breaking skipped"
+          fi
       # bufbuild/buf-action — newest stable release v1.5.0 (published
       # 2026-07-22), pinned to its commit SHA
       # 8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3, resolved from the release
@@ -38,13 +80,18 @@ jobs:
       # Buf Schema Registry flow this repo does not use. format stays off
       # for now: worker.proto is kept verbatim from the contract brief,
       # which aligns trailing comments differently than `buf format` would.
-      - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3
+      # The against input needs `subdir=proto`: the input module is the
+      # proto/ directory, so without it buf compares proto/'s files
+      # (pulsix/worker/v1/worker.proto) against the whole repository's
+      # (proto/pulsix/worker/v1/worker.proto) and reports every file as
+      # deleted.
+      - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1.5.0
         with:
           input: proto
           lint: true
           format: false
-          breaking: true
-          breaking_against: ".git#branch=main"
+          breaking: ${{ steps.baseline.outputs.breaking }}
+          breaking_against: ".git#ref=${{ steps.baseline.outputs.sha }},subdir=proto"
           push: false
           pr_comment: false
 
@@ -54,10 +101,10 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27" }
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
       - run: npm ci
       - run: npm run lint
@@ -81,10 +128,10 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27" }
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
@@ -95,7 +142,7 @@ jobs:
       - run: npm run e2e
       - name: Upload Playwright report and traces
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report
           path: |
@@ -112,17 +159,33 @@ jobs:
     # server — runs on every PR. The default pass uses the deterministic
     # fake ansible-runner fixture; the second pass runs the REAL
     # ansible-runner (PULSIX_E2E_REAL_ANSIBLE=1) against the same
-    # fixtures, which is why ansible-runner 2.4.3 + ansible-core 2.21.4
-    # (the exact versions the worker image pins) are installed first.
+    # fixtures, which is why the worker image's Ansible runtime is installed
+    # first.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27" }
-      # ansible-runner 2.4.3 and ansible-core 2.21.4 are the versions the
-      # worker image ships (the pinned runner invocation's environment);
-      # installing them here keeps the harness's real-ansible pass honest.
-      - run: pip install ansible-runner==2.4.3 ansible-core==2.21.4
+      # The same runtime deploy/worker/Dockerfile builds: Python 3.13,
+      # ansible-core 2.21.4 + ansible-runner 2.4.3 installed into the
+      # interpreter's own site-packages, and sshpass next to the runner's
+      # git/openssh-client. Keep these pins in lockstep with the Dockerfile.
+      #
+      # Not a `pip install --user` into the system Python (what a bare
+      # `pip install` on the runner falls back to): the worker runs
+      # ansible-runner with HOME pointed into the job's work dir, which
+      # hides ~/.local's user site-packages — ansible-runner then dies on
+      # "No module named 'ansible_runner'" with exit code 1 (run
+      # 35198733874).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: "3.13" }
+      - name: Install the worker image's Ansible runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sshpass
+          python -m pip install --no-cache-dir "ansible-core==2.21.4" "ansible-runner==2.4.3"
+          ansible-runner --version
+          ansible-playbook --version
       # Fast, deterministic pass (fake runner): the gate itself.
       - run: go test -race -count=1 ./internal/e2e/...
       # The real end-to-end with actual ansible: the same scenario driven
@@ -174,15 +237,15 @@ jobs:
   #     run:
   #       working-directory: web
   #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-  #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
   #       with: { go-version: "1.27" }
-  #     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+  #     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
   #       with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
   #     - run: npm ci
   #     - run: npx playwright install --with-deps chromium
   #     - run: npm run e2e
-  #     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+  #     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
   #       if: always()
   #       with:
   #         name: playwright-ansible-report
@@ -203,11 +266,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # actions/checkout@v7.0.1 — this job's own step, pinned to the
-      # newest stable release as of 2026-09-11 (commit
-      # 3d3c42e5aac5ba805825da76410c181273ba90b1, the same SHA the other
-      # jobs pin since the task-3 fix round; see task-16-report.md).
-      - uses: actions/checkout@v7.0.1
+      # Pinned by SHA like every other job (see the go job's pin table).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # github.sha is on GitHub's documented list of expressions that are
       # always a plain, safe value (a 40-hex-char commit SHA it computes
       # itself), so this isn't exploitable — but it is still routed
@@ -245,6 +305,28 @@ jobs:
   commits:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - uses: webiny/action-conventional-commits@v1.3.0
+      # webiny/action-conventional-commits was replaced by an in-repo
+      # script: its newest release (v1.3.0) still targets the deprecated
+      # Node 20 runtime (runners force it onto Node 24 with a warning).
+      # Range: a PR's commits on top of its base; a push's new commits
+      # (before..sha), or just the pushed tip when there is no usable
+      # "before" (a new branch, or a force push whose old tip is gone).
+      - name: Check commit messages follow Conventional Commits
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$PUSH_BEFORE_SHA"
+          fi
+          if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ ! "$base" =~ ^0+$ ]] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            scripts/check-conventional-commits.sh "${base}..${HEAD_SHA}"
+          else
+            scripts/check-conventional-commits.sh "${HEAD_SHA}^!"
+          fi
