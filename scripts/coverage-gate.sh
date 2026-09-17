@@ -25,10 +25,30 @@
 # header and the whole package falls back under the normal floor on the
 # next run — see task-4-report.md "Fix round 2" for why internal/db/gen
 # qualifies today and for the guard being exercised against a planted
-# hand-written file.
+# hand-written file. The one allowance: a hand-written file that declares
+# no function at all (the word "func" never appears in it — constants and
+# types only, like internal/pb/workerpb/limits.go) carries no coverable
+# statement, so it cannot hide untested code and does not disqualify an
+# otherwise generated package. At least one generated file is still
+# required.
+#
+# A package whose coverage line reads "[no statements]" (test files only,
+# e.g. internal/pb, whose tests exercise the generated workerpb) has
+# nothing to measure and is printed as SKIP too.
+#
+# A package whose tests FAIL is reported as such (not as "0.0%"), and the
+# go test output of every failing package is printed after the table, so
+# a CI log shows why — the table alone hides it.
+#
+# Portable across awk implementations (GNU awk, mawk, BSD awk on macOS):
+# no multi-line -v assignments, no gawk-only functions.
 #
 # Usage: scripts/coverage-gate.sh
-# Exit status: 0 if every non-excluded package meets its floor, 1 otherwise.
+#   COVERAGE_GATE_GO_TEST_OUTPUT=<file> evaluates a saved
+#   `go test -cover ./...` output instead of running the tests (used to
+#   check the gate's own parsing without a full test run).
+# Exit status: 0 if every non-excluded package meets its floor and go test
+# succeeded, 1 otherwise.
 
 set -euo pipefail
 
@@ -41,28 +61,32 @@ module=$(go list -m)
 # clause.
 generated_pkgs=()
 while IFS=$'\t' read -r import_path dir; do
-	has_source_file=0
+	has_generated_file=0
 	all_generated=1
 	for f in "$dir"/*.go; do
 		[ -e "$f" ] || continue
 		case "$f" in
 			*_test.go) continue ;;
 		esac
-		has_source_file=1
-		if ! sed -n '1,/^package /p' "$f" | grep -qE '^// Code generated .* DO NOT EDIT\.$'; then
+		if sed -n '1,/^package /p' "$f" | grep -qE '^// Code generated .* DO NOT EDIT\.$'; then
+			has_generated_file=1
+		elif grep -qw 'func' "$f"; then
 			all_generated=0
 			break
 		fi
 	done
-	if [ "$has_source_file" -eq 1 ] && [ "$all_generated" -eq 1 ]; then
+	if [ "$has_generated_file" -eq 1 ] && [ "$all_generated" -eq 1 ]; then
 		generated_pkgs+=("$import_path")
 	fi
 done < <(go list -f $'{{.ImportPath}}\t{{.Dir}}' ./...)
 
-generated_list=""
-if [ "${#generated_pkgs[@]}" -gt 0 ]; then
-	generated_list=$(printf '%s\n' "${generated_pkgs[@]}")
-fi
+# Space-separated: import paths never contain spaces, and BSD awk rejects
+# a -v value that spans lines ("newline in string").
+generated_list="${generated_pkgs[*]:-}"
+
+test_output=$(mktemp)
+trap 'rm -f "$test_output"' EXIT
+test_rc=0
 
 # -timeout 900s (Task 17): go test's per-package default is 600s, and
 # internal/api -race alone exceeds it on some machines (its ~190 handler
@@ -72,12 +96,19 @@ fi
 # `go test -race ./...` invocation (Makefile's `test` target does the
 # same). 900s is a generous margin over the slowest observed run, not a
 # tuned minimum.
-go test -race -cover -timeout 900s ./... 2>&1 | awk -v module="$module" -v generated="$generated_list" '
+if [ -n "${COVERAGE_GATE_GO_TEST_OUTPUT:-}" ]; then
+	cp "$COVERAGE_GATE_GO_TEST_OUTPUT" "$test_output"
+else
+	go test -race -cover -timeout 900s ./... >"$test_output" 2>&1 || test_rc=$?
+fi
+
+gate_rc=0
+awk -v module="$module" -v generated="$generated_list" '
 	BEGIN {
 		FS = "\t"
 		default_floor = 80
 		fail = 0
-		n = split(generated, gen_arr, "\n")
+		n = split(generated, gen_arr, " ")
 		for (i = 1; i <= n; i++) {
 			if (gen_arr[i] != "") generated_set[gen_arr[i]] = 1
 		}
@@ -98,7 +129,20 @@ go test -race -cover -timeout 900s ./... 2>&1 | awk -v module="$module" -v gener
 		}
 
 		if (pkg in generated_set) {
-			printf "SKIP  %-55s (machine-generated, DO NOT EDIT header on every file, excluded from gate)\n", pkg
+			printf "SKIP  %-55s (machine-generated: DO NOT EDIT header on every file with code, excluded from gate)\n", pkg
+			next
+		}
+
+		# go test prints "FAIL\t<pkg>\t<duration>" (or "[build failed]" /
+		# "[setup failed]") with no coverage figure for a failing package.
+		if ($1 ~ /^FAIL/) {
+			printf "FAIL  %-55s tests failed (output below)\n", pkg
+			fail = 1
+			next
+		}
+
+		if ($0 ~ /coverage: \[no statements\]/) {
+			printf "SKIP  %-55s (no statements to cover, excluded from gate)\n", pkg
 			next
 		}
 
@@ -126,8 +170,21 @@ go test -race -cover -timeout 900s ./... 2>&1 | awk -v module="$module" -v gener
 
 	END {
 		if (fail) {
-			print "coverage gate: one or more packages below their required floor"
+			print "coverage gate: one or more packages failed or are below their required floor"
 			exit 1
 		}
 	}
-'
+' "$test_output" || gate_rc=$?
+
+if [ "$test_rc" -ne 0 ] || [ "$gate_rc" -ne 0 ]; then
+	# Passing packages print only their "ok" line (a package without tests
+	# a "?" or a tab-led "coverage:" line), so everything else is the
+	# failing packages' own output (test failures, panics, build errors).
+	echo
+	echo "==== go test output (passing packages omitted) ===="
+	grep -vE -e $'^ok  \t' -e $'^[?]   \t' -e $'^\t[^\t]+\t+coverage: ' "$test_output" || true
+	if [ "$gate_rc" -eq 0 ]; then
+		echo "coverage gate: go test exited with status $test_rc"
+	fi
+	exit 1
+fi
