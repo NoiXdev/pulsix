@@ -57,7 +57,7 @@ func newRotationStoreWiring(t *testing.T, slug string) rotationStoreWiring {
 	invStore := inventory.NewSQLStore(d)
 	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
 	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
-	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)

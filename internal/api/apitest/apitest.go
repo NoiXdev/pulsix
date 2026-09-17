@@ -222,7 +222,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// under running assertions.
 	templateStore := templates.NewSQLStore(d)
 	playbooksStore := playbooks.NewSQLStore(d)
-	templateLookup := app.NewTemplateLookup(templateStore, playbooksStore)
+	templateLookup := app.NewTemplateLookup(templateStore, playbooksStore, crypto.NewBox(testMasterKey))
 	jobsQueue := jobs.NewSQLQueue(d, crypto.NewBox(testMasterKey), renderer, credsSvc, templateLookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(d), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, crypto.NewBox(testMasterKey), time.Now, rand.Reader)
@@ -240,7 +240,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	jobsQueue.SetRotationFinisher(credsSvc)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
-	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
+	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, crypto.NewBox(testMasterKey))
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,

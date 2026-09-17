@@ -10,13 +10,16 @@
 // types are JSON- and field-wise equivalent (Scope{GroupID *uuid.UUID,
 // HostIDs []uuid.UUID}).
 //
-// Extra-var secrets are stored as submitted (the worker needs plaintext
-// extra vars in its claim payload) and masked on every read this package
+// Extra-var values under secret-typed fields are sealed at rest with the
+// template's own AAD (ExtraVarsAAD) and masked on every read this package
 // serves: a sealed value, and any non-empty value under a secret-typed
-// field, is replaced by the {"$secret": "set"} marker (backlog 2.21's
-// direction, mirrored from inventory reads). The store is the raw
-// persistence layer — the job queue's claim path reads through it and so
-// sees plaintext by design.
+// field (a template saved before sealing existed), is replaced by the
+// {"$secret": "set"} marker (backlog 2.21's direction, mirrored from
+// inventory reads). A write that sends that marker back — or an explicit
+// {"$secret": "keep", "from": <path>} — keeps the stored secret. The store
+// is the raw persistence layer: the job queue's claim path reads through it
+// and opens the sealed values (internal/app's template lookup), the only
+// place they are revealed.
 package templates
 
 import (
@@ -132,6 +135,20 @@ type Store interface {
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 }
 
+// Sealer is the slice of crypto.Box the service needs: secret-typed extra
+// vars are sealed at rest under the template's own AAD.
+type Sealer interface {
+	SealAAD(plain, aad []byte) ([]byte, error)
+	OpenAAD(sealed, aad []byte) ([]byte, error)
+}
+
+// ExtraVarsAAD is the additional data a template's sealed extra vars are
+// boxed with, so a ciphertext copied into another template or organization
+// no longer opens.
+func ExtraVarsAAD(orgID, templateID uuid.UUID) []byte {
+	return []byte("template-extra-vars:" + orgID.String() + ":" + templateID.String())
+}
+
 // Service implements the job-template registry.
 type Service struct {
 	store     Store
@@ -139,11 +156,13 @@ type Service struct {
 	groups    GroupLookup
 	hosts     HostLookup
 	creds     CredentialLookup
+	box       Sealer
 }
 
-// NewService wires the store and the four lookups validation needs.
-func NewService(store Store, playbooks PlaybookLookup, groups GroupLookup, hosts HostLookup, creds CredentialLookup) *Service {
-	return &Service{store: store, playbooks: playbooks, groups: groups, hosts: hosts, creds: creds}
+// NewService wires the store, the four lookups validation needs and the
+// sealing box for secret-typed extra vars.
+func NewService(store Store, playbooks PlaybookLookup, groups GroupLookup, hosts HostLookup, creds CredentialLookup, box Sealer) *Service {
+	return &Service{store: store, playbooks: playbooks, groups: groups, hosts: hosts, creds: creds, box: box}
 }
 
 // CreateInput is a new job template.
@@ -170,7 +189,7 @@ type UpdateInput struct {
 
 // Create validates the input and stores a new template.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Template, error) {
-	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID)
+	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, nil)
 	if err != nil {
 		return Template{}, err
 	}
@@ -183,10 +202,11 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 
 // Update validates the input and replaces an existing template's fields.
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInput) (Template, error) {
-	if _, err := s.store.Get(ctx, orgID, id); err != nil {
+	cur, err := s.store.Get(ctx, orgID, id)
+	if err != nil {
 		return Template{}, err
 	}
-	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID)
+	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, cur.ExtraVars)
 	if err != nil {
 		return Template{}, err
 	}
@@ -233,7 +253,7 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 // timestamps left to the store. Validation order is meta (name, limit),
 // playbook, scope, credential, then the schema and the values against it —
 // each step naming exactly what is wrong.
-func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID) (Template, error) {
+func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, stored map[string]any) (Template, error) {
 	if err := validateMeta(name, limit); err != nil {
 		return Template{}, err
 	}
@@ -268,9 +288,11 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, p
 		if err := sc.Check(); err != nil {
 			return Template{}, fmt.Errorf("%w: %w", ErrBadSchema, err)
 		}
-		if err := schema.Validate(sc.Fields, vars); err != nil {
+		sealed, err := s.sealExtraVars(ExtraVarsAAD(orgID, id), sc.Fields, vars, stored)
+		if err != nil {
 			return Template{}, err
 		}
+		vars = sealed
 	}
 	return Template{
 		ID: id, OrgID: orgID, PlaybookID: playbookID, Name: name, Scope: scope,
@@ -349,4 +371,69 @@ func maskExtraVars(sc *schema.Schema, vars map[string]any) map[string]any {
 		fields = sc.Fields
 	}
 	return schema.MaskDeclared(fields, vars)
+}
+
+// sealExtraVars prepares incoming extra vars for storage under fields: a
+// plaintext value of a secret-typed field is sealed; the masked marker a
+// read returned, or a keep marker, keeps the stored value at that path
+// (it must be sealed — a marker without a stored secret is a validation
+// problem); a sealed envelope sent in directly is refused. The result is
+// validated against the schema afterwards, sealed values included.
+func (s *Service) sealExtraVars(aad []byte, fields []schema.Field, incoming, stored map[string]any) (map[string]any, error) {
+	var problems []schema.Problem
+	out, err := schema.MapSecrets(fields, incoming, func(path string, v any) (any, error) {
+		from, keep := schema.KeepFrom(v)
+		if !keep && isMaskMarker(v) {
+			from, keep = path, true
+		}
+		if keep {
+			prev, found := schema.Lookup(stored, from)
+			if _, sealed := schema.SealedBytes(prev); !found || !sealed {
+				problems = append(problems, schema.Problem{Path: path, Message: "the stored secret this refers to no longer exists; enter it again"})
+				return nil, nil
+			}
+			return prev, nil
+		}
+		if _, ok := schema.SealedBytes(v); ok {
+			problems = append(problems, schema.Problem{Path: path, Message: "sealed values cannot be written directly"})
+			return nil, nil
+		}
+		if plain, ok := v.(string); ok && plain != "" {
+			ct, err := s.box.SealAAD([]byte(plain), aad)
+			if err != nil {
+				return nil, fmt.Errorf("seal extra var %s: %w", path, err)
+			}
+			return schema.Sealed(ct), nil
+		}
+		return v, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(problems) > 0 {
+		return nil, &schema.ValidationError{Problems: problems}
+	}
+	if err := schema.Validate(fields, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// isMaskMarker reports whether v is the {"$secret": "set"} marker a masked
+// read returns.
+func isMaskMarker(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) != 1 {
+		return false
+	}
+	return equalMarker(m, schema.Mask())
+}
+
+func equalMarker(a, b map[string]any) bool {
+	for k, v := range b {
+		if a[k] != v {
+			return false
+		}
+	}
+	return len(a) == len(b)
 }

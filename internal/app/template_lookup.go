@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -22,17 +23,19 @@ import (
 // templateLookup adapts the raw stores to jobs.TemplateSource. It reads the
 // stores — not templates.Service — on purpose: the service masks extra-var
 // secrets on its API reads, while the claim payload the queue builds needs
-// the stored values in the clear (the same split credentials.Service draws
-// between its metadata reads and OpenSecret).
+// them in the clear, so the lookup opens the sealed values with the box
+// (the same split credentials.Service draws between its metadata reads and
+// OpenSecret).
 type templateLookup struct {
 	templates *templates.SQLStore
 	playbooks *playbooks.SQLStore
+	box       templates.Sealer
 }
 
 // NewTemplateLookup builds the adapter both wirings share (app.Build and
 // apitest.New, which mirrors it).
-func NewTemplateLookup(t *templates.SQLStore, p *playbooks.SQLStore) jobs.TemplateSource {
-	return templateLookup{templates: t, playbooks: p}
+func NewTemplateLookup(t *templates.SQLStore, p *playbooks.SQLStore, box templates.Sealer) jobs.TemplateSource {
+	return templateLookup{templates: t, playbooks: p, box: box}
 }
 
 // TemplateLookup implements jobs.TemplateSource: the template row joined
@@ -53,7 +56,11 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 	if err != nil {
 		return jobs.TemplateRow{}, fmt.Errorf("encode template scope: %w", err)
 	}
-	vars, err := json.Marshal(t.ExtraVars)
+	opened, err := a.openExtraVars(t)
+	if err != nil {
+		return jobs.TemplateRow{}, err
+	}
+	vars, err := json.Marshal(opened)
 	if err != nil {
 		return jobs.TemplateRow{}, fmt.Errorf("encode template extra vars: %w", err)
 	}
@@ -71,6 +78,55 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 		Scope: scope, Limit: t.Limit,
 		ExtraVars: vars, ExtraVarsSchema: schemaRaw, CredentialID: t.CredentialID,
 	}, nil
+}
+
+// openExtraVars reveals the template's sealed extra vars (secret-typed
+// values are sealed at rest under templates.ExtraVarsAAD) for the claim
+// payload — the one place they travel in the clear, inside the mTLS claim.
+// A value that does not open under this template's AAD fails the lookup,
+// and with it the claim, closed.
+func (a templateLookup) openExtraVars(t templates.Template) (map[string]any, error) {
+	aad := templates.ExtraVarsAAD(t.OrgID, t.ID)
+	var open func(v any) (any, error)
+	open = func(v any) (any, error) {
+		if ct, ok := schema.SealedBytes(v); ok {
+			plain, err := a.box.OpenAAD(ct, aad)
+			if err != nil {
+				return nil, fmt.Errorf("open template extra var: %w", err)
+			}
+			return string(plain), nil
+		}
+		switch x := v.(type) {
+		case map[string]any:
+			out := make(map[string]any, len(x))
+			for k, e := range x {
+				o, err := open(e)
+				if err != nil {
+					return nil, err
+				}
+				out[k] = o
+			}
+			return out, nil
+		case []any:
+			out := make([]any, len(x))
+			for i, e := range x {
+				o, err := open(e)
+				if err != nil {
+					return nil, err
+				}
+				out[i] = o
+			}
+			return out, nil
+		default:
+			return v, nil
+		}
+	}
+	out, err := open(t.ExtraVars)
+	if err != nil {
+		return nil, err
+	}
+	m, _ := out.(map[string]any)
+	return m, nil
 }
 
 // playbookText dereferences an optional playbook column; the playbooks CHECK

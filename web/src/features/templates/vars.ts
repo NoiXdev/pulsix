@@ -3,15 +3,14 @@ import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } fr
 import type { SchemaField, Vars } from '../inventory/schema/types.ts';
 
 /**
- * The masked-secret roundtrip contract (Task 7): a GET returns
- * {"$secret": "set"} for a stored secret; templates have no keep-marker
- * resolve path, so a PUT that echoed the marker back would be refused
- * ("must be a string") — and the manager has no way to know which stored
- * value it means anyway. The dialog therefore treats a set-marker as
- * "unchanged" and the save OMITS the key (both branches unit-tested); a
- * replaced secret is sent as new plaintext, which works for required and
- * optional fields alike. A stored secret under a field the template's
- * schema no longer declares is stripped the same way.
+ * The masked-secret roundtrip contract: a GET returns {"$secret": "set"}
+ * for a stored secret; the manager seals secret extra vars at rest and
+ * resolves keep markers ({"$secret": "keep", "from": <path>}) and the
+ * set-marker to the stored value on a PUT. The dialog therefore sends an
+ * unchanged secret as a keep marker — omitting it would drop the stored
+ * secret, because a PUT replaces all extra vars — and a replaced secret as
+ * new plaintext. A stored secret under a field the template's schema no
+ * longer declares is stripped.
  */
 
 /** SecretInputState is what the dialog shows for a secret-typed field's
@@ -47,24 +46,33 @@ function toKeepMarkers(fields: readonly SchemaField[], vars: Vars, prefix = ''):
 }
 
 /** varsForPut is the PUT's extra_vars: the form's values with every
- * unchanged secret (a keep marker, or — without a schema — the raw
- * set-marker at any depth) omitted, everything else passed through. */
+ * unchanged declared secret sent as a keep marker naming its own path (a
+ * raw set-marker included), everything else passed through; without a
+ * schema, set-markers are stripped (no field is secret). */
 export function varsForPut(fields: readonly SchemaField[] | undefined, vars: Vars): Vars {
   if (!fields || fields.length === 0) return stripSetMarkers(vars);
-  return stripKeepMarkers(declaredOnly(fields, vars), fields);
+  return keepUnchangedSecrets(declaredOnly(fields, vars), fields);
 }
 
-function stripKeepMarkers(vars: Vars, fields: readonly SchemaField[]): Vars {
+function keepUnchangedSecrets(vars: Vars, fields: readonly SchemaField[], prefix = ''): Vars {
   const out: Vars = {};
   for (const [k, v] of Object.entries(vars)) {
     const f = fields.find((x) => x.name === k);
-    if (isKeepMarker(v) || isSecretSet(v)) continue; // unchanged: omitted
+    const path = childPath(prefix, k);
+    if (isKeepMarker(v)) {
+      out[k] = v; // names the stored value's original path (entries may have moved)
+      continue;
+    }
+    if (isSecretSet(v)) {
+      out[k] = { $secret: 'keep', from: path } as KeepMarker;
+      continue;
+    }
     if (f?.type === 'object' && isRecord(v)) {
-      out[k] = stripKeepMarkers(v, f.fields ?? []);
+      out[k] = keepUnchangedSecrets(v, f.fields ?? [], path);
       continue;
     }
     if (f?.type === 'repeater' && Array.isArray(v)) {
-      out[k] = v.map((item) => (isRecord(item) ? stripKeepMarkers(item, f.fields ?? []) : item));
+      out[k] = v.map((item, i) => (isRecord(item) ? keepUnchangedSecrets(item, f.fields ?? [], indexPath(path, i)) : item));
       continue;
     }
     out[k] = v;

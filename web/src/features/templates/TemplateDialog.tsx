@@ -33,8 +33,8 @@ export interface TemplateDialogProps {
  * extra-vars schema with the values form built from it, and the default
  * SSH credential. Secret-typed extra vars follow Task 7's roundtrip
  * contract: a value the server has ("value set on server, not shown") is
- * display-only and its key is OMITTED from the PUT; replacing it sends the
- * new plaintext (templates/vars.ts, both branches unit-tested).
+ * display-only and rides the PUT as a keep marker (the server keeps the
+ * sealed value); replacing it sends the new plaintext (templates/vars.ts).
  */
 export function TemplateDialog({ org, template, canReadCredentials, onClose }: TemplateDialogProps) {
   const detail = useTemplate(org, template?.id ?? '');

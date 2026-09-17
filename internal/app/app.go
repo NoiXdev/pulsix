@@ -206,13 +206,13 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	// break the cycle while keeping one source of SQL for the table).
 	templateStore := templates.NewSQLStore(appDB)
 	playbooksStore := playbooks.NewSQLStore(appDB)
-	templateLookup := NewTemplateLookup(templateStore, playbooksStore)
+	templateLookup := NewTemplateLookup(templateStore, playbooksStore, box)
 	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, templateLookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(appDB), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
 	reposSvc := repos.NewService(repos.NewSQLStore(appDB), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
-	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc)
+	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, box)
 	jobsQueue.SetSyncSink(jobsSvc)
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.

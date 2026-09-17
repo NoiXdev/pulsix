@@ -107,7 +107,7 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	queue.SetKeyPins(hostsSvc)
@@ -200,7 +200,7 @@ func TestQueueClaimFailsUnbuildableJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	queue.SetKeyPins(hostsSvc)
 	zone := seedZone(t, d, org)
@@ -281,7 +281,7 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	queue.SetKeyPins(hostsSvc)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
@@ -476,7 +476,7 @@ func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
 	invStore := inventory.NewSQLStore(d)
 	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
 	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
-	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
 	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
 
 	scoped := db.WithOrgScope(ctx, org)

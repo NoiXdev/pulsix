@@ -17,10 +17,18 @@ const schema: SchemaField[] = [
 
 const SET = { $secret: 'set' };
 
-describe('varsForPut (masked-secret roundtrip, Task 7)', () => {
-  it('omits an unchanged secret field from the PUT', () => {
+describe('varsForPut (masked-secret roundtrip)', () => {
+  // The server seals secret extra vars and resolves keep markers: an
+  // unchanged secret must travel as a keep marker — omitting it would drop
+  // the stored secret on the PUT (full replace).
+  it('sends an unchanged secret field as a keep marker', () => {
+    const vars = varsForPut(schema, { token: { $secret: 'keep', from: 'token' }, region: 'eu' });
+    expect(vars).toEqual({ token: { $secret: 'keep', from: 'token' }, region: 'eu' });
+  });
+
+  it('turns a raw set-marker under a declared secret into a keep marker', () => {
     const vars = varsForPut(schema, { token: SET, region: 'eu' });
-    expect(vars).toEqual({ region: 'eu' });
+    expect(vars).toEqual({ token: { $secret: 'keep', from: 'token' }, region: 'eu' });
   });
 
   it('sends a replaced secret as new plaintext', () => {
@@ -28,7 +36,7 @@ describe('varsForPut (masked-secret roundtrip, Task 7)', () => {
     expect(vars).toEqual({ token: 'hunter2', region: 'eu' });
   });
 
-  it('keeps an unchanged secret inside a repeater entry omitted too', () => {
+  it('keeps an unchanged secret inside a repeater entry as a keep marker', () => {
     const vars = varsForPut(schema, {
       token: SET,
       targets: [
@@ -36,7 +44,10 @@ describe('varsForPut (masked-secret roundtrip, Task 7)', () => {
         { host: 'b', password: 'plain' },
       ],
     });
-    expect(vars).toEqual({ targets: [{ host: 'a' }, { host: 'b', password: 'plain' }] });
+    expect(vars).toEqual({
+      token: { $secret: 'keep', from: 'token' },
+      targets: [{ host: 'a', password: { $secret: 'keep', from: 'targets[0].password' } }, { host: 'b', password: 'plain' }],
+    });
   });
 
   it('strips a stored secret the schema no longer declares', () => {

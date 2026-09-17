@@ -149,6 +149,7 @@ func newFixture() fixture {
 			sshCred: {ID: sshCred, OrgID: org, Name: "ssh", Kind: credentials.KindSSHPassword},
 			gitCred: {ID: gitCred, OrgID: org, Name: "git", Kind: credentials.KindGitToken},
 		}},
+		testBox(),
 	)
 	return fixture{
 		store: store, svc: svc, org: org, playbook: playbook, group: group,
@@ -386,8 +387,8 @@ func TestList(t *testing.T) {
 
 // TestMaskingCoversSchemaChange is the string→secret case backlog 2.21
 // describes: a template stored without a schema keeps plaintext extra vars;
-// once a schema declares the field secret, every read masks it while the
-// stored value stays untouched.
+// once a schema declares the field secret, every read masks it, and the next
+// save seals the stored value.
 func TestMaskingCoversSchemaChange(t *testing.T) {
 	f := newFixture()
 	created, err := f.svc.Create(ctx, f.org, templates.CreateInput{
@@ -439,8 +440,10 @@ func TestMaskingCoversSchemaChange(t *testing.T) {
 	if got.ExtraVars["empty"] != "" {
 		t.Fatalf("empty value must be untouched: %#v", got.ExtraVars["empty"])
 	}
-	if f.store.byID[created.ID].ExtraVars["token"] != "plaintext" {
-		t.Fatal("the stored value must stay plaintext for the claim path")
+	// Saved under the secret-typed schema, the value is sealed at rest; the
+	// claim path opens it (internal/app's template lookup).
+	if got := openStored(t, testBox(), f, created, "token"); got != "plaintext" {
+		t.Fatalf("the stored secret opens to %q", got)
 	}
 
 	list, err := f.svc.List(ctx, f.org)

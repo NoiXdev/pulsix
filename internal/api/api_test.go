@@ -117,7 +117,7 @@ func testPlaybooks() *playbooks.Service {
 // template operation (nil interface values are only a problem once called),
 // mirroring testPlaybooks above.
 func testTemplates() *templates.Service {
-	return templates.NewService(nil, nil, nil, nil, nil)
+	return templates.NewService(nil, nil, nil, nil, nil, nil)
 }
 
 // testJobs satisfies Deps' Jobs requirement for tests that only exercise

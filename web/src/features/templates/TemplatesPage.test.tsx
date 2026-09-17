@@ -115,7 +115,7 @@ describe('TemplatesPage', () => {
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
   });
 
-  it('shows an unchanged secret display-only and omits it from the PUT', async () => {
+  it('shows an unchanged secret display-only and keeps it with a keep marker on the PUT', async () => {
     const user = userEvent.setup();
     let put: unknown;
     mockApi({
@@ -142,7 +142,7 @@ describe('TemplatesPage', () => {
       name: 'deploy-site',
       playbook_id: 'pb1',
       scope: undefined,
-      extra_vars: { region: 'eu' },
+      extra_vars: { region: 'eu', token: { $secret: 'keep', from: 'token' } },
       extra_vars_schema: withSchema.extra_vars_schema,
       credential_id: 'c1',
     });
