@@ -87,6 +87,9 @@ func TestGRPCPortAdapters(t *testing.T) {
 		t.Fatal(err)
 	}
 	zone := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'ports', 'ports')`, zone, org.ID); err != nil {
+		t.Fatal(err)
+	}
 	queue := jobs.NewSQLQueue(d, stubBox{}, stubSnapshot{}, stubCreds{}, stubTemplates{}, stubBastions{}, time.Now, rand.Reader)
 	queue.SetKeyPins(stubPins{})
 	store := jobs.NewSQLStore(d)

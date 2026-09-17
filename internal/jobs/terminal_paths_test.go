@@ -23,7 +23,7 @@ import (
 // host makes the claim's payload build fail).
 func (w *atomicWorld) insertRotateJob(t *testing.T, target uuid.UUID) Job {
 	t.Helper()
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, w.d, w.org)
 	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	payload, err := json.Marshal(rotationJobPayload{
@@ -135,4 +135,16 @@ func TestCancelWipesPayloadOnlyWhenTerminal(t *testing.T) {
 	if _, payload := w.jobState(t, running.ID); !payload {
 		t.Fatal("ClearTerminalPayload wiped a non-terminal job's payload")
 	}
+}
+
+// testZone inserts one zone of org: a job references a zone of its own
+// organization (jobs_org_zone_fkey).
+func testZone(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(context.Background(),
+		`INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, $3, 'test zone')`, id, org, "z-"+id.String()[24:]); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

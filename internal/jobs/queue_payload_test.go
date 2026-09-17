@@ -495,7 +495,7 @@ func TestReaperFallbackAnchorsOnClaimedAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org.ID)
 	q := NewSQLQueue(d, fakeBox{}, fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
 	store := NewSQLStore(d)
 	// Kind-agnostic reaper bookkeeping; adhoc claims do not depend on a

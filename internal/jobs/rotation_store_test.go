@@ -505,7 +505,7 @@ func TestRotationFinishErrorPathsAreLoggedNotFatal(t *testing.T) {
 
 	// A rotate_key job whose payload is a plain document without a
 	// credential id: the finalize is skipped, the finish stands.
-	j := newJob(w.org, uuid.Must(uuid.NewV7()), jobs.KindRotateKey, jobs.StatusQueued)
+	j := newJob(w.org, w.zone(t), jobs.KindRotateKey, jobs.StatusQueued)
 	if err := store.CreateJob(db.WithOrgScope(ctx, w.org), j, json.RawMessage(`{"nope":1}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ func TestRotationFinishErrorPathsAreLoggedNotFatal(t *testing.T) {
 	}
 
 	// A run job with the finisher wired records nothing.
-	runJob := newJob(w.org, uuid.Must(uuid.NewV7()), jobs.KindRun, jobs.StatusQueued)
+	runJob := newJob(w.org, w.zone(t), jobs.KindRun, jobs.StatusQueued)
 	runJob.HostIDs = []uuid.UUID{uuid.Must(uuid.NewV7())}
 	if err := store.CreateJob(db.WithOrgScope(ctx, w.org), runJob, nil); err != nil {
 		t.Fatal(err)
@@ -531,7 +531,7 @@ func TestRotationFinishErrorPathsAreLoggedNotFatal(t *testing.T) {
 
 	// A queued rotate_key job cancelled before its claim: the payload's
 	// at-rest lifetime ends immediately.
-	cancelled := newJob(w.org, uuid.Must(uuid.NewV7()), jobs.KindRotateKey, jobs.StatusQueued)
+	cancelled := newJob(w.org, w.zone(t), jobs.KindRotateKey, jobs.StatusQueued)
 	cancelled.HostIDs = []uuid.UUID{uuid.Must(uuid.NewV7())}
 	if err := store.CreateJob(db.WithOrgScope(ctx, w.org), cancelled, json.RawMessage(`{"credential_id":"x"}`)); err != nil {
 		t.Fatal(err)
@@ -683,13 +683,13 @@ func TestCreateJobGroupIsAtomic(t *testing.T) {
 	// A pre-inserted row whose id the group's second job will collide with.
 	tripID := uuid.Must(uuid.NewV7())
 	if err := store.CreateJob(scoped, jobs.Job{
-		ID: tripID, OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: jobs.KindRun,
+		ID: tripID, OrgID: org, ZoneID: seedZone(t, d, org), Kind: jobs.KindRun,
 		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now(),
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	first := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: jobs.KindRotateKey,
 		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	second := first

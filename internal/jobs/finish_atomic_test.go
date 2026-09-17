@@ -101,7 +101,7 @@ func newAtomicWorld(t *testing.T, slug string) *atomicWorld {
 // targeting the world's rendered host) and claims them all.
 func (w *atomicWorld) claimedRotateJobs(t *testing.T, n int) []Job {
 	t.Helper()
-	zone, group, cred := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	zone, group, cred := testZone(t, w.d, w.org), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	scoped := db.WithOrgScope(context.Background(), w.org)
 	var out []Job
 	for i := 0; i < n; i++ {
@@ -198,7 +198,7 @@ func TestFinishIsAtomic(t *testing.T) {
 			}
 			var leaked int
 			if err := w.d.Pool().QueryRow(context.Background(),
-				`SELECT count(*) FROM zones WHERE org_id = $1`, w.org).Scan(&leaked); err != nil {
+				`SELECT count(*) FROM zones WHERE org_id = $1 AND slug LIKE 'finish-%'`, w.org).Scan(&leaked); err != nil {
 				t.Fatal(err)
 			}
 			if leaked != 0 {

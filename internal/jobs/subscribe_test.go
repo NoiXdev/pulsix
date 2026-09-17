@@ -29,7 +29,7 @@ import (
 func TestSubscribeReceivesAppendedEvents(t *testing.T) {
 	d := testdb.Open(t)
 	org, other := seedOrg(t, gen.New(d.Pool()), "jobs-subs-org"), seedOrg(t, gen.New(d.Pool()), "jobs-subs-other")
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	queue := newTestQueue(d)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 	queue.SetEventBroker(svc.EventsBroker())

@@ -44,7 +44,7 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	org, other := seedOrg(t, q, "jobs-events-org"), seedOrg(t, q, "jobs-events-other")
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	queue := newTestQueue(d)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 
@@ -122,7 +122,7 @@ func TestCancelFlowAndFinishIdempotency(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	org := seedOrg(t, q, "jobs-cancel-org")
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	queue := newTestQueue(d)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 
@@ -236,7 +236,7 @@ func TestAppendKeepsSeqMonotonicAcrossAttempts(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	org := seedOrg(t, q, "jobs-events-attempts")
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	queue := newTestQueue(d)
 	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
 

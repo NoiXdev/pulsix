@@ -363,7 +363,7 @@ func seedTestSinkOrg(t *testing.T, q *gen.Queries, slug string) uuid.UUID {
 func TestFinishRecordsConnectionTest(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink")
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org)
 	hostID, credID, bastionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	q := NewSQLQueue(d, fakeBox{}, fakeProbeRenderer{inv: probeSnapshot(hostID, credID, bastionID)}, fullProbeCreds{}, fakeTemplates{}, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
 		bastionID: {ID: bastionID, Address: "10.0.0.1", Port: 2223, Username: "jumper"},
@@ -417,7 +417,7 @@ func TestFinishRecordsConnectionTest(t *testing.T) {
 func TestFinishConnectionTestCancelledRecordsNothing(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-cancel")
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org)
 	hostID := uuid.Must(uuid.NewV7())
 	q := NewSQLQueue(d, fakeBox{}, fakeProbeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
 	sink := &fakeTestSink{}
@@ -444,7 +444,7 @@ func TestFinishConnectionTestCancelledRecordsNothing(t *testing.T) {
 func TestFinishConnectionTestWithoutEventRecordsNothing(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-noevent")
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org)
 	hostID := uuid.Must(uuid.NewV7())
 	q := NewSQLQueue(d, fakeBox{}, fakeProbeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
 	sink := &fakeTestSink{}
@@ -474,7 +474,7 @@ func TestFinishConnectionTestWithoutEventRecordsNothing(t *testing.T) {
 func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-errors")
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org)
 	hostID := uuid.Must(uuid.NewV7())
 	bastionID := uuid.Must(uuid.NewV7())
 	credID := uuid.Must(uuid.NewV7())
@@ -556,7 +556,7 @@ func (failingTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUI
 func TestFinishConnectionTestTwoHostsRecordsNothing(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-multi")
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org)
 	q := NewSQLQueue(d, fakeBox{}, fakeProbeRenderer{}, fullProbeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
 	q.SetKeyPins(fakePins{})
 	sink := &fakeTestSink{}
@@ -603,7 +603,7 @@ func TestFinishConnectionTestTwoHostsRecordsNothing(t *testing.T) {
 func TestFinishConnectionTestSinkFailureFailsTheFinish(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-fails")
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, d, org)
 	hostID := uuid.Must(uuid.NewV7())
 	bastionID := uuid.Must(uuid.NewV7())
 	q := NewSQLQueue(d, fakeBox{}, fakeProbeRenderer{inv: probeSnapshot(hostID, uuid.Must(uuid.NewV7()), bastionID)}, fullProbeCreds{}, fakeTemplates{}, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{

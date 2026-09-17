@@ -88,10 +88,11 @@ func TestRecordRotationBranches(t *testing.T) {
 	q.SetRotationFinisher(finisher)
 	scoped := db.WithOrgScope(context.Background(), org)
 	store := NewSQLStore(d)
+	zone := testZone(t, d, org)
 
 	// A job whose payload cannot open (ciphertext of another job): the
 	// finalize is skipped, the call returns.
-	corrupt := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRotateKey,
+	corrupt := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRotateKey,
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	sealed, err := fakeBox{}.SealAAD([]byte(`{}`), JobAAD(org, uuid.Must(uuid.NewV7())))
 	if err != nil {
@@ -108,7 +109,7 @@ func TestRecordRotationBranches(t *testing.T) {
 	}
 
 	// A well-formed group whose jobs are not all terminal records nothing.
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRotateKey,
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRotateKey,
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	job.HostIDs = []uuid.UUID{anyHost}
 	payload, err := json.Marshal(rotationJobPayload{
@@ -134,7 +135,7 @@ func TestRecordRotationBranches(t *testing.T) {
 	// once Finish ran — the count query sees the terminal state through
 	// the raw pool's bypass.
 	job.ID = uuid.Must(uuid.NewV7())
-	job.ZoneID = uuid.Must(uuid.NewV7())
+	job.ZoneID = testZone(t, d, org)
 	job.RunGroupID = uuid.Must(uuid.NewV7())
 	if err := store.CreateJob(scoped, job, mustSeal(q.box, org, job.ID, payload)); err != nil {
 		t.Fatal(err)
@@ -231,7 +232,7 @@ func TestRecordRotationFinisherErrorFailsTheFinish(t *testing.T) {
 	finisher := &recordingFinisher{err: errors.New("disk full")}
 	q.SetRotationFinisher(finisher)
 
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRotateKey,
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ZoneID: testZone(t, d, orgID), Kind: KindRotateKey,
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	job.HostIDs = []uuid.UUID{anyHost}
 	payload, err := json.Marshal(rotationJobPayload{

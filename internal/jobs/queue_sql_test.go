@@ -203,7 +203,7 @@ func TestQueueClaimFailsUnbuildableJobs(t *testing.T) {
 	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d))
 	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
 	queue.SetKeyPins(hostsSvc)
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
 	j.TemplateID = &templateID
 	if err := jobs.NewSQLStore(d).CreateJob(scoped, j, nil); err != nil {
@@ -355,7 +355,7 @@ func TestQueueFinishRecordsSyncResults(t *testing.T) {
 	queue.SetSyncSink(sink)
 
 	scoped := db.WithOrgScope(ctx, org)
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	repoID := uuid.Must(uuid.NewV7())
 	syncJob := func(status jobs.Status) jobs.Job {
 		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
@@ -496,7 +496,7 @@ func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
 	}
 
 	store := jobs.NewSQLStore(d)
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 	syncJob := func() jobs.Job {
 		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
 		j.Payload = json.RawMessage(`{"repo_id":"` + repoID.String() + `"}`)

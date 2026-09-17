@@ -62,7 +62,7 @@ func TestFinishForIsBoundToTheClaimingWorker(t *testing.T) {
 	if _, err := gen.New(w.d.Pool()).CreateOrganization(context.Background(), gen.CreateOrganizationParams{ID: orgB, Slug: "jobs-finish-binding-b", Name: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	zone := uuid.Must(uuid.NewV7())
+	zone := testZone(t, w.d, w.org)
 	owner := WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone}
 
 	tests := []struct {

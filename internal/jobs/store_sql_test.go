@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/db"
@@ -98,7 +99,7 @@ func TestSQLStoreJobCRUD(t *testing.T) {
 	org, other := seedOrg(t, q, "jobs-crud-org"), seedOrg(t, q, "jobs-crud-other")
 	store := jobs.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	zone := uuid.Must(uuid.NewV7())
+	zone := seedZone(t, d, org)
 
 	j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
 	if err := store.CreateJob(scoped, j, nil); err != nil {
@@ -202,7 +203,7 @@ func TestQueueClaimIsScopedToTheWorkersOrganization(t *testing.T) {
 	queue := jobs.NewSQLQueue(d, fakeSealer{}, emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
 	queue.SetKeyPins(emptyPins{})
 
-	zoneB := uuid.Must(uuid.NewV7())
+	zoneB := seedZone(t, d, orgB)
 	jobB := newJob(orgB, zoneB, jobs.KindAdhoc, jobs.StatusQueued)
 	scopedB := db.WithOrgScope(ctx, orgB)
 	if err := store.CreateJob(scopedB, jobB, nil); err != nil {
@@ -270,7 +271,7 @@ func TestQueueClaimConcurrency(t *testing.T) {
 	}
 
 	// Phase 1: eight jobs in one zone, eight claimers.
-	zoneA := uuid.Must(uuid.NewV7())
+	zoneA := seedZone(t, d, org)
 	scoped := db.WithOrgScope(ctx, org)
 	for i := 0; i < 8; i++ {
 		if err := store.CreateJob(scoped, newJob(org, zoneA, jobs.KindAdhoc, jobs.StatusQueued), nil); err != nil {
@@ -298,7 +299,7 @@ func TestQueueClaimConcurrency(t *testing.T) {
 
 	// Phase 3: eight jobs across two zones, eight claimers — every claimer
 	// gets one, from both zones.
-	zoneB := uuid.Must(uuid.NewV7())
+	zoneB := seedZone(t, d, org)
 	for i := 0; i < 4; i++ {
 		if err := store.CreateJob(scoped, newJob(org, zoneA, jobs.KindAdhoc, jobs.StatusQueued), nil); err != nil {
 			t.Fatal(err)
@@ -322,4 +323,43 @@ func TestQueueClaimConcurrency(t *testing.T) {
 	if len(zones) != 2 {
 		t.Fatalf("claims covered %d zones, want both", len(zones))
 	}
+}
+
+// TestJobsReferenceAZoneOfTheirOrganization (final review triage): a job's
+// zone must be a zone of the job's own organization — the composite
+// foreign key every org-owned reference uses — so a job can never be
+// queued into another organization's zone (whose workers would claim it).
+func TestJobsReferenceAZoneOfTheirOrganization(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org, other := seedOrg(t, q, "jobs-zone-fk-org"), seedOrg(t, q, "jobs-zone-fk-other")
+	foreignZone := seedZone(t, d, other)
+	store := jobs.NewSQLStore(d)
+	for name, zone := range map[string]uuid.UUID{
+		"another organization's zone": foreignZone,
+		"a zone that does not exist":  uuid.Must(uuid.NewV7()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := store.CreateJob(db.WithOrgScope(ctx, org), newJob(org, zone, jobs.KindAdhoc, jobs.StatusQueued), nil)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+				t.Fatalf("CreateJob = %v, want a foreign key violation", err)
+			}
+		})
+	}
+	if err := store.CreateJob(db.WithOrgScope(ctx, org), newJob(org, seedZone(t, d, org), jobs.KindAdhoc, jobs.StatusQueued), nil); err != nil {
+		t.Fatalf("a job in its own organization's zone: %v", err)
+	}
+}
+
+// seedZone inserts one zone of org and returns its id: jobs reference a
+// zone of their own organization.
+func seedZone(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(context.Background(),
+		`INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, $3, 'test zone')`, id, org, "z-"+id.String()[24:]); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
