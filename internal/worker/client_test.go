@@ -112,7 +112,8 @@ func TestDialForeignWorkerCertRejected(t *testing.T) {
 }
 
 // TestDialUnregisteredWorkerRejected: a valid certificate whose serial the
-// registry does not know is refused by the manager's auth interceptor.
+// registry does not know is refused by the manager's auth interceptor with
+// Unauthenticated (spec 2026-09-18 §4).
 func TestDialUnregisteredWorkerRejected(t *testing.T) {
 	h := newHarness(t)
 	cfg := h.issue("fra-1-a", false) // issued but not registered
@@ -125,8 +126,8 @@ func TestDialUnregisteredWorkerRejected(t *testing.T) {
 
 	client := workerpb.NewWorkerServiceClient(conn)
 	_, err = client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "dev"})
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("code = %s (%v), want PermissionDenied", status.Code(err), err)
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("code = %s (%v), want Unauthenticated", status.Code(err), err)
 	}
 }
 

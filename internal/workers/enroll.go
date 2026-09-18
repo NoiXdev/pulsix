@@ -71,6 +71,9 @@ func (s *Service) CreateEnrollment(ctx context.Context, orgID uuid.UUID, actor *
 	if s.signer == nil || s.zones == nil {
 		return Enrollment{}, "", errors.New("workers: create enrollment: service was built without WithSigner/WithZones")
 	}
+	if err := checkNotReserved(name); err != nil {
+		return Enrollment{}, "", err
+	}
 	if !namePattern.MatchString(name) {
 		return Enrollment{}, "", fmt.Errorf("%w: name must be 1-63 lowercase letters, digits or hyphens, starting with a letter or digit", ErrInvalidInput)
 	}

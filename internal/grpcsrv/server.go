@@ -1,7 +1,8 @@
 // Server assembly: the Deps wiring, the mTLS grpc.Server construction
-// (server certificate from the internal CA, mandatory and verified client
-// certificates) and the in-process job→token registry RunEvents binds a
-// stream to the claim that created it.
+// (a self-renewing server certificate from the internal CA, served with
+// the CA; client certificates verified whenever presented and required by
+// the interceptor for every method but Enroll) and the in-process
+// job→token registry RunEvents binds a stream to the claim that created it.
 package grpcsrv
 
 import (
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/workers"
 )
@@ -50,6 +52,14 @@ type Deps struct {
 	// Injected so tests can tick deterministically.
 	NewTicker func(time.Duration) Ticker
 
+	// Streams tracks open event streams per worker so a revocation can end
+	// them; nil builds a private registry.
+	Streams *StreamRegistry
+
+	// ClientIP resolves the Enroll caller's address for the rate limit;
+	// nil trusts no proxy.
+	ClientIP *clientip.Resolver
+
 	// tls is the transport credentials newServer builds from the CA; not
 	// set by callers.
 	tls credentials.TransportCredentials
@@ -58,15 +68,18 @@ type Deps struct {
 // Server implements workerpb.WorkerServiceServer on top of Deps.
 type Server struct {
 	workerpb.UnimplementedWorkerServiceServer
-	deps     Deps
-	registry *tokenRegistry
+	deps        Deps
+	registry    *tokenRegistry
+	streams     *StreamRegistry
+	enrollLimit *clientip.Limiter
 }
 
-// newServer builds the Server: it issues the gRPC listener's server
-// certificate (orgID nil and workerName empty make Issue take the
-// server-cert path: ServerAuth, DNS SAN from the CA config's listen host)
-// and the TLS configuration demanding a client certificate signed by the
-// instance CA on every connection.
+// newServer builds the Server: the gRPC listener's server certificate
+// source (orgID nil and workerName empty make Issue take the server-cert
+// path: ServerAuth, DNS SAN from the CA config's listen host; re-issued in
+// memory as it ages, see servercert.go) and the TLS configuration that
+// verifies a client certificate against the instance CA whenever one is
+// presented. Whether a method needs one is the interceptor's decision.
 func newServer(deps Deps) (*Server, error) {
 	if deps.Clock == nil {
 		return nil, fmt.Errorf("grpcsrv: Clock must be set")
@@ -75,25 +88,30 @@ func newServer(deps Deps) (*Server, error) {
 		return nil, fmt.Errorf("grpcsrv: CA and Workers must be set")
 	}
 	caPool, _ := deps.CA.Pool()
-	certPEM, keyPEM, _, err := deps.CA.Issue(context.Background(), nil, uuid.Nil, "")
+	certs, err := newServerCertSource(deps.CA, deps.Clock)
 	if err != nil {
-		return nil, fmt.Errorf("issue gRPC server certificate: %w", err)
+		return nil, err
 	}
-	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("load gRPC server certificate: %w", err)
-	}
+	// A client certificate is verified when presented and required by the
+	// interceptor for every method except Enroll (auth.go).
 	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    caPool,
-		MinVersion:   tls.VersionTLS13,
+		GetCertificate: certs.get,
+		ClientAuth:     tls.VerifyClientCertIfGiven,
+		ClientCAs:      caPool,
+		MinVersion:     tls.VersionTLS13,
 	}
 	deps.tls = credentials.NewTLS(tlsCfg)
 	if deps.CancelPollInterval == 0 {
 		deps.CancelPollInterval = DefaultCancelPollInterval
 	}
-	return &Server{deps: deps, registry: newTokenRegistry(deps.Clock)}, nil
+	if deps.Streams == nil {
+		deps.Streams = NewStreamRegistry()
+	}
+	if deps.ClientIP == nil {
+		deps.ClientIP = clientip.New(nil)
+	}
+	return &Server{deps: deps, registry: newTokenRegistry(deps.Clock), streams: deps.Streams,
+		enrollLimit: clientip.NewLimiter(enrollLimit, enrollWindow, deps.Clock)}, nil
 }
 
 // New builds the Server and returns it wrapped in a ready-to-serve

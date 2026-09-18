@@ -3,7 +3,8 @@
 // binds the stream to the claim (single-use, 30 s TTL), appends every
 // event, and — polled concurrently — sends the cancel directive exactly
 // once when the job enters the cancelling state. The stream stays open
-// until the worker closes it, so events keep flowing either way.
+// until the worker closes it, so events keep flowing either way — unless
+// the worker is revoked, which ends it with Unauthenticated (StreamRegistry).
 package grpcsrv
 
 import (
@@ -45,6 +46,15 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 	if err != nil {
 		return err
 	}
+	_, w, err := authenticated(ctx)
+	if err != nil {
+		return err
+	}
+	// A revocation (StreamRegistry.CloseWorker) ends the stream: the handler
+	// returns while the receive loop still blocks in Recv, which the
+	// finished RPC then unblocks.
+	revoked, release := s.streams.track(w.ID)
+	defer release()
 
 	// Recv and Send are each single-goroutine, but a Send goroutine may run
 	// next to the Recv loop — so the cancel poll sends directly.
@@ -52,9 +62,21 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 	defer close(done)
 	go s.pollCancels(ctx, jobID, stream, done)
 
-	// Events after a cancel directive are still recorded: the worker needs
-	// a little more time to shut its run down, and those events are what
-	// the run's UI shows.
+	recvErr := make(chan error, 1)
+	go func() { recvErr <- s.receiveEvents(ctx, jobID, stream) }()
+	select {
+	case err := <-recvErr:
+		return err
+	case <-revoked:
+		return status.Error(codes.Unauthenticated, "worker revoked")
+	}
+}
+
+// receiveEvents appends every event of the bound stream until the worker
+// closes it. Events after a cancel directive are still recorded: the worker
+// needs a little more time to shut its run down, and those events are what
+// the run's UI shows.
+func (s *Server) receiveEvents(ctx context.Context, jobID uuid.UUID, stream workerpb.WorkerService_RunEventsServer) error {
 	for {
 		ev, err := stream.Recv()
 		if err == io.EOF {

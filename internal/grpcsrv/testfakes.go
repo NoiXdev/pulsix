@@ -50,10 +50,12 @@ func (f *fakeCAStore) Save(_ context.Context, sealed []byte) error {
 // registry service on. bySerial maps every certificate serial a worker
 // holds to its row; touched maps a serial to the last touched version.
 type fakeWorkerStore struct {
-	mu       sync.Mutex
-	bySerial map[string]workers.Worker
-	revoked  map[string]bool // serial → certificate revoked
-	touched  map[string]string
+	mu          sync.Mutex
+	bySerial    map[string]workers.Worker
+	revoked     map[string]bool // serial → certificate revoked
+	touched     map[string]string
+	enrollments map[uuid.UUID]workers.Enrollment
+	hashes      map[uuid.UUID][]byte // enrollment id → SHA-256 of its secret
 }
 
 func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
@@ -135,7 +137,10 @@ func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificat
 
 func (f *fakeWorkerStore) Delete(_ context.Context, _, _ uuid.UUID) error { return nil }
 
-func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, _ []byte) (workers.Enrollment, error) {
+func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, hash []byte) (workers.Enrollment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enrollments[e.ID], f.hashes[e.ID] = e, hash
 	return e, nil
 }
 
@@ -147,19 +152,40 @@ func (f *fakeWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID
 	return workers.ErrNotFound
 }
 
-func (f *fakeWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
-	return workers.Worker{}, workers.ErrNotFound
+func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.enrollments[id]
+	if !ok {
+		return workers.Worker{}, workers.ErrNotFound
+	}
+	w, c, err := fn(e, f.hashes[id])
+	if err != nil {
+		return workers.Worker{}, err
+	}
+	for _, other := range f.bySerial { // UNIQUE (org_id, name), as in the SQL store
+		if other.OrgID == w.OrgID && other.Name == w.Name {
+			return workers.Worker{}, workers.ErrNameTaken
+		}
+	}
+	f.bySerial[c.Serial.String()] = w
+	now := time.Now()
+	e.UsedAt = &now
+	f.enrollments[id] = e
+	return w, nil
 }
 
 // harness is one fully wired server over a bufconn listener.
 type harness struct {
 	t *testing.T
 
-	ca    *ca.CA
-	srv   *Server
-	gs    *grpc.Server
-	lis   *bufconn.Listener
-	store *fakeWorkerStore
+	ca      *ca.CA
+	caStore *fakeCAStore // the CA's sealed state, to open it again with another clock
+	caBox   *crypto.Box
+	srv     *Server
+	gs      *grpc.Server
+	lis     *bufconn.Listener
+	store   *fakeWorkerStore
 
 	claims  *FakeClaimer
 	events  *FakeEventRecorder
@@ -192,8 +218,9 @@ func (h *harness) advance(d time.Duration) {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
-		t:       t,
-		store:   &fakeWorkerStore{bySerial: map[string]workers.Worker{}, revoked: map[string]bool{}, touched: map[string]string{}},
+		t: t,
+		store: &fakeWorkerStore{bySerial: map[string]workers.Worker{}, revoked: map[string]bool{}, touched: map[string]string{},
+			enrollments: map[uuid.UUID]workers.Enrollment{}, hashes: map[uuid.UUID][]byte{}},
 		claims:  &FakeClaimer{},
 		events:  &FakeEventRecorder{},
 		results: &FakeResultRecorder{},
@@ -202,7 +229,8 @@ func newHarness(t *testing.T) *harness {
 	}
 	var key [32]byte
 	copy(key[:], "pulsix-grpcsrv-test-key-0123")
-	caInst, err := ca.New(&fakeCAStore{}, crypto.NewBox(key), ca.Config{CommonName: "pulsix-manager", ListenHost: "manager"})
+	h.caStore, h.caBox = &fakeCAStore{}, crypto.NewBox(key)
+	caInst, err := ca.New(h.caStore, h.caBox, ca.Config{CommonName: "pulsix-manager", ListenHost: "manager"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +239,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	deps := Deps{
-		CA: h.ca, Workers: workers.NewService(h.store),
+		CA: h.ca, Workers: workers.NewService(h.store, workers.WithSigner(h.ca)),
 		Claims: h.claims, Events: h.events, Results: h.results, Audit: h.audit,
 		Clock: h.clock, CancelPollInterval: 10 * time.Millisecond,
 	}
@@ -260,6 +288,12 @@ func (h *harness) issue(name string, orgID, zoneID uuid.UUID, register bool) (ce
 // certificate — nil, nil means no client certificate at all.
 func (h *harness) client(certPEM, keyPEM []byte) workerpb.WorkerServiceClient {
 	h.t.Helper()
+	return workerpb.NewWorkerServiceClient(h.conn(certPEM, keyPEM))
+}
+
+// conn is client's raw connection, for calls by method name.
+func (h *harness) conn(certPEM, keyPEM []byte) *grpc.ClientConn {
+	h.t.Helper()
 	cfg := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "manager"}
 	if certPEM != nil {
 		cert, err := tls.X509KeyPair(certPEM, keyPEM)
@@ -280,5 +314,5 @@ func (h *harness) client(certPEM, keyPEM []byte) workerpb.WorkerServiceClient {
 		h.t.Fatal(err)
 	}
 	h.t.Cleanup(func() { _ = conn.Close() })
-	return workerpb.NewWorkerServiceClient(conn)
+	return conn
 }

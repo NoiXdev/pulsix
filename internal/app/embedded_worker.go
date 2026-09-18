@@ -1,11 +1,12 @@
 // The embedded worker (PULSIX_EMBEDDED_WORKER=1, off by default): the same
 // worker package cmd/worker drives, started in-process and authenticated
-// over loopback mTLS. It enrolls itself through the exact
-// `pulsix-manager worker add` path (resolveZone, ca.CA.Issue,
-// workers.Service.Register — all defined in workeradd.go, reused
-// unchanged), so an embedded worker is indistinguishable from one an
-// operator enrolled by hand: same workers table row, same certificate
-// serial the gRPC interceptor checks on every call.
+// over loopback mTLS. It enrolls itself much like the
+// `pulsix-manager worker add` path (resolveZone from workeradd.go,
+// ca.CA.Issue, then workers.Service.RegisterOrAttach, the one path the
+// reserved name "embedded" may use), so an embedded worker is
+// indistinguishable from one an operator enrolled by hand: same workers
+// table row, same certificate serial the gRPC interceptor checks on every
+// call.
 //
 // Opt-in and only for trusted single-tenant setups (spec §2/§16): the
 // playbooks an embedded worker runs execute inside the manager process's
@@ -29,11 +30,14 @@
 // one zone of one organization.
 //
 // Known limits, accepted because it is opt-in: every manager start
-// re-attaches to the same "embedded" worker row (workers.RegisterOrAttach)
-// and adds one certificate row for its freshly issued key — those
-// certificate rows accumulate across restarts until an operator revokes or
-// deletes the worker — and a failure after zone resolution (issuing,
-// registering, dialing) stops the embedded worker until the next restart.
+// re-attaches to the same "embedded" worker row (workers.RegisterOrAttach;
+// the name is reserved for it, so no other enrollment can take it) and
+// adds one certificate row for its freshly issued key — those certificate
+// rows accumulate across restarts until an operator revokes or deletes the
+// worker — and a failure after zone resolution (issuing, registering,
+// dialing) stops the embedded worker until the next restart. A revoked
+// row, or one enrolled in another zone than the default zone, keeps it
+// down with an error log naming the fix.
 package app
 
 import (
@@ -41,6 +45,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"time"
@@ -72,13 +77,6 @@ func warnEmbeddedWorker(log *slog.Logger) {
 // a "default" zone yet.
 const embeddedWorkerRetryInterval = 5 * time.Second
 
-// embeddedWorkerName is the fixed name the embedded worker registers
-// under. The workers table IS unique per (org_id, name), which is why the
-// row is reused: RegisterOrAttach finds the existing "embedded" row on
-// every manager restart and attaches the freshly issued certificate to it
-// instead of failing on the name clash.
-const embeddedWorkerName = "embedded"
-
 // startEmbeddedWorker launches the embedded worker's resolve-and-run
 // goroutine and returns a stop function that cancels it and waits for the
 // goroutine to actually exit — Close calls it exactly like it stops the
@@ -88,12 +86,12 @@ const embeddedWorkerName = "embedded"
 // exactly cfg.CAListenHost(), the same name the server certificate's SAN
 // was issued with, or the loopback handshake fails (see
 // internal/worker.Config.ServerName's own doc comment).
-func startEmbeddedWorker(appDB *db.DB, caInst *ca.CA, managerAddr, serverName string, log *slog.Logger) func() {
+func startEmbeddedWorker(appDB *db.DB, caInst *ca.CA, workersSvc *workers.Service, managerAddr, serverName string, log *slog.Logger) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runEmbeddedWorker(ctx, appDB, caInst, managerAddr, serverName, log)
+		runEmbeddedWorker(ctx, appDB, caInst, workersSvc, managerAddr, serverName, log)
 	}()
 	return func() {
 		cancel()
@@ -110,7 +108,7 @@ func startEmbeddedWorker(appDB *db.DB, caInst *ca.CA, managerAddr, serverName st
 // the same pattern hostsSvc.ReconcileDefaultZones uses in app.go's Build
 // for the same reason (a management-plane read that must see every
 // organization, not the caller's own).
-func runEmbeddedWorker(ctx context.Context, appDB *db.DB, caInst *ca.CA, managerAddr, serverName string, log *slog.Logger) {
+func runEmbeddedWorker(ctx context.Context, appDB *db.DB, caInst *ca.CA, workersSvc *workers.Service, managerAddr, serverName string, log *slog.Logger) {
 	src := genZoneSource{q: gen.New(appDB.Pool())}
 	ticker := time.NewTicker(embeddedWorkerRetryInterval)
 	defer ticker.Stop()
@@ -118,7 +116,7 @@ func runEmbeddedWorker(ctx context.Context, appDB *db.DB, caInst *ca.CA, manager
 	for {
 		zone, err := resolveZone(ctx, src, hosts.DefaultZoneSlug, "")
 		if err == nil {
-			runEmbeddedLoop(ctx, appDB, caInst, zone, managerAddr, serverName, log)
+			runEmbeddedLoop(ctx, caInst, workersSvc, zone, managerAddr, serverName, log)
 			return
 		}
 		if !warned {
@@ -134,6 +132,28 @@ func runEmbeddedWorker(ctx context.Context, appDB *db.DB, caInst *ca.CA, manager
 	}
 }
 
+// registerEmbedded records the embedded worker's freshly issued
+// certificate on its row (created on the first start, reused afterwards,
+// workers.RegisterOrAttach) and reports whether the worker may run. Every
+// refusal is logged with what the operator has to do about it.
+func registerEmbedded(ctx context.Context, workersSvc *workers.Service, zone zoneRow, serial *big.Int, log *slog.Logger) bool {
+	_, err := workersSvc.RegisterOrAttach(ctx, zone.OrgID, workers.RegisterInput{
+		ZoneID: zone.ID, Name: workers.EmbeddedName, CertSerial: serial,
+	})
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, workers.ErrRevoked):
+		log.ErrorContext(ctx, "embedded worker: revoked; delete it on the Workers page to re-create it")
+	case errors.Is(err, workers.ErrZoneMismatch):
+		log.ErrorContext(ctx, "embedded worker: the existing \"embedded\" worker is enrolled in another zone; delete it on the Workers page to re-create it in the default zone",
+			"org_id", zone.OrgID, "zone_id", zone.ID)
+	default:
+		log.ErrorContext(ctx, "embedded worker: register", "err", err)
+	}
+	return false
+}
+
 // runEmbeddedLoop enrolls the embedded worker for zone (issue, register)
 // and runs its claim loop until ctx is cancelled. The certificate and CA
 // PEM are written to a private temp directory (0700 dir via os.MkdirTemp,
@@ -144,19 +164,13 @@ func runEmbeddedWorker(ctx context.Context, appDB *db.DB, caInst *ca.CA, manager
 // executor for run/adhoc/bootstrap/rotate_key, the Go-native SSH prober
 // for connection_test, and the repo-sync executor for sync_repo. A future
 // change to that dispatch table must be made in both places.
-func runEmbeddedLoop(ctx context.Context, appDB *db.DB, caInst *ca.CA, zone zoneRow, managerAddr, serverName string, log *slog.Logger) {
-	certPEM, keyPEM, serial, err := caInst.Issue(ctx, &zone.OrgID, zone.ID, embeddedWorkerName)
+func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Service, zone zoneRow, managerAddr, serverName string, log *slog.Logger) {
+	certPEM, keyPEM, serial, err := caInst.Issue(ctx, &zone.OrgID, zone.ID, workers.EmbeddedName)
 	if err != nil {
 		log.ErrorContext(ctx, "embedded worker: issue certificate", "err", err)
 		return
 	}
-	if _, err := workers.NewService(workers.NewSQLStore(appDB)).RegisterOrAttach(ctx, zone.OrgID, workers.RegisterInput{
-		ZoneID: zone.ID, Name: embeddedWorkerName, CertSerial: serial,
-	}); errors.Is(err, workers.ErrRevoked) {
-		log.ErrorContext(ctx, "embedded worker: revoked; delete it on the Workers page to re-create it")
-		return
-	} else if err != nil {
-		log.ErrorContext(ctx, "embedded worker: register", "err", err)
+	if !registerEmbedded(ctx, workersSvc, zone, serial, log) {
 		return
 	}
 

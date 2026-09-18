@@ -29,7 +29,15 @@ var (
 	ErrNameTaken = errors.New("name already in use")
 	// ErrRevoked refuses a revoked certificate or a revoked worker.
 	ErrRevoked = errors.New("worker or certificate revoked")
+	// ErrZoneMismatch refuses attaching a certificate for one zone to a
+	// worker row enrolled in another.
+	ErrZoneMismatch = errors.New("worker is enrolled in another zone")
 )
+
+// EmbeddedName is the name the manager's embedded worker registers under.
+// It is reserved: Register and CreateEnrollment refuse it, only
+// RegisterOrAttach (the embedded worker's own path) may use it.
+const EmbeddedName = "embedded"
 
 // namePattern lets a name start with a lowercase letter or digit and
 // continue with lowercase letters, digits or hyphens, at most 63 characters
@@ -115,8 +123,25 @@ func NewService(store Store, opts ...Option) *Service {
 }
 
 // Register validates the input and stores a new worker with its first
-// certificate.
+// certificate. The reserved EmbeddedName is refused.
 func (s *Service) Register(ctx context.Context, orgID uuid.UUID, in RegisterInput) (Worker, error) {
+	if err := checkNotReserved(in.Name); err != nil {
+		return Worker{}, err
+	}
+	return s.register(ctx, orgID, in)
+}
+
+// checkNotReserved refuses EmbeddedName for every path but the embedded
+// worker's own.
+func checkNotReserved(name string) error {
+	if name == EmbeddedName {
+		return fmt.Errorf("%w: the name %q is reserved for the manager's embedded worker", ErrInvalidInput, name)
+	}
+	return nil
+}
+
+// register is Register without the reserved-name check.
+func (s *Service) register(ctx context.Context, orgID uuid.UUID, in RegisterInput) (Worker, error) {
 	if !namePattern.MatchString(in.Name) {
 		return Worker{}, fmt.Errorf("%w: name must be 1-63 lowercase letters, digits or hyphens, starting with a letter or digit", ErrInvalidInput)
 	}
@@ -139,18 +164,24 @@ func (s *Service) Register(ctx context.Context, orgID uuid.UUID, in RegisterInpu
 }
 
 // RegisterOrAttach is Register for a worker whose name may already exist
-// (the embedded worker, re-issued on every manager start): an existing
-// active row gets the new certificate; a revoked one stays refused.
+// (the embedded worker, re-issued on every manager start), and the one
+// path that may use EmbeddedName: an existing active row gets the new
+// certificate; a revoked one stays refused (ErrRevoked), and so does a row
+// enrolled in another zone (ErrZoneMismatch) — the interceptor would
+// refuse a certificate whose zone differs from its row anyway.
 func (s *Service) RegisterOrAttach(ctx context.Context, orgID uuid.UUID, in RegisterInput) (Worker, error) {
 	cur, err := s.store.GetByName(ctx, orgID, in.Name)
 	if errors.Is(err, ErrNotFound) {
-		return s.Register(ctx, orgID, in)
+		return s.register(ctx, orgID, in)
 	}
 	if err != nil {
 		return Worker{}, err
 	}
 	if cur.Status == StatusRevoked {
 		return Worker{}, ErrRevoked
+	}
+	if cur.ZoneID != in.ZoneID {
+		return Worker{}, fmt.Errorf("%w: worker %q belongs to zone %s, not %s", ErrZoneMismatch, cur.Name, cur.ZoneID, in.ZoneID)
 	}
 	if in.CertSerial == nil || in.CertSerial.Sign() <= 0 {
 		return Worker{}, fmt.Errorf("%w: certificate serial must be a positive integer", ErrInvalidInput)

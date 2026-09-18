@@ -246,3 +246,40 @@ func TestRegisterOrAttachReusesTheRow(t *testing.T) {
 		t.Fatalf("revoked row: %v", err)
 	}
 }
+
+// TestRegisterOrAttachRefusesAnotherZone: attaching a certificate for zone B
+// to a row enrolled in zone A would hand out a certificate whose zone SAN
+// the interceptor refuses (the row's zone wins), so the attach is refused
+// up front and nothing is recorded.
+func TestRegisterOrAttachRefusesAnotherZone(t *testing.T) {
+	w := newEnrollWorld(t)
+	other := uuid.Must(uuid.NewV7())
+	_, err := w.svc.RegisterOrAttach(ctx, w.org, workers.RegisterInput{ZoneID: other, Name: w.existing.Name, CertSerial: big.NewInt(4245)})
+	if !errors.Is(err, workers.ErrZoneMismatch) {
+		t.Fatalf("attach in another zone: %v, want ErrZoneMismatch", err)
+	}
+	if _, err := w.svc.GetBySerial(ctx, big.NewInt(4245)); !errors.Is(err, workers.ErrNotFound) {
+		t.Fatalf("the refused certificate must not be recorded: %v", err)
+	}
+}
+
+// TestEmbeddedNameIsReserved: only the manager's embedded worker
+// (RegisterOrAttach) may use the name "embedded"; the CLI registration and
+// token enrollment refuse it, so no remote worker can squat on the row the
+// embedded worker re-attaches to.
+func TestEmbeddedNameIsReserved(t *testing.T) {
+	w := newEnrollWorld(t)
+	if _, err := w.svc.Register(ctx, w.org, workers.RegisterInput{ZoneID: w.zone, Name: workers.EmbeddedName, CertSerial: big.NewInt(4246)}); !errors.Is(err, workers.ErrInvalidInput) {
+		t.Fatalf("Register(embedded): %v, want ErrInvalidInput", err)
+	}
+	if _, _, err := w.svc.CreateEnrollment(ctx, w.org, &w.actor, w.zone, workers.EmbeddedName); !errors.Is(err, workers.ErrInvalidInput) {
+		t.Fatalf("CreateEnrollment(embedded): %v, want ErrInvalidInput", err)
+	}
+	if pending, _ := w.svc.ListEnrollments(ctx, w.org); len(pending) != 0 {
+		t.Fatalf("a refused enrollment must not be stored: %v", pending)
+	}
+	got, err := w.svc.RegisterOrAttach(ctx, w.org, workers.RegisterInput{ZoneID: w.zone, Name: workers.EmbeddedName, CertSerial: big.NewInt(4247)})
+	if err != nil || got.Name != workers.EmbeddedName {
+		t.Fatalf("the embedded worker's own path: %+v, %v", got, err)
+	}
+}

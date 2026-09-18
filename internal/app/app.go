@@ -261,6 +261,20 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	credsSvc.SetRotationEnqueuer(jobsSvc)
 	jobsQueue.SetRotationFinisher(credsSvc)
 
+	// The instance CA is built even without a gRPC listener: enrollment
+	// tokens carry its fingerprint (spec 2026-09-18 §4).
+	caInst, err := ca.New(ca.NewSQLStore(appDB), box, ca.Config{CommonName: caCommonName, ListenHost: cfg.CAListenHost()})
+	if err != nil {
+		appDB.Close()
+		return nil, fmt.Errorf("open CA: %w", err)
+	}
+	if err := caInst.Ensure(ctx); err != nil {
+		appDB.Close()
+		return nil, fmt.Errorf("ensure CA: %w", err)
+	}
+	workersSvc := workers.NewService(workers.NewSQLStore(appDB), workers.WithSigner(caInst), workers.WithZones(hostsSvc))
+	streams := grpcsrv.NewStreamRegistry()
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
@@ -276,9 +290,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	// The worker gRPC endpoint is opt-in via PULSIX_GRPC_LISTEN; its ports
 	// are the real job queue from Task 5 (jobs_ports.go adapts it to the
-	// grpcsrv interfaces). The workers service rides appDB: the workers
-	// table carries no row-level security by design (migration 00017), so
-	// GetBySerial/Touch work outside any org scope.
+	// grpcsrv interfaces). It shares workersSvc and the stream registry
+	// built above; the certificate lookup and Touch behind the interceptor
+	// run outside any org scope (workers.Store).
 	//
 	// The reaper runs regardless of the gRPC listener: enqueued jobs need
 	// their stale claims swept even before a worker ever connects. It is
@@ -299,20 +313,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
-		caInst, err := ca.New(ca.NewSQLStore(appDB), box, ca.Config{
-			CommonName: caCommonName, ListenHost: cfg.CAListenHost(),
-		})
-		if err != nil {
-			reaperStop()
-			retestStop()
-			tickerStop()
-			appDB.Close()
-			return nil, fmt.Errorf("open CA for gRPC server: %w", err)
-		}
 		grpcServer, err = grpcsrv.New(ctx, grpcsrv.Deps{
-			CA: caInst, Workers: workers.NewService(workers.NewSQLStore(appDB)),
+			CA: caInst, Workers: workersSvc,
 			Claims: jobsClaimer{jobsQueue}, Events: jobsEventRecorder{jobsQueue}, Results: jobsResultRecorder{jobsQueue},
-			Audit: systemAuditor{auditRec}, Clock: time.Now,
+			Audit: systemAuditor{auditRec}, Clock: time.Now, Streams: streams, ClientIP: clientip.New(cfg.TrustedProxies),
 		})
 		if err != nil {
 			reaperStop()
@@ -340,7 +344,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
 			warnEmbeddedWorker(slog.Default())
-			stopEmbedded = startEmbeddedWorker(appDB, caInst, net.JoinHostPort("127.0.0.1", port), cfg.CAListenHost(), slog.Default())
+			stopEmbedded = startEmbeddedWorker(appDB, caInst, workersSvc, net.JoinHostPort("127.0.0.1", port), cfg.CAListenHost(), slog.Default())
 		}
 	}
 

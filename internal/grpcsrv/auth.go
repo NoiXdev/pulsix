@@ -1,7 +1,8 @@
-// Authentication: every connection presents a client certificate the
-// instance CA issued (the TLS layer refuses anything less), and the
-// interceptor turns that certificate into a verified worker identity that
-// both call shapes carry into the handler through the context.
+// Authentication: the TLS layer verifies a presented client certificate
+// against the instance CA, and the interceptor requires one for every
+// method except Enroll (a worker's way to its first certificate). It turns
+// the certificate into a verified worker identity that both call shapes
+// carry into the handler through the context.
 package grpcsrv
 
 import (
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -37,8 +39,15 @@ func workerOf(ctx context.Context) (workers.Worker, bool) {
 	return w, ok
 }
 
+// unauthenticatedMethods may be called without a client certificate:
+// token enrollment is how a worker gets its first one.
+var unauthenticatedMethods = map[string]bool{workerpb.WorkerService_Enroll_FullMethodName: true}
+
 // authUnaryInterceptor authenticates a unary call before the handler runs.
-func (s *Server) authUnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+func (s *Server) authUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if unauthenticatedMethods[info.FullMethod] {
+		return handler(ctx, req)
+	}
 	ctx, err := s.authenticate(ctx)
 	if err != nil {
 		return nil, err
@@ -68,8 +77,9 @@ func (s *ctxServerStream) Context() context.Context { return s.ctx }
 
 // authenticate turns the presented client certificate into a stashed
 // identity and worker row. A missing or untrustworthy certificate is
-// Unauthenticated; a certificate the CA signed but whose serial the worker
-// registry no longer knows (a revoked worker) is PermissionDenied.
+// Unauthenticated, and so are unknown and revoked serials (spec 2026-09-18
+// §4) — one answer, so neither can be told apart — and a certificate whose
+// zone SAN differs from the registry row it resolves to.
 func (s *Server) authenticate(ctx context.Context) (context.Context, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.AuthInfo == nil {
@@ -95,11 +105,14 @@ func (s *Server) authenticate(ctx context.Context) (context.Context, error) {
 		return ctx, status.Errorf(codes.Unauthenticated, "bad client certificate: %v", err)
 	}
 	worker, err := s.deps.Workers.GetBySerial(ctx, identity.Serial)
-	if errors.Is(err, workers.ErrNotFound) {
-		return ctx, status.Error(codes.PermissionDenied, "unknown or revoked worker")
+	if errors.Is(err, workers.ErrNotFound) || errors.Is(err, workers.ErrRevoked) {
+		return ctx, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
 	}
 	if err != nil {
 		return ctx, status.Errorf(codes.Internal, "look up worker: %v", err)
+	}
+	if worker.ZoneID != identity.ZoneID {
+		return ctx, status.Error(codes.Unauthenticated, "certificate does not match the worker's enrollment")
 	}
 	return context.WithValue(context.WithValue(ctx, identityKey{}, identity), workerKey{}, worker), nil
 }
