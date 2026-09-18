@@ -286,11 +286,7 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, p
 	// decide whether a pinned host key is checked (and with which SSH
 	// arguments) are reserved for the worker (re-review N1).
 	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {
-		problems := make([]schema.Problem, len(names))
-		for i, n := range names {
-			problems[i] = schema.Problem{Path: n, Message: "this variable controls connection security and is set by Pulsix itself; remove it"}
-		}
-		return Template{}, &schema.ValidationError{Problems: problems}
+		return Template{}, forbiddenProblems(names)
 	}
 	if sc != nil {
 		if sc.Fields == nil {
@@ -348,15 +344,36 @@ func (s *Service) validateScope(ctx context.Context, orgID uuid.UUID, scope Scop
 }
 
 // validateMeta checks the name against the shared resource-name rule and
-// the free-form limit pattern's only two constraints (length, no NUL).
+// the free-form limit pattern.
 func validateMeta(name, limit string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%w: name must be 1-63 lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit", ErrInvalidInput)
 	}
+	return validateLimit(limit)
+}
+
+// validateLimit applies the limit rules a template and a run override
+// share: a limit is passed to ansible-playbook verbatim, so the only
+// checks are length and the absence of NUL — everything else is a legal
+// host pattern.
+func validateLimit(limit string) error {
 	if len(limit) > maxLimit || strings.ContainsRune(limit, 0) {
 		return fmt.Errorf("%w: limit must be at most %d characters and contain no NUL", ErrInvalidInput, maxLimit)
 	}
 	return nil
+}
+
+// forbiddenProblems builds the validation error for extra-var names the
+// connection-security denylist (internal/ansiblevars) refused: the
+// variables that decide whether a pinned host key is checked (and with
+// which SSH arguments) are reserved for the worker (re-review N1). Shared
+// by a template save (build) and a run override (ValidateOverrides).
+func forbiddenProblems(names []string) error {
+	problems := make([]schema.Problem, len(names))
+	for i, n := range names {
+		problems[i] = schema.Problem{Path: n, Message: "this variable controls connection security and is set by Pulsix itself; remove it"}
+	}
+	return &schema.ValidationError{Problems: problems}
 }
 
 // masked returns t with its extra vars masked for a reader: every sealed
@@ -391,6 +408,24 @@ func maskExtraVars(sc *schema.Schema, vars map[string]any) map[string]any {
 // problem); a sealed envelope sent in directly is refused. The result is
 // validated against the schema afterwards, sealed values included.
 func (s *Service) sealExtraVars(aad []byte, fields []schema.Field, incoming, stored map[string]any) (map[string]any, error) {
+	out, err := s.sealSecrets(aad, fields, incoming, stored)
+	if err != nil {
+		return nil, err
+	}
+	if err := schema.Validate(fields, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// sealSecrets prepares incoming extra vars for storage under fields: a
+// plaintext value of a secret-typed field is sealed; the masked marker a
+// read returned, or a keep marker, keeps the stored value at that path
+// (it must be sealed — a marker without a stored secret is a validation
+// problem); a sealed envelope sent in directly is refused. It does not
+// validate the result against the schema — callers that need strict
+// validation run schema.Validate themselves.
+func (s *Service) sealSecrets(aad []byte, fields []schema.Field, incoming, stored map[string]any) (map[string]any, error) {
 	var problems []schema.Problem
 	out, err := schema.MapSecrets(fields, incoming, func(path string, v any) (any, error) {
 		from, keep := schema.KeepFrom(v)
@@ -423,9 +458,6 @@ func (s *Service) sealExtraVars(aad []byte, fields []schema.Field, incoming, sto
 	}
 	if len(problems) > 0 {
 		return nil, &schema.ValidationError{Problems: problems}
-	}
-	if err := schema.Validate(fields, out); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
