@@ -210,17 +210,25 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 	}
 	wcfg.Version = "embedded"
 
-	conn, err := worker.Dial(ctx, wcfg)
+	id, err := worker.LoadIdentity(wcfg.CertPath, wcfg.KeyPath)
+	if err != nil {
+		log.ErrorContext(ctx, "embedded worker: load identity", "err", err)
+		return
+	}
+	conn, err := worker.DialIdentity(ctx, wcfg, id)
 	if err != nil {
 		log.ErrorContext(ctx, "embedded worker: dial manager", "err", err)
 		return
 	}
 	defer func() { _ = conn.Close() }()
+	client := workerpb.NewWorkerServiceClient(conn)
+	// Renewal at start and every 6 h, once a third of the validity is left.
+	go worker.NewRenewer(client, id, nil, nil, log).Run(ctx)
 
 	runExec := runner.NewRunner(wcfg.AnsibleRunnerBin, wcfg.AnsibleBin, "git", 0, log)
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, log)
 	loop := worker.NewLoop(
-		wcfg, workerpb.NewWorkerServiceClient(conn),
+		wcfg, client,
 		worker.NewCompositeExecutor(map[string]worker.Executor{
 			"run": runExec, "adhoc": runExec,
 			"bootstrap":       worker.NewBootstrapExecutor(runExec),

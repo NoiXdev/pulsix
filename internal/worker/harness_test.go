@@ -51,8 +51,10 @@ func (m *memCAStore) Save(_ context.Context, sealed []byte) error {
 
 // fakeWorkerStore is the in-memory workers.Store for the registry service.
 type fakeWorkerStore struct {
-	mu       sync.Mutex
-	bySerial map[string]workers.Worker
+	mu          sync.Mutex
+	bySerial    map[string]workers.Worker
+	enrollments map[uuid.UUID]workers.Enrollment
+	hashes      map[uuid.UUID][]byte // enrollment id → SHA-256 of its secret
 }
 
 func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
@@ -93,7 +95,10 @@ func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificat
 
 func (f *fakeWorkerStore) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
-func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, _ []byte) (workers.Enrollment, error) {
+func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, hash []byte) (workers.Enrollment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enrollments[e.ID], f.hashes[e.ID] = e, hash
 	return e, nil
 }
 
@@ -105,8 +110,27 @@ func (f *fakeWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID
 	return workers.ErrNotFound
 }
 
-func (f *fakeWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
-	return workers.Worker{}, workers.ErrNotFound
+func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.enrollments[id]
+	if !ok {
+		return workers.Worker{}, workers.ErrNotFound
+	}
+	w, c, err := fn(e, f.hashes[id])
+	if err != nil {
+		return workers.Worker{}, err
+	}
+	for _, other := range f.bySerial { // UNIQUE (org_id, name), as in the SQL store
+		if other.OrgID == w.OrgID && other.Name == w.Name {
+			return workers.Worker{}, workers.ErrNameTaken
+		}
+	}
+	f.bySerial[c.Serial.String()] = w
+	now := time.Now()
+	e.UsedAt = &now
+	f.enrollments[id] = e
+	return w, nil
 }
 
 // fakeClaims implements grpcsrv.Claimer from a queue the test seeds.
@@ -260,10 +284,10 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	claims, events, results := &fakeClaims{}, &fakeEvents{}, &fakeResults{}
-	store := &fakeWorkerStore{bySerial: map[string]workers.Worker{}}
+	store := &fakeWorkerStore{bySerial: map[string]workers.Worker{}, enrollments: map[uuid.UUID]workers.Enrollment{}, hashes: map[uuid.UUID][]byte{}}
 	gs, err := grpcsrv.New(context.Background(), grpcsrv.Deps{
 		CA:      caInst,
-		Workers: workers.NewService(store),
+		Workers: workers.NewService(store, workers.WithSigner(caInst)),
 		Claims:  claims, Events: events, Results: results, Audit: &fakeAudit{},
 		Clock:              time.Now,
 		CancelPollInterval: 10 * time.Millisecond,
@@ -329,5 +353,12 @@ func (h *harness) dialWith(t *testing.T, cfg Config) (*grpc.ClientConn, error) {
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return h.lis.DialContext(ctx)
 		}),
+	})
+}
+
+// bufconnDialer routes a worker's dials to the harness listener.
+func (h *harness) bufconnDialer() grpc.DialOption {
+	return grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+		return h.lis.DialContext(ctx)
 	})
 }

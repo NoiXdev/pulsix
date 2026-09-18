@@ -289,6 +289,26 @@ func TestLoadIgnoresAliasedEnv(t *testing.T) {
 	}
 }
 
+// TestLoadIdentityDirAndToken: without the three bundle paths the worker
+// uses its identity directory, and PULSIX_ENROLL_TOKEN is read trimmed.
+func TestLoadIdentityDirAndToken(t *testing.T) {
+	cfg, err := Load([]string{"PULSIX_MANAGER_ADDR=manager:8444", "PULSIX_WORKER_DATA_DIR=/data", "PULSIX_ENROLL_TOKEN= pxw1.a.b.c \n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.IdentityDir != "/data/identity" || cfg.CertPath != "/data/identity/cert.pem" || cfg.KeyPath != "/data/identity/key.pem" ||
+		cfg.CAPath != "/data/identity/ca.pem" || cfg.EnrollToken != "pxw1.a.b.c" {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+	cfg, err = Load([]string{"PULSIX_MANAGER_ADDR=manager:8444", "PULSIX_WORKER_IDENTITY_DIR=/id"})
+	if err != nil || cfg.CertPath != "/id/cert.pem" {
+		t.Fatalf("identity dir override = %+v, %v", cfg, err)
+	}
+	if _, err := Load([]string{"PULSIX_MANAGER_ADDR=manager:8444", "PULSIX_WORKER_CERT=/c.pem"}); err == nil || !strings.Contains(err.Error(), "PULSIX_WORKER_KEY") {
+		t.Fatalf("a partial bundle must name the missing path: %v", err)
+	}
+}
+
 func envSlice(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k, v := range m {

@@ -29,7 +29,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -170,7 +172,13 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 			d := backoff(backoffShift)
 			backoffShift = nextBackoffShift(backoffShift)
-			l.log.WarnContext(ctx, "claim failed; backing off", "backoff", d, "err", err)
+			if status.Code(err) == codes.Unauthenticated {
+				// Revoked or unknown certificate: retrying cannot help, but
+				// exiting would only restart the container into the same state.
+				l.log.ErrorContext(ctx, "the manager refused this worker's certificate (revoked or unknown); remove the identity and enroll again with a new token", "backoff", d)
+			} else {
+				l.log.WarnContext(ctx, "claim failed; backing off", "backoff", d, "err", err)
+			}
 			if err := l.sleep(ctx, d); err != nil {
 				return nil
 			}

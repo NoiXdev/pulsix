@@ -152,6 +152,13 @@ echo "smoke: waiting for the worker container to enroll and heartbeat (timeout 1
 wait_for "the enrolled worker's heartbeat" 180 worker_heartbeating
 echo "smoke: worker enrolled and heartbeating"
 
+echo "smoke: checking the worker's certificate is registered and short-lived …"
+certs="$(psql "SELECT count(*) FROM worker_certificates c JOIN workers w ON w.id = c.worker_id WHERE w.name = 'worker-1' AND c.revoked_at IS NULL AND c.not_after <= now() + interval '91 days'")"
+if [ "$certs" -lt 1 ]; then
+	echo "smoke: worker-1 has no registered certificate of at most 90 days" >&2
+	exit 1
+fi
+
 echo "smoke: checking the worker container holds neither the master key nor the database credentials …"
 worker_env="$(compose exec -T worker env)"
 for forbidden in PULSIX_MASTER_KEY PULSIX_DATABASE_URL "$PULSIX_MASTER_KEY" "$DB_PASSWORD"; do

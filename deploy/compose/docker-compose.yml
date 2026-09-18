@@ -130,11 +130,13 @@ services:
     restart: on-failure:3
 
   # The zone worker that runs the playbooks. It holds no database access
-  # and no master key — only its own certificate bundle (read-only) and
-  # the address of the manager's worker endpoint. It waits for the bundle
-  # the enrollment service above writes, then starts claiming jobs for the
-  # zone it was enrolled for (by default the first organization's
-  # "default" zone).
+  # and no master key — only its own certificate bundle and the address of
+  # the manager's worker endpoint. It waits for the bundle the enrollment
+  # service above writes, then starts claiming jobs for the zone it was
+  # enrolled for (by default the first organization's "default" zone). The
+  # bundle volume is writable for the worker because it renews its own
+  # certificate (90-day leaves); worker-enroll keeps reusing the renewed
+  # bundle.
   worker:
     image: noixdev/pulsix-worker:${PULSIX_VERSION:-latest}
     depends_on:
@@ -159,7 +161,7 @@ services:
       PULSIX_WORKER_KEY: /etc/pulsix-worker/key.pem
       PULSIX_CA_CERT: /etc/pulsix-worker/ca.pem
     volumes:
-      - pulsix-worker-bundle:/etc/pulsix-worker:ro
+      - pulsix-worker-bundle:/etc/pulsix-worker
       - pulsix-worker-data:/var/lib/pulsix-worker
     restart: unless-stopped
 

@@ -125,23 +125,36 @@ services:
       - "8444:8444"
 ```
 
-and start the remote worker with:
+Then enroll the remote worker with a one-time token instead of a copied
+certificate bundle:
 
-```bash
-docker run -d --name pulsix-worker \
-  -e PULSIX_MANAGER_ADDR=pulsix.example.com:8444 \
-  -e PULSIX_MANAGER_SERVER_NAME=pulsix-manager \
-  -e PULSIX_WORKER_CERT=/etc/pulsix-worker/cert.pem \
-  -e PULSIX_WORKER_KEY=/etc/pulsix-worker/key.pem \
-  -e PULSIX_CA_CERT=/etc/pulsix-worker/ca.pem \
-  -v /path/to/bundle:/etc/pulsix-worker:ro \
-  noixdev/pulsix-worker:latest
-```
+1. On the Workers page, "Add worker" → pick the zone and a name → copy the
+   command it prints.
+2. Run that command on the worker's machine:
+
+   ```bash
+   docker run -d --name pulsix-worker-hel-1 --restart unless-stopped \
+     -e PULSIX_MANAGER_ADDR=pulsix.example.com:8444 \
+     -e PULSIX_MANAGER_SERVER_NAME=pulsix-manager \
+     -e PULSIX_ENROLL_TOKEN=pxw1.… \
+     -v pulsix-worker-hel-1:/var/lib/pulsix-worker \
+     noixdev/pulsix-worker:<version>
+   ```
+
+3. The token is single use and valid for one hour. After the first start
+   the worker's identity lives in the named volume, and the token is
+   ignored on every later start. To re-enroll, remove the volume and use a
+   new token from the Workers page.
+4. Revoking the worker on the Workers page cuts it off at once.
 
 `PULSIX_MANAGER_SERVER_NAME` is required whenever the address you dial is
 not the manager's `PULSIX_GRPC_SERVER_NAME` itself: the endpoint's
 certificate carries that name, not your public hostname. The endpoint
-only accepts workers presenting a certificate this instance issued.
+only accepts workers this instance enrolled or issued a certificate for.
+
+For an air-gapped worker machine with no route back to the manager for
+enrollment, use the `worker add` bundle flow from "Additional workers"
+above instead and copy the three files over by hand.
 
 ## The embedded worker (opt-in, trusted single-tenant setups only)
 

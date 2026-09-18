@@ -2,12 +2,17 @@
 // variables. The exact names are pinned by `pulsix-manager worker add`'s
 // usage note (internal/app/workeradd.go) — that printed note is the
 // enrollment contract an operator pastes onto the worker host, so the names
-// here must never drift from it.
+// here must never drift from it. PULSIX_WORKER_CERT/KEY/CA_CERT stay
+// supported as an all-or-none set (that bundle); when none of the three is
+// set, the worker instead reads or writes its identity directory
+// (PULSIX_WORKER_IDENTITY_DIR) and, on first start, enrolls with
+// PULSIX_ENROLL_TOKEN — the token flow the Workers page prints.
 package worker
 
 import (
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,15 +34,18 @@ const (
 	envClaimInterval = "PULSIX_CLAIM_INTERVAL"
 	envMaxConcurrent = "PULSIX_MAX_CONCURRENT"
 	envServerName    = "PULSIX_MANAGER_SERVER_NAME"
+	envEnrollToken   = "PULSIX_ENROLL_TOKEN"
+	envIdentityDir   = "PULSIX_WORKER_IDENTITY_DIR"
 )
 
 // Defaults for the optional variables.
 const (
-	defaultDataDir       = "/var/lib/pulsix-worker"
-	defaultRunnerBin     = "ansible-runner"
-	defaultAnsibleBin    = "ansible-playbook"
-	defaultClaimInterval = 3 * time.Second
-	defaultMaxConcurrent = 1
+	defaultDataDir         = "/var/lib/pulsix-worker"
+	defaultRunnerBin       = "ansible-runner"
+	defaultAnsibleBin      = "ansible-playbook"
+	defaultClaimInterval   = 3 * time.Second
+	defaultMaxConcurrent   = 1
+	defaultIdentityDirName = "identity"
 )
 
 // Config is the validated worker configuration. Version is the build
@@ -86,6 +94,14 @@ type Config struct {
 	MaxConcurrent int
 	// Version is the worker's build version, set via ldflags after Load.
 	Version string
+	// IdentityDir holds cert.pem, key.pem and ca.pem when the three paths
+	// are not set explicitly (PULSIX_WORKER_IDENTITY_DIR, default
+	// <data dir>/identity): where token enrollment writes and renewal
+	// replaces the certificate.
+	IdentityDir string
+	// EnrollToken is the one-time token (PULSIX_ENROLL_TOKEN) the worker
+	// enrolls with when no usable bundle exists yet.
+	EnrollToken string
 }
 
 // Load parses and validates the given environment (os.Environ() in the
@@ -106,24 +122,41 @@ func Load(env []string) (Config, error) {
 		return cfg, err
 	}
 	cfg.ManagerAddr = addr
-	for _, pair := range [][2]string{
-		{envCertPath, vals[envCertPath]},
-		{envKeyPath, vals[envKeyPath]},
-		{envCAPath, vals[envCAPath]},
-	} {
-		if pair[1] == "" {
-			return cfg, fmt.Errorf("%s is required (the worker needs its mTLS material; see `pulsix-manager worker add`)", pair[0])
-		}
-	}
-	cfg.CertPath = vals[envCertPath]
-	cfg.KeyPath = vals[envKeyPath]
-	cfg.CAPath = vals[envCAPath]
-	cfg.ServerName = vals[envServerName]
 
 	cfg.DataDir = vals[envDataDir]
 	if cfg.DataDir == "" {
 		cfg.DataDir = defaultDataDir
 	}
+	// The certificate bundle: either all three paths (the bundle `pulsix-manager
+	// worker add` prints) or none, then the identity directory token
+	// enrollment fills.
+	paths := [][2]string{{envCertPath, vals[envCertPath]}, {envKeyPath, vals[envKeyPath]}, {envCAPath, vals[envCAPath]}}
+	set := 0
+	for _, p := range paths {
+		if p[1] != "" {
+			set++
+		}
+	}
+	switch set {
+	case 3:
+		cfg.CertPath, cfg.KeyPath, cfg.CAPath = vals[envCertPath], vals[envKeyPath], vals[envCAPath]
+	case 0:
+		cfg.IdentityDir = vals[envIdentityDir]
+		if cfg.IdentityDir == "" {
+			cfg.IdentityDir = filepath.Join(cfg.DataDir, defaultIdentityDirName)
+		}
+		cfg.CertPath = filepath.Join(cfg.IdentityDir, "cert.pem")
+		cfg.KeyPath = filepath.Join(cfg.IdentityDir, "key.pem")
+		cfg.CAPath = filepath.Join(cfg.IdentityDir, "ca.pem")
+	default:
+		for _, p := range paths {
+			if p[1] == "" {
+				return cfg, fmt.Errorf("%s is required when any of %s, %s, %s is set (set all three, or none and enroll with %s)", p[0], envCertPath, envKeyPath, envCAPath, envEnrollToken)
+			}
+		}
+	}
+	cfg.ServerName = vals[envServerName]
+	cfg.EnrollToken = strings.TrimSpace(vals[envEnrollToken])
 
 	zones, err := parseZones(vals[envZones])
 	if err != nil {

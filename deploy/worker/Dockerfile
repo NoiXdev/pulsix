@@ -58,14 +58,18 @@ COPY --from=build /out/pulsix-worker /pulsix-worker
 
 # The worker's scratch root: per-job temp dirs and the persistent repo
 # cache live under it (PULSIX_WORKER_DATA_DIR defaults to this path). It
-# must be owner-private and writable by the runtime user.
+# must be owner-private and writable by the runtime user. A token-enrolling
+# worker (PULSIX_ENROLL_TOKEN, no PULSIX_WORKER_CERT/KEY/CA_CERT bundle)
+# writes its identity directory under this same data volume by default
+# (<data dir>/identity), so the enrolled and later renewed certificate
+# survives a restart without any extra mount.
 RUN mkdir -p /var/lib/pulsix-worker && chmod 0700 /var/lib/pulsix-worker \
 	&& chown -R 65532:65532 /var/lib/pulsix-worker \
 	&& mkdir -p /etc/pulsix-worker && chown 65532:65532 /etc/pulsix-worker
 # /etc/pulsix-worker is where the compose stack mounts the worker's
-# certificate bundle (read-only); owned by the runtime user so a fresh
-# named volume first mounted here gets the same ownership the enrollment
-# service's side of it has.
+# certificate bundle (writable: renewal replaces cert.pem there); owned by
+# the runtime user so a fresh named volume first mounted here gets the
+# same ownership the enrollment service's side of it has.
 ENV PULSIX_WORKER_DATA_DIR=/var/lib/pulsix-worker
 VOLUME ["/var/lib/pulsix-worker"]
 

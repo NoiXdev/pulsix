@@ -8,9 +8,12 @@
 // internal/worker/config.go for the authoritative list and defaults:
 //
 //	PULSIX_MANAGER_ADDR        manager's gRPC endpoint, host:port (required)
-//	PULSIX_WORKER_CERT         this worker's client certificate PEM path (required)
-//	PULSIX_WORKER_KEY          this worker's private key PEM path (required)
-//	PULSIX_CA_CERT             CA certificate PEM path, pins the manager (required)
+//	PULSIX_MANAGER_SERVER_NAME overrides the TLS ServerName verified against the manager
+//	PULSIX_WORKER_CERT         this worker's client certificate PEM path (all three, or none)
+//	PULSIX_WORKER_KEY          this worker's private key PEM path (all three, or none)
+//	PULSIX_CA_CERT             CA certificate PEM path, pins the manager (all three, or none)
+//	PULSIX_ENROLL_TOKEN        one-time token to enroll with when no bundle exists yet
+//	PULSIX_WORKER_IDENTITY_DIR where enrollment writes/renewal replaces the certificate, default <data dir>/identity
 //	PULSIX_WORKER_DATA_DIR     scratch root, default /var/lib/pulsix-worker
 //	PULSIX_WORKER_ZONES        comma-separated zone ids; empty = what the certificate says
 //	PULSIX_ANSIBLE_RUNNER_BIN  default ansible-runner
@@ -65,12 +68,25 @@ func run(env []string) int {
 	defer stop()
 
 	slog.Info("pulsix-worker starting", "manager", cfg.ManagerAddr, "data_dir", cfg.DataDir)
-	conn, err := worker.Dial(ctx, cfg)
+	// A valid bundle wins; otherwise enroll with PULSIX_ENROLL_TOKEN.
+	if err := worker.EnsureIdentity(ctx, cfg, slog.Default()); err != nil {
+		slog.Error("no worker identity", "err", err)
+		return 2
+	}
+	id, err := worker.LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		slog.Error("load worker identity", "err", err)
+		return 1
+	}
+	conn, err := worker.DialIdentity(ctx, cfg, id)
 	if err != nil {
 		slog.Error("dial manager failed", "addr", cfg.ManagerAddr, "err", err)
 		return 1
 	}
 	defer func() { _ = conn.Close() }() // best-effort: the process is exiting anyway
+	client := workerpb.NewWorkerServiceClient(conn)
+	// Renewal at start and every 6 h, once a third of the validity is left.
+	go worker.NewRenewer(client, id, nil, nil, slog.Default()).Run(ctx)
 
 	// The kind dispatch: the ansible-runner executor serves run and ad-hoc
 	// jobs and the Task 11 system playbooks (bootstrap and rotate_key —
@@ -82,7 +98,7 @@ func run(env []string) int {
 	runExec := runner.NewRunner(cfg.AnsibleRunnerBin, cfg.AnsibleBin, "git", 0, slog.Default())
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, slog.Default())
 	loop := worker.NewLoop(
-		cfg, workerpb.NewWorkerServiceClient(conn),
+		cfg, client,
 		worker.NewCompositeExecutor(map[string]worker.Executor{
 			"run":             runExec,
 			"adhoc":           runExec,
