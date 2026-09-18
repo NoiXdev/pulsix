@@ -120,6 +120,8 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   }
 
   async function onTest() {
+    const action = t.kind === 'repo_sync' ? 'sync the repository' : 'run the job template';
+    if (!confirm(`Test call ${t.name}? This will ${action} for real, right now; the allowed-sources check is skipped.`)) return;
     try {
       const res = await test.mutateAsync({ id: t.id });
       toast.show(`Test call: ${res.outcome}`);
@@ -184,7 +186,11 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
             Rotate secret
           </Button>
           {(canRun || t.kind === 'repo_sync') && (
-            <Button type="button" onClick={() => void onTest()}>
+            <Button
+              type="button"
+              title={t.kind === 'repo_sync' ? 'Starts a real repository sync now; the allowed-sources check is skipped.' : 'Starts a real job template run now; the allowed-sources check is skipped.'}
+              onClick={() => void onTest()}
+            >
               Test call
             </Button>
           )}

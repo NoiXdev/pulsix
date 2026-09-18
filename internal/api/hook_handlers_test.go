@@ -88,14 +88,35 @@ func TestHookUniformNotFound(t *testing.T) {
 	open := f.createTrigger(t, nil)
 	disabled := f.createTrigger(t, func(in *triggers.Input) { in.Enabled = false })
 	fenced := f.createTrigger(t, func(in *triggers.Input) { in.AllowCIDRs = []string{"10.0.0.0/8"} })
+
+	// A repo_sync trigger, for the reverse of "wrong endpoint" below
+	// (fix round 1, Important 1's IDOR case): a template-kind trigger id
+	// addressed through the repo route is already covered by "wrong
+	// endpoint"; a repo-kind trigger id addressed through the jobs route
+	// must 404 the same way.
+	repoResp := postJSON(t, f.operatorC, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/repos", map[string]any{"name": "hook-404-repo", "url": "https://git.example.com/hook-404-repo.git"})
+	var repo struct {
+		Repo struct {
+			ID string `json:"id"`
+		} `json:"repo"`
+	}
+	decodeInto(t, repoResp, &repo)
+	repoID := uuid.MustParse(repo.Repo.ID)
+	repoTrigger, err := f.s.Deps.Triggers.Create(db.WithOrgScope(context.Background(), f.orgID), f.orgID, uuid.Must(uuid.NewV7()),
+		triggers.Input{Kind: triggers.KindRepoSync, RepoID: &repoID, Name: "hook-404-repo-trigger", Enabled: true, Preset: triggers.PresetGitLab})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	responses := map[string]*http.Response{
-		"unknown id":      hook(t, f.s.HTTP.URL+"/api/v1/hooks/jobs/"+uuid.NewString(), body, signedHeaders(open, body)),
-		"malformed id":    hook(t, f.s.HTTP.URL+"/api/v1/hooks/jobs/not-a-uuid", body, signedHeaders(open, body)),
-		"wrong endpoint":  hook(t, f.s.HTTP.URL+"/api/v1/hooks/repos/"+open.Trigger.ID.String(), body, signedHeaders(open, body)),
-		"disabled":        hook(t, disabled.URL, body, signedHeaders(disabled, body)),
-		"wrong source ip": hook(t, fenced.URL, body, signedHeaders(fenced, body)),
-		"bad signature":   hook(t, open.URL, body, map[string]string{"X-Pulsix-Signature-256": "sha256=deadbeef"}),
-		"no signature":    hook(t, open.URL, body, nil),
+		"unknown id":             hook(t, f.s.HTTP.URL+"/api/v1/hooks/jobs/"+uuid.NewString(), body, signedHeaders(open, body)),
+		"malformed id":           hook(t, f.s.HTTP.URL+"/api/v1/hooks/jobs/not-a-uuid", body, signedHeaders(open, body)),
+		"wrong endpoint":         hook(t, f.s.HTTP.URL+"/api/v1/hooks/repos/"+open.Trigger.ID.String(), body, signedHeaders(open, body)),
+		"reverse wrong endpoint": hook(t, f.s.HTTP.URL+"/api/v1/hooks/jobs/"+repoTrigger.Trigger.ID.String(), body, signedHeaders(repoTrigger, body)),
+		"disabled":               hook(t, disabled.URL, body, signedHeaders(disabled, body)),
+		"wrong source ip":        hook(t, fenced.URL, body, signedHeaders(fenced, body)),
+		"bad signature":          hook(t, open.URL, body, map[string]string{"X-Pulsix-Signature-256": "sha256=deadbeef"}),
+		"no signature":           hook(t, open.URL, body, nil),
 	}
 	var first string
 	for name, resp := range responses {

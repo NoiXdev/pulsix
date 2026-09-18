@@ -86,4 +86,92 @@ describe('TriggersDialog', () => {
     expect(screen.queryByRole('button', { name: 'New trigger' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Rotate secret' })).not.toBeInTheDocument();
   });
+
+  // Fix round 1, Important 2: global-constraints.md's "A test call enqueues
+  // a real run, and the button says so" was dropped from the UI. Test call
+  // now confirms before sending, mirroring Rotate secret's confirm()
+  // pattern — this pins the warning text and that declining the confirm
+  // makes no request at all.
+  it('confirms before a test call, stating it starts a real run', async () => {
+    const user = userEvent.setup();
+    let confirmMessage = '';
+    let testCalls = 0;
+    window.confirm = (message?: string) => {
+      confirmMessage = message ?? '';
+      return false;
+    };
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [trigger()] },
+      'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
+      'POST /api/v1/orgs/acme/triggers/tr1/test': () => {
+        testCalls += 1;
+        return { outcome: 'triggered' };
+      },
+    });
+    renderDialog();
+    await user.click(await screen.findByRole('button', { name: 'Test call' }));
+    expect(confirmMessage).toMatch(/real/i);
+    expect(testCalls).toBe(0);
+
+    window.confirm = () => true;
+    await user.click(screen.getByRole('button', { name: 'Test call' }));
+    expect(await screen.findByText(/Test call: triggered/)).toBeInTheDocument();
+    expect(testCalls).toBe(1);
+  });
+
+  // Fix round 1, Minor 2: TriggersDialog.test.tsx never rendered with a
+  // repo_sync target, leaving TriggerForm's mapping-fieldset-hidden branch
+  // and TriggerCard's `(canRun || t.kind === 'repo_sync')` Test-call
+  // visibility branch untested.
+  it('supports a repo_sync target: hides the payload mapping and always shows Test call', async () => {
+    const user = userEvent.setup();
+    const repoTrigger = trigger({ id: 'tr2', kind: 'repo_sync', template_id: undefined, repo_id: 'r1', mapping: {} });
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [repoTrigger] },
+      'GET /api/v1/orgs/acme/triggers/tr2/deliveries': { deliveries: [] },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <TriggersDialog org="acme" target={{ kind: 'repo_sync', id: 'r1', name: 'infra' }} canWrite canRun={false} onClose={() => {}} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    // canRun is false, but the trigger's own kind is repo_sync: Test call
+    // must still show (TriggerCard checks the trigger's kind, not canRun).
+    expect(await screen.findByRole('button', { name: 'Test call' })).toBeInTheDocument();
+    // A repo_sync target's create form has no payload-mapping fieldset.
+    await user.click(screen.getByRole('button', { name: 'New trigger' }));
+    expect(screen.queryByText('Payload mapping')).not.toBeInTheDocument();
+  });
+
+  // Fix round 1, Minor 1: TriggerForm sat at 60% statement coverage because
+  // only the create path was exercised — the edit path (pre-filled fields,
+  // If-Match carrying the loaded revision) had none.
+  it('edits a trigger, sending the loaded revision as If-Match', async () => {
+    const user = userEvent.setup();
+    let putIfMatch: string | null = null;
+    let putBody: unknown;
+    let current = trigger();
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': () => ({ triggers: [current] }),
+      'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
+      'PUT /api/v1/orgs/acme/triggers/tr1': (req: MockRequest) => {
+        putIfMatch = req.headers.get('If-Match');
+        putBody = req.body;
+        current = trigger({ name: 'deploy on release', revision: 2 });
+        return { trigger: current };
+      },
+    });
+    renderDialog();
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    const nameInput = screen.getByLabelText('Name');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'deploy on release');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('deploy on release')).toBeInTheDocument();
+    expect(putIfMatch).toBe('"1"');
+    expect(putBody).toMatchObject({ name: 'deploy on release' });
+  });
 });
