@@ -48,6 +48,11 @@ func TestDocument(t *testing.T) {
 		"/api/v1/orgs/{org}/job-templates",
 		"/api/v1/orgs/{org}/job-templates/{id}",
 		"/api/v1/orgs/{org}/schedules",
+		"/api/v1/orgs/{org}/triggers",
+		"/api/v1/orgs/{org}/triggers/{id}",
+		"/api/v1/orgs/{org}/triggers/{id}/rotate-secret",
+		"/api/v1/orgs/{org}/triggers/{id}/test",
+		"/api/v1/orgs/{org}/triggers/{id}/deliveries",
 		"/api/v1/hooks/jobs/{id}",
 		"/api/v1/hooks/repos/{id}",
 	} {

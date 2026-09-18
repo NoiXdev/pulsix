@@ -1330,6 +1330,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org triggers */
+        get: operations["get-api-v1-orgs-by-org-triggers"];
+        put?: never;
+        /** Post API v1 orgs by org triggers */
+        post: operations["createTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org triggers by ID */
+        get: operations["get-api-v1-orgs-by-org-triggers-by-id"];
+        /** Put API v1 orgs by org triggers by ID */
+        put: operations["updateTrigger"];
+        post?: never;
+        /** Delete API v1 orgs by org triggers by ID */
+        delete: operations["deleteTrigger"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org triggers by ID deliveries */
+        get: operations["get-api-v1-orgs-by-org-triggers-by-id-deliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org triggers by ID rotate secret */
+        post: operations["rotateTriggerSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org triggers by ID test */
+        post: operations["testTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/zones": {
         parameters: {
             query?: never;
@@ -2571,6 +2659,12 @@ export interface components {
             message: string;
             path: string;
         };
+        RateLimitDTO: {
+            /** Format: int64 */
+            count: number;
+            /** @description Duration such as 1m or 1h (1s-24h) */
+            per: string;
+        };
         RecoveryOutputBody: {
             /**
              * Format: uri
@@ -2999,6 +3093,134 @@ export interface components {
             readonly $schema?: string;
             otpauth_url: string;
             secret: string;
+        };
+        TriggerBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerBody.json
+             */
+            readonly $schema?: string;
+            allow_cidrs?: string[] | null;
+            /** @description default true */
+            enabled?: boolean;
+            /** @enum {string} */
+            kind: "template_run" | "repo_sync";
+            mapping?: components["schemas"]["TriggerMappingDTO"];
+            name: string;
+            /** @enum {string} */
+            on_active?: "queue" | "skip";
+            /** @enum {string} */
+            preset: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
+            rate_limit?: components["schemas"]["RateLimitDTO"];
+            repo_id?: string;
+            template_id?: string;
+            timestamp_header?: string;
+        };
+        TriggerDTO: {
+            allow_cidrs: string[] | null;
+            /** @enum {string} */
+            auth: "hmac" | "token";
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            id: string;
+            /** @enum {string} */
+            kind: "template_run" | "repo_sync";
+            mapping: components["schemas"]["TriggerMappingDTO"];
+            name: string;
+            /** @enum {string} */
+            on_active: "queue" | "skip";
+            /** @enum {string} */
+            preset: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
+            rate_limit: components["schemas"]["RateLimitDTO"];
+            repo_id?: string;
+            /** Format: int64 */
+            revision: number;
+            signature_header: string;
+            template_id?: string;
+            timestamp_header?: string;
+            /** Format: date-time */
+            updated_at: string;
+            url: string;
+        };
+        TriggerDeliveriesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerDeliveriesOutputBody.json
+             */
+            readonly $schema?: string;
+            deliveries: components["schemas"]["TriggerDeliveryDTO"][] | null;
+        };
+        TriggerDeliveryDTO: {
+            /** Format: date-time */
+            at: string;
+            id: string;
+            job_group_id?: string;
+            /** @enum {string} */
+            outcome: "triggered" | "skipped_active" | "rejected_ip" | "rejected_auth" | "rate_limited" | "invalid_payload" | "disabled" | "failed";
+            reason?: string;
+            source_ip?: string;
+        };
+        TriggerListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerListOutputBody.json
+             */
+            readonly $schema?: string;
+            triggers: components["schemas"]["TriggerDTO"][] | null;
+        };
+        TriggerMappingDTO: {
+            /** @description var name → JSONPath ($, .name, ['name'], [index], [*]) */
+            extra_vars?: {
+                [key: string]: string;
+            };
+            limit?: string;
+        };
+        TriggerOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerOutputBody.json
+             */
+            readonly $schema?: string;
+            trigger: components["schemas"]["TriggerDTO"];
+        };
+        TriggerSecretOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerSecretOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Shown once; store it in the sender */
+            secret: string;
+            trigger: components["schemas"]["TriggerDTO"];
+            url: string;
+        };
+        TriggerTestInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerTestInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description JSON body to send; default {} */
+            payload?: {
+                [key: string]: unknown;
+            };
+        };
+        TriggerTestOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerTestOutputBody.json
+             */
+            readonly $schema?: string;
+            outcome: string;
+            run_id?: string;
         };
         UserStruct: {
             display_name: string;
@@ -6719,6 +6941,282 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-triggers": {
+        parameters: {
+            query?: {
+                template_id?: string;
+                repo_id?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerSecretOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-triggers-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateTrigger: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The trigger's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-triggers-by-id-deliveries": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDeliveriesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    rotateTriggerSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerSecretOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    testTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerTestInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerTestOutputBody"];
                 };
             };
             /** @description Error */
