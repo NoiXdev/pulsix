@@ -444,17 +444,22 @@ func (q *SQLQueue) cancelDependents(ctx context.Context, jobID uuid.UUID, status
 	return nil
 }
 
-// clearPayload wipes a terminal system job's sealed payload: the one-time
-// bootstrap login, the pending rotation key and the connection-test target
-// have served their purpose the moment the job is terminal — the sealed
-// ciphertext must not sit at rest any longer than the run needs it
-// (backlog 2.7c at-rest lifetime). Nothing depends on it afterwards: the
-// job's error text, stats and events carry the record. On the finish path
-// it runs inside Finish's transaction.
+// clearPayload wipes a terminal job's payload of any kind: the one-time
+// bootstrap login, the pending rotation key, the connection-test target
+// and a run's sealed per-run overrides (schedules and webhooks can carry
+// secret-typed extra vars in them) have all served their purpose the
+// moment the job is terminal — the sealed ciphertext must not sit at rest
+// any longer than the run needs it (backlog 2.7c at-rest lifetime).
+// Nothing depends on it afterwards: the job's error text, stats and events
+// carry the record. No kind filter: a sync_repo job's plain (unsealed)
+// {"repo_id":...} payload is wiped the same way, safely, because
+// recordSync has already read it earlier in the same transaction — see
+// terminate's call order. On the finish path it runs inside Finish's
+// transaction.
 func (q *SQLQueue) clearPayload(ctx context.Context, jobID uuid.UUID) error {
 	if _, err := q.db.Exec(ctx,
 		`UPDATE jobs SET payload = NULL
-		 WHERE id = $1 AND kind IN ('connection_test','bootstrap','rotate_key','revoke_key') AND payload IS NOT NULL
+		 WHERE id = $1 AND payload IS NOT NULL
 		   AND status IN ('succeeded','failed','cancelled','error')`,
 		jobID); err != nil {
 		return fmt.Errorf("clear terminal job payload: %w", err)

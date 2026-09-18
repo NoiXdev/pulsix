@@ -37,12 +37,24 @@ type RunRequest struct {
 	Overrides  *RunOverrides
 }
 
+// validate checks the trigger kind and that TriggerRef fits it: schedule
+// and webhook runs always name the schedule or trigger that started them,
+// manual and system runs never carry one (a mismatch here is a wiring
+// slip in a caller — Tasks 6/9/10 — not something an operator can cause).
 func (r RunRequest) validate() error {
 	switch r.Trigger {
-	case TriggerManual, TriggerSchedule, TriggerWebhook, TriggerSystem:
-		return nil
+	case TriggerManual, TriggerSystem:
+		if r.TriggerRef != nil {
+			return fmt.Errorf("%w: trigger %q carries no trigger reference", ErrInvalidInput, r.Trigger)
+		}
+	case TriggerSchedule, TriggerWebhook:
+		if r.TriggerRef == nil {
+			return fmt.Errorf("%w: trigger %q requires a trigger reference", ErrInvalidInput, r.Trigger)
+		}
+	default:
+		return fmt.Errorf("%w: unknown trigger %q", ErrInvalidInput, r.Trigger)
 	}
-	return fmt.Errorf("%w: unknown trigger %q", ErrInvalidInput, r.Trigger)
+	return nil
 }
 
 // EnqueueRunWith is EnqueueRun with an explicit trigger and overrides.

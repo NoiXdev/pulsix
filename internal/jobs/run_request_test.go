@@ -57,7 +57,8 @@ func TestEnqueueRunWithRecordsTriggerAndSealsOverrides(t *testing.T) {
 
 func TestEnqueueRunWithoutOverridesStoresNoPayload(t *testing.T) {
 	svc, store, org, templateID := runFixture(t)
-	created, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, Overrides: &jobs.RunOverrides{}})
+	trig := uuid.Must(uuid.NewV7())
+	created, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &trig, Overrides: &jobs.RunOverrides{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestEnqueueSyncWithRecordsTheWebhook(t *testing.T) {
 	if j.Kind != jobs.KindSyncRepo || j.Trigger != jobs.TriggerWebhook || *j.TriggerRef != trig {
 		t.Fatalf("job = %+v", j)
 	}
-	if _, err := svc.EnqueueSyncWith(ctx, org, repo, jobs.RunRequest{Trigger: jobs.TriggerWebhook, Overrides: &jobs.RunOverrides{ExtraVars: map[string]any{"a": 1}}}); !errors.Is(err, jobs.ErrInvalidInput) {
+	if _, err := svc.EnqueueSyncWith(ctx, org, repo, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &trig, Overrides: &jobs.RunOverrides{ExtraVars: map[string]any{"a": 1}}}); !errors.Is(err, jobs.ErrInvalidInput) {
 		t.Fatalf("a sync takes no overrides: %v", err)
 	}
 }
@@ -133,7 +134,24 @@ func TestEnqueueRunWithPropagatesTemplateLookupError(t *testing.T) {
 	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	wantErr := errors.New("template lookup exploded")
 	svc := newService(newFakeStore(), &fakeQueue{}, &fakeTemplates{err: wantErr}, &fakeResolver{}, &fakeHosts{})
-	if _, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{Trigger: jobs.TriggerSchedule}); !errors.Is(err, wantErr) {
+	trig := uuid.Must(uuid.NewV7())
+	if _, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &trig}); !errors.Is(err, wantErr) {
 		t.Fatalf("EnqueueRunWith error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestRunRequestValidateRejectsMismatchedTriggerRef(t *testing.T) {
+	svc, _, org, templateID := runFixture(t)
+	ref := uuid.Must(uuid.NewV7())
+	cases := []jobs.RunRequest{
+		{Trigger: jobs.TriggerSchedule},                 // schedule without a ref
+		{Trigger: jobs.TriggerWebhook},                  // webhook without a ref
+		{Trigger: jobs.TriggerManual, TriggerRef: &ref}, // manual with a ref
+		{Trigger: jobs.TriggerSystem, TriggerRef: &ref}, // system with a ref
+	}
+	for _, req := range cases {
+		if _, err := svc.EnqueueRunWith(ctx, org, templateID, req); !errors.Is(err, jobs.ErrInvalidInput) {
+			t.Errorf("request %+v: err = %v, want ErrInvalidInput", req, err)
+		}
 	}
 }

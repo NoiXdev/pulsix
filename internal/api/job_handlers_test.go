@@ -132,6 +132,7 @@ type jobDTO struct {
 	TemplateID string         `json:"template_id,omitempty"`
 	RunGroupID string         `json:"run_group_id"`
 	Trigger    string         `json:"trigger"`
+	TriggerRef string         `json:"trigger_ref,omitempty"`
 	ActorName  string         `json:"actor_name,omitempty"`
 	WorkerName string         `json:"worker_name,omitempty"`
 	Hosts      []string       `json:"hosts"`
@@ -577,6 +578,53 @@ func TestJobListPaginationAndFilterValidation(t *testing.T) {
 	resp := requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"?cursor=not-a-valid-cursor", nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("garbage cursor: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestJobDetailAndListShowTriggerRef is fix round 1, minor 4: the DTO
+// change (Trigger enum widened, trigger_ref added) had no API-level test.
+// Schedules and webhooks (Tasks 6/9/10) do not exist yet, so the
+// schedule-triggered job is inserted directly through the store — exactly
+// the shape a schedule tick will insert — and read back through both the
+// detail and the list routes.
+func TestJobDetailAndListShowTriggerRef(t *testing.T) {
+	f := newRunFixture(t, "run-trigger-ref-org")
+
+	// A manual run (the only trigger the HTTP route can produce today)
+	// carries no trigger_ref.
+	manualID := runJob(t, f.operatorC, f.runURL())[0].ID
+	var manual struct {
+		Job jobDTO `json:"job"`
+	}
+	decodeInto(t, requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+manualID, nil), &manual)
+	if manual.Job.Trigger != "manual" || manual.Job.TriggerRef != "" {
+		t.Fatalf("manual job = %+v, want trigger manual with no trigger_ref", manual.Job)
+	}
+
+	scheduleID := uuid.Must(uuid.NewV7())
+	scheduled := jobs.Job{
+		ID: uuid.Must(uuid.NewV7()), OrgID: f.orgID, ZoneID: f.zoneA, Kind: jobs.KindRun, TemplateID: &f.templateID,
+		HostIDs: []uuid.UUID{f.hostA}, Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()),
+		Trigger: jobs.TriggerSchedule, TriggerRef: &scheduleID,
+	}
+	if err := jobs.NewSQLStore(f.s.DB).CreateJob(db.WithOrgScope(context.Background(), f.orgID), scheduled, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var detail struct {
+		Job jobDTO `json:"job"`
+	}
+	decodeInto(t, requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+scheduled.ID.String(), nil), &detail)
+	if detail.Job.Trigger != "schedule" || detail.Job.TriggerRef != scheduleID.String() {
+		t.Fatalf("scheduled job detail = %+v, want trigger_ref %s", detail.Job, scheduleID)
+	}
+
+	var list struct {
+		Jobs []jobDTO `json:"jobs"`
+	}
+	decodeInto(t, requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"?group="+scheduled.RunGroupID.String(), nil), &list)
+	if len(list.Jobs) != 1 || list.Jobs[0].Trigger != "schedule" || list.Jobs[0].TriggerRef != scheduleID.String() {
+		t.Fatalf("scheduled job in list = %+v, want trigger_ref %s", list.Jobs, scheduleID)
 	}
 }
 
