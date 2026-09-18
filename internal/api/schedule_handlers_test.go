@@ -1,10 +1,18 @@
 package api_test
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/templates"
 )
 
 type scheduleOut struct {
@@ -180,6 +188,115 @@ func TestScheduleValidationAndPermissions(t *testing.T) {
 	}
 	if resp := postJSON(t, f.operatorC, f.schedulesURL(), f.scheduleBody("dup")); resp.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate name: %d", resp.StatusCode)
+	}
+
+	// Fix round 1, Minor #1: pause, resume and run now share create's own
+	// write gate (scheduleScope with templates.write) but weren't
+	// independently HTTP-tested for a viewer.
+	created := postJSON(t, f.operatorC, f.schedulesURL(), f.scheduleBody("viewer-write-check"))
+	if created.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, created))
+	}
+	var cs struct {
+		Schedule scheduleOut `json:"schedule"`
+	}
+	decodeInto(t, created, &cs)
+	for _, action := range []string{"pause", "resume", "run"} {
+		t.Run("viewer "+action, func(t *testing.T) {
+			resp := postJSON(t, f.viewerC, f.schedulesURL()+"/"+cs.Schedule.ID+"/"+action, nil)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("viewer %s: %d", action, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestScheduleExtraVarsSecretsAreNeverLeaked is the brief's "secret values
+// never appear in an API response" global constraint, the same class of
+// check TestRunDetailLeaksNoSecrets (job_handlers_test.go) makes for the
+// run view: a schedule whose extra-var override targets a secret-typed
+// field on the template's schema must mask it — schedules.MaskSealed's
+// {"$secret":"set"} marker — on every response that carries it (create,
+// get, list, update), and neither the sealed ciphertext ($sealed) nor the
+// plaintext value may ever reach the wire, or the org's audit trail.
+func TestScheduleExtraVarsSecretsAreNeverLeaked(t *testing.T) {
+	f := newRunFixture(t, "sched-secret")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	tmpl, err := f.s.Deps.Templates.Create(scoped, f.orgID, templates.CreateInput{
+		Name: "deploy-with-secret", PlaybookID: f.playbook,
+		Scope:           templates.Scope{HostIDs: []uuid.UUID{f.hostA}},
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{{Name: "db_pass", Type: schema.TypeSecret}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const secretValue = "s3cret-db-pass-7f2c19"
+	c := f.operatorC
+	newBody := func(cronTime string) map[string]any {
+		return map[string]any{
+			"template_id": tmpl.ID.String(), "name": "secret schedule", "mode": "simple",
+			"simple":     map[string]any{"kind": "daily", "time": cronTime},
+			"timezone":   "Europe/Berlin",
+			"extra_vars": map[string]any{"db_pass": secretValue},
+		}
+	}
+
+	assertNoLeak := func(t *testing.T, label, raw string) {
+		t.Helper()
+		if !strings.Contains(raw, `"$secret":"set"`) {
+			t.Errorf("%s: response does not mask db_pass with the {\"$secret\":\"set\"} marker: %s", label, raw)
+		}
+		for _, marker := range []string{secretValue, "$sealed"} {
+			if strings.Contains(raw, marker) {
+				t.Errorf("%s leaks %q: %s", label, marker, raw)
+			}
+		}
+	}
+
+	resp := postJSON(t, c, f.schedulesURL(), newBody("04:00"))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	etag := resp.Header.Get("ETag")
+	createBody := mustReadBody(t, resp)
+	assertNoLeak(t, "create", createBody)
+	var created struct {
+		Schedule scheduleOut `json:"schedule"`
+	}
+	if err := json.Unmarshal([]byte(createBody), &created); err != nil {
+		t.Fatal(err)
+	}
+	id := created.Schedule.ID
+	if _, sealed := created.Schedule.ExtraVars["db_pass"]; !sealed {
+		t.Fatalf("create response has no extra_vars.db_pass at all: %s", createBody)
+	}
+
+	getResp := requestJSON(t, c, http.MethodGet, f.schedulesURL()+"/"+id, nil)
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, getResp))
+	}
+	assertNoLeak(t, "get", mustReadBody(t, getResp))
+
+	listResp := requestJSON(t, c, http.MethodGet, f.schedulesURL()+"?template_id="+tmpl.ID.String(), nil)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, listResp))
+	}
+	assertNoLeak(t, "list", mustReadBody(t, listResp))
+
+	updResp := requestWithHeaders(t, c, http.MethodPut, f.schedulesURL()+"/"+id, newBody("05:00"), map[string]string{"If-Match": etag})
+	if updResp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, updResp))
+	}
+	assertNoLeak(t, "update", mustReadBody(t, updResp))
+
+	// The mutations above (create, update) are audited; the secret must
+	// not have leaked into the summary or meta an admin can read back.
+	activity := mustReadBody(t, requestJSON(t, f.adminC, http.MethodGet, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/activity?limit=100", nil))
+	for _, marker := range []string{secretValue, "$sealed"} {
+		if strings.Contains(activity, marker) {
+			t.Errorf("activity feed leaks %q: %s", marker, activity)
+		}
 	}
 }
 
