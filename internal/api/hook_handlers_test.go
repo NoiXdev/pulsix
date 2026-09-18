@@ -174,6 +174,26 @@ func TestHookFiresWithAnEmptyBody(t *testing.T) {
 	}
 }
 
+// TestHookHMACPresetFiresWithAnEmptyBody covers Task 10 rereview New
+// Breakage Minor 2: TestHookFiresWithAnEmptyBody and
+// TestRepoHookFiresWithAnEmptyBody only exercise token presets (bearer,
+// GitLab), which never look at the body at all — this pins the HMAC half
+// of named risk (a): verify (internal/triggers/auth.go) has no branch on
+// body length, so a bodyless call to the default pulsix preset still has
+// to present a valid signature of the empty body, never a free pass. A
+// future "skip verify when there is no body" shortcut would pass every
+// other test in this file but fail this one.
+func TestHookHMACPresetFiresWithAnEmptyBody(t *testing.T) {
+	f := newRunFixture(t, "hook-empty-hmac")
+	c := f.createTrigger(t, func(in *triggers.Input) { in.Mapping = triggers.Mapping{} })
+	if resp := hook(t, c.URL, nil, signedHeaders(c, nil)); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("correctly signed empty body: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if resp := hook(t, c.URL, nil, map[string]string{c.Trigger.SignatureHeader(): "sha256=00"}); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("wrong signature on empty body: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
 // TestRepoHookFiresWithAnEmptyBody is the repo_sync half of the same fix:
 // a repo_sync trigger takes no mapping at all, so an empty body is the
 // normal case for it too (GitLab's ping event has no body worth reading).

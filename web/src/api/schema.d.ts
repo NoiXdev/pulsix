@@ -3638,7 +3638,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
                 "application/octet-stream": string;
             };
@@ -3673,7 +3673,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
                 "application/octet-stream": string;
             };
