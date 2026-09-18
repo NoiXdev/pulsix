@@ -7,6 +7,7 @@ package gen
 import (
 	"database/sql/driver"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -272,6 +273,29 @@ type JobTemplate struct {
 	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
+type JobTrigger struct {
+	ID              uuid.UUID      `json:"id"`
+	OrgID           uuid.UUID      `json:"org_id"`
+	Kind            string         `json:"kind"`
+	TemplateID      pgtype.UUID    `json:"template_id"`
+	RepoID          pgtype.UUID    `json:"repo_id"`
+	Name            string         `json:"name"`
+	Enabled         bool           `json:"enabled"`
+	Preset          string         `json:"preset"`
+	Auth            string         `json:"auth"`
+	SignatureHeader string         `json:"signature_header"`
+	TimestampHeader string         `json:"timestamp_header"`
+	Secret          []byte         `json:"secret"`
+	AllowCidrs      []netip.Prefix `json:"allow_cidrs"`
+	Mapping         []byte         `json:"mapping"`
+	OnActive        string         `json:"on_active"`
+	RateLimit       []byte         `json:"rate_limit"`
+	CreatedBy       pgtype.UUID    `json:"created_by"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	Revision        int64          `json:"revision"`
+}
+
 type OrgMembership struct {
 	OrgID     uuid.UUID `json:"org_id"`
 	UserID    uuid.UUID `json:"user_id"`
@@ -365,6 +389,24 @@ type TotpSecret struct {
 	ConfirmedAt  pgtype.Timestamptz `json:"confirmed_at"`
 	LastUsedStep int64              `json:"last_used_step"`
 	CreatedAt    time.Time          `json:"created_at"`
+}
+
+type TriggerBucket struct {
+	TriggerID uuid.UUID `json:"trigger_id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	Tokens    float64   `json:"tokens"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type TriggerDelivery struct {
+	ID         uuid.UUID   `json:"id"`
+	OrgID      uuid.UUID   `json:"org_id"`
+	TriggerID  uuid.UUID   `json:"trigger_id"`
+	At         time.Time   `json:"at"`
+	SourceIp   string      `json:"source_ip"`
+	Outcome    string      `json:"outcome"`
+	Reason     string      `json:"reason"`
+	JobGroupID pgtype.UUID `json:"job_group_id"`
 }
 
 type User struct {
