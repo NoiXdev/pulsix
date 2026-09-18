@@ -67,3 +67,15 @@ func TestDescribeUnknownShape(t *testing.T) {
 		t.Errorf("Describe(@daily) = %q", d)
 	}
 }
+
+// A weekly shape whose day list Compile would reject (a repeated day) must
+// not be recognized by FromCron either, so Describe never renders text for
+// a Simple value that Compile itself rejects.
+func TestFromCronRejectsWhatCompileRejects(t *testing.T) {
+	if _, ok := cronexpr.FromCron("0 3 * * 2,2"); ok {
+		t.Fatalf("FromCron(%q) = ok, want false (duplicate day)", "0 3 * * 2,2")
+	}
+	if d := cronexpr.Describe("0 3 * * 2,2"); d != "" {
+		t.Errorf("Describe(%q) = %q, want empty", "0 3 * * 2,2", d)
+	}
+}

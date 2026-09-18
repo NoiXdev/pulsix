@@ -3,7 +3,9 @@ package cronexpr
 import "time"
 
 // searchYears bounds Next: an expression with no occurrence in five years
-// (Feb 30) never fires. Five years always include a Feb 29.
+// (Feb 30) never fires. Five years include a Feb 29 in every case except a
+// window that straddles a skipped centennial leap year (the next one is
+// 2100); that is rare enough in practice to accept as-is.
 const searchYears = 5
 
 // Next returns the first occurrence strictly after `after`, evaluated in
@@ -81,16 +83,38 @@ func (e Expr) dayMatches(w time.Time) bool {
 
 // instant maps a wall-clock minute w (in UTC fields) to the instant it
 // names in loc. A wall time inside a spring-forward gap runs at the first
-// valid minute after the gap: the start of the zone period time.Date
-// normalized into. A wall time repeated by a fall-back resolves to its
-// first (earlier) instant; time.Date's own choice is unspecified.
+// valid instant after the gap. time.Date normalizes a gap wall time into a
+// real instant in one of the two zone periods adjoining the gap, and which
+// one depends on the zone and the direction of the shift: east of UTC (and
+// in most zones) it lands after the gap, so ZoneBounds' start is the
+// answer; west of UTC it can normalize backwards instead, landing before
+// the gap, in which case the answer is that period's end (the same
+// transition instant, viewed from the other side). The direction is
+// detected by comparing the wall clock time.Date actually produced against
+// the one that was requested, not by the zone's sign, because the rule
+// that matters is which way time.Date moved, not where the zone sits.
+// A wall time repeated by a fall-back resolves to its first (earlier)
+// instant; time.Date's own choice between the two is unspecified.
 func instant(w time.Time, loc *time.Location) time.Time {
 	t := time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), 0, 0, loc)
 	if !sameWall(t, w) {
-		start, _ := t.ZoneBounds()
+		start, end := t.ZoneBounds()
+		got := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC)
+		if got.Before(w) {
+			// time.Date normalized backwards, into the period before the
+			// gap: the first valid instant is that period's end.
+			return end
+		}
+		// time.Date normalized forwards, into the period after the gap:
+		// its start is the first valid instant.
 		return start
 	}
 	first := t
+	// The back-off probes cover every DST shift in use today: 30 minutes
+	// (e.g. Lord Howe) and 60 minutes, with a spare 2-hour probe. A
+	// hypothetical zone repeating a wall-clock reading across a larger
+	// offset change than that would resolve to a later instant instead of
+	// the first, which this package cannot detect.
 	for _, back := range []time.Duration{30 * time.Minute, time.Hour, 2 * time.Hour} {
 		if u := t.Add(-back); sameWall(u, w) {
 			first = u

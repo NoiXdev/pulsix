@@ -30,20 +30,21 @@ var macros = map[string]string{
 }
 
 type field struct {
-	name     string
-	min, max int
-	names    map[string]int
+	name          string
+	min, max      int
+	names         map[string]int
+	allowQuestion bool // '?' as an alias for '*' (Quartz), day fields only
 }
 
 var (
 	minuteField = field{name: "minute", min: 0, max: 59}
 	hourField   = field{name: "hour", min: 0, max: 23}
-	domField    = field{name: "day of month", min: 1, max: 31}
+	domField    = field{name: "day of month", min: 1, max: 31, allowQuestion: true}
 	monthField  = field{name: "month", min: 1, max: 12, names: map[string]int{
 		"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
 		"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 	}}
-	dowField = field{name: "day of week", min: 0, max: 7, names: map[string]int{
+	dowField = field{name: "day of week", min: 0, max: 7, allowQuestion: true, names: map[string]int{
 		"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6,
 	}}
 )
@@ -93,9 +94,14 @@ func Parse(spec string) (Expr, error) {
 func (e Expr) String() string { return e.spec }
 
 func parseField(raw string, f field) (bits uint64, star bool, err error) {
-	star = strings.HasPrefix(raw, "*") || raw == "?"
 	if raw == "?" {
+		if !f.allowQuestion {
+			return 0, false, fmt.Errorf("%w: %s does not accept '?'", ErrSyntax, f.name)
+		}
+		star = true
 		raw = "*"
+	} else {
+		star = strings.HasPrefix(raw, "*")
 	}
 	for _, item := range strings.Split(raw, ",") {
 		b, err := parseItem(item, f)
@@ -111,8 +117,8 @@ func parseItem(item string, f field) (uint64, error) {
 	rng, stepRaw, hasStep := strings.Cut(item, "/")
 	step := 1
 	if hasStep {
-		n, err := strconv.Atoi(stepRaw)
-		if err != nil || n < 1 || n > f.max {
+		n, ok := parseUint(stepRaw)
+		if !ok || n < 1 || n > f.max {
 			return 0, fmt.Errorf("%w: %s step %q", ErrSyntax, f.name, stepRaw)
 		}
 		step = n
@@ -149,11 +155,27 @@ func (f field) value(s string) (int, error) {
 	if n, ok := f.names[strings.ToLower(s)]; ok {
 		return n, nil
 	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < f.min || n > f.max {
+	n, ok := parseUint(s)
+	if !ok || n < f.min || n > f.max {
 		return 0, fmt.Errorf("%w: %s value %q (allowed %d-%d)", ErrSyntax, f.name, s, f.min, f.max)
 	}
 	return n, nil
+}
+
+// parseUint parses s as an unsigned decimal integer: digits only, no sign.
+// strconv.Atoi alone accepts a leading '+' or '-', which cron fields never
+// carry ("+5" and "-5" are not valid field values).
+func parseUint(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	return n, err == nil
 }
 
 func span(lo, hi, step int) uint64 {

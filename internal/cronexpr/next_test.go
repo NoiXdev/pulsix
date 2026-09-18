@@ -74,6 +74,48 @@ func TestNextN(t *testing.T) {
 			want: []string{"2026-10-25T02:00:00+02:00", "2026-10-25T02:30:00+02:00", "2026-10-25T03:00:00+01:00"},
 		},
 		{
+			// 2026-03-08 02:00 EST jumps to 03:00 EDT: a zone west of UTC,
+			// where time.Date normalizes a gap wall time backwards (into
+			// the period before the gap) rather than forwards.
+			name: "spring forward west of UTC runs at the first valid minute",
+			spec: "30 2 * * *", loc: loc(t, "America/New_York"),
+			from: time.Date(2026, 3, 7, 12, 0, 0, 0, loc(t, "America/New_York")),
+			want: []string{"2026-03-08T03:00:00-04:00", "2026-03-09T02:30:00-04:00"},
+		},
+		{
+			// 2026-11-01 02:00 EDT falls back to 01:00 EST: 01:30 happens
+			// twice and runs once, at its first occurrence.
+			name: "fall back west of UTC runs once at the first occurrence",
+			spec: "30 1 * * *", loc: loc(t, "America/New_York"),
+			from: time.Date(2026, 10, 31, 12, 0, 0, 0, loc(t, "America/New_York")),
+			want: []string{"2026-11-01T01:30:00-04:00", "2026-11-02T01:30:00-05:00"},
+		},
+		{
+			// 2026-09-06 00:00 -03 jumps to 01:00 -03 in the southern
+			// hemisphere's spring (a gap at midnight, west of UTC): 00:30
+			// does not exist and runs at the first valid minute after it.
+			name: "spring forward at midnight, southern hemisphere, west of UTC",
+			spec: "30 0 * * *", loc: loc(t, "America/Santiago"),
+			from: time.Date(2026, 9, 5, 12, 0, 0, 0, loc(t, "America/Santiago")),
+			want: []string{"2026-09-06T01:00:00-03:00", "2026-09-07T00:30:00-03:00"},
+		},
+		{
+			// 2026-10-04 02:00 +10:30 jumps to 02:30 +11:00: a 30-minute
+			// gap, so 02:15 does not exist and runs at 02:30.
+			name: "spring forward with a 30-minute shift",
+			spec: "15 2 * * *", loc: loc(t, "Australia/Lord_Howe"),
+			from: time.Date(2026, 10, 3, 12, 0, 0, 0, loc(t, "Australia/Lord_Howe")),
+			want: []string{"2026-10-04T02:30:00+11:00", "2026-10-05T02:15:00+11:00"},
+		},
+		{
+			// 2026-04-05 02:00 +11:00 falls back to 01:30 +10:30: a
+			// 30-minute repeat of 01:30-01:59, which does not replay.
+			name: "fall back with a 30-minute shift does not replay",
+			spec: "*/15 * * * *", loc: loc(t, "Australia/Lord_Howe"),
+			from: time.Date(2026, 4, 5, 1, 20, 0, 0, loc(t, "Australia/Lord_Howe")),
+			want: []string{"2026-04-05T01:30:00+11:00", "2026-04-05T01:45:00+11:00", "2026-04-05T02:00:00+10:30"},
+		},
+		{
 			name: "day of month OR day of week when both are restricted",
 			spec: "0 0 15 * FRI", loc: berlin,
 			from: time.Date(2026, 9, 1, 0, 0, 0, 0, berlin),
@@ -135,10 +177,11 @@ func TestNextN(t *testing.T) {
 }
 
 func TestNextNeverFires(t *testing.T) {
-	if got := mustParse(t, "0 0 30 2 *").Next(time.Now(), time.UTC); !got.IsZero() {
+	ref := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	if got := mustParse(t, "0 0 30 2 *").Next(ref, time.UTC); !got.IsZero() {
 		t.Fatalf("Feb 30 fired at %v", got)
 	}
-	if got := mustParse(t, "0 0 30 2 *").NextN(time.Now(), time.UTC, 3); len(got) != 0 {
+	if got := mustParse(t, "0 0 30 2 *").NextN(ref, time.UTC, 3); len(got) != 0 {
 		t.Fatalf("NextN = %v", got)
 	}
 }

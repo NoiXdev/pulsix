@@ -160,7 +160,13 @@ func FromCron(spec string) (Simple, bool) {
 				}
 			}
 		}
-		return Simple{Kind: SimpleWeekly, Days: days, Time: at}, true
+		out := Simple{Kind: SimpleWeekly, Days: days, Time: at}
+		// Keep FromCron's contract uniform with the every_minutes/
+		// every_hours branches above: only recognize a shape that Compile
+		// itself would accept back (a duplicated day, e.g. "2,2", would
+		// otherwise round-trip to a Describe text that Compile rejects).
+		_, cerr := out.Compile()
+		return out, cerr == nil
 	case m[4] == "*":
 		d, _ := strconv.Atoi(m[3])
 		return Simple{Kind: SimpleMonthly, Day: d, Time: at}, true

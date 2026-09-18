@@ -40,6 +40,7 @@ func TestParseRejects(t *testing.T) {
 		"* * 32 * *", "* * * 13 *", "* * * * 8", "5-1 * * * *", "*/0 * * * *",
 		"*/61 * * * *", "1,,2 * * * *", "a * * * *", "* * * foo *", "@yearly",
 		"@every 5m", "@reboot", "CRON_TZ=UTC 0 * * * *", "0 3 L * *", "0 3 * * 5#2",
+		"+5 * * * *", "* -1 * * *", "? * * * *", "0 0 * ? *",
 	} {
 		if _, err := cronexpr.Parse(in); !errors.Is(err, cronexpr.ErrSyntax) {
 			t.Errorf("Parse(%q) = %v, want ErrSyntax", in, err)
