@@ -37,6 +37,10 @@ type fakeStore struct {
 	syncs     []fakeSyncResult
 	syncErr   error
 	nextErr   error
+
+	activeTemplates map[uuid.UUID]bool
+	activeRepos     map[uuid.UUID]bool
+	activeErr       error
 }
 
 func newFakeStore() *fakeStore {
@@ -138,6 +142,24 @@ func (f *fakeStore) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID,
 	}
 	f.syncs = append(f.syncs, fakeSyncResult{orgID, repoID, at, errText})
 	return nil
+}
+
+func (f *fakeStore) HasActiveTemplateJob(_ context.Context, _, templateID uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.activeErr != nil {
+		return false, f.activeErr
+	}
+	return f.activeTemplates[templateID], nil
+}
+
+func (f *fakeStore) HasActiveRepoSync(_ context.Context, _, repoID uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.activeErr != nil {
+		return false, f.activeErr
+	}
+	return f.activeRepos[repoID], nil
 }
 
 type fakeQueue struct {

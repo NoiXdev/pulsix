@@ -137,6 +137,14 @@ func (s *rotationOnlyStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UU
 	return nil
 }
 
+func (s *rotationOnlyStore) HasActiveTemplateJob(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (s *rotationOnlyStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 // TestEnqueueRotationCreatesOneJobPerTarget pins the group shape: one
 // rotate_key job per host (its zone) plus its follow-up connection_test
 // (same group and zone, created strictly later so it claims after the
@@ -451,4 +459,12 @@ func (plainRotationStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, i
 }
 func (plainRotationStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string) error {
 	return nil
+}
+
+func (plainRotationStore) HasActiveTemplateJob(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (plainRotationStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
 }

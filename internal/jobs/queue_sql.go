@@ -336,19 +336,34 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		playbook = playbookRef(tmpl)
 		// The template's limit stays an ansible host pattern applied on top
 		// of the job's rendered hosts: it can only narrow a job, never widen
-		// it past job.HostIDs (the inventory holds nothing else).
+		// it past job.HostIDs (the inventory holds nothing else). A run
+		// request's own sealed overrides (schedules, webhooks, "run now
+		// with overrides") replace the limit and are overlaid onto the
+		// extra vars before either check below runs.
+		ov, err := q.runOverrides(job)
+		if err != nil {
+			return err
+		}
 		limit = tmpl.Limit
-		if extraVars, err = stringMap(tmpl.ExtraVars); err != nil {
+		if ov != nil && ov.Limit != nil {
+			limit = *ov.Limit
+		}
+		varsRaw, err := mergeExtraVars(tmpl.ExtraVars, ov)
+		if err != nil {
+			return err
+		}
+		if extraVars, err = stringMap(varsRaw); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
 		}
 		// A template stored before the connection-security variables were
-		// refused must not run with them (re-review N1).
+		// refused must not run with them (re-review N1). The merged map is
+		// checked, so an override cannot smuggle one in either.
 		for name := range extraVars {
 			if ansiblevars.Forbidden(name) {
 				return fmt.Errorf("%w: template extra var %s controls connection security; remove it from the template", ErrInvalidInput, name)
 			}
 		}
-		if err := redact.addExtraVarSecrets(tmpl.ExtraVarsSchema, tmpl.ExtraVars); err != nil {
+		if err := redact.addExtraVarSecrets(tmpl.ExtraVarsSchema, varsRaw); err != nil {
 			return err
 		}
 		if tmpl.CredentialID != nil {

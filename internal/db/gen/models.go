@@ -243,6 +243,7 @@ type Job struct {
 	Attempts             int32              `json:"attempts"`
 	DependsOn            pgtype.UUID        `json:"depends_on"`
 	RotationCredentialID pgtype.UUID        `json:"rotation_credential_id"`
+	TriggerRef           pgtype.UUID        `json:"trigger_ref"`
 }
 
 type JobEvent struct {

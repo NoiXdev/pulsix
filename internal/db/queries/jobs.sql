@@ -1,7 +1,7 @@
 -- name: CreateJob :one
 INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                  depends_on, rotation_credential_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                  depends_on, rotation_credential_id, trigger_ref)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
 -- name: GetJob :one
@@ -156,3 +156,19 @@ RETURNING id;
 SELECT count(*) FROM jobs
 WHERE org_id = $1 AND rotation_credential_id = $2
   AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error');
+
+-- name: HasActiveTemplateJob :one
+SELECT EXISTS (
+  SELECT 1 FROM jobs
+  WHERE org_id = $1 AND template_id = $2
+    AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
+);
+
+-- name: HasActiveRepoSync :one
+-- sync_repo payloads are plain JSON ({"repo_id": ...}), never sealed.
+SELECT EXISTS (
+  SELECT 1 FROM jobs
+  WHERE org_id = sqlc.arg(org_id) AND kind = 'sync_repo'
+    AND payload->>'repo_id' = sqlc.arg(repo_id)::text
+    AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
+);

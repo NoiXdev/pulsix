@@ -1950,7 +1950,9 @@ export interface components {
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
             template_id?: string;
             /** @enum {string} */
-            trigger: "manual" | "system";
+            trigger: "manual" | "schedule" | "webhook" | "system";
+            /** @description The schedule or webhook trigger that started the job */
+            trigger_ref?: string;
             zone_id: string;
         };
         JobDetailDTO: {
@@ -1981,7 +1983,9 @@ export interface components {
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
             template: components["schemas"]["JobTemplateSummaryDTO"];
             /** @enum {string} */
-            trigger: "manual" | "system";
+            trigger: "manual" | "schedule" | "webhook" | "system";
+            /** @description The schedule or webhook trigger that started the job */
+            trigger_ref?: string;
             worker_name?: string;
             zone_id: string;
         };

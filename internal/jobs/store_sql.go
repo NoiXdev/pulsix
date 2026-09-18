@@ -86,12 +86,20 @@ func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 		// NULL, keeps the column's contract.
 		hostIDs = []uuid.UUID{}
 	}
+	trigger := j.Trigger
+	if trigger == "" {
+		// Several existing integration tests insert jobs without a
+		// trigger; the insert always names the column, so the DB default
+		// never applied and the new jobs_trigger_check would refuse ''.
+		trigger = TriggerManual
+	}
 	return gen.CreateJobParams{
 		ID: j.ID, OrgID: j.OrgID, ZoneID: j.ZoneID, Kind: string(j.Kind),
 		TemplateID: db.NullUUID(j.TemplateID), HostIds: hostIDs, Status: string(j.Status),
-		RunGroupID: j.RunGroupID, Trigger: j.Trigger, ActorID: db.NullUUID(j.ActorID),
+		RunGroupID: j.RunGroupID, Trigger: trigger, ActorID: db.NullUUID(j.ActorID),
 		Payload:   payload,
 		DependsOn: db.NullUUID(j.DependsOn), RotationCredentialID: db.NullUUID(j.RotationCredentialID),
+		TriggerRef: db.NullUUID(j.TriggerRef),
 	}
 }
 
@@ -192,6 +200,22 @@ func syncErrorPtr(errText string) *string {
 	return &errText
 }
 
+func (s *SQLStore) HasActiveTemplateJob(ctx context.Context, orgID, templateID uuid.UUID) (bool, error) {
+	ok, err := s.q.HasActiveTemplateJob(ctx, gen.HasActiveTemplateJobParams{OrgID: orgID, TemplateID: pgtype.UUID{Bytes: templateID, Valid: true}})
+	if err != nil {
+		return false, fmt.Errorf("check active template job: %w", err)
+	}
+	return ok, nil
+}
+
+func (s *SQLStore) HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error) {
+	ok, err := s.q.HasActiveRepoSync(ctx, gen.HasActiveRepoSyncParams{OrgID: orgID, RepoID: repoID.String()})
+	if err != nil {
+		return false, fmt.Errorf("check active repo sync: %w", err)
+	}
+	return ok, nil
+}
+
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -209,7 +233,8 @@ func toJob(r gen.Job) Job {
 		WorkerID:  db.UUIDPtr(r.WorkerID),
 		ClaimedAt: db.TimePtr(r.ClaimedAt), StartedAt: db.TimePtr(r.StartedAt), FinishedAt: db.TimePtr(r.FinishedAt),
 		Stats: stats, Error: r.Error, RunGroupID: r.RunGroupID, Trigger: r.Trigger,
-		ActorID: db.UUIDPtr(r.ActorID), CreatedAt: r.CreatedAt, Payload: json.RawMessage(r.Payload),
+		TriggerRef: db.UUIDPtr(r.TriggerRef),
+		ActorID:    db.UUIDPtr(r.ActorID), CreatedAt: r.CreatedAt, Payload: json.RawMessage(r.Payload),
 	}
 }
 
@@ -222,7 +247,7 @@ func toJobDetail(r gen.GetJobRow) Job {
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Kind: r.Kind, TemplateID: r.TemplateID,
 		HostIds: r.HostIds, Status: r.Status, WorkerID: r.WorkerID, ClaimedAt: r.ClaimedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Stats: r.Stats, Error: r.Error,
-		RunGroupID: r.RunGroupID, Trigger: r.Trigger, ActorID: r.ActorID, Payload: r.Payload,
+		RunGroupID: r.RunGroupID, Trigger: r.Trigger, TriggerRef: r.TriggerRef, ActorID: r.ActorID, Payload: r.Payload,
 		CreatedAt: r.CreatedAt, Attempts: r.Attempts, DependsOn: r.DependsOn, RotationCredentialID: r.RotationCredentialID,
 	})
 	j.ActorName, j.WorkerName, j.TemplateName = deref(r.ActorName), deref(r.WorkerName), deref(r.TemplateName)

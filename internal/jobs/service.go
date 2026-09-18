@@ -182,6 +182,9 @@ type Job struct {
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID
 	Trigger    string
+	// TriggerRef is the schedule or webhook trigger that started the job;
+	// nil for manual and system jobs.
+	TriggerRef *uuid.UUID
 	ActorID    *uuid.UUID
 	CreatedAt  time.Time
 	// ActorName, WorkerName and TemplateName are the display names the
@@ -311,6 +314,13 @@ type Store interface {
 	// repository of the organization matches — e.g. one deleted while its
 	// sync was running.
 	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error
+	// HasActiveTemplateJob reports whether a job of the template is not
+	// terminal yet — the overlap guard schedules and webhooks ask before
+	// enqueuing another run of the same template.
+	HasActiveTemplateJob(ctx context.Context, orgID, templateID uuid.UUID) (bool, error)
+	// HasActiveRepoSync reports whether a sync_repo job of the repository
+	// is not terminal yet — the on_active guard a repo webhook asks.
+	HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
 }
 
 // Claim is one claimed job ready to ship to a worker, with the binding
@@ -477,15 +487,7 @@ func parseScope(raw json.RawMessage) (render.Scope, error) {
 // worker runs against the inventory as it looks when the run starts, and
 // nothing secret is ever stored on the job row.
 func (s *Service) EnqueueRun(ctx context.Context, orgID, templateID uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
-	if err != nil {
-		return nil, err
-	}
-	scope, err := parseScope(tmpl.Scope)
-	if err != nil {
-		return nil, err
-	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, actor)
+	return s.EnqueueRunWith(ctx, orgID, templateID, RunRequest{Trigger: TriggerManual, Actor: actor})
 }
 
 // newID generates a UUIDv7 from the injected entropy source. An entropy
@@ -499,9 +501,9 @@ func (s *Service) newID() uuid.UUID {
 	return id
 }
 
-// enqueueRunScope is the zone-splitting core EnqueueRun and RetryFailed
+// enqueueRunScope is the zone-splitting core EnqueueRunWith and RetryFailed
 // share.
-func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, actor *uuid.UUID) ([]Job, error) {
+func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, req RunRequest) ([]Job, error) {
 	targets, err := s.resolver.Resolve(ctx, orgID, scope)
 	if err != nil {
 		return nil, err
@@ -530,10 +532,14 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 		j := Job{
 			ID: s.newID(), OrgID: orgID, ZoneID: t.ZoneID,
 			Kind: KindRun, TemplateID: &tmplID, HostIDs: t.HostIDs,
-			Status: StatusQueued, RunGroupID: group, Trigger: TriggerManual,
-			ActorID: actor, CreatedAt: now,
+			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
+			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
 		}
-		if err := s.store.CreateJob(ctx, j, nil); err != nil {
+		payload, err := s.runPayload(j, req.Overrides)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.CreateJob(ctx, j, payload); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
@@ -713,6 +719,11 @@ type syncPayload struct {
 // rendering any inventory snapshot. The payload is plain JSON — nothing in
 // it is secret — so the claim path passes it through unsealed.
 func (s *Service) EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (Job, error) {
+	return s.enqueueSync(ctx, orgID, repoID, RunRequest{Trigger: TriggerManual, Actor: actor})
+}
+
+// enqueueSync is EnqueueSync's core, shared with EnqueueSyncWith.
+func (s *Service) enqueueSync(ctx context.Context, orgID, repoID uuid.UUID, req RunRequest) (Job, error) {
 	zoneID, err := s.defaultZone(ctx, orgID)
 	if err != nil {
 		return Job{}, err
@@ -724,8 +735,8 @@ func (s *Service) EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, acto
 	j := Job{
 		ID: s.newID(), OrgID: orgID, ZoneID: zoneID,
 		Kind: KindSyncRepo, HostIDs: []uuid.UUID{},
-		Status: StatusQueued, RunGroupID: s.newID(), Trigger: TriggerManual,
-		ActorID: actor, CreatedAt: s.now(),
+		Status: StatusQueued, RunGroupID: s.newID(), Trigger: req.Trigger,
+		TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: s.now(),
 	}
 	if err := s.store.CreateJob(ctx, j, payload); err != nil {
 		return Job{}, err
@@ -831,7 +842,7 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, actor)
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, RunRequest{Trigger: TriggerManual, Actor: actor})
 }
 
 // failedHostIDs intersects the stats' failed/unreachable host ids with the

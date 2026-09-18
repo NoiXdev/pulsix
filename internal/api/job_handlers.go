@@ -42,7 +42,8 @@ type jobDTO struct {
 	Status     string    `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
 	TemplateID string    `json:"template_id,omitempty"`
 	RunGroupID string    `json:"run_group_id"`
-	Trigger    string    `json:"trigger" enum:"manual,system"`
+	Trigger    string    `json:"trigger" enum:"manual,schedule,webhook,system"`
+	TriggerRef string    `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -54,6 +55,9 @@ func toJobDTO(j jobs.Job) jobDTO {
 	}
 	if j.TemplateID != nil {
 		out.TemplateID = j.TemplateID.String()
+	}
+	if j.TriggerRef != nil {
+		out.TriggerRef = j.TriggerRef.String()
 	}
 	return out
 }
@@ -87,7 +91,8 @@ type jobDetailDTO struct {
 	Status     string                 `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
 	Template   *jobTemplateSummaryDTO `json:"template"`
 	RunGroupID string                 `json:"run_group_id"`
-	Trigger    string                 `json:"trigger" enum:"manual,system"`
+	Trigger    string                 `json:"trigger" enum:"manual,schedule,webhook,system"`
+	TriggerRef string                 `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
 	ActorName  string                 `json:"actor_name,omitempty"`
 	WorkerName string                 `json:"worker_name,omitempty"`
 	Hosts      []string               `json:"hosts" doc:"The job's target host ids"`
@@ -108,6 +113,9 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(), Trigger: j.Trigger,
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
 		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
+	}
+	if j.TriggerRef != nil {
+		out.TriggerRef = j.TriggerRef.String()
 	}
 	out.Hosts = make([]string, len(j.HostIDs))
 	for i, h := range j.HostIDs {
