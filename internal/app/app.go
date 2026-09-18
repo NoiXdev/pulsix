@@ -42,6 +42,7 @@ import (
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/triggers"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -229,6 +230,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// *templates.Service already satisfies TemplateChecker, so it is
 	// passed directly — no adapter needed.
 	schedulesSvc := schedules.NewService(schedules.NewSQLStore(appDB), templatesSvc, jobsSvc, auditRec, time.Now, rand.Reader, slog.Default())
+	// The triggers service (Task 10): the webhook receive pipeline behind
+	// POST /hooks/jobs/{id} and POST /hooks/repos/{id}. IPLimit is the
+	// per-source-address limit (spec §9), in process like the reaper and
+	// ticker above — with several managers, each counts on its own.
+	triggersSvc := triggers.NewService(triggers.Deps{
+		Store: triggers.NewSQLStore(appDB), Templates: templatesSvc, Repos: reposSvc, Box: box,
+		Runs: jobsSvc, Audit: auditRec, PublicURL: cfg.PublicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
+		Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
+	})
 	jobsQueue.SetSyncSink(jobsSvc)
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
@@ -257,7 +267,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Credentials: credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
-		Jobs: jobsSvc, Schedules: schedulesSvc, Version: cfg.Version,
+		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 	})
 	if err != nil {
 		appDB.Close()

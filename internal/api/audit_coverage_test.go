@@ -103,6 +103,16 @@ var auditAllowlist = map[string]string{
 	// operator is still editing — like /hosts/query above, POST only
 	// because the shape is a request body — and persists nothing.
 	"POST /api/v1/orgs/{org}/schedules/preview": "read-only computation of the next occurrences; mutates nothing",
+
+	// Task 10: the two public webhook receivers. Neither carries a session
+	// or bearer principal (there is none — the trigger's own secret is the
+	// credential, spec §3), so withAudit's actor resolution has nothing to
+	// attribute the event to. The triggers service audits every triggered
+	// run itself, directly, as it enqueues (Receive → auditRun in
+	// receive.go): actor webhook:<trigger id>, with the source IP in Meta —
+	// not through this middleware.
+	"POST /api/v1/hooks/jobs/{id}":  "public webhook endpoint; no session or bearer principal exists to attribute an event to — the triggers service audits each triggered run itself as webhook:<id> with the source IP",
+	"POST /api/v1/hooks/repos/{id}": "public webhook endpoint; no session or bearer principal exists to attribute an event to — the triggers service audits each triggered run itself as webhook:<id> with the source IP",
 }
 
 // registeredMutatingOps builds the full route table the same way api.New

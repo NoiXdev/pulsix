@@ -26,6 +26,7 @@ import (
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/triggers"
 )
 
 // testTenancy builds a *tenancy.Service with a nil store, good enough to
@@ -190,7 +191,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{},
 	}
 }
 
@@ -350,7 +351,7 @@ func testDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{},
 	}
 }
 

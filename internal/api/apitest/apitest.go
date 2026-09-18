@@ -38,6 +38,7 @@ import (
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/triggers"
 )
 
 // SentMail is one message captured by Mailer.
@@ -249,6 +250,16 @@ func New(t *testing.T, opts ...Option) *Server {
 	// exactly like production wiring (internal/app.Build) — the ticker
 	// itself is not started here, the same way the reaper is not.
 	schedulesSvc := schedules.NewService(schedules.NewSQLStore(d), templatesSvc, jobsSvc, auditRec, time.Now, rand.Reader, nil)
+	// The triggers service (Task 10): the webhook receive pipeline behind
+	// POST /hooks/jobs/{id} and POST /hooks/repos/{id}, built exactly like
+	// production wiring (internal/app.Build) with PublicURL derived from
+	// this test server's own URL, so Created.URL from a test-created
+	// trigger already points at it.
+	triggersSvc := triggers.NewService(triggers.Deps{
+		Store: triggers.NewSQLStore(d), Templates: templatesSvc, Repos: reposSvc, Box: crypto.NewBox(testMasterKey),
+		Runs: jobsSvc, Audit: auditRec, PublicURL: publicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
+		Now: time.Now, Rand: rand.Reader,
+	})
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
@@ -273,6 +284,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Templates:   templatesSvc,
 		Jobs:        jobsSvc,
 		Schedules:   schedulesSvc,
+		Triggers:    triggersSvc,
 	}
 	for _, opt := range opts {
 		opt(s)

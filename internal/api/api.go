@@ -28,6 +28,7 @@ import (
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/triggers"
 	"github.com/noixdev/pulsix/internal/web"
 )
 
@@ -72,6 +73,10 @@ type Deps struct {
 	// Schedules fires job templates on a timetable; see
 	// registerScheduleRoutes.
 	Schedules *schedules.Service
+	// Triggers is the webhook trigger registry and receive pipeline. The
+	// two public hook routes call it directly; see registerHookRoutes.
+	// Its own org-scoped CRUD routes are registered by a later task.
+	Triggers *triggers.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -175,6 +180,9 @@ func (d Deps) validate() error {
 	}
 	if d.Schedules == nil {
 		missing = append(missing, "Schedules")
+	}
+	if d.Triggers == nil {
+		missing = append(missing, "Triggers")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -304,10 +312,16 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerAuthRoutes(hapi, deps)
 	registerMFARoutes(hapi, deps)
 	registerPasskeyRoutes(hapi, deps)
-	registerOrgRoutes(hapi, deps)          // POST/GET /orgs — no org in the path, no bearer credential accepted
-	registerInviteAcceptRoute(hapi, deps)  // POST /invites/accept — public, no principal at all
-	registerAdminRoutes(hapi, deps)        // POST /admin/users/{id}/deactivate — instance admin, session only
-	registerSetupRoutes(hapi, deps)        // GET /setup/status, POST /setup/complete — public
+	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
+	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all
+	registerAdminRoutes(hapi, deps)       // POST /admin/users/{id}/deactivate — instance admin, session only
+	registerSetupRoutes(hapi, deps)       // GET /setup/status, POST /setup/complete — public
+	// POST /hooks/jobs/{id}, POST /hooks/repos/{id} — public, unauthenticated
+	// webhook receivers; the trigger's own secret is the credential (spec
+	// §3). Registered on the root API like registerSetupRoutes above, not
+	// under the org-scoped group: there is no org in either path, and no
+	// session or bearer credential is accepted.
+	registerHookRoutes(hapi, deps)
 	registerSMTPSettingsRoutes(hapi, deps) // /admin/settings/smtp... — instance admin, session only
 	// GET /me/activity spans every org the caller belongs to, so — like
 	// registerOrgRoutes above — it takes no org in its path and accepts no
