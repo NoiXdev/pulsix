@@ -74,6 +74,96 @@ func TestEnrollIsSingleUseUnderConcurrency(t *testing.T) {
 	}
 }
 
+// TestMarkEnrollmentUsedIsAtomic proves the single-use guard lives in the
+// database's conditional UPDATE, not in the caller's closure: a closure
+// that never looks at got.UsedAt or the expiry still cannot redeem an
+// already-used or (by the database's own clock) expired enrollment, and of
+// two concurrent redeems through such a forgetful closure exactly one
+// succeeds. Each redeem names its worker uniquely so a UNIQUE(org_id,
+// name) violation can never masquerade as the guard under test.
+func TestMarkEnrollmentUsedIsAtomic(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "atomic-enroll")
+	zone := seedZone(t, q, org, "default")
+	store := workers.NewSQLStore(d)
+
+	// The worker name is suffixed with the (per-call, caller-chosen) serial
+	// rather than a UUID prefix: two UUIDv7s minted microseconds apart in
+	// this test share their high-order timestamp bits, so a short prefix
+	// of the string form is not actually unique here — the serial is.
+	forgetfulRedeem := func(serial *big.Int) func(got workers.Enrollment, h []byte) (workers.Worker, workers.Certificate, error) {
+		return func(got workers.Enrollment, _ []byte) (workers.Worker, workers.Certificate, error) {
+			id := uuid.Must(uuid.NewV7())
+			return workers.Worker{ID: id, OrgID: org, ZoneID: zone, Name: got.Name + "-" + serial.String(), CertSerial: serial, Status: workers.StatusActive},
+				workers.Certificate{Serial: serial, OrgID: org, WorkerID: id, NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}, nil
+		}
+	}
+
+	t.Run("already used", func(t *testing.T) {
+		secret := bytes.Repeat([]byte{5}, 32)
+		hash := sha256.Sum256(secret)
+		e, err := store.CreateEnrollment(db.WithOrgScope(ctx, org), workers.Enrollment{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Name: "used-1", ExpiresAt: time.Now().Add(time.Hour)}, hash[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Enroll(ctx, e.ID, forgetfulRedeem(big.NewInt(7001))); err != nil {
+			t.Fatalf("first redeem: %v", err)
+		}
+		if _, err := store.Enroll(ctx, e.ID, forgetfulRedeem(big.NewInt(7002))); !errors.Is(err, workers.ErrEnrollmentRefused) {
+			t.Fatalf("redeem of an already-used enrollment (forgetful closure) = %v, want ErrEnrollmentRefused", err)
+		}
+	})
+
+	t.Run("expired by the database clock", func(t *testing.T) {
+		secret := bytes.Repeat([]byte{6}, 32)
+		hash := sha256.Sum256(secret)
+		// ExpiresAt is already in the past; the closure below never checks
+		// it — only the database's conditional UPDATE can refuse this.
+		e, err := store.CreateEnrollment(db.WithOrgScope(ctx, org), workers.Enrollment{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Name: "expired-1", ExpiresAt: time.Now().Add(-time.Minute)}, hash[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Enroll(ctx, e.ID, forgetfulRedeem(big.NewInt(7003))); !errors.Is(err, workers.ErrEnrollmentRefused) {
+			t.Fatalf("redeem of an expired enrollment (forgetful closure) = %v, want ErrEnrollmentRefused", err)
+		}
+	})
+
+	t.Run("concurrent redeems through a forgetful closure", func(t *testing.T) {
+		secret := bytes.Repeat([]byte{8}, 32)
+		hash := sha256.Sum256(secret)
+		e, err := store.CreateEnrollment(db.WithOrgScope(ctx, org), workers.Enrollment{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Name: "race-1", ExpiresAt: time.Now().Add(time.Hour)}, hash[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mu sync.Mutex
+		wins, refusals := 0, 0
+		var wg sync.WaitGroup
+		for i := 0; i < 2; i++ {
+			serial := big.NewInt(int64(7100 + i))
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := store.Enroll(ctx, e.ID, forgetfulRedeem(serial))
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					wins++
+				case errors.Is(err, workers.ErrEnrollmentRefused):
+					refusals++
+				default:
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		if wins != 1 || refusals != 1 {
+			t.Fatalf("wins %d, refusals %d; want exactly one redeem even through a closure with no UsedAt/expiry check", wins, refusals)
+		}
+	})
+}
+
 func TestLookupSerialSeesRevocationAndRenewals(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())

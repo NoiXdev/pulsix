@@ -29,8 +29,10 @@
 // one zone of one organization.
 //
 // Known limits, accepted because it is opt-in: every manager start
-// registers a new worker row named "embedded" (the old rows stay until an
-// operator deletes them), and a failure after zone resolution (issuing,
+// re-attaches to the same "embedded" worker row (workers.RegisterOrAttach)
+// and adds one certificate row for its freshly issued key — those
+// certificate rows accumulate across restarts until an operator revokes or
+// deletes the worker — and a failure after zone resolution (issuing,
 // registering, dialing) stops the embedded worker until the next restart.
 package app
 

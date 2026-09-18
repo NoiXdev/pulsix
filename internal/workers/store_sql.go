@@ -171,6 +171,12 @@ func (s *SQLStore) Enroll(ctx context.Context, id uuid.UUID, fn func(e Enrollmen
 	var out Worker
 	err = s.d.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
 		row, err := s.q.LockWorkerEnrollment(ctx, gen.LockWorkerEnrollmentParams{OrgID: orgID, ID: id})
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Withdrawn between GetWorkerEnrollmentOrg and here: fold into
+			// the same ErrNotFound the service maps to ErrEnrollmentRefused,
+			// so a withdraw racing a redeem never surfaces a raw error.
+			return ErrNotFound
+		}
 		if err != nil {
 			return fmt.Errorf("lock enrollment: %w", err)
 		}
@@ -187,8 +193,17 @@ func (s *SQLStore) Enroll(ctx context.Context, id uuid.UUID, fn func(e Enrollmen
 		if err := s.insertCert(ctx, c); err != nil {
 			return fmt.Errorf("insert certificate: %w", err)
 		}
-		if err := s.q.MarkWorkerEnrollmentUsed(ctx, gen.MarkWorkerEnrollmentUsedParams{OrgID: orgID, ID: id, WorkerID: db.NullUUID(&w.ID)}); err != nil {
+		// The single-use guard: a conditional UPDATE, not the closure
+		// above. 0 rows means another redeem (or a lapsed expiry, judged
+		// by the database's own now()) won the race after the lock was
+		// taken but before this statement ran; the whole transaction —
+		// including the worker and certificate just inserted — rolls back.
+		n, err := s.q.MarkWorkerEnrollmentUsed(ctx, gen.MarkWorkerEnrollmentUsedParams{OrgID: orgID, ID: id, WorkerID: db.NullUUID(&w.ID)})
+		if err != nil {
 			return fmt.Errorf("mark enrollment used: %w", err)
+		}
+		if n == 0 {
+			return ErrEnrollmentRefused
 		}
 		out = w
 		return nil

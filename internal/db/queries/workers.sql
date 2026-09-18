@@ -49,6 +49,10 @@ SELECT org_id FROM worker_enrollments WHERE id = sqlc.arg(id);
 -- name: LockWorkerEnrollment :one
 SELECT * FROM worker_enrollments WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) FOR UPDATE;
 
--- name: MarkWorkerEnrollmentUsed :exec
+-- name: MarkWorkerEnrollmentUsed :execrows
+-- The single-use guard: unused and unexpired by the database's own clock,
+-- not the caller's. 0 affected rows means the enrollment was already used,
+-- has expired or does not exist for this org; the caller treats that as a
+-- refusal and rolls the whole redeem transaction back.
 UPDATE worker_enrollments SET used_at = now(), worker_id = sqlc.narg(worker_id)
-WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND used_at IS NULL AND expires_at > now();

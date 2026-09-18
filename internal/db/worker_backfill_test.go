@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -24,7 +25,12 @@ func TestWorkerCertificateBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	name := "backfill_" + uuid.Must(uuid.NewV7()).String()[:8]
+	// The trailing 12 hex characters of a UUIDv7 are its random tail, not
+	// the timestamp (which dominates the leading characters and barely
+	// changes within a test run) — two concurrent runs against the same
+	// shared Postgres container must not pick the same database name.
+	id := strings.ReplaceAll(uuid.Must(uuid.NewV7()).String(), "-", "")
+	name := "backfill_" + id[20:]
 	if _, err := admin.Pool().Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatal(err)
 	}

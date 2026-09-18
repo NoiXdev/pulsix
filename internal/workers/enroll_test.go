@@ -141,6 +141,18 @@ func TestEnrollRefusals(t *testing.T) {
 	if _, err := w.svc.Enroll(ctx, workers.EnrollInput{TokenID: tok.ID, Secret: tok.Secret, CSRPEM: []byte("x")}); !errors.Is(err, workers.ErrBadCSR) {
 		t.Fatalf("bad csr: %v", err)
 	}
+	// A bad CSR must not burn the token: the redeem transaction rolls
+	// back, so a later valid redeem of the same token still succeeds.
+	// (Uses its own enrollment so it does not disturb the expiry check
+	// below, which needs tok to still be pending.)
+	_, notBurnedToken, _ := w.svc.CreateEnrollment(ctx, w.org, &w.actor, w.zone, "fra-2b")
+	notBurned, _ := enrolltoken.Parse(notBurnedToken)
+	if _, err := w.svc.Enroll(ctx, workers.EnrollInput{TokenID: notBurned.ID, Secret: notBurned.Secret, CSRPEM: []byte("x")}); !errors.Is(err, workers.ErrBadCSR) {
+		t.Fatalf("bad csr (not-burned setup): %v", err)
+	}
+	if _, err := w.svc.Enroll(ctx, workers.EnrollInput{TokenID: notBurned.ID, Secret: notBurned.Secret, CSRPEM: newCSR(t)}); err != nil {
+		t.Fatalf("a bad CSR must not burn the token — retry with a valid CSR: %v", err)
+	}
 	w.now = w.now.Add(workers.EnrollmentTTL + time.Second)
 	if _, err := w.svc.Enroll(ctx, workers.EnrollInput{TokenID: tok.ID, Secret: tok.Secret, CSRPEM: newCSR(t)}); !errors.Is(err, workers.ErrEnrollmentRefused) {
 		t.Fatalf("expired: %v", err)

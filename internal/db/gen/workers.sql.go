@@ -336,9 +336,9 @@ func (q *Queries) LookupWorkerSerial(ctx context.Context, serial string) (Lookup
 	return i, err
 }
 
-const markWorkerEnrollmentUsed = `-- name: MarkWorkerEnrollmentUsed :exec
+const markWorkerEnrollmentUsed = `-- name: MarkWorkerEnrollmentUsed :execrows
 UPDATE worker_enrollments SET used_at = now(), worker_id = $1
-WHERE org_id = $2 AND id = $3
+WHERE org_id = $2 AND id = $3 AND used_at IS NULL AND expires_at > now()
 `
 
 type MarkWorkerEnrollmentUsedParams struct {
@@ -347,9 +347,16 @@ type MarkWorkerEnrollmentUsedParams struct {
 	ID       uuid.UUID   `json:"id"`
 }
 
-func (q *Queries) MarkWorkerEnrollmentUsed(ctx context.Context, arg MarkWorkerEnrollmentUsedParams) error {
-	_, err := q.db.Exec(ctx, markWorkerEnrollmentUsed, arg.WorkerID, arg.OrgID, arg.ID)
-	return err
+// The single-use guard: unused and unexpired by the database's own clock,
+// not the caller's. 0 affected rows means the enrollment was already used,
+// has expired or does not exist for this org; the caller treats that as a
+// refusal and rolls the whole redeem transaction back.
+func (q *Queries) MarkWorkerEnrollmentUsed(ctx context.Context, arg MarkWorkerEnrollmentUsedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markWorkerEnrollmentUsed, arg.WorkerID, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchWorkerByID = `-- name: TouchWorkerByID :exec

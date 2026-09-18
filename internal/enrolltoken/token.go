@@ -27,7 +27,11 @@ type Token struct {
 	CAPin  [32]byte
 }
 
-var enc = base64.RawURLEncoding
+// Strict: the plain RawURLEncoding decoder accepts non-canonical trailing
+// bits, so several distinct strings could otherwise decode to the same
+// token. Nothing this package encodes is ever non-canonical, so Strict
+// costs nothing and closes that off.
+var enc = base64.RawURLEncoding.Strict()
 
 // String renders the token.
 func (t Token) String() string {
