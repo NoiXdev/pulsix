@@ -100,9 +100,10 @@ type Loop struct {
 	client workerpb.WorkerServiceClient
 	exec   Executor
 
-	sleep func(ctx context.Context, d time.Duration) error
-	now   func() time.Time
-	log   *slog.Logger
+	sleep    func(ctx context.Context, d time.Duration) error
+	now      func() time.Time
+	log      *slog.Logger
+	identity *Identity
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -121,6 +122,17 @@ func WithNow(fn func() time.Time) LoopOption {
 // WithLogger replaces the structured stderr logger.
 func WithLogger(logger *slog.Logger) LoopOption {
 	return func(l *Loop) { l.log = logger }
+}
+
+// WithIdentity gives the loop the worker's own Identity, so an
+// Unauthenticated claim error can tell a genuinely revoked/expired
+// certificate (the on-disk one is bad; delete and re-enroll) apart from a
+// stale connection presenting a certificate that has since been renewed
+// (a healthy identity; retrying or reconnecting heals it — see
+// ReconnectingClient). Without it, every Unauthenticated is reported as
+// the latter, worse case.
+func WithIdentity(id *Identity) LoopOption {
+	return func(l *Loop) { l.identity = id }
 }
 
 // NewLoop wires the loop over an already-dialed client (worker.Dial builds
@@ -173,9 +185,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			d := backoff(backoffShift)
 			backoffShift = nextBackoffShift(backoffShift)
 			if status.Code(err) == codes.Unauthenticated {
-				// Revoked or unknown certificate: retrying cannot help, but
-				// exiting would only restart the container into the same state.
-				l.log.ErrorContext(ctx, "the manager refused this worker's certificate (revoked or unknown); remove the identity and enroll again with a new token", "backoff", d)
+				l.logUnauthenticated(ctx, d)
 			} else {
 				l.log.WarnContext(ctx, "claim failed; backing off", "backoff", d, "err", err)
 			}
@@ -208,6 +218,34 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.log.InfoContext(ctx, "job finished", attrs...)
 		}
 	}
+}
+
+// logUnauthenticated reports a claim refused with Unauthenticated. When
+// the loop knows its own Identity (WithIdentity) and that certificate is
+// still within its validity window, this is not a bad identity — it is
+// almost always a connection that handshook before a certificate renewal
+// and has not yet moved to a fresh one (see ReconnectingClient), which
+// heals itself; the message says so instead of sending the operator to
+// delete a healthy worker. Only once the certificate itself has expired
+// (or WithIdentity was never set — the embedded worker's short-lived
+// process, or a caller predating this fix) does it point at revocation.
+func (l *Loop) logUnauthenticated(ctx context.Context, backoffDelay time.Duration) {
+	if l.identity != nil && l.now().Before(l.identity.Leaf().NotAfter) {
+		l.log.ErrorContext(ctx, "the manager refused this worker's certificate even though it is still valid and not expired; "+
+			"this is usually a connection that has not yet reconnected with a renewed certificate and recovers on its own — "+
+			"if it does not, the worker may have been revoked",
+			"backoff", backoffDelay, "not_after", l.identity.Leaf().NotAfter)
+		return
+	}
+	// Revoked, unknown, or (with no Identity to tell otherwise) possibly
+	// just expired: retrying cannot help. A revoked worker's row survives
+	// on the manager (workers.Delete is revoked-only), so it must be
+	// deleted on the Workers page before the same name can enroll again;
+	// a bundle-flow worker needs a fresh `worker add` bundle instead of a
+	// token.
+	l.log.ErrorContext(ctx, "the manager refused this worker's certificate (revoked, unknown, or expired); "+
+		"if it was revoked, delete it on the Workers page, then re-enroll — a new token, or a fresh `worker add` bundle",
+		"backoff", backoffDelay)
 }
 
 // backoff is the exponential delay for the given shift, capped.

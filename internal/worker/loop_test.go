@@ -20,7 +20,9 @@ import (
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // fakeRunStream is one RunEvents stream a test controls: the test feeds
@@ -1040,5 +1042,52 @@ func TestLoopTruncatesOversizedEventPayloads(t *testing.T) {
 	}
 	if events[1].GetPayload() != `{"x":1}` {
 		t.Fatalf("a small payload must pass untouched: %q", events[1].GetPayload())
+	}
+}
+
+// TestLoopUnauthenticatedLogDependsOnIdentityValidity: an Unauthenticated
+// claim error while the worker's own certificate is still within its
+// validity window must not send the operator to delete a healthy
+// identity — that is exactly the situation a stale, not-yet-reconnected
+// connection produces (Important review finding 1), and it heals itself
+// (the reconnecting client redials; the server's own MaxConnectionAge is
+// the backstop). Only once the certificate the loop is looking at has
+// itself expired does the "revoked or unknown, delete and re-enroll"
+// hint make sense.
+func TestLoopUnauthenticatedLogDependsOnIdentityValidity(t *testing.T) {
+	h := newHarness(t)
+	icfg := h.issue("fra-1", true)
+	id, err := LoadIdentity(icfg.CertPath, icfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(t *testing.T, now time.Time) string {
+		t.Helper()
+		cfg := cfgFor(t.TempDir())
+		client := &fakeWorkerClient{}
+		client.setClaimErr(status.Error(codes.Unauthenticated, "denied"))
+		var logs bytes.Buffer
+		l := NewLoop(cfg, client, &scriptExecutor{}, WithIdentity(id), WithNow(func() time.Time { return now }),
+			WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+			WithSleep(func(context.Context, time.Duration) error { return nil }))
+		cancel, done := runLoop(t, l)
+		waitFor(t, 2*time.Second, func() bool { return len(client.claimsNow()) >= 2 })
+		cancel()
+		<-done
+		return logs.String()
+	}
+
+	fresh := run(t, id.Leaf().NotBefore.Add(time.Hour))
+	if strings.Contains(fresh, "remove the identity") || strings.Contains(fresh, "delete it") {
+		t.Fatalf("a still-valid certificate must not be told to be removed:\n%s", fresh)
+	}
+	if !strings.Contains(fresh, "not expired") && !strings.Contains(fresh, "still valid") {
+		t.Fatalf("the log must say the certificate is still good:\n%s", fresh)
+	}
+
+	stale := run(t, id.Leaf().NotAfter.Add(time.Hour))
+	if !strings.Contains(stale, "delete it") {
+		t.Fatalf("an actually-expired certificate must point at deleting the worker before re-enrolling:\n%s", stale)
 	}
 }

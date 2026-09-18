@@ -22,17 +22,21 @@
 //	PULSIX_MAX_CONCURRENT      default 1 (v0.2b runs one job at a time)
 //
 // Exit codes: 2 on a configuration error (the operator must act), 0 on a
-// clean shutdown (SIGTERM/SIGINT), 1 on any other failure.
+// clean shutdown (SIGTERM/SIGINT), 1 on any other failure (including a
+// transient failure to reach the manager while enrolling — a restart
+// policy retries that on its own).
 package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"google.golang.org/grpc"
+
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
 	"github.com/noixdev/pulsix/internal/worker/sshprobe"
@@ -68,9 +72,15 @@ func run(env []string) int {
 	defer stop()
 
 	slog.Info("pulsix-worker starting", "manager", cfg.ManagerAddr, "data_dir", cfg.DataDir)
-	// A valid bundle wins; otherwise enroll with PULSIX_ENROLL_TOKEN.
+	// A valid bundle wins; otherwise enroll with PULSIX_ENROLL_TOKEN. A
+	// failure to reach the manager for enrollment is transient (exit 1,
+	// the restart policy retries); anything else names something the
+	// operator has to fix (exit 2).
 	if err := worker.EnsureIdentity(ctx, cfg, slog.Default()); err != nil {
 		slog.Error("no worker identity", "err", err)
+		if errors.Is(err, worker.ErrEnrollUnreachable) {
+			return 1
+		}
 		return 2
 	}
 	id, err := worker.LoadIdentity(cfg.CertPath, cfg.KeyPath)
@@ -84,9 +94,17 @@ func run(env []string) int {
 		return 1
 	}
 	defer func() { _ = conn.Close() }() // best-effort: the process is exiting anyway
-	client := workerpb.NewWorkerServiceClient(conn)
-	// Renewal at start and every 6 h, once a third of the validity is left.
-	go worker.NewRenewer(client, id, nil, nil, slog.Default()).Run(ctx)
+	// client can move to a fresh connection after a certificate renewal
+	// (Redial, wired below) without the loop or the renewer knowing.
+	client := worker.NewReconnectingClient(conn, slog.Default())
+	// Renewal at start and every 6 h, once a third of the validity is
+	// left; a successful renewal redials so the new certificate actually
+	// reaches the wire (see ReconnectingClient's own doc comment).
+	go worker.NewRenewer(client, id, nil, nil, slog.Default(), worker.WithOnRenewed(func(renewCtx context.Context) {
+		client.Redial(renewCtx, func(dialCtx context.Context) (*grpc.ClientConn, error) {
+			return worker.DialIdentity(dialCtx, cfg, id)
+		})
+	})).Run(ctx)
 
 	// The kind dispatch: the ansible-runner executor serves run and ad-hoc
 	// jobs and the Task 11 system playbooks (bootstrap and rotate_key —
@@ -109,6 +127,7 @@ func run(env []string) int {
 			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
 		}),
 		worker.WithLogger(slog.Default()),
+		worker.WithIdentity(id),
 	)
 	return workerLoop(ctx, loop)
 }

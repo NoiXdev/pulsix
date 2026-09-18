@@ -2,8 +2,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,4 +131,21 @@ func TestRenewerRenewsWhenDue(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	NewRenewer(workerpb.NewWorkerServiceClient(conn), id, func() time.Time { return now }, nil, quiet()).Run(ctx)
+}
+
+// TestEnsureIdentityWrapsUnreachableManager: a failure to reach the
+// manager for the Enroll call itself (as opposed to a bad token or a
+// malformed config) is reported through ErrEnrollUnreachable, so
+// cmd/worker/main.go can exit 1 (transient, a restart policy retries)
+// instead of 2 (a configuration mistake the operator must fix).
+func TestEnsureIdentityWrapsUnreachableManager(t *testing.T) {
+	h := newHarness(t)
+	cfg := tokenConfig(t, h.token(t, "fra-9"))
+	unreachable := grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+		return nil, errors.New("connection refused")
+	})
+	err := ensureIdentity(t.Context(), cfg, quiet(), time.Now, []grpc.DialOption{unreachable})
+	if !errors.Is(err, ErrEnrollUnreachable) {
+		t.Fatalf("err = %v, want ErrEnrollUnreachable", err)
+	}
 }

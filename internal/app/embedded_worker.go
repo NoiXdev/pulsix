@@ -50,11 +50,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/hosts"
-	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
 	"github.com/noixdev/pulsix/internal/worker/sshprobe"
@@ -221,9 +222,19 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 		return
 	}
 	defer func() { _ = conn.Close() }()
-	client := workerpb.NewWorkerServiceClient(conn)
-	// Renewal at start and every 6 h, once a third of the validity is left.
-	go worker.NewRenewer(client, id, nil, nil, log).Run(ctx)
+	// client can move to a fresh connection after a certificate renewal
+	// (Redial, wired below) without the loop or the renewer knowing — see
+	// ReconnectingClient's own doc comment for why that matters for a
+	// long-lived connection like this one.
+	client := worker.NewReconnectingClient(conn, log)
+	// Renewal at start and every 6 h, once a third of the validity is
+	// left; a successful renewal redials so the new certificate actually
+	// reaches the wire.
+	go worker.NewRenewer(client, id, nil, nil, log, worker.WithOnRenewed(func(renewCtx context.Context) {
+		client.Redial(renewCtx, func(dialCtx context.Context) (*grpc.ClientConn, error) {
+			return worker.DialIdentity(dialCtx, wcfg, id)
+		})
+	})).Run(ctx)
 
 	runExec := runner.NewRunner(wcfg.AnsibleRunnerBin, wcfg.AnsibleBin, "git", 0, log)
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, log)
@@ -238,6 +249,7 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
 		}),
 		worker.WithLogger(log),
+		worker.WithIdentity(id),
 	)
 	log.InfoContext(ctx, "embedded worker running", "org_id", zone.OrgID, "zone_id", zone.ID)
 	if err := loop.Run(ctx); err != nil {

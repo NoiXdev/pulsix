@@ -43,9 +43,10 @@ The stack ships one, in two services:
   registering another worker. It is the only service besides the manager
   that holds the database credentials and the master key, and it runs no
   playbooks.
-- `worker` — the long-running worker. It mounts the bundle read-only,
-  has **no** database access and **no** master key, and waits for the
-  bundle before it starts claiming jobs.
+- `worker` — the long-running worker. It has **no** database access and
+  **no** master key, and waits for the bundle before it starts claiming
+  jobs. The bundle volume is writable for it (not read-only): the worker
+  renews its own certificate and replaces `cert.pem` in place.
 
 By default the worker serves the `default` zone of the first
 organization. `PULSIX_WORKER_ZONE`, `PULSIX_WORKER_ORG` and
@@ -152,9 +153,10 @@ not the manager's `PULSIX_GRPC_SERVER_NAME` itself: the endpoint's
 certificate carries that name, not your public hostname. The endpoint
 only accepts workers this instance enrolled or issued a certificate for.
 
-For an air-gapped worker machine with no route back to the manager for
-enrollment, use the `worker add` bundle flow from "Additional workers"
-above instead and copy the three files over by hand.
+If you cannot redeem a token within its one-hour window right now (no one
+is watching a browser session, or you are scripting bulk enrollment),
+use the `worker add` bundle flow from "Additional workers" above instead
+and copy the three files over by hand — it has no time limit.
 
 ## The embedded worker (opt-in, trusted single-tenant setups only)
 

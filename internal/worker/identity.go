@@ -59,9 +59,24 @@ func (i *Identity) NeedsRenewal(now time.Time) bool {
 	return leaf.NotAfter.Sub(now) < leaf.NotAfter.Sub(leaf.NotBefore)/3
 }
 
-// Replace installs a renewed certificate for the same key: it is checked
-// against the key, written atomically over the certificate file (temp file
-// + rename in the same directory) and only then swapped in.
+// certDir is the directory holding the certificate file (and, by
+// convention, key.pem and ca.pem next to it).
+func (i *Identity) certDir() string { return filepath.Dir(i.certPath) }
+
+// Replace installs a renewed certificate for the same key. It is checked
+// against the key first — a mismatched or malformed certificate changes
+// nothing and returns before either step below runs. It is then written
+// atomically over the certificate file (temp file + rename in the same
+// directory) and swapped into memory.
+//
+// The swap happens even when the write fails: a worker that cannot
+// persist its renewed certificate right now (a read-only mount) must
+// still use it over the wire until its next restart rather than silently
+// keep presenting one closer to expiry. The write error is still
+// returned so the caller can report it — see Renewer.Check, which also
+// probes writability before it ever asks the manager to mint this
+// certificate, so this path is the backstop for a probe that raced with
+// something making the directory read-only between the check and here.
 func (i *Identity) Replace(certPEM []byte) error {
 	block, _ := pem.Decode(certPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
@@ -77,14 +92,29 @@ func (i *Identity) Replace(certPEM []byte) error {
 	if !ok || !eq || !pub.Equal(signer.Public()) {
 		return errors.New("renewed certificate does not match the worker's key")
 	}
-	if err := writeFileAtomic(filepath.Dir(i.certPath), filepath.Base(i.certPath), certPEM, 0o644); err != nil {
-		return fmt.Errorf("write renewed certificate: %w", err)
-	}
+	writeErr := writeFileAtomic(i.certDir(), filepath.Base(i.certPath), certPEM, 0o644)
 	next := &tls.Certificate{Certificate: [][]byte{block.Bytes}, PrivateKey: cur.PrivateKey, Leaf: leaf}
 	i.mu.Lock()
 	i.cert = next
 	i.mu.Unlock()
+	if writeErr != nil {
+		return fmt.Errorf("write renewed certificate: %w", writeErr)
+	}
 	return nil
+}
+
+// probeWritable checks that dir accepts a create-and-remove of a
+// temporary file, so a caller can refuse to spend a round trip (or, for
+// renewal, mint and immediately orphan a server-registered certificate)
+// on a write it already knows will fail.
+func probeWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".writable-probe-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	_ = f.Close()
+	return os.Remove(name)
 }
 
 // writeFileAtomic writes content to dir/name through a temp file in the

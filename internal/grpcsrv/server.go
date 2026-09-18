@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/clientip"
@@ -30,6 +31,31 @@ const DefaultCancelPollInterval = 500 * time.Millisecond
 // bound: a worker has thirty seconds to open the stream before the token
 // expires and the job has to be re-claimed.
 const tokenTTL = 30 * time.Second
+
+// maxConnectionAge and maxConnectionAgeGrace force every connection to
+// cycle periodically (a GOAWAY at the age, a hard close after the grace),
+// independently of the worker's own post-renewal reconnect
+// (internal/worker.ReconnectingClient). This is the backstop: a worker
+// whose proactive reconnect silently fails (a transient dial error, an
+// older binary before this fix) would otherwise keep an already-completed
+// TLS handshake past its certificate's expiry — the server re-verifies
+// the peer certificate's validity window on every RPC, so that connection
+// would then fail every call at day 90 for no fixable reason, "revoked"-
+// looking to the operator even though a fresh, valid certificate sits on
+// disk. 24h keeps every connection's negotiated peer certificate well
+// within the 90-day leaf lifetime (renewal itself triggers at day 60,
+// two-thirds through — a full 24h cycle is nowhere near that margin) and
+// matches the cadence gRPC's own docs recommend for periodic connection
+// rotation. The 30-minute grace is generous next to typical playbook run
+// times, so the GOAWAY lets an in-flight RunEvents stream keep going
+// after age is reached; an exceptional run still going after the grace is
+// cut, but that is exactly the "worker went away mid-run" case the
+// manager's own claim/requeue path already recovers from (a dead worker,
+// a killed container, a network partition) — not a new failure mode.
+const (
+	maxConnectionAge      = 24 * time.Hour
+	maxConnectionAgeGrace = 30 * time.Minute
+)
 
 // Deps wires the server's dependencies. CA and Workers are the concrete
 // services the transport needs by value; the rest are the narrow ports
@@ -139,6 +165,12 @@ func (s *Server) newGRPCServer() *grpc.Server {
 		grpc.MaxRecvMsgSize(workerpb.MaxWorkerToManagerBytes),
 		grpc.ChainUnaryInterceptor(s.authUnaryInterceptor),
 		grpc.ChainStreamInterceptor(s.authStreamInterceptor),
+		// Backstop for a stale certificate on a long-lived connection; see
+		// maxConnectionAge's own comment.
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      maxConnectionAge,
+			MaxConnectionAgeGrace: maxConnectionAgeGrace,
+		}),
 	)
 	workerpb.RegisterWorkerServiceServer(gs, s)
 	return gs
