@@ -270,3 +270,72 @@ func TestTickerSurvivesAPanickingScheduleAndProcessesTheRest(t *testing.T) {
 		t.Fatalf("enqueued = %d, want 1 (only the healthy schedule)", len(runs.requests))
 	}
 }
+
+// alwaysPanicAudit panics on every Record call — a persistent bug in the
+// audit sink, not a one-off glitch — used to reproduce fix round 2's
+// Minor: the original panic comes from inside auditRun itself, on the
+// normal (triggered) path after a successful enqueue, and Decide's own
+// recover handler used to call auditRun a second time to record the
+// failure. Because the underlying fault is persistent, that second call
+// panics too, and a panic raised by a deferred function is not caught by
+// that function's own recover.
+type alwaysPanicAudit struct{}
+
+func (alwaysPanicAudit) Record(context.Context, audit.Event) error {
+	panic("boom: audit panicked")
+}
+
+// TestDecideRecoversAPanicFromTheAuditorItself is fix round 2's Minor: a
+// panic originating inside auditRun's own call, on the normal (triggered)
+// path after a successful enqueue, is caught by Decide's recover — which
+// used to call auditRun a second time to record the failure. A panic
+// raised by a deferred function is not caught by that function's own
+// recover, so if the *same* call panics again, it used to escape Decide
+// entirely, leaving the row's write-back to processRow's outer recover,
+// which discards it — no run recorded, next_run_at never advanced, so the
+// schedule re-enqueues on every following tick while the auditor keeps
+// panicking.
+func TestDecideRecoversAPanicFromTheAuditorItself(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	store := newFakeStore()
+	tmpl := &fakeTemplates{}
+	runs := &fakeRuns{}
+	auditor := alwaysPanicAudit{}
+	org, actor, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	svc := schedules.NewService(store, tmpl, runs, auditor, func() time.Time { return base }, rand.Reader,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	in := validInput(templateID)
+	s, err := svc.Create(ctx, org, actor, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.NextRunAt = &base
+
+	d := svc.Decide(ctx, s, base, grace)
+	if d.Run.Outcome != schedules.OutcomeFailed {
+		t.Fatalf("decision = %+v, want failed", d)
+	}
+	if d.NextRunAt == nil || !d.NextRunAt.After(base) {
+		t.Fatalf("next run at = %v, must still advance past the poisoned occurrence", d.NextRunAt)
+	}
+	if len(runs.requests) != 1 {
+		t.Fatalf("the enqueue itself must have already happened once before the audit panicked: %d", len(runs.requests))
+	}
+}
+
+// TestDecideStopsAScheduleWithAnUnknownTimezone is Minor #3's remaining
+// gap: the invalid-timetable branch is reached via lerr (LoadLocation),
+// not just via an unparsable cron — the cron itself is valid here.
+func TestDecideStopsAScheduleWithAnUnknownTimezone(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	w := newWorld(t)
+	s := due(t, w, "0 * * * *", base, schedules.Guards{})
+	s.Timezone = "Mars/Olympus"
+	d := w.svc.Decide(ctx, s, base, grace)
+	if d.Run.Outcome != schedules.OutcomeFailed || d.NextRunAt != nil {
+		t.Fatalf("decision = %+v", d)
+	}
+	if len(w.audit.events) != 1 {
+		t.Fatalf("an invalid timezone must be audited too: %+v", w.audit.events)
+	}
+}

@@ -284,7 +284,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
 	// several safe. Stopped in Close and on every early return below.
 	tickerCtx, tickerStop := context.WithCancel(context.Background())
-	go schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run(tickerCtx)
+	go schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default()), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run(tickerCtx)
 
 	var grpcServer *grpc.Server
 	var stopEmbedded func()

@@ -79,3 +79,57 @@ func TestTickerRunStopsOnCancel(t *testing.T) {
 		t.Fatalf("ticks = %d, want 3 (errors keep the loop alive)", len(store.nowSeen))
 	}
 }
+
+// panicDue panics on every ProcessDue call, counting how many were made —
+// a persistent fault, not a one-off, so tickSafely's recover has to keep
+// working every time, not merely once.
+type panicDue struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *panicDue) ProcessDue(context.Context, time.Time, int, func(context.Context, schedules.Schedule) schedules.Decision) (int, error) {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	panic("boom: ProcessDue panicked")
+}
+
+func (f *panicDue) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestTickerRunRecoversAPanicInTickAndKeepsTicking exercises tickSafely's
+// own recover (fix round 1, Important #1's "also recover at the loop
+// level" — round 2's re-review found this recover had no test of its own:
+// both existing panic tests go through fakeDue's decide callback, which
+// only exercises Decide's recover). A DueStore whose ProcessDue itself
+// panics, every tick, must not stop Run's loop.
+func TestTickerRunRecoversAPanicInTickAndKeepsTicking(t *testing.T) {
+	w := newWorld(t)
+	store := &panicDue{}
+	ctx, cancel := context.WithCancel(context.Background())
+	ticks := 0
+	sleep := func(ctx context.Context, _ time.Duration) error {
+		ticks++
+		if ticks == 3 {
+			cancel()
+		}
+		return ctx.Err()
+	}
+	done := make(chan struct{})
+	go func() {
+		schedules.NewTicker(w.svc, store, time.Second, time.Now, sleep, slog.New(slog.NewTextHandler(io.Discard, nil))).Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop after cancellation")
+	}
+	if got := store.callCount(); got != 3 {
+		t.Fatalf("ProcessDue calls = %d, want 3 (a panicking tick must not stop the loop)", got)
+	}
+}

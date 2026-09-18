@@ -3,6 +3,7 @@ package schedules
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"runtime/debug"
 	"time"
@@ -13,6 +14,18 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
+
+// rowWriteTimeout bounds one row's write-back (its savepoint, run insert,
+// schedule advance and trim) once decide has already returned. These are
+// a handful of statements on a connection the batch's own transaction
+// already holds, not a fresh pool acquisition, so a bound this generous
+// only guards against a genuinely stuck driver or network — never against
+// ordinary pool contention, which is what the batch's own decide/enqueue
+// deadline is for (see ProcessDue). Fix round 2, New Important: this
+// write-back must never be abandoned merely because that deadline has
+// passed — by the time decide has returned, the row's enqueue may already
+// have happened.
+const rowWriteTimeout = 10 * time.Second
 
 // DueSQLStore is the ticker's store: one raw-pool transaction per batch,
 // with no pulsix.org_id bound — the bypass policy applies, so the due scan
@@ -30,16 +43,40 @@ import (
 // next_run_at advances were rolled back too, so the next tick re-fired
 // every one of them, forever, if the bad row's failure was persistent
 // (e.g. corrupt stored JSON) rather than transient.
-type DueSQLStore struct{ d *db.DB }
+type DueSQLStore struct {
+	d    *db.DB
+	rand io.Reader
+	log  *slog.Logger
+}
 
-// NewDueSQLStore builds the store.
-func NewDueSQLStore(d *db.DB) *DueSQLStore { return &DueSQLStore{d: d} }
+// NewDueSQLStore builds the store. log defaults to slog.Default() when
+// nil, matching Service and Ticker; rand is the entropy source for a
+// corrupt row's failed-run id (fix round 2: this used to call
+// uuid.NewV7() directly, bypassing the app's injected randomness, like
+// every other id in this package).
+func NewDueSQLStore(d *db.DB, rand io.Reader, log *slog.Logger) *DueSQLStore {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &DueSQLStore{d: d, rand: rand, log: log}
+}
 
 // ProcessDue implements DueStore. ctx normally carries the batch's own
-// deadline (Ticker.Tick bounds it to a small multiple of the tick — fix
-// round 1, Important #3): a starved pool connection or a stuck decide()
-// then fails fast, releasing the locked rows (and the pool connection an
-// HTTP handler is waiting on) instead of holding them forever.
+// decide/enqueue deadline (Ticker.Tick bounds it to a small multiple of
+// the tick — fix round 1, Important #3): a starved pool connection or a
+// stuck decide() then fails fast instead of blocking the batch forever.
+//
+// That deadline applies only to deciding each row (the call to decide,
+// passed ctx directly below) and to starting a new row at all — the loop
+// stops as soon as ctx is done, leaving every row it had not yet reached
+// untouched, still due. It never reaches a row's write-back: fix round 1
+// used ctx for every savepoint and for the final commit too, so a batch
+// that overran its deadline mid-row rolled back every row it had already
+// decided and enqueued — including rows whose savepoint had already
+// committed — and they fired again on the very next tick (fix round 2,
+// New Important). processRow now writes each decided row back on
+// context.WithoutCancel(ctx), under its own short rowWriteTimeout, and
+// the final commit below does the same.
 func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int, decide func(ctx context.Context, s Schedule) Decision) (int, error) {
 	tx, err := st.d.Pool().Begin(ctx)
 	if err != nil {
@@ -51,23 +88,42 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 	if err != nil {
 		return 0, fmt.Errorf("lock due schedules: %w", err)
 	}
-	for _, r := range rows {
-		processRow(ctx, tx, r, now, decide)
+	for i, r := range rows {
+		if ctx.Err() != nil {
+			// The batch's own deadline (or the manager's shutdown) is
+			// gone: every row from here on is left exactly as it is,
+			// still locked until the commit below releases it, rather
+			// than started and each logging its own failure to begin —
+			// one line here beats one per remaining row.
+			st.log.WarnContext(context.WithoutCancel(ctx), "schedule batch deadline reached; leaving the remaining rows due for the next tick",
+				"decided", i, "remaining", len(rows)-i)
+			break
+		}
+		st.processRow(ctx, tx, r, now, decide)
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(context.WithoutCancel(ctx)); err != nil {
 		return 0, fmt.Errorf("commit schedule tick: %w", err)
 	}
 	return len(rows), nil
 }
 
-// processRow decides and records one locked row inside its own savepoint.
+// processRow decides one locked row on ctx (the batch's decide/enqueue
+// deadline) and records it inside its own savepoint. Every write below —
+// the savepoint itself, insertRun, AdvanceSchedule, TrimScheduleRuns and
+// the savepoint's own commit — runs on a fresh context.WithoutCancel(ctx)
+// bounded only by rowWriteTimeout, detached from ctx's own deadline, so a
+// deadline hit while deciding a *later* row can never discard a write
+// this row already earned (fix round 2, New Important).
+//
 // A panic anywhere in this function — decoding the row, deciding it, or
 // writing its run and advance — is recovered: Service.Decide already
-// recovers a panic inside deciding/enqueueing itself (fix round 1,
-// Important #1) and returns a normal failed Decision, but toSchedule and
-// the write helpers below run outside that recover, so this is the belt
-// to Decide's suspenders, and it is what makes one row's panic leave the
-// other rows in the batch, and the batch's own commit, unaffected.
+// recovers a panic inside deciding/enqueueing itself, including inside
+// cronexpr and the audit call (fix round 1, Important #1; fix round 2
+// closed the two gaps a re-review found in that recover's own coverage),
+// but toSchedule and the write helpers below run outside it, so this is
+// the belt to Decide's suspenders, and it is what makes one row's panic
+// leave the other rows in the batch, and the batch's own commit,
+// unaffected.
 //
 // Any failure — decode, decide, or a write — simply leaves the row as it
 // was: neither its run nor its next_run_at advance, so the row stays due
@@ -76,16 +132,22 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 // atomicity is at-least-once"). The one exception is a row that never
 // decodes at all (see decideOne): that failure is deterministic, not
 // transient, so the row is stopped instead of retried forever.
-func processRow(ctx context.Context, tx pgx.Tx, r gen.Schedule, now time.Time, decide func(ctx context.Context, s Schedule) Decision) {
+func (st *DueSQLStore) processRow(ctx context.Context, tx pgx.Tx, r gen.Schedule, now time.Time, decide func(ctx context.Context, s Schedule) Decision) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			slog.Default().ErrorContext(ctx, "schedule row panicked outside Decide; leaving it due for the next tick",
+			st.log.ErrorContext(context.WithoutCancel(ctx), "schedule row panicked outside Decide; leaving it due for the next tick",
 				"schedule", r.ID, "org", r.OrgID, "panic", rec, "stack", string(debug.Stack()))
 		}
 	}()
-	sp, err := tx.Begin(ctx)
+
+	run, next := st.decideOne(ctx, r, now, decide)
+
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rowWriteTimeout)
+	defer cancel()
+
+	sp, err := tx.Begin(wctx)
 	if err != nil {
-		slog.Default().ErrorContext(ctx, "begin schedule row savepoint; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
+		st.log.ErrorContext(wctx, "begin schedule row savepoint; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
 		return
 	}
 	committed := false
@@ -96,24 +158,22 @@ func processRow(ctx context.Context, tx pgx.Tx, r gen.Schedule, now time.Time, d
 	}()
 	sq := gen.New(sp)
 
-	run, next := decideOne(ctx, r, now, decide)
-
-	if err := insertRun(ctx, sq, run); err != nil {
-		slog.Default().ErrorContext(ctx, "record schedule run; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
+	if err := insertRun(wctx, sq, run); err != nil {
+		st.log.ErrorContext(wctx, "record schedule run; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
 		return
 	}
-	if err := sq.AdvanceSchedule(ctx, gen.AdvanceScheduleParams{
+	if err := sq.AdvanceSchedule(wctx, gen.AdvanceScheduleParams{
 		OrgID: r.OrgID, ID: r.ID, LastRunAt: db.NullTime(&run.DecidedAt), NextRunAt: db.NullTime(next),
 	}); err != nil {
-		slog.Default().ErrorContext(ctx, "advance schedule; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
+		st.log.ErrorContext(wctx, "advance schedule; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
 		return
 	}
-	if err := sq.TrimScheduleRuns(ctx, gen.TrimScheduleRunsParams{OrgID: r.OrgID, ScheduleID: r.ID, Keep: keepRuns}); err != nil {
-		slog.Default().ErrorContext(ctx, "trim schedule runs; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
+	if err := sq.TrimScheduleRuns(wctx, gen.TrimScheduleRunsParams{OrgID: r.OrgID, ScheduleID: r.ID, Keep: keepRuns}); err != nil {
+		st.log.ErrorContext(wctx, "trim schedule runs; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
 		return
 	}
-	if err := sp.Commit(ctx); err != nil {
-		slog.Default().ErrorContext(ctx, "commit schedule row savepoint; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
+	if err := sp.Commit(wctx); err != nil {
+		st.log.ErrorContext(wctx, "commit schedule row savepoint; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
 		return
 	}
 	committed = true
@@ -127,16 +187,20 @@ func processRow(ctx context.Context, tx pgx.Tx, r gen.Schedule, now time.Time, d
 // failure processRow can hit, a decode failure is deterministic: retrying
 // it every tick would only re-fail forever, so the schedule is stopped
 // instead of left due (fix round 1, Important #2).
-func decideOne(ctx context.Context, r gen.Schedule, now time.Time, decide func(ctx context.Context, s Schedule) Decision) (Run, *time.Time) {
+func (st *DueSQLStore) decideOne(ctx context.Context, r gen.Schedule, now time.Time, decide func(ctx context.Context, s Schedule) Decision) (Run, *time.Time) {
 	sch, err := toSchedule(r)
 	if err != nil {
-		slog.Default().ErrorContext(ctx, "schedule row does not decode; stopping it", "schedule", r.ID, "org", r.OrgID, "err", err)
+		st.log.ErrorContext(ctx, "schedule row does not decode; stopping it", "schedule", r.ID, "org", r.OrgID, "err", err)
 		dueAt := now
 		if t := db.TimePtr(r.NextRunAt); t != nil {
 			dueAt = *t
 		}
+		id, idErr := uuid.NewV7FromReader(st.rand)
+		if idErr != nil {
+			panic(idErr) //nolint:forbidigo // entropy failure is unrecoverable, like uuid.Must (Service.newID does the same); processRow's own recover still protects the batch
+		}
 		return Run{
-			ID: uuid.Must(uuid.NewV7()), OrgID: r.OrgID, ScheduleID: r.ID, DueAt: dueAt, DecidedAt: now,
+			ID: id, OrgID: r.OrgID, ScheduleID: r.ID, DueAt: dueAt, DecidedAt: now,
 			Outcome: OutcomeFailed, Reason: "the schedule's stored data is corrupt; edit and save it",
 		}, nil
 	}

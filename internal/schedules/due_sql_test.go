@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/schedules"
 )
 
@@ -43,7 +44,7 @@ func TestTwoTickersDecideEachOccurrenceOnce(t *testing.T) {
 	svc := schedules.NewService(st, &fakeTemplates{}, runs, &fakeAudit{}, func() time.Time { return now }, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
-		tk := schedules.NewTicker(svc, schedules.NewDueSQLStore(d), 15*time.Second, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		tk := schedules.NewTicker(svc, schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))), 15*time.Second, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -99,7 +100,7 @@ func TestProcessDueTrimsRunsTo500(t *testing.T) {
 		}
 	}
 	svc := schedules.NewService(st, &fakeTemplates{}, &fakeRuns{}, &fakeAudit{}, func() time.Time { return now }, rand.Reader, nil)
-	if _, err := schedules.NewTicker(svc, schedules.NewDueSQLStore(d), 15*time.Second, func() time.Time { return now }, nil, nil).Tick(context.Background()); err != nil {
+	if _, err := schedules.NewTicker(svc, schedules.NewDueSQLStore(d, rand.Reader, nil), 15*time.Second, func() time.Time { return now }, nil, nil).Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -163,7 +164,7 @@ func TestProcessDueIsolatesACorruptRowFromHealthyRows(t *testing.T) {
 
 	runs := &fakeRuns{}
 	svc := schedules.NewService(st, &fakeTemplates{}, runs, &fakeAudit{}, func() time.Time { return now }, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	tk := schedules.NewTicker(svc, schedules.NewDueSQLStore(d), 15*time.Second, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tk := schedules.NewTicker(svc, schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))), 15*time.Second, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	n, err := tk.Tick(context.Background())
 	if err != nil || n != 2 {
@@ -197,6 +198,155 @@ func TestProcessDueIsolatesACorruptRowFromHealthyRows(t *testing.T) {
 	}
 	if len(runs.requests) != 1 {
 		t.Fatalf("enqueued after second tick = %d, want still 1", len(runs.requests))
+	}
+}
+
+// TestProcessDueKeepsAlreadyEnqueuedRowsWhenTheBatchDeadlineIsExceeded is
+// fix round 2's New Important: the batch's decide/enqueue deadline must
+// not reach the write-back of a row decide has already finished — by
+// then its enqueue may already have happened, and discarding the write
+// (by letting the deadline also poison the savepoint and the final
+// commit) would silently re-fire it on every following tick. Two due
+// rows, ordered so row1 is decided (quickly) before row2; row2's decide
+// blocks well past the batch's own deadline. row1 must still be recorded
+// exactly once, and a second tick must not enqueue it again.
+func TestProcessDueKeepsAlreadyEnqueuedRowsWhenTheBatchDeadlineIsExceeded(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-overrun")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	dueAt1 := now.Add(-2 * time.Second)
+	dueAt2 := now.Add(-1 * time.Second) // sorts after row1 by next_run_at
+
+	row1, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "row1",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row2, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "row2",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const deadline = 100 * time.Millisecond
+	nextRun := now.Add(time.Hour)
+	decide := func(ctx context.Context, s schedules.Schedule) schedules.Decision {
+		if s.ID == row2.ID {
+			// Blocks well past the batch's own deadline — a stand-in for
+			// a stuck enqueue under pool contention, which is exactly
+			// what the deadline exists to bound. It ignores ctx on
+			// purpose: a decide that itself respects cancellation would
+			// return quickly and not exercise this path.
+			time.Sleep(5 * deadline)
+		}
+		return schedules.Decision{
+			Run:       schedules.Run{ID: uuid.Must(uuid.NewV7()), OrgID: s.OrgID, ScheduleID: s.ID, DueAt: now, DecidedAt: now, Outcome: schedules.OutcomeTriggered},
+			NextRunAt: &nextRun,
+		}
+	}
+
+	tctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	if _, err := schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))).ProcessDue(tctx, now, 50, decide); err != nil {
+		t.Fatalf("first batch: %v (row1's already-enqueued write must survive a deadline hit on row2, not fail the whole batch)", err)
+	}
+
+	var row1Runs int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, row1.ID).Scan(&row1Runs); err != nil || row1Runs != 1 {
+		t.Fatalf("row1 runs after the overrun batch = %d, %v, want exactly 1", row1Runs, err)
+	}
+	var row1Next *time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT next_run_at FROM schedules WHERE id = $1`, row1.ID).Scan(&row1Next); err != nil {
+		t.Fatal(err)
+	}
+	if row1Next == nil || !row1Next.Equal(nextRun) {
+		t.Fatalf("row1 next_run_at = %v, want %v (it must have advanced, not been rolled back)", row1Next, nextRun)
+	}
+
+	// A second tick, with plenty of time, must not enqueue row1 again:
+	// its due occurrence was already recorded and advanced by the first,
+	// overrun batch.
+	if _, err := schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))).ProcessDue(context.Background(), now, 50, decide); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, row1.ID).Scan(&row1Runs); err != nil || row1Runs != 1 {
+		t.Fatalf("row1 runs after the second tick = %d, %v, want still 1 (it must not fire again)", row1Runs, err)
+	}
+}
+
+// TestProcessRowRecoversAPanicOutsideDecide exercises processRow's own
+// recover directly (fix round 1, Important #1's belt to Decide's
+// suspenders — round 2's re-review found no test drove a panic outside
+// Decide: both existing panic tests go through Service.Decide, so only
+// its own recover was ever exercised). decide here is a raw callback, not
+// Service.Decide, so a panic in it is caught only by processRow itself.
+// Two due rows, ordered so the poisoned one is decided first: the healthy
+// row next to it must still fire exactly once, and the poisoned one is
+// simply left due (no run recorded, next_run_at unchanged) rather than
+// aborting the batch.
+func TestProcessRowRecoversAPanicOutsideDecide(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-rowpanic")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	dueAt1 := now.Add(-2 * time.Second)
+	dueAt2 := now.Add(-1 * time.Second) // sorts after the poisoned row
+
+	poison, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "poison",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "healthy",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nextRun := now.Add(time.Hour)
+	decide := func(ctx context.Context, s schedules.Schedule) schedules.Decision {
+		if s.ID == poison.ID {
+			panic("boom: decide panicked outside Decide")
+		}
+		return schedules.Decision{
+			Run:       schedules.Run{ID: uuid.Must(uuid.NewV7()), OrgID: s.OrgID, ScheduleID: s.ID, DueAt: now, DecidedAt: now, Outcome: schedules.OutcomeTriggered},
+			NextRunAt: &nextRun,
+		}
+	}
+
+	n, err := schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))).ProcessDue(context.Background(), now, 50, decide)
+	if err != nil || n != 2 {
+		t.Fatalf("ProcessDue = %d, %v", n, err)
+	}
+
+	var healthyRuns, poisonRuns int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, healthy.ID).Scan(&healthyRuns); err != nil || healthyRuns != 1 {
+		t.Fatalf("healthy runs = %d, %v, want exactly 1", healthyRuns, err)
+	}
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, poison.ID).Scan(&poisonRuns); err != nil || poisonRuns != 0 {
+		t.Fatalf("poisoned schedule's runs = %d, %v, want 0 (its panic escaped processRow's inner writes, so nothing was ever recorded)", poisonRuns, err)
+	}
+	var poisonNext *time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT next_run_at FROM schedules WHERE id = $1`, poison.ID).Scan(&poisonNext); err != nil {
+		t.Fatal(err)
+	}
+	if poisonNext == nil || !poisonNext.Equal(dueAt1) {
+		t.Fatalf("poisoned schedule's next_run_at = %v, want unchanged (%v): it stays due for the next tick", poisonNext, dueAt1)
 	}
 }
 
@@ -247,23 +397,74 @@ func TestLockDueSchedulesDoesNotBlockRunNow(t *testing.T) {
 	}
 }
 
-// TestProcessDueDoesNotStarvePoolConnections is a regression test for fix
-// round 1's Important #3 (the v0.2b pool-exhaustion shape, see
-// internal/inventory/concurrency_test.go's
-// TestUpdateGroupWithBastionDoesNotStarvePoolConnections, which this is
-// modelled on): a batch holds one connection for its locked row and needs
-// a second one for decide()'s own work (HasActiveRun, enqueue and audit
-// each run on their own connection, simulated here with a plain query that
-// holds a second connection briefly). With pool_max_conns=2, a concurrent
-// schedule update, pause and "run now" — each needing a connection of
-// their own, and two of which (update, pause) block on the very row the
-// batch has locked — must all still complete within a bound instead of
-// deadlocking the pool forever: the batch's own context is bounded to a
-// small deadline (mirroring Ticker.Tick's batchDeadlineFactor × tick), so
-// a starved second connection fails fast and the batch's transaction
-// rolls back, releasing the row lock, instead of holding it (and the
-// connection a blocked request needs) indefinitely.
-func TestProcessDueDoesNotStarvePoolConnections(t *testing.T) {
+// blockingRuns is a RunEnqueuer whose EnqueueRunWith genuinely needs a
+// pool connection of its own (a real query against d, not an in-process
+// fake) and, after signalling started, waits briefly before asking for
+// it — giving the concurrent update/pause goroutines in
+// TestTickerDoesNotStarvePoolConnections a head start on the pool's one
+// spare connection, so they are the ones blocked on the ticker's row lock
+// (holding that connection) by the time the enqueue itself asks for a
+// connection. That is the actual shape of the circular wait fix round 1's
+// Important #3 guards against — not merely a lucky ordering where the
+// enqueue always wins the race for the pool's last free connection.
+type blockingRuns struct {
+	d       *db.DB
+	started chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (b *blockingRuns) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
+	b.once.Do(func() { close(b.started) })
+	time.Sleep(150 * time.Millisecond)
+	// A long, deliberately ctx-oblivious duration: under the old FOR
+	// UPDATE lock mode with no batch deadline, what actually stalls this
+	// call forever is never acquiring a connection at all (see the type's
+	// own doc comment), not this query's own runtime — so its exact
+	// length only matters for demonstrating that, once a connection is
+	// acquired under the fix, the batch's own deadline cancels it well
+	// before it would otherwise finish.
+	if _, err := b.d.Pool().Exec(ctx, "SELECT pg_sleep(10)"); err != nil {
+		return nil, err
+	}
+	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: req.Trigger}}, nil
+}
+
+// TestTickerDoesNotStarvePoolConnections is fix round 2's rewrite of
+// Important #3's regression test. The previous version supplied its own
+// context.WithTimeout directly around ProcessDue and asserted run now's
+// completion against that same test-local bound; the re-review found it
+// passed unchanged with the lock-mode fix reverted, with the deadline
+// removed from Ticker.Tick, and even at 66d0210 (neither fix present) —
+// it never actually drove Ticker.Tick's own bound, so it never exercised
+// production's fix at all.
+//
+// This version does: it builds a real Ticker with a short real tick
+// (500ms, so Tick's own batchDeadlineFactor × tick deadline is 2s) over
+// pool_max_conns=2, and calls Tick(context.Background()) directly — no
+// test-supplied deadline of its own — so whatever bounds it is Tick's own
+// internal logic. It enqueues through blockingRuns, which genuinely needs
+// a second pool connection (not an in-process fake indifferent to the
+// pool). Concurrently, a schedule update, pause and run now — each
+// through the real service and store — target the very row the ticker
+// has locked. Update and pause take an update-strength lock and so block
+// on the ticker's row lock regardless of lock mode; run now's
+// schedule_runs insert only takes FOR KEY SHARE, which FOR NO KEY UPDATE
+// (unlike the old FOR UPDATE) does not conflict with.
+//
+// With the old FOR UPDATE lock mode and no deadline (verified below by
+// reverting both), this deadlocks: update and pause grab the pool's one
+// spare connection first and then block on the ticker's lock, so when the
+// enqueue itself asks for a connection there is none left — the ticker
+// can never finish deciding the row, so it never releases the lock, so
+// update and pause never get theirs either. With the fix, the stuck
+// enqueue is cancelled by Tick's own deadline, the batch still commits
+// (fix round 2, New Important) and releases the lock, and everything
+// completes within a few seconds.
+func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	url := testdb.URL(t)
 	d, err := db.OpenAsRole(context.Background(), url+"&pool_max_conns=2", "pulsix_app")
 	if err != nil {
@@ -283,37 +484,25 @@ func TestProcessDueDoesNotStarvePoolConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := schedules.NewService(st, &fakeTemplates{}, &fakeRuns{}, &fakeAudit{}, func() time.Time { return now }, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	// batchDeadline mirrors Ticker.Tick's own context.WithTimeout around
-	// ProcessDue (batchDeadlineFactor × tick): short on purpose, so a
-	// starved second connection fails fast and the batch's transaction
-	// rolls back — releasing the row lock — well before the concurrent
-	// operations' own, much more generous timeouts expire.
-	const batchDeadline = 2 * time.Second
+	runs := &blockingRuns{d: d, started: make(chan struct{})}
+	svc := schedules.NewService(st, &fakeTemplates{}, runs, &fakeAudit{}, func() time.Time { return now }, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	const tick = 500 * time.Millisecond
+	tk := schedules.NewTicker(svc, schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))), tick, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	decideStarted := make(chan struct{})
-	decide := func(ctx context.Context, s schedules.Schedule) schedules.Decision {
-		close(decideStarted)
-		// Give the concurrent update/pause goroutines below a head start
-		// on the pool's one remaining connection, so they are the ones
-		// blocked on the row's lock (holding that connection) by the time
-		// decide() itself asks for a second connection — the actual shape
-		// of the circular wait this test guards against, not merely a
-		// lucky ordering where decide() always wins the race for the
-		// pool's last free connection.
-		time.Sleep(150 * time.Millisecond)
-		// decide()'s real work (HasActiveRun, enqueue, audit) each acquire
-		// their own connection from the same pool while this batch's
-		// transaction still holds the row's lock on connection 1. It is
-		// expected to fail here under contention — that is exactly what
-		// batchDeadline is for — so no t.Error on this specific call.
-		_, _ = d.Pool().Exec(ctx, "SELECT pg_sleep(1)")
-		next := now.Add(time.Hour)
-		return schedules.Decision{
-			Run:       schedules.Run{ID: uuid.Must(uuid.NewV7()), OrgID: s.OrgID, ScheduleID: s.ID, DueAt: dueAt, DecidedAt: now, Outcome: schedules.OutcomeTriggered},
-			NextRunAt: &next,
+	tickDone := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		if _, err := tk.Tick(context.Background()); err != nil {
+			t.Errorf("Tick: %v", err)
 		}
+		tickDone <- time.Since(start)
+	}()
+
+	select {
+	case <-runs.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the ticker never reached its enqueue — setup is broken, not the deadlock under test")
 	}
 
 	var wg sync.WaitGroup
@@ -322,22 +511,7 @@ func TestProcessDueDoesNotStarvePoolConnections(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		tctx, cancel := context.WithTimeout(context.Background(), batchDeadline)
-		defer cancel()
-		// A deadline-exceeded error here is the batch giving up on
-		// purpose, not a starvation failure — it is what lets the row
-		// lock go and unblocks update/pause below.
-		if _, err := schedules.NewDueSQLStore(d).ProcessDue(tctx, now, 50, decide); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			errs <- fmt.Errorf("ticker batch: %w (pool exhaustion deadlock?)", err)
-		}
-	}()
-
-	<-decideStarted // the row is locked and decide() is running
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		cctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		_, err := svc.Update(cctx, org, sch.ID, sch.Revision, schedules.Input{
 			TemplateID: templateID, Name: sch.Name, Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
@@ -352,38 +526,43 @@ func TestProcessDueDoesNotStarvePoolConnections(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if _, err := svc.Pause(cctx, org, sch.ID); err != nil {
 			errs <- fmt.Errorf("concurrent pause: %w (pool exhaustion deadlock?)", err)
 		}
 	}()
 
-	// run now's schedule_runs insert takes only FOR KEY SHARE on the
-	// schedule row (see TestLockDueSchedulesDoesNotBlockRunNow for that
-	// claim in isolation, without the pool_max_conns=2 contention from
-	// update/pause above also competing for the one spare connection).
-	// Here it only needs to complete without error inside a generous
-	// bound, the same as update and pause.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if _, err := svc.RunNow(cctx, org, sch.ID, uuid.Must(uuid.NewV7())); err != nil {
 			errs <- fmt.Errorf("concurrent run now: %w (pool exhaustion deadlock?)", err)
 		}
 	}()
 
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
+	allDone := make(chan struct{})
+	go func() { wg.Wait(); close(allDone) }()
 	select {
-	case <-done:
-	case <-time.After(15 * time.Second):
-		t.Fatal("concurrent operations did not complete within 15s — pool exhaustion deadlock?")
+	case <-allDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("update/pause/run now did not complete within 30s — pool exhaustion deadlock?")
 	}
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+
+	select {
+	case elapsed := <-tickDone:
+		// batchDeadlineFactor × tick = 4 × 500ms = 2s: a stuck enqueue
+		// must fail fast within that bound, not merely "eventually".
+		if elapsed > 5*time.Second {
+			t.Errorf("Tick took %s, want close to its own 2s deadline (batchDeadlineFactor × tick) — a starved enqueue must fail fast, not hang", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Tick did not return within 10s of the concurrent operations finishing — pool exhaustion deadlock?")
 	}
 }

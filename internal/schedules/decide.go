@@ -26,12 +26,16 @@ type Decision struct {
 //
 // A panic anywhere below — a stored override that no longer reveals, a
 // third-party enqueuer's own bug, cronexpr on some edge case, an empty
-// jobs slice if that contract ever changes — is recovered into a generic
-// failed Decision instead of crashing the ticker's goroutine (fix round
-// 1, Important #1). next is computed early, before anything risky runs,
-// so the recovered Decision still advances next_run_at: the poisoned
-// occurrence is skipped rather than staying due forever and re-panicking,
-// and possibly crash-looping the whole manager, on every following tick.
+// jobs slice if that contract ever changes, the auditor itself — is
+// recovered into a generic failed Decision instead of crashing the
+// ticker's goroutine (fix round 1, Important #1). The recover is
+// registered before cronexpr.Parse/Next run (fix round 2 closed a gap: a
+// panic there used to run before any recover was registered at all, so it
+// escaped Decide entirely and left the row due forever, re-panicking
+// every tick). next is only used once nextComputed confirms it was
+// actually assigned — a panic inside Next itself leaves it at its zero
+// value, and NextRunAt must be nil then, the same as any other schedule
+// Decide cannot safely advance past.
 func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace time.Duration) (result Decision) {
 	run := Run{ID: s.newID(), OrgID: sch.OrgID, ScheduleID: sch.ID, DecidedAt: now}
 	if sch.NextRunAt != nil {
@@ -39,6 +43,27 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 	} else {
 		run.DueAt = now
 	}
+
+	var next time.Time
+	var nextComputed bool
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.ErrorContext(ctx, "schedule decide panicked; recording a failed run", "schedule", sch.ID, "org", sch.OrgID, "panic", r, "stack", string(debug.Stack()))
+			result = Decision{Run: run}
+			result.Run.Outcome, result.Run.Reason = OutcomeFailed, "the scheduled run failed unexpectedly (see the manager log)"
+			if nextComputed {
+				result.NextRunAt = &next
+			}
+			// auditSafely, not auditRun: if the panic being recovered
+			// here came from inside auditRun's own normal-path call
+			// below, a persistent fault there would panic again on this
+			// call too, and a panic raised by a deferred function is not
+			// caught by that function's own recover — it would escape
+			// Decide entirely (fix round 2, Minor).
+			s.auditSafely(ctx, sch, result.Run)
+		}
+	}()
+
 	expr, err := cronexpr.Parse(sch.Cron)
 	loc, lerr := time.LoadLocation(sch.Timezone)
 	if err != nil || lerr != nil {
@@ -47,15 +72,8 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 		s.auditRun(ctx, sch, run)
 		return Decision{Run: run}
 	}
-	next := expr.Next(now, loc)
-	defer func() {
-		if r := recover(); r != nil {
-			s.log.ErrorContext(ctx, "schedule decide panicked; recording a failed run", "schedule", sch.ID, "org", sch.OrgID, "panic", r, "stack", string(debug.Stack()))
-			result = Decision{Run: run, NextRunAt: &next}
-			result.Run.Outcome, result.Run.Reason = OutcomeFailed, "the scheduled run failed unexpectedly (see the manager log)"
-			s.auditRun(ctx, sch, result.Run)
-		}
-	}()
+	next = expr.Next(now, loc)
+	nextComputed = true
 	decision := Decision{Run: run, NextRunAt: &next}
 
 	reason := ""
@@ -102,6 +120,25 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 	}
 	s.auditRun(ctx, sch, decision.Run)
 	return decision
+}
+
+// auditSafely calls auditRun but never lets it panic a second time. It
+// exists for Decide's own recover handler: a panic that originated inside
+// auditRun itself (the normal-path call after a successful enqueue, or
+// the invalid-timetable call above) would otherwise panic again here if
+// the underlying fault is persistent, and a panic raised by a deferred
+// function is not caught by that function's own recover — it would
+// escape Decide entirely, be caught only by processRow's outer recover
+// (fix round 1, Important #1), and leave the row without any run written
+// back, re-enqueuing on every tick while the auditor keeps panicking (fix
+// round 2, Minor).
+func (s *Service) auditSafely(ctx context.Context, sch Schedule, run Run) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.ErrorContext(ctx, "schedule audit panicked while recording a recovered run", "schedule", sch.ID, "org", sch.OrgID, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	s.auditRun(ctx, sch, run)
 }
 
 // auditRun records a triggered or failed scheduled run with actor
