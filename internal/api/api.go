@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -68,6 +69,9 @@ type Deps struct {
 	// Jobs is the org-scoped job queue; the connection-test trigger route
 	// enqueues through it (registerHostopsRoutes).
 	Jobs *jobs.Service
+	// Schedules fires job templates on a timetable; see
+	// registerScheduleRoutes.
+	Schedules *schedules.Service
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -168,6 +172,9 @@ func (d Deps) validate() error {
 	}
 	if d.Jobs == nil {
 		missing = append(missing, "Jobs")
+	}
+	if d.Schedules == nil {
+		missing = append(missing, "Schedules")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -340,4 +347,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerJobRoutes(orgScoped, deps)             // /orgs/{org}/jobs... + the run action on job templates
 	registerAdhocRoute(orgScoped, deps)            // POST /orgs/{org}/hosts/command — the ad-hoc shell command
 	registerHostopsRoutes(orgScoped, deps)         // connection test + host key, all /orgs/{org}/hosts/{id}/...
+	registerScheduleRoutes(orgScoped, deps)        // /orgs/{org}/schedules...
 }

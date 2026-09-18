@@ -257,7 +257,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Credentials: credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
-		Jobs: jobsSvc, Version: cfg.Version,
+		Jobs: jobsSvc, Schedules: schedulesSvc, Version: cfg.Version,
 	})
 	if err != nil {
 		appDB.Close()

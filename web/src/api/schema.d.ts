@@ -1105,6 +1105,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org schedules */
+        get: operations["get-api-v1-orgs-by-org-schedules"];
+        put?: never;
+        /** Post API v1 orgs by org schedules */
+        post: operations["createSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/pause-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules pause all */
+        post: operations["pauseAllSchedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules preview */
+        post: operations["previewSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org schedules by ID */
+        get: operations["get-api-v1-orgs-by-org-schedules-by-id"];
+        /** Put API v1 orgs by org schedules by ID */
+        put: operations["updateSchedule"];
+        post?: never;
+        /** Delete API v1 orgs by org schedules by ID */
+        delete: operations["deleteSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules by ID pause */
+        post: operations["pauseSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules by ID resume */
+        post: operations["resumeSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules by ID run */
+        post: operations["runSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org schedules by ID runs */
+        get: operations["get-api-v1-orgs-by-org-schedules-by-id-runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/tags": {
         parameters: {
             query?: never;
@@ -1312,6 +1451,11 @@ export interface components {
             /** @description One-time private key; exactly one of password and private_key */
             private_key?: string;
             user: string;
+        };
+        CatchUpDTO: {
+            enabled: boolean;
+            /** @description Go duration, 1m to 24h (default 1h) */
+            window?: string;
         };
         CheckDTO: {
             detail: string;
@@ -1646,6 +1790,14 @@ export interface components {
             vars: {
                 [key: string]: unknown;
             };
+        };
+        GuardsDTO: {
+            catch_up?: components["schemas"]["CatchUpDTO"];
+            /**
+             * @description skip (default) records skipped_overlap while a run of the template is active
+             * @enum {string}
+             */
+            overlap?: "skip" | "queue";
         };
         HealthOutputBody: {
             /**
@@ -2458,6 +2610,129 @@ export interface components {
             job_count: number;
             job_id: string;
         };
+        ScheduleBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleBody.json
+             */
+            readonly $schema?: string;
+            cron?: string;
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            guards?: components["schemas"]["GuardsDTO"];
+            limit?: string;
+            /** @enum {string} */
+            mode: "cron" | "simple";
+            name: string;
+            simple?: components["schemas"]["SimpleDTO"];
+            /** Format: uuid */
+            template_id: string;
+            timezone: string;
+        };
+        ScheduleDTO: {
+            /** Format: date-time */
+            created_at: string;
+            cron: string;
+            /** @description Human text for simple shapes; empty otherwise */
+            description: string;
+            /** @description Overrides; secret values read as {"$secret":"set"} */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            guards: components["schemas"]["GuardsDTO"];
+            id: string;
+            last_run?: components["schemas"]["ScheduleRunDTO"];
+            /** Format: date-time */
+            last_run_at?: string;
+            limit?: string;
+            /** @enum {string} */
+            mode: "cron" | "simple";
+            name: string;
+            /** Format: date-time */
+            next_run_at?: string;
+            paused: boolean;
+            /** Format: int64 */
+            revision: number;
+            simple?: components["schemas"]["SimpleDTO"];
+            template_id: string;
+            timezone: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ScheduleListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleListOutputBody.json
+             */
+            readonly $schema?: string;
+            schedules: components["schemas"]["ScheduleDTO"][] | null;
+        };
+        ScheduleOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleOutputBody.json
+             */
+            readonly $schema?: string;
+            schedule: components["schemas"]["ScheduleDTO"];
+        };
+        SchedulePauseAllOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SchedulePauseAllOutputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            paused: number;
+        };
+        SchedulePreviewInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SchedulePreviewInputBody.json
+             */
+            readonly $schema?: string;
+            cron?: string;
+            /** @enum {string} */
+            mode: "cron" | "simple";
+            simple?: components["schemas"]["SimpleDTO"];
+            timezone: string;
+        };
+        SchedulePreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SchedulePreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            cron: string;
+            description: string;
+            next: string[] | null;
+        };
+        ScheduleRunDTO: {
+            /** Format: date-time */
+            decided_at: string;
+            /** Format: date-time */
+            due_at: string;
+            id: string;
+            job_group_id?: string;
+            /** @enum {string} */
+            outcome: "triggered" | "skipped_overlap" | "missed" | "failed";
+            reason?: string;
+        };
+        ScheduleRunsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleRunsOutputBody.json
+             */
+            readonly $schema?: string;
+            runs: components["schemas"]["ScheduleRunDTO"][] | null;
+        };
         Schema: {
             fields: components["schemas"]["Field"][] | null;
         };
@@ -2496,6 +2771,21 @@ export interface components {
             admin_mfa_enrolled: boolean;
             completed: boolean;
             version: string;
+        };
+        SimpleDTO: {
+            /**
+             * Format: int64
+             * @description monthly: 1-31; months without that day are skipped
+             */
+            day?: number;
+            /** @description weekly: mon..sun */
+            days?: string[] | null;
+            /** Format: int64 */
+            every?: number;
+            /** @enum {string} */
+            kind: "every_minutes" | "every_hours" | "daily" | "weekly" | "monthly";
+            /** @description HH:MM in the schedule's time zone */
+            time?: string;
         };
         SmtpSettingsBody: {
             /**
@@ -5808,6 +6098,379 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepoSyncOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-schedules": {
+        parameters: {
+            query?: {
+                /** @description Only this template's schedules */
+                template_id?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    pauseAllSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePauseAllOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    previewSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulePreviewInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-schedules-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateSchedule: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The schedule's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    pauseSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    resumeSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    runSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-schedules-by-id-runs": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRunsOutputBody"];
                 };
             };
             /** @description Error */

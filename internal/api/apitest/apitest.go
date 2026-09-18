@@ -33,6 +33,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -242,12 +243,18 @@ func New(t *testing.T, opts ...Option) *Server {
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, crypto.NewBox(testMasterKey))
+	auditRec := audit.NewRecorder(audit.NewSQLStore(d), time.Now)
+	// The schedules service (Task 7): fires job templates on a timetable
+	// through the same org-scoped jobs.Service every other trigger uses,
+	// exactly like production wiring (internal/app.Build) — the ticker
+	// itself is not started here, the same way the reaper is not.
+	schedulesSvc := schedules.NewService(schedules.NewSQLStore(d), templatesSvc, jobsSvc, auditRec, time.Now, rand.Reader, nil)
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:   auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
 		Tenancy:  tenancySvc,
-		Audit:    audit.NewRecorder(audit.NewSQLStore(d), time.Now),
+		Audit:    auditRec,
 		ClientIP: clientip.New(nil),
 		Setup:    setupSvc,
 		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
@@ -265,6 +272,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Playbooks:   playbooksSvc,
 		Templates:   templatesSvc,
 		Jobs:        jobsSvc,
+		Schedules:   schedulesSvc,
 	}
 	for _, opt := range opts {
 		opt(s)

@@ -98,6 +98,11 @@ var auditAllowlist = map[string]string{
 	// not a query string. No object is mutated, so there is nothing for an
 	// audit event to attribute.
 	"POST /api/v1/orgs/{org}/hosts/query": "a read (lists hosts matching a selector) that uses POST only because the filter is a request body, not query params; persists nothing, so there is no object mutation to record",
+
+	// Task 7: computes the next occurrences of a cron/simple timetable an
+	// operator is still editing — like /hosts/query above, POST only
+	// because the shape is a request body — and persists nothing.
+	"POST /api/v1/orgs/{org}/schedules/preview": "read-only computation of the next occurrences; mutates nothing",
 }
 
 // registeredMutatingOps builds the full route table the same way api.New
