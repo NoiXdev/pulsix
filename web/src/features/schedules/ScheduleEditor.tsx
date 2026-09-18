@@ -73,7 +73,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
   const [simple, setSimple] = useState<SimpleForm>(fromSimpleBody(initial?.simple));
   const [overlapSkip, setOverlapSkip] = useState((initial?.guards.overlap ?? 'skip') === 'skip');
   const [catchUp, setCatchUp] = useState(initial?.guards.catch_up?.enabled ?? false);
-  const [window, setWindow] = useState(initial?.guards.catch_up?.window || '1h');
+  const [catchUpWindow, setCatchUpWindow] = useState(initial?.guards.catch_up?.window || '1h');
   const [limit, setLimit] = useState(initial?.limit ?? '');
   const [extraVars, setExtraVars] = useState(initial?.extra_vars ? JSON.stringify(initial.extra_vars, null, 2) : '');
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +113,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       mode,
       ...(mode === 'simple' ? { simple: toSimpleBody(simple) } : { cron }),
       timezone,
-      guards: { overlap: overlapSkip ? 'skip' : 'queue', catch_up: { enabled: catchUp, window } },
+      guards: { overlap: overlapSkip ? 'skip' : 'queue', catch_up: { enabled: catchUp, window: catchUpWindow } },
       ...(limit !== '' ? { limit } : {}),
       ...(vars ? { extra_vars: vars } : {}),
     } as ScheduleInput;
@@ -153,8 +153,21 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
 
   async function del() {
     if (!initial || !confirm(`Delete schedule ${initial.name}?`)) return;
-    await remove.mutateAsync(initial.id);
-    onClose();
+    try {
+      await remove.mutateAsync(initial.id);
+      onClose();
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+    }
+  }
+
+  async function toggle() {
+    if (!initial) return;
+    try {
+      await (initial.paused ? resume : pause).mutateAsync(initial.id);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : (initial.paused ? 'Resuming failed' : 'Pausing failed'), 'destructive');
+    }
   }
 
   const zoneFmt = (at: string) => new Date(at).toLocaleString(undefined, { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' });
@@ -247,7 +260,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       )}
       <div className="flex flex-col gap-1 rounded-md border border-border p-2">
         {previewError ? (
-          <p className="text-xs text-[var(--px-crit)]">{previewError}</p>
+          <p role="alert" className="text-xs text-[var(--px-crit)]">{previewError}</p>
         ) : (
           <>
             {preview.data?.description && <p className="text-xs">{preview.data.description}</p>}
@@ -272,7 +285,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       {catchUp ? (
         <>
           <Label htmlFor="sched-window">Catch-up window</Label>
-          <select id="sched-window" className={SELECT} value={window} onChange={(e) => setWindow(e.target.value)}>
+          <select id="sched-window" className={SELECT} value={catchUpWindow} onChange={(e) => setCatchUpWindow(e.target.value)}>
             {WINDOWS.map((w) => (
               <option key={w} value={w}>
                 {w}
@@ -294,7 +307,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
         placeholder='{"release": "v1.2"}'
         disabled={!canWrite}
       />
-      {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[var(--px-crit)]">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">
         {initial && canRun && (
           <Button type="button" onClick={() => void run()}>
@@ -302,7 +315,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
           </Button>
         )}
         {initial && canWrite && (
-          <Button type="button" onClick={() => void (initial.paused ? resume : pause).mutateAsync(initial.id)}>
+          <Button type="button" onClick={() => void toggle()}>
             {initial.paused ? 'Resume' : 'Pause'}
           </Button>
         )}

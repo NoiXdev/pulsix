@@ -121,6 +121,43 @@ describe('SchedulesPage', () => {
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
   });
 
+  it('surfaces a toast instead of an unhandled rejection when delete fails', async () => {
+    const user = userEvent.setup();
+    window.confirm = () => true;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/schedules': { schedules: [schedule()] },
+      'GET /api/v1/orgs/acme/schedules/s1': { schedule: schedule() },
+      'GET /api/v1/orgs/acme/schedules/s1/runs': { runs: [] },
+      'POST /api/v1/orgs/acme/schedules/preview': { cron: '0 3 * * 2,4', description: '', next: [] },
+      'DELETE /api/v1/orgs/acme/schedules/s1': () => new Response(JSON.stringify({ detail: 'schedule still referenced' }), { status: 409 }),
+    });
+    renderPage('/o/acme/schedules?id=s1');
+    const panel = await screen.findByRole('region', { name: 'Schedule editor' });
+    await user.click(await within(panel).findByRole('button', { name: 'Delete' }));
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent('schedule still referenced');
+    // The panel stays open — a failed delete must not act as if it succeeded.
+    expect(screen.getByRole('region', { name: 'Schedule editor' })).toBeInTheDocument();
+  });
+
+  it('surfaces a toast instead of an unhandled rejection when pause fails', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/schedules': { schedules: [schedule()] },
+      'GET /api/v1/orgs/acme/schedules/s1': { schedule: schedule() },
+      'GET /api/v1/orgs/acme/schedules/s1/runs': { runs: [] },
+      'POST /api/v1/orgs/acme/schedules/preview': { cron: '0 3 * * 2,4', description: '', next: [] },
+      'POST /api/v1/orgs/acme/schedules/s1/pause': () => new Response(JSON.stringify({ detail: 'schedule already paused' }), { status: 409 }),
+    });
+    renderPage('/o/acme/schedules?id=s1');
+    const panel = await screen.findByRole('region', { name: 'Schedule editor' });
+    await user.click(await within(panel).findByRole('button', { name: 'Pause' }));
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent('schedule already paused');
+  });
+
   it('pauses all schedules after confirmation and hides writes from viewers', async () => {
     const user = userEvent.setup();
     let paused = false;
