@@ -47,11 +47,13 @@ const (
 	orgURIPrefix  = "urn:pulsix:org:"
 	zoneURIPrefix = "urn:pulsix:zone:"
 
-	// The root lives 3650 days; leaves live 825 days, the longest lifetime
-	// mobile platforms accept for TLS certificates.
+	// The root lives 3650 days.
 	rootValidity = 3650 * 24 * time.Hour
-	leafValidity = 825 * 24 * time.Hour
 )
+
+// LeafValidity is the lifetime of every worker and server certificate
+// (spec 2026-09-18 §4: 90 days; the worker renews once a third is left).
+const LeafValidity = 90 * 24 * time.Hour
 
 // Config names the CA's common name and, optionally, the host the gRPC
 // listener serves the server certificate for.
@@ -225,22 +227,13 @@ func (c *CA) generate() (caBlob, error) {
 	return caBlob{KeyPEM: keyPEM, CertPEM: string(pemCert(der))}, nil
 }
 
-// Issue signs a fresh ECDSA P-384 key with the root: a worker certificate
-// for (orgID, zoneID, workerName) with the pulsix-* URI SANs, or — when
-// orgID is nil and workerName is empty — the gRPC server certificate with
-// ExtKeyUsageServerAuth and the listen host as DNS SAN. It returns the
-// certificate and key as PEM and the certificate's serial number.
-func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, workerName string) (certPEM, keyPEM []byte, serial *big.Int, err error) {
-	if c.cert == nil {
-		return nil, nil, nil, fmt.Errorf("issue certificate: %w", ErrNotReady)
-	}
-	priv, err := ecdsa.GenerateKey(elliptic.P384(), c.rand)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate key: %w", err)
-	}
+// leafTemplate is the certificate Issue and SignCSR both sign: a worker
+// client certificate with the pulsix URI SANs, or (orgID nil, workerName
+// empty) the gRPC server certificate.
+func (c *CA) leafTemplate(orgID *uuid.UUID, zoneID uuid.UUID, workerName string) (*x509.Certificate, error) {
 	leafSerial, err := newSerial(c.rand)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("draw serial: %w", err)
+		return nil, fmt.Errorf("draw serial: %w", err)
 	}
 	server := orgID == nil && workerName == ""
 	commonName := c.cfg.CommonName
@@ -256,13 +249,9 @@ func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, worker
 	}
 	now := c.now()
 	tpl := &x509.Certificate{
-		SerialNumber:          leafSerial,
-		Subject:               pkix.Name{CommonName: commonName},
-		NotBefore:             now,
-		NotAfter:              now.Add(leafValidity),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		URIs:                  uris,
+		SerialNumber: leafSerial, Subject: pkix.Name{CommonName: commonName},
+		NotBefore: now, NotAfter: now.Add(LeafValidity),
+		KeyUsage: x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, URIs: uris,
 	}
 	if server {
 		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
@@ -271,6 +260,26 @@ func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, worker
 		}
 	} else {
 		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
+	return tpl, nil
+}
+
+// Issue signs a fresh ECDSA P-384 key with the root: a worker certificate
+// for (orgID, zoneID, workerName) with the pulsix-* URI SANs, or — when
+// orgID is nil and workerName is empty — the gRPC server certificate with
+// ExtKeyUsageServerAuth and the listen host as DNS SAN. It returns the
+// certificate and key as PEM and the certificate's serial number.
+func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, workerName string) (certPEM, keyPEM []byte, serial *big.Int, err error) {
+	if c.cert == nil {
+		return nil, nil, nil, fmt.Errorf("issue certificate: %w", ErrNotReady)
+	}
+	priv, err := ecdsa.GenerateKey(elliptic.P384(), c.rand)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate key: %w", err)
+	}
+	tpl, err := c.leafTemplate(orgID, zoneID, workerName)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	der, err := x509.CreateCertificate(c.rand, tpl, c.cert, &priv.PublicKey, c.key)
 	if err != nil {

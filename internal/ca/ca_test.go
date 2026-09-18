@@ -116,7 +116,7 @@ func TestIssueAndVerifyRoundTrip(t *testing.T) {
 	if len(crt.ExtKeyUsage) != 1 || crt.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
 		t.Errorf("ext key usage = %v", crt.ExtKeyUsage)
 	}
-	if crt.NotAfter.Sub(crt.NotBefore) < 800*24*time.Hour {
+	if crt.NotAfter.Sub(crt.NotBefore) != ca.LeafValidity {
 		t.Errorf("validity = %v", crt.NotAfter.Sub(crt.NotBefore))
 	}
 	// The key matches the certificate.
@@ -310,7 +310,7 @@ func TestIssueUsesTheInjectedClock(t *testing.T) {
 	if !crt.NotBefore.Equal(now) {
 		t.Errorf("leaf NotBefore = %v, want %v", crt.NotBefore, now)
 	}
-	if got := crt.NotAfter.Sub(crt.NotBefore); got != 825*24*time.Hour {
+	if got := crt.NotAfter.Sub(crt.NotBefore); got != ca.LeafValidity {
 		t.Errorf("leaf validity = %v", got)
 	}
 }

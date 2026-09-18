@@ -34,7 +34,7 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 
 	// The claim doubles as the worker's heartbeat: Touch records last_seen
 	// and the self-reported build version.
-	if err := s.deps.Workers.Touch(ctx, worker.CertSerial, req.GetVersion()); err != nil {
+	if err := s.deps.Workers.Touch(ctx, worker.ID, req.GetVersion()); err != nil {
 		return nil, status.Errorf(codes.Internal, "touch worker: %v", err)
 	}
 

@@ -19,9 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkerService_ClaimJob_FullMethodName     = "/pulsix.worker.v1.WorkerService/ClaimJob"
-	WorkerService_RunEvents_FullMethodName    = "/pulsix.worker.v1.WorkerService/RunEvents"
-	WorkerService_ReportResult_FullMethodName = "/pulsix.worker.v1.WorkerService/ReportResult"
+	WorkerService_ClaimJob_FullMethodName         = "/pulsix.worker.v1.WorkerService/ClaimJob"
+	WorkerService_RunEvents_FullMethodName        = "/pulsix.worker.v1.WorkerService/RunEvents"
+	WorkerService_ReportResult_FullMethodName     = "/pulsix.worker.v1.WorkerService/ReportResult"
+	WorkerService_Enroll_FullMethodName           = "/pulsix.worker.v1.WorkerService/Enroll"
+	WorkerService_RenewCertificate_FullMethodName = "/pulsix.worker.v1.WorkerService/RenewCertificate"
 )
 
 // WorkerServiceClient is the client API for WorkerService service.
@@ -40,6 +42,14 @@ type WorkerServiceClient interface {
 	// ReportResult is the terminal unary call: the worker reports the final
 	// status and per-host stats. Sent after the last RunEvents message.
 	ReportResult(ctx context.Context, in *ReportResultRequest, opts ...grpc.CallOption) (*ReportResultResponse, error)
+	// Enroll exchanges a one-time enrollment token and a certificate
+	// request for the worker's first client certificate. It is the only
+	// method callable without a client certificate; the worker pins the CA
+	// by the fingerprint in its token before sending anything.
+	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
+	// RenewCertificate issues a fresh certificate for the calling worker's
+	// key. The old certificate stays valid until it expires.
+	RenewCertificate(ctx context.Context, in *RenewCertificateRequest, opts ...grpc.CallOption) (*RenewCertificateResponse, error)
 }
 
 type workerServiceClient struct {
@@ -83,6 +93,26 @@ func (c *workerServiceClient) ReportResult(ctx context.Context, in *ReportResult
 	return out, nil
 }
 
+func (c *workerServiceClient) Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnrollResponse)
+	err := c.cc.Invoke(ctx, WorkerService_Enroll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerServiceClient) RenewCertificate(ctx context.Context, in *RenewCertificateRequest, opts ...grpc.CallOption) (*RenewCertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewCertificateResponse)
+	err := c.cc.Invoke(ctx, WorkerService_RenewCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServiceServer is the server API for WorkerService service.
 // All implementations should embed UnimplementedWorkerServiceServer
 // for forward compatibility.
@@ -99,6 +129,14 @@ type WorkerServiceServer interface {
 	// ReportResult is the terminal unary call: the worker reports the final
 	// status and per-host stats. Sent after the last RunEvents message.
 	ReportResult(context.Context, *ReportResultRequest) (*ReportResultResponse, error)
+	// Enroll exchanges a one-time enrollment token and a certificate
+	// request for the worker's first client certificate. It is the only
+	// method callable without a client certificate; the worker pins the CA
+	// by the fingerprint in its token before sending anything.
+	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
+	// RenewCertificate issues a fresh certificate for the calling worker's
+	// key. The old certificate stays valid until it expires.
+	RenewCertificate(context.Context, *RenewCertificateRequest) (*RenewCertificateResponse, error)
 }
 
 // UnimplementedWorkerServiceServer should be embedded to have
@@ -116,6 +154,12 @@ func (UnimplementedWorkerServiceServer) RunEvents(grpc.BidiStreamingServer[RunEv
 }
 func (UnimplementedWorkerServiceServer) ReportResult(context.Context, *ReportResultRequest) (*ReportResultResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportResult not implemented")
+}
+func (UnimplementedWorkerServiceServer) Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Enroll not implemented")
+}
+func (UnimplementedWorkerServiceServer) RenewCertificate(context.Context, *RenewCertificateRequest) (*RenewCertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewCertificate not implemented")
 }
 func (UnimplementedWorkerServiceServer) testEmbeddedByValue() {}
 
@@ -180,6 +224,42 @@ func _WorkerService_ReportResult_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerService_Enroll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnrollRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).Enroll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_Enroll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).Enroll(ctx, req.(*EnrollRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerService_RenewCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).RenewCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_RenewCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).RenewCertificate(ctx, req.(*RenewCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkerService_ServiceDesc is the grpc.ServiceDesc for WorkerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -194,6 +274,14 @@ var WorkerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportResult",
 			Handler:    _WorkerService_ReportResult_Handler,
+		},
+		{
+			MethodName: "Enroll",
+			Handler:    _WorkerService_Enroll_Handler,
+		},
+		{
+			MethodName: "RenewCertificate",
+			Handler:    _WorkerService_RenewCertificate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

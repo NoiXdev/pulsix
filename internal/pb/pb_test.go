@@ -130,12 +130,12 @@ func (minimalServer) ReportResult(context.Context, *workerpb.ReportResultRequest
 func TestRegisterWorkerServiceServer(t *testing.T) {
 	t.Parallel()
 
-	// The generated server interface exposes exactly the three contract
-	// methods.
-	if got := reflect.TypeOf((*workerpb.WorkerServiceServer)(nil)).Elem().NumMethod(); got != 3 {
-		t.Errorf("WorkerServiceServer has %d methods, want 3", got)
+	// The generated server interface exposes exactly the three job RPCs
+	// plus Enroll and RenewCertificate (v0.2c).
+	if got := reflect.TypeOf((*workerpb.WorkerServiceServer)(nil)).Elem().NumMethod(); got != 5 {
+		t.Errorf("WorkerServiceServer has %d methods, want 5", got)
 	}
-	for _, name := range []string{"ClaimJob", "RunEvents", "ReportResult"} {
+	for _, name := range []string{"ClaimJob", "RunEvents", "ReportResult", "Enroll", "RenewCertificate"} {
 		_, ok := reflect.TypeOf((*workerpb.WorkerServiceServer)(nil)).Elem().MethodByName(name)
 		if !ok {
 			t.Errorf("WorkerServiceServer is missing method %q", name)
@@ -150,4 +150,34 @@ func TestRegisterWorkerServiceServer(t *testing.T) {
 	minimal := grpc.NewServer()
 	workerpb.RegisterWorkerServiceServer(minimal, minimalServer{})
 	minimal.Stop()
+}
+
+func TestEnrollMessagesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	req := &workerpb.EnrollRequest{TokenId: "0197c0a2-0000-7000-8000-000000000001", Secret: []byte("s3cr3t"), Csr: []byte("csr"), Version: "v0.2c"}
+	raw, err := proto.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotReq workerpb.EnrollRequest
+	if err := proto.Unmarshal(raw, &gotReq); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(req, &gotReq) {
+		t.Errorf("round-tripped enroll request differs:\nwant %+v\ngot  %+v", req, &gotReq)
+	}
+
+	resp := &workerpb.RenewCertificateResponse{Certificate: []byte("cert")}
+	raw, err = proto.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotResp workerpb.RenewCertificateResponse
+	if err := proto.Unmarshal(raw, &gotResp); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(resp, &gotResp) {
+		t.Errorf("round-tripped renew response differs:\nwant %+v\ngot  %+v", resp, &gotResp)
+	}
 }

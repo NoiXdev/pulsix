@@ -7,9 +7,53 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createWorkerEnrollment = `-- name: CreateWorkerEnrollment :one
+INSERT INTO worker_enrollments (id, org_id, zone_id, name, secret_hash, expires_at, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, org_id, zone_id, name, secret_hash, expires_at, used_at, worker_id, created_by, created_at
+`
+
+type CreateWorkerEnrollmentParams struct {
+	ID         uuid.UUID   `json:"id"`
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     uuid.UUID   `json:"zone_id"`
+	Name       string      `json:"name"`
+	SecretHash []byte      `json:"secret_hash"`
+	ExpiresAt  time.Time   `json:"expires_at"`
+	CreatedBy  pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateWorkerEnrollment(ctx context.Context, arg CreateWorkerEnrollmentParams) (WorkerEnrollment, error) {
+	row := q.db.QueryRow(ctx, createWorkerEnrollment,
+		arg.ID,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Name,
+		arg.SecretHash,
+		arg.ExpiresAt,
+		arg.CreatedBy,
+	)
+	var i WorkerEnrollment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.SecretHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.WorkerID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
 
 const deleteWorker = `-- name: DeleteWorker :execrows
 DELETE FROM workers WHERE org_id = $1 AND id = $2
@@ -28,14 +72,34 @@ func (q *Queries) DeleteWorker(ctx context.Context, arg DeleteWorkerParams) (int
 	return result.RowsAffected(), nil
 }
 
-const getWorkerBySerial = `-- name: GetWorkerBySerial :one
-SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at FROM workers WHERE cert_serial = $1
+const deleteWorkerEnrollment = `-- name: DeleteWorkerEnrollment :execrows
+DELETE FROM worker_enrollments WHERE org_id = $1 AND id = $2 AND used_at IS NULL
 `
 
-// Org-unscoped on purpose: the gRPC interceptor has no org context, and the
-// serial is globally unique (the secret the worker authenticates with).
-func (q *Queries) GetWorkerBySerial(ctx context.Context, certSerial string) (Worker, error) {
-	row := q.db.QueryRow(ctx, getWorkerBySerial, certSerial)
+type DeleteWorkerEnrollmentParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) DeleteWorkerEnrollment(ctx context.Context, arg DeleteWorkerEnrollmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteWorkerEnrollment, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getWorkerByName = `-- name: GetWorkerByName :one
+SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 AND name = $2
+`
+
+type GetWorkerByNameParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Name  string    `json:"name"`
+}
+
+func (q *Queries) GetWorkerByName(ctx context.Context, arg GetWorkerByNameParams) (Worker, error) {
+	row := q.db.QueryRow(ctx, getWorkerByName, arg.OrgID, arg.Name)
 	var i Worker
 	err := row.Scan(
 		&i.ID,
@@ -46,14 +110,28 @@ func (q *Queries) GetWorkerBySerial(ctx context.Context, certSerial string) (Wor
 		&i.LastSeen,
 		&i.Version,
 		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const getWorkerEnrollmentOrg = `-- name: GetWorkerEnrollmentOrg :one
+SELECT org_id FROM worker_enrollments WHERE id = $1
+`
+
+// Enroll's first step, org-unscoped: the id is the token's public half.
+func (q *Queries) GetWorkerEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getWorkerEnrollmentOrg, id)
+	var org_id uuid.UUID
+	err := row.Scan(&org_id)
+	return org_id, err
 }
 
 const insertWorker = `-- name: InsertWorker :one
 INSERT INTO workers (id, org_id, zone_id, name, cert_serial, version)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, org_id, zone_id, name, cert_serial, last_seen, version, created_at
+RETURNING id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at
 `
 
 type InsertWorkerParams struct {
@@ -84,12 +162,80 @@ func (q *Queries) InsertWorker(ctx context.Context, arg InsertWorkerParams) (Wor
 		&i.LastSeen,
 		&i.Version,
 		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
 	)
 	return i, err
 }
 
+const insertWorkerCertificate = `-- name: InsertWorkerCertificate :exec
+INSERT INTO worker_certificates (serial, org_id, worker_id, not_before, not_after)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertWorkerCertificateParams struct {
+	Serial    string    `json:"serial"`
+	OrgID     uuid.UUID `json:"org_id"`
+	WorkerID  uuid.UUID `json:"worker_id"`
+	NotBefore time.Time `json:"not_before"`
+	NotAfter  time.Time `json:"not_after"`
+}
+
+func (q *Queries) InsertWorkerCertificate(ctx context.Context, arg InsertWorkerCertificateParams) error {
+	_, err := q.db.Exec(ctx, insertWorkerCertificate,
+		arg.Serial,
+		arg.OrgID,
+		arg.WorkerID,
+		arg.NotBefore,
+		arg.NotAfter,
+	)
+	return err
+}
+
+const listPendingWorkerEnrollments = `-- name: ListPendingWorkerEnrollments :many
+SELECT id, org_id, zone_id, name, secret_hash, expires_at, used_at, worker_id, created_by, created_at FROM worker_enrollments
+WHERE org_id = $1 AND used_at IS NULL AND expires_at > $2
+ORDER BY created_at
+`
+
+type ListPendingWorkerEnrollmentsParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Now   time.Time `json:"now"`
+}
+
+func (q *Queries) ListPendingWorkerEnrollments(ctx context.Context, arg ListPendingWorkerEnrollmentsParams) ([]WorkerEnrollment, error) {
+	rows, err := q.db.Query(ctx, listPendingWorkerEnrollments, arg.OrgID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkerEnrollment
+	for rows.Next() {
+		var i WorkerEnrollment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Name,
+			&i.SecretHash,
+			&i.ExpiresAt,
+			&i.UsedAt,
+			&i.WorkerID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkers = `-- name: ListWorkers :many
-SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at FROM workers WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListWorkers(ctx context.Context, orgID uuid.UUID) ([]Worker, error) {
@@ -110,6 +256,8 @@ func (q *Queries) ListWorkers(ctx context.Context, orgID uuid.UUID) ([]Worker, e
 			&i.LastSeen,
 			&i.Version,
 			&i.CreatedAt,
+			&i.Status,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -121,21 +269,100 @@ func (q *Queries) ListWorkers(ctx context.Context, orgID uuid.UUID) ([]Worker, e
 	return items, nil
 }
 
-const touchWorker = `-- name: TouchWorker :execrows
-UPDATE workers SET last_seen = now(), version = $2 WHERE cert_serial = $1
+const lockWorkerEnrollment = `-- name: LockWorkerEnrollment :one
+SELECT id, org_id, zone_id, name, secret_hash, expires_at, used_at, worker_id, created_by, created_at FROM worker_enrollments WHERE org_id = $1 AND id = $2 FOR UPDATE
 `
 
-type TouchWorkerParams struct {
-	CertSerial string `json:"cert_serial"`
-	Version    string `json:"version"`
+type LockWorkerEnrollmentParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
 }
 
-// Org-unscoped for the same reason as GetWorkerBySerial; updates only
-// last_seen and version, and matches nothing for an unknown serial.
-func (q *Queries) TouchWorker(ctx context.Context, arg TouchWorkerParams) (int64, error) {
-	result, err := q.db.Exec(ctx, touchWorker, arg.CertSerial, arg.Version)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) LockWorkerEnrollment(ctx context.Context, arg LockWorkerEnrollmentParams) (WorkerEnrollment, error) {
+	row := q.db.QueryRow(ctx, lockWorkerEnrollment, arg.OrgID, arg.ID)
+	var i WorkerEnrollment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.SecretHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.WorkerID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lookupWorkerSerial = `-- name: LookupWorkerSerial :one
+SELECT w.id, w.org_id, w.zone_id, w.name, w.cert_serial, w.last_seen, w.version, w.created_at, w.status, w.revoked_at, c.serial AS cert_serial_presented, c.not_before AS cert_not_before,
+       c.not_after AS cert_not_after, c.revoked_at AS cert_revoked_at
+FROM worker_certificates c
+JOIN workers w ON w.org_id = c.org_id AND w.id = c.worker_id
+WHERE c.serial = $1
+`
+
+type LookupWorkerSerialRow struct {
+	Worker              Worker             `json:"worker"`
+	CertSerialPresented string             `json:"cert_serial_presented"`
+	CertNotBefore       time.Time          `json:"cert_not_before"`
+	CertNotAfter        time.Time          `json:"cert_not_after"`
+	CertRevokedAt       pgtype.Timestamptz `json:"cert_revoked_at"`
+}
+
+// The gRPC authentication path, org-unscoped: a presented serial resolves
+// to its certificate and worker; the caller decides revoked vs usable.
+func (q *Queries) LookupWorkerSerial(ctx context.Context, serial string) (LookupWorkerSerialRow, error) {
+	row := q.db.QueryRow(ctx, lookupWorkerSerial, serial)
+	var i LookupWorkerSerialRow
+	err := row.Scan(
+		&i.Worker.ID,
+		&i.Worker.OrgID,
+		&i.Worker.ZoneID,
+		&i.Worker.Name,
+		&i.Worker.CertSerial,
+		&i.Worker.LastSeen,
+		&i.Worker.Version,
+		&i.Worker.CreatedAt,
+		&i.Worker.Status,
+		&i.Worker.RevokedAt,
+		&i.CertSerialPresented,
+		&i.CertNotBefore,
+		&i.CertNotAfter,
+		&i.CertRevokedAt,
+	)
+	return i, err
+}
+
+const markWorkerEnrollmentUsed = `-- name: MarkWorkerEnrollmentUsed :exec
+UPDATE worker_enrollments SET used_at = now(), worker_id = $1
+WHERE org_id = $2 AND id = $3
+`
+
+type MarkWorkerEnrollmentUsedParams struct {
+	WorkerID pgtype.UUID `json:"worker_id"`
+	OrgID    uuid.UUID   `json:"org_id"`
+	ID       uuid.UUID   `json:"id"`
+}
+
+func (q *Queries) MarkWorkerEnrollmentUsed(ctx context.Context, arg MarkWorkerEnrollmentUsedParams) error {
+	_, err := q.db.Exec(ctx, markWorkerEnrollmentUsed, arg.WorkerID, arg.OrgID, arg.ID)
+	return err
+}
+
+const touchWorkerByID = `-- name: TouchWorkerByID :exec
+UPDATE workers SET last_seen = now(), version = $1 WHERE id = $2
+`
+
+type TouchWorkerByIDParams struct {
+	Version string    `json:"version"`
+	ID      uuid.UUID `json:"id"`
+}
+
+// Org-unscoped heartbeat by worker id (a renewed certificate has a new serial).
+func (q *Queries) TouchWorkerByID(ctx context.Context, arg TouchWorkerByIDParams) error {
+	_, err := q.db.Exec(ctx, touchWorkerByID, arg.Version, arg.ID)
+	return err
 }

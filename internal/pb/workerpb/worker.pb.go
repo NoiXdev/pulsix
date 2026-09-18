@@ -548,6 +548,222 @@ func (*ReportResultResponse) Descriptor() ([]byte, []int) {
 	return file_pulsix_worker_v1_worker_proto_rawDescGZIP(), []int{6}
 }
 
+type EnrollRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TokenId       string                 `protobuf:"bytes,1,opt,name=token_id,json=tokenId,proto3" json:"token_id,omitempty"` // the enrollment id (uuid) from the token
+	Secret        []byte                 `protobuf:"bytes,2,opt,name=secret,proto3" json:"secret,omitempty"`                  // the token's 32-byte secret
+	Csr           []byte                 `protobuf:"bytes,3,opt,name=csr,proto3" json:"csr,omitempty"`                        // PEM "CERTIFICATE REQUEST"
+	Version       string                 `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`                // worker build version
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnrollRequest) Reset() {
+	*x = EnrollRequest{}
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnrollRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnrollRequest) ProtoMessage() {}
+
+func (x *EnrollRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnrollRequest.ProtoReflect.Descriptor instead.
+func (*EnrollRequest) Descriptor() ([]byte, []int) {
+	return file_pulsix_worker_v1_worker_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *EnrollRequest) GetTokenId() string {
+	if x != nil {
+		return x.TokenId
+	}
+	return ""
+}
+
+func (x *EnrollRequest) GetSecret() []byte {
+	if x != nil {
+		return x.Secret
+	}
+	return nil
+}
+
+func (x *EnrollRequest) GetCsr() []byte {
+	if x != nil {
+		return x.Csr
+	}
+	return nil
+}
+
+func (x *EnrollRequest) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+type EnrollResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Certificate   []byte                 `protobuf:"bytes,1,opt,name=certificate,proto3" json:"certificate,omitempty"`        // PEM leaf
+	CaChain       []byte                 `protobuf:"bytes,2,opt,name=ca_chain,json=caChain,proto3" json:"ca_chain,omitempty"` // PEM CA certificate
+	WorkerId      string                 `protobuf:"bytes,3,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnrollResponse) Reset() {
+	*x = EnrollResponse{}
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnrollResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnrollResponse) ProtoMessage() {}
+
+func (x *EnrollResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnrollResponse.ProtoReflect.Descriptor instead.
+func (*EnrollResponse) Descriptor() ([]byte, []int) {
+	return file_pulsix_worker_v1_worker_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *EnrollResponse) GetCertificate() []byte {
+	if x != nil {
+		return x.Certificate
+	}
+	return nil
+}
+
+func (x *EnrollResponse) GetCaChain() []byte {
+	if x != nil {
+		return x.CaChain
+	}
+	return nil
+}
+
+func (x *EnrollResponse) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+type RenewCertificateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Csr           []byte                 `protobuf:"bytes,1,opt,name=csr,proto3" json:"csr,omitempty"` // PEM "CERTIFICATE REQUEST"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewCertificateRequest) Reset() {
+	*x = RenewCertificateRequest{}
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertificateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertificateRequest) ProtoMessage() {}
+
+func (x *RenewCertificateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertificateRequest.ProtoReflect.Descriptor instead.
+func (*RenewCertificateRequest) Descriptor() ([]byte, []int) {
+	return file_pulsix_worker_v1_worker_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RenewCertificateRequest) GetCsr() []byte {
+	if x != nil {
+		return x.Csr
+	}
+	return nil
+}
+
+type RenewCertificateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Certificate   []byte                 `protobuf:"bytes,1,opt,name=certificate,proto3" json:"certificate,omitempty"` // PEM leaf
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewCertificateResponse) Reset() {
+	*x = RenewCertificateResponse{}
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertificateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertificateResponse) ProtoMessage() {}
+
+func (x *RenewCertificateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pulsix_worker_v1_worker_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertificateResponse.ProtoReflect.Descriptor instead.
+func (*RenewCertificateResponse) Descriptor() ([]byte, []int) {
+	return file_pulsix_worker_v1_worker_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RenewCertificateResponse) GetCertificate() []byte {
+	if x != nil {
+		return x.Certificate
+	}
+	return nil
+}
+
 var File_pulsix_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
@@ -610,11 +826,26 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x14\n" +
 	"\x05stats\x18\x03 \x01(\tR\x05stats\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\"\x16\n" +
-	"\x14ReportResultResponse2\x92\x02\n" +
+	"\x14ReportResultResponse\"n\n" +
+	"\rEnrollRequest\x12\x19\n" +
+	"\btoken_id\x18\x01 \x01(\tR\atokenId\x12\x16\n" +
+	"\x06secret\x18\x02 \x01(\fR\x06secret\x12\x10\n" +
+	"\x03csr\x18\x03 \x01(\fR\x03csr\x12\x18\n" +
+	"\aversion\x18\x04 \x01(\tR\aversion\"j\n" +
+	"\x0eEnrollResponse\x12 \n" +
+	"\vcertificate\x18\x01 \x01(\fR\vcertificate\x12\x19\n" +
+	"\bca_chain\x18\x02 \x01(\fR\acaChain\x12\x1b\n" +
+	"\tworker_id\x18\x03 \x01(\tR\bworkerId\"+\n" +
+	"\x17RenewCertificateRequest\x12\x10\n" +
+	"\x03csr\x18\x01 \x01(\fR\x03csr\"<\n" +
+	"\x18RenewCertificateResponse\x12 \n" +
+	"\vcertificate\x18\x01 \x01(\fR\vcertificate2\xca\x03\n" +
 	"\rWorkerService\x12Q\n" +
 	"\bClaimJob\x12!.pulsix.worker.v1.ClaimJobRequest\x1a\".pulsix.worker.v1.ClaimJobResponse\x12O\n" +
 	"\tRunEvents\x12\x1a.pulsix.worker.v1.RunEvent\x1a\".pulsix.worker.v1.ManagerDirective(\x010\x01\x12]\n" +
-	"\fReportResult\x12%.pulsix.worker.v1.ReportResultRequest\x1a&.pulsix.worker.v1.ReportResultResponseB0Z.github.com/noixdev/pulsix/internal/pb/workerpbb\x06proto3"
+	"\fReportResult\x12%.pulsix.worker.v1.ReportResultRequest\x1a&.pulsix.worker.v1.ReportResultResponse\x12K\n" +
+	"\x06Enroll\x12\x1f.pulsix.worker.v1.EnrollRequest\x1a .pulsix.worker.v1.EnrollResponse\x12i\n" +
+	"\x10RenewCertificate\x12).pulsix.worker.v1.RenewCertificateRequest\x1a*.pulsix.worker.v1.RenewCertificateResponseB0Z.github.com/noixdev/pulsix/internal/pb/workerpbb\x06proto3"
 
 var (
 	file_pulsix_worker_v1_worker_proto_rawDescOnce sync.Once
@@ -628,38 +859,46 @@ func file_pulsix_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_pulsix_worker_v1_worker_proto_rawDescData
 }
 
-var file_pulsix_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_pulsix_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_pulsix_worker_v1_worker_proto_goTypes = []any{
-	(*ClaimJobRequest)(nil),       // 0: pulsix.worker.v1.ClaimJobRequest
-	(*ClaimJobResponse)(nil),      // 1: pulsix.worker.v1.ClaimJobResponse
-	(*Job)(nil),                   // 2: pulsix.worker.v1.Job
-	(*RunEvent)(nil),              // 3: pulsix.worker.v1.RunEvent
-	(*ManagerDirective)(nil),      // 4: pulsix.worker.v1.ManagerDirective
-	(*ReportResultRequest)(nil),   // 5: pulsix.worker.v1.ReportResultRequest
-	(*ReportResultResponse)(nil),  // 6: pulsix.worker.v1.ReportResultResponse
-	nil,                           // 7: pulsix.worker.v1.Job.ExtraVarsEntry
-	nil,                           // 8: pulsix.worker.v1.Job.ConnectionsEntry
-	nil,                           // 9: pulsix.worker.v1.Job.CredentialsEntry
-	nil,                           // 10: pulsix.worker.v1.Job.HostKeysEntry
-	nil,                           // 11: pulsix.worker.v1.Job.KnownHostsEntry
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*ClaimJobRequest)(nil),          // 0: pulsix.worker.v1.ClaimJobRequest
+	(*ClaimJobResponse)(nil),         // 1: pulsix.worker.v1.ClaimJobResponse
+	(*Job)(nil),                      // 2: pulsix.worker.v1.Job
+	(*RunEvent)(nil),                 // 3: pulsix.worker.v1.RunEvent
+	(*ManagerDirective)(nil),         // 4: pulsix.worker.v1.ManagerDirective
+	(*ReportResultRequest)(nil),      // 5: pulsix.worker.v1.ReportResultRequest
+	(*ReportResultResponse)(nil),     // 6: pulsix.worker.v1.ReportResultResponse
+	(*EnrollRequest)(nil),            // 7: pulsix.worker.v1.EnrollRequest
+	(*EnrollResponse)(nil),           // 8: pulsix.worker.v1.EnrollResponse
+	(*RenewCertificateRequest)(nil),  // 9: pulsix.worker.v1.RenewCertificateRequest
+	(*RenewCertificateResponse)(nil), // 10: pulsix.worker.v1.RenewCertificateResponse
+	nil,                              // 11: pulsix.worker.v1.Job.ExtraVarsEntry
+	nil,                              // 12: pulsix.worker.v1.Job.ConnectionsEntry
+	nil,                              // 13: pulsix.worker.v1.Job.CredentialsEntry
+	nil,                              // 14: pulsix.worker.v1.Job.HostKeysEntry
+	nil,                              // 15: pulsix.worker.v1.Job.KnownHostsEntry
+	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
 }
 var file_pulsix_worker_v1_worker_proto_depIdxs = []int32{
 	2,  // 0: pulsix.worker.v1.ClaimJobResponse.job:type_name -> pulsix.worker.v1.Job
-	7,  // 1: pulsix.worker.v1.Job.extra_vars:type_name -> pulsix.worker.v1.Job.ExtraVarsEntry
-	8,  // 2: pulsix.worker.v1.Job.connections:type_name -> pulsix.worker.v1.Job.ConnectionsEntry
-	9,  // 3: pulsix.worker.v1.Job.credentials:type_name -> pulsix.worker.v1.Job.CredentialsEntry
-	10, // 4: pulsix.worker.v1.Job.host_keys:type_name -> pulsix.worker.v1.Job.HostKeysEntry
-	11, // 5: pulsix.worker.v1.Job.known_hosts:type_name -> pulsix.worker.v1.Job.KnownHostsEntry
-	12, // 6: pulsix.worker.v1.RunEvent.at:type_name -> google.protobuf.Timestamp
+	11, // 1: pulsix.worker.v1.Job.extra_vars:type_name -> pulsix.worker.v1.Job.ExtraVarsEntry
+	12, // 2: pulsix.worker.v1.Job.connections:type_name -> pulsix.worker.v1.Job.ConnectionsEntry
+	13, // 3: pulsix.worker.v1.Job.credentials:type_name -> pulsix.worker.v1.Job.CredentialsEntry
+	14, // 4: pulsix.worker.v1.Job.host_keys:type_name -> pulsix.worker.v1.Job.HostKeysEntry
+	15, // 5: pulsix.worker.v1.Job.known_hosts:type_name -> pulsix.worker.v1.Job.KnownHostsEntry
+	16, // 6: pulsix.worker.v1.RunEvent.at:type_name -> google.protobuf.Timestamp
 	0,  // 7: pulsix.worker.v1.WorkerService.ClaimJob:input_type -> pulsix.worker.v1.ClaimJobRequest
 	3,  // 8: pulsix.worker.v1.WorkerService.RunEvents:input_type -> pulsix.worker.v1.RunEvent
 	5,  // 9: pulsix.worker.v1.WorkerService.ReportResult:input_type -> pulsix.worker.v1.ReportResultRequest
-	1,  // 10: pulsix.worker.v1.WorkerService.ClaimJob:output_type -> pulsix.worker.v1.ClaimJobResponse
-	4,  // 11: pulsix.worker.v1.WorkerService.RunEvents:output_type -> pulsix.worker.v1.ManagerDirective
-	6,  // 12: pulsix.worker.v1.WorkerService.ReportResult:output_type -> pulsix.worker.v1.ReportResultResponse
-	10, // [10:13] is the sub-list for method output_type
-	7,  // [7:10] is the sub-list for method input_type
+	7,  // 10: pulsix.worker.v1.WorkerService.Enroll:input_type -> pulsix.worker.v1.EnrollRequest
+	9,  // 11: pulsix.worker.v1.WorkerService.RenewCertificate:input_type -> pulsix.worker.v1.RenewCertificateRequest
+	1,  // 12: pulsix.worker.v1.WorkerService.ClaimJob:output_type -> pulsix.worker.v1.ClaimJobResponse
+	4,  // 13: pulsix.worker.v1.WorkerService.RunEvents:output_type -> pulsix.worker.v1.ManagerDirective
+	6,  // 14: pulsix.worker.v1.WorkerService.ReportResult:output_type -> pulsix.worker.v1.ReportResultResponse
+	8,  // 15: pulsix.worker.v1.WorkerService.Enroll:output_type -> pulsix.worker.v1.EnrollResponse
+	10, // 16: pulsix.worker.v1.WorkerService.RenewCertificate:output_type -> pulsix.worker.v1.RenewCertificateResponse
+	12, // [12:17] is the sub-list for method output_type
+	7,  // [7:12] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name
 	7,  // [7:7] is the sub-list for extension extendee
 	0,  // [0:7] is the sub-list for field type_name
@@ -676,7 +915,7 @@ func file_pulsix_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pulsix_worker_v1_worker_proto_rawDesc), len(file_pulsix_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

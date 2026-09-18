@@ -55,29 +55,58 @@ type fakeWorkerStore struct {
 	bySerial map[string]workers.Worker
 }
 
-func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker) (workers.Worker, error) {
+func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.bySerial[w.CertSerial.String()] = w
+	f.bySerial[c.Serial.String()] = w
 	return w, nil
 }
 
-func (f *fakeWorkerStore) List(context.Context, uuid.UUID) ([]workers.Worker, error) {
-	return nil, nil
-}
+func (f *fakeWorkerStore) List(context.Context, uuid.UUID) ([]workers.Worker, error) { return nil, nil }
 
-func (f *fakeWorkerStore) GetBySerial(_ context.Context, serial *big.Int) (workers.Worker, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if w, ok := f.bySerial[serial.String()]; ok {
-		return w, nil
-	}
+func (f *fakeWorkerStore) GetByName(context.Context, uuid.UUID, string) (workers.Worker, error) {
 	return workers.Worker{}, workers.ErrNotFound
 }
 
-func (f *fakeWorkerStore) Touch(context.Context, *big.Int, string) error { return nil }
-func (f *fakeWorkerStore) Delete(context.Context, uuid.UUID, uuid.UUID) error {
-	return nil
+func (f *fakeWorkerStore) LookupSerial(_ context.Context, serial *big.Int) (workers.Worker, workers.Certificate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if w, ok := f.bySerial[serial.String()]; ok {
+		return w, workers.Certificate{Serial: serial, OrgID: w.OrgID, WorkerID: w.ID}, nil
+	}
+	return workers.Worker{}, workers.Certificate{}, workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) Touch(context.Context, uuid.UUID, string) error { return nil }
+
+func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificate) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, w := range f.bySerial {
+		if w.ID == c.WorkerID {
+			f.bySerial[c.Serial.String()] = w
+			return nil
+		}
+	}
+	return workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
+func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, _ []byte) (workers.Enrollment, error) {
+	return e, nil
+}
+
+func (f *fakeWorkerStore) ListEnrollments(context.Context, uuid.UUID, time.Time) ([]workers.Enrollment, error) {
+	return nil, nil
+}
+
+func (f *fakeWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID) error {
+	return workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
 }
 
 // fakeClaims implements grpcsrv.Claimer from a queue the test seeds.

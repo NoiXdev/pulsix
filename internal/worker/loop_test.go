@@ -143,6 +143,14 @@ func (f *fakeWorkerClient) ReportResult(_ context.Context, in *workerpb.ReportRe
 	return &workerpb.ReportResultResponse{}, nil
 }
 
+func (f *fakeWorkerClient) Enroll(context.Context, *workerpb.EnrollRequest, ...grpc.CallOption) (*workerpb.EnrollResponse, error) {
+	return nil, errors.New("not in this fake")
+}
+
+func (f *fakeWorkerClient) RenewCertificate(context.Context, *workerpb.RenewCertificateRequest, ...grpc.CallOption) (*workerpb.RenewCertificateResponse, error) {
+	return nil, errors.New("not in this fake")
+}
+
 func (f *fakeWorkerClient) setClaimErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

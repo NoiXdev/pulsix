@@ -19,6 +19,14 @@ service WorkerService {
   // ReportResult is the terminal unary call: the worker reports the final
   // status and per-host stats. Sent after the last RunEvents message.
   rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
+  // Enroll exchanges a one-time enrollment token and a certificate
+  // request for the worker's first client certificate. It is the only
+  // method callable without a client certificate; the worker pins the CA
+  // by the fingerprint in its token before sending anything.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  // RenewCertificate issues a fresh certificate for the calling worker's
+  // key. The old certificate stays valid until it expires.
+  rpc RenewCertificate(RenewCertificateRequest) returns (RenewCertificateResponse);
 }
 
 message ClaimJobRequest {
@@ -88,3 +96,24 @@ message ReportResultRequest {
 }
 
 message ReportResultResponse {}
+
+message EnrollRequest {
+  string token_id = 1;   // the enrollment id (uuid) from the token
+  bytes secret = 2;      // the token's 32-byte secret
+  bytes csr = 3;         // PEM "CERTIFICATE REQUEST"
+  string version = 4;    // worker build version
+}
+
+message EnrollResponse {
+  bytes certificate = 1; // PEM leaf
+  bytes ca_chain = 2;    // PEM CA certificate
+  string worker_id = 3;
+}
+
+message RenewCertificateRequest {
+  bytes csr = 1;         // PEM "CERTIFICATE REQUEST"
+}
+
+message RenewCertificateResponse {
+  bytes certificate = 1; // PEM leaf
+}

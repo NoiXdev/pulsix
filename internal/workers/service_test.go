@@ -1,69 +1,14 @@
 package workers_test
 
 import (
-	"context"
 	"errors"
 	"math/big"
-	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/workers"
 )
-
-var ctx = context.Background()
-
-type fakeStore struct {
-	rows    []workers.Worker
-	created workers.Worker
-	touched []string
-}
-
-func (f *fakeStore) Create(_ context.Context, w workers.Worker) (workers.Worker, error) {
-	for _, r := range f.rows {
-		if r.OrgID == w.OrgID && r.Name == w.Name {
-			return workers.Worker{}, workers.ErrNameTaken
-		}
-	}
-	f.created = w
-	f.rows = append(f.rows, w)
-	return w, nil
-}
-
-func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]workers.Worker, error) {
-	var out []workers.Worker
-	for _, r := range f.rows {
-		if r.OrgID == orgID {
-			out = append(out, r)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeStore) GetBySerial(_ context.Context, serial *big.Int) (workers.Worker, error) {
-	for _, r := range f.rows {
-		if r.CertSerial.Cmp(serial) == 0 {
-			return r, nil
-		}
-	}
-	return workers.Worker{}, workers.ErrNotFound
-}
-
-func (f *fakeStore) Touch(_ context.Context, serial *big.Int, version string) error {
-	f.touched = append(f.touched, serial.String()+":"+version)
-	return nil
-}
-
-func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
-	for i, r := range f.rows {
-		if r.OrgID == orgID && r.ID == id {
-			f.rows = slices.Delete(f.rows, i, i+1)
-			return nil
-		}
-	}
-	return workers.ErrNotFound
-}
 
 func TestRegisterNameValidation(t *testing.T) {
 	serial := big.NewInt(12345)
@@ -188,7 +133,7 @@ func TestDeleteMapsNotFound(t *testing.T) {
 	if err := svc.Delete(ctx, org, w.ID); !errors.Is(err, workers.ErrNotFound) {
 		t.Fatalf("second Delete: %v, want ErrNotFound", err)
 	}
-	if _, err := f.GetBySerial(ctx, big.NewInt(7)); !errors.Is(err, workers.ErrNotFound) {
+	if _, _, err := f.LookupSerial(ctx, big.NewInt(7)); !errors.Is(err, workers.ErrNotFound) {
 		t.Fatalf("worker still resolvable after delete: %v, want ErrNotFound", err)
 	}
 }
@@ -196,13 +141,14 @@ func TestDeleteMapsNotFound(t *testing.T) {
 func TestTouchDelegates(t *testing.T) {
 	f := &fakeStore{}
 	svc := workers.NewService(f)
-	if err := svc.Touch(ctx, big.NewInt(11), "0.2.0"); err != nil {
+	id := uuid.Must(uuid.NewV7())
+	if err := svc.Touch(ctx, id, "0.2.0"); err != nil {
 		t.Fatalf("Touch: %v", err)
 	}
-	if len(f.touched) != 1 || f.touched[0] != "11:0.2.0" {
+	if len(f.touched) != 1 || f.touched[0] != id.String()+":0.2.0" {
 		t.Fatalf("touched = %v", f.touched)
 	}
-	if err := svc.Touch(ctx, big.NewInt(12), ""); err != nil {
+	if err := svc.Touch(ctx, uuid.Must(uuid.NewV7()), ""); err != nil {
 		t.Fatalf("Touch with empty version: %v", err)
 	}
 }

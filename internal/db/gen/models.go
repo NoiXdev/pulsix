@@ -436,6 +436,31 @@ type Worker struct {
 	LastSeen   pgtype.Timestamptz `json:"last_seen"`
 	Version    string             `json:"version"`
 	CreatedAt  time.Time          `json:"created_at"`
+	Status     string             `json:"status"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type WorkerCertificate struct {
+	Serial    string             `json:"serial"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	WorkerID  uuid.UUID          `json:"worker_id"`
+	NotBefore time.Time          `json:"not_before"`
+	NotAfter  time.Time          `json:"not_after"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt time.Time          `json:"created_at"`
+}
+
+type WorkerEnrollment struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	ZoneID     uuid.UUID          `json:"zone_id"`
+	Name       string             `json:"name"`
+	SecretHash []byte             `json:"secret_hash"`
+	ExpiresAt  time.Time          `json:"expires_at"`
+	UsedAt     pgtype.Timestamptz `json:"used_at"`
+	WorkerID   pgtype.UUID        `json:"worker_id"`
+	CreatedBy  pgtype.UUID        `json:"created_by"`
+	CreatedAt  time.Time          `json:"created_at"`
 }
 
 type Zone struct {

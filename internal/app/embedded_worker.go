@@ -37,6 +37,7 @@ package app
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -70,10 +71,10 @@ func warnEmbeddedWorker(log *slog.Logger) {
 const embeddedWorkerRetryInterval = 5 * time.Second
 
 // embeddedWorkerName is the fixed name the embedded worker registers
-// under. The workers table has no uniqueness constraint on name, only on
-// certificate serial, so a restarted manager registering a second row
-// under the same name is expected, not a conflict — the embedded worker's
-// identity IS the manager process's, and a restart is a new one.
+// under. The workers table IS unique per (org_id, name), which is why the
+// row is reused: RegisterOrAttach finds the existing "embedded" row on
+// every manager restart and attaches the freshly issued certificate to it
+// instead of failing on the name clash.
 const embeddedWorkerName = "embedded"
 
 // startEmbeddedWorker launches the embedded worker's resolve-and-run
@@ -147,9 +148,12 @@ func runEmbeddedLoop(ctx context.Context, appDB *db.DB, caInst *ca.CA, zone zone
 		log.ErrorContext(ctx, "embedded worker: issue certificate", "err", err)
 		return
 	}
-	if _, err := workers.NewService(workers.NewSQLStore(appDB)).Register(ctx, zone.OrgID, workers.RegisterInput{
+	if _, err := workers.NewService(workers.NewSQLStore(appDB)).RegisterOrAttach(ctx, zone.OrgID, workers.RegisterInput{
 		ZoneID: zone.ID, Name: embeddedWorkerName, CertSerial: serial,
-	}); err != nil {
+	}); errors.Is(err, workers.ErrRevoked) {
+		log.ErrorContext(ctx, "embedded worker: revoked; delete it on the Workers page to re-create it")
+		return
+	} else if err != nil {
 		log.ErrorContext(ctx, "embedded worker: register", "err", err)
 		return
 	}

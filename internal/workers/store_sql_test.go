@@ -53,7 +53,7 @@ func TestWorkerRoundTrip(t *testing.T) {
 		t.Fatalf("a fresh worker must not have last_seen: %+v", w)
 	}
 
-	got, err := store.GetBySerial(ctx, serial)
+	got, err := svc.GetBySerial(ctx, serial)
 	if err != nil {
 		t.Fatalf("GetBySerial: %v", err)
 	}
@@ -70,10 +70,10 @@ func TestWorkerRoundTrip(t *testing.T) {
 		t.Fatalf("List = %+v, %v", byID, err)
 	}
 
-	if err := store.Touch(ctx, serial, "0.2.1"); err != nil {
+	if err := store.Touch(ctx, w.ID, "0.2.1"); err != nil {
 		t.Fatalf("Touch: %v", err)
 	}
-	got, err = store.GetBySerial(ctx, serial)
+	got, err = svc.GetBySerial(ctx, serial)
 	if err != nil {
 		t.Fatalf("GetBySerial after Touch: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestWorkerRoundTrip(t *testing.T) {
 	if err := store.Delete(ctx, org, w.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := store.GetBySerial(ctx, serial); !errors.Is(err, workers.ErrNotFound) {
+	if _, err := svc.GetBySerial(ctx, serial); !errors.Is(err, workers.ErrNotFound) {
 		t.Fatalf("GetBySerial after Delete: %v, want ErrNotFound", err)
 	}
 	if err := store.Delete(ctx, org, w.ID); !errors.Is(err, workers.ErrNotFound) {
@@ -99,14 +99,11 @@ func TestWorkerRoundTrip(t *testing.T) {
 	}
 }
 
-func TestTouchUnknownSerialIsNoop(t *testing.T) {
+func TestTouchUnknownWorkerIsNoop(t *testing.T) {
 	d := testdb.Open(t)
 	store := workers.NewSQLStore(d)
-	if err := store.Touch(ctx, big.NewInt(424242), "9.9.9"); err != nil {
-		t.Fatalf("Touch of an unknown serial must be a silent no-op: %v", err)
-	}
-	if _, err := store.GetBySerial(ctx, big.NewInt(424242)); !errors.Is(err, workers.ErrNotFound) {
-		t.Fatalf("Touch created a row: %v", err)
+	if err := store.Touch(ctx, uuid.Must(uuid.NewV7()), "9.9.9"); err != nil {
+		t.Fatalf("Touch of an unknown worker must be a silent no-op: %v", err)
 	}
 }
 
@@ -134,11 +131,11 @@ func TestGetBySerialIsGlobalNotPerOrg(t *testing.T) {
 		t.Fatalf("Register B: %v", err)
 	}
 
-	got, err := store.GetBySerial(ctx, serialA)
+	got, err := svc.GetBySerial(ctx, serialA)
 	if err != nil || got.OrgID != orgA || got.ID != wA.ID {
 		t.Fatalf("GetBySerial(A) = %+v, %v, want A's row", got, err)
 	}
-	got, err = store.GetBySerial(ctx, serialB)
+	got, err = svc.GetBySerial(ctx, serialB)
 	if err != nil || got.OrgID != orgB {
 		t.Fatalf("GetBySerial(B) = %+v, %v, want B's row", got, err)
 	}
@@ -146,10 +143,10 @@ func TestGetBySerialIsGlobalNotPerOrg(t *testing.T) {
 	if err := store.Delete(ctx, orgA, wA.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.GetBySerial(ctx, serialA); !errors.Is(err, workers.ErrNotFound) {
+	if _, err := svc.GetBySerial(ctx, serialA); !errors.Is(err, workers.ErrNotFound) {
 		t.Fatalf("A's serial still resolves after deletion: %v, want ErrNotFound", err)
 	}
-	if _, err := store.GetBySerial(ctx, serialB); err != nil {
+	if _, err := svc.GetBySerial(ctx, serialB); err != nil {
 		t.Fatalf("B's serial must be unaffected by A's deletion: %v", err)
 	}
 }

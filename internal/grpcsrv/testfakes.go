@@ -47,17 +47,19 @@ func (f *fakeCAStore) Save(_ context.Context, sealed []byte) error {
 }
 
 // fakeWorkerStore is the in-memory workers.Store the harness runs the
-// registry service on.
+// registry service on. bySerial maps every certificate serial a worker
+// holds to its row; touched maps a serial to the last touched version.
 type fakeWorkerStore struct {
 	mu       sync.Mutex
 	bySerial map[string]workers.Worker
-	touched  map[string]string // serial → last touched version
+	revoked  map[string]bool // serial → certificate revoked
+	touched  map[string]string
 }
 
-func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker) (workers.Worker, error) {
+func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.bySerial[w.CertSerial.String()] = w
+	f.bySerial[c.Serial.String()] = w
 	return w, nil
 }
 
@@ -73,33 +75,81 @@ func (f *fakeWorkerStore) List(_ context.Context, orgID uuid.UUID) ([]workers.Wo
 	return out, nil
 }
 
-func (f *fakeWorkerStore) GetBySerial(_ context.Context, serial *big.Int) (workers.Worker, error) {
+func (f *fakeWorkerStore) GetByName(_ context.Context, orgID uuid.UUID, name string) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, w := range f.bySerial {
+		if w.OrgID == orgID && w.Name == name {
+			return w, nil
+		}
+	}
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) LookupSerial(_ context.Context, serial *big.Int) (workers.Worker, workers.Certificate, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if serial == nil {
-		return workers.Worker{}, workers.ErrNotFound
+		return workers.Worker{}, workers.Certificate{}, workers.ErrNotFound
 	}
 	w, ok := f.bySerial[serial.String()]
 	if !ok {
-		return workers.Worker{}, workers.ErrNotFound
+		return workers.Worker{}, workers.Certificate{}, workers.ErrNotFound
 	}
-	return w, nil
+	c := workers.Certificate{Serial: serial, OrgID: w.OrgID, WorkerID: w.ID}
+	if f.revoked[serial.String()] {
+		now := time.Now()
+		c.RevokedAt = &now
+	}
+	return w, c, nil
 }
 
-func (f *fakeWorkerStore) Touch(_ context.Context, serial *big.Int, version string) error {
+// GetBySerial is a test helper: the row a serial resolves to.
+func (f *fakeWorkerStore) GetBySerial(ctx context.Context, serial *big.Int) (workers.Worker, error) {
+	w, _, err := f.LookupSerial(ctx, serial)
+	return w, err
+}
+
+func (f *fakeWorkerStore) Touch(_ context.Context, workerID uuid.UUID, version string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if serial == nil {
-		return nil
+	for s, w := range f.bySerial {
+		if w.ID == workerID {
+			f.touched[s] = version
+		}
 	}
-	if _, ok := f.bySerial[serial.String()]; !ok {
-		return nil // an unknown serial is a silent no-op
-	}
-	f.touched[serial.String()] = version
 	return nil
 }
 
+func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificate) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, w := range f.bySerial {
+		if w.ID == c.WorkerID {
+			f.bySerial[c.Serial.String()] = w
+			return nil
+		}
+	}
+	return workers.ErrNotFound
+}
+
 func (f *fakeWorkerStore) Delete(_ context.Context, _, _ uuid.UUID) error { return nil }
+
+func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, _ []byte) (workers.Enrollment, error) {
+	return e, nil
+}
+
+func (f *fakeWorkerStore) ListEnrollments(context.Context, uuid.UUID, time.Time) ([]workers.Enrollment, error) {
+	return nil, nil
+}
+
+func (f *fakeWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID) error {
+	return workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
 
 // harness is one fully wired server over a bufconn listener.
 type harness struct {
@@ -143,7 +193,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
 		t:       t,
-		store:   &fakeWorkerStore{bySerial: map[string]workers.Worker{}, touched: map[string]string{}},
+		store:   &fakeWorkerStore{bySerial: map[string]workers.Worker{}, revoked: map[string]bool{}, touched: map[string]string{}},
 		claims:  &FakeClaimer{},
 		events:  &FakeEventRecorder{},
 		results: &FakeResultRecorder{},

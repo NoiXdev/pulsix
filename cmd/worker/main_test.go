@@ -42,6 +42,14 @@ func (failingClient) ReportResult(context.Context, *workerpb.ReportResultRequest
 	return nil, errors.New("unreachable")
 }
 
+func (failingClient) Enroll(context.Context, *workerpb.EnrollRequest, ...grpc.CallOption) (*workerpb.EnrollResponse, error) {
+	return nil, errors.New("manager unreachable")
+}
+
+func (failingClient) RenewCertificate(context.Context, *workerpb.RenewCertificateRequest, ...grpc.CallOption) (*workerpb.RenewCertificateResponse, error) {
+	return nil, errors.New("manager unreachable")
+}
+
 // TestRunWorkerCleanShutdown: a loop whose claims fail still exits 0 when
 // its context is cancelled — the shutdown, not the claim failure, decides
 // the exit code. The executor is the real wiring (the ansible-runner
