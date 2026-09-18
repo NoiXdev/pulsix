@@ -57,16 +57,19 @@ RETURNING tokens;
 -- name: GetTriggerBucket :one
 SELECT tokens, updated_at FROM trigger_buckets WHERE org_id = sqlc.arg(org_id) AND trigger_id = sqlc.arg(trigger_id);
 
--- name: InsertTriggerDelivery :exec
--- throttle: at most one row per trigger, outcome and minute.
+-- name: InsertTriggerDelivery :execrows
+-- One row per trigger, outcome and calendar minute for the throttled
+-- outcomes: trigger_deliveries_throttle_idx is the partial unique index
+-- for exactly those, and ON CONFLICT DO NOTHING makes the dedup atomic
+-- under concurrent deliveries (Task 9 review, Minor 1). Every other
+-- outcome never matches that index, so it always inserts. 0 rows affected
+-- tells the caller nothing was written, so it can skip the trim (Minor 2).
 INSERT INTO trigger_deliveries (id, org_id, trigger_id, at, source_ip, outcome, reason, job_group_id)
-SELECT sqlc.arg(id)::uuid, sqlc.arg(org_id)::uuid, sqlc.arg(trigger_id)::uuid, sqlc.arg(at)::timestamptz,
-       sqlc.arg(source_ip)::text, sqlc.arg(outcome)::text, sqlc.arg(reason)::text, sqlc.narg(job_group_id)::uuid
-WHERE NOT sqlc.arg(throttle)::boolean OR NOT EXISTS (
-  SELECT 1 FROM trigger_deliveries d
-  WHERE d.org_id = sqlc.arg(org_id)::uuid AND d.trigger_id = sqlc.arg(trigger_id)::uuid
-    AND d.outcome = sqlc.arg(outcome)::text AND d.at > sqlc.arg(at)::timestamptz - interval '1 minute'
-);
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(org_id)::uuid, sqlc.arg(trigger_id)::uuid, sqlc.arg(at)::timestamptz,
+        sqlc.arg(source_ip)::text, sqlc.arg(outcome)::text, sqlc.arg(reason)::text, sqlc.narg(job_group_id)::uuid)
+ON CONFLICT (trigger_id, outcome, (trigger_delivery_minute(at))) WHERE outcome IN (
+  'rejected_ip', 'rejected_auth', 'disabled', 'rate_limited', 'invalid_payload'
+) DO NOTHING;
 
 -- name: TrimTriggerDeliveries :exec
 DELETE FROM trigger_deliveries AS d

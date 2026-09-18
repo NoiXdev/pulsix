@@ -187,15 +187,13 @@ func (q *Queries) GetTriggerBucket(ctx context.Context, arg GetTriggerBucketPara
 	return i, err
 }
 
-const insertTriggerDelivery = `-- name: InsertTriggerDelivery :exec
+const insertTriggerDelivery = `-- name: InsertTriggerDelivery :execrows
 INSERT INTO trigger_deliveries (id, org_id, trigger_id, at, source_ip, outcome, reason, job_group_id)
-SELECT $1::uuid, $2::uuid, $3::uuid, $4::timestamptz,
-       $5::text, $6::text, $7::text, $8::uuid
-WHERE NOT $9::boolean OR NOT EXISTS (
-  SELECT 1 FROM trigger_deliveries d
-  WHERE d.org_id = $2::uuid AND d.trigger_id = $3::uuid
-    AND d.outcome = $6::text AND d.at > $4::timestamptz - interval '1 minute'
-)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz,
+        $5::text, $6::text, $7::text, $8::uuid)
+ON CONFLICT (trigger_id, outcome, (trigger_delivery_minute(at))) WHERE outcome IN (
+  'rejected_ip', 'rejected_auth', 'disabled', 'rate_limited', 'invalid_payload'
+) DO NOTHING
 `
 
 type InsertTriggerDeliveryParams struct {
@@ -207,12 +205,16 @@ type InsertTriggerDeliveryParams struct {
 	Outcome    string      `json:"outcome"`
 	Reason     string      `json:"reason"`
 	JobGroupID pgtype.UUID `json:"job_group_id"`
-	Throttle   bool        `json:"throttle"`
 }
 
-// throttle: at most one row per trigger, outcome and minute.
-func (q *Queries) InsertTriggerDelivery(ctx context.Context, arg InsertTriggerDeliveryParams) error {
-	_, err := q.db.Exec(ctx, insertTriggerDelivery,
+// One row per trigger, outcome and calendar minute for the throttled
+// outcomes: trigger_deliveries_throttle_idx is the partial unique index
+// for exactly those, and ON CONFLICT DO NOTHING makes the dedup atomic
+// under concurrent deliveries (Task 9 review, Minor 1). Every other
+// outcome never matches that index, so it always inserts. 0 rows affected
+// tells the caller nothing was written, so it can skip the trim (Minor 2).
+func (q *Queries) InsertTriggerDelivery(ctx context.Context, arg InsertTriggerDeliveryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertTriggerDelivery,
 		arg.ID,
 		arg.OrgID,
 		arg.TriggerID,
@@ -221,9 +223,11 @@ func (q *Queries) InsertTriggerDelivery(ctx context.Context, arg InsertTriggerDe
 		arg.Outcome,
 		arg.Reason,
 		arg.JobGroupID,
-		arg.Throttle,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listTriggerDeliveries = `-- name: ListTriggerDeliveries :many

@@ -61,6 +61,26 @@ CREATE TABLE trigger_deliveries (
 );
 CREATE INDEX trigger_deliveries_trigger_idx ON trigger_deliveries (org_id, trigger_id, at DESC);
 
+-- date_trunc(text, timestamptz) is STABLE (its result depends on the
+-- session's TimeZone setting), and Postgres refuses a non-IMMUTABLE
+-- function in an index expression. This wrapper fixes the zone to UTC, so
+-- its result depends only on its argument — the standard workaround for
+-- indexing a timestamptz truncation.
+CREATE FUNCTION trigger_delivery_minute(ts timestamptz) RETURNS timestamptz
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+  $$ SELECT date_trunc('minute', ts AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' $$;
+
+-- Throttling keeps at most one row per trigger, outcome and calendar
+-- minute for exactly the outcomes that are throttled (spec §3); the
+-- partial unique index is the arbiter for an INSERT ... ON CONFLICT DO
+-- NOTHING, which makes the dedup atomic under concurrent deliveries. A
+-- plain "insert unless a NOT EXISTS subquery finds a row" reads a
+-- statement snapshot, so a burst of concurrent rejections in the same
+-- minute could all pass the check and all insert (Task 9 review, Minor 1).
+CREATE UNIQUE INDEX trigger_deliveries_throttle_idx ON trigger_deliveries (
+  trigger_id, outcome, trigger_delivery_minute(at)
+) WHERE outcome IN ('rejected_ip', 'rejected_auth', 'disabled', 'rate_limited', 'invalid_payload');
+
 ALTER TABLE trigger_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trigger_deliveries FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON trigger_deliveries
@@ -88,4 +108,5 @@ CREATE POLICY org_isolation_bypass ON trigger_buckets
 -- +goose Down
 DROP TABLE trigger_buckets;
 DROP TABLE trigger_deliveries;
+DROP FUNCTION trigger_delivery_minute(timestamptz);
 DROP TABLE job_triggers;

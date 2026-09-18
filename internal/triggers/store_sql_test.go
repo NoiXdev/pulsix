@@ -127,6 +127,94 @@ func TestRateLimitIsSharedAcrossManagers(t *testing.T) {
 	}
 }
 
+// TestThrottledDeliveryIsRaceFree covers Task 9 review Minor 1: the
+// original NOT EXISTS dedup read a statement snapshot, so N concurrent
+// rejected deliveries in the same trigger, outcome and minute could all
+// see no row and all insert — exactly the flood case the throttle exists
+// for. 20 concurrent rejections in the same minute must leave exactly one
+// row.
+func TestThrottledDeliveryIsRaceFree(t *testing.T) {
+	d := testdb.Open(t)
+	org, tmpl := seedTemplate(t, d, "trig-throttle-race")
+	st := triggers.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- st.RecordDelivery(scoped, triggers.Delivery{
+				ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID,
+				At: at.Add(time.Duration(i) * time.Millisecond), Outcome: triggers.OutcomeRejectedAuth,
+			}, true)
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM trigger_deliveries WHERE trigger_id = $1 AND outcome = 'rejected_auth'`, in.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("20 concurrent throttled deliveries produced %d rows, want exactly 1", count)
+	}
+}
+
+// TestThrottledDuplicateSkipsTrim covers Task 9 review Minor 2: a
+// suppressed (deduplicated) insert must not run the 500-row trim — there
+// is nothing new to trim for, and running it anyway costs an extra
+// statement on every flooded rejection.
+func TestThrottledDuplicateSkipsTrim(t *testing.T) {
+	d := testdb.Open(t)
+	org, tmpl := seedTemplate(t, d, "trig-skip-trim")
+	st := triggers.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+		t.Fatal(err)
+	}
+	// Push the trigger's row count well past 500 directly, bypassing
+	// RecordDelivery's own trim, so a trim that ran anyway would be
+	// observable.
+	for i := 0; i < 600; i++ {
+		if _, err := d.Pool().Exec(ctx, `INSERT INTO trigger_deliveries (id, org_id, trigger_id, at, outcome) VALUES ($1,$2,$3,$4,'triggered')`,
+			uuid.Must(uuid.NewV7()), org, in.ID, at.Add(time.Duration(i)*time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var before int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM trigger_deliveries WHERE trigger_id = $1`, in.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	// A duplicate rejection in the same minute is deduplicated (0 rows
+	// inserted); the trim must not run for it.
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(30 * time.Second), Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM trigger_deliveries WHERE trigger_id = $1`, in.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("count changed from %d to %d; a deduplicated insert must skip the trim", before, after)
+	}
+}
+
 func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 	d := testdb.Open(t)
 	org, tmpl := seedTemplate(t, d, "trig-deliveries")

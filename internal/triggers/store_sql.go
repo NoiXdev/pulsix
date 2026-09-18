@@ -194,14 +194,25 @@ func (st *SQLStore) TakeToken(ctx context.Context, orgID, id uuid.UUID, rl RateL
 	return false, wait, nil
 }
 
-// RecordDelivery appends a delivery (throttled for rejections) and trims
-// the trigger's log to its newest 500 rows.
-func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery, throttle bool) error {
-	if err := st.q.InsertTriggerDelivery(ctx, gen.InsertTriggerDeliveryParams{
+// RecordDelivery appends a delivery and trims the trigger's log to its
+// newest 500 rows. Throttling (one row per trigger, outcome and minute for
+// the outcomes that need it) is enforced declaratively by
+// trigger_deliveries_throttle_idx, a partial unique index the insert
+// conflicts into — see InsertTriggerDelivery's own comment; the throttle
+// argument documents the caller's intent at the call site (receive.go)
+// without this store needing to re-derive it from the outcome. When the
+// insert is deduplicated (0 rows affected), the trim is skipped: nothing
+// changed, so there is nothing to trim for (Task 9 review, Minor 2).
+func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery, _ bool) error {
+	rows, err := st.q.InsertTriggerDelivery(ctx, gen.InsertTriggerDeliveryParams{
 		ID: d.ID, OrgID: d.OrgID, TriggerID: d.TriggerID, At: d.At, SourceIp: d.SourceIP,
-		Outcome: string(d.Outcome), Reason: d.Reason, JobGroupID: db.NullUUID(d.JobGroupID), Throttle: throttle,
-	}); err != nil {
+		Outcome: string(d.Outcome), Reason: d.Reason, JobGroupID: db.NullUUID(d.JobGroupID),
+	})
+	if err != nil {
 		return fmt.Errorf("record delivery: %w", err)
+	}
+	if rows == 0 {
+		return nil
 	}
 	if err := st.q.TrimTriggerDeliveries(ctx, gen.TrimTriggerDeliveriesParams{OrgID: d.OrgID, TriggerID: d.TriggerID}); err != nil {
 		return fmt.Errorf("trim deliveries: %w", err)
