@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { GitBranch, RefreshCw } from 'lucide-react';
+import { GitBranch, RefreshCw, Webhook } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
@@ -12,6 +12,7 @@ import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useRepos, useSyncRepo } from '../../api/hooks/useRepos.ts';
 import { may } from '../../lib/roles.ts';
 import { RepoDialog } from './RepoDialog.tsx';
+import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
 import type { Repo } from '../../api/types.ts';
 
 const COLUMNS = 'minmax(0, 0.7fr) minmax(0, 1.3fr) 110px 110px minmax(0, 0.9fr) 150px 110px';
@@ -30,6 +31,7 @@ export function ReposPage() {
   const credentials = useCredentials(org, { enabled: !!orgInfo.data && canReadCredentials });
 
   const [dialog, setDialog] = useState<'new' | Repo | null>(null);
+  const [triggers, setTriggers] = useState<Repo | null>(null);
 
   const guard = useQueryGuard(repos);
   if (guard) return guard;
@@ -64,7 +66,7 @@ export function ReposPage() {
           <span>Subpath</span>
           <span>Credential</span>
           <span>Last sync</span>
-          {canWrite && <span>Actions</span>}
+          <span>Actions</span>
         </GridHeader>
         {list.map((r) => (
           <GridRow key={r.id} columns={COLUMNS}>
@@ -80,11 +82,25 @@ export function ReposPage() {
             <span className="truncate font-mono text-xs text-muted-foreground">{r.subpath || '—'}</span>
             <span className="truncate text-xs">{credentialName(names, r.credential_id)}</span>
             <SyncState repo={r} />
-            {canWrite && <SyncButton org={org} repo={r} onStarted={syncStarted} />}
+            <span className="flex gap-1">
+              <Button type="button" variant="ghost" aria-label={`Triggers of ${r.name}`} onClick={() => setTriggers(r)}>
+                <Webhook size={13} />
+              </Button>
+              {canWrite && <SyncButton org={org} repo={r} onStarted={syncStarted} />}
+            </span>
           </GridRow>
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No repositories yet.</p>}
       </Card>
+      {triggers && (
+        <TriggersDialog
+          org={org}
+          target={{ kind: 'repo_sync', id: triggers.id, name: triggers.name }}
+          canWrite={canWrite}
+          canRun={canWrite}
+          onClose={() => setTriggers(null)}
+        />
+      )}
       {dialog === 'new' ? (
         <RepoDialog org={org} credentials={names} onClose={() => setDialog(null)} />
       ) : dialog ? (

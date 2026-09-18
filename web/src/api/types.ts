@@ -45,3 +45,7 @@ export type AdhocInput = components['schemas']['AdhocInputBody'];
 export type Schedule = components['schemas']['ScheduleDTO'];
 export type ScheduleRun = components['schemas']['ScheduleRunDTO'];
 export type ScheduleInput = components['schemas']['ScheduleBody'];
+
+export type Trigger = components['schemas']['TriggerDTO'];
+export type TriggerInput = components['schemas']['TriggerBody'];
+export type TriggerDelivery = components['schemas']['TriggerDeliveryDTO'];

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { CalendarClock, ListPlus, Play } from 'lucide-react';
+import { CalendarClock, ListPlus, Play, Webhook } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
@@ -14,6 +14,7 @@ import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.ts';
 import { may } from '../../lib/roles.ts';
 import { TemplateDialog } from './TemplateDialog.tsx';
+import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
 import type { Template } from '../../api/types.ts';
 
 const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) 110px';
@@ -36,6 +37,7 @@ export function TemplatesPage() {
   const runTemplate = useRunTemplateById(org);
 
   const [dialog, setDialog] = useState<'new' | Template | null>(null);
+  const [triggers, setTriggers] = useState<Template | null>(null);
 
   const guard = useQueryGuard(templates);
   if (guard) return guard;
@@ -98,6 +100,9 @@ export function TemplatesPage() {
             <span>{scopeChip(t, groupName)}</span>
             <span className="truncate text-xs text-muted-foreground">{t.credential_id ? (credentialName(t.credential_id) ?? t.credential_id.slice(0, 8)) : '—'}</span>
             <span className="flex gap-1">
+              <Button type="button" variant="ghost" aria-label={`Triggers of ${t.name}`} onClick={() => setTriggers(t)}>
+                <Webhook size={13} />
+              </Button>
               <Button
                 type="button"
                 variant="ghost"
@@ -116,6 +121,15 @@ export function TemplatesPage() {
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No job templates yet.</p>}
       </Card>
+      {triggers && (
+        <TriggersDialog
+          org={org}
+          target={{ kind: 'template_run', id: triggers.id, name: triggers.name }}
+          canWrite={canWrite}
+          canRun={canRun}
+          onClose={() => setTriggers(null)}
+        />
+      )}
       {dialog === 'new' ? (
         <TemplateDialog org={org} canReadCredentials={canReadCredentials} onClose={() => setDialog(null)} />
       ) : dialog ? (
