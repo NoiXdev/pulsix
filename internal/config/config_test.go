@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noixdev/pulsix/internal/config"
 )
@@ -233,5 +234,65 @@ func TestJobMaxAttempts(t *testing.T) {
 		if err != nil || cfg.JobMaxAttempts != c.want {
 			t.Errorf("PULSIX_JOB_MAX_ATTEMPTS=%q: got %d, %v; want %d", c.raw, cfg.JobMaxAttempts, err, c.want)
 		}
+	}
+}
+
+// TestScheduleTick: PULSIX_SCHEDULE_TICK drives the schedule ticker; the
+// default is 15s and anything below 5s is refused (spec §2 "Ticker").
+func TestScheduleTick(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{raw: "", want: 15 * time.Second},
+		{raw: "30s", want: 30 * time.Second},
+		{raw: "5s", want: 5 * time.Second},
+		{raw: "4s", wantErr: true},
+		{raw: "0", wantErr: true},
+		{raw: "soon", wantErr: true},
+	}
+	for _, c := range cases {
+		m := map[string]string{"PULSIX_SCHEDULE_TICK": c.raw}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := config.Load(env(m))
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("PULSIX_SCHEDULE_TICK=%q: expected an error", c.raw)
+			}
+			continue
+		}
+		if err != nil || cfg.ScheduleTick != c.want {
+			t.Errorf("PULSIX_SCHEDULE_TICK=%q: got %v, %v; want %v", c.raw, cfg.ScheduleTick, err, c.want)
+		}
+	}
+}
+
+// TestTrustedProxies: a comma-separated CIDR list, empty by default.
+func TestTrustedProxies(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cfg, err := config.Load(env(base))
+	if err != nil || len(cfg.TrustedProxies) != 0 {
+		t.Fatalf("default: %v, %v", cfg.TrustedProxies, err)
+	}
+	base["PULSIX_TRUSTED_PROXIES"] = "172.16.0.0/12, 10.0.0.5"
+	cfg, err = config.Load(env(base))
+	if err != nil || len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[1].String() != "10.0.0.5/32" {
+		t.Fatalf("parsed: %v, %v", cfg.TrustedProxies, err)
+	}
+	base["PULSIX_TRUSTED_PROXIES"] = "10.0.0.0/33"
+	if _, err := config.Load(env(base)); err == nil {
+		t.Fatal("an invalid CIDR must be refused")
 	}
 }

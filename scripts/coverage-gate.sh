@@ -151,7 +151,8 @@ awk -v module="$module" -v generated="$generated_list" '
 		    pkg == module "/internal/inventory/schema" || pkg == module "/internal/inventory/grouptree" ||
 		    pkg == module "/internal/inventory/render" || pkg == module "/internal/credentials" ||
 		    pkg == module "/internal/ca" || pkg == module "/internal/jobs" ||
-		    pkg == module "/internal/worker/runner" || pkg == module "/internal/worker/sshprobe") {
+		    pkg == module "/internal/worker/runner" || pkg == module "/internal/worker/sshprobe" ||
+		    pkg == module "/internal/clientip") {
 			floor = 90
 		}
 

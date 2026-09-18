@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
@@ -237,7 +238,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
-		Tenancy: tenancySvc, Audit: auditRec, Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
+		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Credentials: credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,

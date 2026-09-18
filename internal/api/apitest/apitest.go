@@ -20,6 +20,7 @@ import (
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
@@ -244,10 +245,11 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
-		Tokens:  auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
-		Tenancy: tenancySvc,
-		Audit:   audit.NewRecorder(audit.NewSQLStore(d), time.Now),
-		Setup:   setupSvc,
+		Tokens:   auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
+		Tenancy:  tenancySvc,
+		Audit:    audit.NewRecorder(audit.NewSQLStore(d), time.Now),
+		ClientIP: clientip.New(nil),
+		Setup:    setupSvc,
 		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
 		// exercises whatever a test actually stored through
 		// PUT /admin/settings/smtp — no separate fake needed, since the

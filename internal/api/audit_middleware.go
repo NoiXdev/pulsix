@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"log/slog"
+	"net/netip"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -226,6 +228,10 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 		}
 		objType, _ := op.Metadata["auditObject"].(string)
 		userID := carrier.userID
+		meta := map[string]any{}
+		if ip := clientAddr(deps, ctx); ip.IsValid() {
+			meta["source_ip"] = ip.String()
+		}
 		// An event that belongs to an organization is written inside that
 		// organization's database scope, so row-level security checks the
 		// insert like every other org-scoped write. reqCtx itself predates
@@ -245,7 +251,7 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 			// organization" into "organization uuid.Nil".
 			OrgID: carrier.orgID, ActorID: &userID, ActorKind: carrier.kind,
 			Action: ctx.Method() + " " + op.OperationID, ObjectType: objType,
-			ObjectID: carrier.objectID, Summary: carrier.summary,
+			ObjectID: carrier.objectID, Summary: carrier.summary, Meta: meta,
 		}); err != nil {
 			// Recording failures must not break the request the user
 			// already received a successful response for — the mutation
@@ -258,4 +264,17 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 			slog.ErrorContext(reqCtx, "audit: failed to record event", "err", err, "action", ctx.Method()+" "+op.OperationID)
 		}
 	}
+}
+
+// clientAddr resolves the request's client address through the trusted
+// proxy list (internal/clientip). huma exposes headers one callback at a
+// time, so X-Forwarded-For lines are collected in order first.
+func clientAddr(deps Deps, ctx huma.Context) netip.Addr {
+	var xff []string
+	ctx.EachHeader(func(name, value string) {
+		if strings.EqualFold(name, "X-Forwarded-For") {
+			xff = append(xff, value)
+		}
+	})
+	return deps.ClientIP.Resolve(ctx.RemoteAddr(), xff)
 }

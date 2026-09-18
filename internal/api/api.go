@@ -15,6 +15,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
@@ -38,6 +39,9 @@ type Deps struct {
 	Tokens   *auth.Tokens
 	Tenancy  *tenancy.Service
 	Audit    *audit.Recorder
+	// ClientIP resolves request source addresses behind
+	// PULSIX_TRUSTED_PROXIES; required.
+	ClientIP *clientip.Resolver
 	Setup    *setup.Service
 	Hosts    *hosts.Service
 	// Credentials is the organization's encrypted secret store (SSH keys,
@@ -128,6 +132,9 @@ func (d Deps) validate() error {
 	}
 	if d.Audit == nil {
 		missing = append(missing, "Audit")
+	}
+	if d.ClientIP == nil {
+		missing = append(missing, "ClientIP")
 	}
 	if d.Setup == nil {
 		missing = append(missing, "Setup")

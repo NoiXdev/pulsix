@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/clientip"
 )
 
 // defaultCAListenHost is the DNS SAN the gRPC server certificate falls
@@ -52,6 +55,14 @@ type Config struct {
 	// a positive integer; default DefaultJobMaxAttempts). It stops a job
 	// whose claim a worker can never complete from looping forever.
 	JobMaxAttempts int
+	// ScheduleTick is how often the schedule ticker looks for due
+	// schedules (PULSIX_SCHEDULE_TICK, default 15s, minimum 5s). Twice the
+	// tick is the grace period after which a due run counts as late.
+	ScheduleTick time.Duration
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For the
+	// API believes (PULSIX_TRUSTED_PROXIES, CIDRs or addresses, comma
+	// separated, default empty: the TCP peer is the client).
+	TrustedProxies []netip.Prefix
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -65,6 +76,12 @@ const DefaultRetestInterval = time.Hour
 
 // DefaultJobMaxAttempts is the default PULSIX_JOB_MAX_ATTEMPTS.
 const DefaultJobMaxAttempts = 3
+
+// DefaultScheduleTick and MinScheduleTick bound PULSIX_SCHEDULE_TICK.
+const (
+	DefaultScheduleTick = 15 * time.Second
+	MinScheduleTick     = 5 * time.Second
+)
 
 // Load reads and validates configuration. getenv is injected for tests.
 func Load(getenv func(string) string) (Config, error) {
@@ -111,6 +128,19 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		cfg.JobMaxAttempts = n
 	}
+	cfg.ScheduleTick = DefaultScheduleTick
+	if raw := getenv("PULSIX_SCHEDULE_TICK"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < MinScheduleTick {
+			return cfg, fmt.Errorf("PULSIX_SCHEDULE_TICK must be a duration of at least %s (e.g. 15s)", MinScheduleTick)
+		}
+		cfg.ScheduleTick = d
+	}
+	proxies, err := clientip.ParsePrefixes(getenv("PULSIX_TRUSTED_PROXIES"))
+	if err != nil {
+		return cfg, fmt.Errorf("PULSIX_TRUSTED_PROXIES: %w", err)
+	}
+	cfg.TrustedProxies = proxies
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {
 		return cfg, fmt.Errorf("PULSIX_MASTER_KEY must be 64 hex characters (32 bytes)")
