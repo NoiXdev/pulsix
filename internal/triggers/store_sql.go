@@ -159,7 +159,7 @@ func (st *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 }
 
 func (st *SQLStore) Deliveries(ctx context.Context, orgID, id uuid.UUID, limit int) ([]Delivery, error) {
-	rows, err := st.q.ListTriggerDeliveries(ctx, gen.ListTriggerDeliveriesParams{OrgID: orgID, TriggerID: id, Lim: int32(limit)}) //nolint:gosec // clamped by the API
+	rows, err := st.q.ListTriggerDeliveries(ctx, gen.ListTriggerDeliveriesParams{OrgID: orgID, TriggerID: id, Lim: int32(limit)}) //nolint:gosec // clamped to 1-500 by Service.Deliveries
 	if err != nil {
 		return nil, fmt.Errorf("list deliveries: %w", err)
 	}

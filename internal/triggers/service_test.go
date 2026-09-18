@@ -34,10 +34,11 @@ func (fakeBox) OpenAAD(sealed, aad []byte) ([]byte, error) {
 }
 
 type fakeStore struct {
-	mu      sync.Mutex
-	byID    map[uuid.UUID]triggers.Trigger
-	secrets map[uuid.UUID][]byte
-	fills   int
+	mu        sync.Mutex
+	byID      map[uuid.UUID]triggers.Trigger
+	secrets   map[uuid.UUID][]byte
+	fills     int
+	lastLimit int
 }
 
 func newFakeStore() *fakeStore {
@@ -117,7 +118,10 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) Deliveries(context.Context, uuid.UUID, uuid.UUID, int) ([]triggers.Delivery, error) {
+func (f *fakeStore) Deliveries(_ context.Context, _, _ uuid.UUID, limit int) ([]triggers.Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastLimit = limit
 	return nil, nil
 }
 
@@ -277,6 +281,33 @@ func TestRepoSyncTriggersTakeNoMapping(t *testing.T) {
 	in.Name, in.Mapping = "with mapping", triggers.Mapping{Limit: "$.x"}
 	if _, err := w.svc.Create(ctx, w.org, w.actor, in); !errors.Is(err, triggers.ErrInvalidInput) {
 		t.Fatalf("repo_sync with mapping: %v", err)
+	}
+}
+
+// TestDeliveriesClampsTheLimit covers Task 9 review Minor 6: Service.Deliveries
+// passed its limit straight through to the store, which cast it to int32
+// with a //nolint comment claiming the API clamps it — a business rule
+// that belonged in the service, not a trusted assumption about callers.
+func TestDeliveriesClampsTheLimit(t *testing.T) {
+	w := newWorld(t)
+	c, err := w.svc.Create(ctx, w.org, w.actor, w.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ in, want int }{
+		{0, 1},
+		{-5, 1},
+		{5, 5},
+		{500, 500},
+		{100000, 500},
+	}
+	for _, tc := range cases {
+		if _, err := w.svc.Deliveries(ctx, w.org, c.Trigger.ID, tc.in); err != nil {
+			t.Fatal(err)
+		}
+		if w.store.lastLimit != tc.want {
+			t.Fatalf("Deliveries(%d): store saw limit %d, want %d", tc.in, w.store.lastLimit, tc.want)
+		}
 	}
 }
 

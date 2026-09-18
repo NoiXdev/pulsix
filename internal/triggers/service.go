@@ -176,11 +176,28 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.d.Store.Delete(ctx, orgID, id)
 }
 
+// maxDeliveriesLimit bounds Deliveries so a negative or absurdly large
+// caller-supplied value cannot reach the store as-is (Task 9 review, Minor
+// 6): a negative value is an SQL error there, and a value above MaxInt32
+// wraps when cast.
+const maxDeliveriesLimit = 500
+
 func (s *Service) Deliveries(ctx context.Context, orgID, id uuid.UUID, limit int) ([]Delivery, error) {
 	if _, err := s.d.Store.Get(ctx, orgID, id); err != nil {
 		return nil, err
 	}
-	return s.d.Store.Deliveries(ctx, orgID, id, limit)
+	return s.d.Store.Deliveries(ctx, orgID, id, clampDeliveriesLimit(limit))
+}
+
+func clampDeliveriesLimit(limit int) int {
+	switch {
+	case limit < 1:
+		return 1
+	case limit > maxDeliveriesLimit:
+		return maxDeliveriesLimit
+	default:
+		return limit
+	}
 }
 
 func (s *Service) sealNewSecret(orgID, id uuid.UUID) (string, []byte, error) {
