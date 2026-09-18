@@ -3,6 +3,7 @@ package schedules
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/audit"
@@ -22,7 +23,16 @@ type Decision struct {
 // Decide applies spec §2 steps 2–5 to one due schedule: the late /
 // catch-up rule, the overlap guard, the enqueue, and the next occurrence
 // computed from now (a long downtime never replays a backlog).
-func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace time.Duration) Decision {
+//
+// A panic anywhere below — a stored override that no longer reveals, a
+// third-party enqueuer's own bug, cronexpr on some edge case, an empty
+// jobs slice if that contract ever changes — is recovered into a generic
+// failed Decision instead of crashing the ticker's goroutine (fix round
+// 1, Important #1). next is computed early, before anything risky runs,
+// so the recovered Decision still advances next_run_at: the poisoned
+// occurrence is skipped rather than staying due forever and re-panicking,
+// and possibly crash-looping the whole manager, on every following tick.
+func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace time.Duration) (result Decision) {
 	run := Run{ID: s.newID(), OrgID: sch.OrgID, ScheduleID: sch.ID, DecidedAt: now}
 	if sch.NextRunAt != nil {
 		run.DueAt = *sch.NextRunAt
@@ -34,9 +44,18 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 	if err != nil || lerr != nil {
 		s.log.ErrorContext(ctx, "schedule has an unusable timetable; stopping it", "schedule", sch.ID, "org", sch.OrgID)
 		run.Outcome, run.Reason = OutcomeFailed, "the schedule's timetable is invalid; edit and save it"
+		s.auditRun(ctx, sch, run)
 		return Decision{Run: run}
 	}
 	next := expr.Next(now, loc)
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.ErrorContext(ctx, "schedule decide panicked; recording a failed run", "schedule", sch.ID, "org", sch.OrgID, "panic", r, "stack", string(debug.Stack()))
+			result = Decision{Run: run, NextRunAt: &next}
+			result.Run.Outcome, result.Run.Reason = OutcomeFailed, "the scheduled run failed unexpectedly (see the manager log)"
+			s.auditRun(ctx, sch, result.Run)
+		}
+	}()
 	decision := Decision{Run: run, NextRunAt: &next}
 
 	reason := ""

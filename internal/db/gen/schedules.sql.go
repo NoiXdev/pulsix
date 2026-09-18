@@ -309,7 +309,7 @@ SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "lim
 WHERE NOT paused AND next_run_at IS NOT NULL AND next_run_at <= $1::timestamptz
 ORDER BY next_run_at
 LIMIT $2
-FOR UPDATE SKIP LOCKED
+FOR NO KEY UPDATE SKIP LOCKED
 `
 
 type LockDueSchedulesParams struct {
@@ -319,7 +319,12 @@ type LockDueSchedulesParams struct {
 
 // The ticker's due scan: runs in a raw-pool transaction without
 // pulsix.org_id (bypass policy), across every organization; SKIP LOCKED
-// lets several managers tick without a leader (spec §2).
+// lets several managers tick without a leader (spec §2). FOR NO KEY
+// UPDATE, not FOR UPDATE: the ticker never changes a key column, and NO
+// KEY UPDATE does not conflict with the FOR KEY SHARE a schedule_runs
+// insert's FK check takes (e.g. a concurrent "run now") — only with
+// another UPDATE/DELETE of the schedule row itself. Fix round 1, Important
+// #3 ("pool exhaustion circular wait", the v0.2b pattern).
 func (q *Queries) LockDueSchedules(ctx context.Context, arg LockDueSchedulesParams) ([]Schedule, error) {
 	rows, err := q.db.Query(ctx, lockDueSchedules, arg.Now, arg.Lim)
 	if err != nil {

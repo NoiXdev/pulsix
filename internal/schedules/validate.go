@@ -74,16 +74,19 @@ func normalizeName(name string) (string, error) {
 	return n, nil
 }
 
+// defaultWindowDuration is CatchUp.window()'s fallback when Window is
+// unset or fails to parse: defaultWindow ("1h") always parses, so this
+// constant, not a second parse of it, is what that fallback actually is.
+const defaultWindowDuration = time.Hour
+
 // window is the catch-up window as a duration: the stored value (already
-// validated by normalizeGuards to be between 1m and 24h), defaulting to 1h
-// when unset or unparsable and clamped to maxCatchUpWindow.
+// validated by normalizeGuards to be between 1m and 24h), defaulting to
+// defaultWindowDuration when unset or unparsable and clamped to
+// maxCatchUpWindow.
 func (c CatchUp) window() time.Duration {
 	d, err := time.ParseDuration(c.Window)
 	if err != nil || d <= 0 {
-		d, err = time.ParseDuration(defaultWindow)
-		if err != nil {
-			d = time.Hour
-		}
+		d = defaultWindowDuration
 	}
 	if d > maxCatchUpWindow {
 		d = maxCatchUpWindow

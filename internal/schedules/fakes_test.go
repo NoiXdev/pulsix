@@ -186,11 +186,12 @@ func (f *fakeTemplates) RevealOverrides(_ context.Context, _, _ uuid.UUID, store
 }
 
 type fakeRuns struct {
-	mu       sync.Mutex
-	requests []jobs.RunRequest
-	active   bool
-	err      error
-	group    uuid.UUID
+	mu        sync.Mutex
+	requests  []jobs.RunRequest
+	active    bool
+	activeErr error
+	err       error
+	group     uuid.UUID
 }
 
 func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
@@ -209,6 +210,9 @@ func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID
 func (f *fakeRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.activeErr != nil {
+		return false, f.activeErr
+	}
 	return f.active, nil
 }
 

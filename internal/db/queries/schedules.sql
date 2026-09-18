@@ -47,12 +47,17 @@ ORDER BY schedule_id, decided_at DESC, id DESC;
 -- name: LockDueSchedules :many
 -- The ticker's due scan: runs in a raw-pool transaction without
 -- pulsix.org_id (bypass policy), across every organization; SKIP LOCKED
--- lets several managers tick without a leader (spec §2).
+-- lets several managers tick without a leader (spec §2). FOR NO KEY
+-- UPDATE, not FOR UPDATE: the ticker never changes a key column, and NO
+-- KEY UPDATE does not conflict with the FOR KEY SHARE a schedule_runs
+-- insert's FK check takes (e.g. a concurrent "run now") — only with
+-- another UPDATE/DELETE of the schedule row itself. Fix round 1, Important
+-- #3 ("pool exhaustion circular wait", the v0.2b pattern).
 SELECT * FROM schedules
 WHERE NOT paused AND next_run_at IS NOT NULL AND next_run_at <= @now::timestamptz
 ORDER BY next_run_at
 LIMIT @lim
-FOR UPDATE SKIP LOCKED;
+FOR NO KEY UPDATE SKIP LOCKED;
 
 -- name: AdvanceSchedule :exec
 -- Never touches revision or updated_at: an operator's If-Match stays valid.

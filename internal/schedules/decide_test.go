@@ -1,7 +1,13 @@
 package schedules_test
 
 import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,5 +134,139 @@ func TestDecideStopsAScheduleWhoseExpressionNoLongerParses(t *testing.T) {
 	d := w.svc.Decide(ctx, s, base, grace)
 	if d.Run.Outcome != schedules.OutcomeFailed || d.NextRunAt != nil {
 		t.Fatalf("decision = %+v", d)
+	}
+	if len(w.audit.events) != 1 {
+		t.Fatalf("an invalid timetable must be audited too, like any other failed run: %+v", w.audit.events)
+	}
+}
+
+func TestDecideAuditsAnOverlapCheckFailure(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	w := newWorld(t)
+	w.runs.activeErr = errors.New("db down")
+	s := due(t, w, "0 * * * *", base, schedules.Guards{Overlap: schedules.OverlapSkip})
+	d := w.svc.Decide(ctx, s, base, grace)
+	if d.Run.Outcome != schedules.OutcomeFailed || !strings.Contains(d.Run.Reason, "could not check for an active run") {
+		t.Fatalf("decision = %+v", d)
+	}
+	if d.NextRunAt == nil {
+		t.Fatal("the schedule must still advance past the failed check")
+	}
+	if len(w.audit.events) != 1 {
+		t.Fatalf("events = %+v", w.audit.events)
+	}
+}
+
+// panicOnceRuns panics on its first EnqueueRunWith call for a chosen
+// template, then behaves like a normal enqueuer — the shape a broken
+// third-party jobs contract or a bad template reveal could take.
+type panicOnceRuns struct {
+	mu       sync.Mutex
+	poison   uuid.UUID
+	panicked bool
+	requests []jobs.RunRequest
+}
+
+func (f *panicOnceRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if templateID == f.poison && !f.panicked {
+		f.panicked = true
+		panic("boom: enqueue panicked")
+	}
+	f.requests = append(f.requests, req)
+	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: req.Trigger}}, nil
+}
+
+func (f *panicOnceRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+// TestDecideRecoversAPanicAndAdvancesTheSchedule is fix round 1's Important
+// #1: a panic anywhere inside deciding or enqueueing (a stored override
+// that no longer reveals, a broken enqueuer, an unexpected empty jobs
+// slice) must not crash the manager, and must not leave the poisoned
+// occurrence due forever — that would crash-loop the manager on restart,
+// since the transaction never committed.
+func TestDecideRecoversAPanicAndAdvancesTheSchedule(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	store := newFakeStore()
+	tmpl := &fakeTemplates{}
+	poisonTemplate := uuid.Must(uuid.NewV7())
+	runs := &panicOnceRuns{poison: poisonTemplate}
+	auditor := &fakeAudit{}
+	org, actor := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	svc := schedules.NewService(store, tmpl, runs, auditor, func() time.Time { return base }, rand.Reader,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	in := validInput(poisonTemplate)
+	s, err := svc.Create(ctx, org, actor, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.NextRunAt = &base
+
+	d := svc.Decide(ctx, s, base, grace)
+	if d.Run.Outcome != schedules.OutcomeFailed {
+		t.Fatalf("decision after panic = %+v, want failed", d)
+	}
+	if d.NextRunAt == nil || !d.NextRunAt.After(base) {
+		t.Fatalf("next run at = %v, must advance past the poisoned occurrence", d.NextRunAt)
+	}
+
+	// A second decide, once the schedule is due again, is unaffected —
+	// the ticker keeps going instead of crash-looping on the same row.
+	s.NextRunAt = d.NextRunAt
+	d2 := svc.Decide(ctx, s, *d.NextRunAt, grace)
+	if d2.Run.Outcome != schedules.OutcomeTriggered {
+		t.Fatalf("decision after recovery = %+v, want triggered", d2)
+	}
+}
+
+// TestTickerSurvivesAPanickingScheduleAndProcessesTheRest is the
+// batch-level half of fix round 1's Important #1: one schedule's enqueue
+// panicking must not stop the other due schedules in the same batch from
+// firing, and Tick must return normally instead of the panic escaping the
+// whole ticker loop.
+func TestTickerSurvivesAPanickingScheduleAndProcessesTheRest(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	store := newFakeStore()
+	tmpl := &fakeTemplates{}
+	poisonTemplate, healthyTemplate := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	runs := &panicOnceRuns{poison: poisonTemplate}
+	auditor := &fakeAudit{}
+	org, actor := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	svc := schedules.NewService(store, tmpl, runs, auditor, func() time.Time { return base }, rand.Reader,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	mk := func(templateID uuid.UUID) schedules.Schedule {
+		in := validInput(templateID)
+		in.Name = "sched " + uuid.NewString()[:8]
+		s, err := svc.Create(ctx, org, actor, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.NextRunAt = &base
+		return s
+	}
+	poison, healthy := mk(poisonTemplate), mk(healthyTemplate)
+
+	fd := &fakeDue{due: []schedules.Schedule{poison, healthy}}
+	tk := schedules.NewTicker(svc, fd, 15*time.Second, func() time.Time { return base }, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	n, err := tk.Tick(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("Tick = %d, %v", n, err)
+	}
+	if len(fd.decisions) != 2 {
+		t.Fatalf("decisions = %+v", fd.decisions)
+	}
+	if fd.decisions[0].Run.Outcome != schedules.OutcomeFailed {
+		t.Fatalf("poisoned schedule's decision = %+v, want failed", fd.decisions[0])
+	}
+	if fd.decisions[1].Run.Outcome != schedules.OutcomeTriggered {
+		t.Fatalf("healthy schedule's decision = %+v, want triggered", fd.decisions[1])
+	}
+	if len(runs.requests) != 1 {
+		t.Fatalf("enqueued = %d, want 1 (only the healthy schedule)", len(runs.requests))
 	}
 }
