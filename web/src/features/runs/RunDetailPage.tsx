@@ -10,6 +10,7 @@ import { may } from '../../lib/roles.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { EventLog } from './EventLog.tsx';
 import { hasFailedHosts, hostResultRows, kindLabel, shortId, statusTone } from './status.ts';
+import { triggerLabel } from './trigger.ts';
 
 const RUNNING = new Set(['queued', 'claimed', 'running']);
 
@@ -106,7 +107,16 @@ export function RunDetailPage() {
         <div className="grid grid-cols-3 gap-4 p-4 text-xs">
           <Fact label="Zone" value={shortId(j.zone_id)} />
           <Fact label="Worker" value={j.worker_name ?? '—'} />
-          <Fact label="Triggered by" value={j.actor_name ?? (j.trigger === 'system' ? 'scheduler' : '—')} />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] text-muted-foreground">Triggered by</span>
+            {j.trigger === 'schedule' && j.trigger_ref ? (
+              <Link to="/o/$org/schedules" params={{ org }} search={{ id: j.trigger_ref, template: undefined }} className="truncate font-mono text-foreground hover:text-primary">
+                {j.actor_name ? `${j.actor_name} · Schedule` : 'Schedule'}
+              </Link>
+            ) : (
+              <span className="truncate font-mono text-foreground">{j.actor_name ?? triggerLabel(j.trigger)}</span>
+            )}
+          </div>
           <Fact label="Started" value={j.started_at ? j.started_at.slice(0, 19).replace('T', ' ') : '—'} />
           <Fact label="Finished" value={j.finished_at ? j.finished_at.slice(0, 19).replace('T', ' ') : '—'} />
           <Fact label="Run group" value={`${siblings.length + 1} job${siblings.length === 0 ? '' : 's'}`} />

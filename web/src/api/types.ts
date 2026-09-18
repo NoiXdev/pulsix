@@ -41,3 +41,7 @@ export type RepoInput = components['schemas']['RepoCreateInputBody'];
 export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
 export type BootstrapInput = components['schemas']['BootstrapInputBody'];
 export type AdhocInput = components['schemas']['AdhocInputBody'];
+
+export type Schedule = components['schemas']['ScheduleDTO'];
+export type ScheduleRun = components['schemas']['ScheduleRunDTO'];
+export type ScheduleInput = components['schemas']['ScheduleBody'];

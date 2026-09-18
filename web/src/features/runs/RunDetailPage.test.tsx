@@ -209,3 +209,28 @@ describe('RunDetailPage', () => {
     void user;
   });
 });
+
+describe('RunDetailPage trigger', () => {
+  it('names a scheduled run and links to its schedule', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      [`GET /api/v1/orgs/acme/jobs/${JOB_ID}`]: detail({ trigger: 'schedule', trigger_ref: 's1', actor_name: undefined }),
+      [`GET /api/v1/orgs/acme/jobs/${JOB_ID}/events`]: { events: [] },
+    });
+    renderPage();
+    const link = await screen.findByRole('link', { name: 'Schedule' });
+    expect(link.getAttribute('href')).toContain('/o/acme/schedules?id=s1');
+  });
+
+  it('names a webhook run', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      [`GET /api/v1/orgs/acme/jobs/${JOB_ID}`]: detail({ trigger: 'webhook', trigger_ref: 'tr1', actor_name: undefined }),
+      [`GET /api/v1/orgs/acme/jobs/${JOB_ID}/events`]: { events: [] },
+    });
+    renderPage();
+    expect(await screen.findByText('Webhook')).toBeInTheDocument();
+  });
+});

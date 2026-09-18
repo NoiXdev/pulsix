@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ListPlus, Play } from 'lucide-react';
+import { CalendarClock, ListPlus, Play } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
@@ -81,7 +81,7 @@ export function TemplatesPage() {
           <span>Playbook</span>
           <span>Scope</span>
           <span>Default credential</span>
-          {canRun && <span>Actions</span>}
+          <span>Actions</span>
         </GridHeader>
         {list.map((t) => (
           <GridRow key={t.id} columns={COLUMNS}>
@@ -97,11 +97,21 @@ export function TemplatesPage() {
             <span className="truncate font-mono text-xs text-muted-foreground">{playbookLabel(t.playbook_id)}</span>
             <span>{scopeChip(t, groupName)}</span>
             <span className="truncate text-xs text-muted-foreground">{t.credential_id ? (credentialName(t.credential_id) ?? t.credential_id.slice(0, 8)) : '—'}</span>
-            {canRun && (
-              <Button type="button" aria-label={`Run ${t.name}`} disabled={runTemplate.isPending} onClick={() => void run(t)}>
-                <Play size={13} /> Run
+            <span className="flex gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label={`Schedules of ${t.name}`}
+                onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: undefined, template: t.id } })}
+              >
+                <CalendarClock size={13} />
               </Button>
-            )}
+              {canRun && (
+                <Button type="button" aria-label={`Run ${t.name}`} disabled={runTemplate.isPending} onClick={() => void run(t)}>
+                  <Play size={13} /> Run
+                </Button>
+              )}
+            </span>
           </GridRow>
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No job templates yet.</p>}

@@ -9,6 +9,7 @@ const SEGMENT_LABEL: Record<string, string> = {
   repos: 'Repositories',
   playbooks: 'Playbooks',
   templates: 'Templates',
+  schedules: 'Schedules',
   runs: 'Runs',
   credentials: 'Credentials',
   'jump-hosts': 'Jump hosts',

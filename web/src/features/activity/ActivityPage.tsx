@@ -9,7 +9,7 @@ import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 
 const OBJECT_TYPES = ['host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite'];
 
-const ACTOR_KIND_LABEL: Record<string, string> = { token: 'API token', system: 'Pulsix' };
+const ACTOR_KIND_LABEL: Record<string, string> = { token: 'API token', system: 'Pulsix', schedule: 'Schedule', webhook: 'Webhook' };
 
 /**
  * ActivityPage follows design/mockups/build.mjs's ACTIVITY FEED artboard's

@@ -19,6 +19,7 @@ import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
 import { PlaybooksPage } from './features/playbooks/PlaybooksPage.tsx';
 import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
+import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
 
@@ -106,6 +107,15 @@ const groupDetailRoute = createRoute({
 const reposRoute = createRoute({ getParentRoute: () => orgRoute, path: '/repos', component: ReposPage });
 const playbooksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks', component: PlaybooksPage });
 const templatesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
+const schedulesRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/schedules',
+  validateSearch: (search: Record<string, unknown>) => ({
+    id: typeof search.id === 'string' ? search.id : undefined,
+    template: typeof search.template === 'string' ? search.template : undefined,
+  }),
+  component: SchedulesPage,
+});
 const runsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/runs',
@@ -164,6 +174,7 @@ const routeTree = rootRoute.addChildren([
     reposRoute,
     playbooksRoute,
     templatesRoute,
+    schedulesRoute,
     runsRoute,
     runDetailRoute,
     settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, credentialsRoute, jumpHostsRoute, mailRoute]),
