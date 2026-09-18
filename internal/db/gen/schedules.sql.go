@@ -13,6 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceSchedule = `-- name: AdvanceSchedule :exec
+UPDATE schedules SET last_run_at = $1, next_run_at = $2
+WHERE org_id = $3 AND id = $4
+`
+
+type AdvanceScheduleParams struct {
+	LastRunAt pgtype.Timestamptz `json:"last_run_at"`
+	NextRunAt pgtype.Timestamptz `json:"next_run_at"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	ID        uuid.UUID          `json:"id"`
+}
+
+// Never touches revision or updated_at: an operator's If-Match stays valid.
+func (q *Queries) AdvanceSchedule(ctx context.Context, arg AdvanceScheduleParams) error {
+	_, err := q.db.Exec(ctx, advanceSchedule,
+		arg.LastRunAt,
+		arg.NextRunAt,
+		arg.OrgID,
+		arg.ID,
+	)
+	return err
+}
+
 const createSchedule = `-- name: CreateSchedule :one
 INSERT INTO schedules (id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, $12, $13)
@@ -281,6 +304,61 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 	return items, nil
 }
 
+const lockDueSchedules = `-- name: LockDueSchedules :many
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision FROM schedules
+WHERE NOT paused AND next_run_at IS NOT NULL AND next_run_at <= $1::timestamptz
+ORDER BY next_run_at
+LIMIT $2
+FOR UPDATE SKIP LOCKED
+`
+
+type LockDueSchedulesParams struct {
+	Now time.Time `json:"now"`
+	Lim int32     `json:"lim"`
+}
+
+// The ticker's due scan: runs in a raw-pool transaction without
+// pulsix.org_id (bypass policy), across every organization; SKIP LOCKED
+// lets several managers tick without a leader (spec §2).
+func (q *Queries) LockDueSchedules(ctx context.Context, arg LockDueSchedulesParams) ([]Schedule, error) {
+	rows, err := q.db.Query(ctx, lockDueSchedules, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Schedule
+	for rows.Next() {
+		var i Schedule
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.TemplateID,
+			&i.Name,
+			&i.Mode,
+			&i.Cron,
+			&i.Simple,
+			&i.Timezone,
+			&i.Guards,
+			&i.Limit,
+			&i.ExtraVars,
+			&i.Paused,
+			&i.NextRunAt,
+			&i.LastRunAt,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Revision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pauseAllSchedules = `-- name: PauseAllSchedules :execrows
 UPDATE schedules SET paused = true, next_run_at = NULL, revision = revision + 1, updated_at = now()
 WHERE org_id = $1 AND NOT paused
@@ -336,6 +414,28 @@ func (q *Queries) SetSchedulePaused(ctx context.Context, arg SetSchedulePausedPa
 		&i.Revision,
 	)
 	return i, err
+}
+
+const trimScheduleRuns = `-- name: TrimScheduleRuns :exec
+DELETE FROM schedule_runs AS r
+WHERE r.org_id = $1 AND r.schedule_id = $2
+  AND r.id NOT IN (
+    SELECT k.id FROM schedule_runs AS k
+    WHERE k.org_id = $1 AND k.schedule_id = $2
+    ORDER BY k.decided_at DESC, k.id DESC
+    LIMIT $3
+  )
+`
+
+type TrimScheduleRunsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+	Keep       int32     `json:"keep"`
+}
+
+func (q *Queries) TrimScheduleRuns(ctx context.Context, arg TrimScheduleRunsParams) error {
+	_, err := q.db.Exec(ctx, trimScheduleRuns, arg.OrgID, arg.ScheduleID, arg.Keep)
+	return err
 }
 
 const updateSchedule = `-- name: UpdateSchedule :one

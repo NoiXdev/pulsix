@@ -43,3 +43,28 @@ ORDER BY decided_at DESC, id DESC LIMIT @lim;
 -- name: LatestScheduleRuns :many
 SELECT DISTINCT ON (schedule_id) * FROM schedule_runs WHERE org_id = @org_id
 ORDER BY schedule_id, decided_at DESC, id DESC;
+
+-- name: LockDueSchedules :many
+-- The ticker's due scan: runs in a raw-pool transaction without
+-- pulsix.org_id (bypass policy), across every organization; SKIP LOCKED
+-- lets several managers tick without a leader (spec §2).
+SELECT * FROM schedules
+WHERE NOT paused AND next_run_at IS NOT NULL AND next_run_at <= @now::timestamptz
+ORDER BY next_run_at
+LIMIT @lim
+FOR UPDATE SKIP LOCKED;
+
+-- name: AdvanceSchedule :exec
+-- Never touches revision or updated_at: an operator's If-Match stays valid.
+UPDATE schedules SET last_run_at = @last_run_at, next_run_at = sqlc.narg(next_run_at)
+WHERE org_id = @org_id AND id = @id;
+
+-- name: TrimScheduleRuns :exec
+DELETE FROM schedule_runs AS r
+WHERE r.org_id = @org_id AND r.schedule_id = @schedule_id
+  AND r.id NOT IN (
+    SELECT k.id FROM schedule_runs AS k
+    WHERE k.org_id = @org_id AND k.schedule_id = @schedule_id
+    ORDER BY k.decided_at DESC, k.id DESC
+    LIMIT @keep
+  );

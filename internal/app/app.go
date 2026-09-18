@@ -37,6 +37,7 @@ import (
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/schedule"
+	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -61,6 +62,8 @@ type App struct {
 	stopReaper func()
 	// stopRetest cancels the connection re-test scheduler's goroutine.
 	stopRetest func()
+	// stopTicker cancels the schedule ticker's goroutine.
+	stopTicker func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
@@ -77,6 +80,9 @@ func (a *App) Close() {
 	if a.stopRetest != nil {
 		a.stopRetest()
 	}
+	if a.stopTicker != nil {
+		a.stopTicker()
+	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
 	}
@@ -89,7 +95,11 @@ func (a *App) Close() {
 // every service, and finally the API handler — and returns a ready-to-serve
 // App. It is the one place production wiring happens; cmd/manager/main.go
 // only calls it.
-func Build(ctx context.Context, cfg config.Config) (*App, error) {
+func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error) {
+	o := buildOptions{scheduleNow: time.Now}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	// Migrations need DDL privileges appRole does not have, so they run
 	// through the plain superuser/owner connection named by
 	// cfg.DatabaseURL. That connection is closed as soon as migrations are
@@ -214,6 +224,11 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	reposSvc := repos.NewService(repos.NewSQLStore(appDB), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, box)
+	// The schedules service (Task 6): fires job templates on a timetable
+	// through the same org-scoped jobs.Service every other trigger uses.
+	// *templates.Service already satisfies TemplateChecker, so it is
+	// passed directly — no adapter needed.
+	schedulesSvc := schedules.NewService(schedules.NewSQLStore(appDB), templatesSvc, jobsSvc, auditRec, time.Now, rand.Reader, slog.Default())
 	jobsQueue.SetSyncSink(jobsSvc)
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
@@ -266,6 +281,11 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 	retestCtx, retestStop := context.WithCancel(context.Background())
 	go schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run(retestCtx)
 
+	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
+	// several safe. Stopped in Close and on every early return below.
+	tickerCtx, tickerStop := context.WithCancel(context.Background())
+	go schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run(tickerCtx)
+
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
@@ -275,6 +295,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		if err != nil {
 			reaperStop()
 			retestStop()
+			tickerStop()
 			appDB.Close()
 			return nil, fmt.Errorf("open CA for gRPC server: %w", err)
 		}
@@ -286,6 +307,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 		if err != nil {
 			reaperStop()
 			retestStop()
+			tickerStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -303,6 +325,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 			if splitErr != nil {
 				reaperStop()
 				retestStop()
+				tickerStop()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -313,7 +336,7 @@ func Build(ctx context.Context, cfg config.Config) (*App, error) {
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopTicker: tickerStop, stopEmbedded: stopEmbedded,
 	}, nil
 }
 

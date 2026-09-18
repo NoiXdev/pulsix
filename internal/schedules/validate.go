@@ -74,6 +74,23 @@ func normalizeName(name string) (string, error) {
 	return n, nil
 }
 
+// window is the catch-up window as a duration: the stored value (already
+// validated by normalizeGuards to be between 1m and 24h), defaulting to 1h
+// when unset or unparsable and clamped to maxCatchUpWindow.
+func (c CatchUp) window() time.Duration {
+	d, err := time.ParseDuration(c.Window)
+	if err != nil || d <= 0 {
+		d, err = time.ParseDuration(defaultWindow)
+		if err != nil {
+			d = time.Hour
+		}
+	}
+	if d > maxCatchUpWindow {
+		d = maxCatchUpWindow
+	}
+	return d
+}
+
 func normalizeGuards(g Guards) (Guards, error) {
 	switch g.Overlap {
 	case "":
