@@ -195,6 +195,21 @@ func (w *world) templateInput() triggers.Input {
 		Mapping: triggers.Mapping{ExtraVars: map[string]string{"release": "$.ref"}}}
 }
 
+// TestNewServiceDefaultsRand covers Task 9 review Minor 5: Deps' doc
+// comment promises Rand defaults when nil, but NewService did not default
+// it, so a Deps built without one panicked on the first newID/newSecret
+// call instead of using crypto/rand as documented.
+func TestNewServiceDefaultsRand(t *testing.T) {
+	w := newWorld(t)
+	w.svc = triggers.NewService(triggers.Deps{
+		Store: w.store, Templates: w.tmpls, Repos: w.repos, Box: fakeBox{}, PublicURL: "https://pulsix.example.test/",
+		Now: func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) },
+	})
+	if _, err := w.svc.Create(ctx, w.org, w.actor, w.templateInput()); err != nil {
+		t.Fatalf("Create with a nil Rand = %v, want it to default to crypto/rand", err)
+	}
+}
+
 func TestCreateReturnsTheSecretOnceAndSealsIt(t *testing.T) {
 	w := newWorld(t)
 	c, err := w.svc.Create(ctx, w.org, w.actor, w.templateInput())

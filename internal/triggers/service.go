@@ -2,6 +2,7 @@ package triggers
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -82,6 +83,9 @@ func NewService(d Deps) *Service {
 	}
 	if d.Log == nil {
 		d.Log = slog.Default()
+	}
+	if d.Rand == nil {
+		d.Rand = rand.Reader
 	}
 	d.PublicURL = strings.TrimRight(d.PublicURL, "/")
 	return &Service{d: d}
