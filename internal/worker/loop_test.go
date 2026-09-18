@@ -994,6 +994,78 @@ func TestLoopEndToEndCancel(t *testing.T) {
 	}
 }
 
+// TestLoopSurvivesRedialDuringARun: a certificate renewal's redial
+// (ReconnectingClient.Redial) firing WHILE a job's RunEvents stream is
+// still open must not disturb the run — the stream keeps delivering
+// events on the connection that opened it, and the job reports its real
+// terminal status, not "error" from a broken stream (fix round 2,
+// Important B — a blind 30-minute close timer previously could cut a
+// run exactly like this one mid-flight).
+func TestLoopSurvivesRedialDuringARun(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1-a", true)
+	cfg.ClaimInterval = 10 * time.Millisecond
+	jobID := uuid.Must(uuid.NewV7())
+	h.claims.Enqueue(&grpcsrv.JobClaim{
+		Job: workerpb.Job{
+			Id: jobID.String(), Kind: "run", OrgId: orgID.String(), ZoneId: zoneID.String(),
+			WorkerToken: "tok-" + jobID.String(),
+		},
+		Token: "tok-" + jobID.String(),
+	})
+
+	id, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := dialIdentity(t.Context(), cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewReconnectingClient(conn, quiet())
+
+	started := make(chan struct{})
+	resume := make(chan struct{})
+	exec := &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, sink func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		if err := sink(&workerpb.RunEvent{Host: "web-1", Task: "Run", State: "ok"}); err != nil {
+			return StatusError, nil, err
+		}
+		close(started)
+		<-resume // held open while the test redials underneath this run
+		if err := sink(&workerpb.RunEvent{Host: "web-1", Task: "Run", State: "changed"}); err != nil {
+			return StatusError, nil, err
+		}
+		return StatusSucceeded, map[string]any{"web-1": map[string]any{"ok": 2}}, nil
+	}}
+
+	cancel, done := runLoop(t, NewLoop(cfg, rc, exec))
+	<-started
+
+	rc.Redial(t.Context(), func(ctx context.Context) (*grpc.ClientConn, error) {
+		return dialIdentity(ctx, cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	})
+	close(resume)
+
+	waitFor(t, 2*time.Second, func() bool {
+		return len(h.results.Results()) == 1 && len(h.events.Events()) == 2
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	res := h.results.Results()[0]
+	if res.Status != "succeeded" {
+		t.Fatalf("result status = %q, want succeeded — the run must survive the reconnect, not end as error", res.Status)
+	}
+	if res.Stats["web-1"] == nil {
+		t.Fatalf("stats = %v", res.Stats)
+	}
+	if len(h.events.Events()) != 2 {
+		t.Fatalf("events = %d, want 2 (both delivered over the stream the run started with)", len(h.events.Events()))
+	}
+}
+
 // TestLoopTruncatesOversizedEventPayloads: an event whose payload exceeds
 // the per-event limit is still sent — the run's record keeps the event —
 // but its payload is replaced by a bounded JSON document that says it was
@@ -1045,15 +1117,16 @@ func TestLoopTruncatesOversizedEventPayloads(t *testing.T) {
 	}
 }
 
-// TestLoopUnauthenticatedLogDependsOnIdentityValidity: an Unauthenticated
-// claim error while the worker's own certificate is still within its
-// validity window must not send the operator to delete a healthy
-// identity — that is exactly the situation a stale, not-yet-reconnected
-// connection produces (Important review finding 1), and it heals itself
-// (the reconnecting client redials; the server's own MaxConnectionAge is
-// the backstop). Only once the certificate the loop is looking at has
-// itself expired does the "revoked or unknown, delete and re-enroll"
-// hint make sense.
+// TestLoopUnauthenticatedLogDependsOnIdentityValidity: fix round 2
+// (New Breakage 4) flips the "still valid" branch's default diagnosis —
+// with the reconnecting client redialing immediately after every renewal
+// and the server itself cycling every connection at least daily
+// (MaxConnectionAge), a stale, not-yet-reconnected connection is now the
+// rare cause of Unauthenticated while the certificate is still valid;
+// revocation is the common one, so the message says so. A certificate
+// that has actually expired gets a different, actionable recovery
+// (re-enroll with a new token) instead of the revocation wording, which
+// does not fit a worker that was never revoked at all.
 func TestLoopUnauthenticatedLogDependsOnIdentityValidity(t *testing.T) {
 	h := newHarness(t)
 	icfg := h.issue("fra-1", true)
@@ -1078,16 +1151,19 @@ func TestLoopUnauthenticatedLogDependsOnIdentityValidity(t *testing.T) {
 		return logs.String()
 	}
 
-	fresh := run(t, id.Leaf().NotBefore.Add(time.Hour))
-	if strings.Contains(fresh, "remove the identity") || strings.Contains(fresh, "delete it") {
-		t.Fatalf("a still-valid certificate must not be told to be removed:\n%s", fresh)
+	valid := run(t, id.Leaf().NotBefore.Add(time.Hour))
+	if !strings.Contains(valid, "revoked") {
+		t.Fatalf("a still-valid certificate refused as Unauthenticated must be diagnosed as likely revoked:\n%s", valid)
 	}
-	if !strings.Contains(fresh, "not expired") && !strings.Contains(fresh, "still valid") {
-		t.Fatalf("the log must say the certificate is still good:\n%s", fresh)
+	if !strings.Contains(valid, "delete it") {
+		t.Fatalf("the revoked diagnosis must point at deleting the worker on the Workers page:\n%s", valid)
 	}
 
-	stale := run(t, id.Leaf().NotAfter.Add(time.Hour))
-	if !strings.Contains(stale, "delete it") {
-		t.Fatalf("an actually-expired certificate must point at deleting the worker before re-enrolling:\n%s", stale)
+	expired := run(t, id.Leaf().NotAfter.Add(time.Hour))
+	if !strings.Contains(expired, "expired") {
+		t.Fatalf("an actually-expired certificate must be named as such, not diagnosed as revoked:\n%s", expired)
+	}
+	if !strings.Contains(expired, "re-enroll") {
+		t.Fatalf("an expired certificate must name the recovery (re-enroll with a new token):\n%s", expired)
 	}
 }

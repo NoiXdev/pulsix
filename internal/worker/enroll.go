@@ -13,10 +13,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
@@ -88,7 +91,10 @@ func ensureIdentity(ctx context.Context, cfg Config, log *slog.Logger, now func(
 		Csr: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}), Version: cfg.Version,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrEnrollUnreachable, err)
+		if isEnrollUnreachable(err) {
+			return fmt.Errorf("%w: %v", ErrEnrollUnreachable, err)
+		}
+		return fmt.Errorf("the manager refused enrollment: %w", err)
 	}
 	// Only the pin-verified CA block is trusted and written — the rest of
 	// whatever the manager sent as "ca_chain" (there is only ever one
@@ -138,6 +144,44 @@ func ensureIdentity(ctx context.Context, cfg Config, log *slog.Logger, now func(
 	}
 	log.InfoContext(ctx, "worker enrolled", "worker_id", resp.GetWorkerId(), "identity", filepath.Dir(cfg.CertPath))
 	return nil
+}
+
+// isEnrollUnreachable classifies an Enroll RPC failure: true only for a
+// genuine transport-level problem (the manager unreachable, a timeout —
+// worth exiting 1 for, so a restart policy retries) as opposed to the
+// manager having actively answered with a refusal (an expired, used or
+// unknown token; a taken name; a rate limit) or the client-side TLS
+// handshake itself failing because the presented CA does not match the
+// token's pinned fingerprint — both configuration problems no retry
+// fixes, and both must exit 2 so an operator gets a fresh token instead
+// of a restart loop burning the per-address rate limit.
+//
+// A pin failure never reaches an RPC status: crypto/tls's
+// VerifyPeerCertificate callback (pin.go) fails the handshake itself, and
+// grpc-go reports that as a transport error, usually coded Unavailable —
+// indistinguishable BY CODE from a real "manager unreachable". It is
+// still distinguishable by message, because pin.go's own errors are the
+// only thing that can appear there, so their text is checked first.
+func isEnrollUnreachable(err error) bool {
+	msg := err.Error()
+	for _, s := range []string{"pinned CA", "fingerprint", "authentication handshake failed"} {
+		if strings.Contains(msg, s) {
+			return false
+		}
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return true // no gRPC status at all: a raw dial/network error
+	}
+	switch st.Code() {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Unknown:
+		return true
+	default:
+		// Unauthenticated (enrollment refused), AlreadyExists (name
+		// taken), InvalidArgument (bad CSR), ResourceExhausted (rate
+		// limited), … — the manager answered with a definite refusal.
+		return false
+	}
 }
 
 // bundleUsable reports whether the configured bundle loads, its key

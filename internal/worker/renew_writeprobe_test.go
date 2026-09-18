@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
 
@@ -62,13 +63,16 @@ func (c *countingRenewClient) callCount() int {
 	return c.calls
 }
 
-// TestRenewerSkipsMintWhenDirectoryReadOnly: a renewal due against a
-// read-only identity directory must never call RenewCertificate at all —
-// minting a certificate the worker already knows it cannot persist would
-// otherwise repeat every RenewCheckInterval forever (Important review
-// finding 2), silently registering and orphaning one certificate per
-// attempt on the manager.
-func TestRenewerSkipsMintWhenDirectoryReadOnly(t *testing.T) {
+// TestRenewerRenewsEvenWithReadOnlyDirectory: a renewal due against a
+// read-only identity directory must still happen — the worker keeps
+// working on the renewed certificate in memory, because a worker that
+// simply refused to renew would die for good once the certificate on
+// disk expires (fix round 2, Important A). The failure to persist is
+// reported as a single actionable ERROR naming the directory, the uid
+// that needs write access, the ON-DISK certificate's own expiry (not the
+// new one now only in memory) and the consequence of a restart before
+// the directory is fixed.
+func TestRenewerRenewsEvenWithReadOnlyDirectory(t *testing.T) {
 	h := newHarness(t)
 	cfg := h.issue("fra-1", true)
 	id, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
@@ -79,20 +83,51 @@ func TestRenewerSkipsMintWhenDirectoryReadOnly(t *testing.T) {
 	if err := probeWritable(dir); err != nil {
 		t.Skip("cannot simulate a read-only directory with the current privileges")
 	}
+	onDiskExpiry := id.Leaf().NotAfter
+	before := id.Leaf().SerialNumber
+
+	conn, err := dialIdentity(t.Context(), cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := workerpb.NewWorkerServiceClient(conn)
+
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	client := &countingRenewClient{}
 	now := id.Leaf().NotAfter.Add(-time.Hour) // due for renewal
-	r := NewRenewer(client, id, func() time.Time { return now }, nil, quiet())
-	err = r.Check(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("err = %v, want a read-only-directory error naming it", err)
+	var logs bytes.Buffer
+	r := NewRenewer(client, id, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	if err := r.Check(t.Context()); err != nil {
+		t.Fatalf("Check must still renew (in memory) even when the directory is read-only: %v", err)
 	}
-	if client.calls != 0 {
-		t.Fatalf("RenewCertificate was called %d time(s); a read-only directory must be caught before minting anything", client.calls)
+	if id.Leaf().SerialNumber.Cmp(before) == 0 {
+		t.Fatal("the certificate must be renewed and swapped into memory despite the read-only directory")
+	}
+
+	out := logs.String()
+	for _, want := range []string{dir, "65532", onDiskExpiry.Format(time.RFC3339), "restart"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the log must mention %q (path, uid, on-disk expiry, restart consequence):\n%s", want, out)
+		}
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err := os.ReadFile(cfg.CertPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDiskLeaf, err := ca.ParseLeaf(onDisk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onDiskLeaf.SerialNumber.Cmp(before) != 0 {
+		t.Fatal("the on-disk certificate must be unchanged: the write never succeeded")
 	}
 }
 

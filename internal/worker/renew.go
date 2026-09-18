@@ -81,30 +81,37 @@ func (r *Renewer) Run(ctx context.Context) {
 	}
 }
 
-// Check renews when due. It probes that the certificate directory is
-// writable BEFORE calling RenewCertificate: a read-only mount (the most
-// common deployment mistake — a bundle mounted `:ro`, as this project's
-// own docs said to do before this fix) would otherwise mint a fresh,
-// server-registered certificate every RenewCheckInterval only to discard
-// it, forever, because NeedsRenewal keeps seeing the same stale leaf on
-// disk. The probe failing is reported as a clear, actionable error and
-// nothing is minted that round.
+// identityDirRuntimeUID is the worker container's non-root user (see
+// deploy/worker/Dockerfile); named here so the actionable log message in
+// Check can tell an operator exactly what to chown.
+const identityDirRuntimeUID = "65532"
+
+// Check renews when due — unconditionally: it always asks the manager for
+// a fresh certificate and always swaps it into Identity, even when the
+// certificate directory turns out to be read-only. A worker whose
+// identity directory it cannot write to must still keep working (a
+// read-only bundle mount is the most common deployment mistake, and
+// refusing to renew at all means it silently dies at its certificate's
+// own expiry, restart or not); reusing the same key means only the
+// certificate itself needs to move, and it is safe to keep entirely in
+// memory. Renewal is still driven off the in-memory certificate
+// (NeedsRenewal reads Identity.Leaf), so once this succeeds in memory it
+// is not attempted again for another ~60 days regardless of whether the
+// disk write keeps failing — there is no re-mint-every-6h loop.
 //
-// If the directory IS writable but the write itself still fails (a race,
-// a full disk, permissions revoked between the probe and the write),
-// Identity.Replace swaps the renewed certificate into memory anyway —
-// the worker keeps working on it until its next restart rather than
-// silently keep presenting one closer to expiry — and that failure is
-// still reported so the operator can fix persistence before the restart
-// loses the improvement.
+// A disk write failure is reported with everything an operator needs to
+// act: the directory, the uid that needs write access, when the
+// certificate ON DISK (not the one now in memory) expires, and what
+// happens if nothing is done before then. This runs on every renewal
+// attempt while the directory stays broken, including the very first one
+// at startup (Run calls Check immediately), so the warning appears well
+// before day 90, not just once silently in the log history.
 func (r *Renewer) Check(ctx context.Context) error {
 	if !r.id.NeedsRenewal(r.now()) {
 		return nil
 	}
 	dir := r.id.certDir()
-	if err := probeWritable(dir); err != nil {
-		return fmt.Errorf("certificate directory %s is read-only (mount it writable so the worker can renew): %w", dir, err)
-	}
+	onDiskExpiry := r.id.Leaf().NotAfter // what is currently persisted, before any swap below
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, r.id.Signer())
 	if err != nil {
 		return fmt.Errorf("create renewal request: %w", err)
@@ -116,18 +123,24 @@ func (r *Renewer) Check(ctx context.Context) error {
 		return fmt.Errorf("renew certificate: %w", err)
 	}
 	before := r.id.Leaf().SerialNumber
-	replaceErr := r.id.Replace(resp.GetCertificate())
-	if r.id.Leaf().SerialNumber.Cmp(before) != 0 {
-		// The in-memory certificate changed, saved to disk or not: move
-		// future calls to a fresh connection so it actually reaches the
-		// wire (see WithOnRenewed's doc comment).
-		r.log.InfoContext(ctx, "certificate renewed", "not_after", r.id.Leaf().NotAfter)
-		if r.onRenewed != nil {
-			r.onRenewed(ctx)
-		}
+	writeErr := r.id.Replace(resp.GetCertificate())
+	if r.id.Leaf().SerialNumber.Cmp(before) == 0 {
+		// Replace refused the certificate outright (malformed, or does not
+		// match the key) — the manager's fault, not a persistence problem;
+		// nothing changed, so there is nothing to reconnect for either.
+		return fmt.Errorf("save renewed certificate: %w", writeErr)
 	}
-	if replaceErr != nil {
-		return fmt.Errorf("save renewed certificate to disk: %w", replaceErr)
+	r.log.InfoContext(ctx, "certificate renewed", "not_after", r.id.Leaf().NotAfter)
+	if r.onRenewed != nil {
+		r.onRenewed(ctx)
+	}
+	if writeErr != nil {
+		r.log.ErrorContext(ctx, "renewed certificate could not be saved to disk; the worker keeps using the new one in memory only",
+			"dir", dir,
+			"fix", "uid "+identityDirRuntimeUID+" needs write access to this directory",
+			"on_disk_certificate_expires_at", onDiskExpiry.Format(time.RFC3339),
+			"consequence", "if the worker restarts before the directory is made writable, it will stop working once that certificate expires",
+			"err", writeErr)
 	}
 	return nil
 }

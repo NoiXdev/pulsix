@@ -32,30 +32,34 @@ const DefaultCancelPollInterval = 500 * time.Millisecond
 // expires and the job has to be re-claimed.
 const tokenTTL = 30 * time.Second
 
-// maxConnectionAge and maxConnectionAgeGrace force every connection to
-// cycle periodically (a GOAWAY at the age, a hard close after the grace),
+// maxConnectionAge forces every connection to cycle at most once a day,
 // independently of the worker's own post-renewal reconnect
-// (internal/worker.ReconnectingClient). This is the backstop: a worker
-// whose proactive reconnect silently fails (a transient dial error, an
-// older binary before this fix) would otherwise keep an already-completed
-// TLS handshake past its certificate's expiry — the server re-verifies
-// the peer certificate's validity window on every RPC, so that connection
-// would then fail every call at day 90 for no fixable reason, "revoked"-
-// looking to the operator even though a fresh, valid certificate sits on
-// disk. 24h keeps every connection's negotiated peer certificate well
-// within the 90-day leaf lifetime (renewal itself triggers at day 60,
-// two-thirds through — a full 24h cycle is nowhere near that margin) and
-// matches the cadence gRPC's own docs recommend for periodic connection
-// rotation. The 30-minute grace is generous next to typical playbook run
-// times, so the GOAWAY lets an in-flight RunEvents stream keep going
-// after age is reached; an exceptional run still going after the grace is
-// cut, but that is exactly the "worker went away mid-run" case the
-// manager's own claim/requeue path already recovers from (a dead worker,
-// a killed container, a network partition) — not a new failure mode.
-const (
-	maxConnectionAge      = 24 * time.Hour
-	maxConnectionAgeGrace = 30 * time.Minute
-)
+// (internal/worker.ReconnectingClient.Redial). This is the backstop: a
+// worker whose proactive reconnect silently fails (a transient dial
+// error, an older binary before that fix) would otherwise keep an
+// already-completed TLS handshake past its certificate's expiry — the
+// server re-verifies the peer certificate's validity window on every
+// RPC, so that connection would then fail every call at day 90 for no
+// fixable reason, "revoked"-looking to the operator even though a fresh,
+// valid certificate sits on disk. 24h keeps every connection's negotiated
+// peer certificate well within the 90-day leaf lifetime (renewal itself
+// triggers at day 60, two-thirds through — a full 24h cycle is nowhere
+// near that margin) and matches the cadence gRPC's own docs recommend for
+// periodic connection rotation.
+//
+// MaxConnectionAgeGrace is deliberately left unset (gRPC's own default:
+// effectively infinite). Reaching MaxConnectionAge only sends a GOAWAY,
+// which stops the client from starting NEW RPCs on that transport and
+// makes it dial a fresh one for them — it does not touch RPCs already in
+// flight. A worker's RunEvents stream for a run that is still going does
+// not start a new RPC, so it is unaffected and keeps working on the old
+// transport until it finishes on its own; ansible runs routinely take
+// hours, and a grace period would eventually hard-close that transport
+// out from under a run still in progress; there is no run-length limit in
+// this plan, so no finite grace is safe to pick. Revocation, which is the
+// one case that must cut a stream immediately, already does that itself
+// through StreamRegistry — it never relied on this setting.
+const maxConnectionAge = 24 * time.Hour
 
 // Deps wires the server's dependencies. CA and Workers are the concrete
 // services the transport needs by value; the rest are the narrow ports
@@ -166,10 +170,10 @@ func (s *Server) newGRPCServer() *grpc.Server {
 		grpc.ChainUnaryInterceptor(s.authUnaryInterceptor),
 		grpc.ChainStreamInterceptor(s.authStreamInterceptor),
 		// Backstop for a stale certificate on a long-lived connection; see
-		// maxConnectionAge's own comment.
+		// maxConnectionAge's own comment. No MaxConnectionAgeGrace: gRPC's
+		// default lets an in-flight RunEvents stream run to completion.
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      maxConnectionAge,
-			MaxConnectionAgeGrace: maxConnectionAgeGrace,
+			MaxConnectionAge: maxConnectionAge,
 		}),
 	)
 	workerpb.RegisterWorkerServiceServer(gs, s)

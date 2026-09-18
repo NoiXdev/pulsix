@@ -149,3 +149,40 @@ func TestEnsureIdentityWrapsUnreachableManager(t *testing.T) {
 		t.Fatalf("err = %v, want ErrEnrollUnreachable", err)
 	}
 }
+
+// TestEnsureIdentityClassifiesServerRefusals: only a genuine failure to
+// reach the manager (dialing, a transport error) is ErrEnrollUnreachable.
+// A token the server actively refused (used, expired, unknown) and a
+// pin-mismatched CA (the handshake itself failing, before any RPC status
+// exists) are both configuration problems an operator has to fix — a
+// restart policy that treats them as transient would loop until the
+// per-address enrollment rate limit trips (fix round 2, minor).
+func TestEnsureIdentityClassifiesServerRefusals(t *testing.T) {
+	h := newHarness(t)
+
+	// A pin mismatch never reaches an RPC status at all (the TLS handshake
+	// itself fails) — still not "unreachable".
+	tok, _ := enrolltoken.Parse(h.token(t, "fra-p1"))
+	tok.CAPin[0] ^= 0xff
+	err := ensureIdentity(t.Context(), tokenConfig(t, tok.String()), quiet(), time.Now, []grpc.DialOption{h.bufconnDialer()})
+	if err == nil {
+		t.Fatal("a pin mismatch must fail")
+	}
+	if errors.Is(err, ErrEnrollUnreachable) {
+		t.Fatalf("a pin mismatch must not be reported as unreachable: %v", err)
+	}
+
+	// An already-spent token: the server answers Unauthenticated.
+	spent := h.token(t, "fra-p2")
+	firstCfg := tokenConfig(t, spent)
+	if err := ensureIdentity(t.Context(), firstCfg, quiet(), time.Now, []grpc.DialOption{h.bufconnDialer()}); err != nil {
+		t.Fatal(err)
+	}
+	err = ensureIdentity(t.Context(), tokenConfig(t, spent), quiet(), time.Now, []grpc.DialOption{h.bufconnDialer()})
+	if err == nil {
+		t.Fatal("a spent token must be refused")
+	}
+	if errors.Is(err, ErrEnrollUnreachable) {
+		t.Fatalf("a spent token must not be reported as unreachable: %v", err)
+	}
+}

@@ -110,9 +110,21 @@ worker image with:
 | `PULSIX_MANAGER_SERVER_NAME` | the manager's `PULSIX_GRPC_SERVER_NAME` (default `pulsix-manager`) |
 | `PULSIX_WORKER_CERT`, `PULSIX_WORKER_KEY`, `PULSIX_CA_CERT` | the three file paths |
 
+The worker image runs as uid 65532, not root. A bind-mounted directory
+(unlike a named volume) keeps whatever ownership it already has on the
+host, so make it writable by that uid before the first start — the
+worker also renews its own certificate back into the same directory, not
+just reads it once:
+
+```bash
+mkdir -p worker-certs
+mv cert.pem key.pem ca.pem worker-certs/
+sudo chown -R 65532:65532 worker-certs
+```
+
 A worker on this same compose network uses `manager:8444` as its address;
 copy the `worker` service in `docker-compose.yml` under a new name with
-its own bind-mounted bundle directory.
+its own bind-mounted bundle directory (owned the same way).
 
 ### Workers on other machines
 

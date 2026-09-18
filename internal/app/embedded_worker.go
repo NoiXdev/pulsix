@@ -221,12 +221,13 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 		log.ErrorContext(ctx, "embedded worker: dial manager", "err", err)
 		return
 	}
-	defer func() { _ = conn.Close() }()
 	// client can move to a fresh connection after a certificate renewal
 	// (Redial, wired below) without the loop or the renewer knowing — see
 	// ReconnectingClient's own doc comment for why that matters for a
-	// long-lived connection like this one.
+	// long-lived connection like this one. client.Close (not conn.Close,
+	// which would miss a redial) closes whatever is current at shutdown.
 	client := worker.NewReconnectingClient(conn, log)
+	defer func() { _ = client.Close() }()
 	// Renewal at start and every 6 h, once a third of the validity is
 	// left; a successful renewal redials so the new certificate actually
 	// reaches the wire.

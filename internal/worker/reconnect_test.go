@@ -5,8 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
+	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
 
@@ -92,4 +95,66 @@ func TestReconnectingClientRedialFailureKeepsTheOldConnection(t *testing.T) {
 	if _, err := rc.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "dev"}); err != nil {
 		t.Fatalf("a failed redial must leave the working connection in place: %v", err)
 	}
+}
+
+// TestReconnectingClientKeepsAnOpenStreamAcrossRedial: a RunEvents stream
+// opened before Redial must keep working after it — Redial only changes
+// which generation NEW calls go to — and the connection it replaced must
+// stay open the whole time the stream is (fix round 2, Important B: a
+// blind close timer previously cut any run still going at the time of a
+// redial). Only once the stream itself ends does the superseded
+// connection become eligible to close, proven here by a direct call on it
+// starting to fail only after that point.
+func TestReconnectingClientKeepsAnOpenStreamAcrossRedial(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1", true)
+	id, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connA, err := dialIdentity(t.Context(), cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewReconnectingClient(connA, quiet())
+
+	jobID := uuid.Must(uuid.NewV7())
+	h.claims.Enqueue(&grpcsrv.JobClaim{
+		Job:   workerpb.Job{Id: jobID.String(), Kind: "run", OrgId: orgID.String(), ZoneId: zoneID.String()},
+		Token: "tok-" + jobID.String(),
+	})
+	claimResp, err := rc.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "dev"})
+	if err != nil || claimResp.GetJob() == nil {
+		t.Fatalf("claim: resp=%v err=%v", claimResp, err)
+	}
+	job := claimResp.GetJob()
+
+	streamCtx := metadata.AppendToOutgoingContext(t.Context(), "job_id", job.GetId(), "worker_token", job.GetWorkerToken())
+	stream, err := rc.RunEvents(streamCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A redial while the stream above is still open — as a certificate
+	// renewal mid-run would trigger.
+	rc.Redial(t.Context(), func(ctx context.Context) (*grpc.ClientConn, error) {
+		return dialIdentity(ctx, cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	})
+
+	if err := stream.Send(&workerpb.RunEvent{JobId: job.GetId(), Seq: 1, Host: "web-1", Task: "t", State: "ok"}); err != nil {
+		t.Fatalf("a stream opened before Redial must keep working after it: %v", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break // the manager ended the stream; connA is now idle
+		}
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		_, err := workerpb.NewWorkerServiceClient(connA).ClaimJob(context.Background(), &workerpb.ClaimJobRequest{Version: "dev"})
+		return err != nil // connA is closed once the stream truly ended, not before
+	})
 }

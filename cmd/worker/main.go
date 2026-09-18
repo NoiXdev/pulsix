@@ -93,10 +93,12 @@ func run(env []string) int {
 		slog.Error("dial manager failed", "addr", cfg.ManagerAddr, "err", err)
 		return 1
 	}
-	defer func() { _ = conn.Close() }() // best-effort: the process is exiting anyway
 	// client can move to a fresh connection after a certificate renewal
-	// (Redial, wired below) without the loop or the renewer knowing.
+	// (Redial, wired below) without the loop or the renewer knowing;
+	// client.Close (not conn.Close, which would miss a redial) closes
+	// whatever connection is current at shutdown.
 	client := worker.NewReconnectingClient(conn, slog.Default())
+	defer func() { _ = client.Close() }() // best-effort: the process is exiting anyway
 	// Renewal at start and every 6 h, once a third of the validity is
 	// left; a successful renewal redials so the new certificate actually
 	// reaches the wire (see ReconnectingClient's own doc comment).
