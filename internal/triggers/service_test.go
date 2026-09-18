@@ -249,6 +249,7 @@ func TestCreateValidation(t *testing.T) {
 		{"template run with a repo", func(in *triggers.Input) { in.RepoID = &w.repo }},
 		{"bad cidr", func(in *triggers.Input) { in.AllowCIDRs = []string{"10.0.0.0/33"} }},
 		{"bad timestamp header", func(in *triggers.Input) { in.TimestampHeader = "X Bad" }},
+		{"timestamp header on a preset that cannot use it", func(in *triggers.Input) { in.TimestampHeader = "X-Pulsix-Timestamp" }},
 		{"rate limit count", func(in *triggers.Input) { in.RateLimit = triggers.RateLimit{Count: 0, Per: "1m"} }},
 		{"rate limit per", func(in *triggers.Input) { in.RateLimit = triggers.RateLimit{Count: 5, Per: "48h"} }},
 		{"on_active", func(in *triggers.Input) { in.OnActive = "wait" }},
@@ -265,6 +266,26 @@ func TestCreateValidation(t *testing.T) {
 				t.Fatalf("Create = %v, want ErrInvalidInput", err)
 			}
 		})
+	}
+}
+
+// TestTimestampHeaderOnlyForPulsix covers Task 9 review Minor 3: GitHub and
+// Gitea never sign "<timestamp>.<body>", and GitLab's and bearer's token
+// does not bind a timestamp either, so a timestamp header only means
+// anything for the pulsix preset — every other preset must refuse it.
+func TestTimestampHeaderOnlyForPulsix(t *testing.T) {
+	w := newWorld(t)
+	for _, p := range []triggers.Preset{triggers.PresetGitHub, triggers.PresetGitea, triggers.PresetGitLab, triggers.PresetBearer} {
+		in := w.templateInput()
+		in.Preset, in.TimestampHeader = p, "X-Pulsix-Timestamp"
+		if _, err := w.svc.Create(ctx, w.org, w.actor, in); !errors.Is(err, triggers.ErrInvalidInput) {
+			t.Fatalf("preset %s with a timestamp header: %v, want ErrInvalidInput", p, err)
+		}
+	}
+	in := w.templateInput()
+	in.Preset, in.TimestampHeader = triggers.PresetPulsix, "X-Pulsix-Timestamp"
+	if _, err := w.svc.Create(ctx, w.org, w.actor, in); err != nil {
+		t.Fatalf("pulsix with a timestamp header = %v, want no error", err)
 	}
 }
 

@@ -220,8 +220,18 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input) (Tri
 	if _, ok := presets[in.Preset]; !ok {
 		return Trigger{}, fmt.Errorf("%w: preset must be pulsix, github, gitea, gitlab or bearer", ErrInvalidInput)
 	}
-	if in.TimestampHeader != "" && !headerNameRE.MatchString(in.TimestampHeader) {
-		return Trigger{}, fmt.Errorf("%w: timestamp header must be a header name", ErrInvalidInput)
+	if in.TimestampHeader != "" {
+		if !headerNameRE.MatchString(in.TimestampHeader) {
+			return Trigger{}, fmt.Errorf("%w: timestamp header must be a header name", ErrInvalidInput)
+		}
+		// Only the pulsix preset can use a timestamp header: GitHub and
+		// Gitea never sign "<timestamp>.<body>" (their real senders would
+		// fail every genuine delivery), and GitLab's and bearer's token
+		// does not bind a timestamp at all, so the replay window would add
+		// nothing (Task 9 review, Minor 3).
+		if in.Preset != PresetPulsix {
+			return Trigger{}, fmt.Errorf("%w: a timestamp header is only supported for the pulsix preset", ErrInvalidInput)
+		}
 	}
 	cidrs, err := parseCIDRs(in.AllowCIDRs)
 	if err != nil {
