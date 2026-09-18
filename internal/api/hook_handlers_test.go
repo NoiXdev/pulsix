@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
 
@@ -153,6 +155,110 @@ func TestHookOnActiveSkipAndTimestampWindow(t *testing.T) {
 	}
 	if resp := hook(t, c.URL, body, signAt(time.Now().Add(-10*time.Minute))); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("replayed: %d", resp.StatusCode)
+	}
+}
+
+// TestHookFiresWithAnEmptyBody covers Task 10 review Important 1: spec §3
+// lists no 400, so a trigger that maps nothing (a plain "ping" webhook)
+// must fire with no body at all — a bearer or GitLab call needs no body to
+// authenticate, and huma's RawBody request is required by default, which
+// refused every such call with 400 before the fix.
+func TestHookFiresWithAnEmptyBody(t *testing.T) {
+	f := newRunFixture(t, "hook-empty-body")
+	c := f.createTrigger(t, func(in *triggers.Input) {
+		in.Preset, in.Mapping = triggers.PresetBearer, triggers.Mapping{}
+	})
+	resp := hook(t, c.URL, nil, map[string]string{"Authorization": "Bearer " + c.Secret})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("empty body: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestRepoHookFiresWithAnEmptyBody is the repo_sync half of the same fix:
+// a repo_sync trigger takes no mapping at all, so an empty body is the
+// normal case for it too (GitLab's ping event has no body worth reading).
+func TestRepoHookFiresWithAnEmptyBody(t *testing.T) {
+	f := newRunFixture(t, "hook-repo-empty-body")
+	oc := f.operatorC
+	resp := postJSON(t, oc, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/repos", map[string]any{"name": "infra", "url": "https://git.example.com/infra.git"})
+	var repo struct {
+		Repo struct {
+			ID string `json:"id"`
+		} `json:"repo"`
+	}
+	decodeInto(t, resp, &repo)
+	repoID := uuid.MustParse(repo.Repo.ID)
+	c, err := f.s.Deps.Triggers.Create(db.WithOrgScope(context.Background(), f.orgID), f.orgID, uuid.Must(uuid.NewV7()),
+		triggers.Input{Kind: triggers.KindRepoSync, RepoID: &repoID, Name: "push", Enabled: true, Preset: triggers.PresetGitLab})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = hook(t, c.URL, nil, map[string]string{"X-Gitlab-Token": c.Secret})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("empty body repo hook: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestHookBodySizeBoundary covers Task 10 review Minor 1: spec §3 accepts
+// a body up to and including 1 MiB. huma's MaxBytesReader treats a body
+// that reads exactly maxBytes as "too large" regardless of whether more
+// data follows, so the operation's MaxBodyBytes must be set one byte over
+// triggers.MaxBodyBytes for the boundary itself to be accepted.
+func TestHookBodySizeBoundary(t *testing.T) {
+	f := newRunFixture(t, "hook-boundary")
+	c := f.createTrigger(t, func(in *triggers.Input) { in.Mapping = triggers.Mapping{} })
+	exact := bytes.Repeat([]byte("a"), triggers.MaxBodyBytes)
+	if resp := hook(t, c.URL, exact, signedHeaders(c, exact)); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("exactly 1 MiB: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	over := bytes.Repeat([]byte("a"), triggers.MaxBodyBytes+1)
+	if resp := hook(t, c.URL, over, signedHeaders(c, over)); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("1 MiB + 1: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestHookPayloadKeysNeverLeakIntoTheResponseOrTheDeliveryRow covers Task
+// 10 review Minor 3: a mapping target that is an object with a restricted
+// (here: empty) sub-schema makes any key inside the sender's payload
+// object an "unknown field" validation problem, located at
+// "<target>.<key>" by internal/inventory/schema. Before the fix, that key
+// — sender-controlled payload content, not a configured name — reached
+// both the 422 response and the stored delivery's reason.
+func TestHookPayloadKeysNeverLeakIntoTheResponseOrTheDeliveryRow(t *testing.T) {
+	f := newRunFixture(t, "hook-leak")
+	sc := &schema.Schema{Fields: []schema.Field{{Name: "config", Type: schema.TypeObject, Fields: []schema.Field{{Name: "allowed", Type: schema.TypeString}}}}}
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	tmpl, err := f.s.Deps.Templates.Create(scoped, f.orgID, templates.CreateInput{
+		Name: "leak-check", PlaybookID: f.playbook, Scope: templates.Scope{HostIDs: []uuid.UUID{f.hostA}}, ExtraVarsSchema: sc,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := f.s.Deps.Triggers.Create(scoped, f.orgID, uuid.Must(uuid.NewV7()), triggers.Input{
+		Kind: triggers.KindTemplateRun, TemplateID: &tmpl.ID, Name: "leak-check-hook", Enabled: true,
+		Preset: triggers.PresetPulsix, Mapping: triggers.Mapping{ExtraVars: map[string]string{"config": "$.config"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"config":{"s3cr3t_attacker_key":"x"}}`)
+	resp := hook(t, c.URL, body, signedHeaders(c, body))
+	b := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d %s", resp.StatusCode, b)
+	}
+	if strings.Contains(b, "s3cr3t_attacker_key") {
+		t.Fatalf("response echoes a payload key: %s", b)
+	}
+	if !strings.Contains(b, "extra_vars.config") {
+		t.Fatalf("response does not name the configured target: %s", b)
+	}
+	deliveries, err := f.s.Deps.Triggers.Deliveries(scoped, f.orgID, c.Trigger.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || strings.Contains(deliveries[0].Reason, "s3cr3t_attacker_key") {
+		t.Fatalf("delivery reason echoes a payload key: %+v", deliveries)
 	}
 }
 

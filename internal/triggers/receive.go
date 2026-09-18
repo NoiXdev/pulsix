@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,13 @@ const MaxBodyBytes = 1 << 20
 // above a busy CI system's rate (GitHub delivers from a shared address
 // pool) and exists so a single source cannot drive unbounded lookups.
 const HookIPLimit = 300
+
+// errMappingCompile marks a stored mapping that fails to compile at
+// receive time even though Create/Update already validated it (for
+// example after an incompatible library upgrade): a configuration fault,
+// not something the sender caused, so runTemplate routes it to
+// OutcomeFailed instead of OutcomeInvalidPayload (Task 10 review, Minor 4).
+var errMappingCompile = errors.New("stored mapping failed to compile")
 
 // Request is one call to a hook endpoint.
 type Request struct {
@@ -135,6 +143,10 @@ func (s *Service) TestCall(ctx context.Context, orgID, id uuid.UUID, body []byte
 func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body []byte) (Result, error) {
 	ov, field, err := s.mapPayload(ctx, t, body)
 	if err != nil {
+		if errors.Is(err, errMappingCompile) {
+			s.d.Log.ErrorContext(ctx, "webhook trigger's stored mapping failed to compile", "trigger", t.ID, "org", t.OrgID, "err", err)
+			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the trigger's mapping is invalid (see the manager log)", false)
+		}
 		if field == "" {
 			return Result{}, err
 		}
@@ -196,7 +208,7 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	}
 	c, err := compileMapping(t.Mapping)
 	if err != nil {
-		return templates.Overrides{}, "mapping", err
+		return templates.Overrides{}, "", fmt.Errorf("%w: %w", errMappingCompile, err)
 	}
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
@@ -212,7 +224,7 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	case err == nil:
 		return checked, "", nil
 	case errors.As(err, &ve) && len(ve.Problems) > 0:
-		return templates.Overrides{}, "extra_vars." + ve.Problems[0].Path, err
+		return templates.Overrides{}, "extra_vars." + firstSegment(ve.Problems[0].Path), err
 	case errors.Is(err, templates.ErrInvalidInput):
 		return templates.Overrides{}, "limit", err
 	}
@@ -228,9 +240,27 @@ func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason str
 		d.Reason += "; " + reason
 	}
 	if err := s.d.Store.RecordDelivery(ctx, d, throttle); err != nil {
-		return Result{}, err
+		// Recording is best-effort bookkeeping, not part of the request's
+		// own effect — the same principle the audit middleware applies
+		// elsewhere: an outcome that was already decided (a run already
+		// enqueued, a rejection already refused) must not turn into a 500
+		// merely because writing its delivery row failed, or a sender
+		// that retries on 5xx (GitHub, GitLab, ...) would start a
+		// duplicate run (Task 10 review, Minor 6).
+		s.d.Log.ErrorContext(ctx, "record delivery failed", "trigger", d.TriggerID, "org", d.OrgID, "outcome", res.Outcome, "err", err)
 	}
 	return res, nil
+}
+
+// firstSegment returns path up to (not including) its first "." or "[", so
+// a nested validation problem never echoes a key or array index taken from
+// the sender's own payload — only the configured top-level mapping target
+// reaches the 422 response and the delivery reason (Task 10 review, Minor 3).
+func firstSegment(path string) string {
+	if i := strings.IndexAny(path, ".["); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
 
 func (s *Service) auditRun(ctx context.Context, t Trigger, d Delivery, objectType, objectID string) {

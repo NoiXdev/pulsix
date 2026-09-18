@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,9 @@ type recording struct {
 	deliveries []triggers.Delivery
 	throttled  []bool
 	noTokens   bool
+	// recordErr, when set, makes RecordDelivery fail after still
+	// recording the attempt — for TestReceiveKeepsTheRunWhenRecordingTheDeliveryFails.
+	recordErr error
 }
 
 func (r *recording) TakeToken(context.Context, uuid.UUID, uuid.UUID, triggers.RateLimit, time.Time) (bool, time.Duration, error) {
@@ -73,7 +77,7 @@ func (r *recording) TakeToken(context.Context, uuid.UUID, uuid.UUID, triggers.Ra
 func (r *recording) RecordDelivery(_ context.Context, d triggers.Delivery, throttle bool) error {
 	r.deliveries = append(r.deliveries, d)
 	r.throttled = append(r.throttled, throttle)
-	return nil
+	return r.recordErr
 }
 
 type receiveWorld struct {
@@ -267,5 +271,55 @@ func TestReceiveLimitsDeliveriesPerSourceAddress(t *testing.T) {
 	}
 	if res, err := rw.svc.TestCall(ctx, rw.org, c.Trigger.ID, nil); err != nil || res.Outcome != triggers.OutcomeTriggered {
 		t.Fatalf("test call = %+v, %v", res, err)
+	}
+}
+
+// TestReceiveTreatsAStoredMappingCompileFailureAsAServerFault covers Task
+// 10 review Minor 4: a mapping that compiled fine when the trigger was
+// saved (Create validates it) but no longer does by the time a delivery
+// arrives — say, after an incompatible library upgrade — is a
+// configuration fault, not the sender's. Create's own validation refuses
+// such a mapping outright, so the stored trigger is corrupted directly to
+// reach this state.
+func TestReceiveTreatsAStoredMappingCompileFailureAsAServerFault(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := rw.rec.byID[c.Trigger.ID]
+	corrupt.Mapping = triggers.Mapping{ExtraVars: map[string]string{"release": "not a jsonpath"}}
+	rw.rec.byID[c.Trigger.ID] = corrupt
+
+	res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"v1"}`))
+	if err != nil || res.Outcome != triggers.OutcomeFailed || res.Field != "" {
+		t.Fatalf("Receive = %+v, %v; want a server-side failure, not invalid_payload", res, err)
+	}
+	last := rw.rec.deliveries[len(rw.rec.deliveries)-1]
+	if last.Reason == "" || strings.Contains(last.Reason, "not a jsonpath") {
+		t.Fatalf("delivery reason = %q; must be generic, never the compile error", last.Reason)
+	}
+	if len(rw.runs.requests) != 0 {
+		t.Fatal("a mapping fault must not enqueue a run")
+	}
+}
+
+// TestReceiveKeepsTheRunWhenRecordingTheDeliveryFails covers Task 10
+// review Minor 6: once a run is enqueued, a failure to write its delivery
+// row must not turn the response into a 500 — a sender that retries on 5xx
+// (GitHub, GitLab, ...) would otherwise start a duplicate run.
+func TestReceiveKeepsTheRunWhenRecordingTheDeliveryFails(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rw.rec.recordErr = errors.New("simulated delivery insert failure")
+	res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"v1"}`))
+	if err != nil || res.Outcome != triggers.OutcomeTriggered || res.RunID == nil {
+		t.Fatalf("Receive = %+v, %v; a delivery-log failure must not turn an already-enqueued run into an error", res, err)
+	}
+	if len(rw.runs.requests) != 1 {
+		t.Fatalf("run requests = %d, want exactly 1 (no duplicate enqueue on retry)", len(rw.runs.requests))
 	}
 }

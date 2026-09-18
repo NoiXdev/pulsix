@@ -51,7 +51,12 @@ func registerHookRoutes(hapi huma.API, deps Deps) {
 	} {
 		huma.Register(hapi, huma.Operation{
 			OperationID: h.op, Method: http.MethodPost, Path: h.path, Summary: h.summary, Tags: []string{"Webhooks"},
-			DefaultStatus: http.StatusAccepted, MaxBodyBytes: triggers.MaxBodyBytes,
+			// +1: spec §3 accepts a body up to and including 1 MiB, but
+			// huma's MaxBytesReader treats a body that reads exactly
+			// MaxBodyBytes as too large regardless of whether more data
+			// follows it, so the boundary itself needs one extra byte of
+			// headroom to be accepted (Task 10 review, Minor 1).
+			DefaultStatus: http.StatusAccepted, MaxBodyBytes: triggers.MaxBodyBytes + 1,
 		}, func(ctx context.Context, in *hookInput) (*hookOutput, error) {
 			res, err := deps.Triggers.Receive(ctx, triggers.Request{
 				TriggerID: in.ID, Kind: h.kind, Body: in.RawBody, Header: in.header.Get,
@@ -63,6 +68,15 @@ func registerHookRoutes(hapi huma.API, deps Deps) {
 			}
 			return hookResponse(res)
 		})
+		// huma marks a RawBody request required by default, which answers
+		// every bodyless call with 400 before the handler ever runs. Spec
+		// §3 lists no 400 for the hook endpoints — a trigger that maps
+		// nothing (a plain "ping", or a bearer/token-authenticated call)
+		// must be able to fire with no body at all (Task 10 review,
+		// Important 1). This is the same *Operation huma.Register just
+		// added to the document, so mutating it here reaches the handler
+		// closure above.
+		hapi.OpenAPI().Paths[h.path].Post.RequestBody.Required = false
 	}
 }
 

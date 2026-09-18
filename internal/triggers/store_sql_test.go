@@ -142,7 +142,11 @@ func TestThrottledDeliveryIsRaceFree(t *testing.T) {
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now()
+	// A fixed timestamp safely mid-minute, not time.Now(): when the wall
+	// clock happens to be in second 58 or 59, the 20 offsets below (up to
+	// +19ms) can straddle a calendar-minute boundary and legitimately
+	// produce 2 rows instead of 1 (Task 10 review, Important 2).
+	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 	for i := 0; i < 20; i++ {
@@ -228,7 +232,11 @@ func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now()
+	// A fixed timestamp safely mid-minute, not time.Now(): the three
+	// rejections below (up to +2s) can otherwise straddle a calendar-minute
+	// boundary and legitimately produce 2 rows instead of 1 (Task 10
+	// review, Important 2).
+	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
 		if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(time.Duration(i) * time.Second), SourceIP: "203.0.113.7", Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
 			t.Fatal(err)
