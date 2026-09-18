@@ -317,6 +317,38 @@ type RecoveryCode struct {
 	UsedAt   pgtype.Timestamptz `json:"used_at"`
 }
 
+type Schedule struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	TemplateID uuid.UUID          `json:"template_id"`
+	Name       string             `json:"name"`
+	Mode       string             `json:"mode"`
+	Cron       string             `json:"cron"`
+	Simple     []byte             `json:"simple"`
+	Timezone   string             `json:"timezone"`
+	Guards     []byte             `json:"guards"`
+	Limit      *string            `json:"limit"`
+	ExtraVars  []byte             `json:"extra_vars"`
+	Paused     bool               `json:"paused"`
+	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
+	LastRunAt  pgtype.Timestamptz `json:"last_run_at"`
+	CreatedBy  pgtype.UUID        `json:"created_by"`
+	CreatedAt  time.Time          `json:"created_at"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+	Revision   int64              `json:"revision"`
+}
+
+type ScheduleRun struct {
+	ID         uuid.UUID   `json:"id"`
+	OrgID      uuid.UUID   `json:"org_id"`
+	ScheduleID uuid.UUID   `json:"schedule_id"`
+	DueAt      time.Time   `json:"due_at"`
+	DecidedAt  time.Time   `json:"decided_at"`
+	Outcome    string      `json:"outcome"`
+	Reason     string      `json:"reason"`
+	JobGroupID pgtype.UUID `json:"job_group_id"`
+}
+
 type Session struct {
 	ID          uuid.UUID          `json:"id"`
 	UserID      uuid.UUID          `json:"user_id"`

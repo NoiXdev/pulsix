@@ -15,18 +15,19 @@ import (
 )
 
 // ActorKind says how the request that produced an Event was authenticated:
-// a browser session, a bearer API token, or nothing at all (a
-// Pulsix-initiated action — reserved for later tasks; the API middleware
-// that records mutating calls never produces this kind itself, since every
-// route it wraps requires a resolved principal to reach the point where an
-// event is recorded at all).
+// a browser session, a bearer API token, nothing at all (a Pulsix-initiated
+// action), or a schedule firing a run on its own timetable. The API
+// middleware that records mutating calls never produces the system or
+// schedule kind itself, since every route it wraps requires a resolved
+// principal to reach the point where an event is recorded at all.
 type ActorKind string
 
-// The three kinds of actor an Event can carry.
+// The kinds of actor an Event can carry.
 const (
-	ActorKindUser   ActorKind = "user"
-	ActorKindToken  ActorKind = "token"
-	ActorKindSystem ActorKind = "system"
+	ActorKindUser     ActorKind = "user"
+	ActorKindToken    ActorKind = "token"
+	ActorKindSystem   ActorKind = "system"
+	ActorKindSchedule ActorKind = "schedule"
 )
 
 // Event is one recorded audit entry. OrgID and ActorID are both pointers
