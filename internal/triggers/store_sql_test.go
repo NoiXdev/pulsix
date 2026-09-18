@@ -184,7 +184,11 @@ func TestThrottledDuplicateSkipsTrim(t *testing.T) {
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now()
+	// A fixed timestamp safely mid-minute, not time.Now(): the "duplicate"
+	// below adds 30s, which must land in the same calendar minute as at
+	// (trigger_delivery_minute truncates to a UTC minute boundary) on
+	// every run, not just when the test happens not to straddle one.
+	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
 	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
 		t.Fatal(err)
 	}
