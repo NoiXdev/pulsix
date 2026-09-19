@@ -557,7 +557,18 @@ Layered like Checkmk rulesets and Zabbix templates.
   literal text instead of running on the worker. The marker travels sealed with the
   run's overrides (`RunOverrides.Untrusted`) and is applied at claim, so a worker
   never has to know where a value came from; redaction still reads the plain values.
-  Dictionary keys are never templated by Ansible and need no marker. A mapped `limit`
+  Dictionary keys are never templated by Ansible and need no marker, **but the marker
+  only holds while Ansible loads the extra-vars document as JSON**: an object key it
+  reserves (`__ansible_unsafe`, `__ansible_vault`, `__ansible_type`) that does not
+  decode makes the JSON load fail, ansible-core silently re-reads the file as YAML,
+  and every marker in it becomes a plain dict whose strings are templated again
+  (v0.2c final re-review). So a mapped value holding an object key that starts with
+  `__ansible`, at any depth, answers 422 naming its mapping target field at receive
+  time and fails the claim as a second line; and an untrusted run also fails its
+  claim when any object in the merged document (the template's own values included)
+  has an `__ansible` key without being a well-formed `{"__ansible_unsafe": "<s>"}` or
+  `{"__ansible_vault": "<s>"}` marker. The "any depth" guarantee holds only with
+  these refusals in place. A mapped `limit`
   must be a plain host pattern — host and group names (letters, digits, `.`, `_`,
   `-`) with the operators `,` `:` `!` `&` and the wildcard `*`; anything else, above
   all `@file` (read a pattern list from a file on the worker), `~regex` and
