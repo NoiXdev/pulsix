@@ -77,27 +77,32 @@ type schedulePauseAllOutput struct {
 	}
 }
 
-// scheduleRunsMinLimit, scheduleRunsMaxLimit and scheduleRunsDefaultLimit
-// bound the runs history page (route table: 1-100, default 50). The query
-// tag below already rejects an out-of-range value before the handler runs,
-// but clampScheduleRunsLimit is the defense a value reaching
-// schedules.Service.Runs by any other path still needs — Service.Runs
-// itself passes LIMIT straight to Postgres, and a negative one is a
-// database error, not a validation error (Task 5 deferred minor).
+// listLimitMin, listLimitMax and listLimitDefault bound every "recent
+// items, newest first" list page this package hands a caller-supplied
+// limit to: the schedule runs history (1-100, default 50) and the
+// notification channel delivery log (notify_handlers.go), both to the
+// same range. The query tag on each input struct already rejects an
+// out-of-range value before its handler runs, but clampListLimit is the
+// defense a value reaching the backing service by any other path still
+// needs — schedules.Service.Runs and notify.Service.Deliveries both pass
+// limit straight to Postgres, and a negative one is a database error, not
+// a validation error (Task 5 deferred minor; generalized from
+// clampScheduleRunsLimit in Task 4 fix round 1 once notify_handlers.go
+// became a second caller).
 const (
-	scheduleRunsMinLimit     = 1
-	scheduleRunsMaxLimit     = 100
-	scheduleRunsDefaultLimit = 50
+	listLimitMin     = 1
+	listLimitMax     = 100
+	listLimitDefault = 50
 )
 
-func clampScheduleRunsLimit(limit int) int {
+func clampListLimit(limit int) int {
 	switch {
 	case limit <= 0:
-		return scheduleRunsDefaultLimit
-	case limit > scheduleRunsMaxLimit:
-		return scheduleRunsMaxLimit
-	case limit < scheduleRunsMinLimit:
-		return scheduleRunsMinLimit
+		return listLimitDefault
+	case limit > listLimitMax:
+		return listLimitMax
+	case limit < listLimitMin:
+		return listLimitMin
 	default:
 		return limit
 	}
@@ -286,7 +291,7 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		runs, err := deps.Schedules.Runs(ctx, scope.OrgID, id, clampScheduleRunsLimit(in.Limit))
+		runs, err := deps.Schedules.Runs(ctx, scope.OrgID, id, clampListLimit(in.Limit))
 		if err != nil {
 			return nil, mapSchedulesErr(ctx, err)
 		}

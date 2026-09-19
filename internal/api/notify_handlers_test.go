@@ -2,6 +2,9 @@ package api_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -31,9 +34,10 @@ type channelOut struct {
 
 // hookReceiver is a webhook endpoint recording every request.
 type hookReceiver struct {
-	mu     sync.Mutex
-	events []string
-	bodies []string
+	mu      sync.Mutex
+	events  []string
+	bodies  []string
+	headers []http.Header
 }
 
 func (h *hookReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +45,7 @@ func (h *hookReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.events = append(h.events, r.Header.Get("X-Pulsix-Event"))
 	h.bodies = append(h.bodies, string(body))
+	h.headers = append(h.headers, r.Header.Clone())
 	h.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -244,5 +249,174 @@ func TestSendTestRefusesLoopbackDestination(t *testing.T) {
 	}
 	if rec.count() != 0 {
 		t.Fatalf("the loopback receiver saw %d requests, want 0 (the outbound client must refuse to dial it)", rec.count())
+	}
+}
+
+// assertNoSecrets fails the test if raw (a whole HTTP response body)
+// contains any of secrets verbatim, naming which one leaked and where.
+func assertNoSecrets(t *testing.T, where, raw string, secrets []string) {
+	t.Helper()
+	for _, secret := range secrets {
+		if strings.Contains(raw, secret) {
+			t.Fatalf("%s response carries the secret %q: %s", where, secret, raw)
+		}
+	}
+}
+
+// TestNotificationChannelSecretsRedactedOnReadAndAudit is Task 4 review's
+// Important finding: TestNotificationChannelLifecycle only ever checked the
+// *create* response for leaked secrets — GET of a single, still-live
+// channel and the LIST response were never asserted on directly, and
+// neither was the audit trail. This test creates a webhook channel whose
+// URL carries a token in both the path and the query string, plus a secret
+// header value and an HMAC signing secret, then:
+//  1. re-fetches it via GET and via LIST and checks the raw response
+//     bodies for every secret string, and that the URL reads back as
+//     exactly scheme://host (no path, no query);
+//  2. updates the channel with every secret field left out (the "keep
+//     what is stored" markers) and proves, through a real Send test
+//     against an httptest receiver, that the stored header value and
+//     signing secret are byte-for-byte unchanged — not just hidden;
+//  3. checks that the create/update/test audit rows carry none of the
+//     secrets either, in their action, object_id or summary columns.
+func TestNotificationChannelSecretsRedactedOnReadAndAudit(t *testing.T) {
+	f := newRunFixture(t, "notify-secrets")
+	rec := &hookReceiver{}
+	hook := httptest.NewServer(rec)
+	defer hook.Close()
+
+	const (
+		pathToken   = "p4th-s3cret-91a2"
+		queryToken  = "qu3ry-s3cret-77bd"
+		headerValue = "Bearer h34der-s3cret-c40e"
+		hmacSecret  = "0123456789abcdef0123"
+	)
+	secrets := []string{pathToken, queryToken, headerValue, hmacSecret}
+
+	body := map[string]any{
+		"kind": "webhook", "name": "secret hook",
+		"webhook": map[string]any{
+			"url":     hook.URL + "/hooks/" + pathToken + "?token=" + queryToken,
+			"headers": []map[string]any{{"name": "Authorization", "value": headerValue}},
+			"signed":  true, "signing_secret": hmacSecret,
+		},
+	}
+	createResp := postJSON(t, f.adminC, f.channelsURL(), body)
+	createRaw := mustReadBody(t, createResp)
+	assertNoSecrets(t, "create", createRaw, secrets)
+	var created struct {
+		Channel channelOut `json:"channel"`
+	}
+	if err := json.Unmarshal([]byte(createRaw), &created); err != nil {
+		t.Fatal(err)
+	}
+	c := created.Channel
+	wantDisplayURL := hook.URL + "/…"
+	if c.Webhook == nil || c.Webhook.URL != wantDisplayURL {
+		t.Fatalf("created webhook URL = %+v, want exactly %q (scheme and host only)", c.Webhook, wantDisplayURL)
+	}
+
+	// GET of the still-live channel.
+	getResp := requestJSON(t, f.operatorC, http.MethodGet, f.channelsURL()+"/"+c.ID, nil)
+	getRaw := mustReadBody(t, getResp)
+	assertNoSecrets(t, "GET", getRaw, secrets)
+	var got struct {
+		Channel channelOut `json:"channel"`
+	}
+	if err := json.Unmarshal([]byte(getRaw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Channel.Webhook == nil || got.Channel.Webhook.URL != wantDisplayURL || len(got.Channel.Webhook.Headers) != 1 || got.Channel.Webhook.Headers[0] != "Authorization" {
+		t.Fatalf("GET channel = %+v", got.Channel)
+	}
+
+	// LIST.
+	listResp := requestJSON(t, f.operatorC, http.MethodGet, f.channelsURL(), nil)
+	listRaw := mustReadBody(t, listResp)
+	assertNoSecrets(t, "LIST", listRaw, secrets)
+	var list struct {
+		Channels []channelOut `json:"channels"`
+	}
+	if err := json.Unmarshal([]byte(listRaw), &list); err != nil {
+		t.Fatal(err)
+	}
+	var listed *channelOut
+	for i := range list.Channels {
+		if list.Channels[i].ID == c.ID {
+			listed = &list.Channels[i]
+		}
+	}
+	if listed == nil || listed.Webhook == nil || listed.Webhook.URL != wantDisplayURL || len(listed.Webhook.Headers) != 1 || listed.Webhook.Headers[0] != "Authorization" {
+		t.Fatalf("LIST channel = %+v", listed)
+	}
+
+	// Update with every secret field left out (the "keep what is stored"
+	// markers): a bare header name and no url/signing_secret.
+	up := map[string]any{"kind": "webhook", "name": "secret hook", "webhook": map[string]any{
+		"headers": []map[string]any{{"name": "Authorization"}}, "signed": true,
+	}}
+	updateResp := requestWithHeaders(t, f.adminC, http.MethodPut, f.channelsURL()+"/"+c.ID, up, map[string]string{"If-Match": `"1"`})
+	updateRaw := mustReadBody(t, updateResp)
+	assertNoSecrets(t, "update", updateRaw, secrets)
+	var updated struct {
+		Channel channelOut `json:"channel"`
+	}
+	if err := json.Unmarshal([]byte(updateRaw), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Channel.Webhook == nil || updated.Channel.Webhook.URL != wantDisplayURL {
+		t.Fatalf("updated channel = %+v, want the URL unchanged", updated.Channel)
+	}
+
+	// Prove the kept header value and signing secret are byte-for-byte
+	// unchanged, not just hidden: Send test really dials the receiver
+	// (apitest.New's default policy admits loopback), and the receiver
+	// records the exact Authorization header and the exact HMAC signature
+	// it was sent.
+	testResp := postJSON(t, f.adminC, f.channelsURL()+"/"+c.ID+"/test", nil)
+	var tested struct {
+		Delivery struct {
+			Status string `json:"status"`
+		} `json:"delivery"`
+	}
+	decodeInto(t, testResp, &tested)
+	if tested.Delivery.Status != "sent" || rec.count() != 1 {
+		t.Fatalf("send test after update = %+v, receiver saw %d requests", tested, rec.count())
+	}
+	gotHeaders := rec.headers[0]
+	if gotHeaders.Get("Authorization") != headerValue {
+		t.Fatalf("Authorization header after update = %q, want the original %q (must survive an update that never resent it)", gotHeaders.Get("Authorization"), headerValue)
+	}
+	mac := hmac.New(sha256.New, []byte(hmacSecret))
+	mac.Write([]byte(gotHeaders.Get("X-Pulsix-Timestamp") + "."))
+	mac.Write([]byte(rec.bodies[0]))
+	wantSig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	if gotHeaders.Get("X-Pulsix-Signature-256") != wantSig {
+		t.Fatalf("signature after update = %q, want %q computed from the original signing secret", gotHeaders.Get("X-Pulsix-Signature-256"), wantSig)
+	}
+
+	// The audit trail — action, object_id and summary — carries none of
+	// the secrets either (meta carries only source_ip; see
+	// auditMiddleware's own doc comment).
+	rows, err := f.s.DB.Pool().Query(context.Background(),
+		`SELECT action, object_id, summary FROM audit_events WHERE object_type = 'channel' AND object_id = $1`, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var action, objectID, summary string
+		if err := rows.Scan(&action, &objectID, &summary); err != nil {
+			t.Fatal(err)
+		}
+		assertNoSecrets(t, "audit row ("+action+")", action+" "+objectID+" "+summary, secrets)
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("channel audit events = %d, want 3 (create, update, test)", n)
 	}
 }

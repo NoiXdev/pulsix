@@ -141,10 +141,18 @@ func registerNotifyChannelRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// Fetched before the delete so the audit summary can still name the
+		// channel, matching create/update/test below (whose summaries all
+		// name it); once DeleteChannel succeeds there is nothing left to
+		// look the name up from.
+		c, err := deps.Notify.GetChannel(ctx, scope.OrgID, id)
+		if err != nil {
+			return nil, mapNotifyErr(ctx, err)
+		}
 		if err := deps.Notify.DeleteChannel(ctx, scope.OrgID, id); err != nil {
 			return nil, mapNotifyErr(ctx, err)
 		}
-		setAuditObject(ctx, id.String(), "deleted notification channel")
+		setAuditObject(ctx, id.String(), "deleted notification channel "+c.Name)
 		return &okOutput{}, nil
 	}, withAudit("deleteNotificationChannel", "channel"))
 
@@ -168,12 +176,12 @@ func registerNotifyChannelRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		// clampScheduleRunsLimit is the shared 1-100 limit clamp
+		// clampListLimit is the shared 1-100 limit clamp
 		// (schedule_handlers.go): the query tag above already rejects an
 		// out-of-range value, but Service.Deliveries passes limit straight
 		// to Postgres, so this is the defense a value reaching it by any
 		// other path still needs.
-		list, err := deps.Notify.Deliveries(ctx, scope.OrgID, id, clampScheduleRunsLimit(in.Limit))
+		list, err := deps.Notify.Deliveries(ctx, scope.OrgID, id, clampListLimit(in.Limit))
 		if err != nil {
 			return nil, mapNotifyErr(ctx, err)
 		}
