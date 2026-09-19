@@ -10,11 +10,15 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useDeleteWorker, useRevokeWorker, useWithdrawWorkerEnrollment, useWorkerEnrollments, useWorkers } from '../../api/hooks/useWorkers.ts';
 import { may } from '../../lib/roles.ts';
-import type { Worker } from '../../api/types.ts';
+import type { Worker, WorkerEnrollment } from '../../api/types.ts';
 import { AddWorkerDialog } from './AddWorkerDialog.tsx';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from './expiry.ts';
 
-const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.6fr) 100px 110px minmax(0, 0.6fr) 110px minmax(0, 0.7fr) 150px';
+// The trailing 150px track is the Actions column, only rendered for
+// canWrite — dropped from the template for read-only viewers so the grid
+// doesn't reserve a permanently blank 8th column for them.
+const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.6fr) 100px 110px minmax(0, 0.6fr) 110px minmax(0, 0.7fr)';
+const COLUMNS_WITH_ACTIONS = `${COLUMNS_BASE} 150px`;
 const STATUS_TONE: Record<string, Tone> = { online: 'ok', offline: 'warn', revoked: 'unknown' };
 
 /** WorkersPage lists the organization's zone workers (spec 2026-09-18 §4):
@@ -45,6 +49,7 @@ export function WorkersPage() {
   const workers = list.data.workers ?? [];
   const enrollments = pending.data?.enrollments ?? [];
   const now = new Date();
+  const columns = canWrite ? COLUMNS_WITH_ACTIONS : COLUMNS_BASE;
 
   async function onRevoke(w: Worker) {
     if (!confirm(`Revoke worker ${w.name}? It is cut off at once; its running jobs go back to the queue.`)) return;
@@ -65,6 +70,14 @@ export function WorkersPage() {
     }
   }
 
+  async function onWithdraw(e: WorkerEnrollment) {
+    try {
+      await withdraw.mutateAsync(e.id);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : 'Withdrawing failed', 'destructive');
+    }
+  }
+
   return (
     <>
       <div className="flex items-center justify-between">
@@ -81,7 +94,7 @@ export function WorkersPage() {
         )}
       </div>
       <Card>
-        <GridHeader columns={COLUMNS}>
+        <GridHeader columns={columns}>
           <span>Worker</span>
           <span>Zone</span>
           <span>Status</span>
@@ -94,7 +107,7 @@ export function WorkersPage() {
         {workers.map((w) => {
           const expiring = !!w.cert_expires_at && daysLeft(w.cert_expires_at, now) < EXPIRY_WARN_DAYS;
           return (
-            <GridRow key={w.id} columns={COLUMNS}>
+            <GridRow key={w.id} columns={columns}>
               <span className="truncate font-mono text-[13px]" data-row>
                 {w.name}
               </span>
@@ -146,7 +159,7 @@ export function WorkersPage() {
               <span className="font-mono text-[13px]">{e.name}</span>
               <span className="text-xs text-muted-foreground">{new Date(e.expires_at).toLocaleTimeString()}</span>
               {canWrite ? (
-                <Button type="button" variant="ghost" aria-label={`Withdraw ${e.name}`} onClick={() => void withdraw.mutateAsync(e.id)}>
+                <Button type="button" variant="ghost" aria-label={`Withdraw ${e.name}`} onClick={() => void onWithdraw(e)}>
                   Withdraw
                 </Button>
               ) : (

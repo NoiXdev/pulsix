@@ -128,6 +128,65 @@ describe('WorkersPage', () => {
     expect(calls).toEqual(['revoke', 'withdraw']);
   });
 
+  it('deletes a revoked worker after confirmation', async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    window.confirm = () => true;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker({ id: 'w3', name: 'old', status: 'revoked', cert_expires_at: null })] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+      'DELETE /api/v1/orgs/acme/workers/w3': () => {
+        calls.push('delete');
+        return {};
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Delete old' }));
+    expect(calls).toEqual(['delete']);
+  });
+
+  it('shows an error toast when revoke fails', async () => {
+    const user = userEvent.setup();
+    window.confirm = () => true;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker()] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+      'POST /api/v1/orgs/acme/workers/w1/revoke': () => new Response(JSON.stringify({ detail: 'worker not found' }), { status: 404 }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Revoke hel-1' }));
+    expect(await screen.findByText('worker not found')).toBeInTheDocument();
+  });
+
+  it('shows an error toast when delete fails', async () => {
+    const user = userEvent.setup();
+    window.confirm = () => true;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker({ id: 'w3', name: 'old', status: 'revoked', cert_expires_at: null })] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+      'DELETE /api/v1/orgs/acme/workers/w3': () => new Response(JSON.stringify({ detail: 'delete refused' }), { status: 409 }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Delete old' }));
+    expect(await screen.findByText('delete refused')).toBeInTheDocument();
+  });
+
+  it('shows an error toast when withdrawing a pending token fails', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [{ id: 'e1', name: 'hel-2', zone_id: 'z1', expires_at: inDays(0.02), created_at: '' }] },
+      'DELETE /api/v1/orgs/acme/worker-enrollments/e1': () => new Response(JSON.stringify({ detail: 'token already used' }), { status: 409 }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Withdraw hel-2' }));
+    expect(await screen.findByText('token already used')).toBeInTheDocument();
+  });
+
   it('tells non-admins who manages workers', async () => {
     mockApi({ 'GET /api/v1/orgs/acme': org('operator') });
     renderPage();
