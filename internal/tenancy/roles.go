@@ -48,6 +48,9 @@ const (
 
 	PermWorkersRead  Permission = "workers.read"
 	PermWorkersWrite Permission = "workers.write"
+
+	PermChannelsRead  Permission = "channels.read"
+	PermChannelsWrite Permission = "channels.write"
 )
 
 // rank orders roles from least to most privileged. A role absent from this
@@ -92,6 +95,12 @@ var matrix = map[Permission]Role{
 	// (spec 2026-09-18 §4).
 	PermWorkersRead:  RoleAdmin,
 	PermWorkersWrite: RoleAdmin,
+	// Notification channels (spec 2026-09-18 §5): operators see them —
+	// they pick channels for a schedule's rules and read the delivery log —
+	// and admins manage them, because a channel decides where the
+	// organization's information leaves Pulsix.
+	PermChannelsRead:  RoleOperator,
+	PermChannelsWrite: RoleAdmin,
 }
 
 // Allows reports whether role may perform perm. It is total: an unknown role

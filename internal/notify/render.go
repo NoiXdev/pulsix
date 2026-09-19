@@ -1,0 +1,178 @@
+package notify
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"text/template"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// maxBodyBytes bounds a rendered webhook body.
+const maxBodyBytes = 64 << 10
+
+var errBodyTooLarge = errors.New("the rendered body exceeds 64 KiB")
+
+// limitedBuffer refuses to grow past maxBodyBytes, so a template cannot
+// build an unbounded body.
+type limitedBuffer struct{ bytes.Buffer }
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > maxBodyBytes {
+		return 0, errBodyTooLarge
+	}
+	return b.Buffer.Write(p)
+}
+
+// templateFuncs are the helpers a body template may call: json renders a
+// value as JSON (a string becomes a quoted, escaped JSON string), so
+// `{"text": {{json .Schedule.Name}}}` stays valid JSON whatever the name.
+func templateFuncs() template.FuncMap {
+	return template.FuncMap{
+		"json": func(v any) (string, error) {
+			b, err := json.Marshal(v)
+			return string(b), err
+		},
+	}
+}
+
+func parseBodyTemplate(tmpl string) (*template.Template, error) {
+	return template.New("body").Funcs(templateFuncs()).Option("missingkey=error").Parse(tmpl)
+}
+
+// renderWebhookBody renders a webhook body: the event's JSON when tmpl is
+// empty, the template over the event otherwise.
+func renderWebhookBody(tmpl string, ev Event) ([]byte, error) {
+	if tmpl == "" {
+		return json.Marshal(ev)
+	}
+	t, err := parseBodyTemplate(tmpl)
+	if err != nil {
+		return nil, fmt.Errorf("parse body template: %w", err)
+	}
+	var buf limitedBuffer
+	if err := t.Execute(&buf, ev); err != nil {
+		return nil, fmt.Errorf("render body template: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// checkBodyTemplate validates a body template at save time: it must parse
+// and render against a fully populated sample event, so a misspelled
+// field fails now, not on the first real message.
+func checkBodyTemplate(tmpl string) error {
+	if tmpl == "" {
+		return nil
+	}
+	if len(tmpl) > maxTemplateLength {
+		return fmt.Errorf("%w: the body template must be at most %d bytes", ErrInvalidInput, maxTemplateLength)
+	}
+	if _, err := renderWebhookBody(tmpl, sampleEvent()); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return nil
+}
+
+// sampleEvent fills every section with example values: templates are
+// validated against it and "Send test" sends it (as kind test).
+func sampleEvent() Event {
+	started := time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC)
+	finished := started.Add(4*time.Minute + 12*time.Second)
+	id := uuid.MustParse("00000000-0000-7000-8000-000000000001")
+	return Event{
+		Kind: EventRunFinished, At: finished,
+		Org:        OrgRef{ID: id, Slug: "example", Name: "Example"},
+		Categories: []Category{CategoryFailure, CategoryChange},
+		Schedule:   &NamedRef{ID: id, Name: "Nightly OS patching"},
+		Template:   &NamedRef{ID: id, Name: "patch-all"},
+		Run: &RunSummary{
+			ID: id, Result: "failed", Hosts: 12, HostsOK: 11, HostsChanged: 9, HostsFailed: 1,
+			StartedAt: &started, FinishedAt: &finished, DurationSeconds: 252,
+		},
+		Decision: &DecisionSummary{Outcome: "skipped_maintenance", Reason: "every targeted host is in a maintenance window", DueAt: started},
+		Digest: &DigestSummary{
+			From: started.AddDate(0, 0, -7), To: started, Timezone: "Europe/Berlin",
+			Schedules: []DigestSchedule{{ID: id, Name: "Nightly OS patching", Runs: 2, Failures: 1, Skipped: 1}},
+			Slowest:   []DigestRun{{Schedule: "Nightly OS patching", RunID: id, StartedAt: started, DurationSeconds: 252, URL: "https://pulsix.example/o/example/runs/" + id.String()}},
+		},
+		URL: "https://pulsix.example/o/example/runs/" + id.String(),
+	}
+}
+
+// renderEmail renders the plain-text e-mail for an event.
+func renderEmail(ev Event) (subject, body string) {
+	var b strings.Builder
+	line := func(label, value string) {
+		if value != "" {
+			fmt.Fprintf(&b, "%-10s %s\n", label+":", value)
+		}
+	}
+	name := func(r *NamedRef) string {
+		if r == nil {
+			return ""
+		}
+		return r.Name
+	}
+	switch ev.Kind {
+	case EventRunFinished:
+		result := "succeeded"
+		if ev.Run != nil {
+			result = ev.Run.Result
+		}
+		subject = fmt.Sprintf("[Pulsix] %s: %s", name(ev.Schedule), result)
+		if ev.Run != nil && ev.Run.HostsChanged > 0 && result == "succeeded" {
+			subject += " with changes"
+		}
+		line("Schedule", name(ev.Schedule))
+		line("Template", name(ev.Template))
+		if r := ev.Run; r != nil {
+			line("Result", r.Result)
+			line("Hosts", fmt.Sprintf("%d (ok %d, changed %d, failed %d)", r.Hosts, r.HostsOK, r.HostsChanged, r.HostsFailed))
+			if r.StartedAt != nil {
+				line("Started", r.StartedAt.UTC().Format(time.RFC1123))
+			}
+			line("Duration", (time.Duration(r.DurationSeconds) * time.Second).String())
+		}
+	case EventScheduleSkipped, EventScheduleFailed:
+		verb := "skipped"
+		if ev.Kind == EventScheduleFailed {
+			verb = "could not start"
+		}
+		subject = fmt.Sprintf("[Pulsix] %s: %s", name(ev.Schedule), verb)
+		line("Schedule", name(ev.Schedule))
+		line("Template", name(ev.Template))
+		if d := ev.Decision; d != nil {
+			line("Outcome", d.Outcome)
+			line("Reason", d.Reason)
+			line("Due", d.DueAt.UTC().Format(time.RFC1123))
+		}
+	case EventDigest:
+		subject = fmt.Sprintf("[Pulsix] Weekly schedule digest for %s", ev.Org.Name)
+		if d := ev.Digest; d != nil {
+			fmt.Fprintf(&b, "Scheduled runs from %s to %s (%s)\n\n", d.From.Format("2 Jan"), d.To.Format("2 Jan 2006"), d.Timezone)
+			if len(d.Schedules) == 0 {
+				b.WriteString("No schedules.\n")
+			}
+			for _, s := range d.Schedules {
+				fmt.Fprintf(&b, "%s: %d run(s), %d failure(s), %d skipped or missed\n", s.Name, s.Runs, s.Failures, s.Skipped)
+			}
+			if len(d.Slowest) > 0 {
+				b.WriteString("\nSlowest runs:\n")
+				for _, r := range d.Slowest {
+					fmt.Fprintf(&b, "%s, %s: %s  %s\n", r.Schedule, r.StartedAt.UTC().Format("Mon 2 Jan 15:04 MST"), time.Duration(r.DurationSeconds)*time.Second, r.URL)
+				}
+			}
+		}
+	default:
+		subject = fmt.Sprintf("[Pulsix] Test notification from %s", ev.Org.Name)
+		b.WriteString("This is a test message from a Pulsix notification channel. It worked.\n")
+	}
+	if ev.URL != "" {
+		fmt.Fprintf(&b, "\n%s\n", ev.URL)
+	}
+	return subject, b.String()
+}

@@ -296,6 +296,51 @@ type JobTrigger struct {
 	Revision        int64          `json:"revision"`
 }
 
+type NotificationChannel struct {
+	ID        uuid.UUID   `json:"id"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	Kind      string      `json:"kind"`
+	Name      string      `json:"name"`
+	Config    []byte      `json:"config"`
+	Enabled   bool        `json:"enabled"`
+	CreatedBy pgtype.UUID `json:"created_by"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	Revision  int64       `json:"revision"`
+}
+
+type NotificationDelivery struct {
+	ID            uuid.UUID          `json:"id"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	ChannelID     uuid.UUID          `json:"channel_id"`
+	EventKey      string             `json:"event_key"`
+	EventKind     string             `json:"event_kind"`
+	Payload       []byte             `json:"payload"`
+	Status        string             `json:"status"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt time.Time          `json:"next_attempt_at"`
+	LockedUntil   pgtype.Timestamptz `json:"locked_until"`
+	LastError     string             `json:"last_error"`
+	CreatedAt     time.Time          `json:"created_at"`
+	SentAt        pgtype.Timestamptz `json:"sent_at"`
+}
+
+type NotificationDigest struct {
+	OrgID      uuid.UUID          `json:"org_id"`
+	Enabled    bool               `json:"enabled"`
+	Weekday    int16              `json:"weekday"`
+	AtTime     string             `json:"at_time"`
+	Timezone   string             `json:"timezone"`
+	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
+	LastPeriod string             `json:"last_period"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
+type NotificationDigestChannel struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+}
+
 type OrgMembership struct {
 	OrgID     uuid.UUID `json:"org_id"`
 	UserID    uuid.UUID `json:"user_id"`
@@ -360,6 +405,13 @@ type Schedule struct {
 	CreatedAt  time.Time          `json:"created_at"`
 	UpdatedAt  time.Time          `json:"updated_at"`
 	Revision   int64              `json:"revision"`
+}
+
+type ScheduleNotification struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+	ChannelID  uuid.UUID `json:"channel_id"`
+	Events     []string  `json:"events"`
 }
 
 type ScheduleRun struct {

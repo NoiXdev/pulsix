@@ -49,6 +49,10 @@ func TestRoleMatrix(t *testing.T) {
 		{tenancy.RoleAdmin, tenancy.PermWorkersRead, true},
 		{tenancy.RoleAdmin, tenancy.PermWorkersWrite, true},
 		{tenancy.RoleOwner, tenancy.PermWorkersWrite, true},
+		{tenancy.RoleViewer, tenancy.PermChannelsRead, false},
+		{tenancy.RoleOperator, tenancy.PermChannelsRead, true},
+		{tenancy.RoleOperator, tenancy.PermChannelsWrite, false},
+		{tenancy.RoleAdmin, tenancy.PermChannelsWrite, true},
 	}
 	for _, c := range cases {
 		if got := tenancy.Allows(c.role, c.perm); got != c.want {
