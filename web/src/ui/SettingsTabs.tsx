@@ -1,5 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { useMe } from '../api/hooks/useMe.ts';
+import { useOrg } from '../api/hooks/useOrgs.ts';
+import { may } from '../lib/roles.ts';
 
 const ACTIVE = 'border-b-2 border-primary py-2.5 text-[13px] font-semibold text-foreground';
 const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium text-muted-foreground';
@@ -16,9 +18,12 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  *
  * "Outgoing mail" is instance-wide and shown only to instance
  * administrators — the only callers GET /admin/settings/smtp admits.
+ * "Notifications" is shown to the roles that may read channels
+ * (channels.read, operator and above).
  */
 export function SettingsTabs({ org }: { org: string }) {
   const me = useMe({ enabled: true });
+  const orgInfo = useOrg(org);
   return (
     <div role="tablist" className="flex gap-6 border-b border-border">
       <Link
@@ -66,6 +71,17 @@ export function SettingsTabs({ org }: { org: string }) {
       >
         Jump hosts
       </Link>
+      {may(orgInfo.data?.org.role, 'channels.read') && (
+        <Link
+          to="/o/$org/settings/notifications"
+          params={{ org }}
+          role="tab"
+          activeProps={{ className: ACTIVE, 'aria-selected': true }}
+          inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+        >
+          Notifications
+        </Link>
+      )}
       {me.data?.instance_admin && (
         <Link
           to="/o/$org/settings/mail"

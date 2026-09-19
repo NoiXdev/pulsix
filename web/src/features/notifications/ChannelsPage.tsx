@@ -1,0 +1,139 @@
+import { useState } from 'react';
+import { useParams } from '@tanstack/react-router';
+import { Bell } from 'lucide-react';
+import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Button } from '../../ui/button.tsx';
+import { Pill } from '../../ui/badge.tsx';
+import { QueryLoading } from '../../ui/QueryState.tsx';
+import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { useToast } from '../../ui/toastContext.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { useChannels, useDeleteChannel, useTestChannel } from '../../api/hooks/useNotifications.ts';
+import { may } from '../../lib/roles.ts';
+import type { NotifyChannel } from '../../api/types.ts';
+import { ChannelDialog } from './ChannelDialog.tsx';
+import { DeliveryLog } from './DeliveryLog.tsx';
+
+const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 1.2fr) 90px 260px';
+
+function target(c: NotifyChannel): string {
+  if (c.email) return (c.email.recipients ?? []).join(', ');
+  return c.webhook ? `${c.webhook.method} ${c.webhook.url}` : '';
+}
+
+/** ChannelsPage is Settings → Notifications (spec 2026-09-18 §5): the
+ * organization's e-mail and webhook channels with Send test and each
+ * channel's delivery log. Operators see them; admins manage them. */
+export function ChannelsPage() {
+  const { org } = useParams({ strict: false }) as { org: string };
+  const toast = useToast();
+  const orgInfo = useOrg(org);
+  const role = orgInfo.data?.org.role;
+  const canRead = may(role, 'channels.read');
+  const canWrite = may(role, 'channels.write');
+  const channels = useChannels(org, !!orgInfo.data && canRead);
+  const test = useTestChannel(org);
+  const remove = useDeleteChannel(org);
+  const [editing, setEditing] = useState<NotifyChannel | 'new' | null>(null);
+  const [logOf, setLogOf] = useState<NotifyChannel | null>(null);
+
+  const guard = useQueryGuard(orgInfo);
+  if (guard) return guard;
+  if (!orgInfo.data) return <QueryLoading />;
+  const header = (
+    <div className="flex flex-col gap-2">
+      <h1 className="text-xl font-semibold">Notifications</h1>
+      <SettingsTabs org={org} />
+    </div>
+  );
+  if (!canRead) {
+    return (
+      <>
+        {header}
+        <p className="text-sm text-muted-foreground">Notification channels are visible to operators and above.</p>
+      </>
+    );
+  }
+  if (!channels.data) return <QueryLoading />;
+  const list = channels.data.channels ?? [];
+  const mailAvailable = channels.data.mail_available;
+
+  async function onTest(c: NotifyChannel) {
+    try {
+      const res = await test.mutateAsync(c.id);
+      if (res.delivery.status === 'sent') toast.show(`Test message sent through ${c.name}`);
+      else toast.show(`Test through ${c.name} failed: ${res.delivery.last_error ?? 'unknown error'}`, 'destructive');
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : 'Sending the test failed', 'destructive');
+    }
+  }
+
+  async function onDelete(c: NotifyChannel) {
+    if (!confirm(`Delete channel ${c.name}? Schedules stop notifying it and its delivery log is removed.`)) return;
+    try {
+      await remove.mutateAsync(c.id);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+    }
+  }
+
+  return (
+    <>
+      {header}
+      <div className="flex items-center justify-between">
+        <span className="text-[13px] text-muted-foreground">Where schedule results and the weekly digest are sent</span>
+        {canWrite && (
+          <Button variant="primary" onClick={() => setEditing('new')}>
+            <Bell size={15} /> Add channel
+          </Button>
+        )}
+      </div>
+      {!mailAvailable && (
+        <p className="text-xs text-muted-foreground" role="note">
+          E-mail channels need the instance's outgoing mail settings, which an instance administrator sets under Settings → Outgoing mail.
+        </p>
+      )}
+      <Card>
+        <GridHeader columns={COLUMNS}>
+          <span>Channel</span>
+          <span>Kind</span>
+          <span>Sends to</span>
+          <span>Status</span>
+          <span />
+        </GridHeader>
+        {list.map((c) => (
+          <GridRow key={c.id} columns={COLUMNS}>
+            <span className="truncate text-[13px] font-medium" data-row>
+              {c.name}
+            </span>
+            <span className="text-xs">{c.kind === 'email' ? 'E-mail' : 'Webhook'}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{target(c)}</span>
+            <span>{c.enabled ? <Pill tone="ok">enabled</Pill> : <Pill tone="unknown">disabled</Pill>}</span>
+            <span className="flex justify-end gap-1">
+              <Button type="button" variant="ghost" aria-label={`Deliveries of ${c.name}`} onClick={() => setLogOf(c)}>
+                Log
+              </Button>
+              {canWrite && (
+                <>
+                  <Button type="button" variant="ghost" aria-label={`Send test through ${c.name}`} onClick={() => void onTest(c)} disabled={test.isPending}>
+                    Send test
+                  </Button>
+                  <Button type="button" variant="ghost" aria-label={`Edit ${c.name}`} onClick={() => setEditing(c)}>
+                    Edit
+                  </Button>
+                  <Button type="button" variant="destructive" aria-label={`Delete ${c.name}`} onClick={() => void onDelete(c)}>
+                    Delete
+                  </Button>
+                </>
+              )}
+            </span>
+          </GridRow>
+        ))}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No channels yet.</p>}
+      </Card>
+      {editing && <ChannelDialog org={org} channel={editing === 'new' ? undefined : editing} mailAvailable={mailAvailable} onClose={() => setEditing(null)} />}
+      {logOf && <DeliveryLog org={org} channel={logOf} onClose={() => setLogOf(null)} />}
+    </>
+  );
+}

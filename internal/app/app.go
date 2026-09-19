@@ -292,6 +292,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// dispatcher below and the synchronous "Send test".
 	notifySender := notify.NewChannelSender(box, mailer,
 		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs), outbound.DefaultTimeout, nil), time.Now)
+	notifyStore := notify.NewSQLStore(appDB)
+	notifySvc := notify.NewService(notify.Deps{
+		Channels: notifyStore, Deliveries: notifyStore, Box: box, Mail: mailer, Sender: notifySender,
+		PublicURL: cfg.PublicURL, Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
+	})
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
@@ -301,6 +306,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
+		Notify: notifySvc,
 	})
 	if err != nil {
 		appDB.Close()

@@ -23,6 +23,7 @@ import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
 import { WorkersPage } from './features/workers/WorkersPage.tsx';
+import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -159,6 +160,7 @@ const jumpHostsRoute = createRoute({ getParentRoute: () => settingsRoute, path: 
 // Instance-wide outgoing mail settings, for instance administrators; filed
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
+const notificationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/notifications', component: ChannelsPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -180,7 +182,16 @@ const routeTree = rootRoute.addChildren([
     runsRoute,
     runDetailRoute,
     workersRoute,
-    settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, credentialsRoute, jumpHostsRoute, mailRoute]),
+    settingsRoute.addChildren([
+      settingsIndexRoute,
+      membersRoute,
+      activityRoute,
+      tokensRoute,
+      credentialsRoute,
+      jumpHostsRoute,
+      mailRoute,
+      notificationsRoute,
+    ]),
   ]),
 ]);
 

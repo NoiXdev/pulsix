@@ -19,6 +19,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/schedules"
@@ -193,6 +194,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
+		Notify: &notify.Service{},
 	}
 }
 
@@ -343,6 +345,11 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	if _, err := api.New(noWorkers); err == nil || !strings.Contains(err.Error(), "Workers") {
 		t.Fatalf("api.New without Workers = %v, want an error naming Workers", err)
 	}
+	noNotify := testDeps(t)
+	noNotify.Notify = nil
+	if _, err := api.New(noNotify); err == nil || !strings.Contains(err.Error(), "Notify") {
+		t.Fatalf("api.New without Notify = %v, want an error naming Notify", err)
+	}
 }
 
 // testDeps returns a fully-wired (if inert) Deps, exactly like
@@ -358,6 +365,7 @@ func testDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
+		Notify: &notify.Service{},
 	}
 }
 

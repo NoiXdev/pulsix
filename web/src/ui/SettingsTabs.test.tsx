@@ -54,4 +54,24 @@ describe('SettingsTabs', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole('tab', { name: 'Outgoing mail' })).not.toBeInTheDocument();
   });
+
+  it('shows the Notifications tab to operators and above', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': me(false),
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } },
+    });
+    renderTabs();
+    expect(await screen.findByRole('tab', { name: 'Notifications' })).toHaveAttribute('href', '/o/acme/settings/notifications');
+  });
+
+  it('hides the Notifications tab from viewers', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': me(false),
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
+    });
+    renderTabs();
+    expect(await screen.findByRole('tab', { name: 'Members' })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('tab', { name: 'Notifications' })).not.toBeInTheDocument();
+  });
 });

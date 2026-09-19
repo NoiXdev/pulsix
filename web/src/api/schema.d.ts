@@ -1048,6 +1048,77 @@ export interface paths {
         patch: operations["changeMemberRole"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/notification-channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org notification channels */
+        get: operations["get-api-v1-orgs-by-org-notification-channels"];
+        put?: never;
+        /** Post API v1 orgs by org notification channels */
+        post: operations["createNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/notification-channels/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org notification channels by ID */
+        get: operations["get-api-v1-orgs-by-org-notification-channels-by-id"];
+        /** Put API v1 orgs by org notification channels by ID */
+        put: operations["updateNotificationChannel"];
+        post?: never;
+        /** Delete API v1 orgs by org notification channels by ID */
+        delete: operations["deleteNotificationChannel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/notification-channels/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org notification channels by ID deliveries */
+        get: operations["get-api-v1-orgs-by-org-notification-channels-by-id-deliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/notification-channels/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org notification channels by ID test */
+        post: operations["testNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/playbooks": {
         parameters: {
             query?: never;
@@ -2547,6 +2618,128 @@ export interface components {
             readonly $schema?: string;
             /** @enum {string} */
             role: "owner" | "admin" | "operator" | "viewer";
+        };
+        NotifyChannelBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyChannelBody.json
+             */
+            readonly $schema?: string;
+            email?: components["schemas"]["NotifyEmailDTO"];
+            /** @description Default true */
+            enabled?: boolean;
+            /** @enum {string} */
+            kind: "email" | "webhook";
+            name: string;
+            webhook?: components["schemas"]["NotifyWebhookBody"];
+        };
+        NotifyChannelDTO: {
+            /** Format: date-time */
+            created_at: string;
+            email?: components["schemas"]["NotifyEmailDTO"];
+            enabled: boolean;
+            id: string;
+            /** @enum {string} */
+            kind: "email" | "webhook";
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            updated_at: string;
+            webhook?: components["schemas"]["NotifyWebhookDTO"];
+        };
+        NotifyChannelListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyChannelListOutputBody.json
+             */
+            readonly $schema?: string;
+            channels: components["schemas"]["NotifyChannelDTO"][] | null;
+            /** @description Whether this instance has outgoing mail settings (e-mail channels need them) */
+            mail_available: boolean;
+        };
+        NotifyChannelOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyChannelOutputBody.json
+             */
+            readonly $schema?: string;
+            channel: components["schemas"]["NotifyChannelDTO"];
+        };
+        NotifyDeliveriesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyDeliveriesOutputBody.json
+             */
+            readonly $schema?: string;
+            deliveries: components["schemas"]["NotifyDeliveryDTO"][] | null;
+        };
+        NotifyDeliveryDTO: {
+            /** Format: int64 */
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            event_kind: "run.finished" | "schedule.skipped" | "schedule.failed" | "digest.weekly" | "test";
+            id: string;
+            last_error?: string;
+            /**
+             * Format: date-time
+             * @description Pending only: when the next attempt is due
+             */
+            next_attempt_at?: string;
+            /** Format: date-time */
+            sent_at?: string;
+            /** @enum {string} */
+            status: "pending" | "sent" | "failed";
+        };
+        NotifyEmailDTO: {
+            /** @description Plain addresses; every recipient gets the same message */
+            recipients: string[] | null;
+        };
+        NotifyHeaderBody: {
+            name: string;
+            /** @description Omit on update to keep the stored value */
+            value?: string;
+        };
+        NotifyTestOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyTestOutputBody.json
+             */
+            readonly $schema?: string;
+            delivery: components["schemas"]["NotifyDeliveryDTO"];
+        };
+        NotifyWebhookBody: {
+            /** @description Empty sends the event as JSON */
+            body_template?: string;
+            headers?: components["schemas"]["NotifyHeaderBody"][] | null;
+            /**
+             * @description Default POST
+             * @enum {string}
+             */
+            method?: "POST" | "PUT";
+            signed?: boolean;
+            /** @description Omit on update to keep the stored secret */
+            signing_secret?: string;
+            /** @description Required on create; omit on update to keep the stored URL */
+            url?: string;
+        };
+        NotifyWebhookDTO: {
+            body_template?: string;
+            /** @description Header names; values are never returned */
+            headers: string[] | null;
+            /** @enum {string} */
+            method: "POST" | "PUT";
+            /** @description Requests carry X-Pulsix-Signature-256 */
+            signed: boolean;
+            /** @description Scheme and host only: a path can carry a token and is never returned */
+            url: string;
         };
         OkOutputBody: {
             /**
@@ -6248,6 +6441,244 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-notification-channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyChannelListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotifyChannelBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyChannelOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-notification-channels-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyChannelOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The channel's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotifyChannelBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyChannelOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-notification-channels-by-id-deliveries": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyDeliveriesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    testNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyTestOutputBody"];
                 };
             };
             /** @description Error */

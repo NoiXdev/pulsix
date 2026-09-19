@@ -21,6 +21,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/schedules"
@@ -80,6 +81,9 @@ type Deps struct {
 	Triggers *triggers.Service
 	// Workers is the worker registry (Workers page, enrollment tokens).
 	Workers *workers.Service
+	// Notify manages notification channels, their delivery log, schedule
+	// notification rules and the weekly digest (spec 2026-09-18 §5, §7).
+	Notify *notify.Service
 	// WorkerEndpoint is what remote workers dial; empty Addr disables enrollment.
 	WorkerEndpoint WorkerEndpoint
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
@@ -191,6 +195,9 @@ func (d Deps) validate() error {
 	}
 	if d.Workers == nil {
 		missing = append(missing, "Workers")
+	}
+	if d.Notify == nil {
+		missing = append(missing, "Notify")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -372,4 +379,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerScheduleRoutes(orgScoped, deps)        // /orgs/{org}/schedules...
 	registerTriggerRoutes(orgScoped, deps)         // /orgs/{org}/triggers...
 	registerWorkerRoutes(orgScoped, deps)          // /orgs/{org}/workers..., /orgs/{org}/worker-enrollments...
+	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 }

@@ -52,3 +52,7 @@ export type TriggerDelivery = components['schemas']['TriggerDeliveryDTO'];
 
 export type Worker = components['schemas']['WorkerDTO'];
 export type WorkerEnrollment = components['schemas']['WorkerEnrollmentDTO'];
+
+export type NotifyChannel = components['schemas']['NotifyChannelDTO'];
+export type NotifyChannelInput = components['schemas']['NotifyChannelBody'];
+export type NotifyDelivery = components['schemas']['NotifyDeliveryDTO'];

@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,6 +50,9 @@ type DeliveryLog interface {
 // send is not an error of this call: the returned delivery says failed and
 // why.
 func (s *Service) SendTest(ctx context.Context, org OrgRef, channelID uuid.UUID) (Delivery, error) {
+	if err := s.requireSendDeps(); err != nil {
+		return Delivery{}, err
+	}
 	ch, err := s.d.Channels.GetChannel(ctx, org.ID, channelID)
 	if err != nil {
 		return Delivery{}, err
@@ -74,7 +78,14 @@ func (s *Service) SendTest(ctx context.Context, org OrgRef, channelID uuid.UUID)
 	} else {
 		d.SentAt = &now
 	}
-	if err := s.d.Deliveries.InsertDelivery(ctx, d); err != nil {
+	// The attempt is recorded even when ctx ended meanwhile (a caller that
+	// disconnected mid-send): the send already happened or not, and the
+	// insert must not lose that row just because nobody is left to read
+	// the response — the same detached, bounded write dispatch.go's
+	// deliver uses for its own outcome writes.
+	insertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.d.Deliveries.InsertDelivery(insertCtx, d); err != nil {
 		return Delivery{}, err
 	}
 	return d, nil
@@ -82,8 +93,38 @@ func (s *Service) SendTest(ctx context.Context, org OrgRef, channelID uuid.UUID)
 
 // Deliveries lists the newest deliveries of one channel.
 func (s *Service) Deliveries(ctx context.Context, orgID, channelID uuid.UUID, limit int) ([]Delivery, error) {
+	if s.d.Deliveries == nil {
+		return nil, fmt.Errorf("notify: Deliveries needs Deps.Deliveries, which is nil (%w)", errMissingDep)
+	}
 	if _, err := s.d.Channels.GetChannel(ctx, orgID, channelID); err != nil {
 		return nil, err
 	}
 	return s.d.Deliveries.ListDeliveries(ctx, orgID, channelID, limit)
+}
+
+// errMissingDep marks a Service built without a Deps field one of its
+// methods actually needs — a wiring bug (production always sets every
+// field; see internal/app), never a caller's input. requireSendDeps and
+// Deliveries above check for it explicitly so the failure names the
+// missing field instead of a nil-pointer panic on first use; NewService
+// itself does not refuse a partial Deps, because tests that only exercise
+// channel management (CreateChannel, UpdateChannel, ...) have no need for
+// Sender or Deliveries.
+var errMissingDep = errors.New("service built without a required dependency")
+
+// requireSendDeps checks SendTest's two extra dependencies beyond channel
+// management: Sender (to actually deliver) and Deliveries (to log the
+// attempt either way).
+func (s *Service) requireSendDeps() error {
+	var missing []string
+	if s.d.Sender == nil {
+		missing = append(missing, "Sender")
+	}
+	if s.d.Deliveries == nil {
+		missing = append(missing, "Deliveries")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("notify: SendTest needs Deps.%s, which is nil (%w)", strings.Join(missing, " and Deps."), errMissingDep)
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/schedules"
@@ -126,6 +129,12 @@ type Server struct {
 	Queue *jobs.SQLQueue
 	Deps  api.Deps
 	HTTP  *httptest.Server
+	// PublicURL is the test server's own base URL, computed from its
+	// listener before Start() (so it is already known when an Option
+	// runs) — the same value production derives PULSIX_PUBLIC_URL from,
+	// for an Option that needs to rebuild a Deps field that carries it
+	// (e.g. WithRestrictiveNotifyPolicy).
+	PublicURL string
 }
 
 // Option customizes a Server's Deps before its httptest.Server starts.
@@ -180,6 +189,26 @@ func WithHostsStore(wrap func(hosts.Store) hosts.Store) Option {
 	}
 }
 
+// WithRestrictiveNotifyPolicy rebuilds Deps.Notify's Sender on
+// production's actual outbound policy — no PULSIX_NOTIFY_ALLOW_CIDRS
+// entries, so loopback, link-local and the other internal ranges are all
+// refused — instead of New's default loopback-admitting policy (needed so
+// most tests' httptest webhook receivers, which bind to 127.0.0.1, stay
+// reachable). It exists for the one test that must prove Send test really
+// is refused for a loopback destination through the real outbound client,
+// not just permitted by the test fixture's own relaxation of it.
+func WithRestrictiveNotifyPolicy() Option {
+	return func(s *Server) {
+		box := crypto.NewBox(testMasterKey)
+		store := notify.NewSQLStore(s.DB)
+		s.Deps.Notify = notify.NewService(notify.Deps{
+			Channels: store, Deliveries: store, Box: box, Mail: s.Mail,
+			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil), 5*time.Second, nil), time.Now),
+			PublicURL: s.PublicURL, Now: time.Now, Rand: rand.Reader,
+		})
+	}
+}
+
 // New builds Deps from the test database and starts an httptest server.
 //
 // The WebAuthn relying party id and origin are derived from the test
@@ -217,6 +246,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		t.Fatal(err)
 	}
 	publicURL := "http://localhost:" + port
+	s.PublicURL = publicURL
 	cfg := config.Config{PublicURL: publicURL}
 
 	totp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
@@ -296,6 +326,18 @@ func New(t *testing.T, opts ...Option) *Server {
 		t.Fatal(err)
 	}
 	workersSvc := workers.NewService(workers.NewSQLStore(d), workers.WithSigner(testCA), workers.WithZones(hostsSvc))
+	// The notification service (v0.2d): channels send through the
+	// recording Mailer and an outbound client that admits loopback, so a
+	// test's httptest receiver is reachable — production refuses loopback
+	// unless PULSIX_NOTIFY_ALLOW_CIDRS lists it.
+	notifyStore := notify.NewSQLStore(d)
+	loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	notifySvc := notify.NewService(notify.Deps{
+		Channels: notifyStore, Deliveries: notifyStore, Box: crypto.NewBox(testMasterKey), Mail: s.Mail,
+		Sender: notify.NewChannelSender(crypto.NewBox(testMasterKey), s.Mail,
+			outbound.NewClient(outbound.NewPolicy(loopback), 5*time.Second, nil), time.Now),
+		PublicURL: publicURL, Now: time.Now, Rand: rand.Reader,
+	})
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
@@ -322,6 +364,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Schedules:   schedulesSvc,
 		Triggers:    triggersSvc,
 		Workers:     workersSvc,
+		Notify:      notifySvc,
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},
