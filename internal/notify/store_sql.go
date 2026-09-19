@@ -88,6 +88,33 @@ func (st *SQLStore) DeleteChannel(ctx context.Context, orgID, id uuid.UUID) erro
 	return nil
 }
 
+func (st *SQLStore) InsertDelivery(ctx context.Context, d Delivery) error {
+	if _, err := st.q.InsertNotificationDelivery(ctx, gen.InsertNotificationDeliveryParams{
+		ID: d.ID, OrgID: d.OrgID, ChannelID: d.ChannelID, EventKey: d.EventKey, EventKind: string(d.EventKind),
+		Payload: d.Payload, Status: string(d.Status), Attempts: int32(d.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
+		NextAttemptAt: d.NextAttemptAt, LastError: d.LastError, CreatedAt: d.CreatedAt, SentAt: db.NullTime(d.SentAt),
+	}); err != nil {
+		return fmt.Errorf("record notification delivery: %w", err)
+	}
+	return nil
+}
+
+func (st *SQLStore) ListDeliveries(ctx context.Context, orgID, channelID uuid.UUID, limit int) ([]Delivery, error) {
+	rows, err := st.q.ListNotificationDeliveries(ctx, gen.ListNotificationDeliveriesParams{OrgID: orgID, ChannelID: channelID, Lim: int32(limit)}) //nolint:gosec // limit is clamped by the API (≤ 100)
+	if err != nil {
+		return nil, fmt.Errorf("list notification deliveries: %w", err)
+	}
+	out := make([]Delivery, len(rows))
+	for i, r := range rows {
+		out[i] = Delivery{
+			ID: r.ID, OrgID: r.OrgID, ChannelID: r.ChannelID, EventKey: r.EventKey, EventKind: EventKind(r.EventKind),
+			Payload: r.Payload, Status: DeliveryStatus(r.Status), Attempts: int(r.Attempts), NextAttemptAt: r.NextAttemptAt,
+			LastError: r.LastError, CreatedAt: r.CreatedAt, SentAt: db.TimePtr(r.SentAt),
+		}
+	}
+	return out, nil
+}
+
 func toChannel(r gen.NotificationChannel) Channel {
 	return Channel{
 		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), Name: r.Name, Enabled: r.Enabled, Config: r.Config, BodyJSON: r.BodyJson,

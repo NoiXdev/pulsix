@@ -37,12 +37,17 @@ type Mailer interface {
 
 // Deps wires the service. Now, Rand and Log default when nil.
 type Deps struct {
-	Channels ChannelStore
-	Box      Sealer
-	Mail     Mailer
-	Now      func() time.Time
-	Rand     io.Reader
-	Log      *slog.Logger
+	Channels   ChannelStore
+	Deliveries DeliveryLog
+	Box        Sealer
+	Mail       Mailer
+	// Sender delivers "Send test" synchronously (ChannelSender).
+	Sender Sender
+	// PublicURL is the instance's base URL, for the links in messages.
+	PublicURL string
+	Now       func() time.Time
+	Rand      io.Reader
+	Log       *slog.Logger
 }
 
 // Service manages channels.

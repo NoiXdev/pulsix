@@ -34,6 +34,8 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/schedule"
@@ -66,6 +68,9 @@ type App struct {
 	stopReaper func()
 	stopRetest func()
 	stopTicker func()
+	// stopDispatch stops the notification dispatcher (spec 2026-09-18
+	// §5), waiting for a batch in flight.
+	stopDispatch func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
@@ -84,6 +89,9 @@ func (a *App) Close() {
 	}
 	if a.stopTicker != nil {
 		a.stopTicker()
+	}
+	if a.stopDispatch != nil {
+		a.stopDispatch()
 	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
@@ -278,6 +286,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// A revocation ends the worker's open streams and requeues its jobs.
 	workersSvc.SetRevokeHooks(streams, workerJobRequeuer{q: jobsQueue, maxAttempts: cfg.JobMaxAttempts})
 
+	// Notifications (spec §5): every outbound request goes through the
+	// outbound client, which refuses internal destinations unless
+	// PULSIX_NOTIFY_ALLOW_CIDRS admits them. The sender is shared by the
+	// dispatcher below and the synchronous "Send test".
+	notifySender := notify.NewChannelSender(box, mailer,
+		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs), outbound.DefaultTimeout, nil), time.Now)
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
@@ -312,6 +327,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// stopping waits for a batch still in flight (startLoop).
 	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default()), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
 
+	// The notification dispatcher (spec §5): one per manager; the claim's
+	// SKIP LOCKED and lease make several safe. Stopped in Close and on
+	// every early return below.
+	dispatchStop := startLoop(notify.NewDispatcher(notify.NewDeliverySQLStore(appDB), notifySender, notify.DefaultDispatchInterval, time.Now, nil, slog.Default()).Run)
+
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
@@ -324,6 +344,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			reaperStop()
 			retestStop()
 			tickerStop()
+			dispatchStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -342,6 +363,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				reaperStop()
 				retestStop()
 				tickerStop()
+				dispatchStop()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -352,7 +374,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopTicker: tickerStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopEmbedded: stopEmbedded,
 	}, nil
 }
 
