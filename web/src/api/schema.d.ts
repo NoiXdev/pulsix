@@ -1013,6 +1013,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/maintenance-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org maintenance windows */
+        get: operations["get-api-v1-orgs-by-org-maintenance-windows"];
+        put?: never;
+        /** Post API v1 orgs by org maintenance windows */
+        post: operations["createMaintenanceWindow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/maintenance-windows/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org maintenance windows by ID */
+        get: operations["get-api-v1-orgs-by-org-maintenance-windows-by-id"];
+        /** Put API v1 orgs by org maintenance windows by ID */
+        put: operations["updateMaintenanceWindow"];
+        post?: never;
+        /** Delete API v1 orgs by org maintenance windows by ID */
+        delete: operations["deleteMaintenanceWindow"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/members": {
         parameters: {
             query?: never;
@@ -2576,6 +2613,72 @@ export interface components {
             readonly $schema?: string;
             mfa_enrolment_required: boolean;
             mfa_required: boolean;
+        };
+        MaintenanceListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MaintenanceListOutputBody.json
+             */
+            readonly $schema?: string;
+            windows: components["schemas"]["MaintenanceWindowDTO"][] | null;
+        };
+        MaintenanceOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MaintenanceOutputBody.json
+             */
+            readonly $schema?: string;
+            window: components["schemas"]["MaintenanceWindowDTO"];
+        };
+        MaintenanceWindowBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MaintenanceWindowBody.json
+             */
+            readonly $schema?: string;
+            cron?: string;
+            /** @description 1m to 744h, whole minutes */
+            duration?: string;
+            /** Format: date-time */
+            ends_at?: string;
+            name: string;
+            note?: string;
+            /** Format: date-time */
+            starts_at?: string;
+            /** @description The host or inventory group; omit for the organization */
+            target_id?: string;
+            /** @enum {string} */
+            target_kind: "host" | "inventory_group" | "org";
+            timezone?: string;
+        };
+        MaintenanceWindowDTO: {
+            active_now: boolean;
+            /** Format: date-time */
+            created_at: string;
+            cron?: string;
+            /** @description Human text for simple cron shapes */
+            description?: string;
+            /** @description Length of each occurrence, e.g. 2h or 90m */
+            duration?: string;
+            /** Format: date-time */
+            ends_at?: string;
+            id: string;
+            name: string;
+            note?: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            starts_at?: string;
+            target_id?: string;
+            /** @enum {string} */
+            target_kind: "host" | "inventory_group" | "org";
+            target_name?: string;
+            timezone?: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         MeOutputBody: {
             /**
@@ -6347,6 +6450,178 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-maintenance-windows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createMaintenanceWindow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaintenanceWindowBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-maintenance-windows-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateMaintenanceWindow: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The window's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MaintenanceWindowBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteMaintenanceWindow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
             };
             /** @description Error */
             default: {

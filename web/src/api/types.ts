@@ -56,3 +56,6 @@ export type WorkerEnrollment = components['schemas']['WorkerEnrollmentDTO'];
 export type NotifyChannel = components['schemas']['NotifyChannelDTO'];
 export type NotifyChannelInput = components['schemas']['NotifyChannelBody'];
 export type NotifyDelivery = components['schemas']['NotifyDeliveryDTO'];
+
+export type MaintenanceWindow = components['schemas']['MaintenanceWindowDTO'];
+export type MaintenanceWindowInput = components['schemas']['MaintenanceWindowBody'];

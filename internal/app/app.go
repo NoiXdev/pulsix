@@ -34,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
@@ -298,6 +299,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		PublicURL: cfg.PublicURL, Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
 	})
 
+	// Maintenance windows (spec §6): group windows resolve through the same
+	// scope resolver runs use; the schedules' maintenance guard asks them.
+	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(appDB), NewGroupHosts(resolver), time.Now, rand.Reader, slog.Default())
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
@@ -306,7 +311,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
-		Notify: notifySvc,
+		Notify:      notifySvc,
+		Maintenance: maintenanceSvc,
 	})
 	if err != nil {
 		appDB.Close()

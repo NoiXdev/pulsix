@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Search, Server, Settings as SettingsIcon } from 'lucide-react';
+import { Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { may } from '../lib/roles.ts';
 
@@ -181,6 +181,16 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
           >
             <CalendarClock size={16} />
             <span className="flex-1">Schedules</span>
+          </Link>
+          <Link
+            to="/o/$org/maintenance"
+            params={{ org: org.slug }}
+            activeOptions={{ exact: false }}
+            activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
+            inactiveProps={{ className: INACTIVE_LINK }}
+          >
+            <Wrench size={16} />
+            <span className="flex-1">Maintenance</span>
           </Link>
           <Link
             to="/o/$org/runs"

@@ -34,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
@@ -338,6 +339,10 @@ func New(t *testing.T, opts ...Option) *Server {
 			outbound.NewClient(outbound.NewPolicy(loopback), 5*time.Second, nil), time.Now),
 		PublicURL: publicURL, Now: time.Now, Rand: rand.Reader,
 	})
+	// The maintenance service (v0.2d): group windows resolve through the
+	// same scope resolver runs use, exactly like production wiring
+	// (internal/app.Build).
+	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(d), app.NewGroupHosts(resolver), time.Now, rand.Reader, nil)
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
@@ -365,6 +370,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Triggers:    triggersSvc,
 		Workers:     workersSvc,
 		Notify:      notifySvc,
+		Maintenance: maintenanceSvc,
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},

@@ -1,0 +1,115 @@
+import { describe, expect, it } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { ToastProvider } from '../../ui/toast.tsx';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { MaintenancePage } from './MaintenancePage.tsx';
+import { fromLocalInput, targetLabel, toLocalInput, whenLabel } from './time.ts';
+import type { MaintenanceWindow } from '../../api/types.ts';
+
+const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
+const nightly: MaintenanceWindow = {
+  id: 'w1', name: 'nightly', target_kind: 'org', cron: '0 2 * * 6', description: 'Sat at 02:00', duration: '2h',
+  timezone: 'Europe/Berlin', active_now: true, revision: 1, created_at: '', updated_at: '',
+};
+const dbUpgrade: MaintenanceWindow = {
+  id: 'w2', name: 'db upgrade', target_kind: 'host', target_id: 'h1', target_name: 'db-1', starts_at: '2026-09-22T10:00:00Z',
+  ends_at: '2026-09-22T12:00:00Z', note: 'kernel', active_now: false, revision: 3, created_at: '', updated_at: '',
+};
+const noHosts = { hosts: [], next_cursor: '' };
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const rootRoute = createRootRoute();
+  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
+  const page = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([page])]),
+    history: createMemoryHistory({ initialEntries: ['/o/acme/maintenance'] }),
+  });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe('MaintenancePage', () => {
+  it('lists windows with target, timing and active state', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme': org('viewer'), 'GET /api/v1/orgs/acme/maintenance-windows': { windows: [nightly, dbUpgrade] } });
+    renderPage();
+    const row = (await screen.findByText('nightly')).closest('[data-row]')!.parentElement as HTMLElement;
+    expect(within(row).getByText('Whole organization')).toBeInTheDocument();
+    expect(within(row).getByText('Sat at 02:00 · for 2h · Europe/Berlin')).toBeInTheDocument();
+    expect(within(row).getByText('active now')).toBeInTheDocument();
+    expect(screen.getByText('Host db-1')).toBeInTheDocument();
+    expect(screen.getByText('1 active now · schedules can skip runs or leave out hosts during a window')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New window' })).not.toBeInTheDocument();
+  });
+
+  it('creates a recurring window for an inventory group', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/maintenance-windows': { windows: [] },
+      'GET /api/v1/orgs/acme/hosts': noHosts,
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [{ id: 'g1', name: 'postgres', description: '', members: 2, complete: true, group_fields: 0, host_fields: 0 }] },
+      'POST /api/v1/orgs/acme/maintenance-windows': (req: MockRequest) => {
+        posted = req.body;
+        return { window: nightly };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'New window' }));
+    const dialog = screen.getByRole('dialog', { name: 'New maintenance window' });
+    await user.type(within(dialog).getByLabelText('Name'), 'db patching');
+    await user.selectOptions(within(dialog).getByLabelText('Applies to'), 'inventory_group');
+    await user.selectOptions(await within(dialog).findByRole('combobox', { name: 'Group' }), 'g1');
+    await user.click(within(dialog).getByRole('radio', { name: 'Recurring' }));
+    await user.clear(within(dialog).getByLabelText('Timezone'));
+    await user.type(within(dialog).getByLabelText('Timezone'), 'UTC');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(posted).toEqual({ name: 'db patching', target_kind: 'inventory_group', target_id: 'g1', note: '', cron: '0 2 * * 6', duration: '2h', timezone: 'UTC' }),
+    );
+  });
+
+  it('edits a one-off window with If-Match and local times', async () => {
+    const user = userEvent.setup();
+    let put: { body: unknown; ifMatch: string | null } | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/maintenance-windows': { windows: [dbUpgrade] },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h1', name: 'db-1' }], next_cursor: '' },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'PUT /api/v1/orgs/acme/maintenance-windows/w2': (req: MockRequest) => {
+        put = { body: req.body, ifMatch: req.headers.get('If-Match') };
+        return { window: dbUpgrade };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit db upgrade' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit db upgrade' });
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put?.ifMatch).toBe('"3"'));
+    expect(put?.body).toEqual({
+      name: 'db upgrade', target_kind: 'host', target_id: 'h1', note: 'kernel',
+      starts_at: '2026-09-22T10:00:00.000Z', ends_at: '2026-09-22T12:00:00.000Z',
+    });
+  });
+});
+
+describe('maintenance time helpers', () => {
+  it('round-trips local inputs and labels windows', () => {
+    expect(fromLocalInput(toLocalInput('2026-09-22T10:00:00Z'))).toBe('2026-09-22T10:00:00.000Z');
+    expect(toLocalInput(null)).toBe('');
+    expect(targetLabel({ ...dbUpgrade, target_kind: 'inventory_group', target_name: 'pg' })).toBe('Group pg');
+    expect(whenLabel({ ...nightly, description: '' })).toBe('0 2 * * 6 · for 2h · Europe/Berlin');
+    expect(whenLabel(dbUpgrade)).toContain('–');
+  });
+});

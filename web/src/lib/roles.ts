@@ -22,7 +22,8 @@ export type UiPermission =
   | 'workers.read'
   | 'workers.write'
   | 'channels.read'
-  | 'channels.write';
+  | 'channels.write'
+  | 'maintenance.write';
 
 /** Minimum role per permission, exactly internal/tenancy/roles.go's matrix:
  * operators drive hosts, inventory, repos, playbooks, templates and runs
@@ -42,6 +43,7 @@ const MINIMUM_ROLE: Record<UiPermission, Role> = {
   'workers.write': 'admin',
   'channels.read': 'operator',
   'channels.write': 'admin',
+  'maintenance.write': 'operator',
 };
 
 const RANK: Record<Role, number> = { viewer: 1, operator: 2, admin: 3, owner: 4 };
