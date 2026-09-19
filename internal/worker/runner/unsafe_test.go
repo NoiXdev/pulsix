@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,12 +62,13 @@ func TestMaterializeRunnerConfigKeepsTheUnsafeMarker(t *testing.T) {
 // stays literal text in a real ansible-playbook run. The sender-chosen
 // "__ansible_unsafe" key that used to defeat the marker (Ansible's JSON
 // load fails, the file is re-read as YAML and every marker is dropped) is
-// refused before it can reach the file — at receive time and at claim.
+// refused before it can reach the file — at receive time and at claim —
+// and the file's YAML guard fails the run should one get through.
 func TestNestedUntrustedLookupStaysLiteralInRealAnsible(t *testing.T) {
 	const lookup = "{{ lookup('pipe', 'printf %s-%s NESTED 9') }}"
 	payload := map[string]any{"commits": []any{map[string]any{"meta": map[string]any{"message": lookup}}}}
 	bypass := map[string]any{"__ansible_unsafe": map[string]any{"__ansible_unsafe": "x"}}
-	if err := ansiblevars.CheckUntrustedKeys(bypass); err == nil {
+	if err := ansiblevars.CheckUntrusted(bypass); err == nil {
 		t.Fatal("the bypass key must be refused for untrusted values")
 	}
 
@@ -90,15 +92,18 @@ func TestNestedUntrustedLookupStaysLiteralInRealAnsible(t *testing.T) {
 		t.Fatalf("the nested marked value must print literally, never run:\n%s", text)
 	}
 
-	// The control shows why the guard is load-bearing: with the refused
-	// key next to it, the same marked value is templated (ansible-core
-	// 2.21.4). Logged, not asserted, so a fixed Ansible does not fail CI.
+	// Should a refused key reach the file anyway, Ansible's JSON load
+	// fails; the file's YAML guard (extraVarsGuardVar) then fails the run
+	// instead of letting the YAML re-read drop the markers and run the
+	// lookup — which is what ansible-core 2.21.4 did before the guard.
 	job.ExtraVars["other"] = claimValue(map[string]any{"obj": bypass})
 	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
-	control := debugWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "event.commits[0].meta.message")
-	t.Logf("with the refused key present, the lookup ran: %v", strings.Contains(control, "NESTED-9"))
+	control, err := runPlaybookWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "event.commits[0].meta.message")
+	if strings.Contains(control, "NESTED-9") || err == nil {
+		t.Fatalf("a refused key in the file must fail the run without running the lookup (err %v):\n%s", err, control)
+	}
 }
 
 // requireAnsiblePlaybook returns the ansible-playbook binary. It skips when
@@ -122,6 +127,17 @@ func requireAnsiblePlaybook(t *testing.T) string {
 // "<expr>=<value>" for each expression, and returns the output.
 func debugWithExtraVars(t *testing.T, ansible string, extraVars []byte, exprs ...string) string {
 	t.Helper()
+	out, err := runPlaybookWithExtraVars(t, ansible, extraVars, exprs...)
+	if err != nil {
+		t.Fatalf("ansible-playbook: %v\n%s", err, out)
+	}
+	return out
+}
+
+// runPlaybookWithExtraVars is debugWithExtraVars without the success
+// requirement: it returns the output and ansible-playbook's error.
+func runPlaybookWithExtraVars(t *testing.T, ansible string, extraVars []byte, exprs ...string) (string, error) {
+	t.Helper()
 	dir := t.TempDir()
 	evPath, pbPath := filepath.Join(dir, "ev.json"), filepath.Join(dir, "pb.yml")
 	if err := os.WriteFile(evPath, extraVars, 0o600); err != nil {
@@ -137,8 +153,71 @@ func debugWithExtraVars(t *testing.T, ansible string, extraVars []byte, exprs ..
 	cmd := exec.Command(ansible, "-i", "localhost,", "-c", "local", "-e", "@"+evPath, pbPath)
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "ANSIBLE_LOCALHOST_WARNING=False", "ANSIBLE_HOME="+filepath.Join(dir, "home"))
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("ansible-playbook: %v\n%s", err, out)
+	return string(out), err
+}
+
+// TestDeepUntrustedValueCannotDropTheMarkersInRealAnsible is final
+// re-review 2, New Breakage 1: from roughly 250 levels of nesting Python's
+// recursion limit breaks Ansible's JSON load of the extra-vars file, and
+// ansible-core silently re-reads it as YAML (up to roughly 500 levels),
+// where every {"__ansible_unsafe": …} marker is a plain dict whose strings
+// are templated. The manager caps untrusted nesting at
+// ansiblevars.MaxUntrustedDepth; the worker's file additionally carries a
+// guard that no YAML parser accepts, so a failed JSON load fails the run
+// instead of running anything.
+func TestDeepUntrustedValueCannotDropTheMarkersInRealAnsible(t *testing.T) {
+	const lookup = "{{ lookup('pipe', 'printf %s-%s DEEP 300') }}"
+	var deep any = "leaf"
+	for range 300 {
+		deep = []any{deep}
 	}
-	return string(out)
+	if err := ansiblevars.CheckUntrusted(deep); !errors.Is(err, ansiblevars.ErrTooDeep) {
+		t.Fatalf("a 300-level value must be refused as too deep: %v", err)
+	}
+
+	ansible := requireAnsiblePlaybook(t)
+	claimValue := func(v any) string {
+		b, err := json.Marshal(ansiblevars.Inert(v))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	env := runEnv(t)
+	job := runJob(t)
+	job.ExtraVars = map[string]string{"branch": claimValue(lookup), "deep": claimValue(deep)}
+	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+		t.Fatalf("materializeRunnerConfig: %v", err)
+	}
+	out, err := runPlaybookWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "branch")
+	if strings.Contains(out, "DEEP-300") {
+		t.Fatalf("the marked lookup ran after the JSON load failed:\n%s", out)
+	}
+	if err == nil {
+		t.Fatalf("a document Ansible cannot load as JSON must fail the run, not fall back to YAML:\n%s", out)
+	}
+}
+
+// TestMaterializeRunnerConfigWritesTheYAMLGuard: every extra-vars file
+// carries the over-long guard key, and a claim cannot replace it.
+func TestMaterializeRunnerConfigWritesTheYAMLGuard(t *testing.T) {
+	env := runEnv(t)
+	job := runJob(t)
+	job.ExtraVars = map[string]string{extraVarsGuardVar: `"off"`}
+	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+		t.Fatalf("materializeRunnerConfig: %v", err)
+	}
+	var vars map[string]any
+	if err := json.Unmarshal(mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), &vars); err != nil {
+		t.Fatal(err)
+	}
+	guard, ok := vars[extraVarsGuardVar].(map[string]any)
+	if !ok || len(guard) != 1 {
+		t.Fatalf("guard = %#v", vars[extraVarsGuardVar])
+	}
+	for k := range guard {
+		if len(k) <= 1024 {
+			t.Fatalf("the guard key is %d characters; YAML only refuses implicit keys over 1024", len(k))
+		}
+	}
 }

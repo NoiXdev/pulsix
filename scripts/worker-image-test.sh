@@ -61,6 +61,39 @@ expect_connection_attempt "ansible over ssh" \
 	"$(in_image env ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_NOCOLOR=1 \
 		ansible all -i 127.0.0.1, -u x -m ansible.builtin.ping -T 2)"
 
+# The worker's extra-vars file carries a key longer than YAML's 1024-
+# character implicit-key limit (runner.extraVarsGuardVar), so a failed JSON
+# load of the file — e.g. nesting past Python's recursion limit — fails the
+# run instead of silently re-reading it as YAML, which would drop every
+# unsafe marker. Check that premise against the image's own ansible-core
+# and YAML parser, with a 300-deep value next to a marked lookup.
+# shellcheck disable=SC2016 # Python source, nothing for the shell to expand
+guard_out="$(in_image python -c '
+import json
+from ansible.parsing.utils.yaml import from_yaml
+deep = "leaf"
+for _ in range(300):
+    deep = [deep]
+doc = {"branch": {"__ansible_unsafe": "{{ lookup(\"pipe\", \"id\") }}"}, "deep": deep}
+try:
+    from_yaml(json.dumps(doc))
+    print("without guard: falls back to YAML")
+except Exception:
+    print("without guard: fails")
+doc["pulsix_extravars_guard"] = {"k" * 1100: True}
+try:
+    from_yaml(json.dumps(doc))
+    print("guard: LOADED")
+except Exception:
+    print("guard: refused")
+')"
+if printf '%s' "$guard_out" | grep -q "guard: refused"; then
+	echo "worker-image-test: extra-vars YAML guard: ok ($(printf '%s' "$guard_out" | head -n 1))"
+else
+	echo "worker-image-test: extra-vars YAML guard: the image's Ansible loaded a guarded document: $guard_out" >&2
+	fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
 	echo "worker-image-test: FAILED" >&2
 	exit 1

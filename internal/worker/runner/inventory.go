@@ -229,7 +229,7 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 		// guard, re-review N1). System jobs' pulsix_ inputs are exempt —
 		// only the variable carrying the pinned options is refused.
 		if ansiblevars.Forbidden(k) && (!strings.HasPrefix(k, "pulsix_") || k == pinnedCommonArgsVar) {
-			return fmt.Errorf("extra var %s controls connection security and is set by the worker; refusing the run", k)
+			return fmt.Errorf("extra var %s is a reserved name (connection security, set by the worker, or Ansible's own markers); refusing the run", k)
 		}
 		// The claim's extra var values are JSON-encoded; a value that is
 		// not JSON fails the run instead of being pasted into the document.
@@ -242,12 +242,31 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 	for k, v := range forcedConnectionVars(env.WorkDir) {
 		vars[k] = v
 	}
+	vars[extraVarsGuardVar] = map[string]any{extraVarsGuardKey: true}
 	b, err := json.Marshal(vars)
 	if err != nil {
 		return fmt.Errorf("encode extra vars: %w", err)
 	}
 	return writeTextFile(filepath.Join(env.WorkDir, envDirName, extraVarsName), string(b), 0o600)
 }
+
+// extraVarsGuardVar holds a key YAML cannot parse but JSON can: YAML caps
+// an implicit (flow-mapping) key at 1024 characters, and both PyYAML and
+// libyaml refuse a longer one. ansible-core loads "-e @file" as JSON and,
+// when that fails for any reason (a reserved "__ansible" key, nesting past
+// Python's recursion limit, …), silently re-reads the file as YAML — where
+// every {"__ansible_unsafe": …} marker is a plain dict whose strings are
+// templated (final re-reviews 1 and 2). With the guard in the document the
+// YAML re-read fails too, so a failed JSON load fails the run instead of
+// running a webhook's lookup. The manager's own checks (depth cap, reserved
+// keys) keep such documents from being built; this is the worker's line.
+const extraVarsGuardVar = "pulsix_extravars_guard"
+
+// extraVarsGuardKey is the guard's over-long key (1100 characters).
+var extraVarsGuardKey = func() string {
+	const text = "json-only: this key is longer than YAML's 1024-character limit for implicit keys "
+	return text + strings.Repeat(".", 1100-len(text))
+}()
 
 // pinnedCommonArgsVar is the hostvar each host's SSH common args (the
 // pinned host-key options and the jump chain) move into; the forced
