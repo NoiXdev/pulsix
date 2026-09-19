@@ -16,6 +16,8 @@ var ErrNotRevoked = errors.New("worker is not revoked")
 const OnlineWindow = 2 * time.Minute
 
 // StreamCloser ends a worker's open event streams (grpcsrv.StreamRegistry).
+// CloseWorker returns only once none of them can store another event, so
+// the requeue that follows never gets a stray event in the job's log.
 type StreamCloser interface {
 	CloseWorker(workerID uuid.UUID) int
 }

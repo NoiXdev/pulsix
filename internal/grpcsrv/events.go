@@ -52,8 +52,9 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 	}
 	// A revocation (StreamRegistry.CloseWorker) ends the stream: the handler
 	// returns while the receive loop still blocks in Recv, which the
-	// finished RPC then unblocks.
-	revoked, release := s.streams.track(w.ID)
+	// finished RPC then unblocks. The cut also shuts the stream's append
+	// gate, so an event the loop reads after it is dropped, never stored.
+	tracked, release := s.streams.track(w.ID)
 	defer release()
 	// A revocation that committed after the interceptor's lookup but before
 	// track registered the stream found nothing to close. Tracking happens
@@ -70,11 +71,11 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 	go s.pollCancels(ctx, jobID, stream, done)
 
 	recvErr := make(chan error, 1)
-	go func() { recvErr <- s.receiveEvents(ctx, jobID, stream) }()
+	go func() { recvErr <- s.receiveEvents(ctx, jobID, stream, tracked) }()
 	select {
 	case err := <-recvErr:
 		return err
-	case <-revoked:
+	case <-tracked.revoked:
 		return status.Error(codes.Unauthenticated, "worker revoked")
 	}
 }
@@ -82,8 +83,9 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 // receiveEvents appends every event of the bound stream until the worker
 // closes it. Events after a cancel directive are still recorded: the worker
 // needs a little more time to shut its run down, and those events are what
-// the run's UI shows.
-func (s *Server) receiveEvents(ctx context.Context, jobID uuid.UUID, stream workerpb.WorkerService_RunEventsServer) error {
+// the run's UI shows. Events after a revocation are not: once the stream is
+// cut, the loop drops what it reads until the ended RPC fails Recv.
+func (s *Server) receiveEvents(ctx context.Context, jobID uuid.UUID, stream workerpb.WorkerService_RunEventsServer, tracked *trackedStream) error {
 	for {
 		ev, err := stream.Recv()
 		if err == io.EOF {
@@ -95,14 +97,16 @@ func (s *Server) receiveEvents(ctx context.Context, jobID uuid.UUID, stream work
 		if id := ev.GetJobId(); id != "" && id != jobID.String() {
 			return status.Errorf(codes.InvalidArgument, "event job id %q does not match the bound stream", id)
 		}
-		if err := s.deps.Events.Append(ctx, Event{
-			JobID:   jobID.String(),
-			Seq:     ev.GetSeq(),
-			Host:    ev.GetHost(),
-			Task:    ev.GetTask(),
-			State:   ev.GetState(),
-			Payload: ev.GetPayload(),
-			At:      eventAt(ev, s.deps.Clock),
+		if err := tracked.store(func() error {
+			return s.deps.Events.Append(ctx, Event{
+				JobID:   jobID.String(),
+				Seq:     ev.GetSeq(),
+				Host:    ev.GetHost(),
+				Task:    ev.GetTask(),
+				State:   ev.GetState(),
+				Payload: ev.GetPayload(),
+				At:      eventAt(ev, s.deps.Clock),
+			})
 		}); err != nil {
 			return status.Errorf(codes.Internal, "append run event: %v", err)
 		}

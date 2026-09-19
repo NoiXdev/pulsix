@@ -227,17 +227,16 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	}
 
 	// --- A job still running when revoke fires --------------------------------
-	// The fake runner emits its first event and then blocks on blockFile, so
-	// the job stays claimed and its RunEvents stream stays open right up to
-	// the revoke call below — the production case StreamRegistry's cut-off
+	// The fake runner emits its first event (after the worker's run_start
+	// bookend) and then blocks on blockFile, so the job stays claimed and
+	// its RunEvents stream stays open right up to the revoke call below — the production case StreamRegistry's cut-off
 	// exists for (global-constraints.md: "ends the worker's open RunEvents
 	// streams with Unauthenticated").
 	blockFile := filepath.Join(s.t.TempDir(), "release")
 	blockTID := s.createTemplate("hello-blocked", s.helloPB, map[string]any{"greeting": s.greeting, "block_until": blockFile})
 	blockedID := s.runTemplate(blockTID)
 	s.awaitJobRunning(blockedID, 30*time.Second)
-	live := s.awaitEvents(blockedID, 30*time.Second, func(e jobEventsOut) bool { return len(e.Events) > 0 })
-	liveEventCount := len(live.Events)
+	s.awaitEvents(blockedID, 30*time.Second, func(e jobEventsOut) bool { return len(e.Events) > 0 })
 
 	// --- Revocation ------------------------------------------------------------
 	var revoked struct {
@@ -249,6 +248,15 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	if revoked.Worker.Status != "revoked" {
 		s.t.Fatalf("revoked worker status = %q", revoked.Worker.Status)
 	}
+	// The baseline is the log as the revoke left it, not the first event
+	// seen above: the run streams more than one event before it blocks (the
+	// run_start bookend, then the runner's "PLAY" banner), and whichever of
+	// them arrived before the cut is legitimately stored. The revoke returns
+	// only once the cut stream can store nothing more, so from here on the
+	// count is final.
+	var atCut jobEventsOut
+	s.get(prefix+"/jobs/"+blockedID+"/events?after=0", &atCut)
+	cutEventCount := len(atCut.Events)
 	// The job it was still running is handed back to the queue — the
 	// revoke's own synchronous requeue, well under the retry ceiling on its
 	// first attempt.
@@ -285,8 +293,8 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	time.Sleep(2 * time.Second) // well past the fake runner's sub-second post-release work
 	var afterCut jobEventsOut
 	s.get(prefix+"/jobs/"+blockedID+"/events?after=0", &afterCut)
-	if len(afterCut.Events) != liveEventCount {
-		s.t.Fatalf("job %s events after the cut stream released = %d, want unchanged from %d", blockedID, len(afterCut.Events), liveEventCount)
+	if len(afterCut.Events) != cutEventCount {
+		s.t.Fatalf("job %s events after the cut stream released = %d, want unchanged from %d", blockedID, len(afterCut.Events), cutEventCount)
 	}
 
 	// With the zone's only worker revoked, a new run stays queued.
