@@ -99,8 +99,10 @@ naming is `snake_case`, IDs are UUIDv7.
 Tenancy and auth: `organizations`, `users`, `org_memberships(role)`, `passkeys`,
 `totp_secrets`, `api_tokens`, `audit_events`.
 
-Topology: `zones(org_id, slug, name)`, `workers(zone_id, name, cert_serial, last_seen,
-version, capabilities)`, `hosts(org_id, zone_id, name, address, managed bool, monitored
+Topology: `zones(org_id, slug, name)`, `workers(zone_id, name, status active|revoked,
+revoked_at, last_seen, version, capabilities)`, `worker_certificates(worker_id, serial,
+not_before, not_after, revoked_at)`, `worker_enrollments(zone_id, name, secret_hash,
+expires_at, used_at)`, `hosts(org_id, zone_id, name, address, managed bool, monitored
 bool, facts jsonb, last_seen)`, `host_tags(host_id, key, value, source manual|fact)`.
 
 Inventory (Ansible): `inventory_groups(org_id, parent_id, name, schema jsonb, vars jsonb,
@@ -119,8 +121,14 @@ inherit when absent; `zones` also carry a default `bastion_id`.
 
 Ansible content and jobs: `git_repos(org_id, url, credential, branch, last_sync)`,
 `playbooks(org_id, repo_id|null, path|inline, source repo|editor)`, `job_templates(org_id,
-playbook_id, limit, extra_vars, credential_id, schedule)`, `jobs(template_id, status,
-zone_id, worker_id, started, finished, stats jsonb)`, `job_events(job_id, seq, host,
+playbook_id, limit, extra_vars, credential_id)`, `jobs(template_id, status, zone_id,
+worker_id, trigger manual|schedule|webhook|system, trigger_ref, started, finished, stats
+jsonb)`, `schedules(template_id, mode cron|simple, cron, simple jsonb, timezone, guards
+jsonb, limit, extra_vars, paused, next_run_at)`, `schedule_runs(schedule_id, due_at,
+outcome, reason, job_group_id)`, `job_triggers(kind template_run|repo_sync,
+template_id|repo_id, preset, auth hmac|token, secret, allow_cidrs, mapping jsonb,
+on_active, rate_limit jsonb)`, `trigger_deliveries(trigger_id, at, source_ip, outcome,
+reason, job_group_id)`, `job_events(job_id, seq, host,
 task, payload jsonb)` (hypertable, compressed after 7 d).
 
 Monitoring: `monitoring_groups(org_id, parent_id, name, selector jsonb, membership_mode
@@ -258,19 +266,37 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
   extra vars (typed by an optional schema like groups) + SSH credential + zone selection
   (auto: the zone of the targeted hosts; a job spanning zones is split into one job per
   zone) + triggers.
-- Triggers per template: **manual** (button, API), **schedule** (cron or simple mode
-  with timezone; guards: skip when a run is active, skip during maintenance windows on
-  the targets, optional catch-up after downtime; pause), **incoming webhook** (per
-  template URL `/api/v1/hooks/jobs/{id}`, HMAC-SHA256 signature or token, IP
-  allowlist, JSONPath mapping from payload to extra vars and `limit`, rate limit,
-  queue-or-skip when a run is active). Every triggered run records its trigger and
-  actor (user, token, schedule, webhook source) in the audit log.
-- Schedule notifications: rules per schedule (`on failure`, `on change`, `on
-  success`, `skipped/missed` → channels from §11), optional weekly digest. Scheduled
-  runs appear in the activity feed and in a calendar together with maintenance
-  windows (`schedules(template_id, cron, tz, guards jsonb, notify_rules jsonb,
-  paused)`, `job_triggers(template_id, kind webhook, secret_hash, allow_cidrs, mapping
-  jsonb, rate_limit)`).
+- Triggers: **manual** (button, API), **schedule** and **incoming webhook**. Every run
+  records `jobs.trigger` (`manual`, `schedule`, `webhook`, `system`) and `trigger_ref`
+  (the schedule or webhook trigger), and the audit log names its actor: a user, a
+  token, `schedule:<id>`, or `webhook:<id>` with the source address.
+- Schedules (v0.2c): cron (5 fields and `@hourly`, `@daily`, `@weekly`, `@monthly`;
+  day-of-month and day-of-week combine with OR) or a simple mode (every N minutes or
+  hours, daily, weekly, monthly) compiled to cron; an IANA time zone with defined DST
+  behaviour (a time in the spring-forward gap runs at the first valid minute after it,
+  a repeated fall-back time runs once); guards `overlap` (skip or queue) and
+  `catch_up` (enabled, window 1 min–24 h); per-schedule `limit` and extra-var
+  overrides validated against the template schema, secret values sealed; pause,
+  resume, run now, pause all. A ticker (`PULSIX_SCHEDULE_TICK`, default 15 s) takes
+  due schedules with `FOR UPDATE SKIP LOCKED`, so with several managers each
+  occurrence is decided once; enqueueing is at-least-once. Every decision is kept in
+  `schedule_runs` (`triggered`, `skipped_overlap`, `missed`, `failed`). Scheduled runs
+  pass the same enqueue validation as manual runs. The maintenance-window guard
+  arrives with maintenance windows (v0.2d).
+- Incoming webhooks (v0.2c): `POST /api/v1/hooks/jobs/{id}` runs a template and
+  `POST /api/v1/hooks/repos/{id}` syncs a repository (the push webhook of 2.8).
+  Presets: Pulsix, GitHub and Gitea (HMAC-SHA256 of the raw body), GitLab and bearer
+  (token). An optional timestamp header limits replays to ±5 minutes, and the HMAC
+  then covers `<timestamp>.<body>`. An IP allowlist applies to the client address that
+  `PULSIX_TRUSTED_PROXIES` resolves. The mapping takes an RFC 9535 JSONPath subset (`$`,
+  names, indexes, `[*]`) from the JSON payload to extra vars and `limit`, validated
+  like a manual run; secret-typed fields and the connection-security variables cannot
+  be mapped. A per-trigger token bucket is shared by all managers, with a per-address
+  limit in front of it. `on_active` either queues or skips. A trigger keeps its last
+  500 deliveries (`trigger_deliveries`) without the body.
+- Schedule notifications (v0.2d): rules per schedule (`on failure`, `on change`, `on
+  success`, `skipped/missed` → channels from §11), an optional weekly digest, and a
+  calendar of scheduled runs together with maintenance windows.
 - Queue: `jobs` rows in `queued` state. Workers of the matching zone poll with
   `SELECT … FOR UPDATE SKIP LOCKED` through the manager's gRPC `ClaimJob`; the manager
   owns the SQL, workers never talk to Postgres.
@@ -497,6 +523,29 @@ Layered like Checkmk rulesets and Zabbix templates.
   give each trust domain its own organization (or at least its own zone and worker).
   Running playbooks under a separate uid so a task cannot read the worker's key is a
   hardening item (backlog).
+- **Worker enrollment (v0.2c).** An owner or admin creates a token
+  `pxw1.<id>.<secret>.<ca-sha256>`: single use, valid for one hour, bound to
+  organization, zone and worker name; only the SHA-256 of the secret is stored, and
+  it is compared in constant time. The worker creates its key locally (it never
+  leaves the host), sends a CSR over a connection pinned to the CA fingerprint in the
+  token, and receives a 90-day certificate whose CN and organization/zone URI SANs
+  the CA sets itself (CSR subject and extensions are ignored). It renews over its
+  authenticated connection once a third of the validity is left, keeping its key.
+  `Enroll` is the only RPC callable without a client certificate and is limited to
+  10 calls per minute and address. Revocation marks the worker and every serial it
+  ever held as revoked, ends its open event streams and requeues its jobs; unknown
+  and revoked serials are `Unauthenticated`, and a certificate whose zone differs from
+  the registry row is refused. A revoked worker cannot come back under a recreated
+  row, because its serials stay revoked.
+- **Incoming webhooks (v0.2c).** The hook endpoints are the only unauthenticated
+  write paths besides login, setup and enrollment: body ≤ 1 MiB, constant-time
+  signature and token compares, one identical empty 404 for unknown, disabled,
+  disallowed-address and bad-signature calls, per-trigger and per-address rate
+  limits, secrets sealed with AAD `trigger:<org>:<id>` and shown only at creation and
+  rotation, and no secrets or bodies in URLs, logs, audit entries or delivery rows.
+  Webhook and scheduled runs pass the same validation as manual runs (schema, the
+  connection-security denylist, host-key pins). Outbound webhooks (notification
+  channels, with SSRF rules) are v0.2d.
 - **Run output redaction.** Run logs are readable with `jobs.read`. The worker removes
   every secret value the job revealed — credential secrets (keys, passwords, tokens,
   become passwords), secret-typed extra vars, secret inventory variables, one-time
