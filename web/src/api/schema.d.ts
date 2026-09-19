@@ -6163,6 +6163,10 @@ export interface operations {
                 kind?: string;
                 template_id?: string;
                 group?: string;
+                /** @description manual, schedule, webhook or system */
+                trigger?: string;
+                /** @description Only the runs this schedule or webhook trigger started */
+                trigger_ref?: string;
                 cursor?: string;
                 limit?: number;
             };

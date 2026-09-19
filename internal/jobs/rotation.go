@@ -426,6 +426,7 @@ func (q *SQLQueue) ClearTerminalPayload(ctx context.Context, jobID uuid.UUID) {
 	if err := q.cancelDependents(ctx, jobID, Status(status)); err != nil {
 		slog.ErrorContext(ctx, "cancel dependents of a cancelled job", "err", err, "job", jobID)
 	}
+	q.recordCancelledRunGroup(ctx, jobID)
 }
 
 // cancelDependents cancels every queued job that (transitively) depends on

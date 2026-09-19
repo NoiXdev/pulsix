@@ -233,6 +233,10 @@ type Filter struct {
 	// trigger's per-zone group (the run view's grouped-run listing).
 	TemplateID *uuid.UUID
 	RunGroupID *uuid.UUID
+	// Trigger narrows to one trigger kind (manual, schedule, webhook,
+	// system); TriggerRef to the runs one schedule or webhook started.
+	Trigger    *string
+	TriggerRef *uuid.UUID
 }
 
 // DefaultListLimit and MaxListLimit bound List's page size, the same
@@ -321,6 +325,9 @@ type Store interface {
 	// HasActiveRepoSync reports whether a sync_repo job of the repository
 	// is not terminal yet — the on_active guard a repo webhook asks.
 	HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
+	// GroupSummaries aggregates the run jobs of each given run group
+	// (groups without run jobs are absent from the map).
+	GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]GroupSummary, error)
 }
 
 // Claim is one claimed job ready to ship to a worker, with the binding
@@ -522,6 +529,11 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 		}
 		if len(targets) == 0 {
 			return nil, ErrHostKeyChanged
+		}
+	}
+	if len(req.ExcludeHosts) > 0 {
+		if targets = excludeHosts(targets, req.ExcludeHosts); len(targets) == 0 {
+			return nil, ErrAllHostsExcluded
 		}
 	}
 	group := s.newID()

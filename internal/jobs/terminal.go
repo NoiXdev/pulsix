@@ -40,11 +40,12 @@ type terminalTransition struct {
 // of it. applied reports whether the status was written. After a commit
 // the job's in-process stream and cancel records are dropped.
 //
-// Members of a rotation group serialize on a per-group advisory
-// transaction lock taken before the status write: with the status and the
-// group's completeness count in one transaction, two members finishing
+// Members of a rotation group — and of a run group when a RunGroupSink is
+// wired (run_group.go) — serialize on a per-group advisory transaction
+// lock taken before the status write: with the status and the group's
+// completeness count in one transaction, two members finishing
 // concurrently would otherwise each count the other as still running and
-// neither would finalize the group.
+// neither would finalize (or report) the group.
 func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, error) {
 	if !t.status.Terminal() {
 		return false, fmt.Errorf("%w: %q is not a terminal status", ErrInvalidInput, t.status)
@@ -71,7 +72,7 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 	}
 	applied := false
 	err := q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
-		if Kind(kind) == KindRotateKey || Kind(kind) == KindConnectionTest {
+		if Kind(kind) == KindRotateKey || Kind(kind) == KindConnectionTest || (Kind(kind) == KindRun && q.runGroups != nil) {
 			if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
 				finishGroupLockKeyPrefix+groupID.String()); err != nil {
 				return fmt.Errorf("lock run group: %w", err)
@@ -104,6 +105,9 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 			return err
 		}
 		if err := q.recordRotation(ctx, t.jobID, t.status); err != nil {
+			return err
+		}
+		if err := q.recordRunGroup(ctx, t.jobID); err != nil {
 			return err
 		}
 		// The terminal payload's at-rest lifetime ends here: the sealed

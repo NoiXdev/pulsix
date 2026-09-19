@@ -500,12 +500,14 @@ WHERE org_id = $1
   AND ($4::text IS NULL OR kind = $4::text)
   AND ($5::uuid IS NULL OR template_id = $5::uuid)
   AND ($6::uuid IS NULL OR run_group_id = $6::uuid)
+  AND ($7::text IS NULL OR trigger = $7::text)
+  AND ($8::uuid IS NULL OR trigger_ref = $8::uuid)
   AND (
-    $7::timestamptz IS NULL
-    OR (created_at, id) < ($7::timestamptz, $8::uuid)
+    $9::timestamptz IS NULL
+    OR (created_at, id) < ($9::timestamptz, $10::uuid)
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $9
+LIMIT $11
 `
 
 type ListJobsParams struct {
@@ -515,6 +517,8 @@ type ListJobsParams struct {
 	Kind       *string            `json:"kind"`
 	TemplateID pgtype.UUID        `json:"template_id"`
 	RunGroupID pgtype.UUID        `json:"run_group_id"`
+	Trigger    *string            `json:"trigger"`
+	TriggerRef pgtype.UUID        `json:"trigger_ref"`
 	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
 	CursorID   pgtype.UUID        `json:"cursor_id"`
 	RowLimit   int32              `json:"row_limit"`
@@ -534,6 +538,8 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 		arg.Kind,
 		arg.TemplateID,
 		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
 		arg.CursorAt,
 		arg.CursorID,
 		arg.RowLimit,

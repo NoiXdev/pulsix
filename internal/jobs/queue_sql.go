@@ -96,6 +96,9 @@ type SQLQueue struct {
 	// the sync sink has. Nil-safe: AppendEvent publishes through the nil
 	// receiver, which is a no-op.
 	broker *Broker
+	// runGroups is the optional port a completed run group is reported
+	// through (SetRunGroupSink, run_group.go): the notification outbox.
+	runGroups RunGroupSink
 }
 
 // SetSyncSink injects the sink RecordSyncResult calls flow through on the

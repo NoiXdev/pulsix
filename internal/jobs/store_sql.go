@@ -130,6 +130,8 @@ func (s *SQLStore) ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, curs
 		Kind:       textToPg(kindPtr(f.Kind)),
 		TemplateID: uuidToPg(f.TemplateID),
 		RunGroupID: uuidToPg(f.RunGroupID),
+		Trigger:    textToPg(f.Trigger),
+		TriggerRef: uuidToPg(f.TriggerRef),
 		CursorAt:   timeToPg(cursor, cursorAt),
 		CursorID:   uuidToPg(cursorIDPtr(cursor, cursorID)),
 		RowLimit:   int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.List before it ever reaches here
@@ -260,6 +262,54 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// groupSummaryQuery aggregates run groups; raw SQL because the
+// aggregates' NULLs (a group that never started) scan into pointers.
+const groupSummaryQuery = `
+SELECT run_group_id,
+  (array_agg(id ORDER BY created_at, id))[1],
+  count(*),
+  count(*) FILTER (WHERE status IN ('succeeded', 'failed', 'cancelled', 'error')),
+  count(*) FILTER (WHERE status IN ('queued', 'claimed')),
+  count(*) FILTER (WHERE status IN ('failed', 'error')),
+  count(*) FILTER (WHERE status = 'cancelled'),
+  min(started_at), max(finished_at)
+FROM jobs
+WHERE org_id = $1 AND kind = 'run' AND run_group_id = ANY($2::uuid[])
+GROUP BY run_group_id`
+
+func (s *SQLStore) GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {
+	rows, err := s.d.Query(ctx, groupSummaryQuery, orgID, groupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("summarise run groups: %w", err)
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]GroupSummary{}
+	for rows.Next() {
+		var g GroupSummary
+		var total, terminal, waiting, failed, cancelled int
+		if err := rows.Scan(&g.GroupID, &g.FirstJobID, &total, &terminal, &waiting, &failed, &cancelled, &g.StartedAt, &g.FinishedAt); err != nil {
+			return nil, fmt.Errorf("summarise run groups: %w", err)
+		}
+		switch {
+		case waiting == total:
+			g.Status = StatusQueued
+		case terminal < total:
+			g.Status = StatusRunning
+		case failed > 0:
+			g.Status = StatusFailed
+		case cancelled > 0:
+			g.Status = StatusCancelled
+		default:
+			g.Status = StatusSucceeded
+		}
+		out[g.GroupID] = g
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("summarise run groups: %w", err)
+	}
+	return out, nil
 }
 
 // pgtype helpers for the optional ListJobs filters and cursor, mirroring

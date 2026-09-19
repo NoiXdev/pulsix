@@ -41,6 +41,8 @@ type fakeStore struct {
 	activeTemplates map[uuid.UUID]bool
 	activeRepos     map[uuid.UUID]bool
 	activeErr       error
+
+	summaries map[uuid.UUID]jobs.GroupSummary
 }
 
 func newFakeStore() *fakeStore {
@@ -160,6 +162,18 @@ func (f *fakeStore) HasActiveRepoSync(_ context.Context, _, repoID uuid.UUID) (b
 		return false, f.activeErr
 	}
 	return f.activeRepos[repoID], nil
+}
+
+func (f *fakeStore) GroupSummaries(_ context.Context, _ uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]jobs.GroupSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]jobs.GroupSummary{}
+	for _, id := range groupIDs {
+		if g, ok := f.summaries[id]; ok {
+			out[id] = g
+		}
+	}
+	return out, nil
 }
 
 type fakeQueue struct {

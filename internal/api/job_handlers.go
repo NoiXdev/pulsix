@@ -149,6 +149,8 @@ type jobListInput struct {
 	Kind       string `query:"kind"`
 	TemplateID string `query:"template_id"`
 	Group      string `query:"group"`
+	Trigger    string `query:"trigger" doc:"manual, schedule, webhook or system"`
+	TriggerRef string `query:"trigger_ref" doc:"Only the runs this schedule or webhook trigger started"`
 	Cursor     string `query:"cursor"`
 	Limit      int    `query:"limit"`
 }
@@ -316,6 +318,10 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		filter.Trigger, filter.TriggerRef, err = parseTriggerFilter(in.Trigger, in.TriggerRef)
+		if err != nil {
+			return nil, err
+		}
 		list, next, err := deps.Jobs.List(ctx, scope.OrgID, filter, in.Cursor, in.Limit)
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
@@ -425,6 +431,27 @@ func parseJobListFilter(statusStr, kindStr, templateStr, groupStr string) (jobs.
 		f.RunGroupID = &id
 	}
 	return f, nil
+}
+
+// parseTriggerFilter validates the runs list's trigger filters (spec
+// 2026-09-18 §8): a known trigger kind and a well-formed trigger id.
+func parseTriggerFilter(kind, ref string) (*string, *uuid.UUID, error) {
+	var k *string
+	switch kind {
+	case "":
+	case jobs.TriggerManual, jobs.TriggerSchedule, jobs.TriggerWebhook, jobs.TriggerSystem:
+		k = &kind
+	default:
+		return nil, nil, huma.Error400BadRequest("invalid trigger: must be one of manual, schedule, webhook, system")
+	}
+	if ref == "" {
+		return k, nil, nil
+	}
+	id, err := uuid.Parse(ref)
+	if err != nil {
+		return nil, nil, huma.Error400BadRequest("invalid trigger_ref")
+	}
+	return k, &id, nil
 }
 
 // mapJobsErr converts the jobs package's sentinels to HTTP errors, the

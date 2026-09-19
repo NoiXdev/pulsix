@@ -7,6 +7,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -34,12 +35,21 @@ func (o *RunOverrides) empty() bool {
 	return o == nil || (o.Limit == nil && len(o.ExtraVars) == 0)
 }
 
+// ErrAllHostsExcluded means every host of the run's scope was excluded
+// by the request (a schedule's maintenance guard, spec §6): nothing is
+// left to run. Schedules record it as skipped_maintenance.
+var ErrAllHostsExcluded = errors.New("every targeted host is excluded from this run")
+
 // RunRequest says who or what starts a run and with which overrides.
 type RunRequest struct {
 	Trigger    string
 	TriggerRef *uuid.UUID
 	Actor      *uuid.UUID
 	Overrides  *RunOverrides
+	// ExcludeHosts drops these hosts from the resolved scope (a schedule's
+	// exclude_hosts maintenance guard). When none is left the enqueue
+	// fails with ErrAllHostsExcluded.
+	ExcludeHosts []uuid.UUID
 }
 
 // validate checks the trigger kind and that TriggerRef fits it: schedule
@@ -76,6 +86,55 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		return nil, err
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, req)
+}
+
+// RunTargets resolves the template's scope into the managed host ids a
+// run started now would target (every zone together), before the
+// changed-host-key exclusion. The maintenance guard asks it which hosts a
+// scheduled run would touch.
+func (s *Service) RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error) {
+	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := parseScope(tmpl.Scope)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := s.resolver.Resolve(ctx, orgID, scope)
+	if err != nil {
+		return nil, err
+	}
+	var out []uuid.UUID
+	for _, t := range targets {
+		out = append(out, t.HostIDs...)
+	}
+	return out, nil
+}
+
+// excludeHosts drops the given hosts from per-zone targets; a zone left
+// without hosts is dropped too.
+func excludeHosts(targets []ZoneTargets, exclude []uuid.UUID) []ZoneTargets {
+	if len(exclude) == 0 {
+		return targets
+	}
+	drop := make(map[uuid.UUID]bool, len(exclude))
+	for _, id := range exclude {
+		drop[id] = true
+	}
+	out := make([]ZoneTargets, 0, len(targets))
+	for _, t := range targets {
+		kept := t.HostIDs[:0:0]
+		for _, id := range t.HostIDs {
+			if !drop[id] {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) > 0 {
+			out = append(out, ZoneTargets{ZoneID: t.ZoneID, HostIDs: kept})
+		}
+	}
+	return out
 }
 
 // EnqueueSyncWith is EnqueueSync with an explicit trigger (a repo_sync
