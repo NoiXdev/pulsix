@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"strings"
 	"time"
 
@@ -91,12 +92,12 @@ func (s *Service) CreateChannel(ctx context.Context, orgID, actor uuid.UUID, in 
 			return Channel{}, ErrMailUnavailable
 		}
 	}
-	cfg, err := s.buildConfig(orgID, id, in, nil)
+	cfg, bodyJSON, err := s.buildConfig(orgID, id, in, nil)
 	if err != nil {
 		return Channel{}, err
 	}
 	return s.d.Channels.CreateChannel(ctx, Channel{
-		ID: id, OrgID: orgID, Kind: in.Kind, Name: name, Enabled: in.Enabled, Config: cfg, CreatedBy: &actor,
+		ID: id, OrgID: orgID, Kind: in.Kind, Name: name, Enabled: in.Enabled, Config: cfg, BodyJSON: bodyJSON, CreatedBy: &actor,
 	})
 }
 
@@ -117,11 +118,11 @@ func (s *Service) UpdateChannel(ctx context.Context, orgID, id uuid.UUID, revisi
 	if err != nil {
 		return Channel{}, err
 	}
-	cfg, err := s.buildConfig(orgID, id, in, &cur)
+	cfg, bodyJSON, err := s.buildConfig(orgID, id, in, &cur)
 	if err != nil {
 		return Channel{}, err
 	}
-	cur.Name, cur.Enabled, cur.Config = name, in.Enabled, cfg
+	cur.Name, cur.Enabled, cur.Config, cur.BodyJSON = name, in.Enabled, cfg, bodyJSON
 	return s.d.Channels.UpdateChannel(ctx, cur, revision)
 }
 
@@ -139,75 +140,82 @@ func (s *Service) DeleteChannel(ctx context.Context, orgID, id uuid.UUID) error 
 	return s.d.Channels.DeleteChannel(ctx, orgID, id)
 }
 
-// buildConfig turns an input into the stored config. cur is the channel
-// being updated (nil on create): its sealed values are kept where the
+// buildConfig turns an input into the stored config, plus the channel's
+// effective Content-Type classification (unused for KindEmail; true is
+// returned as a harmless, unread default). cur is the channel being
+// updated (nil on create): its sealed values, and its stored
+// classification for a kept Content-Type header, are kept where the
 // input leaves them out.
-func (s *Service) buildConfig(orgID, id uuid.UUID, in Input, cur *Channel) (json.RawMessage, error) {
+func (s *Service) buildConfig(orgID, id uuid.UUID, in Input, cur *Channel) (json.RawMessage, bool, error) {
 	switch in.Kind {
 	case KindEmail:
 		if in.Webhook != nil {
-			return nil, fmt.Errorf("%w: an e-mail channel takes no webhook settings", ErrInvalidInput)
+			return nil, false, fmt.Errorf("%w: an e-mail channel takes no webhook settings", ErrInvalidInput)
 		}
 		e, err := normalizeEmail(in.Email)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return json.Marshal(e)
+		cfg, err := json.Marshal(e)
+		return cfg, true, err
 	case KindWebhook:
 		if in.Email != nil || in.Webhook == nil {
-			return nil, fmt.Errorf("%w: a webhook channel takes webhook settings only", ErrInvalidInput)
+			return nil, false, fmt.Errorf("%w: a webhook channel takes webhook settings only", ErrInvalidInput)
 		}
 		var stored webhookConfig
+		keptBodyJSON := true
 		if cur != nil {
 			if err := json.Unmarshal(cur.Config, &stored); err != nil {
-				return nil, fmt.Errorf("decode stored webhook channel: %w", err)
+				return nil, false, fmt.Errorf("decode stored webhook channel: %w", err)
 			}
+			keptBodyJSON = cur.BodyJSON
 		}
-		w, err := s.buildWebhook(AAD(orgID, id), *in.Webhook, stored, cur != nil)
+		w, bodyJSON, err := s.buildWebhook(AAD(orgID, id), *in.Webhook, stored, cur != nil, keptBodyJSON)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return json.Marshal(w)
+		cfg, err := json.Marshal(w)
+		return cfg, bodyJSON, err
 	}
-	return nil, fmt.Errorf("%w: kind must be email or webhook", ErrInvalidInput)
+	return nil, false, fmt.Errorf("%w: kind must be email or webhook", ErrInvalidInput)
 }
 
-func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig, update bool) (webhookConfig, error) {
+func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig, update, keptBodyJSON bool) (webhookConfig, bool, error) {
 	var out webhookConfig
 	var err error
 	if out.Method, err = normalizeMethod(in.Method); err != nil {
-		return out, err
+		return out, false, err
 	}
 	switch {
 	case in.URL != nil:
 		if out.URLDisplay, err = checkURL(*in.URL); err != nil {
-			return out, err
+			return out, false, err
 		}
 		if out.URLSealed, err = s.d.Box.SealAAD([]byte(strings.TrimSpace(*in.URL)), aad); err != nil {
-			return out, fmt.Errorf("seal webhook url: %w", err)
+			return out, false, fmt.Errorf("seal webhook url: %w", err)
 		}
 	case update:
 		out.URLSealed, out.URLDisplay = stored.URLSealed, stored.URLDisplay
 	default:
-		return out, fmt.Errorf("%w: a webhook channel needs a url", ErrInvalidInput)
+		return out, false, fmt.Errorf("%w: a webhook channel needs a url", ErrInvalidInput)
 	}
 	if len(in.Headers) > maxHeaders {
-		return out, fmt.Errorf("%w: at most %d headers", ErrInvalidInput, maxHeaders)
+		return out, false, fmt.Errorf("%w: at most %d headers", ErrInvalidInput, maxHeaders)
 	}
 	seen := map[string]bool{}
 	for _, h := range in.Headers {
 		if err := checkHeader(h.Name, h.Value); err != nil {
-			return out, err
+			return out, false, err
 		}
 		key := strings.ToLower(h.Name)
 		if seen[key] {
-			return out, fmt.Errorf("%w: header %s is listed twice", ErrInvalidInput, h.Name)
+			return out, false, fmt.Errorf("%w: header %s is listed twice", ErrInvalidInput, h.Name)
 		}
 		seen[key] = true
 		sh := storedHeader{Name: h.Name}
 		if h.Value != nil {
 			if sh.ValueSealed, err = s.d.Box.SealAAD([]byte(*h.Value), aad); err != nil {
-				return out, fmt.Errorf("seal header value: %w", err)
+				return out, false, fmt.Errorf("seal header value: %w", err)
 			}
 		} else {
 			kept := false
@@ -217,42 +225,71 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 				}
 			}
 			if !kept {
-				return out, fmt.Errorf("%w: header %s needs a value", ErrInvalidInput, h.Name)
+				return out, false, fmt.Errorf("%w: header %s needs a value", ErrInvalidInput, h.Name)
 			}
 		}
 		out.Headers = append(out.Headers, sh)
 	}
-	if err := checkBodyTemplate(in.BodyTemplate, isJSONContentType(in.Headers)); err != nil {
-		return out, err
+	bodyJSON := resolveBodyJSON(in.Headers, keptBodyJSON)
+	if err := checkBodyTemplate(in.BodyTemplate, bodyJSON); err != nil {
+		return out, false, err
 	}
 	out.BodyTemplate = in.BodyTemplate
 	switch {
 	case in.Signed && in.SigningSecret != nil:
 		if err := checkSigningSecret(*in.SigningSecret); err != nil {
-			return out, err
+			return out, false, err
 		}
 		if out.SigningSealed, err = s.d.Box.SealAAD([]byte(*in.SigningSecret), aad); err != nil {
-			return out, fmt.Errorf("seal signing secret: %w", err)
+			return out, false, fmt.Errorf("seal signing secret: %w", err)
 		}
 	case in.Signed && len(stored.SigningSealed) > 0:
 		out.SigningSealed = stored.SigningSealed
 	case in.Signed:
-		return out, fmt.Errorf("%w: signed requests need a signing secret", ErrInvalidInput)
+		return out, false, fmt.Errorf("%w: signed requests need a signing secret", ErrInvalidInput)
 	case in.SigningSecret != nil:
-		return out, fmt.Errorf("%w: a signing secret was given but signed is false", ErrInvalidInput)
+		return out, false, fmt.Errorf("%w: a signing secret was given but signed is false", ErrInvalidInput)
 	}
-	return out, nil
+	return out, bodyJSON, nil
 }
 
-// isJSONContentType reports whether this request explicitly sets a
-// Content-Type header naming a JSON media type. A kept header (no value
-// in this request) is not consulted, because its plaintext is sealed and
-// the service only reads it when the caller supplies it fresh.
-func isJSONContentType(headers []HeaderInput) bool {
+// resolveBodyJSON classifies a webhook channel's *effective* Content-Type
+// at save time, so save-time JSON validation (checkBodyTemplate) applies
+// to the type the channel will actually be sent as, not just to whichever
+// request happened to mention it:
+//   - a Content-Type header supplied fresh in this request: classify that
+//     value with isJSONMediaType;
+//   - a Content-Type header kept (listed with no value, matching a stored
+//     header by name): keptBodyJSON, the stored channel's own
+//     classification from when that header's value was last set;
+//   - no Content-Type header at all: true. Every sender in this codebase
+//     (mail.SMTP does not apply; the webhook dispatcher, Task 3's
+//     sendWebhook) sets "Content-Type: application/json" by default
+//     before applying operator headers, so this is the transport default,
+//     not a guess.
+func resolveBodyJSON(headers []HeaderInput, keptBodyJSON bool) bool {
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, "Content-Type") && h.Value != nil {
-			return strings.Contains(strings.ToLower(*h.Value), "json")
+		if strings.EqualFold(h.Name, "Content-Type") {
+			if h.Value != nil {
+				return isJSONMediaType(*h.Value)
+			}
+			return keptBodyJSON
 		}
 	}
-	return false
+	return true
+}
+
+// isJSONMediaType parses a Content-Type-style value and reports whether
+// it names a JSON media type: application/json, or a type with a "+json"
+// structured-syntax suffix (RFC 6839, e.g. application/vnd.api+json). A
+// value that fails to parse, or that names some other type such as
+// application/x-ndjson or text/plain, is not JSON — this is a real media
+// type match, not a substring test, so a "profile=json" parameter or an
+// "ndjson" type name do not count.
+func isJSONMediaType(value string) bool {
+	mt, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return false
+	}
+	return mt == "application/json" || strings.HasSuffix(mt, "+json")
 }

@@ -4,13 +4,20 @@
 -- same tables with more channel kinds, routes and escalation.
 
 -- config is the kind's settings; for webhooks the URL, every header value
--- and the signing secret are sealed with AAD channel:<org>:<id>.
+-- and the signing secret are sealed with AAD channel:<org>:<id>. body_json
+-- is a webhook channel's effective Content-Type classification (the
+-- request's own header, else a kept header's stored classification, else
+-- true for the transport's default of application/json) — unsealed,
+-- because a media type is not a secret, and kept outside config so an
+-- update that only resubmits the body template can still classify a kept
+-- Content-Type header without unsealing it. Unused for email channels.
 CREATE TABLE notification_channels (
   id          uuid PRIMARY KEY,
   org_id      uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   kind        text NOT NULL CHECK (kind IN ('email', 'webhook')),
   name        text NOT NULL,
   config      jsonb NOT NULL,
+  body_json   boolean NOT NULL DEFAULT true,
   enabled     boolean NOT NULL DEFAULT true,
   created_by  uuid,
   created_at  timestamptz NOT NULL DEFAULT now(),

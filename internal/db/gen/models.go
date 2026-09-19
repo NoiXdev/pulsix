@@ -302,6 +302,7 @@ type NotificationChannel struct {
 	Kind      string      `json:"kind"`
 	Name      string      `json:"name"`
 	Config    []byte      `json:"config"`
+	BodyJson  bool        `json:"body_json"`
 	Enabled   bool        `json:"enabled"`
 	CreatedBy pgtype.UUID `json:"created_by"`
 	CreatedAt time.Time   `json:"created_at"`

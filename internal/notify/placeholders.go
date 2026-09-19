@@ -71,7 +71,7 @@ func parseBodyTemplate(tmpl string) ([]templatePart, error) {
 		rest = rest[j+2:]
 		m := placeholderInner.FindStringSubmatch(inner)
 		if m == nil {
-			return nil, fmt.Errorf("%w: %q is not a valid placeholder", ErrInvalidInput, "{{"+inner+"}}")
+			return nil, fmt.Errorf("%w: %q is not a valid placeholder", ErrInvalidInput, "{{"+truncateForError(inner)+"}}")
 		}
 		path := m[1]
 		accessor, ok := placeholderFields[path]
@@ -82,10 +82,12 @@ func parseBodyTemplate(tmpl string) ([]templatePart, error) {
 	}
 }
 
-// truncateForError bounds how much of an unterminated placeholder's tail
-// an error message quotes.
+// truncateForError bounds how much of a placeholder's text — the tail
+// after an unterminated "{{", or the inner text of one that failed to
+// parse — an error message echoes back, so a single malformed placeholder
+// cannot blow up the size of a save-time 422.
 func truncateForError(s string) string {
-	const max = 40
+	const max = 64
 	if len(s) > max {
 		return s[:max] + "…"
 	}
@@ -155,14 +157,14 @@ func fieldText(val any) string {
 // checkBodyTemplate validates a body template at save time: it must parse
 // (every placeholder a known field, correct syntax) and be at most
 // maxTemplateLength bytes. When jsonContentType is true (the channel's
-// Content-Type header names a JSON media type), it additionally renders
-// the template against a realistic sample of every event kind — each
-// with only that kind's sections populated, since a real event leaves
-// the others nil — plus a hostile variant whose text fields carry quotes,
-// backslashes and newlines, and requires every result to be valid JSON.
-// A field absent from a kind's sample renders empty or null, so this
-// never fails just because a template mentions a field only some kinds
-// carry.
+// *effective* Content-Type — see resolveBodyJSON in service.go — names a
+// JSON media type), it additionally renders the template against a
+// realistic sample of every event kind — each with only that kind's
+// sections populated, since a real event leaves the others nil — plus a
+// hostile variant whose text fields carry quotes, backslashes and
+// newlines, and requires every result to be valid JSON. A field absent
+// from a kind's sample renders empty or null, so this never fails just
+// because a template mentions a field only some kinds carry.
 func checkBodyTemplate(tmpl string, jsonContentType bool) error {
 	if tmpl == "" {
 		return nil
@@ -220,9 +222,14 @@ var placeholderFields = map[string]func(Event) (any, bool){
 	},
 	"template.name": func(ev Event) (any, bool) { return refField(ev.Template, func(r NamedRef) any { return r.Name }) },
 
-	"run.id":            func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.ID.String() }) },
-	"run.result":        func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.Result }) },
-	"run.url":           func(ev Event) (any, bool) { return ev.URL, ev.URL != "" },
+	"run.id":     func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.ID.String() }) },
+	"run.result": func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.Result }) },
+	"run.url": func(ev Event) (any, bool) {
+		if ev.Run == nil {
+			return nil, false
+		}
+		return ev.URL, ev.URL != ""
+	},
 	"run.hosts":         func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.Hosts }) },
 	"run.hosts_ok":      func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.HostsOK }) },
 	"run.hosts_changed": func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.HostsChanged }) },

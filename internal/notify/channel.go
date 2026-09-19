@@ -36,13 +36,18 @@ const (
 
 // Channel is one stored channel. Config is the storage form: for webhooks
 // the URL, every header value and the signing secret are sealed with
-// AAD(OrgID, ID); View is the secret-free reading of it.
+// AAD(OrgID, ID); View is the secret-free reading of it. BodyJSON is a
+// webhook channel's effective Content-Type classification (unsealed — a
+// media type is not a secret — and kept outside Config so an update that
+// only resubmits the body template can still classify a kept Content-Type
+// header without unsealing it); unused for an e-mail channel.
 type Channel struct {
 	ID, OrgID            uuid.UUID
 	Kind                 Kind
 	Name                 string
 	Enabled              bool
 	Config               json.RawMessage
+	BodyJSON             bool
 	CreatedBy            *uuid.UUID
 	CreatedAt, UpdatedAt time.Time
 	Revision             int64
@@ -53,7 +58,11 @@ type EmailConfig struct {
 	Recipients []string `json:"recipients"`
 }
 
-// webhookConfig is a webhook channel's stored settings.
+// webhookConfig is a webhook channel's stored settings. BodyTemplate is
+// not secret and is never sealed: it is stored and returned in clear to
+// any reader with channels.read, the same as the method and the URL's
+// display form. Never put a token, password or other credential in it —
+// put those in a header instead, where the value is sealed.
 type webhookConfig struct {
 	Method        string         `json:"method"`
 	URLSealed     []byte         `json:"url_sealed"`
@@ -70,7 +79,11 @@ type storedHeader struct {
 
 // WebhookView is what a reader sees of a webhook channel: the URL only as
 // scheme and host (a path can carry a token, as Slack's do), header names
-// without values, and whether requests are signed.
+// without values, and whether requests are signed. BodyTemplate, unlike
+// every other field here, is not redacted: it is not secret, so it comes
+// back in full — an admin who put a token or credential in it by mistake
+// (instead of in a sealed header) has exposed it to every channels.read
+// reader, not just other admins.
 type WebhookView struct {
 	Method       string
 	URLDisplay   string
@@ -111,7 +124,9 @@ type HeaderInput struct {
 }
 
 // WebhookInput is a webhook channel as submitted. A nil URL or
-// SigningSecret on update keeps the stored one.
+// SigningSecret on update keeps the stored one. BodyTemplate is not
+// secret (see webhookConfig): it is always resubmitted in full and always
+// returned in full by View — do not put a token or credential in it.
 type WebhookInput struct {
 	Method        string
 	URL           *string

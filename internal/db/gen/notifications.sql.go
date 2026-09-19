@@ -13,9 +13,9 @@ import (
 )
 
 const createNotificationChannel = `-- name: CreateNotificationChannel :one
-INSERT INTO notification_channels (id, org_id, kind, name, config, enabled, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, org_id, kind, name, config, enabled, created_by, created_at, updated_at, revision
+INSERT INTO notification_channels (id, org_id, kind, name, config, body_json, enabled, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision
 `
 
 type CreateNotificationChannelParams struct {
@@ -24,6 +24,7 @@ type CreateNotificationChannelParams struct {
 	Kind      string      `json:"kind"`
 	Name      string      `json:"name"`
 	Config    []byte      `json:"config"`
+	BodyJson  bool        `json:"body_json"`
 	Enabled   bool        `json:"enabled"`
 	CreatedBy pgtype.UUID `json:"created_by"`
 }
@@ -35,6 +36,7 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 		arg.Kind,
 		arg.Name,
 		arg.Config,
+		arg.BodyJson,
 		arg.Enabled,
 		arg.CreatedBy,
 	)
@@ -45,6 +47,7 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 		&i.Kind,
 		&i.Name,
 		&i.Config,
+		&i.BodyJson,
 		&i.Enabled,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -72,7 +75,7 @@ func (q *Queries) DeleteNotificationChannel(ctx context.Context, arg DeleteNotif
 }
 
 const getNotificationChannel = `-- name: GetNotificationChannel :one
-SELECT id, org_id, kind, name, config, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 AND id = $2
 `
 
 type GetNotificationChannelParams struct {
@@ -89,6 +92,7 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 		&i.Kind,
 		&i.Name,
 		&i.Config,
+		&i.BodyJson,
 		&i.Enabled,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -99,7 +103,7 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 }
 
 const listNotificationChannels = `-- name: ListNotificationChannels :many
-SELECT id, org_id, kind, name, config, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListNotificationChannels(ctx context.Context, orgID uuid.UUID) ([]NotificationChannel, error) {
@@ -117,6 +121,7 @@ func (q *Queries) ListNotificationChannels(ctx context.Context, orgID uuid.UUID)
 			&i.Kind,
 			&i.Name,
 			&i.Config,
+			&i.BodyJson,
 			&i.Enabled,
 			&i.CreatedBy,
 			&i.CreatedAt,
@@ -134,15 +139,16 @@ func (q *Queries) ListNotificationChannels(ctx context.Context, orgID uuid.UUID)
 }
 
 const updateNotificationChannel = `-- name: UpdateNotificationChannel :one
-UPDATE notification_channels SET name = $1, config = $2, enabled = $3,
+UPDATE notification_channels SET name = $1, config = $2, body_json = $3, enabled = $4,
   revision = revision + 1, updated_at = now()
-WHERE org_id = $4 AND id = $5 AND revision = $6
-RETURNING id, org_id, kind, name, config, enabled, created_by, created_at, updated_at, revision
+WHERE org_id = $5 AND id = $6 AND revision = $7
+RETURNING id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision
 `
 
 type UpdateNotificationChannelParams struct {
 	Name     string    `json:"name"`
 	Config   []byte    `json:"config"`
+	BodyJson bool      `json:"body_json"`
 	Enabled  bool      `json:"enabled"`
 	OrgID    uuid.UUID `json:"org_id"`
 	ID       uuid.UUID `json:"id"`
@@ -154,6 +160,7 @@ func (q *Queries) UpdateNotificationChannel(ctx context.Context, arg UpdateNotif
 	row := q.db.QueryRow(ctx, updateNotificationChannel,
 		arg.Name,
 		arg.Config,
+		arg.BodyJson,
 		arg.Enabled,
 		arg.OrgID,
 		arg.ID,
@@ -166,6 +173,7 @@ func (q *Queries) UpdateNotificationChannel(ctx context.Context, arg UpdateNotif
 		&i.Kind,
 		&i.Name,
 		&i.Config,
+		&i.BodyJson,
 		&i.Enabled,
 		&i.CreatedBy,
 		&i.CreatedAt,

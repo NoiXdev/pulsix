@@ -323,6 +323,44 @@ func TestWebhookInputRefusals(t *testing.T) {
 	}
 }
 
+// TestEffectiveContentTypeDrivesJSONValidation is the fix for the
+// re-review's "New Breakage" finding: save-time JSON validation must use
+// the channel's *effective* Content-Type — this request's own header,
+// else a kept header's stored classification, else JSON (the default
+// every sender in this codebase uses when no header is set) — not just
+// "did this request happen to send a Content-Type header".
+func TestEffectiveContentTypeDrivesJSONValidation(t *testing.T) {
+	w := newWorld(t)
+	const invalidJSON = `{"n": {{ schedule.name }}}` // unquoted: schedule.name has a space
+
+	noHeader := webhookInput("no content type")
+	noHeader.Webhook.BodyTemplate = invalidJSON
+	if _, err := w.svc.CreateChannel(ctx, w.org, w.actor, noHeader); !errors.Is(err, notify.ErrInvalidInput) {
+		t.Fatalf("no Content-Type header with an invalid-JSON body = %v, want ErrInvalidInput (JSON is the default)", err)
+	}
+
+	textPlain := webhookInput("text plain")
+	textPlain.Webhook.Headers = append(textPlain.Webhook.Headers, notify.HeaderInput{Name: "Content-Type", Value: str("text/plain")})
+	textPlain.Webhook.BodyTemplate = invalidJSON
+	if _, err := w.svc.CreateChannel(ctx, w.org, w.actor, textPlain); err != nil {
+		t.Fatalf("an explicit non-JSON Content-Type must not be JSON-validated: %v", err)
+	}
+
+	jsonHeader := webhookInput("kept json header")
+	jsonHeader.Webhook.Headers = append(jsonHeader.Webhook.Headers, notify.HeaderInput{Name: "Content-Type", Value: str("application/json")})
+	c, err := w.svc.CreateChannel(ctx, w.org, w.actor, jsonHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := webhookInput("kept json header")
+	update.Webhook.URL, update.Webhook.SigningSecret = nil, nil
+	update.Webhook.Headers = []notify.HeaderInput{{Name: "Authorization"}, {Name: "Content-Type"}}
+	update.Webhook.BodyTemplate = invalidJSON
+	if _, err := w.svc.UpdateChannel(ctx, w.org, c.ID, c.Revision, update); !errors.Is(err, notify.ErrInvalidInput) {
+		t.Fatalf("a kept application/json header with a body-only update = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestChannelListGetDelete(t *testing.T) {
 	w := newWorld(t)
 	c, err := w.svc.CreateChannel(ctx, w.org, w.actor, webhookInput("ops hook"))

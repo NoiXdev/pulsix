@@ -77,6 +77,29 @@ func TestRenderPlaceholderMissingFieldNeverFails(t *testing.T) {
 	}
 }
 
+// TestRunURLEmptyWithoutRun is the re-review's Minor: "run.url" aliases
+// the event's top-level URL, but that link is the run's — it must not
+// leak through for an event that carries no Run section (e.g. a skipped
+// or failed decision), the same rule every other run.* field already
+// follows.
+func TestRunURLEmptyWithoutRun(t *testing.T) {
+	ev := sampleEventForKind(EventScheduleSkipped)
+	if ev.Run != nil {
+		t.Fatal("test setup: this kind must have no Run section")
+	}
+	if ev.URL == "" {
+		t.Fatal("test setup: the event must still carry a top-level URL")
+	}
+	body, err := renderWebhookBody(`{"u": {{ run.url | json }}, "text": "{{ run.url }}"}`, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil || doc["u"] != nil || doc["text"] != "" {
+		t.Fatalf("run.url without a Run = %+v (%v), want null/empty", doc, err)
+	}
+}
+
 func TestRenderWebhookBodyPlaceholderBoundedBySize(t *testing.T) {
 	ev := sampleEvent()
 	ev.Org.Name = strings.Repeat("x", maxBodyBytes+1)
@@ -160,6 +183,62 @@ func TestCheckBodyTemplateValidatesJSONWhenContentTypeSaysSo(t *testing.T) {
 func TestCheckBodyTemplateValidatesHostileContent(t *testing.T) {
 	if err := checkBodyTemplate(`{"name": "{{ schedule.name }}"}`, true); err != nil {
 		t.Fatalf("hostile-content JSON validation should still pass a correctly escaped template: %v", err)
+	}
+}
+
+// TestCheckBodyTemplateTruncatesInvalidPlaceholderInErrorMessage is the
+// re-review's regression for a save-time 422 whose body an operator's own
+// mistyped placeholder could blow up: the error used to echo the whole
+// inner text between "{{" and "}}" verbatim, so a template with one huge
+// malformed placeholder produced an error message of the same size.
+func TestCheckBodyTemplateTruncatesInvalidPlaceholderInErrorMessage(t *testing.T) {
+	huge := strings.Repeat("x ", 8000) // ~16000 bytes, not a valid path
+	err := checkBodyTemplate("{{"+huge+"}}", false)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("checkBodyTemplate = %v, want ErrInvalidInput", err)
+	}
+	if n := len(err.Error()); n > 200 {
+		t.Fatalf("error message is %d bytes long, want the placeholder text truncated: %s", n, err.Error()[:120])
+	}
+}
+
+// TestCheckBodyTemplateRejectsPathologicalInputs regression-tests the
+// malformed-template shapes the re-review's probe exercised directly
+// against parseBodyTemplate/checkBodyTemplate (nested "{{", a template of
+// nothing but open braces, and a large run of unterminated placeholders):
+// every one of them must be a clean, fast save-time rejection, never a
+// hang or a panic.
+func TestCheckBodyTemplateRejectsPathologicalInputs(t *testing.T) {
+	cases := map[string]string{
+		"nested braces":       "{{ {{ run.result }} }}",
+		"triple braces":       "{{{ run.result }}}",
+		"only open braces":    strings.Repeat("{", 16<<10),
+		"many unclosed pairs": strings.Repeat("{{", 4096),
+	}
+	for name, bad := range cases {
+		if err := checkBodyTemplate(bad, false); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: checkBodyTemplate = %v, want ErrInvalidInput", name, err)
+		}
+	}
+}
+
+// TestRenderPlaceholderEscapesHostileValuesToValidJSON regression-tests
+// the re-review's escaping probe directly: control characters, a
+// script-injection-shaped string, quotes and backslashes all come out as
+// valid, round-tripping JSON in both the default and "| json" forms.
+func TestRenderPlaceholderEscapesHostileValuesToValidJSON(t *testing.T) {
+	ev := sampleEvent()
+	ev.Schedule.Name = "</script><!-- \x01\x1f \r\n\t \"quoted\" back\\slash ☃"
+	body, err := renderWebhookBody(`{"text": "{{ schedule.name }}", "j": {{ schedule.name | json }}}`, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(body) {
+		t.Fatalf("not valid JSON: %s", body)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil || doc["text"] != ev.Schedule.Name || doc["j"] != ev.Schedule.Name {
+		t.Fatalf("doc = %+v (%v)", doc, err)
 	}
 }
 
