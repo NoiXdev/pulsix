@@ -113,8 +113,13 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 		gitBin = "git"
 	}
 	env := append([]string{}, stripPrivateEnv(os.Environ())...)
-	if home := filepath.Join(workDir, homeDirName); home != "" {
-		env = append(env, "HOME="+home)
+	env = append(env, "HOME="+filepath.Join(workDir, homeDirName))
+	// ssh ignores $HOME and resolves ~/.ssh from the account's passwd
+	// entry, so the run's known_hosts is named explicitly (final re-review
+	// out-of-scope 2).
+	knownHosts, err := worker.RunGitKnownHosts(workDir)
+	if err != nil {
+		return "", err
 	}
 
 	// Credential plumbing: the secret reaches git only through a file path.
@@ -125,7 +130,7 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 			return "", err
 		}
 		defer func() { _ = os.Remove(keyFile) }()
-		env = append(env, "GIT_SSH_COMMAND="+gitSSHCommand(keyFile), "GIT_TERMINAL_PROMPT=0")
+		env = append(env, "GIT_SSH_COMMAND="+worker.GitSSHCommand(keyFile, knownHosts), "GIT_TERMINAL_PROMPT=0")
 	case cred.Token != "":
 		tokenFile := filepath.Join(workDir, gitTokensDir, spec.RepoID.String())
 		if err := writeSecretFile(tokenFile, cred.Token, 0o600); err != nil {
@@ -145,6 +150,11 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 		// and the secret itself never leaves the token file — the script
 		// only cats it.
 		env = append(env, "GIT_ASKPASS="+askpass, "GIT_TERMINAL_PROMPT=0")
+	}
+	if cred.PrivateKey == "" {
+		// No key: an ssh:// or scp-like remote still reads and writes
+		// host keys only in the run's known_hosts.
+		env = append(env, "GIT_SSH_COMMAND="+worker.GitSSHCommand("", knownHosts))
 	}
 
 	target := filepath.Join(cacheRoot, spec.OrgID.String(), spec.RepoID.String())
@@ -176,13 +186,6 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 		_ = os.Chmod(target, 0o700)
 	}
 	return target, nil
-}
-
-// gitSSHCommand points ssh at the fetched key file: identities pinned to
-// that one file, host keys accepted on first use and remembered only inside
-// the run's work dir home.
-func gitSSHCommand(keyFile string) string {
-	return fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyFile)
 }
 
 // writeAskpass writes the GIT_ASKPASS script: secret-free (it cats the

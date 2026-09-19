@@ -127,7 +127,7 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	requirements, found := findRequirements(dir, payload.Repo.Subpath)
 	requirementsInstalled := false
 	if found {
-		if err := e.installRequirements(ctx, requirements, dir); err != nil {
+		if err := e.installRequirements(ctx, requirements, dir, env.WorkDir); err != nil {
 			return StatusError, nil, fmt.Errorf("install galaxy requirements: %w", err)
 		}
 		requirementsInstalled = true
@@ -167,7 +167,11 @@ func findRequirements(dir, subpath string) (string, bool) {
 // contract: the repo's git credential does NOT ride along (the runner's
 // askpass/key files are wiped when the fetch returns), so a requirement
 // that needs a private credential is a sync failure, not a silent leak.
-func (e *SyncExecutor) installRequirements(ctx context.Context, requirements, cloneDir string) error {
+//
+// Galaxy's HOME is the run's, and a git source over ssh remembers host keys
+// only in the run's known_hosts: ssh ignores $HOME (final re-review
+// out-of-scope 2).
+func (e *SyncExecutor) installRequirements(ctx context.Context, requirements, cloneDir, workDir string) error {
 	galaxy := e.GalaxyBin
 	if galaxy == "" {
 		galaxy = "ansible-galaxy"
@@ -182,7 +186,13 @@ func (e *SyncExecutor) installRequirements(ctx context.Context, requirements, cl
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(cctx, galaxy, "install", "-r", requirements, "-p", filepath.Join(cloneDir, "..", filepath.Base(cloneDir)+galaxyDirSuffix))
 	cmd.Dir = cloneDir
-	cmd.Env = stripPrivateEnv(os.Environ())
+	knownHosts, err := RunGitKnownHosts(workDir)
+	if err != nil {
+		return err
+	}
+	cmd.Env = append(stripPrivateEnv(os.Environ()),
+		"HOME="+filepath.Join(workDir, RunHomeDirName),
+		"GIT_SSH_COMMAND="+GitSSHCommand("", knownHosts), "GIT_TERMINAL_PROMPT=0")
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

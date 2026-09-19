@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/noixdev/pulsix/internal/worker"
 )
 
 // File and directory names of the run's layout.
@@ -34,7 +36,7 @@ const (
 	gitTokensDir = "gittokens"
 	// homeDirName is the run's private HOME (ansible scratch: connection
 	// sockets, the fact cache).
-	homeDirName = "home"
+	homeDirName = worker.RunHomeDirName
 	// localTmpName is ansible's local temp dir for the run.
 	localTmpName = "ansible-local"
 	// projectDirName is the ansible-runner project dir (the playbook).

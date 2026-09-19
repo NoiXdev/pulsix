@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,6 +135,47 @@ func TestSyncExecutorGalaxyInvocationIsPinned(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("galaxy arg %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// TestSyncExecutorGalaxyKeepsSSHStateInTheRunDir is v0.2c final re-review
+// out-of-scope 2 for galaxy's git sources: ssh ignores $HOME, so the git
+// galaxy starts gets a GIT_SSH_COMMAND naming the run's own known_hosts,
+// and galaxy's HOME is the run's too.
+func TestSyncExecutorGalaxyKeepsSSHStateInTheRunDir(t *testing.T) {
+	clone := t.TempDir()
+	if err := os.WriteFile(clone+"/requirements.yml", []byte("- src: git+ssh://git@git.example.org/r.git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envPath := t.TempDir() + "/galaxy-env"
+	galaxy := t.TempDir() + "/ansible-galaxy"
+	if err := os.WriteFile(galaxy, []byte("#!/bin/sh\nenv > \""+envPath+"\"\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workDir := t.TempDir()
+	if _, _, err := (&SyncExecutor{Fetcher: &fakeFetcher{dir: clone}, GalaxyBin: galaxy}).Run(context.Background(),
+		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "", ""), RunEnv{WorkDir: workDir}, (&evCollector{}).sink); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, l := range strings.Split(string(raw), "\n") {
+		if k, v, ok := strings.Cut(l, "="); ok {
+			env[k] = v
+		}
+	}
+	knownHosts := filepath.Join(workDir, "home", ".ssh", "known_hosts")
+	if !strings.Contains(env["GIT_SSH_COMMAND"], "UserKnownHostsFile='"+knownHosts+"'") {
+		t.Errorf("GIT_SSH_COMMAND = %q, want the run's known_hosts %s", env["GIT_SSH_COMMAND"], knownHosts)
+	}
+	if env["HOME"] != filepath.Join(workDir, "home") {
+		t.Errorf("HOME = %q, want the run's home", env["HOME"])
+	}
+	if fi, err := os.Stat(filepath.Dir(knownHosts)); err != nil || !fi.IsDir() {
+		t.Errorf("the run's ssh dir must exist for ssh to remember a key: %v", err)
 	}
 }
 
