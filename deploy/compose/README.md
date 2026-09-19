@@ -205,6 +205,30 @@ manager's published `8080` port instead — the two are mutually exclusive
 ways of getting traffic to the same manager container, not sequential
 steps.
 
+### Client addresses behind a proxy
+
+Behind any reverse proxy the manager sees the proxy as the caller unless
+it trusts that proxy's `X-Forwarded-For` header. `PULSIX_TRUSTED_PROXIES`
+lists the proxies it trusts (CIDRs or addresses, comma separated).
+
+- **Bundled Traefik:** nothing to do. Traefik gets the fixed address
+  `10.213.73.254` on the stack's network (`PULSIX_PROXY_ADDR`), outside the
+  range other containers draw from, and `PULSIX_TRUSTED_PROXIES` defaults
+  to exactly that address.
+- **Your own proxy:** set `PULSIX_TRUSTED_PROXIES` to the address the
+  manager sees it connect from. Without it, webhook IP allowlists never
+  match (every delivery comes "from the proxy"), audit entries record the
+  proxy's address, and every webhook caller shares one per-address budget
+  for failed calls. Verified webhook deliveries are never refused by that
+  budget, but callers with a wrong id or signature are.
+- Never trust a range untrusted clients can connect from: a trusted peer
+  can claim any client address.
+- The stack's network uses the fixed subnet `10.213.73.0/24`. If that
+  collides with a network of yours, change `PULSIX_NETWORK_SUBNET`,
+  `PULSIX_NETWORK_RANGE` and `PULSIX_PROXY_ADDR` together (see
+  `.env.example`). Changing them recreates the network on the next
+  `docker compose up -d`.
+
 ## Upgrading
 
 ```bash
@@ -212,6 +236,11 @@ steps.
 docker compose pull
 docker compose up -d
 ```
+
+Since v0.2c the stack's network has a fixed subnet (see "Client addresses
+behind a proxy"). The first `docker compose up -d` after that upgrade
+recreates the network; if your Compose version refuses to, run
+`docker compose down` (volumes stay) and then `docker compose up -d`.
 
 The manager runs its own migrations on every start, so an upgrade is just
 "pull the new images, restart the containers" — there is no separate

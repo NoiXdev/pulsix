@@ -63,6 +63,13 @@ compose() {
 	docker compose -p "$project" -f "$compose_file" "$@"
 }
 
+# The stack's network has a fixed subnet (the bundled proxy's fixed
+# address depends on it). The throwaway stack uses its own, so it can run
+# beside a real deployment on the same host without a subnet collision.
+export PULSIX_NETWORK_SUBNET="${PULSIX_NETWORK_SUBNET:-10.213.74.0/24}"
+export PULSIX_NETWORK_RANGE="${PULSIX_NETWORK_RANGE:-10.213.74.0/25}"
+export PULSIX_PROXY_ADDR="${PULSIX_PROXY_ADDR:-10.213.74.254}"
+
 # Always torn down, whether the checks below pass or fail: the trap fires
 # on any exit (success, a failed check's `exit 1`, or `set -e` killing the
 # script on an unexpected error alike), and preserves whatever exit status
