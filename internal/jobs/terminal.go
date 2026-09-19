@@ -107,8 +107,10 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		if err := q.recordRotation(ctx, t.jobID, t.status); err != nil {
 			return err
 		}
-		if err := q.recordRunGroup(ctx, t.jobID); err != nil {
-			return err
+		if Kind(kind) == KindRun {
+			if err := q.recordRunGroup(ctx, orgID, groupID); err != nil {
+				return err
+			}
 		}
 		// The terminal payload's at-rest lifetime ends here: the sealed
 		// one-time login / pending rotation key drops once the job is

@@ -531,6 +531,11 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			return nil, ErrHostKeyChanged
 		}
 	}
+	// Exclusion runs after the key-changed guard: when a key change and
+	// the maintenance exclusion together empty the scope, the enqueue
+	// reports ErrAllHostsExcluded (schedules record it as
+	// skipped_maintenance) even though some of the dropped hosts were
+	// actually excluded for a changed key, not for maintenance.
 	if len(req.ExcludeHosts) > 0 {
 		if targets = excludeHosts(targets, req.ExcludeHosts); len(targets) == 0 {
 			return nil, ErrAllHostsExcluded

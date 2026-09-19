@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -154,6 +155,14 @@ func TestCancellingTheLastQueuedJobCompletesTheGroup(t *testing.T) {
 	if len(got) != 1 || got[0].Status != StatusCancelled {
 		t.Fatalf("reports = %+v, want one cancelled group", got)
 	}
+	// A repeated call into the completed group's check (fix round 1,
+	// Important #1's claimRunGroupReport guard) is the deterministic,
+	// non-racy shape of the same idempotency the concurrency test above
+	// exercises under a real race.
+	w.q.ClearTerminalPayload(scoped, js[1].ID)
+	if n := len(w.sink.snapshot()); n != 1 {
+		t.Fatalf("reports after a repeated group check = %d, want 1", n)
+	}
 }
 
 func TestRunGroupSinkErrorDoesNotFailTheFinish(t *testing.T) {
@@ -219,6 +228,96 @@ func TestGroupSummariesAggregateStatusAndTiming(t *testing.T) {
 	}
 	if g := got[queuedGroup]; g.Status != StatusQueued || g.StartedAt != nil {
 		t.Fatalf("queued group = %+v", g)
+	}
+}
+
+// TestQueuedCancelRacingAFinishReportsTheGroupOnce is fix round 1's
+// Important #1: CancelJob commits a queued job's terminal transition as a
+// standalone statement, outside any group lock. Once that commit has
+// landed, BOTH a concurrent member finish (through terminate, which locks
+// and finds the group complete) and the cancel's own group check
+// (ClearTerminalPayload -> recordCancelledRunGroup, which also locks and
+// finds the group complete) independently believe they are the one
+// completing the group — without a cross-path guard, both report.
+func TestQueuedCancelRacingAFinishReportsTheGroupOnce(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-cancel-race")
+	for round := 0; round < 5; round++ {
+		_, _, js := w.runGroup(t, 2)
+		if _, err := w.d.Pool().Exec(context.Background(), `UPDATE jobs SET status = 'queued', started_at = NULL WHERE id = $1`, js[1].ID); err != nil {
+			t.Fatal(err)
+		}
+		scoped := db.WithOrgScope(context.Background(), w.org)
+		// The cancel's own status write commits here, before either the
+		// finish or the cancel's own group check has run — the exact
+		// unlocked-write race the fix closes.
+		if status, err := NewSQLStore(w.d).CancelJob(scoped, w.org, js[1].ID); err != nil || status != StatusCancelled {
+			t.Fatalf("cancel = %s, %v", status, err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := w.q.Finish(context.Background(), js[0].ID, StatusSucceeded, nil, ""); err != nil {
+				t.Error(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			w.q.ClearTerminalPayload(scoped, js[1].ID)
+		}()
+		wg.Wait()
+		if n := len(w.sink.snapshot()); n != round+1 {
+			t.Fatalf("round %d: reports = %d, want %d (a queued cancel racing a finish must report once)", round, n, round+1)
+		}
+	}
+}
+
+// dbErrorSink is a RunGroupSink whose write fails with a real Postgres
+// error, executed through the finishing transaction itself (ctx carries
+// it) — the shape the fixed savepoint must contain.
+type dbErrorSink struct{ d *db.DB }
+
+func (s *dbErrorSink) RunGroupFinished(ctx context.Context, _ RunGroupResult) error {
+	_, err := s.d.Exec(ctx, `SELECT 1/0`)
+	return err
+}
+
+// TestRunGroupSinkDatabaseErrorStillFinishesTheJob is fix round 1's
+// Important #2: a sink error that comes from the database (not a plain Go
+// error the fake in TestRunGroupSinkErrorDoesNotFailTheFinish returns)
+// aborts the transaction unless the sink's own statement runs under a
+// savepoint. Without that, the next statement in the same transaction
+// (clearPayload) fails with "current transaction is aborted", the whole
+// finish rolls back, and the job is stuck running.
+func TestRunGroupSinkDatabaseErrorStillFinishesTheJob(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-sink-dberr")
+	w.q.SetRunGroupSink(&dbErrorSink{d: w.d})
+	group, tmpl := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	j := Job{
+		ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: testZone(t, w.d, w.org), Kind: KindRun, TemplateID: &tmpl,
+		HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}, Status: StatusQueued, RunGroupID: group,
+		Trigger: TriggerManual, CreatedAt: time.Now(),
+	}
+	scoped := db.WithOrgScope(context.Background(), w.org)
+	if err := NewSQLStore(w.d).CreateJob(scoped, j, json.RawMessage(`"sealed-payload"`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.d.Pool().Exec(context.Background(), `UPDATE jobs SET status = 'running', started_at = now() WHERE id = $1`, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.q.Finish(context.Background(), j.ID, StatusSucceeded, nil, ""); err != nil {
+		t.Fatalf("Finish = %v, want nil although the sink's own statement failed", err)
+	}
+	var status string
+	var payload []byte
+	if err := w.d.Pool().QueryRow(context.Background(), `SELECT status, payload FROM jobs WHERE id = $1`, j.ID).Scan(&status, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", status)
+	}
+	if payload != nil {
+		t.Fatalf("payload = %s, want wiped despite the sink's own statement failing", payload)
 	}
 }
 

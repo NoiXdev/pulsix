@@ -245,6 +245,7 @@ type Job struct {
 	DependsOn            pgtype.UUID        `json:"depends_on"`
 	RotationCredentialID pgtype.UUID        `json:"rotation_credential_id"`
 	TriggerRef           pgtype.UUID        `json:"trigger_ref"`
+	RunGroupReported     bool               `json:"run_group_reported"`
 }
 
 type JobEvent struct {
