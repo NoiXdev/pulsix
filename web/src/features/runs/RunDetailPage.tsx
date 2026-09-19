@@ -48,6 +48,11 @@ export function RunDetailPage() {
   const rows = hostResultRows(j.stats);
   const retryable = isTerminal(j.status) && hasFailedHosts(j.stats);
   const cancellable = RUNNING.has(j.status);
+  // A schedule's or webhook's per-run overrides are wiped when the run
+  // ends (plan decision "Per-run overrides travel sealed on the job"), so a
+  // retry uses the template's own limit and extra vars — said next to the
+  // button, where the operator decides.
+  const retryDropsOverrides = j.trigger === 'schedule' || j.trigger === 'webhook';
   const siblings = j.group ?? [];
   // The run log's SSE status frame may carry the status before the detail
   // poll catches up; the header shows whichever is fresher.
@@ -84,14 +89,25 @@ export function RunDetailPage() {
           {j.template && <span className="font-mono text-[13px]">{j.template.name}</span>}
         </div>
         {canRun && (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {isTerminal(j.status) && retryDropsOverrides && (
+              <span id="retry-overrides-note" className="max-w-xs text-right text-[11px] text-muted-foreground">
+                Retry runs with the template&apos;s own limit and extra vars: overrides from the {j.trigger} are not kept.
+              </span>
+            )}
             {cancellable && (
               <Button type="button" onClick={() => void onCancel()} disabled={cancel.isPending}>
                 Cancel run
               </Button>
             )}
             {isTerminal(j.status) && (
-              <Button type="button" variant="primary" disabled={!retryable || retry.isPending} onClick={() => void onRetry()}>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={!retryable || retry.isPending}
+                aria-describedby={retryDropsOverrides ? 'retry-overrides-note' : undefined}
+                onClick={() => void onRetry()}
+              >
                 Retry failed
               </Button>
             )}

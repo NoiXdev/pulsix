@@ -140,6 +140,38 @@ describe('RunDetailPage', () => {
     expect(await screen.findByText('0197c0bb')).toBeInTheDocument();
   });
 
+  // Final review I2 (plan decision "Per-run overrides travel sealed on
+  // the job"): a triggered run's overrides are wiped when it ends, so a
+  // retry uses the template's own limit and extra vars — the run view says
+  // so next to the button.
+  it.each(['schedule', 'webhook'])('says next to retry-failed that a %s run is retried without its overrides', async (trigger) => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({ status: 'failed', stats: { failed_hosts: ['h2'] }, trigger, trigger_ref: '0197c0cc-0000-7000-8000-00000000000d', actor_name: undefined }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+    const retry = await screen.findByRole('button', { name: 'Retry failed' });
+    const note = screen.getByText(/template's own limit and extra vars/);
+    expect(note).toHaveTextContent(`overrides from the ${trigger} are not kept`);
+    expect(retry).toHaveAccessibleDescription(note.textContent ?? '');
+  });
+
+  it('shows no override notice next to retry-failed for a manual run', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail({ status: 'failed', stats: { failed_hosts: ['h2'] } }).job },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+    await screen.findByRole('button', { name: 'Retry failed' });
+    expect(screen.queryByText(/template's own limit and extra vars/)).not.toBeInTheDocument();
+  });
+
   it('keeps retry-failed disabled for a run with no failed hosts', async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     mockApi({
