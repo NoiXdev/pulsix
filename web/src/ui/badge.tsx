@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '../lib/utils.ts';
 
-export type Tone = 'ok' | 'warn' | 'crit' | 'unknown' | 'accent';
+export type Tone = 'ok' | 'warn' | 'crit' | 'unknown' | 'accent' | 'maintenance';
 
 const TONE_VAR: Record<Tone, string> = {
   ok: 'var(--px-ok)',
@@ -9,13 +9,17 @@ const TONE_VAR: Record<Tone, string> = {
   crit: 'var(--px-crit)',
   unknown: 'var(--px-unknown)',
   accent: 'var(--px-accent)',
+  maintenance: 'var(--px-maintenance)',
 };
 
 /** Pill — design/mockups/build.mjs's `pill()` generator: a coloured dot
  * plus label, background/border at ~10%/20% opacity of the tone colour.
  * Tones map 1:1 onto the state colours brand/README.md reserves for
- * monitoring states (ok/warn/crit/unknown) plus `accent`, used only for
- * a non-state badge like "invited" that still wants the pill shape. */
+ * monitoring states (ok/warn/crit/unknown), plus two explicit non-state
+ * exceptions: `accent`, for a badge like "invited" that still wants the
+ * pill shape, and `maintenance` (the mockup's violet), for a maintenance
+ * window's status — never `warn`, which is reserved for a degraded
+ * monitoring state and would visually conflate "planned" with "wrong". */
 export function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
   const color = TONE_VAR[tone];
   return (

@@ -73,7 +73,7 @@ export function MaintenancePage() {
             </span>
             <span className="truncate text-xs">{targetLabel(w)}</span>
             <span className="truncate text-xs text-muted-foreground">{whenLabel(w)}</span>
-            <span>{w.active_now ? <Pill tone="warn">active now</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
+            <span>{w.active_now ? <Pill tone="maintenance">active now</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
             <span className="flex justify-end gap-1">
               {canWrite && (
                 <>

@@ -12,6 +12,10 @@
   --px-warn: #FBBF24;
   --px-crit: #F87171;
   --px-unknown: #6B7280;
+  /* Maintenance is not a monitoring state, so it is not part of the
+     ok/warn/crit/unknown set above — it gets its own colour (the mockup's
+     violet), reserved for maintenance windows only. */
+  --px-maintenance: #A78BFA;
   --px-font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, monospace;
   --px-font-sans: Inter, system-ui, sans-serif;
 }

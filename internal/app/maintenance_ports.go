@@ -20,11 +20,14 @@ type groupHosts struct{ r jobs.ScopeResolver }
 // NewGroupHosts wires the adapter (also used by internal/api/apitest).
 func NewGroupHosts(r jobs.ScopeResolver) maintenance.GroupHosts { return groupHosts{r: r} }
 
-// HostsInGroup resolves the group; a group deleted meanwhile covers
-// nothing (its windows go with it through the foreign key).
+// HostsInGroup resolves the group. A group deleted meanwhile covers
+// nothing (its windows go with it through the foreign key), and neither
+// does a group that currently has no managed hosts (jobs.ErrEmptyScope) —
+// an empty group is a normal outcome, not a failure, and must not make
+// the maintenance guard error out for every other window in the org.
 func (g groupHosts) HostsInGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]uuid.UUID, error) {
 	targets, err := g.r.Resolve(ctx, orgID, render.Scope{GroupID: &groupID})
-	if errors.Is(err, jobs.ErrNotFound) {
+	if errors.Is(err, jobs.ErrNotFound) || errors.Is(err, jobs.ErrEmptyScope) {
 		return nil, nil
 	}
 	if err != nil {
