@@ -262,41 +262,106 @@ func TestReceiveRepoSyncAndTestCall(t *testing.T) {
 	}
 }
 
-func TestReceiveLimitsDeliveriesPerSourceAddress(t *testing.T) {
-	rw := newReceiveWorld(t)
+func (rw *receiveWorld) withIPLimit(limit int) {
 	now := func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) }
 	rw.svc = triggers.NewService(triggers.Deps{
 		Store: rw.rec, Templates: rw.tmpls, Repos: rw.repos, Box: fakeBox{},
 		Runs: rw.runs, Audit: rw.audit, PublicURL: "https://pulsix.example.test",
-		IPLimit: clientip.NewLimiter(2, time.Minute, now), Now: now, Rand: rand.Reader,
+		IPLimit: clientip.NewLimiter(limit, time.Minute, now), Now: now, Rand: rand.Reader,
 	})
+}
+
+// TestReceiveLimitsFailedCallsPerSourceAddress: the per-address budget is
+// charged by calls that end in the uniform 404 — unknown and malformed
+// ids, wrong endpoint, disabled, disallowed address, bad signature — and
+// once it is spent they all answer 429 alike, so the limit still reveals
+// nothing about which ids exist. Nothing is recorded for an unknown id.
+func TestReceiveLimitsFailedCallsPerSourceAddress(t *testing.T) {
+	rw := newReceiveWorld(t)
+	rw.withIPLimit(2)
 	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := rw.signed(t, c, `{"ref":"v1"}`)
-	unknown := triggers.Request{TriggerID: uuid.Must(uuid.NewV7()).String(), Kind: triggers.KindTemplateRun, Header: http.Header{}.Get, SourceIP: req.SourceIP}
-	if res, _ := rw.svc.Receive(ctx, unknown); res.Outcome != triggers.OutcomeNotFound {
-		t.Fatalf("unknown id = %+v", res)
+	src := netip.MustParseAddr("203.0.113.7")
+	unknown := triggers.Request{TriggerID: uuid.Must(uuid.NewV7()).String(), Kind: triggers.KindTemplateRun, Header: http.Header{}.Get, SourceIP: src}
+	malformed := unknown
+	malformed.TriggerID = "not-a-uuid"
+	badSig := rw.signed(t, c, `{"ref":"v1"}`)
+	badSig.Body = []byte(`{"ref":"v2"}`)
+	badSig.SourceIP = src
+	for i, want := range []triggers.Outcome{triggers.OutcomeNotFound, triggers.OutcomeNotFound} {
+		if res, err := rw.svc.Receive(ctx, []triggers.Request{unknown, malformed}[i]); err != nil || res.Outcome != want {
+			t.Fatalf("call %d = %+v, %v", i, res, err)
+		}
 	}
-	if res, _ := rw.svc.Receive(ctx, req); res.Outcome != triggers.OutcomeTriggered {
-		t.Fatalf("second delivery = %+v", res)
+	for name, req := range map[string]triggers.Request{"unknown": unknown, "malformed": malformed, "bad signature": badSig} {
+		res, err := rw.svc.Receive(ctx, req)
+		if err != nil || res.Outcome != triggers.OutcomeRateLimited || res.RetryAfter != time.Minute {
+			t.Fatalf("%s after the budget = %+v, %v; want the same 429 for every failure", name, res, err)
+		}
 	}
-	res, err := rw.svc.Receive(ctx, req)
-	if err != nil || res.Outcome != triggers.OutcomeRateLimited || res.RetryAfter != time.Minute {
-		t.Fatalf("third delivery from the same address = %+v, %v", res, err)
-	}
-	if len(rw.rec.deliveries) != 1 {
-		t.Fatalf("an address-limited delivery must record nothing: %+v", rw.rec.deliveries)
-	}
-	// Another source and the in-process test call are not affected.
-	other := req
+	// Another source keeps its own budget.
+	other := unknown
 	other.SourceIP = netip.MustParseAddr("192.0.2.9")
-	if res, _ := rw.svc.Receive(ctx, other); res.Outcome != triggers.OutcomeTriggered {
+	if res, _ := rw.svc.Receive(ctx, other); res.Outcome != triggers.OutcomeNotFound {
 		t.Fatalf("another address = %+v", res)
 	}
+}
+
+// TestReceiveFloodOfUnknownIDsDoesNotStarveVerifiedDeliveries is final
+// review I1: behind a reverse proxy every caller can share one address.
+// An anonymous flood of unknown ids from it must not lock out a sender
+// that proves the trigger's secret: verified deliveries are neither
+// charged nor refused by the per-address budget (the per-trigger token
+// bucket limits them).
+func TestReceiveFloodOfUnknownIDsDoesNotStarveVerifiedDeliveries(t *testing.T) {
+	rw := newReceiveWorld(t)
+	rw.withIPLimit(5)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := netip.MustParseAddr("172.31.250.250")
+	for i := 0; i < 50; i++ {
+		flood := triggers.Request{TriggerID: uuid.Must(uuid.NewV7()).String(), Kind: triggers.KindTemplateRun, Header: http.Header{}.Get, SourceIP: proxy}
+		if _, err := rw.svc.Receive(ctx, flood); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		req := rw.signed(t, c, `{"ref":"v1"}`)
+		req.SourceIP = proxy
+		res, err := rw.svc.Receive(ctx, req)
+		if err != nil || res.Outcome != triggers.OutcomeTriggered {
+			t.Fatalf("verified delivery %d during the flood = %+v, %v", i, res, err)
+		}
+	}
+	if len(rw.runs.requests) != 10 {
+		t.Fatalf("runs = %d, want 10", len(rw.runs.requests))
+	}
+	// The in-process test call never touches the budget either.
 	if res, err := rw.svc.TestCall(ctx, rw.org, c.Trigger.ID, nil); err != nil || res.Outcome != triggers.OutcomeTriggered {
 		t.Fatalf("test call = %+v, %v", res, err)
+	}
+}
+
+// TestReceiveHidesASecretFaultBehindTheUniform404 is final review minor 9:
+// a fault after the lookup but before the sender proved the secret must
+// answer like an unknown id, not with a 500 only existing ids produce.
+func TestReceiveHidesASecretFaultBehindTheUniform404(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rw.rec.secrets[c.Trigger.ID] = []byte("sealed under another aad")
+	res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"v1"}`))
+	if err != nil || res.Outcome != triggers.OutcomeNotFound {
+		t.Fatalf("Receive = %+v, %v; want the uniform not-found", res, err)
+	}
+	if len(rw.runs.requests) != 0 {
+		t.Fatal("no run may start")
 	}
 }
 

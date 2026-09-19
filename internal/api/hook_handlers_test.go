@@ -155,6 +155,29 @@ func TestHookLimitsAndPayloadErrors(t *testing.T) {
 	}
 }
 
+// TestHookFloodDoesNotStarveVerifiedDeliveries is final review I1 over
+// HTTP: the test server's callers all share one address, like callers
+// behind an untrusted reverse proxy. Once a flood of unknown ids has spent
+// that address's budget, unknown ids answer 429, and a signed delivery
+// still starts its run.
+func TestHookFloodDoesNotStarveVerifiedDeliveries(t *testing.T) {
+	f := newRunFixture(t, "hook-flood")
+	c := f.createTrigger(t, nil)
+	body := []byte(`{"ref":"v1"}`)
+	last := 0
+	for i := 0; i <= triggers.HookIPLimit; i++ {
+		resp := hook(t, f.s.HTTP.URL+"/api/v1/hooks/jobs/"+uuid.NewString(), body, nil)
+		last = resp.StatusCode
+		_ = resp.Body.Close()
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("unknown id after the budget = %d, want 429", last)
+	}
+	if resp := hook(t, c.URL, body, signedHeaders(c, body)); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("signed delivery during the flood = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
 // TestHookRefusesFileAndRegexLimits is final review C1: a mapped limit
 // that would make Ansible read a file on the worker ("@/path") or use any
 // pattern syntax beyond host and group names answers 422 naming "limit",

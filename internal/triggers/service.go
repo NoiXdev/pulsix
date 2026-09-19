@@ -67,8 +67,9 @@ type Deps struct {
 	Runs      Runner
 	Audit     Auditor
 	PublicURL string
-	// IPLimit bounds deliveries per source address across every trigger
-	// (spec §9 "per-IP rate limits"); nil disables it (unit tests).
+	// IPLimit bounds failed calls per source address across every
+	// trigger (spec §9 "per-IP rate limits"; see Receive); nil disables it
+	// (unit tests).
 	IPLimit *clientip.Limiter
 	Now     func() time.Time
 	Rand    io.Reader

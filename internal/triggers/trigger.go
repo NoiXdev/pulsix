@@ -83,6 +83,16 @@ const (
 	OutcomeNotFound Outcome = "not_found"
 )
 
+// hidden reports whether the outcome answers the uniform empty 404: the
+// refusals that must not reveal whether a trigger exists.
+func (o Outcome) hidden() bool {
+	switch o {
+	case OutcomeNotFound, OutcomeDisabled, OutcomeRejectedIP, OutcomeRejectedAuth:
+		return true
+	}
+	return false
+}
+
 type RateLimit struct {
 	Count int    `json:"count"`
 	Per   string `json:"per"`

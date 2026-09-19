@@ -23,10 +23,12 @@ import (
 // MaxBodyBytes is the hook endpoints' body limit (spec §3).
 const MaxBodyBytes = 1 << 20
 
-// HookIPLimit is how many deliveries one source address may send per
-// minute, summed over every trigger and both hook endpoints. It sits well
-// above a busy CI system's rate (GitHub delivers from a shared address
-// pool) and exists so a single source cannot drive unbounded lookups.
+// HookIPLimit is how many failed calls — the ones answering the uniform
+// 404 — one source address may make per minute, summed over every trigger
+// and both hook endpoints, before those calls answer 429. Verified
+// deliveries do not count (see Receive). It sits well above a misconfigured
+// CI system's retry rate and exists so a single source cannot probe ids or
+// secrets at will.
 const HookIPLimit = 300
 
 // errMappingCompile marks a stored mapping that fails to compile at
@@ -56,12 +58,27 @@ type Result struct {
 
 // Receive runs spec §3's check order. The error is reserved for internal
 // failures; every refusal is an Outcome.
+//
+// The per-address limit counts only calls that end in the uniform 404
+// (unknown or malformed id, wrong endpoint, disabled, disallowed address,
+// bad signature), and once an address has spent its budget every such
+// call answers the same 429. A delivery that proves the trigger's secret
+// is never charged or refused by it — the per-trigger token bucket limits
+// those — so an anonymous flood of unknown ids cannot starve genuine
+// senders that share its address, as every caller does behind a reverse
+// proxy whose address is not in PULSIX_TRUSTED_PROXIES (final review I1).
 func (s *Service) Receive(ctx context.Context, req Request) (Result, error) {
-	// The per-address limit comes first: it costs no database round trip
-	// and records nothing, so a flood of unknown ids stays cheap.
-	if !req.Test && s.d.IPLimit != nil && !s.d.IPLimit.Allow(req.SourceIP) {
+	res, err := s.receive(ctx, req)
+	if err != nil || req.Test || s.d.IPLimit == nil || !res.Outcome.hidden() {
+		return res, err
+	}
+	if !s.d.IPLimit.Allow(req.SourceIP) {
 		return Result{Outcome: OutcomeRateLimited, RetryAfter: s.d.IPLimit.Window()}, nil
 	}
+	return res, nil
+}
+
+func (s *Service) receive(ctx context.Context, req Request) (Result, error) {
 	id, err := uuid.Parse(req.TriggerID)
 	if err != nil {
 		return Result{Outcome: OutcomeNotFound}, nil
@@ -93,7 +110,12 @@ func (s *Service) Receive(ctx context.Context, req Request) (Result, error) {
 	}
 	secret, err := s.d.Box.OpenAAD(sealed, AAD(t.OrgID, t.ID))
 	if err != nil {
-		return Result{}, fmt.Errorf("open trigger secret: %w", err)
+		// The sender has not proved the secret yet: a 500 here would only
+		// ever answer existing ids, so the fault hides behind the uniform
+		// 404 and goes to the log (final review minor 9). Faults after the
+		// signature check may answer 500 — that caller knows the secret.
+		s.d.Log.ErrorContext(ctx, "open webhook trigger secret", "trigger", t.ID, "org", t.OrgID, "err", err)
+		return Result{Outcome: OutcomeNotFound}, nil
 	}
 	if !verify(t, string(secret), req.Header, req.Body, now) {
 		return s.finish(ctx, d, Result{Outcome: OutcomeRejectedAuth}, "", true)
