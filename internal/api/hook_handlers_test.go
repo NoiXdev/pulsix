@@ -155,6 +155,30 @@ func TestHookLimitsAndPayloadErrors(t *testing.T) {
 	}
 }
 
+// TestHookRefusesFileAndRegexLimits is final review C1: a mapped limit
+// that would make Ansible read a file on the worker ("@/path") or use any
+// pattern syntax beyond host and group names answers 422 naming "limit",
+// never echoing the value, and starts no run.
+func TestHookRefusesFileAndRegexLimits(t *testing.T) {
+	f := newRunFixture(t, "hook-limit-pattern")
+	c := f.createTrigger(t, func(in *triggers.Input) {
+		in.Mapping.Limit = "$.target"
+		in.RateLimit = triggers.RateLimit{Count: 100, Per: "1m"}
+	})
+	for _, target := range []string{"@/etc/passwd", "web,@/root/.ssh/id_ed25519", "~web.*", "web[0]"} {
+		body := []byte(`{"ref":"v1","target":"` + target + `"}`)
+		resp := hook(t, c.URL, body, signedHeaders(c, body))
+		b := mustReadBody(t, resp)
+		if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(b, `"limit"`) || strings.Contains(b, target) {
+			t.Errorf("target %q: %d %s", target, resp.StatusCode, b)
+		}
+	}
+	body := []byte(`{"ref":"v1","target":"web*:!db"}`)
+	if resp := hook(t, c.URL, body, signedHeaders(c, body)); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("a plain host pattern: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
 func TestHookOnActiveSkipAndTimestampWindow(t *testing.T) {
 	f := newRunFixture(t, "hook-active")
 	c := f.createTrigger(t, func(in *triggers.Input) {

@@ -130,6 +130,33 @@ func TestValidateOverridesRefusesSecretsForWebhooks(t *testing.T) {
 	}
 }
 
+// TestValidateOverridesStrictLimitRefusesFileAndRegexPatterns is final
+// review C1: a limit mapped from a webhook payload must not make Ansible
+// read a file on the worker ("@/path") or use any other pattern syntax
+// beyond host and group names.
+func TestValidateOverridesStrictLimitRefusesFileAndRegexPatterns(t *testing.T) {
+	f, tmpl := overrideFixture(t)
+	for _, limit := range []string{"@/etc/passwd", "web,@/root/.ssh/id_ed25519", "~web.*", "web[0]", "{{ x }}"} {
+		_, err := f.svc.ValidateOverrides(ctx, f.org, tmpl.ID, templates.Overrides{Limit: strptr(limit)},
+			templates.OverrideOptions{RefuseSecrets: true, StrictLimit: true})
+		if !errors.Is(err, templates.ErrInvalidInput) {
+			t.Errorf("limit %q: err = %v, want ErrInvalidInput", limit, err)
+		}
+		if err != nil && strings.Contains(err.Error(), limit) {
+			t.Errorf("the refusal must not echo the value: %v", err)
+		}
+	}
+	got, err := f.svc.ValidateOverrides(ctx, f.org, tmpl.ID, templates.Overrides{Limit: strptr("web*:&staging:!db-01")},
+		templates.OverrideOptions{RefuseSecrets: true, StrictLimit: true})
+	if err != nil || *got.Limit != "web*:&staging:!db-01" {
+		t.Fatalf("a plain host pattern must pass: %+v, %v", got, err)
+	}
+	// Operators (schedules) keep the full pattern syntax.
+	if _, err := f.svc.ValidateOverrides(ctx, f.org, tmpl.ID, templates.Overrides{Limit: strptr("~web.*")}, templates.OverrideOptions{}); err != nil {
+		t.Fatalf("an operator's limit keeps the full syntax: %v", err)
+	}
+}
+
 func TestValidateOverridesWithoutSchemaOnlyAppliesTheDenylist(t *testing.T) {
 	f := newFixture()
 	tmpl, err := f.svc.Create(ctx, f.org, f.in())

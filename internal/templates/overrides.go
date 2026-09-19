@@ -39,6 +39,11 @@ type OverrideOptions struct {
 	// RefuseSecrets makes any secret-typed value a validation problem
 	// (webhook payload mapping).
 	RefuseSecrets bool
+	// StrictLimit accepts only plain host patterns as the limit
+	// (ansiblevars.CheckUntrustedLimit): a webhook payload must not make
+	// Ansible read a file on the worker ("@/path") or use regex and
+	// subscript patterns. Operators keep the full syntax (spec §14).
+	StrictLimit bool
 }
 
 // ValidateOverrides checks in against the template and returns it in the
@@ -54,6 +59,11 @@ func (s *Service) ValidateOverrides(ctx context.Context, orgID, templateID uuid.
 	if in.Limit != nil {
 		if err := validateLimit(*in.Limit); err != nil {
 			return Overrides{}, err
+		}
+		if opt.StrictLimit {
+			if err := ansiblevars.CheckUntrustedLimit(*in.Limit); err != nil {
+				return Overrides{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
+			}
 		}
 	}
 	if len(in.ExtraVars) == 0 {

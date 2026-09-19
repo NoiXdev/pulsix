@@ -195,15 +195,19 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	}
 
 	// --- A signed webhook starts a run ---------------------------------------
+	// The payload maps a Jinja lookup into the greeting (final review C1):
+	// it must reach the playbook as literal text, never run on the worker.
 	var trig triggerCreatedOut
 	s.post(prefix+"/triggers", map[string]any{
 		"kind": "template_run", "template_id": s.helloTID, "name": "ci", "preset": "pulsix",
+		"mapping": map[string]any{"extra_vars": map[string]string{"greeting": "$.ref"}},
 	}, &trig)
-	runID := s.postHook(trig.URL, trig.Secret, []byte(`{"ref":"refs/heads/main"}`))
+	runID := s.postHook(trig.URL, trig.Secret, []byte(`{"ref":"`+injectedGreeting+`"}`))
 	hooked := s.awaitJob(runID, "run", 90*time.Second)
 	if hooked.Job.Status != "succeeded" {
 		s.t.Fatalf("webhook run = %q (error %q)%s", hooked.Job.Status, hooked.Job.Error, s.runnerOutput())
 	}
+	s.assertGreetingInert(runID)
 	// The delivery itself is recorded as triggered, against the same job —
 	// checked before the wrong-signature call below adds a second (rejected)
 	// delivery row.
@@ -361,6 +365,34 @@ func (s *scenario) awaitScheduleRun(id string, timeout time.Duration) scheduleRu
 }
 
 // postHook sends a correctly signed delivery and returns the started run.
+// injectedGreeting is a webhook value that would run a command on the
+// worker if Ansible rendered it: the command prints "PWNED-42", while the
+// literal text only ever contains "PWNED 42".
+const injectedGreeting = `{{ lookup('pipe', 'printf %s-%s PWNED 42') }}`
+
+// assertGreetingInert checks that the webhook-mapped greeting reached the
+// playbook as literal text: the greeting event carries the lookup
+// expression and never its output. With the fake runner the event also
+// shows the unsafe marker the claim put on the value.
+func (s *scenario) assertGreetingInert(jobID string) {
+	s.t.Helper()
+	e := s.awaitEvents(jobID, 30*time.Second, func(e jobEventsOut) bool { return hasEvent(e, "ok", taskGreeting) })
+	raw, err := json.Marshal(e.Events)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "PWNED-42") {
+		s.t.Fatalf("the webhook value was rendered on the worker: %s", text)
+	}
+	if !strings.Contains(text, "lookup('pipe'") {
+		s.t.Fatalf("the greeting event does not carry the literal webhook value: %s", text)
+	}
+	if os.Getenv("PULSIX_E2E_REAL_ANSIBLE") != "1" && !strings.Contains(text, "__ansible_unsafe") {
+		s.t.Fatalf("the claim did not mark the webhook value unsafe: %s", text)
+	}
+}
+
 func (s *scenario) postHook(url, secret string, body []byte) string {
 	s.t.Helper()
 	mac := hmac.New(sha256.New, []byte(secret))

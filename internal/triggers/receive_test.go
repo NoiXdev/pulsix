@@ -130,6 +130,32 @@ func TestReceiveTriggersARunWithMappedOverrides(t *testing.T) {
 	}
 }
 
+// TestReceiveMarksMappedValuesUntrusted is final review C1: a webhook's
+// mapped values travel as untrusted overrides (the claim marks them unsafe
+// for Ansible), secrets are refused and the limit is held to plain host
+// patterns.
+func TestReceiveMarksMappedValuesUntrusted(t *testing.T) {
+	rw := newReceiveWorld(t)
+	in := rw.templateInput()
+	in.Mapping.Limit = "$.target"
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"{{ lookup('pipe','id') }}","target":"web"}`))
+	if err != nil || res.Outcome != triggers.OutcomeTriggered {
+		t.Fatalf("Receive = %+v, %v", res, err)
+	}
+	ov := rw.runs.requests[0].Overrides
+	if ov == nil || !ov.Untrusted || ov.ExtraVars["release"] != "{{ lookup('pipe','id') }}" || *ov.Limit != "web" {
+		t.Fatalf("overrides = %+v", ov)
+	}
+	opts := *rw.tmpls.opts
+	if len(opts) != 1 || !opts[0].RefuseSecrets || !opts[0].StrictLimit {
+		t.Fatalf("ValidateOverrides options = %+v", opts)
+	}
+}
+
 func TestReceiveRejections(t *testing.T) {
 	rw := newReceiveWorld(t)
 	in := rw.templateInput()

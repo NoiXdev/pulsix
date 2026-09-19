@@ -143,6 +143,8 @@ func (f *fakeStore) RecordDelivery(context.Context, triggers.Delivery, bool) err
 
 type fakeTemplates struct {
 	byID map[uuid.UUID]templates.Template
+	// opts records the options every ValidateOverrides call received.
+	opts *[]templates.OverrideOptions
 }
 
 func (f fakeTemplates) Get(_ context.Context, orgID, id uuid.UUID) (templates.Template, error) {
@@ -153,7 +155,10 @@ func (f fakeTemplates) Get(_ context.Context, orgID, id uuid.UUID) (templates.Te
 	return t, nil
 }
 
-func (f fakeTemplates) ValidateOverrides(_ context.Context, _, _ uuid.UUID, in templates.Overrides, _ templates.OverrideOptions) (templates.Overrides, error) {
+func (f fakeTemplates) ValidateOverrides(_ context.Context, _, _ uuid.UUID, in templates.Overrides, opt templates.OverrideOptions) (templates.Overrides, error) {
+	if f.opts != nil {
+		*f.opts = append(*f.opts, opt)
+	}
 	return in, nil
 }
 
@@ -182,7 +187,7 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{store: newFakeStore(), org: uuid.Must(uuid.NewV7()), actor: uuid.Must(uuid.NewV7()), template: uuid.Must(uuid.NewV7()), repo: uuid.Must(uuid.NewV7())}
 	sc := &schema.Schema{Fields: []schema.Field{{Name: "release", Type: schema.TypeString}, {Name: "token", Type: schema.TypeSecret}}}
-	w.tmpls = fakeTemplates{byID: map[uuid.UUID]templates.Template{w.template: {ID: w.template, OrgID: w.org, ExtraVarsSchema: sc}}}
+	w.tmpls = fakeTemplates{byID: map[uuid.UUID]templates.Template{w.template: {ID: w.template, OrgID: w.org, ExtraVarsSchema: sc}}, opts: &[]templates.OverrideOptions{}}
 	w.repos = fakeRepos{byID: map[uuid.UUID]repos.Repo{w.repo: {ID: w.repo, OrgID: w.org}}}
 	w.svc = triggers.NewService(triggers.Deps{
 		Store:     w.store,

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 )
 
 // runOverrides opens a run job's sealed overrides; nil when it has none.
@@ -55,4 +57,34 @@ func mergeExtraVars(base json.RawMessage, ov *RunOverrides) (json.RawMessage, er
 	}
 	maps.Copy(merged, ov.ExtraVars)
 	return json.Marshal(merged)
+}
+
+// inert returns the overrides as the worker receives them: an untrusted
+// override (a webhook payload) has every string inside its extra vars
+// marked unsafe for Ansible, so a "{{ … }}" or "{% … %}" value stays
+// literal text instead of running on the worker (final review C1). Trusted
+// overrides (schedules, set by operators — spec §14) pass unchanged.
+func (o *RunOverrides) inert() *RunOverrides {
+	if o == nil || !o.Untrusted || len(o.ExtraVars) == 0 {
+		return o
+	}
+	out := *o
+	out.ExtraVars = make(map[string]any, len(o.ExtraVars))
+	for k, v := range o.ExtraVars {
+		out.ExtraVars[k] = ansiblevars.Inert(v)
+	}
+	return &out
+}
+
+// checkLimit re-checks an untrusted override's limit at claim time, the
+// same rule the webhook mapping applies at receive time: no "@file",
+// regex or subscript patterns. The value itself is never echoed.
+func (o *RunOverrides) checkLimit() error {
+	if o == nil || !o.Untrusted || o.Limit == nil {
+		return nil
+	}
+	if err := ansiblevars.CheckUntrustedLimit(*o.Limit); err != nil {
+		return fmt.Errorf("%w: run override limit: %w", ErrInvalidInput, err)
+	}
+	return nil
 }

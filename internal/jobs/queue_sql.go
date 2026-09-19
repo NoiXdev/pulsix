@@ -348,11 +348,20 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if ov != nil && ov.Limit != nil {
 			limit = *ov.Limit
 		}
+		if err := ov.checkLimit(); err != nil {
+			return err
+		}
 		varsRaw, err := mergeExtraVars(tmpl.ExtraVars, ov)
 		if err != nil {
 			return err
 		}
-		if extraVars, err = stringMap(varsRaw); err != nil {
+		// The worker gets the untrusted values marked unsafe for Ansible
+		// (final review C1); redaction below reads the plain values.
+		wireRaw, err := mergeExtraVars(tmpl.ExtraVars, ov.inert())
+		if err != nil {
+			return err
+		}
+		if extraVars, err = stringMap(wireRaw); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
 		}
 		// A template stored before the connection-security variables were
