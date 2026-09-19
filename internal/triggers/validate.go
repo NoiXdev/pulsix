@@ -86,7 +86,7 @@ func checkMappingTargets(m Mapping, t templates.Template) error {
 	for name := range m.ExtraVars {
 		switch {
 		case ansiblevars.Forbidden(name):
-			return fmt.Errorf("%w: %s controls connection security and cannot be mapped", ErrInvalidInput, name)
+			return fmt.Errorf("%w: %s is a reserved variable name (connection security or Ansible's own markers) and cannot be mapped", ErrInvalidInput, name)
 		case secret[name]:
 			return fmt.Errorf("%w: %s is a secret field and cannot be set from a payload", ErrInvalidInput, name)
 		case t.ExtraVarsSchema != nil && !declared[name]:

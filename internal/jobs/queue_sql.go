@@ -351,7 +351,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err := ov.checkLimit(); err != nil {
 			return err
 		}
-		if err := ov.checkKeys(); err != nil {
+		if err := ov.checkUntrusted(); err != nil {
 			return err
 		}
 		varsRaw, err := mergeExtraVars(tmpl.ExtraVars, ov)
@@ -381,7 +381,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		// checked, so an override cannot smuggle one in either.
 		for name := range extraVars {
 			if ansiblevars.Forbidden(name) {
-				return fmt.Errorf("%w: template extra var %s controls connection security; remove it from the template", ErrInvalidInput, name)
+				return fmt.Errorf("%w: template extra var %s is a reserved name (connection security or Ansible's own markers); remove it from the template", ErrInvalidInput, name)
 			}
 		}
 		if err := redact.addExtraVarSecrets(tmpl.ExtraVarsSchema, varsRaw); err != nil {

@@ -447,3 +447,29 @@ func TestReceiveRefusesReservedAnsibleKeys(t *testing.T) {
 		t.Fatalf("plain object = %+v, %v", res, err)
 	}
 }
+
+// TestReceiveRefusesDeeplyNestedValues is final re-review 2, New Breakage
+// 1: a mapped value nested deeper than ansiblevars.MaxUntrustedDepth would
+// make Ansible's JSON load of the extra-vars file fail on Python's
+// recursion limit and fall back to YAML, dropping every unsafe marker. It
+// answers 422 naming the mapping target field; nothing is enqueued.
+func TestReceiveRefusesDeeplyNestedValues(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := func(depth int) string {
+		return `{"ref":` + strings.Repeat("[", depth) + `"x"` + strings.Repeat("]", depth) + `}`
+	}
+	res, err := rw.svc.Receive(ctx, rw.signed(t, c, nested(300)))
+	if err != nil || res.Outcome != triggers.OutcomeInvalidPayload || res.Field != "extra_vars.release" {
+		t.Fatalf("Receive(depth 300) = %+v, %v; want invalid_payload at extra_vars.release", res, err)
+	}
+	if len(rw.runs.requests) != 0 {
+		t.Fatalf("a refused payload must not enqueue: %+v", rw.runs.requests)
+	}
+	if res, err := rw.svc.Receive(ctx, rw.signed(t, c, nested(32))); err != nil || res.Outcome != triggers.OutcomeTriggered {
+		t.Fatalf("Receive(depth 32) = %+v, %v; the cap itself is allowed", res, err)
+	}
+}

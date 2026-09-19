@@ -371,7 +371,7 @@ func validateLimit(limit string) error {
 func forbiddenProblems(names []string) error {
 	problems := make([]schema.Problem, len(names))
 	for i, n := range names {
-		problems[i] = schema.Problem{Path: n, Message: "this variable controls connection security and is set by Pulsix itself; remove it"}
+		problems[i] = schema.Problem{Path: n, Message: "this variable name is reserved (connection security, set by Pulsix itself, or Ansible's own markers); remove it"}
 	}
 	return &schema.ValidationError{Problems: problems}
 }

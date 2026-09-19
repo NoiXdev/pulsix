@@ -77,19 +77,22 @@ func (o *RunOverrides) inert() *RunOverrides {
 	return &out
 }
 
-// checkKeys re-checks an untrusted override's extra vars at claim time, the
-// same rule the webhook mapping applies at receive time: no object key
-// starting with "__ansible" at any depth, which would make Ansible's JSON
-// load of the extra-vars file fail and fall back to YAML — dropping every
-// unsafe marker (final re-review New Breakage 1). Only the variable's name
-// is echoed.
-func (o *RunOverrides) checkKeys() error {
+// checkUntrusted re-checks an untrusted override's extra vars at claim
+// time, the same rule the webhook mapping applies at receive time: no
+// object key starting with "__ansible" and no nesting past
+// ansiblevars.MaxUntrustedDepth. Either would make Ansible's JSON load of
+// the extra-vars file fail and fall back to YAML, dropping every unsafe
+// marker (final re-reviews 1 and 2). The failure reason names only the
+// variable — the mapping target an operator chose — never a key or value
+// from the payload.
+func (o *RunOverrides) checkUntrusted() error {
 	if o == nil || !o.Untrusted {
 		return nil
 	}
 	for _, name := range slices.Sorted(maps.Keys(o.ExtraVars)) {
-		if err := ansiblevars.CheckUntrustedKeys(o.ExtraVars[name]); err != nil {
-			return fmt.Errorf("%w: run override extra var %s: %w", ErrInvalidInput, name, err)
+		if err := ansiblevars.CheckUntrusted(o.ExtraVars[name]); err != nil {
+			return fmt.Errorf("%w: run override extra var %s: a webhook value may not hold an object key starting with \"__ansible\" or nest more than %d levels deep",
+				ErrInvalidInput, name, ansiblevars.MaxUntrustedDepth)
 		}
 	}
 	return nil
@@ -109,10 +112,12 @@ func (o *RunOverrides) checkLimit() error {
 }
 
 // checkWireMarkers checks the merged extra-vars document an untrusted run
-// sends: every object with an "__ansible" key must be a well-formed marker
-// (ansiblevars.CheckMarkers), or Ansible's JSON load fails and the markers
-// on the untrusted values are dropped. The overrides passed checkKeys, so a
-// failure here names a template variable its operator must fix.
+// sends: every object with an "__ansible" key inside a variable must be a
+// well-formed marker (ansiblevars.CheckMarkers), or Ansible's JSON load
+// fails and the markers on the untrusted values are dropped. The overrides
+// passed checkUntrusted, so a failure here names a template variable its
+// operator must fix. Top-level "__ansible" names are refused for every run
+// by the ansiblevars.Forbidden check that follows in buildPayload.
 func checkWireMarkers(raw json.RawMessage) error {
 	var vars map[string]any
 	if err := json.Unmarshal(raw, &vars); err != nil {

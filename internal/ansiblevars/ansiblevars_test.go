@@ -40,3 +40,21 @@ func TestForbiddenInUserVars(t *testing.T) {
 		t.Fatalf("ForbiddenIn = %v", got)
 	}
 }
+
+// TestForbiddenReservesAnsibleMarkerNames is final re-review 2, minor 4: a
+// top-level extra var named like one of Ansible's JSON markers
+// ("__ansible_unsafe", "__ansible_vault", "__ansible_type") turns the whole
+// extra-vars document into something Ansible cannot load as a dictionary,
+// or makes its JSON load fail and fall back to YAML. No input may set one.
+func TestForbiddenReservesAnsibleMarkerNames(t *testing.T) {
+	for _, name := range []string{"__ansible_unsafe", "__ansible_vault", "__ansible_type", "__ANSIBLE_future"} {
+		if !ansiblevars.Forbidden(name) {
+			t.Errorf("Forbidden(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"ansible_user_note", "_ansible_x", "my__ansible_unsafe"} {
+		if ansiblevars.Forbidden(name) {
+			t.Errorf("Forbidden(%q) = true", name)
+		}
+	}
+}

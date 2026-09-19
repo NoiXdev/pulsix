@@ -1,7 +1,8 @@
 // Package ansiblevars names the Ansible variables that user-provided input
 // (template extra vars, and the worker's claim) must never set: the
 // connection-security family that decides whether a host's pinned key is
-// checked and with which SSH arguments (re-review N1). Extra vars carry
+// checked and with which SSH arguments (re-review N1), plus the names
+// Ansible reserves for its own JSON markers. Extra vars carry
 // Ansible's highest precedence, so one such variable in a template would
 // switch pin enforcement off for every host of a run. The worker forces
 // these variables itself; the manager refuses them at the input.
@@ -33,9 +34,14 @@ var forbiddenNames = map[string]bool{
 }
 
 // forbiddenPrefixes cover whole families: the paramiko connection's host
-// key options, and the pulsix_ namespace the worker uses for its own
-// per-host values (pulsix_ssh_common_args carries the pinned options).
-var forbiddenPrefixes = []string{"ansible_paramiko_", "pulsix_"}
+// key options, the pulsix_ namespace the worker uses for its own per-host
+// values (pulsix_ssh_common_args carries the pinned options), and the
+// names ansible-core reserves for its JSON markers ("__ansible_unsafe",
+// "__ansible_vault", "__ansible_type"): as a top-level extra var one turns
+// the whole extra-vars document into something Ansible cannot load as a
+// dictionary, or makes its JSON load fail and fall back to YAML, which
+// drops the unsafe markers on webhook values (final re-review 2).
+var forbiddenPrefixes = []string{"ansible_paramiko_", "pulsix_", "__ansible"}
 
 // Forbidden reports whether user input may not set the variable name.
 // Matching ignores case: a differently cased spelling is refused too.

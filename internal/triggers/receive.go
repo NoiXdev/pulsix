@@ -248,12 +248,12 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	if err != nil || ov.Empty() {
 		return ov, field, err
 	}
-	// A sender-chosen "__ansible…" key would make Ansible's JSON load of
-	// the extra-vars file fail and fall back to YAML, which drops every
-	// unsafe marker (final re-review New Breakage 1). The claim checks
-	// again.
+	// A sender-chosen "__ansible…" key, or nesting past
+	// ansiblevars.MaxUntrustedDepth, would make Ansible's JSON load of the
+	// extra-vars file fail and fall back to YAML, which drops every unsafe
+	// marker (final re-reviews 1 and 2). The claim checks again.
 	for _, name := range slices.Sorted(maps.Keys(ov.ExtraVars)) {
-		if err := ansiblevars.CheckUntrustedKeys(ov.ExtraVars[name]); err != nil {
+		if err := ansiblevars.CheckUntrusted(ov.ExtraVars[name]); err != nil {
 			return templates.Overrides{}, "extra_vars." + name, err
 		}
 	}

@@ -286,3 +286,47 @@ func TestBuildPayloadRefusesReservedAnsibleKeys(t *testing.T) {
 		t.Fatalf("a trusted run keeps the template's own values: %v", err)
 	}
 }
+
+// TestBuildPayloadRefusesDeepUntrustedOverridesWithoutEchoingKeys is final
+// re-review 2 (New Breakage 1 and minor 3): a sealed untrusted override
+// nested deeper than the cap fails the claim, and the failure reason names
+// only the variable (the mapping target), never a key the sender chose.
+func TestBuildPayloadRefusesDeepUntrustedOverridesWithoutEchoingKeys(t *testing.T) {
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n"}}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	var deep any = "leaf"
+	for range 300 {
+		deep = []any{deep}
+	}
+	for name, v := range map[string]any{
+		"deep":         deep,
+		"reserved key": map[string]any{"sender-chosen-a": map[string]any{"__ansible_sender_chosen_b": "x"}},
+	} {
+		job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+		job.Payload = sealedOverride(t, q, job, RunOverrides{Untrusted: true, ExtraVars: map[string]any{"release": v}})
+		err := q.buildPayload(context.Background(), job, &workerpb.Job{})
+		if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "release") || strings.Contains(err.Error(), "sender") {
+			t.Fatalf("%s: claim error = %v; want ErrInvalidInput naming only the variable", name, err)
+		}
+	}
+}
+
+// TestBuildPayloadRefusesTopLevelAnsibleMarkerNames is final re-review 2,
+// minor 4: a template extra var named like one of Ansible's JSON markers
+// breaks the whole extra-vars document, so no run may carry one.
+func TestBuildPayloadRefusesTopLevelAnsibleMarkerNames(t *testing.T) {
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n",
+		ExtraVars: json.RawMessage(`{"__ansible_unsafe":{"__ansible_unsafe":"v"}}`)}}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	for _, untrusted := range []bool{true, false} {
+		job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+		job.Payload = sealedOverride(t, q, job, RunOverrides{Untrusted: untrusted, ExtraVars: map[string]any{"branch": "main"}})
+		if err := q.buildPayload(context.Background(), job, &workerpb.Job{}); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("untrusted=%v: a top-level __ansible name must fail the claim: %v", untrusted, err)
+		}
+	}
+}

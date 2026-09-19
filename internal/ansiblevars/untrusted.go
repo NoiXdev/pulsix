@@ -12,15 +12,18 @@ import (
 // pin). Dictionary keys are never rendered, so only values need it.
 const unsafeKey = "__ansible_unsafe"
 
-// Inert returns v with every string inside it — at any depth of lists and
-// maps — marked unsafe for Ansible, so a value that came from an
+// Inert returns v with every string inside it — in every list and map it
+// holds — marked unsafe for Ansible, so a value that came from an
 // unauthenticated sender (a webhook payload) cannot run a Jinja expression
 // or a lookup on the worker. Numbers, booleans and null are inert already
 // and pass through unchanged. v itself is never modified.
 //
-// The markers only hold while Ansible loads the whole document as JSON:
-// callers must refuse untrusted values CheckUntrustedKeys rejects, and
-// documents CheckMarkers rejects, first (see reservedKeyPrefix).
+// The markers only hold while Ansible loads the whole document as JSON;
+// when that load fails, ansible-core silently re-reads the file as YAML
+// and every marker becomes a plain dict. Callers must first refuse
+// untrusted values CheckUntrusted rejects (reserved keys, nesting past
+// MaxUntrustedDepth) and documents CheckMarkers rejects; the worker's file
+// also carries a YAML guard so a failed JSON load fails the run.
 func Inert(v any) any {
 	switch x := v.(type) {
 	case string:

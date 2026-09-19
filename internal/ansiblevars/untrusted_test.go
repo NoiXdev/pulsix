@@ -3,6 +3,7 @@ package ansiblevars_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
@@ -78,13 +79,13 @@ func TestCheckUntrustedLimit(t *testing.T) {
 	}
 }
 
-// TestCheckUntrustedKeys is final re-review New Breakage 1: a sender-chosen
+// TestCheckUntrusted is final re-review New Breakage 1: a sender-chosen
 // key such as "__ansible_unsafe" or "__ansible_vault" makes ansible-core's
 // JSON load of the extra-vars file fail; it then re-reads the file as
 // YAML, every unsafe marker becomes a plain dict and its strings are
 // templated. Untrusted values may not carry any "__ansible" key, at any
 // depth.
-func TestCheckUntrustedKeys(t *testing.T) {
+func TestCheckUntrusted(t *testing.T) {
 	cases := []struct {
 		name string
 		v    any
@@ -104,9 +105,9 @@ func TestCheckUntrustedKeys(t *testing.T) {
 		{"object in list in object", map[string]any{"items": []any{map[string]any{"ok": "x"}, map[string]any{"__ansible_unsafe": []any{}}}}, false},
 	}
 	for _, c := range cases {
-		err := ansiblevars.CheckUntrustedKeys(c.v)
+		err := ansiblevars.CheckUntrusted(c.v)
 		if (err == nil) != c.ok {
-			t.Errorf("%s: CheckUntrustedKeys = %v, want ok=%v", c.name, err, c.ok)
+			t.Errorf("%s: CheckUntrusted = %v, want ok=%v", c.name, err, c.ok)
 		}
 		if err != nil && !errors.Is(err, ansiblevars.ErrReservedKey) {
 			t.Errorf("%s: error %v does not wrap ErrReservedKey", c.name, err)
@@ -139,6 +140,67 @@ func TestCheckMarkers(t *testing.T) {
 		err := ansiblevars.CheckMarkers(c.v)
 		if (err == nil) != c.ok {
 			t.Errorf("%s: CheckMarkers = %v, want ok=%v", c.name, err, c.ok)
+		}
+	}
+}
+
+// nest wraps leaf in depth containers, alternating lists and objects.
+func nest(depth int, leaf any) any {
+	v := leaf
+	for i := range depth {
+		if i%2 == 0 {
+			v = []any{v}
+		} else {
+			v = map[string]any{"k": v}
+		}
+	}
+	return v
+}
+
+// TestCheckUntrustedCapsNesting is final re-review 2, New Breakage 1: past
+// roughly 250 levels Ansible's JSON load of the extra-vars file fails on
+// Python's recursion limit and falls back to YAML, which drops every
+// unsafe marker. Untrusted values are capped at MaxUntrustedDepth
+// containers (objects and lists alike); the error names no key.
+func TestCheckUntrustedCapsNesting(t *testing.T) {
+	cases := []struct {
+		name string
+		v    any
+		ok   bool
+	}{
+		{"scalar", "x", true},
+		{"one object", map[string]any{"a": "x"}, true},
+		{"at the cap", nest(ansiblevars.MaxUntrustedDepth, "x"), true},
+		{"at the cap, empty innermost list", nest(ansiblevars.MaxUntrustedDepth-1, []any{}), true},
+		{"one past the cap", nest(ansiblevars.MaxUntrustedDepth+1, "x"), false},
+		{"one past the cap, empty innermost object", nest(ansiblevars.MaxUntrustedDepth, map[string]any{}), false},
+		{"300 lists", nest(300, "x"), false},
+		{"deep branch beside a shallow one", map[string]any{"a": "x", "b": nest(ansiblevars.MaxUntrustedDepth, "x")}, false},
+	}
+	for _, c := range cases {
+		err := ansiblevars.CheckUntrusted(c.v)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: CheckUntrusted = %v, want ok=%v", c.name, err, c.ok)
+		}
+		if err != nil && !errors.Is(err, ansiblevars.ErrTooDeep) {
+			t.Errorf("%s: error %v does not wrap ErrTooDeep", c.name, err)
+		}
+	}
+	if ansiblevars.MaxUntrustedDepth > 64 {
+		t.Fatalf("the cap %d must stay far below Ansible's ~250-level threshold", ansiblevars.MaxUntrustedDepth)
+	}
+}
+
+// TestCheckUntrustedNamesNoKey: the claim turns this error into a job's
+// failure reason, which must not repeat anything the sender chose.
+func TestCheckUntrustedNamesNoKey(t *testing.T) {
+	for _, v := range []any{
+		map[string]any{"sender-chosen-name": map[string]any{"__ansible_sender_chosen": "x"}},
+		map[string]any{"sender-chosen-name": nest(40, "x")},
+	} {
+		err := ansiblevars.CheckUntrusted(v)
+		if err == nil || strings.Contains(err.Error(), "sender") {
+			t.Fatalf("CheckUntrusted = %v; want an error naming no key", err)
 		}
 	}
 }

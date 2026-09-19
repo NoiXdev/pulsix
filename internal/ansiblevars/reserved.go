@@ -17,25 +17,59 @@ import (
 const reservedKeyPrefix = "__ansible"
 
 // ErrReservedKey refuses an untrusted value holding a reserved object key.
-var ErrReservedKey = errors.New(`object keys starting with "__ansible" are reserved`)
+var ErrReservedKey = errors.New(`an object key starting with "__ansible" is reserved`)
+
+// MaxUntrustedDepth caps how deeply an untrusted value may nest, counting
+// objects and lists alike ({"a": ["x"]} is 2 deep). From roughly 250
+// levels ansible-core's JSON load of the extra-vars file fails on Python's
+// recursion limit and — like a reserved key — silently falls back to YAML,
+// which drops every unsafe marker; YAML only overflows at roughly 500
+// (final re-review 2). 32 is far below either and far above any real
+// payload a mapping would pick.
+const MaxUntrustedDepth = 32
+
+// ErrTooDeep refuses an untrusted value nested deeper than MaxUntrustedDepth.
+var ErrTooDeep = fmt.Errorf("the value is nested more than %d levels deep", MaxUntrustedDepth)
 
 // ErrMalformedMarker refuses an extra-vars document Ansible would not load
 // as JSON because of a reserved key that is not a well-formed marker.
 var ErrMalformedMarker = errors.New(`an object with an "__ansible" key must be exactly {"__ansible_unsafe": "<text>"} or {"__ansible_vault": "<text>"}`)
 
-// CheckUntrustedKeys reports ErrReservedKey when any object inside v, at
-// any depth of lists and objects, has a key starting with "__ansible". It
-// runs on a value an unauthenticated sender supplied, before Inert marks
-// it; the error names where the key sits, never the value.
-func CheckUntrustedKeys(v any) error {
-	return walkObjects(v, "", func(path string, m map[string]any) error {
-		for k := range m {
+// CheckUntrusted reports whether v, a value an unauthenticated sender
+// supplied, can travel to Ansible marked by Inert: ErrReservedKey when an
+// object inside it, at any depth, has a key starting with "__ansible", and
+// ErrTooDeep when it nests deeper than MaxUntrustedDepth. Either would make
+// Ansible's JSON load of the extra-vars file fail and drop the markers. The
+// error names nothing from v: the caller names the variable.
+func CheckUntrusted(v any) error {
+	return checkUntrusted(v, 0)
+}
+
+func checkUntrusted(v any, depth int) error {
+	switch x := v.(type) {
+	case map[string]any:
+		if depth++; depth > MaxUntrustedDepth {
+			return ErrTooDeep
+		}
+		for k, item := range x {
 			if strings.HasPrefix(k, reservedKeyPrefix) {
-				return fmt.Errorf("%w (at %s)", ErrReservedKey, orRoot(path))
+				return ErrReservedKey
+			}
+			if err := checkUntrusted(item, depth); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
+	case []any:
+		if depth++; depth > MaxUntrustedDepth {
+			return ErrTooDeep
+		}
+		for _, item := range x {
+			if err := checkUntrusted(item, depth); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // CheckMarkers reports ErrMalformedMarker when an object inside v has a key
