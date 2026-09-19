@@ -21,7 +21,7 @@ const ORGS: ShellOrg[] = [
  * itself so the "active route" assertions reflect real client-side
  * routing (finding "Important 11": the router's own activeProps, not a
  * hand-set `active` prop the shell used to take). */
-function renderShellAt(initialPath: string, opts: { onLogout?: () => void } = {}) {
+function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string } = {}) {
   const rootRoute = createRootRoute();
 
   function leaf(path: string) {
@@ -30,7 +30,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void } = {}
       path,
       component: () => (
         <AppShell
-          org={{ slug: initialPath.split('/')[2], name: 'Current Org' }}
+          org={{ slug: initialPath.split('/')[2], name: 'Current Org', role: opts.role ?? 'owner' }}
           orgs={ORGS}
           onSelectOrg={() => {}}
           crumbs={<span>Hosts</span>}
@@ -56,6 +56,20 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void } = {}
 }
 
 describe('AppShell', () => {
+  // Final review minor 7: the Workers page needs workers.read (admin and
+  // above); the entry must not lead viewers and operators to a no-access
+  // page.
+  it.each([
+    ['owner', true],
+    ['admin', true],
+    ['operator', false],
+    ['viewer', false],
+  ])('shows the Workers entry to a %s: %s', async (role, shown) => {
+    renderShellAt('/o/acme/hosts', { role });
+    await screen.findByText('page content');
+    expect(screen.queryByRole('link', { name: 'Workers' }) !== null).toBe(shown);
+  });
+
   it('shows the org switcher with the current org selected', async () => {
     renderShellAt('/o/acme/hosts');
     const select = (await screen.findByRole('combobox', { name: 'Organization' })) as HTMLSelectElement;

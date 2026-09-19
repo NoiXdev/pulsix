@@ -49,7 +49,7 @@ export function AccountSecurityLayout() {
 
   return (
     <AppShell
-      org={{ slug: firstOrg.slug, name: firstOrg.name }}
+      org={{ slug: firstOrg.slug, name: firstOrg.name, role: firstOrg.role }}
       orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
       onSelectOrg={(slug) => void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } })}
       crumbs={

@@ -53,7 +53,7 @@ export function OrgLayout() {
 
   return (
     <AppShell
-      org={{ slug: orgSlug, name: org.data.org.name }}
+      org={{ slug: orgSlug, name: org.data.org.name, role: org.data.org.role }}
       orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
       onSelectOrg={(slug) => {
         if (slug === orgSlug) return;
