@@ -170,10 +170,16 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	s.helloTID = s.createTemplate("hello", s.helloPB, map[string]any{"greeting": s.greeting})
 
 	// --- A schedule fires on the injected clock -----------------------------
+	// The 100 ms tick keeps the step fast, but it also makes the on-time
+	// grace (2 x tick) 200 ms: one late tick on a loaded host would record
+	// the occurrence as missed. Catch-up with a generous window keeps a
+	// late decision a triggered run, so the step does not depend on
+	// sub-second tick latency.
 	var sched scheduleOut
 	s.post(prefix+"/schedules", map[string]any{
 		"template_id": s.helloTID, "name": "every five minutes", "mode": "cron",
 		"cron": "*/5 * * * *", "timezone": "Europe/Berlin",
+		"guards": map[string]any{"catch_up": map[string]any{"enabled": true, "window": "1h"}},
 	}, &sched)
 	if sched.Schedule.NextRunAt == nil {
 		s.t.Fatal("the new schedule carries no next_run_at")
