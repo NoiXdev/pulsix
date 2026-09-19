@@ -133,3 +133,51 @@ func TestTickerRunRecoversAPanicInTickAndKeepsTicking(t *testing.T) {
 		t.Fatalf("ProcessDue calls = %d, want 3 (a panicking tick must not stop the loop)", got)
 	}
 }
+
+// deadlineDue records how far away each batch's context deadline was.
+type deadlineDue struct {
+	mu   sync.Mutex
+	left []time.Duration
+}
+
+func (f *deadlineDue) ProcessDue(ctx context.Context, _ time.Time, _ int, _ func(context.Context, schedules.Schedule) schedules.Decision) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if at, ok := ctx.Deadline(); ok {
+		f.left = append(f.left, time.Until(at))
+	} else {
+		f.left = append(f.left, -1)
+	}
+	return 0, nil
+}
+
+// TestTickerBatchDeadlineHasAFloor: the batch deadline is a multiple of
+// the tick, but never shorter than the floor — a short tick (tests, dev)
+// must not turn an ordinary slow enqueue under load into a failed run.
+func TestTickerBatchDeadlineHasAFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tick time.Duration
+		want time.Duration
+	}{
+		{"short tick gets the floor", 100 * time.Millisecond, 10 * time.Second},
+		{"tick at the crossover", 2500 * time.Millisecond, 10 * time.Second},
+		{"default tick keeps its multiple", schedules.DefaultTick, 4 * schedules.DefaultTick},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &deadlineDue{}
+			tk := schedules.NewTicker(nil, store, tc.tick, time.Now, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			if _, err := tk.Tick(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.left) != 1 {
+				t.Fatalf("batches = %d, want 1", len(store.left))
+			}
+			// The deadline is set just before ProcessDue runs; allow for
+			// the scheduling slack between the two under -race and load.
+			if left := store.left[0]; left > tc.want || left < tc.want-2*time.Second {
+				t.Fatalf("batch deadline %s away, want about %s", left, tc.want)
+			}
+		})
+	}
+}

@@ -407,6 +407,12 @@ func TestLockDueSchedulesDoesNotBlockRunNow(t *testing.T) {
 // connection. That is the actual shape of the circular wait fix round 1's
 // Important #3 guards against — not merely a lucky ordering where the
 // enqueue always wins the race for the pool's last free connection.
+//
+// Only the first call — the ticker's, which the test waits for before it
+// starts anything else — stalls. Later calls (the concurrent run now's own
+// enqueue) still take a real pool connection but return at once: they are
+// not what the test bounds, and with the batch deadline's 10s floor a
+// second stall would outlast their own contexts.
 type blockingRuns struct {
 	d       *db.DB
 	started chan struct{}
@@ -418,16 +424,22 @@ func (b *blockingRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool
 }
 
 func (b *blockingRuns) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
-	b.once.Do(func() { close(b.started) })
-	time.Sleep(150 * time.Millisecond)
-	// A long, deliberately ctx-oblivious duration: under the old FOR
-	// UPDATE lock mode with no batch deadline, what actually stalls this
-	// call forever is never acquiring a connection at all (see the type's
-	// own doc comment), not this query's own runtime — so its exact
-	// length only matters for demonstrating that, once a connection is
-	// acquired under the fix, the batch's own deadline cancels it well
-	// before it would otherwise finish.
-	if _, err := b.d.Pool().Exec(ctx, "SELECT pg_sleep(10)"); err != nil {
+	first := false
+	b.once.Do(func() { close(b.started); first = true })
+	query := "SELECT 1"
+	if first {
+		time.Sleep(150 * time.Millisecond)
+		// A long duration, well past the batch deadline: under the old
+		// FOR UPDATE lock mode with no batch deadline, what actually
+		// stalls this call forever is never acquiring a connection at
+		// all (see the type's own doc comment), not this query's own
+		// runtime — so its exact length only matters for demonstrating
+		// that, once a connection is acquired under the fix, the batch's
+		// own deadline (its 10s floor here) cancels it well before it
+		// would otherwise finish.
+		query = "SELECT pg_sleep(60)"
+	}
+	if _, err := b.d.Pool().Exec(ctx, query); err != nil {
 		return nil, err
 	}
 	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: req.Trigger}}, nil
@@ -443,7 +455,7 @@ func (b *blockingRuns) EnqueueRunWith(ctx context.Context, orgID, templateID uui
 // production's fix at all.
 //
 // This version does: it builds a real Ticker with a short real tick
-// (500ms, so Tick's own batchDeadlineFactor × tick deadline is 2s) over
+// (500ms, so Tick's own deadline is its minBatchDeadline floor, 10s) over
 // pool_max_conns=2, and calls Tick(context.Background()) directly — no
 // test-supplied deadline of its own — so whatever bounds it is Tick's own
 // internal logic. It enqueues through blockingRuns, which genuinely needs
@@ -463,7 +475,7 @@ func (b *blockingRuns) EnqueueRunWith(ctx context.Context, orgID, templateID uui
 // update and pause never get theirs either. With the fix, the stuck
 // enqueue is cancelled by Tick's own deadline, the batch still commits
 // (fix round 2, New Important) and releases the lock, and everything
-// completes within a few seconds.
+// completes shortly after that deadline.
 func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	url := testdb.URL(t)
 	d, err := db.OpenAsRole(context.Background(), url+"&pool_max_conns=2", "pulsix_app")
@@ -511,7 +523,7 @@ func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		defer cancel()
 		_, err := svc.Update(cctx, org, sch.ID, sch.Revision, schedules.Input{
 			TemplateID: templateID, Name: sch.Name, Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
@@ -526,7 +538,7 @@ func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		defer cancel()
 		if _, err := svc.Pause(cctx, org, sch.ID); err != nil {
 			errs <- fmt.Errorf("concurrent pause: %w (pool exhaustion deadlock?)", err)
@@ -536,7 +548,7 @@ func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		defer cancel()
 		if _, err := svc.RunNow(cctx, org, sch.ID, uuid.Must(uuid.NewV7())); err != nil {
 			errs <- fmt.Errorf("concurrent run now: %w (pool exhaustion deadlock?)", err)
@@ -547,8 +559,8 @@ func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	go func() { wg.Wait(); close(allDone) }()
 	select {
 	case <-allDone:
-	case <-time.After(30 * time.Second):
-		t.Fatal("update/pause/run now did not complete within 30s — pool exhaustion deadlock?")
+	case <-time.After(45 * time.Second):
+		t.Fatal("update/pause/run now did not complete within 45s — pool exhaustion deadlock?")
 	}
 	close(errs)
 	for err := range errs {
@@ -557,10 +569,11 @@ func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 
 	select {
 	case elapsed := <-tickDone:
-		// batchDeadlineFactor × tick = 4 × 500ms = 2s: a stuck enqueue
-		// must fail fast within that bound, not merely "eventually".
-		if elapsed > 5*time.Second {
-			t.Errorf("Tick took %s, want close to its own 2s deadline (batchDeadlineFactor × tick) — a starved enqueue must fail fast, not hang", elapsed)
+		// 4 × 500ms is under the floor, so the deadline is 10s: a stuck
+		// enqueue must fail within that bound, not merely "eventually"
+		// (and well before its 60s query would finish on its own).
+		if elapsed > 15*time.Second {
+			t.Errorf("Tick took %s, want close to its own 10s deadline (minBatchDeadline) — a starved enqueue must fail fast, not hang", elapsed)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Tick did not return within 10s of the concurrent operations finishing — pool exhaustion deadlock?")

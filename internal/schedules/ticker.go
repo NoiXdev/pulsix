@@ -14,12 +14,17 @@ import (
 // schedules, short enough that a starved pool connection — the v0.2b
 // pool-exhaustion shape, fix round 1 Important #3 — fails fast instead of
 // holding the batch's row locks, and the pool connection an HTTP handler
-// is waiting on, forever.
+// is waiting on, forever. minBatchDeadline is that bound's floor: with a
+// short tick (a test's or a dev instance's) the multiple alone would be
+// well under a second, and an ordinary slow enqueue on a loaded host would
+// then fail the run instead of merely finishing late. Ten seconds still
+// ends a starved batch quickly, on the same scale as rowWriteTimeout.
 const (
 	DefaultTick         = 15 * time.Second
 	batchSize           = 50
 	keepRuns            = 500
 	batchDeadlineFactor = 4
+	minBatchDeadline    = 10 * time.Second
 )
 
 // DueStore locks due schedules and writes back one decision each.
@@ -93,17 +98,17 @@ func (t *Ticker) tickSafely(ctx context.Context) {
 
 // Tick decides every due schedule, one locked batch at a time, until a
 // batch comes back smaller than batchSize. Each batch's own context is
-// bounded to batchDeadlineFactor × tick (fix round 1, Important #3): a
-// batch that cannot complete in that time — most likely a starved pool
-// connection — fails fast instead of holding its row locks (and the
-// connection a blocked HTTP handler needs) indefinitely; the same rows
-// are still due on the next tick, the same at-least-once guarantee a
-// failed commit already gives.
+// bounded to batchDeadlineFactor × tick, but at least minBatchDeadline
+// (fix round 1, Important #3): a batch that cannot complete in that time
+// — most likely a starved pool connection — fails fast instead of holding
+// its row locks (and the connection a blocked HTTP handler needs)
+// indefinitely; the same rows are still due on the next tick, the same
+// at-least-once guarantee a failed commit already gives.
 func (t *Ticker) Tick(ctx context.Context) (int, error) {
 	total := 0
 	for {
 		now := t.now()
-		batchCtx, cancel := context.WithTimeout(ctx, batchDeadlineFactor*t.tick)
+		batchCtx, cancel := context.WithTimeout(ctx, t.batchDeadline())
 		n, err := t.store.ProcessDue(batchCtx, now, batchSize, func(ctx context.Context, s Schedule) Decision {
 			return t.svc.Decide(ctx, s, now, 2*t.tick)
 		})
@@ -113,4 +118,10 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 			return total, err
 		}
 	}
+}
+
+// batchDeadline bounds one batch: batchDeadlineFactor × tick, never less
+// than minBatchDeadline.
+func (t *Ticker) batchDeadline() time.Duration {
+	return max(batchDeadlineFactor*t.tick, minBatchDeadline)
 }
