@@ -118,12 +118,30 @@ func TestRunWorkerAddBundleIsIdempotent(t *testing.T) {
 		t.Fatalf("worker rows after a rerun = %d, want still 1", n)
 	}
 
-	// The registry row is gone: the bundle is useless, enroll again.
+	// Revoked (final review minor 8): the run fails, and says what to do
+	// instead of a bare "worker revoked".
 	admin, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admin.Close()
+	if _, err := admin.Pool().Exec(ctx, `UPDATE workers SET status = 'revoked', revoked_at = now() WHERE zone_id = $1`, zoneID); err != nil {
+		t.Fatal(err)
+	}
+	err = RunWorkerAdd(ctx, cfg, opts, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("a revoked bundle must not be reused")
+	}
+	for _, want := range []string{`"worker-1"`, "revoked", "Workers page", "delete", "docker compose up -d --force-recreate worker-enroll worker"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if cert, _, _ := readBundle(t, dir); !bytes.Equal(cert, certPEM) {
+		t.Fatal("a revoked worker's bundle must stay untouched until its row is deleted")
+	}
+
+	// The registry row is gone: the bundle is useless, enroll again.
 	if _, err := admin.Pool().Exec(ctx, `DELETE FROM workers WHERE zone_id = $1`, zoneID); err != nil {
 		t.Fatal(err)
 	}

@@ -67,10 +67,8 @@ What v0.2 offers for workers today:
   `worker add` command registers it); it reports in on every job claim.
 - Zones are created per organization in the web interface; every
   organization starts with a `default` zone.
-- Listing and revoking workers from the web interface is not available
-  yet (planned). Until then a worker is revoked by an operator removing
-  its registry row from the database; its certificate then stops working
-  immediately.
+- The Workers page (owners and admins) lists every worker and revokes
+  or deletes it. A revoked worker's certificate stops working at once.
 
 A worker only ever claims jobs of the one zone of the one organization it
 was enrolled for.
@@ -84,6 +82,18 @@ remove its bundle and rerun the enrollment:
 docker compose rm -sf worker worker-enroll
 docker volume rm <project>_pulsix-worker-bundle   # e.g. compose_pulsix-worker-bundle
 docker compose up -d
+```
+
+### If the bundled worker was revoked
+
+After the bundled worker is revoked, `worker-enroll` stops with a message
+naming it instead of silently enrolling it again: re-enrolling on its own
+would undo the revocation. To bring it back, delete the revoked worker on
+the Workers page, then recreate both services — the running `worker`
+container still holds the old certificate in memory:
+
+```bash
+docker compose up -d --force-recreate worker-enroll worker
 ```
 
 ## Additional workers

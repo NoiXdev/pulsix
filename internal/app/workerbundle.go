@@ -163,6 +163,14 @@ func bundleReusable(ctx context.Context, dir string, verifier clientVerifier, lo
 	if errors.Is(err, workers.ErrNotFound) {
 		return false, nil
 	}
+	if errors.Is(err, workers.ErrRevoked) {
+		// Re-enrolling on its own would undo the revocation, and the name
+		// is still taken by the revoked row: say how to bring the bundled
+		// worker back instead (final review minor 8). The worker container
+		// keeps its old certificate in memory, so it is recreated too.
+		return false, fmt.Errorf("the worker %q in %s was revoked. To enroll it again, delete it on the Workers page, "+
+			"then run: docker compose up -d --force-recreate worker-enroll worker", identity.WorkerName, dir)
+	}
 	if err != nil {
 		return false, fmt.Errorf("look up bundle worker: %w", err)
 	}
