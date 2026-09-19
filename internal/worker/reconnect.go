@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 
 	"google.golang.org/grpc"
 
@@ -46,16 +45,37 @@ type connGen struct {
 // and stream opened on it has finished (tracked by connGen.inFlight), or
 // at Close (process shutdown) — never on a blind timer, which would cut
 // an ansible run that happened to still be going.
+//
+// The current generation is read and its inFlight count incremented
+// (acquire) under the SAME mutex Redial uses to swap generations, as one
+// step. Without that, a call could read the about-to-be-superseded
+// generation, and Redial's cleanup goroutine could observe its count at
+// zero and start closing it, both before the call's own Add(1) lands —
+// violating sync.WaitGroup's contract that an Add from zero happens
+// before the matching Wait returns, and racing the connection's Close
+// against a call still using it (fix round 3, New Breakage 2 in the
+// second re-review).
 type ReconnectingClient struct {
-	cur atomic.Pointer[connGen]
+	mu  sync.Mutex
+	cur *connGen
 	log *slog.Logger
 }
 
 // NewReconnectingClient wraps conn's client as the current one.
 func NewReconnectingClient(conn *grpc.ClientConn, log *slog.Logger) *ReconnectingClient {
-	rc := &ReconnectingClient{log: log}
-	rc.cur.Store(&connGen{conn: conn, client: workerpb.NewWorkerServiceClient(conn)})
-	return rc
+	return &ReconnectingClient{cur: &connGen{conn: conn, client: workerpb.NewWorkerServiceClient(conn)}, log: log}
+}
+
+// acquire returns the current generation with its in-flight count
+// already incremented for the duration of one call. Every method below
+// calls it instead of reading cur directly — see the type's own doc
+// comment for why the read and the Add must be one atomic step.
+func (r *ReconnectingClient) acquire() *connGen {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	g := r.cur
+	g.inFlight.Add(1)
+	return g
 }
 
 // Redial dials a fresh connection through dial and, on success, moves
@@ -71,7 +91,11 @@ func (r *ReconnectingClient) Redial(ctx context.Context, dial func(ctx context.C
 		r.log.ErrorContext(ctx, "reconnect with the renewed certificate failed; the current connection keeps working until it next cycles (or the manager cycles it via its own MaxConnectionAge)", "err", err)
 		return
 	}
-	old := r.cur.Swap(&connGen{conn: newConn, client: workerpb.NewWorkerServiceClient(newConn)})
+	newGen := &connGen{conn: newConn, client: workerpb.NewWorkerServiceClient(newConn)}
+	r.mu.Lock()
+	old := r.cur
+	r.cur = newGen
+	r.mu.Unlock()
 	r.log.InfoContext(ctx, "reconnected with the renewed certificate")
 	go closeWhenIdle(ctx, old)
 }
@@ -81,7 +105,10 @@ func (r *ReconnectingClient) Redial(ctx context.Context, dial func(ctx context.C
 // *grpc.ClientConn directly, because Redial may have moved "current" to
 // a different one since dial time.
 func (r *ReconnectingClient) Close() error {
-	return r.cur.Load().conn.Close()
+	r.mu.Lock()
+	g := r.cur
+	r.mu.Unlock()
+	return g.conn.Close()
 }
 
 // closeWhenIdle waits for gen's in-flight calls and streams to drain, or
@@ -100,32 +127,26 @@ func closeWhenIdle(ctx context.Context, gen *connGen) {
 	_ = gen.conn.Close()
 }
 
-func (r *ReconnectingClient) gen() *connGen { return r.cur.Load() }
-
 func (r *ReconnectingClient) ClaimJob(ctx context.Context, in *workerpb.ClaimJobRequest, opts ...grpc.CallOption) (*workerpb.ClaimJobResponse, error) {
-	g := r.gen()
-	g.inFlight.Add(1)
+	g := r.acquire()
 	defer g.inFlight.Done()
 	return g.client.ClaimJob(ctx, in, opts...)
 }
 
 func (r *ReconnectingClient) ReportResult(ctx context.Context, in *workerpb.ReportResultRequest, opts ...grpc.CallOption) (*workerpb.ReportResultResponse, error) {
-	g := r.gen()
-	g.inFlight.Add(1)
+	g := r.acquire()
 	defer g.inFlight.Done()
 	return g.client.ReportResult(ctx, in, opts...)
 }
 
 func (r *ReconnectingClient) Enroll(ctx context.Context, in *workerpb.EnrollRequest, opts ...grpc.CallOption) (*workerpb.EnrollResponse, error) {
-	g := r.gen()
-	g.inFlight.Add(1)
+	g := r.acquire()
 	defer g.inFlight.Done()
 	return g.client.Enroll(ctx, in, opts...)
 }
 
 func (r *ReconnectingClient) RenewCertificate(ctx context.Context, in *workerpb.RenewCertificateRequest, opts ...grpc.CallOption) (*workerpb.RenewCertificateResponse, error) {
-	g := r.gen()
-	g.inFlight.Add(1)
+	g := r.acquire()
 	defer g.inFlight.Done()
 	return g.client.RenewCertificate(ctx, in, opts...)
 }
@@ -137,8 +158,7 @@ func (r *ReconnectingClient) RenewCertificate(ctx context.Context, in *workerpb.
 // this call returns, which happens almost immediately while the run
 // keeps streaming for as long as it takes.
 func (r *ReconnectingClient) RunEvents(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[workerpb.RunEvent, workerpb.ManagerDirective], error) {
-	g := r.gen()
-	g.inFlight.Add(1)
+	g := r.acquire()
 	stream, err := g.client.RunEvents(ctx, opts...)
 	if err != nil {
 		g.inFlight.Done()

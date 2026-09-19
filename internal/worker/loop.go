@@ -230,10 +230,13 @@ func (l *Loop) Run(ctx context.Context) error {
 //     MaxConnectionAge), so by the time this fires at all, revocation —
 //     not staleness — is the likely cause; the message leads with that and
 //     names the fix (delete the worker on the Workers page).
-//   - Expired: the certificate itself is the problem, revoked or not
-//     (`workers.Delete` only ever applied to a revoked row anyway, so it
-//     is not a universal fix here) — the message names the actual
-//     recovery, enrolling again.
+//   - Expired: the certificate itself is the problem. Re-enrolling alone
+//     does not recover it under the SAME name: workers.CreateEnrollment
+//     refuses ErrNameTaken for any existing row, revoked or not, so a
+//     name a worker once held stays blocked until that row is revoked
+//     and deleted — the message gives both real recoveries, reusing the
+//     name (revoke, delete, re-enroll with a new token) and the faster
+//     one (skip all that and enroll under a new name).
 //   - Unknown (no Identity given — the embedded worker's short-lived
 //     process, or a caller predating WithIdentity): the generic message
 //     covering every cause at once.
@@ -245,7 +248,8 @@ func (l *Loop) logUnauthenticated(ctx context.Context, backoffDelay time.Duratio
 			"backoff", backoffDelay, "not_after", l.identity.Leaf().NotAfter)
 	case l.identity != nil:
 		l.log.ErrorContext(ctx, "the manager refused this worker's certificate because it has expired; "+
-			"re-enroll with a new token (or a fresh `worker add` bundle) to replace it",
+			"to reuse this name, revoke it and delete it on the Workers page, then re-enroll with a new token — "+
+			"or skip that and simply enroll under a new name",
 			"backoff", backoffDelay, "expired_at", l.identity.Leaf().NotAfter)
 	default:
 		l.log.ErrorContext(ctx, "the manager refused this worker's certificate (revoked, unknown, or expired); "+

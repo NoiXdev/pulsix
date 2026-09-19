@@ -86,8 +86,9 @@ func (r *Renewer) Run(ctx context.Context) {
 // Check can tell an operator exactly what to chown.
 const identityDirRuntimeUID = "65532"
 
-// Check renews when due — unconditionally: it always asks the manager for
-// a fresh certificate and always swaps it into Identity, even when the
+// Check retries any pending write and then renews when due — both
+// unconditionally: renewal always asks the manager for a fresh
+// certificate and always swaps it into Identity, even when the
 // certificate directory turns out to be read-only. A worker whose
 // identity directory it cannot write to must still keep working (a
 // read-only bundle mount is the most common deployment mistake, and
@@ -95,23 +96,30 @@ const identityDirRuntimeUID = "65532"
 // own expiry, restart or not); reusing the same key means only the
 // certificate itself needs to move, and it is safe to keep entirely in
 // memory. Renewal is still driven off the in-memory certificate
-// (NeedsRenewal reads Identity.Leaf), so once this succeeds in memory it
-// is not attempted again for another ~60 days regardless of whether the
-// disk write keeps failing — there is no re-mint-every-6h loop.
+// (NeedsRenewal reads Identity.Leaf), so once a renewal succeeds in
+// memory it is not attempted again for another ~60 days — there is no
+// re-mint-every-6h loop — regardless of whether the disk write keeps
+// failing.
 //
-// A disk write failure is reported with everything an operator needs to
-// act: the directory, the uid that needs write access, when the
-// certificate ON DISK (not the one now in memory) expires, and what
-// happens if nothing is done before then. This runs on every renewal
-// attempt while the directory stays broken, including the very first one
-// at startup (Run calls Check immediately), so the warning appears well
-// before day 90, not just once silently in the log history.
+// A pending write, though, IS retried on every single Check — not just
+// once around the renewal — because an operator who fixes the directory
+// days or weeks after the renewal must not have to wait for the NEXT
+// renewal (~60 days later) before the certificate is ever saved: without
+// this, a restart any time between the on-disk certificate's own expiry
+// and that next renewal would find nothing usable on disk and fail to
+// start. Each retry that still fails logs the same actionable ERROR: the
+// directory, the uid that needs write access, when the certificate ON
+// DISK — read from Identity.DiskExpiry, never the in-memory one, which by
+// then can be a completely different, much-later-expiring certificate —
+// actually expires, and what happens if nothing is done before then. This
+// runs on every check while the directory stays broken, including the
+// very first one at startup (Run calls Check immediately), so the warning
+// appears well before day 90, not just once silently in the log history.
 func (r *Renewer) Check(ctx context.Context) error {
+	r.retryPendingWrite(ctx) // logs its own actionable error; nothing to propagate
 	if !r.id.NeedsRenewal(r.now()) {
 		return nil
 	}
-	dir := r.id.certDir()
-	onDiskExpiry := r.id.Leaf().NotAfter // what is currently persisted, before any swap below
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, r.id.Signer())
 	if err != nil {
 		return fmt.Errorf("create renewal request: %w", err)
@@ -135,12 +143,35 @@ func (r *Renewer) Check(ctx context.Context) error {
 		r.onRenewed(ctx)
 	}
 	if writeErr != nil {
-		r.log.ErrorContext(ctx, "renewed certificate could not be saved to disk; the worker keeps using the new one in memory only",
-			"dir", dir,
-			"fix", "uid "+identityDirRuntimeUID+" needs write access to this directory",
-			"on_disk_certificate_expires_at", onDiskExpiry.Format(time.RFC3339),
-			"consequence", "if the worker restarts before the directory is made writable, it will stop working once that certificate expires",
-			"err", writeErr)
+		r.logPendingWrite(ctx, writeErr)
 	}
 	return nil
+}
+
+// retryPendingWrite retries a certificate left unsaved by an earlier
+// Check, logging the same actionable warning again if it still cannot be
+// saved (or a one-line success once it finally can). A no-op when
+// nothing is pending.
+func (r *Renewer) retryPendingWrite(ctx context.Context) {
+	if !r.id.HasPendingWrite() {
+		return
+	}
+	if err := r.id.PersistPending(); err != nil {
+		r.logPendingWrite(ctx, err)
+		return
+	}
+	r.log.InfoContext(ctx, "previously pending certificate saved to disk")
+}
+
+// logPendingWrite is the actionable ERROR for a certificate that exists
+// only in memory: the directory, the uid that needs write access, the
+// TRUE on-disk expiry and the consequence of a restart before it is
+// fixed.
+func (r *Renewer) logPendingWrite(ctx context.Context, writeErr error) {
+	r.log.ErrorContext(ctx, "a renewed certificate is only in memory; it could not be saved to disk",
+		"dir", r.id.certDir(),
+		"fix", "uid "+identityDirRuntimeUID+" needs write access to this directory",
+		"on_disk_certificate_expires_at", r.id.DiskExpiry().Format(time.RFC3339),
+		"consequence", "if the worker restarts before the directory is made writable, it will stop working once that certificate expires",
+		"err", writeErr)
 }

@@ -131,6 +131,118 @@ func TestRenewerRenewsEvenWithReadOnlyDirectory(t *testing.T) {
 	}
 }
 
+// TestRenewerRetriesPendingWriteEveryCheckUntilDirectoryIsFixed: a
+// renewal that could only be swapped into memory must not be lost once
+// the directory is fixed — the worker must not wait for its next
+// scheduled renewal (~60 days later) to notice. Every Check while a
+// write is pending retries it and logs the same actionable ERROR with
+// the TRUE on-disk expiry (not the in-memory one, which by then is a
+// fresh ~90-day certificate that makes things look fine when they are
+// not). Once the directory is writable, the very next Check — due for a
+// new renewal or not — persists the pending certificate, and a fresh
+// LoadIdentity from disk afterwards sees the new serial (fix round 3,
+// closing New Breakage 1).
+func TestRenewerRetriesPendingWriteEveryCheckUntilDirectoryIsFixed(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1", true)
+	id, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(cfg.CertPath)
+	if err := probeWritable(dir); err != nil {
+		t.Skip("cannot simulate a read-only directory with the current privileges")
+	}
+	onDiskExpiry := id.Leaf().NotAfter
+	before := id.Leaf().SerialNumber
+
+	conn, err := dialIdentity(t.Context(), cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := workerpb.NewWorkerServiceClient(conn)
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	now := id.Leaf().NotAfter.Add(-time.Hour) // due once, for this first Check only
+
+	var logs1 bytes.Buffer
+	r1 := NewRenewer(client, id, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(&logs1, nil)))
+	if err := r1.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	newSerial := id.Leaf().SerialNumber
+	if newSerial.Cmp(before) == 0 {
+		t.Fatal("the certificate must be renewed in memory")
+	}
+	if !strings.Contains(logs1.String(), onDiskExpiry.Format(time.RFC3339)) {
+		t.Fatalf("the first check's warning must name the true on-disk expiry:\n%s", logs1.String())
+	}
+
+	// A second check, at a realistic "now" the fresh in-memory certificate
+	// is nowhere near due at (unlike the fixed, far-future "now" used to
+	// force the first renewal, which would look due against ANY
+	// freshly-issued 90-day certificate too, real time having barely
+	// moved during the test) — must still retry the write and still warn,
+	// with the SAME on-disk expiry as before (nothing has been saved
+	// yet), not the in-memory one's ~90-days-out expiry.
+	var logs2 bytes.Buffer
+	r2 := NewRenewer(client, id, time.Now, nil, slog.New(slog.NewTextHandler(&logs2, nil)))
+	if err := r2.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if id.Leaf().SerialNumber.Cmp(newSerial) != 0 {
+		t.Fatal("a retry-only check must not mint another certificate")
+	}
+	if !strings.Contains(logs2.String(), onDiskExpiry.Format(time.RFC3339)) {
+		t.Fatalf("every check while a write is pending must warn with the true on-disk expiry:\n%s", logs2.String())
+	}
+	// DiskExpiry must keep tracking the file that is ACTUALLY on disk
+	// (still the original, pre-renewal one) — otherwise the warning would
+	// eventually claim far more time is left than a restart would
+	// actually find. (Not compared against Leaf().NotAfter directly: two
+	// certificates minted less than a second apart, as these are, encode
+	// to the identical whole-second X.509 validity timestamp, so that
+	// comparison would not reliably distinguish anything here — DiskExpiry
+	// matching the true captured on-disk value is the meaningful proof.)
+	if !id.DiskExpiry().Equal(onDiskExpiry) {
+		t.Fatalf("DiskExpiry = %s, want the original on-disk expiry %s", id.DiskExpiry(), onDiskExpiry)
+	}
+
+	// Fix the directory: the next check, even though no new renewal is
+	// due, must persist the pending certificate.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r3 := NewRenewer(client, id, time.Now, nil, quiet())
+	if err := r3.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	onDisk, err := os.ReadFile(cfg.CertPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDiskLeaf, err := ca.ParseLeaf(onDisk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onDiskLeaf.SerialNumber.Cmp(newSerial) != 0 {
+		t.Fatal("the pending certificate must be persisted once the directory is writable again")
+	}
+	reloaded, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Leaf().SerialNumber.Cmp(newSerial) != 0 {
+		t.Fatal("a fresh LoadIdentity from disk must see the new serial")
+	}
+}
+
 // TestIdentityReplaceSwapsInMemoryEvenWhenDiskWriteFails: when a renewed
 // certificate cannot be written to disk (a race after Check's own probe,
 // or a caller that skipped it), Replace must still swap it into memory —

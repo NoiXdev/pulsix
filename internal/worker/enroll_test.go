@@ -186,3 +186,29 @@ func TestEnsureIdentityClassifiesServerRefusals(t *testing.T) {
 		t.Fatalf("a spent token must not be reported as unreachable: %v", err)
 	}
 }
+
+// TestIsEnrollUnreachableNarrowlyMatchesPinFailures: fix round 3, New
+// Breakage 3. "authentication handshake failed" is grpc-go's generic
+// prefix for EVERY TLS handshake error, not just a pin mismatch — a
+// transient one (an EOF or reset while the manager is still starting up
+// behind, say, Docker's userland proxy, which accepts TCP on a published
+// port before the real listener is ready) carries that same prefix. Only
+// pin.go's own specific wording may classify a handshake failure as a
+// non-transient refusal; anything else with that prefix must still count
+// as unreachable, or a transient failure gets misdiagnosed as "the
+// manager refused enrollment" (exit 2) instead of retried (exit 1).
+func TestIsEnrollUnreachableNarrowlyMatchesPinFailures(t *testing.T) {
+	pinMismatch := errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: the manager's CA does not match the fingerprint in the enrollment token"`)
+	if isEnrollUnreachable(pinMismatch) {
+		t.Fatalf("a genuine pin mismatch must not be reported as unreachable: %v", pinMismatch)
+	}
+
+	transient := errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: EOF"`)
+	if !isEnrollUnreachable(transient) {
+		t.Fatalf("a transient handshake failure unrelated to pinning must be reported as unreachable: %v", transient)
+	}
+	reset := errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: read tcp 127.0.0.1:5555->127.0.0.1:8444: read: connection reset by peer"`)
+	if !isEnrollUnreachable(reset) {
+		t.Fatalf("a connection reset during the handshake must be reported as unreachable: %v", reset)
+	}
+}

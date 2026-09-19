@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -157,4 +158,75 @@ func TestReconnectingClientKeepsAnOpenStreamAcrossRedial(t *testing.T) {
 		_, err := workerpb.NewWorkerServiceClient(connA).ClaimJob(context.Background(), &workerpb.ClaimJobRequest{Version: "dev"})
 		return err != nil // connA is closed once the stream truly ended, not before
 	})
+}
+
+// TestReconnectingClientRaceStress: concurrent callers hammering every
+// method while Redial fires repeatedly underneath them, run under -race
+// (and normally with -count=20 in CI for this package, per the fix round
+// 3 report). It asserts nothing about outcomes — RunEvents opened with no
+// legitimate claim is expected to error immediately, same as some
+// ClaimJob/ReportResult/RenewCertificate calls landing between redials —
+// the only thing under test is that acquire() (the current generation
+// plus its inFlight.Add) can never race Redial's swap and the resulting
+// closeWhenIdle's Wait/Close: no data race, and no `sync: WaitGroup
+// misuse` panic (fix round 3, closing the New Breakage 2 race).
+func TestReconnectingClientRaceStress(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1", true)
+	id, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := dialIdentity(t.Context(), cfg, id, []grpc.DialOption{h.bufconnDialer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewReconnectingClient(conn, quiet())
+	t.Cleanup(func() { _ = rc.Close() })
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	caller := func(call func()) {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			call()
+		}
+	}
+
+	wg.Add(4)
+	go caller(func() {
+		_, _ = rc.ClaimJob(context.Background(), &workerpb.ClaimJobRequest{Version: "dev"})
+	})
+	go caller(func() {
+		_, _ = rc.ReportResult(context.Background(), &workerpb.ReportResultRequest{JobId: uuid.Must(uuid.NewV7()).String(), Status: "succeeded"})
+	})
+	go caller(func() {
+		_, _ = rc.RenewCertificate(context.Background(), &workerpb.RenewCertificateRequest{})
+	})
+	go caller(func() {
+		stream, err := rc.RunEvents(context.Background())
+		if err != nil {
+			return
+		}
+		_ = stream.CloseSend()
+		for {
+			if _, err := stream.Recv(); err != nil {
+				return
+			}
+		}
+	})
+
+	for i := 0; i < 200; i++ {
+		rc.Redial(context.Background(), func(ctx context.Context) (*grpc.ClientConn, error) {
+			return dialIdentity(ctx, cfg, id, []grpc.DialOption{h.bufconnDialer()})
+		})
+	}
+	close(stop)
+	wg.Wait()
 }

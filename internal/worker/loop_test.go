@@ -1159,11 +1159,22 @@ func TestLoopUnauthenticatedLogDependsOnIdentityValidity(t *testing.T) {
 		t.Fatalf("the revoked diagnosis must point at deleting the worker on the Workers page:\n%s", valid)
 	}
 
+	// fix round 3: "re-enroll with a new token" alone does not work under
+	// the SAME name — CreateEnrollment refuses ErrNameTaken for any
+	// existing row, revoked or not — so the message must give a recovery
+	// that actually works: revoke and delete the worker first (to free
+	// the name), or enroll under a different name instead.
 	expired := run(t, id.Leaf().NotAfter.Add(time.Hour))
 	if !strings.Contains(expired, "expired") {
 		t.Fatalf("an actually-expired certificate must be named as such, not diagnosed as revoked:\n%s", expired)
 	}
-	if !strings.Contains(expired, "re-enroll") {
-		t.Fatalf("an expired certificate must name the recovery (re-enroll with a new token):\n%s", expired)
+	if !strings.Contains(expired, "revoke") || !strings.Contains(expired, "delete") {
+		t.Fatalf("the expired recovery must say to revoke and delete the worker before reusing its name:\n%s", expired)
+	}
+	if !strings.Contains(expired, "new token") {
+		t.Fatalf("the expired recovery must name re-enrolling with a new token:\n%s", expired)
+	}
+	if !strings.Contains(expired, "new name") {
+		t.Fatalf("the expired recovery must also offer enrolling under a new name as the immediate alternative:\n%s", expired)
 	}
 }

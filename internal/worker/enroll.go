@@ -160,11 +160,19 @@ func ensureIdentity(ctx context.Context, cfg Config, log *slog.Logger, now func(
 // VerifyPeerCertificate callback (pin.go) fails the handshake itself, and
 // grpc-go reports that as a transport error, usually coded Unavailable —
 // indistinguishable BY CODE from a real "manager unreachable". It is
-// still distinguishable by message, because pin.go's own errors are the
-// only thing that can appear there, so their text is checked first.
+// still distinguishable by message: pin.go's own three error strings
+// ("… to pin against", "… the fingerprint …", "… the pinned CA …") are
+// matched exactly, and ONLY those — grpc-go's own
+// "authentication handshake failed" prefix is generic to every TLS
+// handshake failure, including a transient one (an EOF or a connection
+// reset while the manager is still starting up, for example behind
+// Docker's userland proxy, which accepts TCP on a published port before
+// the real listener is ready), so matching that prefix alone would
+// misclassify those as a non-transient refusal too (fix round 3, New
+// Breakage 3 in the second re-review).
 func isEnrollUnreachable(err error) bool {
 	msg := err.Error()
-	for _, s := range []string{"pinned CA", "fingerprint", "authentication handshake failed"} {
+	for _, s := range []string{"pinned CA", "fingerprint", "to pin against"} {
 		if strings.Contains(msg, s) {
 			return false
 		}
