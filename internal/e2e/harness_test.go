@@ -359,6 +359,12 @@ func runGitUploadPack(sess glssh.Session, bare string) {
 // Task 9 fixture pattern; the outcome reads exactly the extra vars the
 // template set, so the retry path's var flip drives it end to end.
 //
+// An extra var named block_until, when set, names a file the fake polls
+// for right after the first event: the run blocks there until the file
+// appears (or 30s pass, a safety net), which is what the stream-cut gate
+// (automation_test.go) uses to keep a job's RunEvents stream open and
+// claimed while it revokes the worker mid-run.
+//
 // Before emitting anything it opens ONE real SSH connection to the run's
 // host the way ansible's ssh connection plugin does — ANSIBLE_SSH_ARGS
 // first, then port, identity file and user, then the host's
@@ -372,7 +378,7 @@ func writeFakeRunner(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "ansible-runner")
 	script := `#!/usr/bin/env python3
 # FAKE ansible-runner (test fixture). Emits a deterministic event stream.
-import json, os, shlex, subprocess, sys
+import json, os, shlex, subprocess, sys, time
 
 workdir = sys.argv[2]
 doc = json.loads(subprocess.run([os.path.join(workdir, "inventory")], capture_output=True, check=True).stdout)
@@ -411,6 +417,16 @@ cmd += shlex.split(effective("ansible_ssh_extra_args"))
 cmd += [hv.get("ansible_host", host), "true"]
 
 emit("playbook_on_start", {}, "PLAY [all]")
+
+block_until = extravars.get("block_until")
+if block_until:
+    deadline = time.time() + 30
+    while not os.path.exists(block_until):
+        if time.time() > deadline:
+            sys.stderr.write("block_until: %s never appeared\n" % block_until)
+            sys.exit(3)
+        time.sleep(0.05)
+
 ssh = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 if ssh.returncode != 0:
     msg = (ssh.stderr or "").strip().splitlines()

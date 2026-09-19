@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,12 @@ type (
 	}
 	hookOut struct {
 		RunID string `json:"run_id"`
+	}
+	triggerDeliveriesOut struct {
+		Deliveries []struct {
+			Outcome    string `json:"outcome"`
+			JobGroupID string `json:"job_group_id,omitempty"`
+		} `json:"deliveries"`
 	}
 )
 
@@ -197,10 +204,36 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	if hooked.Job.Status != "succeeded" {
 		s.t.Fatalf("webhook run = %q (error %q)%s", hooked.Job.Status, hooked.Job.Error, s.runnerOutput())
 	}
+	// The delivery itself is recorded as triggered, against the same job —
+	// checked before the wrong-signature call below adds a second (rejected)
+	// delivery row.
+	var deliveries triggerDeliveriesOut
+	s.get(prefix+"/triggers/"+trig.Trigger.ID+"/deliveries", &deliveries)
+	if len(deliveries.Deliveries) != 1 || deliveries.Deliveries[0].Outcome != "triggered" || deliveries.Deliveries[0].JobGroupID == "" {
+		s.t.Fatalf("deliveries = %+v, want one triggered delivery with a job group", deliveries.Deliveries)
+	}
+	var hookedGroup jobListOut
+	s.get(prefix+"/jobs?group="+deliveries.Deliveries[0].JobGroupID, &hookedGroup)
+	if len(hookedGroup.Jobs) != 1 || hookedGroup.Jobs[0].ID != runID {
+		s.t.Fatalf("delivery's job group = %+v, want exactly the webhook's own run %s", hookedGroup.Jobs, runID)
+	}
 	// A wrong signature answers the same uniform 404 as an unknown id.
 	if code := s.postHookStatus(trig.URL, "sha256="+strings.Repeat("0", 64), []byte(`{}`)); code != http.StatusNotFound {
 		s.t.Fatalf("hook with a wrong signature = %d, want 404", code)
 	}
+
+	// --- A job still running when revoke fires --------------------------------
+	// The fake runner emits its first event and then blocks on blockFile, so
+	// the job stays claimed and its RunEvents stream stays open right up to
+	// the revoke call below — the production case StreamRegistry's cut-off
+	// exists for (global-constraints.md: "ends the worker's open RunEvents
+	// streams with Unauthenticated").
+	blockFile := filepath.Join(s.t.TempDir(), "release")
+	blockTID := s.createTemplate("hello-blocked", s.helloPB, map[string]any{"greeting": s.greeting, "block_until": blockFile})
+	blockedID := s.runTemplate(blockTID)
+	s.awaitJobRunning(blockedID, 30*time.Second)
+	live := s.awaitEvents(blockedID, 30*time.Second, func(e jobEventsOut) bool { return len(e.Events) > 0 })
+	liveEventCount := len(live.Events)
 
 	// --- Revocation ------------------------------------------------------------
 	var revoked struct {
@@ -212,19 +245,49 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	if revoked.Worker.Status != "revoked" {
 		s.t.Fatalf("revoked worker status = %q", revoked.Worker.Status)
 	}
+	// The job it was still running is handed back to the queue — the
+	// revoke's own synchronous requeue, well under the retry ceiling on its
+	// first attempt.
+	var blocked jobDetailOut
+	s.get(prefix+"/jobs/"+blockedID, &blocked)
+	if blocked.Job.Status != "queued" || !strings.Contains(blocked.Job.Error, "worker revoked") {
+		s.t.Fatalf("blocked job right after revoke = %q (error %q), want queued, mentioning worker revoked", blocked.Job.Status, blocked.Job.Error)
+	}
 	// Its identity no longer authenticates: a direct claim is refused.
 	conn, err := worker.Dial(ctx, s.workerCfg)
 	if err != nil {
 		s.t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
-	_, err = workerpb.NewWorkerServiceClient(conn).ClaimJob(ctx, &workerpb.ClaimJobRequest{Version: "e2e", ZoneIds: []string{s.zoneID}})
+	client := workerpb.NewWorkerServiceClient(conn)
+	_, err = client.ClaimJob(ctx, &workerpb.ClaimJobRequest{Version: "e2e", ZoneIds: []string{s.zoneID}})
 	if status.Code(err) != codes.Unauthenticated {
 		s.t.Fatalf("claim with a revoked certificate = %v, want Unauthenticated", err)
 	}
+	// Nor does reporting a result: the interceptor authenticates the
+	// certificate before any handler runs, so a revoked worker's later
+	// result report — even for the job it was just running — is refused
+	// exactly the same way.
+	_, err = client.ReportResult(ctx, &workerpb.ReportResultRequest{JobId: blockedID, Status: "succeeded"})
+	if status.Code(err) != codes.Unauthenticated {
+		s.t.Fatalf("report result with a revoked certificate = %v, want Unauthenticated", err)
+	}
+	// Releasing the still-blocked runner lets it try to carry on streaming —
+	// exactly what the cut-off above should already have ended: no further
+	// events for this job ever land.
+	if err := os.WriteFile(blockFile, nil, 0o600); err != nil {
+		s.t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second) // well past the fake runner's sub-second post-release work
+	var afterCut jobEventsOut
+	s.get(prefix+"/jobs/"+blockedID+"/events?after=0", &afterCut)
+	if len(afterCut.Events) != liveEventCount {
+		s.t.Fatalf("job %s events after the cut stream released = %d, want unchanged from %d", blockedID, len(afterCut.Events), liveEventCount)
+	}
+
 	// With the zone's only worker revoked, a new run stays queued.
 	queuedID := s.runTemplate(s.helloTID)
-	time.Sleep(2 * time.Second) // twenty claim intervals of the (refused) loop
+	time.Sleep(2 * time.Second) // ten claim intervals of the (refused) loop
 	var queued jobDetailOut
 	s.get(prefix+"/jobs/"+queuedID, &queued)
 	if queued.Job.Status != "queued" {
@@ -235,6 +298,28 @@ func (s *scenario) automate(ctx context.Context, clock *fakeClock) {
 	s.get(prefix+"/workers", &list)
 	if len(list.Workers) != 0 {
 		s.t.Fatalf("workers after delete = %+v, want none", list.Workers)
+	}
+}
+
+// awaitJobRunning polls until the job is claimed and running — the point at
+// which its RunEvents stream is open — failing fast on a terminal status
+// reached before that, or on the timeout.
+func (s *scenario) awaitJobRunning(id string, timeout time.Duration) {
+	s.t.Helper()
+	path := "/api/v1/" + s.apiPath() + "/jobs/" + id
+	deadline := time.Now().Add(timeout)
+	for {
+		var out jobDetailOut
+		s.get(path, &out)
+		switch {
+		case out.Job.Status == "running":
+			return
+		case isTerminal(out.Job.Status):
+			s.t.Fatalf("job %s reached %q before it was ever running", id, out.Job.Status)
+		case time.Now().After(deadline):
+			s.t.Fatalf("job %s did not start running in %s; last status %q", id, timeout, out.Job.Status)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

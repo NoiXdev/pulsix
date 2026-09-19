@@ -180,6 +180,11 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, 
 		GRPCPublicAddr: "localhost:" + portOf(grpcLis.Addr().String()),
 		RetestInterval: 24 * time.Hour,
 		ScheduleTick:   w.scheduleTick,
+		// The revoke-time requeue (unlike the reaper) applies this as given,
+		// with no <=0 fallback of its own — config.Load always supplies the
+		// production default, so match it here rather than requeue on 0
+		// attempts allowed.
+		JobMaxAttempts: config.DefaultJobMaxAttempts,
 		Version:        "e2e",
 	}
 	a, err := app.Build(ctx, cfg, w.opts...)
