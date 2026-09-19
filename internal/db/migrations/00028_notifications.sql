@@ -37,7 +37,8 @@ CREATE TABLE notification_deliveries (
   org_id          uuid NOT NULL,
   channel_id      uuid NOT NULL,
   event_key       text NOT NULL,
-  event_kind      text NOT NULL,
+  event_kind      text NOT NULL CONSTRAINT notification_deliveries_event_kind_check
+                    CHECK (event_kind IN ('run.finished', 'schedule.skipped', 'schedule.failed', 'digest.weekly', 'test')),
   payload         jsonb NOT NULL,
   status          text NOT NULL CONSTRAINT notification_deliveries_status_check
                     CHECK (status IN ('pending', 'sent', 'failed')),

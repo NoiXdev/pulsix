@@ -13,6 +13,7 @@ import (
 const (
 	maxNameRunes      = 100
 	maxRecipients     = 20
+	maxAddressBytes   = 254 // RFC 5321 §4.5.3.1.3
 	maxURLLength      = 2048
 	maxHeaders        = 20
 	maxHeaderValue    = 4096
@@ -63,8 +64,8 @@ func normalizeEmail(in *EmailConfig) (EmailConfig, error) {
 	for _, raw := range in.Recipients {
 		r := strings.TrimSpace(raw)
 		addr, err := mail.ParseAddress(r)
-		if err != nil || addr.Name != "" || addr.Address != r {
-			return EmailConfig{}, fmt.Errorf("%w: %q is not a plain e-mail address", ErrInvalidInput, r)
+		if err != nil || addr.Name != "" || addr.Address != r || len(r) > maxAddressBytes {
+			return EmailConfig{}, fmt.Errorf("%w: %q is not a plain e-mail address of at most %d characters", ErrInvalidInput, r, maxAddressBytes)
 		}
 		key := strings.ToLower(r)
 		if !seen[key] {
@@ -120,10 +121,33 @@ func checkHeader(name string, value *string) error {
 	if reservedHeader(lower) || strings.HasPrefix(lower, "x-pulsix-") {
 		return fmt.Errorf("%w: header %s is set by Pulsix and cannot be configured", ErrInvalidInput, name)
 	}
-	if value != nil && (len(*value) > maxHeaderValue || strings.ContainsAny(*value, "\r\n")) {
-		return fmt.Errorf("%w: the value of header %s must be one line of at most %d characters", ErrInvalidInput, name, maxHeaderValue)
+	if value != nil {
+		if len(*value) > maxHeaderValue {
+			return fmt.Errorf("%w: the value of header %s must be one line of at most %d characters", ErrInvalidInput, name, maxHeaderValue)
+		}
+		if !validHeaderValue(*value) {
+			return fmt.Errorf("%w: the value of header %s must be one line of printable characters", ErrInvalidInput, name)
+		}
 	}
 	return nil
+}
+
+// validHeaderValue reports whether every byte of v is safe to send as an
+// HTTP header field value: visible ASCII and space/tab, never a control
+// character (which includes CR and LF — no header splitting) or DEL. This
+// is the rule net/http's transport enforces at send time (httpguts); a
+// value that fails it is refused here instead of failing at delivery.
+func validHeaderValue(v string) bool {
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '\t' {
+			continue
+		}
+		if c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func checkSigningSecret(secret string) error {

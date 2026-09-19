@@ -1,84 +1,45 @@
 package notify
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// maxBodyBytes bounds a rendered webhook body.
+// maxBodyBytes bounds a rendered webhook body: the default JSON body and
+// a placeholder-rendered one alike.
 const maxBodyBytes = 64 << 10
 
 var errBodyTooLarge = errors.New("the rendered body exceeds 64 KiB")
 
-// limitedBuffer refuses to grow past maxBodyBytes, so a template cannot
-// build an unbounded body.
-type limitedBuffer struct{ bytes.Buffer }
-
-func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > maxBodyBytes {
-		return 0, errBodyTooLarge
-	}
-	return b.Buffer.Write(p)
-}
-
-// templateFuncs are the helpers a body template may call: json renders a
-// value as JSON (a string becomes a quoted, escaped JSON string), so
-// `{"text": {{json .Schedule.Name}}}` stays valid JSON whatever the name.
-func templateFuncs() template.FuncMap {
-	return template.FuncMap{
-		"json": func(v any) (string, error) {
-			b, err := json.Marshal(v)
-			return string(b), err
-		},
-	}
-}
-
-func parseBodyTemplate(tmpl string) (*template.Template, error) {
-	return template.New("body").Funcs(templateFuncs()).Option("missingkey=error").Parse(tmpl)
-}
-
 // renderWebhookBody renders a webhook body: the event's JSON when tmpl is
-// empty, the template over the event otherwise.
+// empty, the parsed placeholder template over the event otherwise. See
+// placeholders.go for the template syntax and its bounds.
 func renderWebhookBody(tmpl string, ev Event) ([]byte, error) {
 	if tmpl == "" {
-		return json.Marshal(ev)
+		body, err := json.Marshal(ev)
+		if err != nil {
+			return nil, fmt.Errorf("marshal event: %w", err)
+		}
+		if len(body) > maxBodyBytes {
+			return nil, errBodyTooLarge
+		}
+		return body, nil
 	}
-	t, err := parseBodyTemplate(tmpl)
+	parts, err := parseBodyTemplate(tmpl)
 	if err != nil {
-		return nil, fmt.Errorf("parse body template: %w", err)
+		return nil, err
 	}
-	var buf limitedBuffer
-	if err := t.Execute(&buf, ev); err != nil {
-		return nil, fmt.Errorf("render body template: %w", err)
-	}
-	return buf.Bytes(), nil
-}
-
-// checkBodyTemplate validates a body template at save time: it must parse
-// and render against a fully populated sample event, so a misspelled
-// field fails now, not on the first real message.
-func checkBodyTemplate(tmpl string) error {
-	if tmpl == "" {
-		return nil
-	}
-	if len(tmpl) > maxTemplateLength {
-		return fmt.Errorf("%w: the body template must be at most %d bytes", ErrInvalidInput, maxTemplateLength)
-	}
-	if _, err := renderWebhookBody(tmpl, sampleEvent()); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
-	}
-	return nil
+	return renderParts(parts, ev)
 }
 
 // sampleEvent fills every section with example values: templates are
-// validated against it and "Send test" sends it (as kind test).
+// validated against it (per-kind cut-downs in placeholders.go) and "Send
+// test" sends it (as kind test).
 func sampleEvent() Event {
 	started := time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC)
 	finished := started.Add(4*time.Minute + 12*time.Second)

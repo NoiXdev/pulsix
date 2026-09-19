@@ -18,6 +18,7 @@ func TestNormalizeEmail(t *testing.T) {
 		{Recipients: []string{"Ops <ops@example.test>"}},
 		{Recipients: []string{"ops@example.test\r\nBcc: x@example.test"}},
 		{Recipients: strings.Split(strings.Repeat("a@example.test,", 21), ",")[:21]},
+		{Recipients: []string{strings.Repeat("a", 250) + "@example.test"}},
 	}
 	for _, in := range bad {
 		if _, err := normalizeEmail(in); !errors.Is(err, ErrInvalidInput) {
@@ -70,12 +71,14 @@ func TestCheckHeader(t *testing.T) {
 	}
 	long := strings.Repeat("a", maxHeaderValue+1)
 	crlf := "a\r\nX-Evil: 1"
+	nul := "a\x00b"
+	del := "a\x7fb"
 	cases := []struct {
 		name  string
 		value *string
 	}{
 		{"Bad Name", nil}, {"Host", nil}, {"content-length", nil}, {"X-Pulsix-Signature-256", nil},
-		{"X-Long", &long}, {"X-Split", &crlf},
+		{"X-Long", &long}, {"X-Split", &crlf}, {"X-Nul", &nul}, {"X-Del", &del},
 	}
 	for _, c := range cases {
 		if err := checkHeader(c.name, c.value); !errors.Is(err, ErrInvalidInput) {

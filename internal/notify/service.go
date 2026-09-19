@@ -222,24 +222,37 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 		}
 		out.Headers = append(out.Headers, sh)
 	}
-	if err := checkBodyTemplate(in.BodyTemplate); err != nil {
+	if err := checkBodyTemplate(in.BodyTemplate, isJSONContentType(in.Headers)); err != nil {
 		return out, err
 	}
 	out.BodyTemplate = in.BodyTemplate
-	if in.Signed {
-		switch {
-		case in.SigningSecret != nil:
-			if err := checkSigningSecret(*in.SigningSecret); err != nil {
-				return out, err
-			}
-			if out.SigningSealed, err = s.d.Box.SealAAD([]byte(*in.SigningSecret), aad); err != nil {
-				return out, fmt.Errorf("seal signing secret: %w", err)
-			}
-		case len(stored.SigningSealed) > 0:
-			out.SigningSealed = stored.SigningSealed
-		default:
-			return out, fmt.Errorf("%w: signed requests need a signing secret", ErrInvalidInput)
+	switch {
+	case in.Signed && in.SigningSecret != nil:
+		if err := checkSigningSecret(*in.SigningSecret); err != nil {
+			return out, err
 		}
+		if out.SigningSealed, err = s.d.Box.SealAAD([]byte(*in.SigningSecret), aad); err != nil {
+			return out, fmt.Errorf("seal signing secret: %w", err)
+		}
+	case in.Signed && len(stored.SigningSealed) > 0:
+		out.SigningSealed = stored.SigningSealed
+	case in.Signed:
+		return out, fmt.Errorf("%w: signed requests need a signing secret", ErrInvalidInput)
+	case in.SigningSecret != nil:
+		return out, fmt.Errorf("%w: a signing secret was given but signed is false", ErrInvalidInput)
 	}
 	return out, nil
+}
+
+// isJSONContentType reports whether this request explicitly sets a
+// Content-Type header naming a JSON media type. A kept header (no value
+// in this request) is not consulted, because its plaintext is sealed and
+// the service only reads it when the caller supplies it fresh.
+func isJSONContentType(headers []HeaderInput) bool {
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, "Content-Type") && h.Value != nil {
+			return strings.Contains(strings.ToLower(*h.Value), "json")
+		}
+	}
+	return false
 }

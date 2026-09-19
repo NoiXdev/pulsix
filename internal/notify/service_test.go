@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -143,7 +144,7 @@ func webhookInput(name string) notify.Input {
 	return notify.Input{Kind: notify.KindWebhook, Name: name, Enabled: true, Webhook: &notify.WebhookInput{
 		URL:           str("https://hooks.example.test/services/T0/B0/xyz"),
 		Headers:       []notify.HeaderInput{{Name: "Authorization", Value: str("Bearer t0ken")}},
-		BodyTemplate:  `{"text": {{json .Schedule.Name}}}`,
+		BodyTemplate:  `{"text": {{ schedule.name | json }}}`,
 		Signed:        true,
 		SigningSecret: str("0123456789abcdef0123"),
 	}}
@@ -195,12 +196,29 @@ func TestCreateWebhookChannelSealsEverySecret(t *testing.T) {
 	}
 }
 
+// sealedWebhookConfig mirrors the JSON shape of the package-private
+// webhookConfig, so a black-box test can open the values a kept secret
+// round-trips to instead of trusting the display fields alone.
+type sealedWebhookConfig struct {
+	URLSealed []byte `json:"url_sealed"`
+	Headers   []struct {
+		Name        string `json:"name"`
+		ValueSealed []byte `json:"value_sealed"`
+	} `json:"headers"`
+	SigningSealed []byte `json:"signing_sealed"`
+}
+
 func TestUpdateWebhookKeepsSecretsLeftOut(t *testing.T) {
 	w := newWorld(t)
 	c, err := w.svc.CreateChannel(ctx, w.org, w.actor, webhookInput("ops hook"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	var created sealedWebhookConfig
+	if err := json.Unmarshal(c.Config, &created); err != nil {
+		t.Fatal(err)
+	}
+
 	in := webhookInput("ops hook renamed")
 	in.Webhook.URL, in.Webhook.SigningSecret = nil, nil
 	in.Webhook.Headers = []notify.HeaderInput{{Name: "authorization"}}
@@ -215,8 +233,39 @@ func TestUpdateWebhookKeepsSecretsLeftOut(t *testing.T) {
 	if !hook.Signed || hook.HeaderNames[0] != "authorization" || up.Name != "ops hook renamed" {
 		t.Fatalf("updated view = %+v", hook)
 	}
-	// A new header without a value, signing without any secret, a kind
-	// change and a stale revision are refused.
+
+	// The kept secrets are not just display-equal: they are the exact
+	// same sealed bytes as at creation, and open to the original
+	// plaintext under the channel's AAD (review Minor 2 — a regression
+	// that kept the display but dropped a sealed value must fail this).
+	var kept sealedWebhookConfig
+	if err := json.Unmarshal(up.Config, &kept); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(kept.URLSealed, created.URLSealed) {
+		t.Fatalf("url_sealed changed on an update that left the url out")
+	}
+	if !bytes.Equal(kept.SigningSealed, created.SigningSealed) {
+		t.Fatalf("signing_sealed changed on an update that left the secret out")
+	}
+	var keptHeaderSealed []byte
+	for _, h := range kept.Headers {
+		if strings.EqualFold(h.Name, "authorization") {
+			keptHeaderSealed = h.ValueSealed
+		}
+	}
+	if url, err := (fakeBox{}).OpenAAD(kept.URLSealed, notify.AAD(w.org, c.ID)); err != nil || string(url) != "https://hooks.example.test/services/T0/B0/xyz" {
+		t.Fatalf("kept url = %q, %v", url, err)
+	}
+	if val, err := (fakeBox{}).OpenAAD(keptHeaderSealed, notify.AAD(w.org, c.ID)); err != nil || string(val) != "Bearer t0ken" {
+		t.Fatalf("kept header value = %q, %v", val, err)
+	}
+	if secret, err := (fakeBox{}).OpenAAD(kept.SigningSealed, notify.AAD(w.org, c.ID)); err != nil || string(secret) != "0123456789abcdef0123" {
+		t.Fatalf("kept signing secret = %q, %v", secret, err)
+	}
+
+	// A new header without a value, a kind change and a stale revision
+	// are refused.
 	in.Webhook.Headers = []notify.HeaderInput{{Name: "X-New"}}
 	if _, err := w.svc.UpdateChannel(ctx, w.org, c.ID, up.Revision, in); !errors.Is(err, notify.ErrInvalidInput) {
 		t.Fatalf("header without value = %v", err)
@@ -227,6 +276,21 @@ func TestUpdateWebhookKeepsSecretsLeftOut(t *testing.T) {
 	}
 	if _, err := w.svc.UpdateChannel(ctx, w.org, c.ID, c.Revision, webhookInput("x")); !errors.Is(err, notify.ErrRevisionMismatch) {
 		t.Fatalf("stale revision = %v", err)
+	}
+
+	// Signing without any secret is refused: an unsigned channel turning
+	// signing on must supply one, keeping is not an option because there
+	// is nothing stored to keep.
+	unsigned := webhookInput("plain hook")
+	unsigned.Webhook.Signed, unsigned.Webhook.SigningSecret = false, nil
+	plain, err := w.svc.CreateChannel(ctx, w.org, w.actor, unsigned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := webhookInput("plain hook")
+	sign.Webhook.SigningSecret = nil
+	if _, err := w.svc.UpdateChannel(ctx, w.org, plain.ID, plain.Revision, sign); !errors.Is(err, notify.ErrInvalidInput) {
+		t.Fatalf("signing without any secret = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -241,13 +305,14 @@ func TestWebhookInputRefusals(t *testing.T) {
 		"reserved header": func(in *notify.Input) {
 			in.Webhook.Headers = []notify.HeaderInput{{Name: "X-Pulsix-Event", Value: str("x")}}
 		},
-		"broken template":    func(in *notify.Input) { in.Webhook.BodyTemplate = "{{.Nope}}" },
-		"signed, no secret":  func(in *notify.Input) { in.Webhook.SigningSecret = nil },
-		"short secret":       func(in *notify.Input) { in.Webhook.SigningSecret = str("short") },
-		"email settings too": func(in *notify.Input) { in.Email = &notify.EmailConfig{} },
-		"bad method":         func(in *notify.Input) { in.Webhook.Method = "DELETE" },
-		"bad name":           func(in *notify.Input) { in.Name = " " },
-		"unknown kind":       func(in *notify.Input) { in.Kind = "sms" },
+		"broken template":     func(in *notify.Input) { in.Webhook.BodyTemplate = "{{ nope }}" },
+		"signed, no secret":   func(in *notify.Input) { in.Webhook.SigningSecret = nil },
+		"unsigned but secret": func(in *notify.Input) { in.Webhook.Signed = false },
+		"short secret":        func(in *notify.Input) { in.Webhook.SigningSecret = str("short") },
+		"email settings too":  func(in *notify.Input) { in.Email = &notify.EmailConfig{} },
+		"bad method":          func(in *notify.Input) { in.Webhook.Method = "DELETE" },
+		"bad name":            func(in *notify.Input) { in.Name = " " },
+		"unknown kind":        func(in *notify.Input) { in.Kind = "sms" },
 	}
 	for name, mutate := range cases {
 		in := webhookInput("hook " + name)
