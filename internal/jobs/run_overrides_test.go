@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -235,5 +236,53 @@ func TestBuildPayloadRefusesUntrustedFileLimit(t *testing.T) {
 	err := q.buildPayload(context.Background(), job, &workerpb.Job{})
 	if err == nil || strings.Contains(err.Error(), limit) {
 		t.Fatalf("an untrusted file limit must fail the claim without echoing it: %v", err)
+	}
+}
+
+// TestBuildPayloadRefusesReservedAnsibleKeys is final re-review New
+// Breakage 1, the claim's half: a stored or sealed untrusted override that
+// carries an "__ansible" object key (at any depth) fails the claim, and so
+// does a template value holding a malformed marker next to an untrusted
+// override — either would make Ansible's JSON load of the extra-vars file
+// fail and fall back to YAML, dropping every unsafe marker. Trusted runs
+// keep the operator's values as they are.
+func TestBuildPayloadRefusesReservedAnsibleKeys(t *testing.T) {
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	brokenID := uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n"},
+		brokenID: {ID: brokenID, OrgID: org, PlaybookInline: "- hosts: all\n",
+			ExtraVars: json.RawMessage(`{"odd":{"__ansible_unsafe":7}}`)},
+	}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	newJob := func(tid uuid.UUID, ov RunOverrides) Job {
+		j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRun, TemplateID: &tid, HostIDs: testHosts}
+		j.Payload = sealedOverride(t, q, j, ov)
+		return j
+	}
+	for name, vars := range map[string]map[string]any{
+		"top level":     {"branch": map[string]any{"__ansible_unsafe": "x"}},
+		"vault in list": {"labels": []any{map[string]any{"ok": "y"}, map[string]any{"__ansible_vault": float64(1)}}},
+		"deep type key": {"a": map[string]any{"b": map[string]any{"__ansible_type": "x"}}},
+	} {
+		err := q.buildPayload(context.Background(), newJob(templateID, RunOverrides{Untrusted: true, ExtraVars: vars}), &workerpb.Job{})
+		if !errors.Is(err, ErrInvalidInput) || strings.Contains(err.Error(), "__ansible_unsafe\":") {
+			t.Fatalf("%s: an untrusted reserved key must fail the claim: %v", name, err)
+		}
+	}
+	// The same key from an operator (a trusted override) is theirs to set.
+	trusted := newJob(templateID, RunOverrides{ExtraVars: map[string]any{"branch": map[string]any{"__ansible_unsafe": "x"}}})
+	if err := q.buildPayload(context.Background(), trusted, &workerpb.Job{}); err != nil {
+		t.Fatalf("a trusted override keeps its keys: %v", err)
+	}
+	// A template's malformed marker would break the JSON load too, and with
+	// it the markers on the untrusted values: refused for untrusted runs.
+	err := q.buildPayload(context.Background(), newJob(brokenID, RunOverrides{Untrusted: true, ExtraVars: map[string]any{"branch": "main"}}), &workerpb.Job{})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a malformed template marker next to an untrusted override must fail the claim: %v", err)
+	}
+	if err := q.buildPayload(context.Background(), newJob(brokenID, RunOverrides{ExtraVars: map[string]any{"branch": "main"}}), &workerpb.Job{}); err != nil {
+		t.Fatalf("a trusted run keeps the template's own values: %v", err)
 	}
 }

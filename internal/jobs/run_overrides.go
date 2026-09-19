@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
 )
@@ -76,6 +77,24 @@ func (o *RunOverrides) inert() *RunOverrides {
 	return &out
 }
 
+// checkKeys re-checks an untrusted override's extra vars at claim time, the
+// same rule the webhook mapping applies at receive time: no object key
+// starting with "__ansible" at any depth, which would make Ansible's JSON
+// load of the extra-vars file fail and fall back to YAML — dropping every
+// unsafe marker (final re-review New Breakage 1). Only the variable's name
+// is echoed.
+func (o *RunOverrides) checkKeys() error {
+	if o == nil || !o.Untrusted {
+		return nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(o.ExtraVars)) {
+		if err := ansiblevars.CheckUntrustedKeys(o.ExtraVars[name]); err != nil {
+			return fmt.Errorf("%w: run override extra var %s: %w", ErrInvalidInput, name, err)
+		}
+	}
+	return nil
+}
+
 // checkLimit re-checks an untrusted override's limit at claim time, the
 // same rule the webhook mapping applies at receive time: no "@file",
 // regex or subscript patterns. The value itself is never echoed.
@@ -85,6 +104,24 @@ func (o *RunOverrides) checkLimit() error {
 	}
 	if err := ansiblevars.CheckUntrustedLimit(*o.Limit); err != nil {
 		return fmt.Errorf("%w: run override limit: %w", ErrInvalidInput, err)
+	}
+	return nil
+}
+
+// checkWireMarkers checks the merged extra-vars document an untrusted run
+// sends: every object with an "__ansible" key must be a well-formed marker
+// (ansiblevars.CheckMarkers), or Ansible's JSON load fails and the markers
+// on the untrusted values are dropped. The overrides passed checkKeys, so a
+// failure here names a template variable its operator must fix.
+func checkWireMarkers(raw json.RawMessage) error {
+	var vars map[string]any
+	if err := json.Unmarshal(raw, &vars); err != nil {
+		return fmt.Errorf("%w: extra vars are not a JSON object", ErrInvalidInput)
+	}
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		if err := ansiblevars.CheckMarkers(vars[name]); err != nil {
+			return fmt.Errorf("%w: template extra var %s cannot run with webhook values: %w", ErrInvalidInput, name, err)
+		}
 	}
 	return nil
 }

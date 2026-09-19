@@ -414,3 +414,36 @@ func TestReceiveKeepsTheRunWhenRecordingTheDeliveryFails(t *testing.T) {
 		t.Fatalf("run requests = %d, want exactly 1 (no duplicate enqueue on retry)", len(rw.runs.requests))
 	}
 }
+
+// TestReceiveRefusesReservedAnsibleKeys is final re-review New Breakage 1:
+// an object key starting with "__ansible", at any depth of a mapped value,
+// would make Ansible's JSON load of the extra-vars file fail and fall back
+// to YAML, which drops every unsafe marker. The call is refused with a 422
+// naming the mapping target field, and no run is enqueued.
+func TestReceiveRefusesReservedAnsibleKeys(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{
+		`{"ref":{"__ansible_unsafe":"x"}}`,
+		`{"ref":{"labels":[{"ok":1},{"__ansible_vault":5}]}}`,
+		`{"ref":{"a":{"b":{"__ansible_type":"x"}}}}`,
+	} {
+		res, err := rw.svc.Receive(ctx, rw.signed(t, c, body))
+		if err != nil || res.Outcome != triggers.OutcomeInvalidPayload || res.Field != "extra_vars.release" {
+			t.Fatalf("Receive(%s) = %+v, %v; want invalid_payload at extra_vars.release", body, res, err)
+		}
+		if d := rw.rec.deliveries[len(rw.rec.deliveries)-1]; strings.Contains(d.Reason, "__ansible") {
+			t.Fatalf("the reason must not echo the payload: %q", d.Reason)
+		}
+	}
+	if len(rw.runs.requests) != 0 {
+		t.Fatalf("a refused payload must not enqueue: %+v", rw.runs.requests)
+	}
+	// A plain nested object still maps.
+	if res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":{"labels":[{"env":"prod"}]}}`)); err != nil || res.Outcome != triggers.OutcomeTriggered {
+		t.Fatalf("plain object = %+v, %v", res, err)
+	}
+}

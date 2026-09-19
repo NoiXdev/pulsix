@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
@@ -244,6 +247,15 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	ov, field, err := c.apply(doc)
 	if err != nil || ov.Empty() {
 		return ov, field, err
+	}
+	// A sender-chosen "__ansible…" key would make Ansible's JSON load of
+	// the extra-vars file fail and fall back to YAML, which drops every
+	// unsafe marker (final re-review New Breakage 1). The claim checks
+	// again.
+	for _, name := range slices.Sorted(maps.Keys(ov.ExtraVars)) {
+		if err := ansiblevars.CheckUntrustedKeys(ov.ExtraVars[name]); err != nil {
+			return templates.Overrides{}, "extra_vars." + name, err
+		}
 	}
 	checked, err := s.d.Templates.ValidateOverrides(ctx, t.OrgID, *t.TemplateID, ov, templates.OverrideOptions{RefuseSecrets: true, StrictLimit: true})
 	var ve *schema.ValidationError

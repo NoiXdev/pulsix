@@ -17,6 +17,10 @@ const unsafeKey = "__ansible_unsafe"
 // unauthenticated sender (a webhook payload) cannot run a Jinja expression
 // or a lookup on the worker. Numbers, booleans and null are inert already
 // and pass through unchanged. v itself is never modified.
+//
+// The markers only hold while Ansible loads the whole document as JSON:
+// callers must refuse untrusted values CheckUntrustedKeys rejects, and
+// documents CheckMarkers rejects, first (see reservedKeyPrefix).
 func Inert(v any) any {
 	switch x := v.(type) {
 	case string:

@@ -351,6 +351,9 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err := ov.checkLimit(); err != nil {
 			return err
 		}
+		if err := ov.checkKeys(); err != nil {
+			return err
+		}
 		varsRaw, err := mergeExtraVars(tmpl.ExtraVars, ov)
 		if err != nil {
 			return err
@@ -363,6 +366,15 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		}
 		if extraVars, err = stringMap(wireRaw); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
+		}
+		// An untrusted run's markers only hold while Ansible loads the
+		// whole document as JSON: a malformed "__ansible" object anywhere —
+		// the template's own values included — would make it fall back to
+		// YAML and drop them (final re-review New Breakage 1).
+		if ov != nil && ov.Untrusted {
+			if err := checkWireMarkers(wireRaw); err != nil {
+				return err
+			}
 		}
 		// A template stored before the connection-security variables were
 		// refused must not run with them (re-review N1). The merged map is

@@ -192,6 +192,9 @@ jobs:
       # by the real ansible-runner binary; the harness skips this pass on
       # machines without ansible-runner (e.g. local dev), never fails it.
       - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 ./internal/e2e/...
+      # The unsafe-marker checks against the real ansible-playbook: with
+      # the variable set they fail instead of skipping when it is missing.
+      - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 -run 'UnsafeMarker|RealAnsible' ./internal/worker/runner/...
 
   # The compose + Playwright half of the Ansible E2E (web/e2e/ansible.spec.ts,
   # project `ansible` in playwright.config.ts) STILL CANNOT run: Task 17
