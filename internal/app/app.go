@@ -59,11 +59,12 @@ type App struct {
 	GRPC       *grpc.Server
 	GRPCListen string
 	db         *db.DB
-	// stopReaper cancels the job queue's reaper goroutine; Close calls it.
+	// stopReaper, stopRetest and stopTicker stop the job queue's reaper,
+	// the connection re-test scheduler and the schedule ticker, each
+	// waiting until its goroutine has returned (startLoop); Close calls
+	// them before it closes the pool.
 	stopReaper func()
-	// stopRetest cancels the connection re-test scheduler's goroutine.
 	stopRetest func()
-	// stopTicker cancels the schedule ticker's goroutine.
 	stopTicker func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
@@ -300,18 +301,16 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// The reaper runs regardless of the gRPC listener: enqueued jobs need
 	// their stale claims swept even before a worker ever connects. It is
 	// stopped in Close.
-	reaperCtx, reaperStop := context.WithCancel(context.Background())
-	go jobs.NewReaper(jobsQueue, 0, cfg.JobMaxAttempts).Run(reaperCtx)
+	reaperStop := startLoop(jobs.NewReaper(jobsQueue, 0, cfg.JobMaxAttempts).Run)
 
 	// The daily connection re-test: one pass per interval (default 1h),
 	// staggered per host, under its own advisory lock. Stopped in Close.
-	retestCtx, retestStop := context.WithCancel(context.Background())
-	go schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run(retestCtx)
+	retestStop := startLoop(schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run)
 
 	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
-	// several safe. Stopped in Close and on every early return below.
-	tickerCtx, tickerStop := context.WithCancel(context.Background())
-	go schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default()), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run(tickerCtx)
+	// several safe. Stopped in Close and on every early return below;
+	// stopping waits for a batch still in flight (startLoop).
+	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default()), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
 
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
