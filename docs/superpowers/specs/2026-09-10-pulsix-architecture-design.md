@@ -291,8 +291,10 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
   `PULSIX_TRUSTED_PROXIES` resolves. The mapping takes an RFC 9535 JSONPath subset (`$`,
   names, indexes, `[*]`) from the JSON payload to extra vars and `limit`, validated
   like a manual run; secret-typed fields and the connection-security variables cannot
-  be mapped. A per-trigger token bucket is shared by all managers, with a per-address
-  limit in front of it. `on_active` either queues or skips. A trigger keeps its last
+  be mapped. Mapped strings reach Ansible marked unsafe (never templated) and a mapped
+  `limit` must be a plain host pattern (§14). A per-trigger token bucket is shared by
+  all managers; a per-address limit counts only calls that fail with the uniform 404.
+  `on_active` either queues or skips. A trigger keeps its last
   500 deliveries (`trigger_deliveries`) without the body.
 - Schedule notifications (v0.2d): rules per schedule (`on failure`, `on change`, `on
   success`, `skipped/missed` → channels from §11), an optional weekly digest, and a
@@ -546,6 +548,35 @@ Layered like Checkmk rulesets and Zabbix templates.
   Webhook and scheduled runs pass the same validation as manual runs (schema, the
   connection-security denylist, host-key pins). Outbound webhooks (notification
   channels, with SSRF rules) are v0.2d.
+- **Webhook payloads are untrusted input (v0.2c final review).** A valid signature
+  proves who delivered a payload, not who wrote its values: a GitHub push is signed
+  whatever branch name the pusher chose, and a pull request carries a fork author's
+  title. So every string a mapping takes from a payload reaches Ansible marked unsafe,
+  at any depth of lists and maps (`{"__ansible_unsafe": "<s>"}` in the extra-vars
+  document, the JSON form of `!unsafe`): Jinja expressions and lookups in it stay
+  literal text instead of running on the worker. The marker travels sealed with the
+  run's overrides (`RunOverrides.Untrusted`) and is applied at claim, so a worker
+  never has to know where a value came from; redaction still reads the plain values.
+  Dictionary keys are never templated by Ansible and need no marker. A mapped `limit`
+  must be a plain host pattern — host and group names (letters, digits, `.`, `_`,
+  `-`) with the operators `,` `:` `!` `&` and the wildcard `*`; anything else, above
+  all `@file` (read a pattern list from a file on the worker), `~regex` and
+  `[subscripts]`, answers 422 naming `limit` at receive time and fails the claim as a
+  second line. **Schedule overrides, template values and manual runs are not marked
+  and keep the full limit syntax:** they come from authenticated operators
+  (`templates.write` / `jobs.run`), who can already run arbitrary code on the worker
+  through a playbook (worker trust model above), so marking them would protect nothing
+  and break legitimate templating.
+- **Hook rate limits and proxies.** The per-address limit on the hook endpoints counts
+  only calls that end in the uniform 404 (unknown, malformed or wrong-endpoint id,
+  disabled trigger, disallowed address, bad signature); once an address has spent its
+  budget, all of them answer the same 429. A delivery that proves the secret is never
+  charged or refused by it — the per-trigger token bucket limits those — so an
+  anonymous flood cannot starve genuine senders that share its address. Behind a
+  reverse proxy the manager sees the proxy as every caller unless
+  `PULSIX_TRUSTED_PROXIES` names it: allowlists then never match and audit entries
+  record the proxy. The compose stack gives its bundled Traefik a fixed address outside
+  the network's dynamic range and trusts exactly that address by default.
 - **Run output redaction.** Run logs are readable with `jobs.read`. The worker removes
   every secret value the job revealed — credential secrets (keys, passwords, tokens,
   become passwords), secret-typed extra vars, secret inventory variables, one-time
