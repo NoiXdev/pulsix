@@ -21,15 +21,16 @@ type catchUpDTO struct {
 }
 
 type guardsDTO struct {
-	Overlap string     `json:"overlap,omitempty" enum:"skip,queue" doc:"skip (default) records skipped_overlap while a run of the template is active"`
-	CatchUp catchUpDTO `json:"catch_up,omitempty"`
+	Overlap     string     `json:"overlap,omitempty" enum:"skip,queue" doc:"skip (default) records skipped_overlap while a run of the template is active"`
+	CatchUp     catchUpDTO `json:"catch_up,omitempty"`
+	Maintenance string     `json:"maintenance,omitempty" enum:"ignore,skip,exclude_hosts" doc:"ignore (default) runs inside maintenance windows; skip records skipped_maintenance when a targeted host is in one; exclude_hosts leaves those hosts out"`
 }
 
 type scheduleRunDTO struct {
 	ID         string    `json:"id"`
 	DueAt      time.Time `json:"due_at"`
 	DecidedAt  time.Time `json:"decided_at"`
-	Outcome    string    `json:"outcome" enum:"triggered,skipped_overlap,missed,failed"`
+	Outcome    string    `json:"outcome" enum:"triggered,skipped_overlap,skipped_maintenance,missed,failed"`
 	Reason     string    `json:"reason,omitempty"`
 	JobGroupID string    `json:"job_group_id,omitempty"`
 }
@@ -73,7 +74,7 @@ func toScheduleDTO(s schedules.Schedule, last *schedules.Run) scheduleDTO {
 	dto := scheduleDTO{
 		ID: s.ID.String(), TemplateID: s.TemplateID.String(), Name: s.Name, Mode: string(s.Mode),
 		Cron: s.Cron, Description: cronexpr.Describe(s.Cron), Timezone: s.Timezone,
-		Guards: guardsDTO{Overlap: string(s.Guards.Overlap), CatchUp: catchUpDTO{Enabled: s.Guards.CatchUp.Enabled, Window: s.Guards.CatchUp.Window}},
+		Guards: guardsDTO{Overlap: string(s.Guards.Overlap), CatchUp: catchUpDTO{Enabled: s.Guards.CatchUp.Enabled, Window: s.Guards.CatchUp.Window}, Maintenance: string(s.Guards.Maintenance)},
 		Limit:  s.Overrides.Limit, ExtraVars: schedules.MaskSealed(s.Overrides.ExtraVars),
 		Paused: s.Paused, NextRunAt: s.NextRunAt, LastRunAt: s.LastRunAt,
 		Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
@@ -108,5 +109,5 @@ func (b ScheduleBody) guards() schedules.Guards {
 	if b.Guards == nil {
 		return schedules.Guards{}
 	}
-	return schedules.Guards{Overlap: schedules.Overlap(b.Guards.Overlap), CatchUp: schedules.CatchUp{Enabled: b.Guards.CatchUp.Enabled, Window: b.Guards.CatchUp.Window}}
+	return schedules.Guards{Overlap: schedules.Overlap(b.Guards.Overlap), CatchUp: schedules.CatchUp{Enabled: b.Guards.CatchUp.Enabled, Window: b.Guards.CatchUp.Window}, Maintenance: schedules.Maintenance(b.Guards.Maintenance)}
 }

@@ -186,12 +186,14 @@ func (f *fakeTemplates) RevealOverrides(_ context.Context, _, _ uuid.UUID, store
 }
 
 type fakeRuns struct {
-	mu        sync.Mutex
-	requests  []jobs.RunRequest
-	active    bool
-	activeErr error
-	err       error
-	group     uuid.UUID
+	mu         sync.Mutex
+	requests   []jobs.RunRequest
+	active     bool
+	activeErr  error
+	err        error
+	group      uuid.UUID
+	targets    []uuid.UUID
+	targetsErr error
 }
 
 func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
@@ -207,6 +209,12 @@ func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID
 	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: f.group, Trigger: req.Trigger}}, nil
 }
 
+func (f *fakeRuns) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.targets, f.targetsErr
+}
+
 func (f *fakeRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -214,6 +222,25 @@ func (f *fakeRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, er
 		return false, f.activeErr
 	}
 	return f.active, nil
+}
+
+// fakeMaintenance reports the hosts of inWindow as in maintenance.
+type fakeMaintenance struct {
+	inWindow map[uuid.UUID]bool
+	err      error
+}
+
+func (f *fakeMaintenance) HostsInMaintenance(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID, _ time.Time) (map[uuid.UUID]bool, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := map[uuid.UUID]bool{}
+	for _, h := range hostIDs {
+		if f.inWindow[h] {
+			out[h] = true
+		}
+	}
+	return out, nil
 }
 
 type fakeAudit struct {

@@ -182,6 +182,10 @@ func (f *panicOnceRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (boo
 	return false, nil
 }
 
+func (f *panicOnceRuns) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 // TestDecideRecoversAPanicAndAdvancesTheSchedule is fix round 1's Important
 // #1: a panic anywhere inside deciding or enqueueing (a stored override
 // that no longer reveals, a broken enqueuer, an unexpected empty jobs

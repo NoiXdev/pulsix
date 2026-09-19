@@ -44,22 +44,36 @@ type CatchUp struct {
 	Window  string `json:"window"`
 }
 
-// Guards is the schedules.guards jsonb. v0.2d adds a maintenance guard;
-// unknown keys never reach the database because the API decodes into
-// this struct.
+// Maintenance is the guard for a due run while targeted hosts are in a
+// maintenance window (spec §6): ignore (the default — patch runs often
+// belong inside a window), skip the run when any targeted host is in a
+// window, or exclude those hosts (skip when none remains).
+type Maintenance string
+
+const (
+	MaintenanceIgnore       Maintenance = "ignore"
+	MaintenanceSkip         Maintenance = "skip"
+	MaintenanceExcludeHosts Maintenance = "exclude_hosts"
+)
+
+// Guards is the schedules.guards jsonb. Unknown keys never reach the
+// database because the API decodes into this struct; rows stored before
+// v0.2d have no maintenance key and read as ignore.
 type Guards struct {
-	Overlap Overlap `json:"overlap"`
-	CatchUp CatchUp `json:"catch_up"`
+	Overlap     Overlap     `json:"overlap"`
+	CatchUp     CatchUp     `json:"catch_up"`
+	Maintenance Maintenance `json:"maintenance,omitempty"`
 }
 
 // Outcome is what the ticker (or run now) decided for a due occurrence.
 type Outcome string
 
 const (
-	OutcomeTriggered      Outcome = "triggered"
-	OutcomeSkippedOverlap Outcome = "skipped_overlap"
-	OutcomeMissed         Outcome = "missed"
-	OutcomeFailed         Outcome = "failed"
+	OutcomeTriggered          Outcome = "triggered"
+	OutcomeSkippedOverlap     Outcome = "skipped_overlap"
+	OutcomeSkippedMaintenance Outcome = "skipped_maintenance"
+	OutcomeMissed             Outcome = "missed"
+	OutcomeFailed             Outcome = "failed"
 )
 
 // Schedule is one stored schedule. Overrides are in their storage form:

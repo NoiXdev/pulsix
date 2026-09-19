@@ -343,6 +343,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// same scope resolver runs use, exactly like production wiring
 	// (internal/app.Build).
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(d), app.NewGroupHosts(resolver), time.Now, rand.Reader, nil)
+	schedulesSvc.SetMaintenance(maintenanceSvc)
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,

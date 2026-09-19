@@ -2,13 +2,17 @@ package schedules
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/cronexpr"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/jobs"
 )
 
 // maxCountedOccurrences caps the missed-occurrence count of one decision.
@@ -96,6 +100,31 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 		}
 	}
 
+	// The maintenance guard (spec §6) runs before the overlap guard: a
+	// window is the stronger reason not to run.
+	var exclude []uuid.UUID
+	if mode := sch.Guards.Maintenance; mode == MaintenanceSkip || mode == MaintenanceExcludeHosts {
+		inWindow, all, err := s.hostsInMaintenance(ctx, sch, now)
+		switch {
+		case err != nil:
+			s.log.ErrorContext(ctx, "schedule maintenance check failed", "schedule", sch.ID, "org", sch.OrgID, "err", err)
+			decision.Run.Outcome, decision.Run.Reason = OutcomeFailed, "could not check maintenance windows (see the manager log)"
+			s.auditRun(ctx, sch, decision.Run)
+			return decision
+		case len(inWindow) == 0:
+		case mode == MaintenanceSkip:
+			decision.Run.Outcome = OutcomeSkippedMaintenance
+			decision.Run.Reason = fmt.Sprintf("%d targeted host(s) in a maintenance window", len(inWindow))
+			return decision
+		case all:
+			decision.Run.Outcome, decision.Run.Reason = OutcomeSkippedMaintenance, "every targeted host is in a maintenance window"
+			return decision
+		default:
+			exclude = inWindow
+			reason = joinReason(reason, fmt.Sprintf("%d host(s) left out for maintenance", len(inWindow)))
+		}
+	}
+
 	if sch.Guards.Overlap != OverlapQueue {
 		active, err := s.runs.HasActiveRun(db.WithOrgScope(ctx, sch.OrgID), sch.OrgID, sch.TemplateID)
 		if err != nil {
@@ -110,7 +139,12 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 		}
 	}
 
-	created, err := s.enqueue(ctx, sch, nil)
+	created, err := s.enqueue(ctx, sch, nil, exclude)
+	if errors.Is(err, jobs.ErrAllHostsExcluded) {
+		// The scope changed between the guard's check and the enqueue.
+		decision.Run.Outcome, decision.Run.Reason = OutcomeSkippedMaintenance, "every targeted host is in a maintenance window"
+		return decision
+	}
 	if err != nil {
 		s.log.ErrorContext(ctx, "scheduled run could not be enqueued", "schedule", sch.ID, "org", sch.OrgID, "err", err)
 		decision.Run.Outcome, decision.Run.Reason = OutcomeFailed, failureReason(err)

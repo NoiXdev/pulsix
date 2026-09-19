@@ -302,6 +302,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// Maintenance windows (spec §6): group windows resolve through the same
 	// scope resolver runs use; the schedules' maintenance guard asks them.
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(appDB), NewGroupHosts(resolver), time.Now, rand.Reader, slog.Default())
+	schedulesSvc.SetMaintenance(maintenanceSvc)
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,

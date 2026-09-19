@@ -423,6 +423,10 @@ func (b *blockingRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool
 	return false, nil
 }
 
+func (b *blockingRuns) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 func (b *blockingRuns) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
 	first := false
 	b.once.Do(func() { close(b.started); first = true })

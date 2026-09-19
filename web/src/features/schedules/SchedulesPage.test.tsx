@@ -182,4 +182,28 @@ describe('SchedulesPage', () => {
     expect(screen.queryByRole('button', { name: 'New schedule' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Pause all' })).not.toBeInTheDocument();
   });
+
+  it('sets the maintenance guard and shows skipped_maintenance runs', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/schedules': { schedules: [schedule()] },
+      'GET /api/v1/orgs/acme/schedules/s1': { schedule: schedule({ guards: { overlap: 'skip', catch_up: { enabled: false, window: '1h' }, maintenance: 'skip' } }) },
+      'GET /api/v1/orgs/acme/schedules/s1/runs': { runs: [{ id: 'r1', due_at: '2026-09-15T01:00:00Z', decided_at: '2026-09-15T01:00:02Z', outcome: 'skipped_maintenance', reason: '1 targeted host(s) in a maintenance window' }] },
+      'POST /api/v1/orgs/acme/schedules/preview': { cron: '0 3 * * 2,4', description: '', next: [] },
+      'PUT /api/v1/orgs/acme/schedules/s1': (req: MockRequest) => {
+        put = req.body;
+        return { schedule: schedule() };
+      },
+    });
+    renderPage('/o/acme/schedules?id=s1');
+    const panel = await screen.findByRole('region', { name: 'Schedule editor' });
+    expect(await within(panel).findByText('skipped_maintenance')).toBeInTheDocument();
+    const select = within(panel).getByLabelText('When a targeted host is in a maintenance window');
+    expect(select).toHaveValue('skip');
+    await user.selectOptions(select, 'exclude_hosts');
+    await user.click(within(panel).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toMatchObject({ guards: { maintenance: 'exclude_hosts' } }));
+  });
 });

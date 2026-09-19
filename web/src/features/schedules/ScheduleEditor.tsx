@@ -22,6 +22,12 @@ import { ScheduleRuns } from './ScheduleRuns.tsx';
 
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 const WINDOWS = ['15m', '30m', '1h', '2h', '6h', '12h', '24h'];
+type MaintenanceGuard = 'ignore' | 'skip' | 'exclude_hosts';
+const MAINTENANCE_LABEL: Record<MaintenanceGuard, string> = {
+  ignore: 'Run anyway',
+  skip: 'Skip the run',
+  exclude_hosts: 'Leave those hosts out',
+};
 const KIND_LABEL: Record<SimpleKind, string> = {
   every_minutes: 'Every N minutes',
   every_hours: 'Every N hours',
@@ -74,6 +80,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
   const [overlapSkip, setOverlapSkip] = useState((initial?.guards.overlap ?? 'skip') === 'skip');
   const [catchUp, setCatchUp] = useState(initial?.guards.catch_up?.enabled ?? false);
   const [catchUpWindow, setCatchUpWindow] = useState(initial?.guards.catch_up?.window || '1h');
+  const [maintenance, setMaintenance] = useState<MaintenanceGuard>((initial?.guards.maintenance as MaintenanceGuard) ?? 'ignore');
   const [limit, setLimit] = useState(initial?.limit ?? '');
   const [extraVars, setExtraVars] = useState(initial?.extra_vars ? JSON.stringify(initial.extra_vars, null, 2) : '');
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +120,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       mode,
       ...(mode === 'simple' ? { simple: toSimpleBody(simple) } : { cron }),
       timezone,
-      guards: { overlap: overlapSkip ? 'skip' : 'queue', catch_up: { enabled: catchUp, window: catchUpWindow } },
+      guards: { overlap: overlapSkip ? 'skip' : 'queue', catch_up: { enabled: catchUp, window: catchUpWindow }, maintenance },
       ...(limit !== '' ? { limit } : {}),
       ...(vars ? { extra_vars: vars } : {}),
     } as ScheduleInput;
@@ -296,6 +303,20 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       ) : (
         <p className="text-[11px] text-muted-foreground">otherwise the next regular run happens</p>
       )}
+      <Label htmlFor="sched-maintenance">When a targeted host is in a maintenance window</Label>
+      <select
+        id="sched-maintenance"
+        className={SELECT}
+        value={maintenance}
+        onChange={(e) => setMaintenance(e.target.value as MaintenanceGuard)}
+        disabled={!canWrite}
+      >
+        {(Object.keys(MAINTENANCE_LABEL) as MaintenanceGuard[]).map((m) => (
+          <option key={m} value={m}>
+            {MAINTENANCE_LABEL[m]}
+          </option>
+        ))}
+      </select>
       <Label htmlFor="sched-limit">Limit</Label>
       <Input id="sched-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="the template's limit" disabled={!canWrite} />
       <Label htmlFor="sched-vars">Extra vars</Label>

@@ -42,6 +42,9 @@ type TemplateChecker interface {
 type RunEnqueuer interface {
 	EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
 	HasActiveRun(ctx context.Context, orgID, templateID uuid.UUID) (bool, error)
+	// RunTargets lists the hosts a run of the template would target now
+	// (the maintenance guard's question).
+	RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // Auditor records the scheduled runs themselves (actor schedule:<id>).
@@ -58,6 +61,10 @@ type Service struct {
 	now   func() time.Time
 	rand  io.Reader
 	log   *slog.Logger
+
+	// maint answers the maintenance guard (SetMaintenance). Nil fails a
+	// schedule whose guard needs it closed: recorded as failed, never run.
+	maint MaintenanceChecker
 }
 
 // NewService wires the service; now and rand are injected for tests.
@@ -203,7 +210,7 @@ func (s *Service) RunNow(ctx context.Context, orgID, id, actor uuid.UUID) ([]job
 	}
 	now := s.now()
 	run := Run{ID: s.newID(), OrgID: orgID, ScheduleID: id, DueAt: now, DecidedAt: now}
-	created, err := s.enqueue(ctx, sch, &actor)
+	created, err := s.enqueue(ctx, sch, &actor, nil)
 	if err != nil {
 		run.Outcome, run.Reason = OutcomeFailed, failureReason(err)
 	} else {
@@ -241,9 +248,10 @@ func describe(tt timetable) string {
 }
 
 // enqueue reveals the schedule's overrides and enqueues one run with
-// trigger schedule / trigger_ref schedule id, inside the schedule's org
-// scope (the ticker's context carries none).
-func (s *Service) enqueue(ctx context.Context, sch Schedule, actor *uuid.UUID) ([]jobs.Job, error) {
+// trigger schedule / trigger_ref schedule id, leaving out the exclude
+// hosts, inside the schedule's org scope (the ticker's context carries
+// none).
+func (s *Service) enqueue(ctx context.Context, sch Schedule, actor *uuid.UUID, exclude []uuid.UUID) ([]jobs.Job, error) {
 	ctx = db.WithOrgScope(ctx, sch.OrgID)
 	var ov *jobs.RunOverrides
 	if !sch.Overrides.Empty() {
@@ -255,7 +263,7 @@ func (s *Service) enqueue(ctx context.Context, sch Schedule, actor *uuid.UUID) (
 	}
 	ref := sch.ID
 	return s.runs.EnqueueRunWith(ctx, sch.OrgID, sch.TemplateID, jobs.RunRequest{
-		Trigger: jobs.TriggerSchedule, TriggerRef: &ref, Actor: actor, Overrides: ov,
+		Trigger: jobs.TriggerSchedule, TriggerRef: &ref, Actor: actor, Overrides: ov, ExcludeHosts: exclude,
 	})
 }
 

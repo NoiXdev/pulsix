@@ -102,6 +102,13 @@ func normalizeGuards(g Guards) (Guards, error) {
 	default:
 		return g, fmt.Errorf("%w: guards.overlap must be skip or queue", ErrInvalidInput)
 	}
+	switch g.Maintenance {
+	case "":
+		g.Maintenance = MaintenanceIgnore
+	case MaintenanceIgnore, MaintenanceSkip, MaintenanceExcludeHosts:
+	default:
+		return g, fmt.Errorf("%w: guards.maintenance must be ignore, skip or exclude_hosts", ErrInvalidInput)
+	}
 	if g.CatchUp.Window == "" {
 		g.CatchUp.Window = defaultWindow
 	}

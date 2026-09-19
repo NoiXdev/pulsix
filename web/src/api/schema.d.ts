@@ -2143,6 +2143,11 @@ export interface components {
         GuardsDTO: {
             catch_up?: components["schemas"]["CatchUpDTO"];
             /**
+             * @description ignore (default) runs inside maintenance windows; skip records skipped_maintenance when a targeted host is in one; exclude_hosts leaves those hosts out
+             * @enum {string}
+             */
+            maintenance?: "ignore" | "skip" | "exclude_hosts";
+            /**
              * @description skip (default) records skipped_overlap while a run of the template is active
              * @enum {string}
              */
@@ -3279,7 +3284,7 @@ export interface components {
             id: string;
             job_group_id?: string;
             /** @enum {string} */
-            outcome: "triggered" | "skipped_overlap" | "missed" | "failed";
+            outcome: "triggered" | "skipped_overlap" | "skipped_maintenance" | "missed" | "failed";
             reason?: string;
         };
         ScheduleRunsOutputBody: {
