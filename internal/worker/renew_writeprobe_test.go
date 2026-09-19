@@ -330,3 +330,36 @@ func TestRenewerRunContinuesAfterFailedChecks(t *testing.T) {
 		t.Fatalf("a failed Check must be logged each time:\n%s", logs.String())
 	}
 }
+
+// TestPendingWriteConsequenceDependsOnDiskExpiry: the pending-write ERROR
+// tells the operator what a restart would do. While the certificate on
+// disk is still valid, a restart only loses the renewal; once it has
+// expired, a restart fails right away and the worker then needs to be
+// enrolled again (task 14 re-review N2).
+func TestPendingWriteConsequenceDependsOnDiskExpiry(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1", true)
+	id, err := LoadIdentity(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := id.DiskExpiry()
+	for name, tc := range map[string]struct {
+		now        time.Time
+		want, lack string
+	}{
+		"on-disk certificate still valid": {expiry.Add(-time.Hour), "will stop working once that certificate expires", "already expired"},
+		"on-disk certificate expired":     {expiry.Add(time.Hour), "already expired", "will stop working once"},
+	} {
+		var logs bytes.Buffer
+		r := NewRenewer(nil, id, func() time.Time { return tc.now }, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+		r.logPendingWrite(t.Context(), os.ErrPermission)
+		out := logs.String()
+		if !strings.Contains(out, tc.want) || strings.Contains(out, tc.lack) {
+			t.Fatalf("%s: the consequence must say %q, not %q:\n%s", name, tc.want, tc.lack, out)
+		}
+		if name == "on-disk certificate expired" && (!strings.Contains(out, "enroll") || !strings.Contains(out, "restart")) {
+			t.Fatalf("%s: the consequence must name the restart failure and re-enrollment:\n%s", name, out)
+		}
+	}
+}

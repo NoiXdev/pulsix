@@ -199,3 +199,65 @@ func TestLookupSerialSeesRevocationAndRenewals(t *testing.T) {
 		t.Fatalf("GetByName unknown: %v", err)
 	}
 }
+
+func TestStoreRevokeAndViewDetails(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "revoke-store")
+	zone := seedZone(t, q, org, "default")
+	store := workers.NewSQLStore(d)
+	svc := workers.NewService(store)
+	w, err := svc.Register(ctx, org, workers.RegisterInput{ZoneID: zone, Name: "fra-1", CertSerial: big.NewInt(2001)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, err := store.ViewDetails(ctx, org)
+	if err != nil || details.Expiry[w.ID].IsZero() {
+		t.Fatalf("details = %+v, %v", details, err)
+	}
+	job := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO jobs (id, org_id, zone_id, kind, status, run_group_id, worker_id, claimed_at) VALUES ($1, $2, $3, 'adhoc', 'running', $1, $4, now())`, job, org, zone, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	details, _ = store.ViewDetails(ctx, org)
+	if details.CurrentJob[w.ID] != job {
+		t.Fatalf("current job = %v", details.CurrentJob)
+	}
+	revoked, err := store.Revoke(ctx, org, w.ID)
+	if err != nil || revoked.Status != workers.StatusRevoked || revoked.RevokedAt == nil {
+		t.Fatalf("revoke = %+v, %v", revoked, err)
+	}
+	if _, err := svc.GetBySerial(ctx, big.NewInt(2001)); !errors.Is(err, workers.ErrRevoked) {
+		t.Fatalf("revoked serial: %v", err)
+	}
+	details, _ = store.ViewDetails(ctx, org)
+	if _, ok := details.Expiry[w.ID]; ok {
+		t.Fatal("revoked certificates have no expiry to show")
+	}
+	if _, err := store.Revoke(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, workers.ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+	if got, err := store.Get(ctx, org, w.ID); err != nil || got.Status != workers.StatusRevoked {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	// Revoking twice keeps the first timestamp.
+	again, err := store.Revoke(ctx, org, w.ID)
+	if err != nil || again.RevokedAt == nil || !again.RevokedAt.Equal(*revoked.RevokedAt) {
+		t.Fatalf("second revoke = %+v, %v; want revoked_at %v kept", again, err, revoked.RevokedAt)
+	}
+	// Another organization sees neither the worker nor its revocation.
+	otherOrg := seedOrg(t, q, "revoke-store-other")
+	if _, err := store.Get(ctx, otherOrg, w.ID); !errors.Is(err, workers.ErrNotFound) {
+		t.Fatalf("Get from another org: %v", err)
+	}
+	if _, err := store.Revoke(ctx, otherOrg, w.ID); !errors.Is(err, workers.ErrNotFound) {
+		t.Fatalf("Revoke from another org: %v", err)
+	}
+	// Delete removes the row and, by cascade, its certificates.
+	if err := svc.Delete(ctx, org, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetBySerial(ctx, big.NewInt(2001)); !errors.Is(err, workers.ErrNotFound) {
+		t.Fatalf("deleted worker's serial: %v", err)
+	}
+}

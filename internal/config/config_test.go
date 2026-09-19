@@ -296,3 +296,30 @@ func TestTrustedProxies(t *testing.T) {
 		t.Fatal("an invalid CIDR must be refused")
 	}
 }
+
+// TestGRPCPublicAddr: the address remote workers dial defaults to the
+// public URL's host with the gRPC port, and only exists with a listener.
+func TestGRPCPublicAddr(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cfg, err := config.Load(env(base))
+	if err != nil || cfg.GRPCPublicAddr != "" {
+		t.Fatalf("disabled endpoint: %q, %v", cfg.GRPCPublicAddr, err)
+	}
+	base["PULSIX_GRPC_LISTEN"] = ":8444"
+	cfg, err = config.Load(env(base))
+	if err != nil || cfg.GRPCPublicAddr != "pulsix.example.test:8444" {
+		t.Fatalf("default: %q, %v", cfg.GRPCPublicAddr, err)
+	}
+	base["PULSIX_GRPC_PUBLIC_ADDR"] = "workers.example.test:443"
+	if cfg, err = config.Load(env(base)); err != nil || cfg.GRPCPublicAddr != "workers.example.test:443" {
+		t.Fatalf("override: %q, %v", cfg.GRPCPublicAddr, err)
+	}
+	base["PULSIX_GRPC_PUBLIC_ADDR"] = "no-port"
+	if _, err := config.Load(env(base)); err == nil {
+		t.Fatal("an address without a port must be refused")
+	}
+}

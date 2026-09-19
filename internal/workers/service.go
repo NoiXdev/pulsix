@@ -96,6 +96,9 @@ type Store interface {
 	LookupSerial(ctx context.Context, serial *big.Int) (Worker, Certificate, error)
 	Touch(ctx context.Context, workerID uuid.UUID, version string) error
 	AddCertificate(ctx context.Context, c Certificate) error
+	Get(ctx context.Context, orgID, id uuid.UUID) (Worker, error)
+	Revoke(ctx context.Context, orgID, id uuid.UUID) (Worker, error) // worker + all its certificates, one tx
+	ViewDetails(ctx context.Context, orgID uuid.UUID) (ViewDetails, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	CreateEnrollment(ctx context.Context, e Enrollment, secretHash []byte) (Enrollment, error)
 	ListEnrollments(ctx context.Context, orgID uuid.UUID, now time.Time) ([]Enrollment, error)
@@ -110,6 +113,10 @@ type Service struct {
 	zones  ZoneLister
 	now    func() time.Time
 	rand   io.Reader
+	// streams and jobs are the revocation hooks (SetRevokeHooks); nil
+	// leaves a revocation at the registry rows.
+	streams StreamCloser
+	jobs    JobRequeuer
 }
 
 // NewService wires the store; enrollment and renewal need WithSigner and
@@ -231,9 +238,4 @@ func (s *Service) GetBySerial(ctx context.Context, serial *big.Int) (Worker, err
 // worker's self-reported build.
 func (s *Service) Touch(ctx context.Context, workerID uuid.UUID, version string) error {
 	return s.store.Touch(ctx, workerID, version)
-}
-
-// Delete removes a worker row; deleting an absent one is ErrNotFound.
-func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.Delete(ctx, orgID, id)
 }

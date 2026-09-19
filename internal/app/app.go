@@ -274,6 +274,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	}
 	workersSvc := workers.NewService(workers.NewSQLStore(appDB), workers.WithSigner(caInst), workers.WithZones(hostsSvc))
 	streams := grpcsrv.NewStreamRegistry()
+	// A revocation ends the worker's open streams and requeues its jobs.
+	workersSvc.SetRevokeHooks(streams, workerJobRequeuer{q: jobsQueue, maxAttempts: cfg.JobMaxAttempts})
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
@@ -282,6 +284,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
+		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 	})
 	if err != nil {
 		appDB.Close()

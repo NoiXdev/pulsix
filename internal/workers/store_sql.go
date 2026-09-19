@@ -229,3 +229,56 @@ func toEnrollment(r gen.WorkerEnrollment) Enrollment {
 		UsedAt: db.TimePtr(r.UsedAt), CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt,
 	}
 }
+
+func (s *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Worker, error) {
+	row, err := s.q.GetWorker(ctx, gen.GetWorkerParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Worker{}, ErrNotFound
+	}
+	if err != nil {
+		return Worker{}, err
+	}
+	return toWorker(row)
+}
+
+// Revoke marks the worker and every certificate it holds revoked, in one
+// transaction bound to the worker's organization.
+func (s *SQLStore) Revoke(ctx context.Context, orgID, id uuid.UUID) (Worker, error) {
+	var out Worker
+	err := s.d.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
+		row, err := s.q.RevokeWorker(ctx, gen.RevokeWorkerParams{OrgID: orgID, ID: id})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("revoke worker: %w", err)
+		}
+		if err := s.q.RevokeWorkerCertificates(ctx, gen.RevokeWorkerCertificatesParams{OrgID: orgID, WorkerID: id}); err != nil {
+			return fmt.Errorf("revoke worker certificates: %w", err)
+		}
+		out, err = toWorker(row)
+		return err
+	})
+	return out, err
+}
+
+func (s *SQLStore) ViewDetails(ctx context.Context, orgID uuid.UUID) (ViewDetails, error) {
+	d := ViewDetails{Expiry: map[uuid.UUID]time.Time{}, CurrentJob: map[uuid.UUID]uuid.UUID{}}
+	exp, err := s.q.ListWorkerCertExpiries(ctx, orgID)
+	if err != nil {
+		return d, fmt.Errorf("list certificate expiries: %w", err)
+	}
+	for _, e := range exp {
+		d.Expiry[e.WorkerID] = e.ExpiresAt
+	}
+	cur, err := s.q.ListWorkerCurrentJobs(ctx, orgID)
+	if err != nil {
+		return d, fmt.Errorf("list current jobs: %w", err)
+	}
+	for _, c := range cur {
+		if w := db.UUIDPtr(c.WorkerID); w != nil {
+			d.CurrentJob[*w] = c.ID
+		}
+	}
+	return d, nil
+}

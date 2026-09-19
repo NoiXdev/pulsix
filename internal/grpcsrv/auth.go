@@ -8,6 +8,7 @@ package grpcsrv
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -79,7 +80,7 @@ func (s *ctxServerStream) Context() context.Context { return s.ctx }
 // identity and worker row. A missing or untrustworthy certificate is
 // Unauthenticated, and so are unknown and revoked serials (spec 2026-09-18
 // §4) — one answer, so neither can be told apart — and a certificate whose
-// zone SAN differs from the registry row it resolves to.
+// org or zone SAN differs from the registry row it resolves to.
 func (s *Server) authenticate(ctx context.Context) (context.Context, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.AuthInfo == nil {
@@ -104,17 +105,30 @@ func (s *Server) authenticate(ctx context.Context) (context.Context, error) {
 		// malformed identity — still untrustworthy, still Unauthenticated.
 		return ctx, status.Errorf(codes.Unauthenticated, "bad client certificate: %v", err)
 	}
-	worker, err := s.deps.Workers.GetBySerial(ctx, identity.Serial)
-	if errors.Is(err, workers.ErrNotFound) || errors.Is(err, workers.ErrRevoked) {
-		return ctx, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
-	}
+	worker, err := s.lookupWorker(ctx, identity)
 	if err != nil {
-		return ctx, status.Errorf(codes.Internal, "look up worker: %v", err)
-	}
-	if worker.ZoneID != identity.ZoneID {
-		return ctx, status.Error(codes.Unauthenticated, "certificate does not match the worker's enrollment")
+		return ctx, err
 	}
 	return context.WithValue(context.WithValue(ctx, identityKey{}, identity), workerKey{}, worker), nil
+}
+
+// lookupWorker resolves identity's serial to its registry row and checks
+// that the certificate's org and zone SANs match that row. Unknown and
+// revoked serials and a mismatch are all Unauthenticated; a registry fault
+// is a generic Internal (logged, never echoed to the caller).
+func (s *Server) lookupWorker(ctx context.Context, identity *ca.ClientIdentity) (workers.Worker, error) {
+	worker, err := s.deps.Workers.GetBySerial(ctx, identity.Serial)
+	if errors.Is(err, workers.ErrNotFound) || errors.Is(err, workers.ErrRevoked) {
+		return workers.Worker{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "look up worker certificate", "serial", identity.Serial.String(), "err", err)
+		return workers.Worker{}, status.Error(codes.Internal, "worker lookup failed")
+	}
+	if identity.OrgID == nil || *identity.OrgID != worker.OrgID || identity.ZoneID != worker.ZoneID {
+		return workers.Worker{}, status.Error(codes.Unauthenticated, "certificate does not match the worker's enrollment")
+	}
+	return worker, nil
 }
 
 // authenticated returns the handler-side pieces the interceptor stashed.

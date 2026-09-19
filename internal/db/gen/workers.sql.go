@@ -89,6 +89,33 @@ func (q *Queries) DeleteWorkerEnrollment(ctx context.Context, arg DeleteWorkerEn
 	return result.RowsAffected(), nil
 }
 
+const getWorker = `-- name: GetWorker :one
+SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 AND id = $2
+`
+
+type GetWorkerParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) GetWorker(ctx context.Context, arg GetWorkerParams) (Worker, error) {
+	row := q.db.QueryRow(ctx, getWorker, arg.OrgID, arg.ID)
+	var i Worker
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.CertSerial,
+		&i.LastSeen,
+		&i.Version,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getWorkerByName = `-- name: GetWorkerByName :one
 SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 AND name = $2
 `
@@ -234,6 +261,72 @@ func (q *Queries) ListPendingWorkerEnrollments(ctx context.Context, arg ListPend
 	return items, nil
 }
 
+const listWorkerCertExpiries = `-- name: ListWorkerCertExpiries :many
+SELECT worker_id, max(not_after)::timestamptz AS expires_at
+FROM worker_certificates
+WHERE org_id = $1 AND revoked_at IS NULL
+GROUP BY worker_id
+`
+
+type ListWorkerCertExpiriesRow struct {
+	WorkerID  uuid.UUID `json:"worker_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// The latest expiry of each worker's unrevoked certificates (Workers page).
+func (q *Queries) ListWorkerCertExpiries(ctx context.Context, orgID uuid.UUID) ([]ListWorkerCertExpiriesRow, error) {
+	rows, err := q.db.Query(ctx, listWorkerCertExpiries, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWorkerCertExpiriesRow
+	for rows.Next() {
+		var i ListWorkerCertExpiriesRow
+		if err := rows.Scan(&i.WorkerID, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkerCurrentJobs = `-- name: ListWorkerCurrentJobs :many
+SELECT DISTINCT ON (worker_id) worker_id, id
+FROM jobs
+WHERE org_id = $1 AND worker_id IS NOT NULL AND status IN ('claimed', 'running', 'cancelling')
+ORDER BY worker_id, claimed_at DESC
+`
+
+type ListWorkerCurrentJobsRow struct {
+	WorkerID pgtype.UUID `json:"worker_id"`
+	ID       uuid.UUID   `json:"id"`
+}
+
+// The job each worker is running right now (Workers page).
+func (q *Queries) ListWorkerCurrentJobs(ctx context.Context, orgID uuid.UUID) ([]ListWorkerCurrentJobsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkerCurrentJobs, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWorkerCurrentJobsRow
+	for rows.Next() {
+		var i ListWorkerCurrentJobsRow
+		if err := rows.Scan(&i.WorkerID, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkers = `-- name: ListWorkers :many
 SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 ORDER BY name
 `
@@ -357,6 +450,51 @@ func (q *Queries) MarkWorkerEnrollmentUsed(ctx context.Context, arg MarkWorkerEn
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeWorker = `-- name: RevokeWorker :one
+UPDATE workers SET status = 'revoked', revoked_at = COALESCE(revoked_at, now())
+WHERE org_id = $1 AND id = $2
+RETURNING id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at
+`
+
+type RevokeWorkerParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// Idempotent: a second revoke keeps the first timestamp.
+func (q *Queries) RevokeWorker(ctx context.Context, arg RevokeWorkerParams) (Worker, error) {
+	row := q.db.QueryRow(ctx, revokeWorker, arg.OrgID, arg.ID)
+	var i Worker
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.CertSerial,
+		&i.LastSeen,
+		&i.Version,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const revokeWorkerCertificates = `-- name: RevokeWorkerCertificates :exec
+UPDATE worker_certificates SET revoked_at = now()
+WHERE org_id = $1 AND worker_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeWorkerCertificatesParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	WorkerID uuid.UUID `json:"worker_id"`
+}
+
+func (q *Queries) RevokeWorkerCertificates(ctx context.Context, arg RevokeWorkerCertificatesParams) error {
+	_, err := q.db.Exec(ctx, revokeWorkerCertificates, arg.OrgID, arg.WorkerID)
+	return err
 }
 
 const touchWorkerByID = `-- name: TouchWorkerByID :exec

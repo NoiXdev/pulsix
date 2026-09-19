@@ -127,6 +127,12 @@ func TestDeleteMapsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.Delete(ctx, org, w.ID); !errors.Is(err, workers.ErrNotRevoked) {
+		t.Fatalf("Delete of an active worker: %v, want ErrNotRevoked", err)
+	}
+	if _, _, err := svc.Revoke(ctx, org, w.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Delete(ctx, org, w.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}

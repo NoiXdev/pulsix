@@ -95,6 +95,18 @@ func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificat
 
 func (f *fakeWorkerStore) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
+func (f *fakeWorkerStore) Get(context.Context, uuid.UUID, uuid.UUID) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) Revoke(context.Context, uuid.UUID, uuid.UUID) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) ViewDetails(context.Context, uuid.UUID) (workers.ViewDetails, error) {
+	return workers.ViewDetails{}, nil
+}
+
 func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, hash []byte) (workers.Enrollment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

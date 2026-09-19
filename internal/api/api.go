@@ -30,6 +30,7 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
 	"github.com/noixdev/pulsix/internal/web"
+	"github.com/noixdev/pulsix/internal/workers"
 )
 
 // Deps carries everything the handlers need. Handlers call services only.
@@ -77,6 +78,10 @@ type Deps struct {
 	// two public hook routes call it directly; see registerHookRoutes.
 	// Its own org-scoped CRUD routes are registered by a later task.
 	Triggers *triggers.Service
+	// Workers is the worker registry (Workers page, enrollment tokens).
+	Workers *workers.Service
+	// WorkerEndpoint is what remote workers dial; empty Addr disables enrollment.
+	WorkerEndpoint WorkerEndpoint
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -183,6 +188,9 @@ func (d Deps) validate() error {
 	}
 	if d.Triggers == nil {
 		missing = append(missing, "Triggers")
+	}
+	if d.Workers == nil {
+		missing = append(missing, "Workers")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -363,4 +371,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerHostopsRoutes(orgScoped, deps)         // connection test + host key, all /orgs/{org}/hosts/{id}/...
 	registerScheduleRoutes(orgScoped, deps)        // /orgs/{org}/schedules...
 	registerTriggerRoutes(orgScoped, deps)         // /orgs/{org}/triggers...
+	registerWorkerRoutes(orgScoped, deps)          // /orgs/{org}/workers..., /orgs/{org}/worker-enrollments...
 }

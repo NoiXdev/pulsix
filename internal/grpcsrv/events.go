@@ -46,7 +46,7 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 	if err != nil {
 		return err
 	}
-	_, w, err := authenticated(ctx)
+	identity, w, err := authenticated(ctx)
 	if err != nil {
 		return err
 	}
@@ -55,6 +55,13 @@ func (s *Server) RunEvents(stream workerpb.WorkerService_RunEventsServer) error 
 	// finished RPC then unblocks.
 	revoked, release := s.streams.track(w.ID)
 	defer release()
+	// A revocation that committed after the interceptor's lookup but before
+	// track registered the stream found nothing to close. Tracking happens
+	// before this second lookup, so either CloseWorker sees the stream or
+	// the lookup sees the revocation.
+	if _, err := s.lookupWorker(ctx, identity); err != nil {
+		return err
+	}
 
 	// Recv and Send are each single-goroutine, but a Send goroutine may run
 	// next to the Recv loop — so the cancel poll sends directly.

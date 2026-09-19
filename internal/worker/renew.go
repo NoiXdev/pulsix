@@ -166,12 +166,19 @@ func (r *Renewer) retryPendingWrite(ctx context.Context) {
 // logPendingWrite is the actionable ERROR for a certificate that exists
 // only in memory: the directory, the uid that needs write access, the
 // TRUE on-disk expiry and the consequence of a restart before it is
-// fixed.
+// fixed — which differs once the on-disk certificate has expired: a
+// restart then fails at once instead of at that expiry.
 func (r *Renewer) logPendingWrite(ctx context.Context, writeErr error) {
+	diskExpiry := r.id.DiskExpiry()
+	consequence := "if the worker restarts before the directory is made writable, it will stop working once that certificate expires"
+	if !r.now().Before(diskExpiry) {
+		consequence = "the certificate on disk has already expired: a restart now fails immediately and the worker then has to be enrolled again; " +
+			"make the directory writable and wait for the next check (at most 6 h) to save the renewed certificate before restarting"
+	}
 	r.log.ErrorContext(ctx, "a renewed certificate is only in memory; it could not be saved to disk",
 		"dir", r.id.certDir(),
 		"fix", "uid "+identityDirRuntimeUID+" needs write access to this directory",
-		"on_disk_certificate_expires_at", r.id.DiskExpiry().Format(time.RFC3339),
-		"consequence", "if the worker restarts before the directory is made writable, it will stop working once that certificate expires",
+		"on_disk_certificate_expires_at", diskExpiry.Format(time.RFC3339),
+		"consequence", consequence,
 		"err", writeErr)
 }

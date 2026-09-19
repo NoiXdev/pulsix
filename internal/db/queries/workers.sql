@@ -56,3 +56,30 @@ SELECT * FROM worker_enrollments WHERE org_id = sqlc.arg(org_id) AND id = sqlc.a
 -- refusal and rolls the whole redeem transaction back.
 UPDATE worker_enrollments SET used_at = now(), worker_id = sqlc.narg(worker_id)
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND used_at IS NULL AND expires_at > now();
+
+-- name: GetWorker :one
+SELECT * FROM workers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+
+-- name: RevokeWorker :one
+-- Idempotent: a second revoke keeps the first timestamp.
+UPDATE workers SET status = 'revoked', revoked_at = COALESCE(revoked_at, now())
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
+RETURNING *;
+
+-- name: RevokeWorkerCertificates :exec
+UPDATE worker_certificates SET revoked_at = now()
+WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id) AND revoked_at IS NULL;
+
+-- name: ListWorkerCertExpiries :many
+-- The latest expiry of each worker's unrevoked certificates (Workers page).
+SELECT worker_id, max(not_after)::timestamptz AS expires_at
+FROM worker_certificates
+WHERE org_id = sqlc.arg(org_id) AND revoked_at IS NULL
+GROUP BY worker_id;
+
+-- name: ListWorkerCurrentJobs :many
+-- The job each worker is running right now (Workers page).
+SELECT DISTINCT ON (worker_id) worker_id, id
+FROM jobs
+WHERE org_id = sqlc.arg(org_id) AND worker_id IS NOT NULL AND status IN ('claimed', 'running', 'cancelling')
+ORDER BY worker_id, claimed_at DESC;

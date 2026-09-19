@@ -1,11 +1,13 @@
 package grpcsrv
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -52,6 +54,31 @@ func TestRevocationEndsOpenStreams(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	if code := status.Code(expectEndRecv(stream)); code != codes.Unauthenticated {
+		t.Fatalf("stream ended with %s, want Unauthenticated", code)
+	}
+}
+
+// TestRevocationBetweenAuthAndTrackEndsTheStream: a revocation that
+// commits after the interceptor resolved the serial but before RunEvents
+// registered the stream is missed by CloseWorker; the handler re-checks
+// the serial once the stream is tracked and ends it with Unauthenticated.
+func TestRevocationBetweenAuthAndTrackEndsTheStream(t *testing.T) {
+	h := newHarness(t)
+	jobID := uuid.Must(uuid.NewV7())
+	h.claimAndBind(jobID, orgID, zoneID)
+	certPEM, _ := h.worker()
+	leaf, _ := parseCert(certPEM)
+	// The stream's own authentication is the next lookup: it succeeds, and
+	// the revocation lands right after it.
+	h.store.mu.Lock()
+	h.store.revokeAfterLookup = leaf.SerialNumber.String()
+	h.store.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stream := h.openStreamMeta(jobID, metadata.AppendToOutgoingContext(ctx,
+		metadataJobID, jobID.String(), metadataWorkerToken, testToken(jobID)), h.workerCert, h.workerKey)
 	if code := status.Code(expectEndRecv(stream)); code != codes.Unauthenticated {
 		t.Fatalf("stream ended with %s, want Unauthenticated", code)
 	}

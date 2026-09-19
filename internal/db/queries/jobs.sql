@@ -172,3 +172,19 @@ SELECT EXISTS (
     AND payload->>'repo_id' = sqlc.arg(repo_id)::text
     AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
 );
+
+-- name: RequeueWorkerJobs :many
+-- A revoked worker's claimed and running jobs go back to the queue while
+-- attempts remain (the claim already counted the attempt); the reason
+-- stays in error until the next finish overwrites it.
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, error = sqlc.arg(reason)::text
+WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
+  AND status IN ('claimed', 'running') AND attempts < sqlc.arg(max_attempts)::integer
+RETURNING id;
+
+-- name: ListWorkerJobsToEnd :many
+-- The rest of a revoked worker's jobs: exhausted claims end as error,
+-- cancelling ones as cancelled.
+SELECT id, status FROM jobs
+WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
+  AND (status = 'cancelling' OR (status IN ('claimed', 'running') AND attempts >= sqlc.arg(max_attempts)::integer));

@@ -46,7 +46,10 @@ func (s *Server) Enroll(ctx context.Context, req *workerpb.EnrollRequest) (*work
 	case errors.Is(err, workers.ErrNameTaken):
 		return nil, status.Error(codes.AlreadyExists, "a worker with this name already exists in the organization")
 	case err != nil:
-		return nil, status.Errorf(codes.Internal, "enroll: %v", err)
+		// Enroll is anonymous: the store's text (table and constraint
+		// names, driver messages) is logged, never sent back.
+		slog.ErrorContext(ctx, "enroll worker", "token_id", id.String(), "err", err)
+		return nil, status.Error(codes.Internal, "enrollment failed")
 	}
 	s.audit(ctx, SystemEvent{Operation: "worker.enroll", ObjectType: "worker", ObjectID: res.Worker.ID.String(),
 		OrgID: res.Worker.OrgID.String(), Summary: "worker " + res.Worker.Name + " enrolled from " + ip.String()})
@@ -64,7 +67,8 @@ func (s *Server) RenewCertificate(ctx context.Context, req *workerpb.RenewCertif
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "renew certificate: %v", err)
+		slog.ErrorContext(ctx, "renew worker certificate", "worker_id", w.ID.String(), "err", err)
+		return nil, status.Error(codes.Internal, "certificate renewal failed")
 	}
 	s.audit(ctx, SystemEvent{Operation: "worker.renew", ObjectType: "worker", ObjectID: w.ID.String(),
 		OrgID: w.OrgID.String(), Summary: "worker " + w.Name + " renewed its certificate"})

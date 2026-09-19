@@ -5,6 +5,7 @@ package grpcsrv
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +188,33 @@ func TestExpiredCertificateRefused(t *testing.T) {
 	_, err = h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID))
 	if code := status.Code(err); code != codes.Unavailable && code != codes.Unauthenticated {
 		t.Fatalf("expired certificate: %v, want a refused handshake", err)
+	}
+}
+
+// TestAuthOrgMismatch: a certificate whose org SAN differs from the
+// registry row it resolves to is refused, like a zone mismatch.
+func TestAuthOrgMismatch(t *testing.T) {
+	h := newHarness(t)
+	otherOrg := uuid.Must(uuid.NewV7())
+	certPEM, keyPEM, serial := h.issue("foreign-org", otherOrg, zoneID, false)
+	if _, err := workers.NewService(h.store).Register(t.Context(), orgID, workers.RegisterInput{ZoneID: zoneID, Name: "foreign-org", CertSerial: serial}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID)); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("org mismatch: %v", err)
+	}
+}
+
+// TestAuthLookupFailureIsGeneric: a registry fault behind the interceptor
+// answers Internal without echoing the store's error text.
+func TestAuthLookupFailureIsGeneric(t *testing.T) {
+	h := newHarness(t)
+	certPEM, keyPEM := h.worker()
+	h.store.mu.Lock()
+	h.store.lookupErr = errors.New(`relation "worker_certificates" does not exist`)
+	h.store.mu.Unlock()
+	_, err := h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID))
+	if status.Code(err) != codes.Internal || strings.Contains(status.Convert(err).Message(), "worker_certificates") {
+		t.Fatalf("lookup fault: %v, want a generic Internal", err)
 	}
 }

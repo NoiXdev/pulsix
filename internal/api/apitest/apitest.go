@@ -20,6 +20,7 @@ import (
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -39,6 +40,7 @@ import (
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
+	"github.com/noixdev/pulsix/internal/workers"
 )
 
 // SentMail is one message captured by Mailer.
@@ -260,6 +262,16 @@ func New(t *testing.T, opts ...Option) *Server {
 		Runs: jobsSvc, Audit: auditRec, PublicURL: publicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
 		Now: time.Now, Rand: rand.Reader,
 	})
+	// The worker registry (Task 15) signs with a CA stored on the test
+	// database, as in production (internal/app.Build).
+	testCA, err := ca.New(ca.NewSQLStore(d), crypto.NewBox(testMasterKey), ca.Config{CommonName: "pulsix-manager", ListenHost: "pulsix-manager"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testCA.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	workersSvc := workers.NewService(workers.NewSQLStore(d), workers.WithSigner(testCA), workers.WithZones(hostsSvc))
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
@@ -285,6 +297,10 @@ func New(t *testing.T, opts ...Option) *Server {
 		Jobs:        jobsSvc,
 		Schedules:   schedulesSvc,
 		Triggers:    triggersSvc,
+		Workers:     workersSvc,
+		// What an enrollment snippet names; tests that need the worker
+		// endpoint disabled clear it through an option.
+		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},
 	}
 	for _, opt := range opts {
 		opt(s)

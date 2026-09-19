@@ -45,6 +45,9 @@ const (
 	// templates.write clears.
 	PermJobsRead Permission = "jobs.read"
 	PermJobsRun  Permission = "jobs.run"
+
+	PermWorkersRead  Permission = "workers.read"
+	PermWorkersWrite Permission = "workers.write"
 )
 
 // rank orders roles from least to most privileged. A role absent from this
@@ -70,10 +73,10 @@ var matrix = map[Permission]Role{
 	PermInventoryWrite:   RoleOperator,
 	PermCredentialsRead:  RoleOperator,
 	PermCredentialsWrite: RoleAdmin,
-	PermReposRead:      RoleViewer,
-	PermReposWrite:     RoleOperator,
-	PermPlaybooksRead:  RoleViewer,
-	PermPlaybooksWrite: RoleOperator,
+	PermReposRead:        RoleViewer,
+	PermReposWrite:       RoleOperator,
+	PermPlaybooksRead:    RoleViewer,
+	PermPlaybooksWrite:   RoleOperator,
 	// Job templates sit between playbooks and jobs: reading one needs no
 	// more than a playbook run configuration reveals (the plan does not
 	// name a template permission — templates.read/write fill that gap,
@@ -85,6 +88,10 @@ var matrix = map[Permission]Role{
 	// cancel and retry runs.
 	PermJobsRead: RoleViewer,
 	PermJobsRun:  RoleOperator,
+	// Workers are infrastructure: owner and admin see and manage them
+	// (spec 2026-09-18 §4).
+	PermWorkersRead:  RoleAdmin,
+	PermWorkersWrite: RoleAdmin,
 }
 
 // Allows reports whether role may perform perm. It is total: an unknown role

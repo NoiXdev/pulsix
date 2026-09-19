@@ -38,6 +38,11 @@ type Config struct {
 	// part says — useful precisely when GRPCListen binds every interface
 	// (":8444") and therefore names no host of its own. See CAListenHost.
 	GRPCServerName string
+	// GRPCPublicAddr is the host:port remote workers dial
+	// (PULSIX_GRPC_PUBLIC_ADDR). Default: PUBLIC_URL's host with
+	// GRPCListen's port; empty while the gRPC endpoint is disabled. The
+	// Workers page puts it into the enrollment snippets.
+	GRPCPublicAddr string
 	// EmbeddedWorker runs an in-process worker inside the manager
 	// (PULSIX_EMBEDDED_WORKER, a bool, default false). Opt-in only, for
 	// trusted single-tenant setups: its playbooks run next to the
@@ -102,6 +107,15 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.StatusDomain = getenv("PULSIX_STATUS_DOMAIN")
 	cfg.GRPCListen = getenv("PULSIX_GRPC_LISTEN") // empty = the gRPC endpoint stays disabled
 	cfg.GRPCServerName = getenv("PULSIX_GRPC_SERVER_NAME")
+	if cfg.GRPCListen != "" {
+		cfg.GRPCPublicAddr = getenv("PULSIX_GRPC_PUBLIC_ADDR")
+		if cfg.GRPCPublicAddr == "" {
+			cfg.GRPCPublicAddr = defaultGRPCPublicAddr(cfg.PublicURL, cfg.GRPCListen)
+		}
+		if _, _, err := net.SplitHostPort(cfg.GRPCPublicAddr); err != nil {
+			return cfg, fmt.Errorf("PULSIX_GRPC_PUBLIC_ADDR %q must be host:port", cfg.GRPCPublicAddr)
+		}
+	}
 	if raw := getenv("PULSIX_EMBEDDED_WORKER"); raw != "" {
 		b, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -200,4 +214,15 @@ func (c Config) CAListenHost() string {
 		return h
 	}
 	return defaultCAListenHost
+}
+
+// defaultGRPCPublicAddr joins the public URL's host with the gRPC
+// listener's port.
+func defaultGRPCPublicAddr(publicURL, listen string) string {
+	u, err := url.Parse(publicURL)
+	_, port, perr := net.SplitHostPort(listen)
+	if err != nil || perr != nil || u.Hostname() == "" {
+		return ""
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }

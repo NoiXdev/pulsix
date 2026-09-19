@@ -27,6 +27,7 @@ import (
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
+	"github.com/noixdev/pulsix/internal/workers"
 )
 
 // testTenancy builds a *tenancy.Service with a nil store, good enough to
@@ -191,7 +192,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{}, Triggers: &triggers.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
 	}
 }
 
@@ -337,6 +338,11 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}); err == nil {
 		t.Fatal("api.New without Templates did not return an error")
 	}
+	noWorkers := testDeps(t)
+	noWorkers.Workers = nil
+	if _, err := api.New(noWorkers); err == nil || !strings.Contains(err.Error(), "Workers") {
+		t.Fatalf("api.New without Workers = %v, want an error naming Workers", err)
+	}
 }
 
 // testDeps returns a fully-wired (if inert) Deps, exactly like
@@ -351,7 +357,7 @@ func testDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{}, Triggers: &triggers.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
 	}
 }
 

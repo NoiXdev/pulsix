@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net"
 	"net/netip"
 	"strings"
@@ -239,5 +240,28 @@ func TestRenewCertificateIsAudited(t *testing.T) {
 	got := h.audit.Events()
 	if len(got) != 1 || got[0].Operation != "worker.renew" || got[0].OrgID != orgID.String() || got[0].ObjectType != "worker" {
 		t.Fatalf("audit = %+v", got)
+	}
+}
+
+// TestEnrollAndRenewFaultsAreGeneric: Enroll is anonymous, so a store
+// fault behind it must not reach the caller as text (table names, driver
+// messages); RenewCertificate answers the same way. Both are logged.
+func TestEnrollAndRenewFaultsAreGeneric(t *testing.T) {
+	h := newHarness(t)
+	tok := h.enrollmentToken("fra-11")
+	certPEM, keyPEMBytes := h.worker()
+	fault := errors.New(`insert worker: ERROR: duplicate key value violates unique constraint "workers_cert_serial_key"`)
+	h.store.mu.Lock()
+	h.store.enrollErr, h.store.addCertErr = fault, fault
+	h.store.mu.Unlock()
+
+	_, csr := newKeyAndCSR(t)
+	_, err := h.client(nil, nil).Enroll(t.Context(), &workerpb.EnrollRequest{TokenId: tok.ID.String(), Secret: tok.Secret, Csr: csr})
+	if status.Code(err) != codes.Internal || status.Convert(err).Message() != "enrollment failed" {
+		t.Fatalf("enroll fault: %v, want Internal \"enrollment failed\"", err)
+	}
+	_, err = h.client(certPEM, keyPEMBytes).RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: csr})
+	if status.Code(err) != codes.Internal || strings.Contains(status.Convert(err).Message(), "workers_cert_serial_key") {
+		t.Fatalf("renew fault: %v, want a generic Internal", err)
 	}
 }

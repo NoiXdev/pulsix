@@ -202,3 +202,46 @@ func (f *fakeStore) setStatus(id uuid.UUID, s workers.Status) {
 		}
 	}
 }
+
+func (f *fakeStore) Get(_ context.Context, orgID, id uuid.UUID) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.rows {
+		if r.OrgID == orgID && r.ID == id {
+			return r, nil
+		}
+	}
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeStore) Revoke(_ context.Context, orgID, id uuid.UUID) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.init()
+	for i, r := range f.rows {
+		if r.OrgID == orgID && r.ID == id {
+			now := time.Now()
+			f.rows[i].Status, f.rows[i].RevokedAt = workers.StatusRevoked, &now
+			for s, c := range f.certs {
+				if c.WorkerID == id && c.RevokedAt == nil {
+					c.RevokedAt = &now
+					f.certs[s] = c
+				}
+			}
+			return f.rows[i], nil
+		}
+	}
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeStore) ViewDetails(context.Context, uuid.UUID) (workers.ViewDetails, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := workers.ViewDetails{Expiry: map[uuid.UUID]time.Time{}, CurrentJob: map[uuid.UUID]uuid.UUID{}}
+	for _, c := range f.certs {
+		if c.RevokedAt == nil && c.NotAfter.After(d.Expiry[c.WorkerID]) {
+			d.Expiry[c.WorkerID] = c.NotAfter
+		}
+	}
+	return d, nil
+}

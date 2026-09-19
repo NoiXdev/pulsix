@@ -579,6 +579,45 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 	return items, nil
 }
 
+const listWorkerJobsToEnd = `-- name: ListWorkerJobsToEnd :many
+SELECT id, status FROM jobs
+WHERE org_id = $1 AND worker_id = $2
+  AND (status = 'cancelling' OR (status IN ('claimed', 'running') AND attempts >= $3::integer))
+`
+
+type ListWorkerJobsToEndParams struct {
+	OrgID       uuid.UUID   `json:"org_id"`
+	WorkerID    pgtype.UUID `json:"worker_id"`
+	MaxAttempts int32       `json:"max_attempts"`
+}
+
+type ListWorkerJobsToEndRow struct {
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
+}
+
+// The rest of a revoked worker's jobs: exhausted claims end as error,
+// cancelling ones as cancelled.
+func (q *Queries) ListWorkerJobsToEnd(ctx context.Context, arg ListWorkerJobsToEndParams) ([]ListWorkerJobsToEndRow, error) {
+	rows, err := q.db.Query(ctx, listWorkerJobsToEnd, arg.OrgID, arg.WorkerID, arg.MaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWorkerJobsToEndRow
+	for rows.Next() {
+		var i ListWorkerJobsToEndRow
+		if err := rows.Scan(&i.ID, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requeueStaleJobs = `-- name: RequeueStaleJobs :many
 UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
@@ -601,6 +640,48 @@ type RequeueStaleJobsParams struct {
 // false for every row).
 func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, requeueStaleJobs, arg.StaleBefore, arg.Live, arg.MaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requeueWorkerJobs = `-- name: RequeueWorkerJobs :many
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, error = $1::text
+WHERE org_id = $2 AND worker_id = $3
+  AND status IN ('claimed', 'running') AND attempts < $4::integer
+RETURNING id
+`
+
+type RequeueWorkerJobsParams struct {
+	Reason      string      `json:"reason"`
+	OrgID       uuid.UUID   `json:"org_id"`
+	WorkerID    pgtype.UUID `json:"worker_id"`
+	MaxAttempts int32       `json:"max_attempts"`
+}
+
+// A revoked worker's claimed and running jobs go back to the queue while
+// attempts remain (the claim already counted the attempt); the reason
+// stays in error until the next finish overwrites it.
+func (q *Queries) RequeueWorkerJobs(ctx context.Context, arg RequeueWorkerJobsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, requeueWorkerJobs,
+		arg.Reason,
+		arg.OrgID,
+		arg.WorkerID,
+		arg.MaxAttempts,
+	)
 	if err != nil {
 		return nil, err
 	}

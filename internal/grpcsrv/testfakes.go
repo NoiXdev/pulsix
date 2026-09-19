@@ -56,6 +56,13 @@ type fakeWorkerStore struct {
 	touched     map[string]string
 	enrollments map[uuid.UUID]workers.Enrollment
 	hashes      map[uuid.UUID][]byte // enrollment id → SHA-256 of its secret
+
+	// revokeAfterLookup names a serial whose next lookup still succeeds
+	// and then marks it revoked: a revocation landing right after the
+	// interceptor authenticated a call.
+	revokeAfterLookup string
+	// lookupErr, enrollErr and addCertErr inject store faults.
+	lookupErr, enrollErr, addCertErr error
 }
 
 func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
@@ -94,6 +101,9 @@ func (f *fakeWorkerStore) LookupSerial(_ context.Context, serial *big.Int) (work
 	if serial == nil {
 		return workers.Worker{}, workers.Certificate{}, workers.ErrNotFound
 	}
+	if f.lookupErr != nil {
+		return workers.Worker{}, workers.Certificate{}, f.lookupErr
+	}
 	w, ok := f.bySerial[serial.String()]
 	if !ok {
 		return workers.Worker{}, workers.Certificate{}, workers.ErrNotFound
@@ -102,6 +112,9 @@ func (f *fakeWorkerStore) LookupSerial(_ context.Context, serial *big.Int) (work
 	if f.revoked[serial.String()] {
 		now := time.Now()
 		c.RevokedAt = &now
+	}
+	if f.revokeAfterLookup == serial.String() {
+		f.revokeAfterLookup, f.revoked[serial.String()] = "", true
 	}
 	return w, c, nil
 }
@@ -126,6 +139,9 @@ func (f *fakeWorkerStore) Touch(_ context.Context, workerID uuid.UUID, version s
 func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.addCertErr != nil {
+		return f.addCertErr
+	}
 	for _, w := range f.bySerial {
 		if w.ID == c.WorkerID {
 			f.bySerial[c.Serial.String()] = w
@@ -136,6 +152,18 @@ func (f *fakeWorkerStore) AddCertificate(_ context.Context, c workers.Certificat
 }
 
 func (f *fakeWorkerStore) Delete(_ context.Context, _, _ uuid.UUID) error { return nil }
+
+func (f *fakeWorkerStore) Get(context.Context, uuid.UUID, uuid.UUID) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) Revoke(context.Context, uuid.UUID, uuid.UUID) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
+
+func (f *fakeWorkerStore) ViewDetails(context.Context, uuid.UUID) (workers.ViewDetails, error) {
+	return workers.ViewDetails{}, nil
+}
 
 func (f *fakeWorkerStore) CreateEnrollment(_ context.Context, e workers.Enrollment, hash []byte) (workers.Enrollment, error) {
 	f.mu.Lock()
@@ -155,6 +183,9 @@ func (f *fakeWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID
 func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.enrollErr != nil {
+		return workers.Worker{}, f.enrollErr
+	}
 	e, ok := f.enrollments[id]
 	if !ok {
 		return workers.Worker{}, workers.ErrNotFound
