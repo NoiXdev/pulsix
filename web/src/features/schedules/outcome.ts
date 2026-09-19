@@ -5,6 +5,6 @@ export const OUTCOME_TONE: Record<string, Tone> = {
   triggered: 'ok',
   failed: 'crit',
   skipped_overlap: 'warn',
-  skipped_maintenance: 'unknown',
+  skipped_maintenance: 'maintenance',
   missed: 'warn',
 };

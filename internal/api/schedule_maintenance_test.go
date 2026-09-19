@@ -13,7 +13,6 @@ func TestScheduleMaintenanceGuardRoundTrips(t *testing.T) {
 	resp := postJSON(t, f.operatorC, f.schedulesURL(), body)
 	var created struct {
 		Schedule struct {
-			ID     string `json:"id"`
 			Guards struct {
 				Maintenance string `json:"maintenance"`
 			} `json:"guards"`

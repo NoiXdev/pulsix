@@ -36,6 +36,8 @@ func TestMaintenanceGuard(t *testing.T) {
 			outcome: schedules.OutcomeSkippedMaintenance, reason: "1 targeted host(s) in a maintenance window"},
 		{name: "exclude_hosts leaves the host out", mode: schedules.MaintenanceExcludeHosts, inWindow: []uuid.UUID{hA},
 			outcome: schedules.OutcomeTriggered, reason: "1 host(s) left out for maintenance", exclude: []uuid.UUID{hA}, enqueued: true},
+		{name: "exclude_hosts with no host in a window runs", mode: schedules.MaintenanceExcludeHosts,
+			outcome: schedules.OutcomeTriggered, enqueued: true},
 		{name: "exclude_hosts with every host in a window skips", mode: schedules.MaintenanceExcludeHosts, inWindow: []uuid.UUID{hA, hB},
 			outcome: schedules.OutcomeSkippedMaintenance, reason: "every targeted host"},
 		{name: "a failing check fails closed", mode: schedules.MaintenanceSkip, checkErr: errors.New("db down"),
@@ -55,11 +57,18 @@ func TestMaintenanceGuard(t *testing.T) {
 			if d.Run.Outcome != c.outcome || !strings.Contains(d.Run.Reason, c.reason) {
 				t.Fatalf("run = %+v, want %s containing %q", d.Run, c.outcome, c.reason)
 			}
+			if c.checkErr != nil && strings.Contains(d.Run.Reason, c.checkErr.Error()) {
+				t.Fatalf("run reason = %q must not leak the checker's error detail", d.Run.Reason)
+			}
 			if got := len(w.runs.requests) == 1; got != c.enqueued {
 				t.Fatalf("enqueued = %v, want %v", got, c.enqueued)
 			}
-			if c.enqueued && len(c.exclude) > 0 {
-				if ex := w.runs.requests[0].ExcludeHosts; len(ex) != 1 || ex[0] != c.exclude[0] {
+			if c.enqueued {
+				ex := w.runs.requests[0].ExcludeHosts
+				switch {
+				case len(c.exclude) == 0 && ex != nil:
+					t.Fatalf("exclude = %v, want nil", ex)
+				case len(c.exclude) > 0 && (len(ex) != 1 || ex[0] != c.exclude[0]):
 					t.Fatalf("exclude = %v, want %v", ex, c.exclude)
 				}
 			}
@@ -67,6 +76,28 @@ func TestMaintenanceGuard(t *testing.T) {
 				t.Fatal("a guarded decision must still advance the schedule")
 			}
 		})
+	}
+}
+
+// TestMaintenanceGuardReasonCombinesWithCatchUp exercises joinReason's
+// non-empty branch: a catch-up run that also leaves out a host for
+// maintenance must say both, not overwrite one with the other — the only
+// case where a schedule's run history needs to show two reasons at once.
+func TestMaintenanceGuardReasonCombinesWithCatchUp(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	hA, hB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	w := newWorld(t)
+	m := &fakeMaintenance{inWindow: map[uuid.UUID]bool{hA: true}}
+	w.svc.SetMaintenance(m)
+	w.runs.targets = []uuid.UUID{hA, hB}
+	g := schedules.Guards{Overlap: schedules.OverlapSkip, CatchUp: schedules.CatchUp{Enabled: true, Window: "2h"}, Maintenance: schedules.MaintenanceExcludeHosts}
+	s := due(t, w, "0 * * * *", base, g)
+	d := w.svc.Decide(ctx, s, base.Add(3*time.Hour+10*time.Minute), grace)
+	if d.Run.Outcome != schedules.OutcomeTriggered {
+		t.Fatalf("outcome = %v, want triggered", d.Run.Outcome)
+	}
+	if !strings.Contains(d.Run.Reason, "catch-up of 4 missed occurrence(s)") || !strings.Contains(d.Run.Reason, "1 host(s) left out for maintenance") {
+		t.Fatalf("reason = %q, want both the catch-up and the maintenance reason", d.Run.Reason)
 	}
 }
 

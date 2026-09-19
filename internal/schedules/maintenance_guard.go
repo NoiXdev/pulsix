@@ -28,6 +28,10 @@ var errNoMaintenanceChecker = errors.New("no maintenance checker is wired")
 
 // hostsInMaintenance returns the run's targeted hosts that are in a
 // maintenance window at now, and whether that is every targeted host.
+// targets is the template's resolved scope (RunTargets), not narrowed by
+// the schedule's own limit override — the guard can flag a host the
+// limit would never have touched, which is fail-safe (it never
+// under-guards), not a bug.
 func (s *Service) hostsInMaintenance(ctx context.Context, sch Schedule, now time.Time) ([]uuid.UUID, bool, error) {
 	if s.maint == nil {
 		return nil, false, errNoMaintenanceChecker

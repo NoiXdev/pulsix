@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,9 +112,6 @@ func TestHostsInMaintenance(t *testing.T) {
 	if _, err := svc.Create(ctx, org, uuid.Must(uuid.NewV7()), groupWin); err != nil {
 		t.Fatal(err)
 	}
-	// A stored window that no longer evaluates is ignored, not fatal.
-	broken := uuid.Must(uuid.NewV7())
-	store.byID[broken] = maintenance.Window{ID: broken, OrgID: org, TargetKind: maintenance.TargetOrg, Cron: "broken", Duration: time.Hour, Timezone: "UTC"}
 
 	got, err := svc.HostsInMaintenance(ctx, org, []uuid.UUID{hA, hB, hC}, now)
 	if err != nil || len(got) != 2 || !got[hA] || !got[hB] || got[hC] {
@@ -133,6 +131,27 @@ func TestHostsInMaintenance(t *testing.T) {
 	store.err = errors.New("db down")
 	if _, err := svc.HostsInMaintenance(ctx, org, []uuid.UUID{hA}, now); err == nil {
 		t.Fatal("a store failure must surface")
+	}
+}
+
+// TestHostsInMaintenanceFailsClosedOnAnUnevaluableWindow: a window whose
+// cron or timezone no longer evaluates must fail the whole call, not be
+// silently skipped — the guard's contract is absolute (spec §6), and a
+// window that goes uncovered because it was ignored is indistinguishable
+// from no window at all. Create/Update always validate the cron and
+// timezone (validate.go), so this can only happen to a row that predates
+// or bypasses that validation (a hand-edited row, or a later evaluator
+// change); the fake store lets the test plant one directly.
+func TestHostsInMaintenanceFailsClosedOnAnUnevaluableWindow(t *testing.T) {
+	now := at("2026-09-22T10:30:00Z")
+	store := newFakeStore()
+	org := uuid.Must(uuid.NewV7())
+	svc := maintenance.NewService(store, fakeGroups{}, func() time.Time { return now }, nil, quiet)
+	broken := uuid.Must(uuid.NewV7())
+	store.byID[broken] = maintenance.Window{ID: broken, OrgID: org, TargetKind: maintenance.TargetOrg, Cron: "broken", Duration: time.Hour, Timezone: "UTC"}
+	_, err := svc.HostsInMaintenance(ctx, org, []uuid.UUID{uuid.Must(uuid.NewV7())}, now)
+	if err == nil || !strings.Contains(err.Error(), broken.String()) {
+		t.Fatalf("HostsInMaintenance = %v, want an error naming window %s", err, broken)
 	}
 }
 

@@ -74,6 +74,34 @@ func TestTwoTickersDecideEachOccurrenceOnce(t *testing.T) {
 	}
 }
 
+// TestSkippedMaintenanceRunRoundTripsThroughTheStore writes and reads back
+// a skipped_maintenance row through the real store: the widened named
+// CHECK (00032_maintenance_windows.sql) must actually accept the value,
+// not just read correctly by inspection — a future migration narrowing it
+// again would fail this at insert time.
+func TestSkippedMaintenanceRunRoundTripsThroughTheStore(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-skip-maint")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	s, err := st.Create(scoped, schedules.Schedule{ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "maint-skip",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapSkip, CatchUp: schedules.CatchUp{Window: "1h"}, Maintenance: schedules.MaintenanceSkip}, NextRunAt: &now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := schedules.Run{ID: uuid.Must(uuid.NewV7()), OrgID: org, ScheduleID: s.ID, DueAt: now, DecidedAt: now,
+		Outcome: schedules.OutcomeSkippedMaintenance, Reason: "1 targeted host(s) in a maintenance window"}
+	if err := st.RecordRun(scoped, run); err != nil {
+		t.Fatalf("RecordRun(skipped_maintenance) = %v, want the widened CHECK to accept it", err)
+	}
+	runs, err := st.Runs(scoped, org, s.ID, 10)
+	if err != nil || len(runs) != 1 || runs[0].Outcome != schedules.OutcomeSkippedMaintenance || runs[0].Reason != run.Reason {
+		t.Fatalf("Runs = %+v, %v", runs, err)
+	}
+}
+
 func TestProcessDueTrimsRunsTo500(t *testing.T) {
 	d := testdb.Open(t)
 	org, templateID := seedTemplate(t, d, "sched-trim")

@@ -108,8 +108,15 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 
 // HostsInMaintenance returns the subset of hostIDs that an active window
 // covers at the instant at: an organization window covers every host, a
-// group window the managed hosts of the group and its subgroups. A stored
-// window that no longer evaluates is logged and ignored.
+// group window the managed hosts of the group and its subgroups. This
+// answers the schedules' maintenance guard (spec §6), whose contract is
+// fail-closed: a stored window that no longer evaluates — a hand-edited
+// row, or one that predates a validation change; Create/Update never
+// accept an invalid cron or timezone — fails the whole call instead of
+// being silently ignored, naming the window so the caller can log the
+// detail. List's "active now" display and OccurrencesBetween's calendar
+// stay best-effort and skip such a window instead, since neither is a
+// safety guard.
 func (s *Service) HostsInMaintenance(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID, at time.Time) (map[uuid.UUID]bool, error) {
 	windows, err := s.store.List(ctx, orgID)
 	if err != nil {
@@ -120,8 +127,7 @@ func (s *Service) HostsInMaintenance(ctx context.Context, orgID uuid.UUID, hostI
 	for _, w := range windows {
 		active, err := ActiveAt(w, at)
 		if err != nil {
-			s.log.ErrorContext(ctx, "maintenance window does not evaluate; ignoring it", "window", w.ID, "org", orgID, "err", err)
-			continue
+			return nil, fmt.Errorf("evaluate maintenance window %s: %w", w.ID, err)
 		}
 		if !active {
 			continue
