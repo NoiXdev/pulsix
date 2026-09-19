@@ -49,3 +49,24 @@ func TestNewLimiterDefaultsTheClock(t *testing.T) {
 		t.Fatal("the first call is always allowed")
 	}
 }
+
+// TestLimiterKeysIPv6ByPrefix is final review minor 1: one host holds a
+// whole /64, so rotating through it must not buy a fresh budget per
+// address; another /64 and IPv4 keep their own.
+func TestLimiterKeysIPv6ByPrefix(t *testing.T) {
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	l := clientip.NewLimiter(2, time.Minute, func() time.Time { return now })
+	if !l.Allow(netip.MustParseAddr("2001:db8:1:2::1")) || !l.Allow(netip.MustParseAddr("2001:db8:1:2:ffff::9")) {
+		t.Fatal("the first two calls of the /64 are allowed")
+	}
+	if l.Allow(netip.MustParseAddr("2001:db8:1:2:dead:beef:0:1")) {
+		t.Fatal("a third address inside the same /64 shares its budget")
+	}
+	if !l.Allow(netip.MustParseAddr("2001:db8:1:3::1")) {
+		t.Fatal("another /64 has its own budget")
+	}
+	// An IPv4-mapped address counts as the IPv4 address itself.
+	if !l.Allow(netip.MustParseAddr("192.0.2.7")) || !l.Allow(netip.MustParseAddr("::ffff:192.0.2.7")) || l.Allow(netip.MustParseAddr("192.0.2.7")) {
+		t.Fatal("an IPv4-mapped address must share the IPv4 address's budget")
+	}
+}
