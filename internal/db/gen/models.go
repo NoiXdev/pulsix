@@ -297,6 +297,25 @@ type JobTrigger struct {
 	Revision        int64          `json:"revision"`
 }
 
+type MaintenanceWindow struct {
+	ID              uuid.UUID          `json:"id"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	Name            string             `json:"name"`
+	TargetKind      string             `json:"target_kind"`
+	HostID          pgtype.UUID        `json:"host_id"`
+	GroupID         pgtype.UUID        `json:"group_id"`
+	StartsAt        pgtype.Timestamptz `json:"starts_at"`
+	EndsAt          pgtype.Timestamptz `json:"ends_at"`
+	Cron            *string            `json:"cron"`
+	DurationSeconds *int32             `json:"duration_seconds"`
+	Timezone        *string            `json:"timezone"`
+	Note            string             `json:"note"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	Revision        int64              `json:"revision"`
+}
+
 type NotificationChannel struct {
 	ID        uuid.UUID   `json:"id"`
 	OrgID     uuid.UUID   `json:"org_id"`

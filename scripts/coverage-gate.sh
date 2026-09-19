@@ -153,7 +153,8 @@ awk -v module="$module" -v generated="$generated_list" '
 		    pkg == module "/internal/ca" || pkg == module "/internal/jobs" ||
 		    pkg == module "/internal/worker/runner" || pkg == module "/internal/worker/sshprobe" ||
 		    pkg == module "/internal/clientip" || pkg == module "/internal/cronexpr" ||
-		    pkg == module "/internal/enrolltoken" || pkg == module "/internal/outbound") {
+		    pkg == module "/internal/enrolltoken" || pkg == module "/internal/outbound" ||
+		    pkg == module "/internal/maintenance") {
 			floor = 90
 		}
 

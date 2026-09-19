@@ -51,6 +51,9 @@ const (
 
 	PermChannelsRead  Permission = "channels.read"
 	PermChannelsWrite Permission = "channels.write"
+
+	PermMaintenanceRead  Permission = "maintenance.read"
+	PermMaintenanceWrite Permission = "maintenance.write"
 )
 
 // rank orders roles from least to most privileged. A role absent from this
@@ -101,6 +104,10 @@ var matrix = map[Permission]Role{
 	// organization's information leaves Pulsix.
 	PermChannelsRead:  RoleOperator,
 	PermChannelsWrite: RoleAdmin,
+	// Maintenance windows (§6) are part of operating hosts: everyone sees
+	// them, operators plan them.
+	PermMaintenanceRead:  RoleViewer,
+	PermMaintenanceWrite: RoleOperator,
 }
 
 // Allows reports whether role may perform perm. It is total: an unknown role

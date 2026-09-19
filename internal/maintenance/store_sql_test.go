@@ -1,0 +1,96 @@
+package maintenance_test
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/maintenance"
+)
+
+// seedHost creates an organization with one zone and one host.
+func seedHost(t *testing.T, d *db.DB, slug string) (org, host uuid.UUID) {
+	t.Helper()
+	q := gen.New(d.Pool())
+	o, err := q.CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: slug, Name: slug})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'z', 'z')`, zone, o.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO hosts (id, org_id, zone_id, name, managed) VALUES ($1, $2, $3, 'web-1', true)`, host, o.ID, zone); err != nil {
+		t.Fatal(err)
+	}
+	return o.ID, host
+}
+
+func TestWindowStoreRoundTrip(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d, "maint-store")
+	otherOrg, _ := seedHost(t, d, "maint-other")
+	st := maintenance.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	start, end := at("2026-09-22T10:00:00Z"), at("2026-09-22T12:00:00Z")
+	oneOff, err := st.Create(scoped, maintenance.Window{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "db upgrade", TargetKind: maintenance.TargetHost, TargetID: &host,
+		StartsAt: &start, EndsAt: &end, Note: "kernel 6.12",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oneOff.TargetName != "web-1" || *oneOff.TargetID != host || !oneOff.EndsAt.Equal(end) || oneOff.Revision != 1 || oneOff.Recurring() {
+		t.Fatalf("one-off = %+v", oneOff)
+	}
+	recurring, err := st.Create(scoped, maintenance.Window{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "nightly", TargetKind: maintenance.TargetOrg,
+		Cron: "0 2 * * *", Duration: 90 * time.Minute, Timezone: "Europe/Berlin",
+	})
+	if err != nil || recurring.Duration != 90*time.Minute || recurring.Timezone != "Europe/Berlin" || recurring.TargetID != nil || recurring.StartsAt != nil {
+		t.Fatalf("recurring = %+v, %v", recurring, err)
+	}
+	if _, err := st.Create(scoped, maintenance.Window{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "nightly", TargetKind: maintenance.TargetOrg,
+		Cron: "@daily", Duration: time.Hour, Timezone: "UTC"}); !errors.Is(err, maintenance.ErrNameTaken) {
+		t.Fatalf("duplicate name = %v", err)
+	}
+	ghost := uuid.Must(uuid.NewV7())
+	if _, err := st.Create(scoped, maintenance.Window{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "ghost", TargetKind: maintenance.TargetGroup, TargetID: &ghost,
+		StartsAt: &start, EndsAt: &end}); !errors.Is(err, maintenance.ErrInvalidInput) {
+		t.Fatalf("unknown group = %v", err)
+	}
+	// Another organization's scope sees nothing.
+	if list, err := st.List(db.WithOrgScope(ctx, otherOrg), org); err != nil || len(list) != 0 {
+		t.Fatalf("cross-org list = %v, %v", list, err)
+	}
+	recurring.Name = "nightly patching"
+	up, err := st.Update(scoped, recurring, 1)
+	if err != nil || up.Name != "nightly patching" || up.Revision != 2 {
+		t.Fatalf("update = %+v, %v", up, err)
+	}
+	if _, err := st.Update(scoped, recurring, 1); !errors.Is(err, maintenance.ErrRevisionMismatch) {
+		t.Fatalf("stale update = %v", err)
+	}
+	recurring.ID = uuid.Must(uuid.NewV7())
+	if _, err := st.Update(scoped, recurring, 1); !errors.Is(err, maintenance.ErrNotFound) {
+		t.Fatalf("unknown update = %v", err)
+	}
+	// Deleting the host deletes its windows.
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM hosts WHERE id = $1`, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Get(scoped, org, oneOff.ID); !errors.Is(err, maintenance.ErrNotFound) {
+		t.Fatalf("window of a deleted host = %v", err)
+	}
+	if err := st.Delete(scoped, org, up.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Delete(scoped, org, up.ID); !errors.Is(err, maintenance.ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
+	}
+}
