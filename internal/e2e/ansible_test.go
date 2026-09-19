@@ -89,6 +89,8 @@ type scenario struct {
 	greeting string
 
 	runnerLog string // the capture wrapper's log (see captureRunnerOutput)
+
+	workerCfg worker.Config // the claim loop's config (the automation gate dials with its identity)
 }
 
 func TestAnsibleEndToEnd(t *testing.T) {
@@ -97,7 +99,7 @@ func TestAnsibleEndToEnd(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	s := wireScenario(t, ctx, cancel)
+	s := wireScenario(t, ctx, cancel, wiring{})
 	s.drive()
 }
 
@@ -137,15 +139,34 @@ func portOf(addr string) string {
 	return port
 }
 
+// wiring selects the variant a scenario is built with. The zero value is
+// the v0.2b gate: a worker enrolled with the `pulsix-manager worker add`
+// bundle and the production schedule tick.
+type wiring struct {
+	// tokenWorker enrolls the worker over the API with a one-time token
+	// (v0.2c) instead of the CLI bundle.
+	tokenWorker bool
+	// scheduleTick overrides PULSIX_SCHEDULE_TICK (0 keeps the default).
+	scheduleTick time.Duration
+	// opts are app.Build's test seams (app.WithScheduleClock).
+	opts []app.Option
+}
+
 // wireScenario builds everything the drive steps use: the fully wired
 // manager, the enrolled worker's claim loop, the authenticated API session
 // and the SSH fixtures (their authorized keys are the ones the generated
 // credentials actually carry).
-func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) *scenario {
+func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, w wiring) *scenario {
 	t.Helper()
 
 	// --- The manager: full production wiring ----------------------------
 	httpLis, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The worker gRPC listener exists before Build so the enrollment
+	// snippets and the token path name its real address.
+	grpcLis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,10 +177,12 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 		PublicURL:      "http://localhost:" + portOf(httpLis.Addr().String()),
 		MasterKey:      masterKey,
 		GRPCListen:     "localhost:0", // the CA's SAN; the harness binds its own listener
+		GRPCPublicAddr: "localhost:" + portOf(grpcLis.Addr().String()),
 		RetestInterval: 24 * time.Hour,
+		ScheduleTick:   w.scheduleTick,
 		Version:        "e2e",
 	}
-	a, err := app.Build(ctx, cfg)
+	a, err := app.Build(ctx, cfg, w.opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,10 +193,6 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 	// thing cmd/manager does with PULSIX_GRPC_LISTEN. The TLS ServerName
 	// the worker dials with is the listen host ("localhost"), which is
 	// exactly the server certificate's DNS SAN (Task 8's caveat).
-	grpcLis, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		t.Fatal(err)
-	}
 	go func() { _ = a.GRPC.Serve(grpcLis) }()
 	t.Cleanup(func() {
 		stopped := make(chan struct{})
@@ -230,32 +249,16 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 		t.Fatal("the organization carries no default zone after setup")
 	}
 
-	// --- Worker enrollment: the operator CLI path -------------------------
-	// `pulsix-manager worker add` against the same database and master key:
-	// it issues the client certificate from the instance CA (the same one
-	// Build's gRPC server verifies against) and registers the serial — the
-	// exact output the worker binary is configured from.
-	enrollCfg := config.Config{DatabaseURL: testdb.URL(t), MasterKey: masterKey, GRPCListen: "localhost:0"}
-	var enroll strings.Builder
-	if err := app.RunWorkerAdd(ctx, enrollCfg, app.WorkerAddOptions{ZoneSlug: "default", OrgSlug: org, Name: "e2e-worker"}, &enroll, io.Discard); err != nil {
-		t.Fatalf("worker add: %v", err)
-	}
-	certPEM, keyPEM, caPEM, err := ParseEnrollmentBlocks(enroll.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	for path, content := range map[string]string{
-		filepath.Join(dir, "worker.crt"): certPEM,
-		filepath.Join(dir, "worker.key"): keyPEM,
-		filepath.Join(dir, "ca.pem"):     caPEM,
-	} {
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	s := &scenario{t: t, api: api, org: org, zoneID: zoneID.String(), greeting: "hello e2e"}
+	managerAddr := "localhost:" + portOf(grpcLis.Addr().String())
+
+	// --- Worker enrollment: the CLI bundle or a one-time token -------------
+	var identity worker.Config
+	if w.tokenWorker {
+		identity = s.enrollWithToken(ctx, managerAddr)
+	} else {
+		identity = enrollWithCLI(t, ctx, masterKey, org)
+	}
 
 	// --- The three generated credentials, over the API --------------------
 	s.setupCredentials()
@@ -277,10 +280,10 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 	// log that the run assertions print on failure (runnerOutput).
 	runnerBin, s.runnerLog = captureRunnerOutput(t, runnerBin)
 	workerCfg := worker.Config{
-		ManagerAddr:      "localhost:" + portOf(grpcLis.Addr().String()),
-		CertPath:         filepath.Join(dir, "worker.crt"),
-		KeyPath:          filepath.Join(dir, "worker.key"),
-		CAPath:           filepath.Join(dir, "ca.pem"),
+		ManagerAddr:      managerAddr,
+		CertPath:         identity.CertPath,
+		KeyPath:          identity.KeyPath,
+		CAPath:           identity.CAPath,
 		DataDir:          t.TempDir(),
 		Zones:            []uuid.UUID{zoneID},
 		AnsibleRunnerBin: runnerBin,
@@ -306,6 +309,7 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 		}),
 		worker.WithLogger(testLogger(t)),
 	)
+	s.workerCfg = workerCfg
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
@@ -324,6 +328,36 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc) 
 	s.setupRepo(gitSrv)
 	s.setupInventory()
 	return s
+}
+
+// enrollWithCLI is the v0.2b path: `pulsix-manager worker add` against the
+// same database and master key issues the client certificate from the
+// instance CA (the same one Build's gRPC server verifies against) and
+// registers the serial — the exact output the worker binary is configured
+// from.
+func enrollWithCLI(t *testing.T, ctx context.Context, masterKey [32]byte, org string) worker.Config {
+	t.Helper()
+	enrollCfg := config.Config{DatabaseURL: testdb.URL(t), MasterKey: masterKey, GRPCListen: "localhost:0"}
+	var enroll strings.Builder
+	if err := app.RunWorkerAdd(ctx, enrollCfg, app.WorkerAddOptions{ZoneSlug: "default", OrgSlug: org, Name: "e2e-worker"}, &enroll, io.Discard); err != nil {
+		t.Fatalf("worker add: %v", err)
+	}
+	certPEM, keyPEM, caPEM, err := ParseEnrollmentBlocks(enroll.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cfg := worker.Config{
+		CertPath: filepath.Join(dir, "worker.crt"),
+		KeyPath:  filepath.Join(dir, "worker.key"),
+		CAPath:   filepath.Join(dir, "ca.pem"),
+	}
+	for path, content := range map[string]string{cfg.CertPath: certPEM, cfg.KeyPath: keyPEM, cfg.CAPath: caPEM} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cfg
 }
 
 // testLogger keeps the worker's structured logs quiet unless the test
