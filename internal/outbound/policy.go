@@ -41,7 +41,51 @@ func blockedRanges() []blockedRange {
 		{netip.MustParsePrefix("255.255.255.255/32"), "broadcast"},
 		{netip.MustParsePrefix("100.100.100.200/32"), "cloud metadata"},
 		{netip.MustParsePrefix("fd00:ec2::254/128"), "cloud metadata"},
+		{netip.MustParsePrefix("192.0.0.192/32"), "cloud metadata"},   // Oracle Cloud's legacy metadata address
+		{netip.MustParsePrefix("168.63.129.16/32"), "cloud metadata"}, // Azure WireServer
+		{netip.MustParsePrefix("fec0::/10"), "site-local (deprecated)"},
+		// 64:ff9b:1::/48 (RFC 8215, NAT64 local use) is refused outright
+		// rather than having its embedded IPv4 address extracted: unlike
+		// the well-known 64:ff9b::/96 prefix, this format supports more
+		// than one embedded prefix length, so pulling a fixed 32 bits out
+		// of it could as easily under-refuse as over-refuse. See
+		// embeddingPrefixes for the forms extraction does handle.
+		{netip.MustParsePrefix("64:ff9b:1::/48"), "NAT64 (local use; embedding is ambiguous, refused outright)"},
 	}
+}
+
+// embeddingPrefix is an IPv6 range known to carry a literal IPv4 address in
+// a fixed 32-bit span, so the address it actually reaches on the far side
+// of a NAT64/SIIT/6to4 translator can be checked by the very same policy a
+// plain IPv4 destination would be. offset is the embedded address's byte
+// offset within netip.Addr.As16().
+type embeddingPrefix struct {
+	prefix netip.Prefix
+	offset int
+}
+
+// embeddingPrefixes lists the IPv4-in-IPv6 forms Check extracts and checks
+// recursively (RFC 6052 §2.1, RFC 3056). It is a function for the same
+// reason blockedRanges is.
+func embeddingPrefixes() []embeddingPrefix {
+	return []embeddingPrefix{
+		{netip.MustParsePrefix("64:ff9b::/96"), 12},    // NAT64 well-known prefix
+		{netip.MustParsePrefix("::/96"), 12},           // IPv4-compatible (deprecated)
+		{netip.MustParsePrefix("::ffff:0:0:0/96"), 12}, // IPv4-translated (SIIT) — distinct from the IPv4-mapped ::ffff:a.b.c.d form Unmap already handles
+		{netip.MustParsePrefix("2002::/16"), 2},        // 6to4
+	}
+}
+
+// embeddedIPv4 reports the IPv4 address a carries, when a falls in one of
+// embeddingPrefixes, and whether one was found.
+func embeddedIPv4(a netip.Addr) (netip.Addr, bool) {
+	for _, e := range embeddingPrefixes() {
+		if e.prefix.Contains(a) {
+			b := a.As16()
+			return netip.AddrFrom4([4]byte{b[e.offset], b[e.offset+1], b[e.offset+2], b[e.offset+3]}), true
+		}
+	}
+	return netip.Addr{}, false
 }
 
 // Policy decides which destination addresses may be dialled. The zero
@@ -57,8 +101,23 @@ func NewPolicy(allow []netip.Prefix) Policy {
 }
 
 // Check reports whether a may be dialled: nil, or an error wrapping
-// ErrBlocked. IPv4-mapped IPv6 addresses are judged as IPv4.
+// ErrBlocked. IPv4-mapped IPv6 addresses are judged as IPv4; other
+// IPv4-in-IPv6 forms (NAT64, 6to4, IPv4-compatible, SIIT) have their
+// embedded IPv4 address judged the same way, recursively, so a
+// translator on the far side cannot be used to reach a blocked address.
+//
+// A zoned address (RFC 4007, "::1%lo0") is refused unconditionally,
+// before the allowlist is even consulted: net/netip documents that
+// netip.Prefix.Contains never matches an address that carries a zone, so
+// neither the blocked-range check nor PULSIX_NOTIFY_ALLOW_CIDRS could
+// ever see it — every zoned address would otherwise pass Check with no
+// prefix able to catch or admit it. A zone is meaningful only on the
+// host that resolved it, never to a remote webhook receiver, so there is
+// no legitimate destination this would refuse.
 func (p Policy) Check(a netip.Addr) error {
+	if a.Zone() != "" {
+		return fmt.Errorf("%w: %s carries a zone, which is refused unconditionally and cannot be allowed with PULSIX_NOTIFY_ALLOW_CIDRS", ErrBlocked, a)
+	}
 	a = a.Unmap()
 	if !a.IsValid() {
 		return fmt.Errorf("%w: invalid address", ErrBlocked)
@@ -71,6 +130,11 @@ func (p Policy) Check(a netip.Addr) error {
 	for _, b := range blockedRanges() {
 		if b.prefix.Contains(a) {
 			return fmt.Errorf("%w: %s is %s (allow it with PULSIX_NOTIFY_ALLOW_CIDRS)", ErrBlocked, a, b.reason)
+		}
+	}
+	if embedded, ok := embeddedIPv4(a); ok {
+		if err := p.Check(embedded); err != nil {
+			return fmt.Errorf("%s embeds the IPv4 address %s, which is not allowed: %w", a, embedded, err)
 		}
 	}
 	return nil

@@ -105,3 +105,46 @@ func TestSendGivesUpOnASilentServer(t *testing.T) {
 		t.Fatalf("Send took %s against a silent server", elapsed)
 	}
 }
+
+// TestSendEndsImmediatelyOnContextCancellationWithoutDeadline is fix-round-1
+// Minor 1: a context cancelled directly (a client disconnect, a
+// dispatcher shutting down), rather than one that reaches its own
+// deadline, must still end the conversation right away — not wait out the
+// full 30s sessionTimeout, which is what happens when only ctx.Deadline
+// is honoured after the dial.
+func TestSendEndsImmediatelyOnContextCancellationWithoutDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if c, err := ln.Accept(); err == nil {
+			accepted <- c
+		}
+	}()
+	defer func() {
+		select {
+		case c := <-accepted:
+			_ = c.Close()
+		default:
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{Host: "127.0.0.1", Port: addr.Port, From: "pulsix@example.test"}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	if err := m.Send(ctx, "dest@example.test", "s", "b"); err == nil {
+		t.Fatal("a cancelled context (no deadline) accepted the message")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Send took %s after a context cancellation with no deadline, want well under sessionTimeout", elapsed)
+	}
+}

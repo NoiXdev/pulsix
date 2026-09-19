@@ -160,6 +160,11 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 		_ = conn.Close()
 		return fmt.Errorf("set smtp deadline: %w", err)
 	}
+	// dctx.Done fires at the deadline above, or the moment ctx itself is
+	// cancelled — a caller disconnecting or shutting down should not have
+	// to wait out the rest of sessionTimeout for a conn read to notice.
+	stop := context.AfterFunc(dctx, func() { _ = conn.SetDeadline(time.Now()) })
+	defer stop()
 	c, err := smtp.NewClient(conn, settings.Host)
 	if err != nil {
 		_ = conn.Close()

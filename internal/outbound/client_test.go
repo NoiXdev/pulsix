@@ -3,6 +3,9 @@ package outbound_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -101,15 +104,113 @@ func TestClientTimesOut(t *testing.T) {
 	}
 }
 
+// TestClientIgnoresProxyEnvironment is fix-round-1 Important 2. The
+// original version of this test only made a request to a loopback target
+// and asserted no error — but net/http's ProxyFromEnvironment never
+// proxies loopback destinations, so the assertion held whether or not
+// NewClient actually set Proxy: nil. A mutation to
+// Proxy: http.ProxyFromEnvironment passed it (see the fix round's RED
+// evidence). This version asserts the Transport's Proxy field
+// structurally, which a proxy-from-environment regression cannot pass:
+// a proxy would let requests be routed past DialContext's address check
+// entirely (the proxy connection, not our resolved+checked address, is
+// what actually gets dialled).
 func TestClientIgnoresProxyEnvironment(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
-	defer srv.Close()
-	resp, err := outbound.NewClient(loopbackOnly(), time.Second, nil).Get(srv.URL)
-	if err != nil {
-		t.Fatalf("a proxy variable must not reroute the request: %v", err)
+	c := outbound.NewClient(loopbackOnly(), time.Second, nil)
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport is %T, want *http.Transport", c.Transport)
 	}
-	_ = resp.Body.Close()
+	if tr.Proxy != nil {
+		t.Fatal("Transport.Proxy must be nil: a non-nil Proxy (even http.ProxyFromEnvironment) would let a request bypass DialContext's address check")
+	}
+}
+
+// loopbackZone returns the name of a real loopback network interface
+// (e.g. "lo" on Linux, "lo0" on macOS/BSD), so a zoned IPv6 literal built
+// from it is one the OS can actually resolve and dial — proving the
+// block happens in Check, before any network operation, not because the
+// zone itself was bogus.
+func loopbackZone(t *testing.T) string {
+	t.Helper()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces: %v", err)
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagLoopback != 0 {
+			return ifc.Name
+		}
+	}
+	t.Skip("no loopback interface found")
+	return ""
+}
+
+// TestClientRefusesZonedLoopbackLiteral is fix-round-1 Critical 1's
+// end-to-end regression: a real listener on [::1], reached through a URL
+// carrying a zoned literal exactly as RFC 6874 percent-encodes it in a
+// browser or Go's own URL parser (http://[::1%25<zone>]/). Before the
+// fix, Policy.Check silently admitted any zoned address (Prefix.Contains
+// never matches one), and this request reached the loopback server with a
+// 200. After the fix it must never leave DialContext.
+func TestClientRefusesZonedLoopbackLiteral(t *testing.T) {
+	zone := loopbackZone(t)
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback available: %v", err)
+	}
+	defer ln.Close() //nolint:errcheck
+	reached := make(chan struct{}, 1)
+	go func() {
+		_ = http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reached <- struct{}{}
+			w.WriteHeader(http.StatusOK)
+		}))
+	}()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := fmt.Sprintf("http://[::1%%25%s]:%s/", zone, port)
+	_, err = outbound.NewClient(outbound.NewPolicy(nil), time.Second, nil).Get(target)
+	if !errors.Is(err, outbound.ErrBlocked) {
+		t.Fatalf("Get(%s) = %v, want ErrBlocked", target, err)
+	}
+	select {
+	case <-reached:
+		t.Fatal("the zoned literal reached the loopback listener")
+	default:
+	}
+}
+
+// TestClientTimesOutMidBody is Minor 5: TestClientTimesOut only ever
+// stalls before headers are sent; this proves the timeout also bounds a
+// response whose body never finishes, the "full body" half of
+// NewClient's timeout contract.
+func TestClientTimesOutMidBody(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+	start := time.Now()
+	resp, err := outbound.NewClient(loopbackOnly(), 200*time.Millisecond, nil).Get(srv.URL)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	_, err = io.ReadAll(resp.Body)
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("ReadAll err = %v after %s, want a timeout reading a body that never finishes", err, time.Since(start))
+	}
 }
 
 func TestClientReportsResolverFailures(t *testing.T) {

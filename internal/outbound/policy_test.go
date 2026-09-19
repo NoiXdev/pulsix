@@ -63,3 +63,88 @@ func TestBlockedErrorNamesAddressAndReason(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+// TestPolicyRefusesZonedAddresses is fix-round-1 item Critical 1: a zoned
+// IPv6 literal (RFC 4007, written in a URL per RFC 6874 as
+// "[::1%25lo0]") is documented by net/netip to never match any
+// netip.Prefix.Contains — so the ordinary blocked-range loop silently lets
+// it through. Zones are local to the resolving host and never a
+// meaningful webhook destination, so Check refuses every zoned address
+// unconditionally — not even PULSIX_NOTIFY_ALLOW_CIDRS can readmit one,
+// since the same Contains blindness would make the allowlist check itself
+// a no-op for a zoned address.
+func TestPolicyRefusesZonedAddresses(t *testing.T) {
+	cases := []string{
+		"::1%lo0",               // zoned loopback: the exact bypass the review found
+		"fe80::1%eth0",          // zoned link-local
+		"::ffff:127.0.0.1%lo0",  // zoned IPv4-mapped loopback
+		"203.0.113.10%whatever", // zones are IPv6-only syntax in netip, but guard it anyway
+	}
+	for _, c := range cases {
+		a, err := netip.ParseAddr(c)
+		if err != nil {
+			// "203.0.113.10%whatever" is not valid netip syntax for IPv4;
+			// skip rather than fail the whole table over a documentation
+			// case that Go itself refuses to parse.
+			continue
+		}
+		if err := outbound.NewPolicy(nil).Check(a); !errors.Is(err, outbound.ErrBlocked) {
+			t.Errorf("Check(%s) = %v, want ErrBlocked", c, err)
+		}
+	}
+}
+
+// TestPolicyAllowlistCannotReadmitAZonedAddress: even a wide-open allowlist
+// must not admit a zoned address, because Prefix.Contains never matches
+// one — proving the zone refusal in Check happens before the allowlist
+// loop, not as a fallback inside it.
+func TestPolicyAllowlistCannotReadmitAZonedAddress(t *testing.T) {
+	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("::/0")})
+	if err := p.Check(netip.MustParseAddr("::1%lo0")); !errors.Is(err, outbound.ErrBlocked) {
+		t.Fatalf("Check(::1%%lo0) with a ::/0 allowlist = %v, want ErrBlocked", err)
+	}
+}
+
+// TestPolicyChecksEmbeddedIPv4 is fix-round-1 Important 1: IPv6 forms that
+// carry a 32-bit IPv4 address must have that address checked by the same
+// policy, so a NAT64/6to4/SIIT translator on the far side cannot be used
+// to reach a blocked IPv4 destination. A private embedded address is a
+// normal self-hosted receiver and must still be allowed.
+func TestPolicyChecksEmbeddedIPv4(t *testing.T) {
+	cases := []struct {
+		addr    string
+		allowed bool
+		note    string
+	}{
+		{"64:ff9b::a9fe:a9fe", false, "NAT64 well-known, embeds the metadata address"},
+		{"64:ff9b::7f00:1", false, "NAT64 well-known, embeds loopback"},
+		{"64:ff9b::a00:1", true, "NAT64 well-known, embeds a private address"},
+		{"64:ff9b:1::a9fe:a9fe", false, "NAT64 local-use (RFC 8215): whole prefix refused, extraction is ambiguous"},
+		{"64:ff9b:1::1", false, "NAT64 local-use: refused regardless of the low bits"},
+		{"::7f00:1", false, "IPv4-compatible, embeds loopback"},
+		{"::ffff:0:7f00:1", false, "IPv4-translated / SIIT, embeds loopback"},
+		{"2002:a9fe:a9fe::", false, "6to4, embeds the metadata address"},
+		{"2002:a00:1::", true, "6to4, embeds a private address"},
+		{"fec0::1", false, "deprecated site-local, defence in depth"},
+	}
+	p := outbound.NewPolicy(nil)
+	for _, c := range cases {
+		err := p.Check(netip.MustParseAddr(c.addr))
+		if c.allowed && err != nil {
+			t.Errorf("%s: Check(%s) = %v, want allowed", c.note, c.addr, err)
+		}
+		if !c.allowed && !errors.Is(err, outbound.ErrBlocked) {
+			t.Errorf("%s: Check(%s) = %v, want ErrBlocked", c.note, c.addr, err)
+		}
+	}
+}
+
+// TestPolicyEmbeddedIPv4RespectsAllowlist: the embedded address is checked
+// through the same Policy, allowlist included — an operator who allowed a
+// private range should not have NAT64/6to4 access to it refused.
+func TestPolicyEmbeddedIPv4RespectsAllowlist(t *testing.T) {
+	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("169.254.169.254/32")})
+	if err := p.Check(netip.MustParseAddr("64:ff9b::a9fe:a9fe")); err != nil {
+		t.Fatalf("allowlisted embedded address refused: %v", err)
+	}
+}
