@@ -552,23 +552,39 @@ Layered like Checkmk rulesets and Zabbix templates.
   proves who delivered a payload, not who wrote its values: a GitHub push is signed
   whatever branch name the pusher chose, and a pull request carries a fork author's
   title. So every string a mapping takes from a payload reaches Ansible marked unsafe,
-  at any depth of lists and maps (`{"__ansible_unsafe": "<s>"}` in the extra-vars
-  document, the JSON form of `!unsafe`): Jinja expressions and lookups in it stay
-  literal text instead of running on the worker. The marker travels sealed with the
-  run's overrides (`RunOverrides.Untrusted`) and is applied at claim, so a worker
+  inside every list and object of a mapped value (`{"__ansible_unsafe": "<s>"}` in the
+  extra-vars document, the JSON form of `!unsafe`): Jinja expressions and lookups in it
+  stay literal text instead of running on the worker. The marker travels sealed with
+  the run's overrides (`RunOverrides.Untrusted`) and is applied at claim, so a worker
   never has to know where a value came from; redaction still reads the plain values.
-  Dictionary keys are never templated by Ansible and need no marker, **but the marker
-  only holds while Ansible loads the extra-vars document as JSON**: an object key it
-  reserves (`__ansible_unsafe`, `__ansible_vault`, `__ansible_type`) that does not
-  decode makes the JSON load fail, ansible-core silently re-reads the file as YAML,
-  and every marker in it becomes a plain dict whose strings are templated again
-  (v0.2c final re-review). So a mapped value holding an object key that starts with
-  `__ansible`, at any depth, answers 422 naming its mapping target field at receive
-  time and fails the claim as a second line; and an untrusted run also fails its
-  claim when any object in the merged document (the template's own values included)
-  has an `__ansible` key without being a well-formed `{"__ansible_unsafe": "<s>"}` or
-  `{"__ansible_vault": "<s>"}` marker. The "any depth" guarantee holds only with
-  these refusals in place. A mapped `limit`
+  Dictionary keys are never templated by Ansible and need no marker. **The marker only
+  holds while Ansible loads the extra-vars document as JSON.** When that load fails for
+  any reason, ansible-core silently re-reads the file as YAML, and every marker becomes
+  a plain dict whose strings are templated again (v0.2c final re-reviews 1 and 2). Two
+  sender-controlled routes to a failed JSON load are known and closed:
+  - an object key Ansible reserves (`__ansible_unsafe`, `__ansible_vault`,
+    `__ansible_type`) that does not decode: a mapped value holding any object key that
+    starts with `__ansible` is refused;
+  - nesting: from roughly 250 levels Python's recursion limit breaks the JSON load while
+    the YAML re-read still succeeds up to roughly 500. A mapped value may nest at most
+    **32 levels** (objects and lists counted alike, `ansiblevars.MaxUntrustedDepth`).
+
+  Both are refused at receive time (422 naming the mapping target field, never a key or
+  value from the payload) and again at claim (the failure reason names only the
+  variable). An untrusted run also fails its claim when an object in a merged variable
+  (the template's own values included) has an `__ansible` key without being a
+  well-formed `{"__ansible_unsafe": "<s>"}` or `{"__ansible_vault": "<s>"}` marker, and
+  no input may set a top-level extra var whose name starts with `__ansible` (the
+  connection-security denylist reserves the prefix). As a last line the worker writes
+  every extra-vars file with a guard key longer than YAML's 1024-character implicit-key
+  limit (`pulsix_extravars_guard`): JSON accepts it, PyYAML and libyaml refuse it, so
+  a JSON load that fails for a reason not yet known fails the run instead of re-reading
+  the file as YAML. The guard is in every run's file, so a trusted run whose operator
+  values Ansible cannot load as JSON now fails with a YAML parse error instead of
+  running on the silent fallback. Other inputs were probed against ansible-core 2.21.4 (report,
+  "Residual fixes"): very long strings, huge numbers, `NaN`/`Infinity`, lone surrogate
+  escapes, a byte-order mark and invalid UTF-8 are either refused by the receive-time
+  JSON decode or normalized by it (U+FFFD), and load as JSON in Ansible. A mapped `limit`
   must be a plain host pattern — host and group names (letters, digits, `.`, `_`,
   `-`) with the operators `,` `:` `!` `&` and the wildcard `*`; anything else, above
   all `@file` (read a pattern list from a file on the worker), `~regex` and
