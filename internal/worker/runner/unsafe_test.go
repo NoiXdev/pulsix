@@ -221,3 +221,69 @@ func TestMaterializeRunnerConfigWritesTheYAMLGuard(t *testing.T) {
 		}
 	}
 }
+
+// TestExtraVarsGuardIsTheFirstKey is final re-review 3, minor 1: when
+// Ansible cannot load the file its error quotes the head of line 1, and
+// the file is one line. The guard must come first whatever the other
+// names sort as, so that head is the guard's own text, never the start of
+// a secret value (redaction only replaces whole values).
+func TestExtraVarsGuardIsTheFirstKey(t *testing.T) {
+	env := runEnv(t)
+	job := runJob(t)
+	job.ExtraVars = map[string]string{"": `"e"`, "!a": `"x"`, "0": "1", "A": `"y"`, "a_token": `"secret"`, extraVarsGuardVar: `"off"`}
+	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+		t.Fatalf("materializeRunnerConfig: %v", err)
+	}
+	raw := mustRead(t, filepath.Join(env.WorkDir, "env", "extravars"))
+	prefix := `{"` + extraVarsGuardVar + `":{"` + extraVarsGuardKey + `":true}`
+	if !strings.HasPrefix(string(raw), prefix) {
+		t.Fatalf("the file must start with the guard, got %.120q", raw)
+	}
+	var vars map[string]any
+	if err := json.Unmarshal(raw, &vars); err != nil {
+		t.Fatalf("the file must stay valid JSON: %v", err)
+	}
+	if vars["a_token"] != "secret" || vars["!a"] != "x" || vars[""] != "e" {
+		t.Fatalf("the claim's vars must all survive: %v", vars)
+	}
+	if strings.Count(string(raw), `"`+extraVarsGuardVar+`"`) != 1 {
+		t.Fatal("the guard must appear exactly once")
+	}
+	// An empty claim still yields a valid document.
+	job.ExtraVars = nil
+	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), &vars); err != nil {
+		t.Fatalf("empty claim: %v", err)
+	}
+}
+
+// TestUnloadableExtraVarsErrorShowsNoSecretPrefix is final re-review 3,
+// minor 1, under the real ansible-playbook: a trusted run whose template
+// holds a value Ansible cannot load as JSON fails on the guard, and the
+// error's quote of the file shows no prefix of a secret whose name sorts
+// before everything else.
+func TestUnloadableExtraVarsErrorShowsNoSecretPrefix(t *testing.T) {
+	ansible := requireAnsiblePlaybook(t)
+	secret := "S3CRET" + strings.Repeat("x", 150)
+	env := runEnv(t)
+	job := runJob(t)
+	job.ExtraVars = map[string]string{
+		"a_token": `"` + secret + `"`,
+		"cfg":     `{"o":{"__ansible_unsafe":5}}`, // a malformed marker: the JSON load fails
+	}
+	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+		t.Fatalf("materializeRunnerConfig: %v", err)
+	}
+	out, err := runPlaybookWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "cfg")
+	if err == nil {
+		t.Fatalf("the unloadable file must fail the run:\n%s", out)
+	}
+	if strings.Contains(out, "S3CRET") {
+		t.Fatalf("the error output leaks a secret prefix:\n%s", out)
+	}
+	if !strings.Contains(out, extraVarsGuardVar) {
+		t.Fatalf("expected the error to quote the guard at the head of the file:\n%s", out)
+	}
+}

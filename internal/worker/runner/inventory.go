@@ -242,12 +242,39 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 	for k, v := range forcedConnectionVars(env.WorkDir) {
 		vars[k] = v
 	}
-	vars[extraVarsGuardVar] = map[string]any{extraVarsGuardKey: true}
-	b, err := json.Marshal(vars)
+	b, err := guardedExtraVars(vars)
 	if err != nil {
-		return fmt.Errorf("encode extra vars: %w", err)
+		return err
 	}
 	return writeTextFile(filepath.Join(env.WorkDir, envDirName, extraVarsName), string(b), 0o600)
+}
+
+// guardedExtraVars encodes the extra-vars document with the guard
+// (extraVarsGuardVar) as its very first key, whatever the other names sort
+// as. When Ansible cannot load the file its error quotes the head of line
+// 1 — the whole one-line document — and redaction only replaces whole
+// values, so anything but the guard there could show a prefix of a secret
+// value (final re-review 3). A claim's own entry under the guard's name is
+// dropped.
+func guardedExtraVars(vars map[string]any) ([]byte, error) {
+	delete(vars, extraVarsGuardVar)
+	guard, err := json.Marshal(map[string]any{extraVarsGuardVar: map[string]any{extraVarsGuardKey: true}})
+	if err != nil {
+		return nil, fmt.Errorf("encode extra vars guard: %w", err)
+	}
+	rest, err := json.Marshal(vars)
+	if err != nil {
+		return nil, fmt.Errorf("encode extra vars: %w", err)
+	}
+	// guard is `{"pulsix_extravars_guard":{…}}` and rest `{…}`: splice them
+	// into one object, the guard's member first.
+	out := guard[:len(guard)-1]
+	if len(rest) > 2 {
+		out = append(append(out, ','), rest[1:]...)
+	} else {
+		out = append(out, '}')
+	}
+	return out, nil
 }
 
 // extraVarsGuardVar holds a key YAML cannot parse but JSON can: YAML caps
