@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,9 @@ type Mailer struct {
 	mu   sync.Mutex
 	sent []SentMail
 	fail error
+	// unconfigured makes Configured report an instance without outgoing
+	// mail (SetConfigured); the zero value is a configured instance.
+	unconfigured bool
 }
 
 // Send records the message and succeeds, unless FailWith set an error to
@@ -65,6 +69,26 @@ func (m *Mailer) Send(_ context.Context, to, subject, body string) error {
 	}
 	m.sent = append(m.sent, SentMail{To: to, Subject: subject, Body: body})
 	return nil
+}
+
+// SendMany records one message addressed to every recipient (To joined
+// with ", "), like mail.SMTP.SendMany sends one.
+func (m *Mailer) SendMany(ctx context.Context, to []string, subject, body string) error {
+	return m.Send(ctx, strings.Join(to, ", "), subject, body)
+}
+
+// Configured reports whether the fake instance has outgoing mail.
+func (m *Mailer) Configured(context.Context) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.unconfigured, nil
+}
+
+// SetConfigured switches the fake instance's outgoing mail on or off.
+func (m *Mailer) SetConfigured(ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unconfigured = !ok
 }
 
 // FailWith makes every later Send return err — e.g. an error wrapping

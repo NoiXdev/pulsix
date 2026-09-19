@@ -14,7 +14,14 @@ import (
 	"net/smtp"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// sessionTimeout bounds one whole SMTP conversation, from the dial to
+// QUIT, unless the caller's context ends it sooner. Without it a server
+// that accepts the connection and never answers would hold the caller —
+// an invitation request or a notification dispatcher — forever.
+const sessionTimeout = 30 * time.Second
 
 // ErrNotConfigured means the instance has no outbound mail settings at all.
 // It is a state, not a delivery failure: callers that can do without mail
@@ -63,7 +70,35 @@ func (m *SMTP) Send(ctx context.Context, to, subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("load smtp settings: %w", err)
 	}
-	return deliver(settings, to, subject, body)
+	return deliver(ctx, settings, []string{to}, subject, body)
+}
+
+// SendMany delivers one message to several recipients in one SMTP
+// conversation (every address is a RCPT TO and listed in the To header).
+// A notification channel's recipients share the message, the way a
+// mailing list does.
+func (m *SMTP) SendMany(ctx context.Context, to []string, subject, body string) error {
+	if len(to) == 0 {
+		return errors.New("smtp: no recipients")
+	}
+	settings, err := m.load(ctx)
+	if err != nil {
+		return fmt.Errorf("load smtp settings: %w", err)
+	}
+	return deliver(ctx, settings, to, subject, body)
+}
+
+// Configured reports whether the instance has outbound mail settings. A
+// loader error other than "nothing stored" is returned as is.
+func (m *SMTP) Configured(ctx context.Context) (bool, error) {
+	settings, err := m.load(ctx)
+	if errors.Is(err, ErrNotConfigured) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load smtp settings: %w", err)
+	}
+	return settings.Host != "", nil
 }
 
 // Test sends a fixed test message to to, using the currently stored
@@ -76,7 +111,7 @@ func (m *SMTP) Test(ctx context.Context, to string) error {
 	if err != nil {
 		return fmt.Errorf("load smtp settings: %w", err)
 	}
-	return deliver(settings, to, "Pulsix test e-mail", "This is a test message sent from your Pulsix instance's SMTP settings.")
+	return deliver(ctx, settings, []string{to}, "Pulsix test e-mail", "This is a test message sent from your Pulsix instance's SMTP settings.")
 }
 
 // Discard is a Mailer that accepts and drops every message. It exists for
@@ -87,7 +122,8 @@ type Discard struct{}
 // Send always succeeds and sends nothing.
 func (Discard) Send(context.Context, string, string, string) error { return nil }
 
-// deliver opens one SMTP conversation and sends a single message. It is
+// deliver opens one SMTP conversation, bounded by sessionTimeout or ctx's
+// deadline, and sends a single message to every recipient. It is
 // deliberately not net/smtp's own SendMail: that function decides on its
 // own, from what the server advertises, whether to use STARTTLS, giving the
 // caller no way to either insist on it or refuse it. Here StartTLS is an
@@ -96,17 +132,38 @@ func (Discard) Send(context.Context, string, string, string) error { return nil 
 // no TLS is attempted at all, matching a test server that offers none.
 // InsecureSkipVerify is never set — the certificate is always verified
 // against settings.Host.
-func deliver(settings SMTPSettings, to, subject, body string) error {
+func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, body string) error {
 	if settings.Host == "" {
 		return ErrNotConfigured
 	}
-	if strings.ContainsAny(settings.From, "\r\n") || strings.ContainsAny(to, "\r\n") {
+	if strings.ContainsAny(settings.From, "\r\n") {
 		return errHeaderInjection
 	}
+	for _, rcpt := range to {
+		if strings.ContainsAny(rcpt, "\r\n") {
+			return errHeaderInjection
+		}
+	}
+	deadline := time.Now().Add(sessionTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	dctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
-	c, err := smtp.Dial(addr)
+	conn, err := (&net.Dialer{}).DialContext(dctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
+	}
+	// Every later read and write of the conversation shares the deadline.
+	if err := conn.SetDeadline(deadline); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("set smtp deadline: %w", err)
+	}
+	c, err := smtp.NewClient(conn, settings.Host)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("smtp greeting from %s: %w", addr, err)
 	}
 	defer c.Close() //nolint:errcheck
 
@@ -140,14 +197,16 @@ func deliver(settings SMTPSettings, to, subject, body string) error {
 	if err := c.Mail(settings.From); err != nil {
 		return fmt.Errorf("mail from: %w", err)
 	}
-	if err := c.Rcpt(to); err != nil {
-		return fmt.Errorf("rcpt to: %w", err)
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("rcpt to: %w", err)
+		}
 	}
 	w, err := c.Data()
 	if err != nil {
 		return fmt.Errorf("data: %w", err)
 	}
-	if _, err := w.Write(buildMessage(settings.From, to, subject, body)); err != nil {
+	if _, err := w.Write(buildMessage(settings.From, strings.Join(to, ", "), subject, body)); err != nil {
 		return fmt.Errorf("write message: %w", err)
 	}
 	if err := w.Close(); err != nil {

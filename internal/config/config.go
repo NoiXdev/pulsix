@@ -68,6 +68,11 @@ type Config struct {
 	// API believes (PULSIX_TRUSTED_PROXIES, CIDRs or addresses, comma
 	// separated, default empty: the TCP peer is the client).
 	TrustedProxies []netip.Prefix
+	// NotifyAllowCIDRs re-admits destination ranges notification webhooks
+	// are otherwise refused (loopback, link-local, metadata; see
+	// internal/outbound) — PULSIX_NOTIFY_ALLOW_CIDRS, CIDRs or addresses,
+	// comma separated, default empty.
+	NotifyAllowCIDRs []netip.Prefix
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -155,6 +160,11 @@ func Load(getenv func(string) string) (Config, error) {
 		return cfg, fmt.Errorf("PULSIX_TRUSTED_PROXIES: %w", err)
 	}
 	cfg.TrustedProxies = proxies
+	notifyAllow, err := clientip.ParsePrefixes(getenv("PULSIX_NOTIFY_ALLOW_CIDRS"))
+	if err != nil {
+		return cfg, fmt.Errorf("PULSIX_NOTIFY_ALLOW_CIDRS: %w", err)
+	}
+	cfg.NotifyAllowCIDRs = notifyAllow
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {
 		return cfg, fmt.Errorf("PULSIX_MASTER_KEY must be 64 hex characters (32 bytes)")

@@ -323,3 +323,25 @@ func TestGRPCPublicAddr(t *testing.T) {
 		t.Fatal("an address without a port must be refused")
 	}
 }
+
+// TestNotifyAllowCIDRs: a comma-separated CIDR list, empty by default.
+func TestNotifyAllowCIDRs(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cfg, err := config.Load(env(base))
+	if err != nil || len(cfg.NotifyAllowCIDRs) != 0 {
+		t.Fatalf("default: %v, %v", cfg.NotifyAllowCIDRs, err)
+	}
+	base["PULSIX_NOTIFY_ALLOW_CIDRS"] = "127.0.0.0/8, ::1"
+	cfg, err = config.Load(env(base))
+	if err != nil || len(cfg.NotifyAllowCIDRs) != 2 || cfg.NotifyAllowCIDRs[1].String() != "::1/128" {
+		t.Fatalf("parsed: %v, %v", cfg.NotifyAllowCIDRs, err)
+	}
+	base["PULSIX_NOTIFY_ALLOW_CIDRS"] = "localhost"
+	if _, err := config.Load(env(base)); err == nil || !strings.Contains(err.Error(), "PULSIX_NOTIFY_ALLOW_CIDRS") {
+		t.Fatalf("a host name must be refused naming the variable, got %v", err)
+	}
+}
