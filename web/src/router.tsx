@@ -22,6 +22,7 @@ import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
 import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
+import { WorkersPage } from './features/workers/WorkersPage.tsx';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -126,6 +127,7 @@ const runsRoute = createRoute({
   component: RunsPage,
 });
 const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: RunDetailPage });
+const workersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/workers', component: WorkersPage });
 
 /**
  * settingsRoute is the layout route for Members, Activity and API tokens —
@@ -177,6 +179,7 @@ const routeTree = rootRoute.addChildren([
     schedulesRoute,
     runsRoute,
     runDetailRoute,
+    workersRoute,
     settingsRoute.addChildren([settingsIndexRoute, membersRoute, activityRoute, tokensRoute, credentialsRoute, jumpHostsRoute, mailRoute]),
   ]),
 ]);

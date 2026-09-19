@@ -11,6 +11,7 @@ const SEGMENT_LABEL: Record<string, string> = {
   templates: 'Templates',
   schedules: 'Schedules',
   runs: 'Runs',
+  workers: 'Workers',
   credentials: 'Credentials',
   'jump-hosts': 'Jump hosts',
 };

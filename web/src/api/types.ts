@@ -49,3 +49,6 @@ export type ScheduleInput = components['schemas']['ScheduleBody'];
 export type Trigger = components['schemas']['TriggerDTO'];
 export type TriggerInput = components['schemas']['TriggerBody'];
 export type TriggerDelivery = components['schemas']['TriggerDeliveryDTO'];
+
+export type Worker = components['schemas']['WorkerDTO'];
+export type WorkerEnrollment = components['schemas']['WorkerEnrollmentDTO'];

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Bell, CalendarClock, ChevronDown, ClipboardList, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Search, Server, Settings as SettingsIcon } from 'lucide-react';
+import { Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Search, Server, Settings as SettingsIcon } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 
 export interface ShellOrg {
@@ -188,6 +188,16 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
           >
             <Play size={16} />
             <span className="flex-1">Runs</span>
+          </Link>
+          <Link
+            to="/o/$org/workers"
+            params={{ org: org.slug }}
+            activeOptions={{ exact: false }}
+            activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
+            inactiveProps={{ className: INACTIVE_LINK }}
+          >
+            <Cpu size={16} />
+            <span className="flex-1">Workers</span>
           </Link>
           <Link
             to="/o/$org/settings"
