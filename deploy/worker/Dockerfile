@@ -56,6 +56,17 @@ RUN pip install --no-cache-dir "ansible-core==2.21.4" "ansible-runner==2.4.3"
 
 COPY --from=build /out/pulsix-worker /pulsix-worker
 
+# The runtime user, with a passwd entry: OpenSSH looks the running uid up
+# before it does anything else and refuses to start without one ("No user
+# exists for uid 65532"), which broke every SSH playbook run and every git
+# over SSH in the v0.2b image. The home holds nothing a run depends on —
+# runs get their own HOME and known_hosts under their work dir — and it
+# stays out of the data volume; the shell is nologin (nobody logs in).
+RUN groupadd --system --gid 65532 pulsix \
+	&& useradd --system --uid 65532 --gid 65532 --home-dir /home/pulsix --create-home \
+		--shell /usr/sbin/nologin pulsix \
+	&& chmod 0700 /home/pulsix
+
 # The worker's scratch root: per-job temp dirs and the persistent repo
 # cache live under it (PULSIX_WORKER_DATA_DIR defaults to this path). It
 # must be owner-private and writable by the runtime user. A token-enrolling

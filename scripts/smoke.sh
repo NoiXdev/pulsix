@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # smoke.sh — runs the real manager and worker images through
 # deploy/compose/docker-compose.yml and proves the basics work: the
+# worker image's runtime user can use ssh (scripts/worker-image-test.sh), the
 # manager starts, answers /healthz, reports setup as not yet completed on
 # a fresh database, and serves the SPA; after the setup wizard's API call
 # the worker-enroll service enrolls the worker container, which holds
@@ -81,6 +82,10 @@ cleanup() {
 	exit "$status"
 }
 trap cleanup EXIT
+
+# The worker image's runtime user must be able to use ssh (a passwd entry
+# and a home): checked in throwaway containers before the stack starts.
+"$repo_root/scripts/worker-image-test.sh" "noixdev/pulsix-worker:${PULSIX_VERSION:-latest}"
 
 echo "smoke: starting the stack as Compose project \"$project\" (manager image tag: ${PULSIX_VERSION:-latest}) …"
 compose up -d
