@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,6 +151,9 @@ type wiring struct {
 	scheduleTick time.Duration
 	// opts are app.Build's test seams (app.WithScheduleClock).
 	opts []app.Option
+	// notifyAllow sets PULSIX_NOTIFY_ALLOW_CIDRS (v0.2d): the notification
+	// gate admits its loopback webhook receiver.
+	notifyAllow []netip.Prefix
 }
 
 // wireScenario builds everything the drive steps use: the fully wired
@@ -184,8 +188,9 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, 
 		// with no <=0 fallback of its own — config.Load always supplies the
 		// production default, so match it here rather than requeue on 0
 		// attempts allowed.
-		JobMaxAttempts: config.DefaultJobMaxAttempts,
-		Version:        "e2e",
+		JobMaxAttempts:   config.DefaultJobMaxAttempts,
+		Version:          "e2e",
+		NotifyAllowCIDRs: w.notifyAllow,
 	}
 	a, err := app.Build(ctx, cfg, w.opts...)
 	if err != nil {
