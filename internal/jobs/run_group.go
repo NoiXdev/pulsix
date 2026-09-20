@@ -93,40 +93,96 @@ SELECT
 // the group with claimRunGroupReport — an ordinary UPDATE that serializes
 // on Postgres's own row lock regardless of which caller holds the
 // advisory lock, or whether it is held at all.
-//
-// orgID and groupID are the caller's own — terminate and
-// recordCancelledRunGroup both already look up org_id, kind and
-// run_group_id for their own purposes (the lock condition, the kind
-// gate), so recordRunGroup does not re-read them (fix round 1, Minor #3).
 func (q *SQLQueue) recordRunGroup(ctx context.Context, orgID, groupID uuid.UUID) error {
 	if q.runGroups == nil {
 		return nil
 	}
+	r, won, err := q.claimFinishedRunGroup(ctx, orgID, groupID)
+	if err != nil {
+		// Neither the read nor the claim may wedge the job in running —
+		// the same controller ruling reportRunGroup's savepoint already
+		// implements for the sink, and now actually true here too
+		// (final review, Important #1): both statements ran inside a
+		// savepoint, so the finishing transaction survives their failure
+		// and the terminal transition still commits. This transition's
+		// report is lost, never retried, since the job it belonged to is
+		// terminal by the time any retry could run.
+		slog.ErrorContext(ctx, "record run group: read or claim failed; its notifications are lost", "group", groupID, "org", orgID, "err", err)
+		return nil
+	}
+	if !won {
+		return nil // the group is not done yet, or another path reported it
+	}
+	q.reportRunGroup(ctx, orgID, groupID, r)
+	return nil
+}
+
+// claimFinishedRunGroup runs the group read and the report claim inside
+// one savepoint (final review, Important #1). Both statements used to run
+// directly on the finishing transaction: a Postgres error in either — the
+// review's scenario is an operator statement_timeout that runGroupQuery's
+// four count(DISTINCT ...) sub-selects exceed, but an RLS denial or a bad
+// cast does the same — left the transaction in the aborted state, so
+// clearPayload (the next statement in terminate) failed with "current
+// transaction is aborted", the whole finish rolled back, and the job kept
+// its non-terminal status. A retried Finish then failed identically, so
+// the job stayed running forever and the schedule's overlap guard skipped
+// every further occurrence of that schedule.
+//
+// The savepoint is the same machinery reportRunGroup uses for the sink,
+// for the same reason: ROLLBACK TO SAVEPOINT is the one statement Postgres
+// still accepts in an aborted transaction.
+//
+// It reports won = false without an error for a group that is not complete
+// yet and for one another path has already claimed; neither is a failure.
+func (q *SQLQueue) claimFinishedRunGroup(ctx context.Context, orgID, groupID uuid.UUID) (RunGroupResult, bool, error) {
 	r := RunGroupResult{OrgID: orgID, GroupID: groupID}
+	if _, err := q.db.Exec(ctx, `SAVEPOINT run_group_read`); err != nil {
+		return r, false, fmt.Errorf("open read savepoint: %w", err)
+	}
+	r, won, err := q.readAndClaimRunGroup(ctx, r, orgID, groupID)
+	if err != nil {
+		if _, rbErr := q.db.Exec(ctx, `ROLLBACK TO SAVEPOINT run_group_read`); rbErr != nil {
+			return r, false, fmt.Errorf("%w (rolling back to the savepoint also failed: %w)", err, rbErr)
+		}
+		return r, false, err
+	}
+	if _, err := q.db.Exec(ctx, `RELEASE SAVEPOINT run_group_read`); err != nil {
+		// The statements themselves succeeded, so the claim (if it won)
+		// stands; a failed release means the connection is gone, and
+		// reporting through it would fail too.
+		slog.ErrorContext(ctx, "record run group: release read savepoint", "group", groupID, "org", orgID, "err", err)
+		return r, false, nil
+	}
+	return r, won, nil
+}
+
+// readAndClaimRunGroup reads the group's aggregate and, when the group is
+// complete, claims its single report. Its caller wraps it in a savepoint.
+//
+// orgID and groupID are the caller's own — terminate and
+// recordCancelledRunGroup both already look up org_id, kind and
+// run_group_id for their own purposes (the lock condition, the kind
+// gate), so this does not re-read them (fix round 1, Minor #3).
+func (q *SQLQueue) readAndClaimRunGroup(ctx context.Context, r RunGroupResult, orgID, groupID uuid.UUID) (RunGroupResult, bool, error) {
 	var total, terminal, failed, cancelled int
 	var first *uuid.UUID
 	if err := q.db.QueryRow(ctx, runGroupQuery, orgID, groupID).Scan(
 		&total, &terminal, &failed, &cancelled, &r.Hosts, &r.HostsChanged, &r.HostsFailed,
 		&r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef,
 	); err != nil {
-		// A read failure here must not wedge the job in running any more
-		// than the sink's own failure below may (see reportRunGroup): it
-		// is logged, and this transition's report is lost — never
-		// retried, since the job it belonged to is already terminal by
-		// the time any retry could run.
-		slog.ErrorContext(ctx, "record run group: read group", "group", groupID, "org", orgID, "err", err)
-		return nil
+		return r, false, fmt.Errorf("read group: %w", err)
 	}
 	if total == 0 || terminal < total || first == nil {
-		return nil // the group is not done yet
+		return r, false, nil // the group is not done yet
 	}
 	r.Jobs, r.FirstJobID = total, *first
 	won, err := q.claimRunGroupReport(ctx, r.FirstJobID)
 	if err != nil {
-		return fmt.Errorf("record run group: claim report: %w", err)
+		return r, false, fmt.Errorf("claim report: %w", err)
 	}
 	if !won {
-		return nil // another path already reported this group
+		return r, false, nil // another path already reported this group
 	}
 	switch {
 	case failed > 0:
@@ -136,8 +192,7 @@ func (q *SQLQueue) recordRunGroup(ctx context.Context, orgID, groupID uuid.UUID)
 	default:
 		r.Status = StatusSucceeded
 	}
-	q.reportRunGroup(ctx, orgID, groupID, r)
-	return nil
+	return r, true, nil
 }
 
 // claimRunGroupReport is the group's exactly-once guard: an ordinary

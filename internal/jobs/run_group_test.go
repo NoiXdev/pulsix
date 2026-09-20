@@ -350,3 +350,76 @@ func TestCancelledRunGroupCheckIgnoresOtherJobs(t *testing.T) {
 		t.Fatalf("reports = %d, want none", n)
 	}
 }
+
+// failReportClaim installs a trigger that makes the report claim's own
+// UPDATE raise, and removes it again when the test ends. It is the
+// cheapest faithful stand-in for the final review's scenario — an operator
+// setting a statement_timeout on the application role, which the group
+// read's four count(DISTINCT ...) sub-selects then exceed: what matters is
+// that a *Postgres* error happens on the report path inside the finishing
+// transaction, not which of its two statements raised it. Both run under
+// the same savepoint.
+//
+// The DDL goes through the bootstrap superuser connection, because
+// pulsix_app deliberately does not own the jobs table.
+func failReportClaim(t *testing.T) {
+	t.Helper()
+	admin, err := db.Open(context.Background(), testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := admin.Pool().Exec(context.Background(), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`CREATE OR REPLACE FUNCTION pulsix_test_fail_report_claim() RETURNS trigger
+	      LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'report claim refused'; END $$`)
+	exec(`CREATE TRIGGER pulsix_test_fail_report_claim BEFORE UPDATE ON jobs FOR EACH ROW
+	      WHEN (NEW.run_group_reported AND NOT OLD.run_group_reported)
+	      EXECUTE FUNCTION pulsix_test_fail_report_claim()`)
+	t.Cleanup(func() {
+		exec(`DROP TRIGGER IF EXISTS pulsix_test_fail_report_claim ON jobs`)
+		exec(`DROP FUNCTION IF EXISTS pulsix_test_fail_report_claim()`)
+	})
+}
+
+// TestRunGroupReportPathDatabaseErrorStillFinishesTheJob is the final
+// review's Important #1. The group read and the report claim ran directly
+// on the finishing transaction, with only the sink call itself under a
+// savepoint. A Postgres error in either therefore aborted the transaction:
+// clearPayload, the very next statement, failed with "current transaction
+// is aborted", terminate rolled the whole finish back, and the job kept
+// its non-terminal status — forever, because a retried Finish fails the
+// identical way. The schedule's overlap guard then skipped every further
+// occurrence of that schedule, so a notification-only code path stopped
+// the automation product. The read's own comment claimed the opposite
+// guarantee ("must not wedge the job in running"); this is that guarantee
+// made true.
+func TestRunGroupReportPathDatabaseErrorStillFinishesTheJob(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-report-dberr")
+	failReportClaim(t)
+	_, _, js := w.runGroup(t, 1)
+	if _, err := w.d.Pool().Exec(context.Background(), `UPDATE jobs SET payload = '"sealed-payload"' WHERE id = $1`, js[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.q.Finish(context.Background(), js[0].ID, StatusSucceeded, nil, ""); err != nil {
+		t.Fatalf("Finish = %v, want nil: a notification-only path must never wedge a job in running", err)
+	}
+	var status string
+	var payload []byte
+	if err := w.d.Pool().QueryRow(context.Background(), `SELECT status, payload FROM jobs WHERE id = $1`, js[0].ID).Scan(&status, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded although the report path raised", status)
+	}
+	if payload != nil {
+		t.Fatalf("payload = %s, want wiped: the terminal transition must still commit", payload)
+	}
+	if got := w.sink.snapshot(); len(got) != 0 {
+		t.Fatalf("reported %d group(s) although the claim never succeeded", len(got))
+	}
+}
