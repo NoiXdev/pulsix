@@ -109,6 +109,23 @@ func (t *DigestTicker) tickSafely(ctx context.Context) {
 	}
 }
 
+// weekBefore is the instant one wall-clock week before occurrence, in
+// timezone: it converts to the organization's zone before subtracting
+// seven days, so a week that crosses a DST change still starts at the
+// same local wall-clock time as it ends. Doing the same subtraction on
+// occurrence's own (UTC) Location would instead subtract exactly 168
+// hours — one hour off whenever the intervening week crosses a spring or
+// autumn transition, silently shifting which runs a digest attributes to
+// its week. An unparseable timezone (unreachable once SetDigest has
+// validated it) falls back to the naive subtraction.
+func weekBefore(occurrence time.Time, timezone string) time.Time {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return occurrence.AddDate(0, 0, -7)
+	}
+	return occurrence.In(loc).AddDate(0, 0, -7)
+}
+
 // Tick handles every due digest once.
 func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 	now := t.now()
@@ -117,7 +134,7 @@ func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 			t.log.WarnContext(ctx, "weekly digest more than a day late; skipping it", "org", d.OrgID, "due", d.Occurrence)
 			return nil
 		}
-		sum, err := t.builder.Digest(db.WithOrgScope(ctx, d.OrgID), d.OrgID, d.Occurrence.AddDate(0, 0, -7), d.Occurrence)
+		sum, err := t.builder.Digest(db.WithOrgScope(ctx, d.OrgID), d.OrgID, weekBefore(d.Occurrence, d.Timezone), d.Occurrence)
 		if err != nil {
 			return fmt.Errorf("build digest: %w", err)
 		}

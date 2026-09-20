@@ -136,3 +136,29 @@ func TestDigestTicker(t *testing.T) {
 		t.Fatalf("key = %s", got)
 	}
 }
+
+// TestDigestWeekBoundaryCrossesDST is the plan's own must-hold: the
+// digest's from/to bounds are computed in the org's timezone, with DST
+// handled with the same care cronexpr gives a schedule's own occurrences.
+// Monday 26 Oct 2026 08:00 Europe/Berlin (CET, UTC+1) is 07:00 UTC; the
+// switch out of summer time happened the day before, on 25 Oct. The
+// previous Monday, 19 Oct, was still CEST (UTC+2): 08:00 CEST is 06:00
+// UTC — one hour earlier than naively subtracting exactly seven 24-hour
+// days from the occurrence (07:00 UTC) would give. A one-hour drift here
+// would silently exclude a run at the very moment the previous digest
+// itself fired.
+func TestDigestWeekBoundaryCrossesDST(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	occ := time.Date(2026, 10, 26, 7, 0, 0, 0, time.UTC)
+	now := occ.Add(30 * time.Second)
+	q := &fakeDigestQueue{due: []notify.DueDigest{{OrgID: org, Occurrence: occ, Timezone: "Europe/Berlin"}}}
+	outbox := &recordingDigestOutbox{sums: map[uuid.UUID]notify.DigestSummary{}}
+	tk := notify.NewDigestTicker(q, fakeBuilder{}, outbox, time.Minute, func() time.Time { return now }, nil, quiet())
+	if _, err := tk.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 10, 19, 6, 0, 0, 0, time.UTC)
+	if sum := outbox.sums[org]; !sum.From.Equal(want) {
+		t.Fatalf("from = %s, want %s (the DST-correct previous Monday 08:00 Europe/Berlin)", sum.From, want)
+	}
+}
