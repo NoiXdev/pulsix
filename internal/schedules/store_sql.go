@@ -157,6 +157,18 @@ func (st *SQLStore) LatestRuns(ctx context.Context, orgID uuid.UUID) (map[uuid.U
 	return out, nil
 }
 
+func (st *SQLStore) RunsBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]Run, error) {
+	rows, err := st.q.ListScheduleRunsBetween(ctx, gen.ListScheduleRunsBetweenParams{OrgID: orgID, FromAt: from, ToAt: to})
+	if err != nil {
+		return nil, fmt.Errorf("list schedule runs between: %w", err)
+	}
+	out := make([]Run, len(rows))
+	for i, r := range rows {
+		out[i] = toRun(r)
+	}
+	return out, nil
+}
+
 // insertRun is shared by the org-scoped store and the ticker's bypass tx.
 func insertRun(ctx context.Context, q *gen.Queries, r Run) error {
 	if err := q.InsertScheduleRun(ctx, gen.InsertScheduleRunParams{

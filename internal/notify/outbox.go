@@ -164,6 +164,34 @@ func (o *Outbox) enqueueSchedule(ctx context.Context, q *gen.Queries, orgID, sch
 	return o.insert(ctx, q, orgID, key, build(sc, cats), channels)
 }
 
+// EnqueueDigest queues a weekly digest for the organization's enabled
+// digest channels inside tx (the digest ticker's row savepoint).
+func (o *Outbox) EnqueueDigest(ctx context.Context, tx pgx.Tx, d DueDigest, sum DigestSummary) error {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin notification savepoint: %w", err)
+	}
+	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
+		channels, err := q.DigestChannelsForSend(ctx, d.OrgID)
+		if err != nil {
+			return fmt.Errorf("read digest channels: %w", err)
+		}
+		if len(channels) == 0 {
+			return nil
+		}
+		org, err := q.NotifyOrgContext(ctx, d.OrgID)
+		if err != nil {
+			return fmt.Errorf("read organization: %w", err)
+		}
+		base := o.publicURL + "/o/" + org.Slug
+		for i := range sum.Slowest {
+			sum.Slowest[i].URL = base + "/runs/" + sum.Slowest[i].RunID.String()
+		}
+		ev := Event{Kind: EventDigest, At: d.Occurrence, Org: OrgRef{ID: d.OrgID, Slug: org.Slug, Name: org.Name}, Digest: &sum, URL: base + "/schedules"}
+		return o.insert(ctx, q, d.OrgID, d.Key(), ev, channels)
+	})
+}
+
 // insert queues one delivery per channel; the unique event key makes a
 // repeated insert a no-op.
 func (o *Outbox) insert(ctx context.Context, q *gen.Queries, orgID uuid.UUID, key string, ev Event, channels []uuid.UUID) error {

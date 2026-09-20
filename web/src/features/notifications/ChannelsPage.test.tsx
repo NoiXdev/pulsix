@@ -150,4 +150,27 @@ describe('ChannelsPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Send test through ops hook' }));
     expect(await screen.findByText('Test through ops hook failed: the endpoint answered 404')).toBeInTheDocument();
   });
+
+  it('edits the weekly digest', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [hook, mailCh], mail_available: true },
+      'GET /api/v1/orgs/acme/notification-digest': { digest: { enabled: false, weekday: 'mon', time: '08:00', timezone: 'UTC', channels: [] } },
+      'PUT /api/v1/orgs/acme/notification-digest': (req: MockRequest) => {
+        put = req.body;
+        return { digest: { enabled: true, weekday: 'fri', time: '08:00', timezone: 'UTC', channels: [{ id: 'c1', name: 'ops hook', kind: 'webhook' }], next_run_at: '2026-09-25T08:00:00Z' } };
+      },
+    });
+    renderPage();
+    const card = await screen.findByRole('region', { name: 'Weekly digest' });
+    await user.click(within(card).getByLabelText('Send the weekly digest'));
+    await user.selectOptions(within(card).getByLabelText('Day'), 'fri');
+    await user.click(within(card).getByLabelText('ops hook'));
+    await user.click(within(card).getByRole('button', { name: 'Save digest' }));
+    await waitFor(() => expect(put).toEqual({ enabled: true, weekday: 'fri', time: '08:00', timezone: 'UTC', channels: ['c1'] }));
+    expect(await screen.findByText('Weekly digest saved')).toBeInTheDocument();
+  });
 });

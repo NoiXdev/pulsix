@@ -72,6 +72,8 @@ type App struct {
 	// stopDispatch stops the notification dispatcher (spec 2026-09-18
 	// §5), waiting for a batch in flight.
 	stopDispatch func()
+	// stopDigest stops the weekly digest ticker.
+	stopDigest func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
@@ -93,6 +95,9 @@ func (a *App) Close() {
 	}
 	if a.stopDispatch != nil {
 		a.stopDispatch()
+	}
+	if a.stopDigest != nil {
+		a.stopDigest()
 	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
@@ -295,7 +300,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs), outbound.DefaultTimeout, nil), time.Now)
 	notifyStore := notify.NewSQLStore(appDB)
 	notifySvc := notify.NewService(notify.Deps{
-		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Box: box, Mail: mailer, Sender: notifySender,
+		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: box, Mail: mailer, Sender: notifySender,
 		PublicURL: cfg.PublicURL, Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
 	})
 
@@ -352,6 +357,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// every early return below.
 	dispatchStop := startLoop(notify.NewDispatcher(notify.NewDeliverySQLStore(appDB), notifySender, notify.DefaultDispatchInterval, time.Now, nil, slog.Default()).Run)
 
+	// The weekly digest (spec §7): one ticker per manager, SKIP LOCKED
+	// like the schedule ticker; schedulesSvc builds the week's summary.
+	digestStop := startLoop(notify.NewDigestTicker(notify.NewDigestSQLStore(appDB, slog.Default()), schedulesSvc, outbox, notify.DefaultDigestTick, time.Now, nil, slog.Default()).Run)
+
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
@@ -365,6 +374,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			retestStop()
 			tickerStop()
 			dispatchStop()
+			digestStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -384,6 +394,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				retestStop()
 				tickerStop()
 				dispatchStop()
+				digestStop()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -394,7 +405,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEmbedded: stopEmbedded,
 	}, nil
 }
 

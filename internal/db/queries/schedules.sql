@@ -73,3 +73,10 @@ WHERE r.org_id = @org_id AND r.schedule_id = @schedule_id
     ORDER BY k.decided_at DESC, k.id DESC
     LIMIT @keep
   );
+
+-- name: ListScheduleRunsBetween :many
+-- The calendar's past occurrences and the digest's week: every decision
+-- whose due time falls in [from, to).
+SELECT * FROM schedule_runs
+WHERE org_id = @org_id AND due_at >= @from_at::timestamptz AND due_at < @to_at::timestamptz
+ORDER BY due_at, id;

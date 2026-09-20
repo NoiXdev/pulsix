@@ -254,6 +254,49 @@ func (q *Queries) ListScheduleRuns(ctx context.Context, arg ListScheduleRunsPara
 	return items, nil
 }
 
+const listScheduleRunsBetween = `-- name: ListScheduleRunsBetween :many
+SELECT id, org_id, schedule_id, due_at, decided_at, outcome, reason, job_group_id FROM schedule_runs
+WHERE org_id = $1 AND due_at >= $2::timestamptz AND due_at < $3::timestamptz
+ORDER BY due_at, id
+`
+
+type ListScheduleRunsBetweenParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	FromAt time.Time `json:"from_at"`
+	ToAt   time.Time `json:"to_at"`
+}
+
+// The calendar's past occurrences and the digest's week: every decision
+// whose due time falls in [from, to).
+func (q *Queries) ListScheduleRunsBetween(ctx context.Context, arg ListScheduleRunsBetweenParams) ([]ScheduleRun, error) {
+	rows, err := q.db.Query(ctx, listScheduleRunsBetween, arg.OrgID, arg.FromAt, arg.ToAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ScheduleRun
+	for rows.Next() {
+		var i ScheduleRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ScheduleID,
+			&i.DueAt,
+			&i.DecidedAt,
+			&i.Outcome,
+			&i.Reason,
+			&i.JobGroupID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSchedules = `-- name: ListSchedules :many
 SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision FROM schedules
 WHERE org_id = $1 AND ($2::uuid IS NULL OR template_id = $2::uuid)

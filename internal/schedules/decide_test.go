@@ -186,6 +186,10 @@ func (f *panicOnceRuns) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uui
 	return nil, nil
 }
 
+func (f *panicOnceRuns) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]jobs.GroupSummary, error) {
+	return nil, nil
+}
+
 // TestDecideRecoversAPanicAndAdvancesTheSchedule is fix round 1's Important
 // #1: a panic anywhere inside deciding or enqueueing (a stored override
 // that no longer reveals, a broken enqueuer, an unexpected empty jobs

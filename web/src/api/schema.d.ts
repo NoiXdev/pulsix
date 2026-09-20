@@ -1156,6 +1156,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/notification-digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org notification digest */
+        get: operations["get-api-v1-orgs-by-org-notification-digest"];
+        /** Put API v1 orgs by org notification digest */
+        put: operations["updateNotificationDigest"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/playbooks": {
         parameters: {
             query?: never;
@@ -2822,6 +2840,40 @@ export interface components {
             sent_at?: string;
             /** @enum {string} */
             status: "pending" | "sent" | "failed";
+        };
+        NotifyDigestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyDigestBody.json
+             */
+            readonly $schema?: string;
+            channels: string[] | null;
+            enabled: boolean;
+            time: string;
+            timezone: string;
+            /** @enum {string} */
+            weekday: "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+        };
+        NotifyDigestDTO: {
+            channels: components["schemas"]["NotifyRuleChannelDTO"][] | null;
+            enabled: boolean;
+            /** Format: date-time */
+            next_run_at?: string;
+            /** @description HH:MM in timezone */
+            time: string;
+            timezone: string;
+            /** @enum {string} */
+            weekday: "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+        };
+        NotifyDigestOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyDigestOutputBody.json
+             */
+            readonly $schema?: string;
+            digest: components["schemas"]["NotifyDigestDTO"];
         };
         NotifyEmailDTO: {
             /** @description Plain addresses; every recipient gets the same message */
@@ -7016,6 +7068,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotifyTestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-notification-digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyDigestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateNotificationDigest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotifyDigestBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyDigestOutputBody"];
                 };
             };
             /** @description Error */

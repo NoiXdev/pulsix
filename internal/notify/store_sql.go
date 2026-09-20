@@ -173,6 +173,58 @@ func (st *SQLStore) ReplaceScheduleRules(ctx context.Context, orgID, scheduleID 
 	return nil
 }
 
+func (st *SQLStore) GetDigest(ctx context.Context, orgID uuid.UUID) (DigestSettings, bool, error) {
+	row, err := st.q.GetNotificationDigest(ctx, orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DigestSettings{}, false, nil
+	}
+	if err != nil {
+		return DigestSettings{}, false, fmt.Errorf("get notification digest: %w", err)
+	}
+	chans, err := st.q.ListNotificationDigestChannels(ctx, orgID)
+	if err != nil {
+		return DigestSettings{}, false, fmt.Errorf("list digest channels: %w", err)
+	}
+	d := DigestSettings{Enabled: row.Enabled, Weekday: int(row.Weekday), Time: row.AtTime, Timezone: row.Timezone, NextRunAt: db.TimePtr(row.NextRunAt)}
+	for _, c := range chans {
+		d.Channels = append(d.Channels, ChannelRef{ID: c.ChannelID, Name: c.ChannelName, Kind: Kind(c.ChannelKind)})
+	}
+	return d, true, nil
+}
+
+// PutDigest upserts the settings and replaces the channel list in one
+// transaction; an unknown channel is ErrInvalidInput.
+func (st *SQLStore) PutDigest(ctx context.Context, orgID uuid.UUID, s DigestSettings, channels []uuid.UUID) error {
+	tx, err := st.d.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin notification digest: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	q := gen.New(tx)
+	if _, err := q.UpsertNotificationDigest(ctx, gen.UpsertNotificationDigestParams{
+		OrgID: orgID, Enabled: s.Enabled, Weekday: int16(s.Weekday), AtTime: s.Time, Timezone: s.Timezone, //nolint:gosec // 0-6
+		NextRunAt: db.NullTime(s.NextRunAt),
+	}); err != nil {
+		return fmt.Errorf("store notification digest: %w", err)
+	}
+	if err := q.DeleteNotificationDigestChannels(ctx, orgID); err != nil {
+		return fmt.Errorf("clear digest channels: %w", err)
+	}
+	for _, ch := range channels {
+		err := q.InsertNotificationDigestChannel(ctx, gen.InsertNotificationDigestChannelParams{OrgID: orgID, ChannelID: ch})
+		if db.IsForeignKeyViolation(err) {
+			return fmt.Errorf("%w: unknown channel %s", ErrInvalidInput, ch)
+		}
+		if err != nil {
+			return fmt.Errorf("store digest channel: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit notification digest: %w", err)
+	}
+	return nil
+}
+
 func toChannel(r gen.NotificationChannel) Channel {
 	return Channel{
 		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), Name: r.Name, Enabled: r.Enabled, Config: r.Config, BodyJSON: r.BodyJson,

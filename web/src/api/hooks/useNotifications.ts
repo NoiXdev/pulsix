@@ -90,3 +90,21 @@ export function useSetScheduleNotifications(org: string, scheduleId: string) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['schedule-notifications', org, scheduleId] }),
   });
 }
+
+export function useDigest(org: string, enabled = true) {
+  return useQuery({
+    queryKey: ['notification-digest', org],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/notification-digest', { params: { path: { org } } })),
+    enabled: !!org && enabled,
+  });
+}
+
+export type DigestInput = { enabled: boolean; weekday: 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'; time: string; timezone: string; channels: string[] };
+
+export function useSetDigest(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DigestInput) => unwrap(api.PUT('/api/v1/orgs/{org}/notification-digest', { params: { path: { org } }, body })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['notification-digest', org] }),
+  });
+}

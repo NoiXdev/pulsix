@@ -30,6 +30,8 @@ type Store interface {
 	RecordRun(ctx context.Context, r Run) error
 	Runs(ctx context.Context, orgID, scheduleID uuid.UUID, limit int) ([]Run, error)
 	LatestRuns(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Run, error)
+	// RunsBetween lists the organization's decisions due in [from, to).
+	RunsBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]Run, error)
 }
 
 // TemplateChecker is the slice of templates.Service overrides need.
@@ -45,6 +47,8 @@ type RunEnqueuer interface {
 	// RunTargets lists the hosts a run of the template would target now
 	// (the maintenance guard's question).
 	RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
+	// GroupSummaries summarises run groups for the digest and calendar.
+	GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]jobs.GroupSummary, error)
 }
 
 // Auditor records the scheduled runs themselves (actor schedule:<id>).
@@ -228,6 +232,12 @@ func (s *Service) Runs(ctx context.Context, orgID, id uuid.UUID, limit int) ([]R
 		return nil, err
 	}
 	return s.store.Runs(ctx, orgID, id, limit)
+}
+
+// RunsBetween lists the organization's decisions due in [from, to), for
+// the calendar.
+func (s *Service) RunsBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]Run, error) {
+	return s.store.RunsBetween(ctx, orgID, from, to)
 }
 
 // Preview compiles an editor's input and lists the next five occurrences.

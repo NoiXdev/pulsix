@@ -141,6 +141,18 @@ func (f *fakeStore) LatestRuns(_ context.Context, _ uuid.UUID) (map[uuid.UUID]sc
 	return out, nil
 }
 
+func (f *fakeStore) RunsBetween(_ context.Context, orgID uuid.UUID, from, to time.Time) ([]schedules.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []schedules.Run
+	for _, r := range f.runs {
+		if r.OrgID == orgID && !r.DueAt.Before(from) && r.DueAt.Before(to) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // fakeTemplates records the options it was called with; "sealing" wraps a
 // value in a marker map so tests can see it happened.
 type fakeTemplates struct {
@@ -194,6 +206,7 @@ type fakeRuns struct {
 	group      uuid.UUID
 	targets    []uuid.UUID
 	targetsErr error
+	summaries  map[uuid.UUID]jobs.GroupSummary
 }
 
 func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
@@ -207,6 +220,18 @@ func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID
 		f.group = uuid.Must(uuid.NewV7())
 	}
 	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: f.group, Trigger: req.Trigger}}, nil
+}
+
+func (f *fakeRuns) GroupSummaries(_ context.Context, _ uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]jobs.GroupSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]jobs.GroupSummary{}
+	for _, id := range groupIDs {
+		if g, ok := f.summaries[id]; ok {
+			out[id] = g
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeRuns) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {

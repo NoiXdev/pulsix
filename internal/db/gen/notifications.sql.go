@@ -13,6 +13,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceNotificationDigest = `-- name: AdvanceNotificationDigest :exec
+UPDATE notification_digests SET next_run_at = $1, last_period = $2
+WHERE org_id = $3
+`
+
+type AdvanceNotificationDigestParams struct {
+	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
+	LastPeriod string             `json:"last_period"`
+	OrgID      uuid.UUID          `json:"org_id"`
+}
+
+func (q *Queries) AdvanceNotificationDigest(ctx context.Context, arg AdvanceNotificationDigestParams) error {
+	_, err := q.db.Exec(ctx, advanceNotificationDigest, arg.NextRunAt, arg.LastPeriod, arg.OrgID)
+	return err
+}
+
 const claimNotificationDeliveries = `-- name: ClaimNotificationDeliveries :many
 UPDATE notification_deliveries AS d
 SET locked_until = $1::timestamptz, attempts = d.attempts + 1
@@ -178,6 +194,15 @@ func (q *Queries) DeleteNotificationChannel(ctx context.Context, arg DeleteNotif
 	return result.RowsAffected(), nil
 }
 
+const deleteNotificationDigestChannels = `-- name: DeleteNotificationDigestChannels :exec
+DELETE FROM notification_digest_channels WHERE org_id = $1
+`
+
+func (q *Queries) DeleteNotificationDigestChannels(ctx context.Context, orgID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteNotificationDigestChannels, orgID)
+	return err
+}
+
 const deleteScheduleNotifications = `-- name: DeleteScheduleNotifications :exec
 DELETE FROM schedule_notifications WHERE org_id = $1 AND schedule_id = $2
 `
@@ -190,6 +215,34 @@ type DeleteScheduleNotificationsParams struct {
 func (q *Queries) DeleteScheduleNotifications(ctx context.Context, arg DeleteScheduleNotificationsParams) error {
 	_, err := q.db.Exec(ctx, deleteScheduleNotifications, arg.OrgID, arg.ScheduleID)
 	return err
+}
+
+const digestChannelsForSend = `-- name: DigestChannelsForSend :many
+SELECT d.channel_id
+FROM notification_digest_channels AS d
+JOIN notification_channels AS c ON c.org_id = d.org_id AND c.id = d.channel_id
+WHERE d.org_id = $1 AND c.enabled
+ORDER BY d.channel_id
+`
+
+func (q *Queries) DigestChannelsForSend(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, digestChannelsForSend, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var channel_id uuid.UUID
+		if err := rows.Scan(&channel_id); err != nil {
+			return nil, err
+		}
+		items = append(items, channel_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const failNotificationDelivery = `-- name: FailNotificationDelivery :execrows
@@ -245,6 +298,26 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 	return i, err
 }
 
+const getNotificationDigest = `-- name: GetNotificationDigest :one
+SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at FROM notification_digests WHERE org_id = $1
+`
+
+func (q *Queries) GetNotificationDigest(ctx context.Context, orgID uuid.UUID) (NotificationDigest, error) {
+	row := q.db.QueryRow(ctx, getNotificationDigest, orgID)
+	var i NotificationDigest
+	err := row.Scan(
+		&i.OrgID,
+		&i.Enabled,
+		&i.Weekday,
+		&i.AtTime,
+		&i.Timezone,
+		&i.NextRunAt,
+		&i.LastPeriod,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertNotificationDelivery = `-- name: InsertNotificationDelivery :execrows
 INSERT INTO notification_deliveries (id, org_id, channel_id, event_key, event_kind, payload, status, attempts,
   next_attempt_at, last_error, created_at, sent_at)
@@ -289,6 +362,20 @@ func (q *Queries) InsertNotificationDelivery(ctx context.Context, arg InsertNoti
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertNotificationDigestChannel = `-- name: InsertNotificationDigestChannel :exec
+INSERT INTO notification_digest_channels (org_id, channel_id) VALUES ($1, $2)
+`
+
+type InsertNotificationDigestChannelParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+}
+
+func (q *Queries) InsertNotificationDigestChannel(ctx context.Context, arg InsertNotificationDigestChannelParams) error {
+	_, err := q.db.Exec(ctx, insertNotificationDigestChannel, arg.OrgID, arg.ChannelID)
+	return err
 }
 
 const insertScheduleNotification = `-- name: InsertScheduleNotification :exec
@@ -394,6 +481,40 @@ func (q *Queries) ListNotificationDeliveries(ctx context.Context, arg ListNotifi
 	return items, nil
 }
 
+const listNotificationDigestChannels = `-- name: ListNotificationDigestChannels :many
+SELECT d.channel_id, c.name AS channel_name, c.kind AS channel_kind
+FROM notification_digest_channels AS d
+JOIN notification_channels AS c ON c.org_id = d.org_id AND c.id = d.channel_id
+WHERE d.org_id = $1
+ORDER BY c.name
+`
+
+type ListNotificationDigestChannelsRow struct {
+	ChannelID   uuid.UUID `json:"channel_id"`
+	ChannelName string    `json:"channel_name"`
+	ChannelKind string    `json:"channel_kind"`
+}
+
+func (q *Queries) ListNotificationDigestChannels(ctx context.Context, orgID uuid.UUID) ([]ListNotificationDigestChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listNotificationDigestChannels, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNotificationDigestChannelsRow
+	for rows.Next() {
+		var i ListNotificationDigestChannelsRow
+		if err := rows.Scan(&i.ChannelID, &i.ChannelName, &i.ChannelKind); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listScheduleNotifications = `-- name: ListScheduleNotifications :many
 SELECT n.channel_id, n.events, c.name AS channel_name, c.kind AS channel_kind
 FROM schedule_notifications AS n
@@ -437,6 +558,66 @@ func (q *Queries) ListScheduleNotifications(ctx context.Context, arg ListSchedul
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDueDigests = `-- name: LockDueDigests :many
+SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at FROM notification_digests
+WHERE enabled AND next_run_at <= $1::timestamptz
+ORDER BY next_run_at
+LIMIT $2
+FOR NO KEY UPDATE SKIP LOCKED
+`
+
+type LockDueDigestsParams struct {
+	Now time.Time `json:"now"`
+	Lim int32     `json:"lim"`
+}
+
+// The digest ticker's due scan: raw pool, bypass policy, every org, SKIP
+// LOCKED like the schedule ticker.
+func (q *Queries) LockDueDigests(ctx context.Context, arg LockDueDigestsParams) ([]NotificationDigest, error) {
+	rows, err := q.db.Query(ctx, lockDueDigests, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotificationDigest
+	for rows.Next() {
+		var i NotificationDigest
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Enabled,
+			&i.Weekday,
+			&i.AtTime,
+			&i.Timezone,
+			&i.NextRunAt,
+			&i.LastPeriod,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notifyOrgContext = `-- name: NotifyOrgContext :one
+SELECT slug, name FROM organizations WHERE id = $1
+`
+
+type NotifyOrgContextRow struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) NotifyOrgContext(ctx context.Context, orgID uuid.UUID) (NotifyOrgContextRow, error) {
+	row := q.db.QueryRow(ctx, notifyOrgContext, orgID)
+	var i NotifyOrgContextRow
+	err := row.Scan(&i.Slug, &i.Name)
+	return i, err
 }
 
 const notifyRuleChannels = `-- name: NotifyRuleChannels :many
@@ -602,6 +783,46 @@ func (q *Queries) UpdateNotificationChannel(ctx context.Context, arg UpdateNotif
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+	)
+	return i, err
+}
+
+const upsertNotificationDigest = `-- name: UpsertNotificationDigest :one
+INSERT INTO notification_digests (org_id, enabled, weekday, at_time, timezone, next_run_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
+ON CONFLICT (org_id) DO UPDATE SET enabled = EXCLUDED.enabled, weekday = EXCLUDED.weekday,
+  at_time = EXCLUDED.at_time, timezone = EXCLUDED.timezone, next_run_at = EXCLUDED.next_run_at, updated_at = now()
+RETURNING org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at
+`
+
+type UpsertNotificationDigestParams struct {
+	OrgID     uuid.UUID          `json:"org_id"`
+	Enabled   bool               `json:"enabled"`
+	Weekday   int16              `json:"weekday"`
+	AtTime    string             `json:"at_time"`
+	Timezone  string             `json:"timezone"`
+	NextRunAt pgtype.Timestamptz `json:"next_run_at"`
+}
+
+func (q *Queries) UpsertNotificationDigest(ctx context.Context, arg UpsertNotificationDigestParams) (NotificationDigest, error) {
+	row := q.db.QueryRow(ctx, upsertNotificationDigest,
+		arg.OrgID,
+		arg.Enabled,
+		arg.Weekday,
+		arg.AtTime,
+		arg.Timezone,
+		arg.NextRunAt,
+	)
+	var i NotificationDigest
+	err := row.Scan(
+		&i.OrgID,
+		&i.Enabled,
+		&i.Weekday,
+		&i.AtTime,
+		&i.Timezone,
+		&i.NextRunAt,
+		&i.LastPeriod,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

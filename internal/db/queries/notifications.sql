@@ -109,3 +109,49 @@ FROM schedules AS s
 JOIN organizations AS o ON o.id = s.org_id
 JOIN job_templates AS t ON t.org_id = s.org_id AND t.id = s.template_id
 WHERE s.org_id = @org_id AND s.id = @schedule_id;
+
+-- name: NotifyOrgContext :one
+SELECT slug, name FROM organizations WHERE id = @org_id;
+
+-- name: GetNotificationDigest :one
+SELECT * FROM notification_digests WHERE org_id = @org_id;
+
+-- name: ListNotificationDigestChannels :many
+SELECT d.channel_id, c.name AS channel_name, c.kind AS channel_kind
+FROM notification_digest_channels AS d
+JOIN notification_channels AS c ON c.org_id = d.org_id AND c.id = d.channel_id
+WHERE d.org_id = @org_id
+ORDER BY c.name;
+
+-- name: UpsertNotificationDigest :one
+INSERT INTO notification_digests (org_id, enabled, weekday, at_time, timezone, next_run_at, updated_at)
+VALUES (@org_id, @enabled, @weekday, @at_time, @timezone, sqlc.narg(next_run_at), now())
+ON CONFLICT (org_id) DO UPDATE SET enabled = EXCLUDED.enabled, weekday = EXCLUDED.weekday,
+  at_time = EXCLUDED.at_time, timezone = EXCLUDED.timezone, next_run_at = EXCLUDED.next_run_at, updated_at = now()
+RETURNING *;
+
+-- name: DeleteNotificationDigestChannels :exec
+DELETE FROM notification_digest_channels WHERE org_id = @org_id;
+
+-- name: InsertNotificationDigestChannel :exec
+INSERT INTO notification_digest_channels (org_id, channel_id) VALUES (@org_id, @channel_id);
+
+-- name: LockDueDigests :many
+-- The digest ticker's due scan: raw pool, bypass policy, every org, SKIP
+-- LOCKED like the schedule ticker.
+SELECT * FROM notification_digests
+WHERE enabled AND next_run_at <= @now::timestamptz
+ORDER BY next_run_at
+LIMIT @lim
+FOR NO KEY UPDATE SKIP LOCKED;
+
+-- name: DigestChannelsForSend :many
+SELECT d.channel_id
+FROM notification_digest_channels AS d
+JOIN notification_channels AS c ON c.org_id = d.org_id AND c.id = d.channel_id
+WHERE d.org_id = @org_id AND c.enabled
+ORDER BY d.channel_id;
+
+-- name: AdvanceNotificationDigest :exec
+UPDATE notification_digests SET next_run_at = @next_run_at, last_period = @last_period
+WHERE org_id = @org_id;

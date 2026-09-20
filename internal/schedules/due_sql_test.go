@@ -455,6 +455,10 @@ func (b *blockingRuns) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid
 	return nil, nil
 }
 
+func (b *blockingRuns) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]jobs.GroupSummary, error) {
+	return nil, nil
+}
+
 func (b *blockingRuns) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
 	first := false
 	b.once.Do(func() { close(b.started); first = true })

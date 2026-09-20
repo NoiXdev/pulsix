@@ -40,6 +40,7 @@ type Deps struct {
 	Channels   ChannelStore
 	Deliveries DeliveryLog
 	Rules      RuleStore
+	Digests    DigestStore
 	Box        Sealer
 	Mail       Mailer
 	// Sender delivers "Send test" synchronously (ChannelSender).

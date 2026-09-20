@@ -14,6 +14,7 @@ import { may } from '../../lib/roles.ts';
 import type { NotifyChannel } from '../../api/types.ts';
 import { ChannelDialog } from './ChannelDialog.tsx';
 import { DeliveryLog } from './DeliveryLog.tsx';
+import { DigestCard } from './DigestCard.tsx';
 
 const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 1.2fr) 90px 260px';
 
@@ -132,6 +133,7 @@ export function ChannelsPage() {
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No channels yet.</p>}
       </Card>
+      <DigestCard org={org} channels={list} canWrite={canWrite} />
       {editing && <ChannelDialog org={org} channel={editing === 'new' ? undefined : editing} mailAvailable={mailAvailable} onClose={() => setEditing(null)} />}
       {logOf && <DeliveryLog org={org} channel={logOf} onClose={() => setLogOf(null)} />}
     </>
