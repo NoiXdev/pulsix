@@ -201,3 +201,41 @@ func TestInsertDeliveryIsIdempotentPerEventAndChannel(t *testing.T) {
 		t.Fatalf("rows = %d, %v; the event key must dedupe", n, err)
 	}
 }
+
+// TestClaimHasAnAttemptsBackstop is the final review's Important #6 /
+// minor 26. ClaimNotificationDeliveries had no attempts filter at all, and
+// the Go-side MaxAttempts cap is consulted only when the *send* returned
+// an error. A row whose outcome write never landed — a manager that died
+// after the receiver accepted the message, or whose outcome write panicked
+// — therefore became due again when its lease expired and was re-claimed
+// with no cap whatever: the same message re-sent to the receiver every two
+// minutes, forever. The SQL-side backstop bounds that loop even when no
+// Go-side decision is ever reached.
+//
+// It is deliberately far above MaxAttempts: the Go side still owns the
+// real cap and its error text, and this only stops an unbounded loop.
+func TestClaimHasAnAttemptsBackstop(t *testing.T) {
+	d := testdb.Open(t)
+	ch := seedChannel(t, d, seedOrg(t, d, "dispatch-backstop"))
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	below := queueDelivery(t, d, ch, "test:below-the-backstop", now.Add(-time.Minute))
+	at := queueDelivery(t, d, ch, "test:at-the-backstop", now.Add(-time.Minute))
+	// Both leases have expired, so without a cap both are claimable.
+	if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET attempts = 19, locked_until = $2 WHERE id = $1`, below, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET attempts = 20, locked_until = $2 WHERE id = $1`, at, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := notify.NewDeliverySQLStore(d).Claim(ctx, now, 2*time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Delivery.ID != below {
+		ids := make([]uuid.UUID, len(got))
+		for i, c := range got {
+			ids[i] = c.Delivery.ID
+		}
+		t.Fatalf("claimed %v, want only the row below the backstop (%s)", ids, below)
+	}
+}

@@ -96,12 +96,27 @@ func NewDispatcher(queue DeliveryQueue, sender Sender, interval time.Duration, n
 // Run dispatches until ctx is cancelled.
 func (d *Dispatcher) Run(ctx context.Context) {
 	for {
-		if _, err := d.Tick(ctx); err != nil && ctx.Err() == nil {
-			d.log.ErrorContext(ctx, "notification dispatch failed", "err", err)
-		}
+		d.tickSafely(ctx)
 		if err := d.sleep(ctx, d.interval); err != nil {
 			return
 		}
+	}
+}
+
+// tickSafely runs one Tick, recovering any panic that escapes it — the
+// same net DigestTicker.Run and schedules.Ticker.Run have had all along,
+// and the one Dispatcher.Run was missing (final review, Important #6):
+// a panic in the claim, or anywhere else in Tick's own body, otherwise
+// took the dispatcher goroutine and with it the whole manager process
+// down. The tick is skipped; the next one retries.
+func (d *Dispatcher) tickSafely(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			d.log.ErrorContext(ctx, "notification dispatch tick panicked", "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	if _, err := d.Tick(ctx); err != nil && ctx.Err() == nil {
+		d.log.ErrorContext(ctx, "notification dispatch failed", "err", err)
 	}
 }
 
@@ -132,7 +147,21 @@ func (d *Dispatcher) Tick(ctx context.Context) (int, error) {
 
 // deliver sends one claimed delivery and records the outcome. A panic in
 // a sender is recovered into a retry, like a transient error.
+//
+// The recover covers the *whole* function, not just the send (final
+// review, Important #6): deliver runs in a goroutine Tick spawns per
+// claimed delivery, so a panic in the outcome write below — Complete,
+// Retry or Fail — could never be caught by any parent and killed the
+// manager. Combined with the queue's missing SQL-side attempts cap that
+// was an unbounded loop: crash, restart, re-claim the same row, re-send
+// to the receiver, crash. There is nothing useful to do about such a
+// panic but log it and leave the row to its lease.
 func (d *Dispatcher) deliver(ctx context.Context, c Claimed) {
+	defer func() {
+		if r := recover(); r != nil {
+			d.log.ErrorContext(ctx, "notification delivery panicked outside the sender", "delivery", c.Delivery.ID, "org", c.Delivery.OrgID, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 	sendErr := d.send(ctx, c)
 	// The outcome is recorded even when ctx ended meanwhile (shutdown):
 	// the send already happened or not; the lease would otherwise make

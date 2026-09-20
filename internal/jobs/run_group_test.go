@@ -423,3 +423,35 @@ func TestRunGroupReportPathDatabaseErrorStillFinishesTheJob(t *testing.T) {
 		t.Fatalf("reported %d group(s) although the claim never succeeded", len(got))
 	}
 }
+
+// panickingSink panics instead of returning an error.
+type panickingSink struct{}
+
+func (panickingSink) RunGroupFinished(context.Context, RunGroupResult) error { panic("sink exploded") }
+
+// TestRunGroupSinkPanicStillFinishesTheJob is the final review's
+// Important #6, first hole. The sink call had no recover, and there is
+// none above it either: the call path is the worker's Finish RPC and
+// grpcsrv installs only the auth interceptors, while grpc-go does not
+// recover handler panics itself. A panic inside the notification outbox
+// therefore killed the whole manager — strictly worse than the wedge the
+// function's own doc comment is written to prevent.
+func TestRunGroupSinkPanicStillFinishesTheJob(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-sink-panic")
+	w.q.SetRunGroupSink(panickingSink{})
+	_, _, js := w.runGroup(t, 1)
+	if _, err := w.d.Pool().Exec(context.Background(), `UPDATE jobs SET payload = '"sealed-payload"' WHERE id = $1`, js[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.q.Finish(context.Background(), js[0].ID, StatusSucceeded, nil, ""); err != nil {
+		t.Fatalf("Finish = %v, want nil although the sink panicked", err)
+	}
+	var status string
+	var payload []byte
+	if err := w.d.Pool().QueryRow(context.Background(), `SELECT status, payload FROM jobs WHERE id = $1`, js[0].ID).Scan(&status, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if status != "succeeded" || payload != nil {
+		t.Fatalf("status = %s, payload = %s; a panicking sink must be treated like a sink error", status, payload)
+	}
+}

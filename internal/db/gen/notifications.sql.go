@@ -38,6 +38,7 @@ WHERE c.org_id = d.org_id AND c.id = d.channel_id
     SELECT p.id FROM notification_deliveries AS p
     WHERE p.status = 'pending' AND p.next_attempt_at <= $2::timestamptz
       AND (p.locked_until IS NULL OR p.locked_until <= $2::timestamptz)
+      AND p.attempts < 20
     ORDER BY p.next_attempt_at
     LIMIT $3
     FOR UPDATE SKIP LOCKED
@@ -72,6 +73,14 @@ type ClaimNotificationDeliveriesRow struct {
 // managers dispatch without a leader; the lease (locked_until) and the
 // attempts increment are written in the same statement, so a manager that
 // dies mid-send leaves a row that becomes due again once the lease ends.
+//
+// attempts < 20 is the backstop for that re-claim path. The real cap lives
+// in Go (notify.MaxAttempts), but it is consulted only when the send
+// returned an error, so a row whose outcome write never landed at all -- a
+// manager that died after the receiver accepted the message, or whose
+// outcome write panicked -- used to be re-claimed forever, re-sending the
+// same message every two minutes. The number is deliberately far above
+// MaxAttempts: this only bounds a loop no Go-side decision ever reaches.
 func (q *Queries) ClaimNotificationDeliveries(ctx context.Context, arg ClaimNotificationDeliveriesParams) ([]ClaimNotificationDeliveriesRow, error) {
 	rows, err := q.db.Query(ctx, claimNotificationDeliveries, arg.LeaseUntil, arg.Now, arg.Lim)
 	if err != nil {

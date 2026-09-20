@@ -6,8 +6,10 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"github.com/google/uuid"
@@ -227,7 +229,7 @@ func (q *SQLQueue) reportRunGroup(ctx context.Context, orgID, groupID uuid.UUID,
 		slog.ErrorContext(ctx, "finished run group: open sink savepoint", "group", groupID, "org", orgID, "err", err)
 		return
 	}
-	if err := q.runGroups.RunGroupFinished(ctx, r); err != nil {
+	if err := q.callSink(ctx, r); err != nil {
 		if _, rbErr := q.db.Exec(ctx, `ROLLBACK TO SAVEPOINT run_group_sink`); rbErr != nil {
 			slog.ErrorContext(ctx, "finished run group: roll back sink savepoint", "group", groupID, "org", orgID, "err", rbErr)
 			return
@@ -265,4 +267,24 @@ func (q *SQLQueue) recordCancelledRunGroup(ctx context.Context, jobID uuid.UUID)
 	}); err != nil {
 		slog.ErrorContext(ctx, "cancelled run group: record", "job", jobID, "err", err)
 	}
+}
+
+// callSink calls the sink and turns a panic in it into an ordinary sink
+// error, so the savepoint machinery above rolls its writes back and the
+// finish carries on (final review, Important #6).
+//
+// There is no recovery net above this: the call path is the worker's
+// Finish RPC, grpcsrv installs only the auth interceptors, and grpc-go
+// does not recover handler panics itself — so an unrecovered panic in the
+// notification outbox killed the whole manager process. That is strictly
+// worse than the wedge RunGroupSink's own doc comment exists to prevent,
+// and this is the same recover every sibling background path already has.
+func (q *SQLQueue) callSink(ctx context.Context, r RunGroupResult) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.ErrorContext(ctx, "finished run group: the notification sink panicked", "group", r.GroupID, "org", r.OrgID, "panic", rec, "stack", string(debug.Stack()))
+			err = errors.New("the notification sink failed unexpectedly (see the manager log)")
+		}
+	}()
+	return q.runGroups.RunGroupFinished(ctx, r)
 }
