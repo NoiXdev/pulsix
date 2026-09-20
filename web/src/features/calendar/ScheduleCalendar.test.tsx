@@ -3,10 +3,11 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import type { CalendarEntry } from '../../api/types.ts';
 import { ScheduleCalendar } from './ScheduleCalendar.tsx';
-import { addDays, entryTone, monthOf, rangeFor, shift, startOfWeek, weekCells, windowsIn } from './calendar.ts';
+import { MAX_RANGE_MS, addDays, entryTone, monthOf, rangeFor, shift, startOfWeek, weekCells, windowsIn } from './calendar.ts';
 
 const monday = startOfWeek(new Date());
 // Local times this week, so the test holds in every time zone.
@@ -31,7 +32,9 @@ function renderIt() {
   });
   render(
     <QueryClientProvider client={qc}>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
     </QueryClientProvider>,
   );
   return router;
@@ -97,6 +100,29 @@ describe('ScheduleCalendar', () => {
     const cal = await screen.findByRole('region', { name: 'Calendar' });
     await user.click(within(cal).getByRole('tab', { name: 'month' }));
     await waitFor(() => expect(cal.querySelectorAll('[data-day]')).toHaveLength(42));
+  });
+});
+
+/**
+ * Final review, Critical #1 (second half): ScheduleCalendar read
+ * `cal.data?.entries ?? []` and used no useQueryGuard, so a refused
+ * request rendered as a complete, empty grid — no error, no toast, no
+ * retry hint. That is what turned a range-arithmetic slip into something
+ * shaped like data loss, and it would do the same for any other calendar
+ * failure (500, 403, network).
+ */
+describe('a failed calendar query', () => {
+  it('reports the failure instead of drawing an empty grid', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/calendar': () =>
+        new Response(JSON.stringify({ detail: 'invalid range: to must be after from, at most 6 weeks later' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderIt();
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Calendar' })).toBeNull();
   });
 });
 
@@ -167,5 +193,59 @@ describe('weekCells across a DST transition', () => {
     const cells = weekCells([entry({ at: target.toISOString() })], start);
     expect(cells[4].flat()).toHaveLength(1); // Monday, the correct column
     expect(cells[3].flat()).toHaveLength(0); // Sunday (the transition day) — not here
+  });
+});
+
+/**
+ * Final review, Critical #1: rangeFor('month', ...) builds the six week
+ * rows with setDate, so its span is 42 *calendar* days — 1009 h across an
+ * autumn fall-back, one hour past the server's old absolute 42x24 h bound.
+ * The request was refused with 400 and ScheduleCalendar drew the refusal
+ * as a fully rendered, completely empty grid. The helper test above anchors
+ * on September, which contains no transition, which is exactly why this
+ * shipped.
+ *
+ * The assertion is against MAX_RANGE_MS, the mirror of internal/calendar's
+ * MaxRange, so the client can never ask for more than the server accepts.
+ */
+describe('rangeFor across an autumn DST transition', () => {
+  // Reaching process.env through globalThis, as the weekCells DST block
+  // above does: the project's tsconfig carries no Node types.
+  const nodeEnv = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env;
+  const originalTZ = nodeEnv.TZ;
+  afterEach(() => {
+    if (originalTZ === undefined) delete nodeEnv.TZ;
+    else nodeEnv.TZ = originalTZ;
+  });
+
+  const HOUR = 60 * 60 * 1000;
+  // Each case is a month whose six-week grid contains a fall-back
+  // transition: Berlin's on 25 October 2026, New York's on 1 November 2026
+  // (which lands in both the October and the November grid).
+  const cases: Array<[string, string, Date]> = [
+    ['Europe/Berlin', 'October 2026', new Date(2026, 9, 5)],
+    ['America/New_York', 'October 2026', new Date(2026, 9, 5)],
+    ['America/New_York', 'November 2026', new Date(2026, 10, 9)],
+  ];
+
+  for (const [zone, month, anchor] of cases) {
+    it(`asks for a range the server accepts in ${zone}, ${month}`, () => {
+      nodeEnv.TZ = zone;
+      const { from, to } = rangeFor('month', new Date(anchor));
+      const span = to.getTime() - from.getTime();
+      expect(span).toBe(1009 * HOUR); // 42 calendar days across the fall-back
+      expect(span).toBeLessThanOrEqual(MAX_RANGE_MS);
+      // The grid still covers the 42 day cells it draws.
+      expect(addDays(from, 42)).toEqual(to);
+    });
+  }
+
+  it('leaves a spring-forward month and UTC untouched', () => {
+    nodeEnv.TZ = 'Europe/Berlin';
+    const spring = rangeFor('month', new Date(2026, 2, 16)); // March 2026
+    expect(spring.to.getTime() - spring.from.getTime()).toBe(1007 * HOUR);
+    nodeEnv.TZ = 'UTC';
+    const utc = rangeFor('month', new Date(2026, 9, 5));
+    expect(utc.to.getTime() - utc.from.getTime()).toBe(1008 * HOUR);
   });
 });

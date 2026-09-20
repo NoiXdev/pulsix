@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { useCalendar } from '../../api/hooks/useCalendar.ts';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import type { CalendarEntry, CalendarWindow } from '../../api/types.ts';
 import { BANDS, MAINTENANCE_COLOR, type CalendarView, addDays, dayKey, entryTone, monthOf, rangeFor, shift, startOfWeek, weekCells, windowsIn } from './calendar.ts';
 
@@ -26,6 +27,11 @@ export function ScheduleCalendar({ org }: { org: string }) {
   const [anchor, setAnchor] = useState(() => startOfWeek(new Date()));
   const { from, to } = rangeFor(view, anchor);
   const cal = useCalendar(org, from.toISOString(), to.toISOString());
+  // Without this guard a refused or failed range rendered as a complete
+  // but empty grid — no error, no toast, no retry hint — so the operator
+  // read "nothing is scheduled and nothing is in maintenance" off a
+  // request that never succeeded (final review, Critical #1).
+  const guard = useQueryGuard(cal);
   const entries = cal.data?.entries ?? [];
   const windows = cal.data?.maintenance ?? [];
 
@@ -33,6 +39,8 @@ export function ScheduleCalendar({ org }: { org: string }) {
     if (e.job_id) void navigate({ to: '/o/$org/runs/$id', params: { org, id: e.job_id } });
     else void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: e.schedule_id, template: undefined } });
   }
+
+  if (guard) return guard;
 
   const title =
     view === 'month'

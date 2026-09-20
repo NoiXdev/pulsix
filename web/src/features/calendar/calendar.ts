@@ -29,13 +29,25 @@ export function monthOf(anchor: Date): Date {
   return new Date(mid.getFullYear(), mid.getMonth(), 1);
 }
 
+/** MAX_RANGE_MS mirrors internal/calendar's MaxRange, the absolute bound
+ * the API enforces on from/to. The month view asks for the six week rows
+ * it draws, and 42 *calendar* days are not a fixed number of hours: across
+ * an autumn fall-back they are 1009 h, across a spring-forward 1007 h. The
+ * server's bound therefore carries one hour of slack over 42x24 h, and
+ * rangeFor clamps against the same value — so a zone that somehow packed
+ * more than one transition into six weeks would ask for a shorter range
+ * rather than silently collect a 400 (final review, Critical #1). */
+export const MAX_RANGE_MS = 42 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000;
+
 /** rangeFor is what a view shows around anchor (a Monday): a week, or the
  * six weeks from the Monday on or before the first of the anchor's month
  * (the API's maximum range). */
 export function rangeFor(view: CalendarView, anchor: Date): { from: Date; to: Date } {
   if (view === 'month') {
     const from = startOfWeek(monthOf(anchor));
-    return { from, to: addDays(from, 42) };
+    const to = addDays(from, 42);
+    const excess = to.getTime() - from.getTime() - MAX_RANGE_MS;
+    return { from, to: excess > 0 ? new Date(to.getTime() - excess) : to };
   }
   return { from: anchor, to: addDays(anchor, 7) };
 }

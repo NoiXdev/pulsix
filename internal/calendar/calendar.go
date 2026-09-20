@@ -29,8 +29,21 @@ import (
 // occurrences on its own (backlog carry-over): an org with many windows
 // could still return an unbounded total, so maxMaintenance bounds the
 // whole view the same way maxEntries bounds schedule entries.
+//
+// MaxRange is an absolute bound on what a caller may ask for, but the SPA
+// asks for the six week rows it draws — 42 *calendar* days, built with
+// setDate — and 42 calendar days are not a fixed number of hours: a span
+// containing an autumn fall-back transition is 1009 h, one containing a
+// spring-forward 1007 h (final review, Critical #1). A bare 42x24 h bound
+// therefore refused exactly the months an operator in a DST zone needs, so
+// the bound carries one hour of slack: enough for the single transition
+// six weeks can contain, and short of the 43rd calendar day by 23 h. The
+// SPA mirrors this value as MAX_RANGE_MS and clamps its own request
+// against it (web/src/features/calendar/calendar.ts), so the two sides
+// cannot disagree about what is acceptable.
 const (
-	MaxRange       = 42 * 24 * time.Hour
+	MaxRange       = 42*24*time.Hour + dstSlack
+	dstSlack       = time.Hour
 	maxPerSchedule = 500
 	maxEntries     = 5000
 	maxMaintenance = 5000

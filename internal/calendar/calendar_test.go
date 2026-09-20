@@ -163,3 +163,40 @@ func TestRangeTruncatesMaintenance(t *testing.T) {
 		t.Fatalf("maintenance = %d, truncated %v, %v", len(v.Maintenance), v.Truncated, err)
 	}
 }
+
+// TestRangeAcceptsSixCalendarWeeksAcrossADSTTransition is the final
+// review's Critical #1. The SPA's month view asks for the six week rows it
+// draws: 42 *calendar* days, built with setDate. Their absolute length is
+// not fixed — a span containing an autumn fall-back transition is 1009 h,
+// one containing a spring-forward 1007 h — so an absolute 42x24 h bound
+// refused exactly the months a DST-zone operator needs (Europe/Berlin and
+// America/New_York, October 2026; America/New_York, November 2026), and
+// the SPA drew the resulting 400 as a silently empty grid.
+//
+// The boundary is pinned from both sides: 42 calendar days across a
+// fall-back is accepted, one nanosecond more than MaxRange is not.
+func TestRangeAcceptsSixCalendarWeeksAcrossADSTTransition(t *testing.T) {
+	now := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC)
+	svc := calendar.NewService(fakeSchedules{}, fakeGroups{}, fakeWindows{}, func() time.Time { return now })
+	for _, zone := range []string{"Europe/Berlin", "America/New_York"} {
+		loc, err := time.LoadLocation(zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, first := range []time.Time{
+			time.Date(2026, 9, 28, 0, 0, 0, 0, loc),  // the October grid
+			time.Date(2026, 10, 26, 0, 0, 0, 0, loc), // the November grid
+		} {
+			last := first.AddDate(0, 0, 42) // what addDays(from, 42) builds
+			if _, err := svc.Range(ctx, uuid.Must(uuid.NewV7()), first, last); err != nil {
+				t.Errorf("%s %s: 42 calendar days (%s) = %v", zone, first.Format("Jan 2006"), last.Sub(first), err)
+			}
+		}
+	}
+	if _, err := svc.Range(ctx, uuid.Must(uuid.NewV7()), now, now.Add(calendar.MaxRange)); err != nil {
+		t.Errorf("exactly MaxRange = %v", err)
+	}
+	if _, err := svc.Range(ctx, uuid.Must(uuid.NewV7()), now, now.Add(calendar.MaxRange+1)); !errors.Is(err, calendar.ErrInvalidRange) {
+		t.Errorf("one nanosecond past MaxRange = %v", err)
+	}
+}
