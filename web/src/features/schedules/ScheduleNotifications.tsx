@@ -21,9 +21,16 @@ export function ScheduleNotifications({ org, scheduleId, canWrite }: { org: stri
   if (!rules.data) return null;
   const list = rules.data.rules ?? [];
   if (!canWrite || !channels.data) {
+    // An editor whose channel list failed to load would otherwise see the
+    // reader's view with no hint why the matrix is missing.
     return (
       <section aria-label="Notifications" className="flex flex-col gap-1.5">
         <span className="text-[11px] font-medium text-muted-foreground">Notifications</span>
+        {canWrite && channels.isError && (
+          <p role="alert" className="text-xs text-destructive">
+            The channels could not be loaded, so these rules cannot be edited right now.
+          </p>
+        )}
         {list.length === 0 && <p className="text-xs text-muted-foreground">No notifications — runs appear in the activity feed only.</p>}
         {list.map((r) => (
           <div key={r.on} className="flex items-center gap-2 text-xs">

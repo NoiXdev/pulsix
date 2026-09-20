@@ -51,6 +51,17 @@ func IsUniqueViolation(err error) bool { return pgCode(err) == "23505" }
 // a row that is still referenced, or a reference to a row that does not exist.
 func IsForeignKeyViolation(err error) bool { return pgCode(err) == "23503" }
 
+// ConstraintName is the constraint a PostgreSQL error names, or "" when
+// err is not a PostgreSQL error or names no constraint. A table with more
+// than one foreign key needs it to tell which reference failed.
+func ConstraintName(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.ConstraintName
+	}
+	return ""
+}
+
 func pgCode(err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

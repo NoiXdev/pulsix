@@ -70,6 +70,18 @@ describe('ScheduleNotifications', () => {
     expect(await screen.findByText('Notifications saved')).toBeInTheDocument();
   });
 
+  it('says so when the channels cannot be loaded', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/schedules/s1/notifications': rules,
+      'GET /api/v1/orgs/acme/notification-channels': () => new Response('{"detail":"nope"}', { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderIt(true);
+    expect(await screen.findByRole('alert')).toHaveTextContent('The channels could not be loaded');
+    // The rules themselves still read, so the section is not empty.
+    expect(screen.getByText('→ ops hook, ops mail')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save notifications' })).not.toBeInTheDocument();
+  });
+
   it('points to the settings when the organization has no channel', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/schedules/s1/notifications': { rules: [] },

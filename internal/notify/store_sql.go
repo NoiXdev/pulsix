@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -151,6 +152,15 @@ func (st *SQLStore) ReplaceScheduleRules(ctx context.Context, orgID, scheduleID 
 		}
 		err := q.InsertScheduleNotification(ctx, gen.InsertScheduleNotificationParams{OrgID: orgID, ScheduleID: scheduleID, ChannelID: r.ChannelID, Events: events})
 		if db.IsForeignKeyViolation(err) {
+			// schedule_notifications has two composite foreign keys, and
+			// only one of them is the caller's mistake. A violation of the
+			// schedule reference means the schedule was deleted between the
+			// handler's read and this write — a vanished schedule, not an
+			// unknown channel. A violation that names no constraint falls
+			// back to the channel, the case an operator can actually cause.
+			if strings.Contains(db.ConstraintName(err), "schedule_id") {
+				return fmt.Errorf("%w: the schedule was deleted while its notifications were being saved", ErrNotFound)
+			}
 			return fmt.Errorf("%w: unknown channel %s", ErrInvalidInput, r.ChannelID)
 		}
 		if err != nil {

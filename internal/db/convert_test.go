@@ -38,6 +38,13 @@ func TestPgErrorClassification(t *testing.T) {
 	if !db.IsForeignKeyViolation(fk) || db.IsForeignKeyViolation(unique) {
 		t.Fatal("IsForeignKeyViolation")
 	}
+	named := fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "23503", ConstraintName: "schedule_notifications_org_id_schedule_id_fkey"})
+	if db.ConstraintName(named) != "schedule_notifications_org_id_schedule_id_fkey" {
+		t.Fatalf("ConstraintName = %q", db.ConstraintName(named))
+	}
+	if db.ConstraintName(fk) != "" || db.ConstraintName(errors.New("plain")) != "" || db.ConstraintName(nil) != "" {
+		t.Fatal("ConstraintName on an error that names no constraint")
+	}
 	if db.IsUniqueViolation(errors.New("plain")) || db.IsForeignKeyViolation(nil) {
 		t.Fatal("non-pg errors must not match")
 	}

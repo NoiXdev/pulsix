@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -199,10 +200,78 @@ func TestScheduleRulesRoundTrip(t *testing.T) {
 	if err != nil || len(views) != 3 || views[0].On != notify.CategoryFailure || len(views[0].Channels) != 2 || views[2].On != notify.CategorySkipped {
 		t.Fatalf("rules = %+v, %v", views, err)
 	}
-	if _, err := w.svc.SetScheduleRules(scoped, w.org, w.schedule, []notify.Rule{{On: notify.CategorySuccess, Channels: []uuid.UUID{uuid.Must(uuid.NewV7())}}}); err == nil {
-		t.Fatal("an unknown channel was accepted")
+	if _, err := w.svc.SetScheduleRules(scoped, w.org, w.schedule, []notify.Rule{{On: notify.CategorySuccess, Channels: []uuid.UUID{uuid.Must(uuid.NewV7())}}}); !errors.Is(err, notify.ErrInvalidInput) {
+		t.Fatalf("an unknown channel = %v, want ErrInvalidInput", err)
 	}
 	if views, err := w.svc.SetScheduleRules(scoped, w.org, w.schedule, nil); err != nil || len(views) != 0 {
 		t.Fatalf("clearing = %+v, %v", views, err)
+	}
+}
+
+// TestSetScheduleRulesOnADeletedSchedule covers the second of
+// schedule_notifications' two foreign keys: a schedule that vanished
+// between the handler's read and the write is a missing schedule, not the
+// unknown channel the other key reports.
+func TestSetScheduleRulesOnADeletedSchedule(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-sched-gone")
+	if _, err := w.d.Pool().Exec(ctx, `DELETE FROM schedules WHERE id = $1`, w.schedule); err != nil {
+		t.Fatal(err)
+	}
+	_, err := w.svc.SetScheduleRules(db.WithOrgScope(ctx, w.org), w.org, w.schedule, []notify.Rule{
+		{On: notify.CategoryFailure, Channels: []uuid.UUID{w.chA.ID}},
+	})
+	if !errors.Is(err, notify.ErrNotFound) {
+		t.Fatalf("a deleted schedule = %v, want ErrNotFound", err)
+	}
+}
+
+// TestRunGroupFinishedTreatsCancelledAndErrorAsFailure pins the two status
+// arms the other tests do not reach. A cancelled run did not do its job, so
+// the plan counts it as a failure; an errored one likewise.
+func TestRunGroupFinishedTreatsCancelledAndErrorAsFailure(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-status")
+	for _, tc := range []struct {
+		status jobs.Status
+		result string
+	}{
+		{jobs.StatusCancelled, "cancelled"},
+		{jobs.StatusError, "failed"},
+	} {
+		group := uuid.Must(uuid.NewV7())
+		w.finish(t, jobs.RunGroupResult{
+			OrgID: w.org, GroupID: group, FirstJobID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerSchedule,
+			TriggerRef: &w.schedule, Status: tc.status, Hosts: 3,
+		})
+		var got []queued
+		for _, q := range w.queued(t) {
+			if q.key == "run:"+group.String() {
+				got = append(got, q)
+			}
+		}
+		// failure → A and B; no host changed, so the change rule adds nobody.
+		if len(got) != 2 {
+			t.Fatalf("%s queued %d messages, want one each for A and B", tc.status, len(got))
+		}
+		for _, q := range got {
+			if q.ev.Run.Result != tc.result || len(q.ev.Categories) != 1 || q.ev.Categories[0] != notify.CategoryFailure {
+				t.Fatalf("%s queued %+v", tc.status, q.ev.Run)
+			}
+		}
+	}
+}
+
+// TestNewOutboxDefaultsClockAndEntropy: a nil rand must not reach
+// uuid.NewV7FromReader, because that panics inside the caller's own
+// transaction — the one place a notification must never reach.
+func TestNewOutboxDefaultsClockAndEntropy(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-defaults")
+	w.outbox = notify.NewOutbox(w.d, "https://pulsix.example.test", nil, nil, nil)
+	group := uuid.Must(uuid.NewV7())
+	w.finish(t, jobs.RunGroupResult{
+		OrgID: w.org, GroupID: group, FirstJobID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerSchedule,
+		TriggerRef: &w.schedule, Status: jobs.StatusFailed, Hosts: 1,
+	})
+	if got := w.queued(t); len(got) != 2 || got[0].key != "run:"+group.String() {
+		t.Fatalf("queued = %+v, want the failure channels reached with defaulted clock and entropy", got)
 	}
 }

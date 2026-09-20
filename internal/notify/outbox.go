@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,11 +35,16 @@ type Outbox struct {
 	log       *slog.Logger
 }
 
-// NewOutbox wires the outbox; nil now and log take defaults. rand is the
-// entropy for delivery ids.
+// NewOutbox wires the outbox; nil now, rand and log take defaults. rand is
+// the entropy for delivery ids, and it defaults rather than staying nil
+// because a nil reader would panic inside the caller's own transaction —
+// the one place a notification must never reach.
 func NewOutbox(d *db.DB, publicURL string, now func() time.Time, rand io.Reader, log *slog.Logger) *Outbox {
 	if now == nil {
 		now = time.Now
+	}
+	if rand == nil {
+		rand = cryptorand.Reader
 	}
 	if log == nil {
 		log = slog.Default()
