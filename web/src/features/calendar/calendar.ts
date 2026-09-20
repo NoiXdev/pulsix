@@ -7,8 +7,6 @@ export const MAINTENANCE_COLOR = '#A78BFA';
 
 export type CalendarView = 'week' | 'month' | 'list';
 
-const DAY = 86_400_000;
-
 /** startOfWeek is Monday 00:00 (local time) of d's week. */
 export function startOfWeek(d: Date): Date {
   const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -82,13 +80,21 @@ export interface CellItem {
 }
 
 /** weekCells buckets entries into 7 days × 8 three-hour bands (local
- * time), one item per schedule and cell with a count. */
+ * time), one item per schedule and cell with a count.
+ *
+ * The day index comes from matching calendar dates (dayKey), not from
+ * dividing a millisecond difference by a fixed 24h — a day the grid spans
+ * is not always 24h of real time (a DST transition makes it 23h or 25h),
+ * so that division silently misplaced an occurrence by one column when a
+ * short day fell before the target within the displayed week. */
 export function weekCells(entries: CalendarEntry[], start: Date): CellItem[][][] {
   const cells: CellItem[][][] = Array.from({ length: 7 }, () => BANDS.map(() => []));
+  const dayIndex = new Map<string, number>();
+  for (let i = 0; i < 7; i++) dayIndex.set(dayKey(addDays(start, i)), i);
   for (const e of entries) {
     const at = new Date(e.at);
-    const day = Math.floor((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - start.getTime()) / DAY);
-    if (day < 0 || day > 6) continue;
+    const day = dayIndex.get(dayKey(at));
+    if (day === undefined) continue;
     const band = Math.floor(at.getHours() / 3);
     const cell = cells[day][band];
     const item = cell.find((c) => c.scheduleId === e.schedule_id);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -121,5 +121,51 @@ describe('calendar helpers', () => {
     expect(cells[1][1]).toHaveLength(1);
     expect(cells.flat(2)).toHaveLength(1);
     expect(windowsIn([{ window_id: 'w', name: 'x', target_kind: 'org', start: new Date(2026, 8, 22, 2).toISOString(), end: new Date(2026, 8, 22, 4).toISOString() }], new Date(2026, 8, 22, 3), new Date(2026, 8, 22, 6))).toHaveLength(1);
+  });
+});
+
+/**
+ * Review finding (Important, fix round 1): weekCells used to bucket a day
+ * index with Math.floor(msDiff / 86_400_000), which assumes every day in
+ * the grid is exactly 24h. A DST-changing week breaks that assumption:
+ * Europe/Berlin's 2026 spring-forward (Sunday 29 March, clocks 02:00 →
+ * 03:00, a 23h day) or fall-back (Sunday 25 October, clocks 03:00 → 02:00,
+ * a 25h day) changes real elapsed time without changing the number of
+ * calendar days crossed. Both fixtures below start the grid on a Thursday
+ * (not a Monday) so the transition day falls *before* the target within
+ * the 7-day window — the one condition under which the old ms-division
+ * arithmetic actually misplaces the entry (a Monday-start week, the only
+ * shape the app itself ever builds, happens to dodge it because the
+ * transition always lands on the grid's last day, a Sunday).
+ */
+describe('weekCells across a DST transition', () => {
+  // The project's tsconfig carries no Node types (no @types/node dependency
+  // — adding one is out of scope for a test-only need), but Vitest itself
+  // runs on Node, where the global `process` exists at runtime; reading it
+  // through globalThis sidesteps the missing ambient type the same way
+  // src/test/setup.ts reaches other runtime globals it isn't typed for.
+  const nodeEnv = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env;
+  const originalTZ = nodeEnv.TZ;
+  afterEach(() => {
+    if (originalTZ === undefined) delete nodeEnv.TZ;
+    else nodeEnv.TZ = originalTZ;
+  });
+
+  it('places an occurrence after a spring-forward (23h) day in its correct column, not one early', () => {
+    nodeEnv.TZ = 'Europe/Berlin';
+    const start = new Date(2026, 2, 26); // Thursday 26 March 2026, local midnight
+    const target = new Date(2026, 2, 30, 9); // Monday 30 March 2026, 09:00 local (index 4)
+    const cells = weekCells([entry({ at: target.toISOString() })], start);
+    expect(cells[4].flat()).toHaveLength(1); // Monday, the correct column
+    expect(cells[3].flat()).toHaveLength(0); // Sunday (the transition day) — not here
+  });
+
+  it('places an occurrence after a fall-back (25h) day in its correct column', () => {
+    nodeEnv.TZ = 'Europe/Berlin';
+    const start = new Date(2026, 9, 22); // Thursday 22 October 2026, local midnight
+    const target = new Date(2026, 9, 26, 9); // Monday 26 October 2026, 09:00 local (index 4)
+    const cells = weekCells([entry({ at: target.toISOString() })], start);
+    expect(cells[4].flat()).toHaveLength(1); // Monday, the correct column
+    expect(cells[3].flat()).toHaveLength(0); // Sunday (the transition day) — not here
   });
 });

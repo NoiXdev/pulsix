@@ -144,3 +144,22 @@ func TestRangeValidationAndErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestRangeTruncatesMaintenance covers the maxMaintenance cap (review fix
+// round 1, Minor 1): maintenance.Service.OccurrencesBetween only bounds
+// each window's own contribution (500), so an org with many windows could
+// otherwise make the calendar's maintenance list unbounded even though
+// Range's own schedule-entry caps (maxPerSchedule, maxEntries) do not
+// apply to it.
+func TestRangeTruncatesMaintenance(t *testing.T) {
+	now := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	occ := make([]maintenance.Occurrence, 5001)
+	for i := range occ {
+		occ[i] = maintenance.Occurrence{Name: "w", Start: now, End: now.Add(time.Hour)}
+	}
+	svc := calendar.NewService(fakeSchedules{}, fakeGroups{}, fakeWindows{occ: occ}, func() time.Time { return now })
+	v, err := svc.Range(ctx, uuid.Must(uuid.NewV7()), now, now.Add(24*time.Hour))
+	if err != nil || len(v.Maintenance) != 5000 || !v.Truncated {
+		t.Fatalf("maintenance = %d, truncated %v, %v", len(v.Maintenance), v.Truncated, err)
+	}
+}
