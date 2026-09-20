@@ -47,3 +47,37 @@ func TestCalendar(t *testing.T) {
 		}
 	}
 }
+
+// TestCalendarReportsTruncatedMaintenance is the final review's Important
+// #3. maintenance.Occurrences stops at 500 per window and said nothing
+// about it, and calendar.Range set Truncated only when the *total* crossed
+// its own 5000 cap — so a single frequent window returned its first 500
+// stretches with `truncated: false`, and the SPA faithfully drew the rest
+// of the range as free of maintenance. An operator then plans a deploy
+// into a window the API told them was not there. The planned-occurrence
+// path already reports its own per-schedule cap correctly; this is the
+// sibling that was missing.
+//
+// A */15 window over seven days is 672 occurrences, well past the cap.
+func TestCalendarReportsTruncatedMaintenance(t *testing.T) {
+	f := newRunFixture(t, "calendar-trunc")
+	win := map[string]any{"name": "agent restart", "target_kind": "org", "cron": "*/15 * * * *", "duration": "5m", "timezone": "UTC"}
+	if resp := postJSON(t, f.operatorC, f.maintenanceURL(), win); resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	now := time.Now().UTC()
+	q := url.Values{"from": {now.Format(time.RFC3339)}, "to": {now.Add(7 * 24 * time.Hour).Format(time.RFC3339)}}
+	var cal struct {
+		Truncated   bool `json:"truncated"`
+		Maintenance []struct {
+			Name string `json:"name"`
+		} `json:"maintenance"`
+	}
+	decodeInto(t, requestJSON(t, f.viewerC, http.MethodGet, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/calendar?"+q.Encode(), nil), &cal)
+	if len(cal.Maintenance) != 500 {
+		t.Fatalf("maintenance = %d, want the per-window cap of 500", len(cal.Maintenance))
+	}
+	if !cal.Truncated {
+		t.Fatal("truncated = false although the window's occurrences were capped; the API withheld data while saying it had not")
+	}
+}

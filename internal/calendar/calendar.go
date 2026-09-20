@@ -69,7 +69,7 @@ type RunGroups interface {
 
 // Windows lists maintenance windows' stretches (maintenance.Service).
 type Windows interface {
-	OccurrencesBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]maintenance.Occurrence, error)
+	OccurrencesBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]maintenance.Occurrence, bool, error)
 }
 
 // Entry is one schedule occurrence in the range.
@@ -140,10 +140,13 @@ func (s *Service) Range(ctx context.Context, orgID uuid.UUID, from, to time.Time
 	if len(view.Entries) > maxEntries {
 		view.Entries, view.Truncated = view.Entries[:maxEntries], true
 	}
-	maintOcc, err := s.windows.OccurrencesBetween(ctx, orgID, from, to)
+	maintOcc, maintCapped, err := s.windows.OccurrencesBetween(ctx, orgID, from, to)
 	if err != nil {
 		return View{}, err
 	}
+	// A single window that hit its own per-window cap truncates the view
+	// just as the whole-view cap does (final review, Important #3).
+	view.Truncated = view.Truncated || maintCapped
 	if len(maintOcc) > maxMaintenance {
 		maintOcc, view.Truncated = maintOcc[:maxMaintenance], true
 	}

@@ -75,7 +75,7 @@ export function ScheduleCalendar({ org }: { org: string }) {
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: MAINTENANCE_COLOR }} /> maintenance
         </span>
       </div>
-      {cal.data?.truncated && <p className="px-4 pt-2 text-[11px] text-muted-foreground">Some very frequent schedules are shown in part.</p>}
+      {cal.data?.truncated && <p className="px-4 pt-2 text-[11px] text-muted-foreground">Some very frequent schedules or maintenance windows are shown in part.</p>}
       {view === 'week' && <WeekGrid start={from} entries={entries} windows={windows} onOpen={open} />}
       {view === 'month' && <MonthGrid start={from} month={monthOf(anchor).getMonth()} entries={entries} windows={windows} onOpen={open} />}
       {view === 'list' && <ListView entries={entries} windows={windows} onOpen={open} />}

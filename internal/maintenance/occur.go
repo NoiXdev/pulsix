@@ -40,29 +40,36 @@ func ActiveAt(w Window, at time.Time) (bool, error) {
 }
 
 // Occurrences lists the stretches of w that overlap [from, to), at most
-// max of them, in order.
-func Occurrences(w Window, from, to time.Time, max int) ([]Occurrence, error) {
+// max of them, in order. The second result says the cap bit, so a caller
+// can tell "this window has no more stretches in the range" from "this is
+// as many as you may have" — the calendar reported the first while
+// meaning the second, and drew the rest of the range as free of
+// maintenance (final review, Important #3).
+func Occurrences(w Window, from, to time.Time, max int) ([]Occurrence, bool, error) {
 	occ := func(start, end time.Time) Occurrence {
 		return Occurrence{WindowID: w.ID, Name: w.Name, TargetKind: w.TargetKind, TargetID: w.TargetID, TargetName: w.TargetName, Start: start, End: end}
 	}
 	if !w.Recurring() {
 		if w.StartsAt == nil || w.EndsAt == nil {
-			return nil, fmt.Errorf("one-off window %s has no start or end", w.ID)
+			return nil, false, fmt.Errorf("one-off window %s has no start or end", w.ID)
 		}
 		if w.StartsAt.Before(to) && w.EndsAt.After(from) {
-			return []Occurrence{occ(*w.StartsAt, *w.EndsAt)}, nil
+			return []Occurrence{occ(*w.StartsAt, *w.EndsAt)}, false, nil
 		}
-		return nil, nil
+		return nil, false, nil
 	}
 	expr, loc, err := w.timetable()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var out []Occurrence
-	for s := expr.Next(from.Add(-w.Duration), loc); !s.IsZero() && s.Before(to) && len(out) < max; s = expr.Next(s, loc) {
-		out = append(out, occ(s, s.Add(w.Duration)))
+	next := expr.Next(from.Add(-w.Duration), loc)
+	for ; !next.IsZero() && next.Before(to) && len(out) < max; next = expr.Next(next, loc) {
+		out = append(out, occ(next, next.Add(w.Duration)))
 	}
-	return out, nil
+	// The loop ends on the cap only while a further stretch still starts
+	// inside the range; an exhausted timetable is not a truncation.
+	return out, len(out) == max && !next.IsZero() && next.Before(to), nil
 }
 
 // sortOccurrences orders occurrences by start, then window id.

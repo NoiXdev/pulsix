@@ -76,7 +76,7 @@ describe('ScheduleCalendar', () => {
     });
     const router = renderIt();
     const cal = await screen.findByRole('region', { name: 'Calendar' });
-    expect(await within(cal).findByText('Some very frequent schedules are shown in part.')).toBeInTheDocument();
+    expect(await within(cal).findByText('Some very frequent schedules or maintenance windows are shown in part.')).toBeInTheDocument();
     await user.click(within(cal).getByRole('tab', { name: 'list' }));
     const rows = await within(cal).findAllByText((_, el) => el?.hasAttribute('data-list-row') ?? false);
     expect(rows).toHaveLength(3);

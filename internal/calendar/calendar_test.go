@@ -47,12 +47,13 @@ func (f fakeGroups) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map
 }
 
 type fakeWindows struct {
-	occ []maintenance.Occurrence
-	err error
+	occ       []maintenance.Occurrence
+	truncated bool
+	err       error
 }
 
-func (f fakeWindows) OccurrencesBetween(context.Context, uuid.UUID, time.Time, time.Time) ([]maintenance.Occurrence, error) {
-	return f.occ, f.err
+func (f fakeWindows) OccurrencesBetween(context.Context, uuid.UUID, time.Time, time.Time) ([]maintenance.Occurrence, bool, error) {
+	return f.occ, f.truncated, f.err
 }
 
 func TestRangeCombinesPastPlannedAndMaintenance(t *testing.T) {
@@ -198,5 +199,22 @@ func TestRangeAcceptsSixCalendarWeeksAcrossADSTTransition(t *testing.T) {
 	}
 	if _, err := svc.Range(ctx, uuid.Must(uuid.NewV7()), now, now.Add(calendar.MaxRange+1)); !errors.Is(err, calendar.ErrInvalidRange) {
 		t.Errorf("one nanosecond past MaxRange = %v", err)
+	}
+}
+
+// TestRangeReportsAWindowsOwnTruncation is the final review's Important
+// #3 at the calendar's own layer: a per-window cap truncates the view even
+// when the total is nowhere near maxMaintenance, exactly as the
+// per-schedule cap does for planned occurrences.
+func TestRangeReportsAWindowsOwnTruncation(t *testing.T) {
+	now := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	occ := []maintenance.Occurrence{{Name: "agent restart", Start: now, End: now.Add(5 * time.Minute)}}
+	svc := calendar.NewService(fakeSchedules{}, fakeGroups{}, fakeWindows{occ: occ, truncated: true}, func() time.Time { return now })
+	v, err := svc.Range(ctx, uuid.Must(uuid.NewV7()), now, now.Add(7*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Truncated || len(v.Maintenance) != 1 {
+		t.Fatalf("view = truncated %v with %d window(s), want a truncated view", v.Truncated, len(v.Maintenance))
 	}
 }

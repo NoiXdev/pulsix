@@ -74,28 +74,28 @@ func TestActiveAtRecurringAcrossDST(t *testing.T) {
 func TestOccurrences(t *testing.T) {
 	w := nightly()
 	// A range that starts inside an occurrence includes that occurrence.
-	got, err := maintenance.Occurrences(w, at("2026-09-22T01:00:00Z"), at("2026-09-25T00:00:00Z"), 100)
+	got, _, err := maintenance.Occurrences(w, at("2026-09-22T01:00:00Z"), at("2026-09-25T00:00:00Z"), 100)
 	if err != nil || len(got) != 3 {
 		t.Fatalf("occurrences = %+v, %v", got, err)
 	}
 	if !got[0].Start.Equal(at("2026-09-22T00:00:00Z")) || !got[0].End.Equal(at("2026-09-22T02:00:00Z")) || got[0].Name != "nightly" {
 		t.Fatalf("first = %+v", got[0])
 	}
-	if capped, _ := maintenance.Occurrences(w, at("2026-09-01T00:00:00Z"), at("2026-10-01T00:00:00Z"), 5); len(capped) != 5 {
+	if capped, _, _ := maintenance.Occurrences(w, at("2026-09-01T00:00:00Z"), at("2026-10-01T00:00:00Z"), 5); len(capped) != 5 {
 		t.Fatalf("capped = %d", len(capped))
 	}
 	oneOff := maintenance.Window{Name: "db upgrade", StartsAt: ptr(at("2026-09-23T20:00:00Z")), EndsAt: ptr(at("2026-09-24T02:00:00Z"))}
-	if in, _ := maintenance.Occurrences(oneOff, at("2026-09-24T00:00:00Z"), at("2026-09-25T00:00:00Z"), 5); len(in) != 1 {
+	if in, _, _ := maintenance.Occurrences(oneOff, at("2026-09-24T00:00:00Z"), at("2026-09-25T00:00:00Z"), 5); len(in) != 1 {
 		t.Fatalf("overlapping one-off = %+v", in)
 	}
-	if out, _ := maintenance.Occurrences(oneOff, at("2026-09-24T02:00:00Z"), at("2026-09-25T00:00:00Z"), 5); len(out) != 0 {
+	if out, _, _ := maintenance.Occurrences(oneOff, at("2026-09-24T02:00:00Z"), at("2026-09-25T00:00:00Z"), 5); len(out) != 0 {
 		t.Fatalf("one-off ending at the range start = %+v", out)
 	}
-	if _, err := maintenance.Occurrences(maintenance.Window{}, at("2026-09-24T00:00:00Z"), at("2026-09-25T00:00:00Z"), 5); err == nil {
+	if _, _, err := maintenance.Occurrences(maintenance.Window{}, at("2026-09-24T00:00:00Z"), at("2026-09-25T00:00:00Z"), 5); err == nil {
 		t.Fatal("a one-off window without bounds listed")
 	}
 	w.Cron = "nope"
-	if _, err := maintenance.Occurrences(w, at("2026-09-24T00:00:00Z"), at("2026-09-25T00:00:00Z"), 5); err == nil {
+	if _, _, err := maintenance.Occurrences(w, at("2026-09-24T00:00:00Z"), at("2026-09-25T00:00:00Z"), 5); err == nil {
 		t.Fatal("a broken expression listed")
 	}
 }
@@ -111,7 +111,7 @@ func TestOccurrences(t *testing.T) {
 func TestOccurrencesSpringForwardGap(t *testing.T) {
 	w := maintenance.Window{ID: uuid.Must(uuid.NewV7()), Name: "predawn", TargetKind: maintenance.TargetOrg,
 		Cron: "30 1 * * *", Duration: time.Hour, Timezone: "Europe/Berlin"}
-	got, err := maintenance.Occurrences(w, at("2026-03-29T00:00:00Z"), at("2026-03-30T00:00:00Z"), 1)
+	got, _, err := maintenance.Occurrences(w, at("2026-03-29T00:00:00Z"), at("2026-03-30T00:00:00Z"), 1)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("occurrences = %+v, %v", got, err)
 	}
@@ -134,5 +134,30 @@ func TestOccurrencesSpringForwardGap(t *testing.T) {
 		if got, err := maintenance.ActiveAt(w, at(instant)); err != nil || got != want {
 			t.Errorf("ActiveAt(%s) = %v, %v; want %v", instant, got, err, want)
 		}
+	}
+}
+
+// TestOccurrencesReportsTheCap is the final review's Important #3 at its
+// source: the cap and an exhausted timetable both end the loop, and only
+// the first is a truncation the caller must pass on.
+func TestOccurrencesReportsTheCap(t *testing.T) {
+	w := maintenance.Window{ID: uuid.Must(uuid.NewV7()), Name: "agent restart", TargetKind: maintenance.TargetOrg,
+		Cron: "*/15 * * * *", Duration: 5 * time.Minute, Timezone: "UTC"}
+	from, to := at("2026-09-21T00:00:00Z"), at("2026-09-22T00:00:00Z") // 96 occurrences
+	if occ, capped, err := maintenance.Occurrences(w, from, to, 10); err != nil || len(occ) != 10 || !capped {
+		t.Fatalf("capped run = %d occurrences, capped %v, %v", len(occ), capped, err)
+	}
+	// Exactly as many as the range holds is not a truncation.
+	if occ, capped, err := maintenance.Occurrences(w, from, to, 96); err != nil || len(occ) != 96 || capped {
+		t.Fatalf("exact run = %d occurrences, capped %v, %v", len(occ), capped, err)
+	}
+	if occ, capped, err := maintenance.Occurrences(w, from, to, 500); err != nil || len(occ) != 96 || capped {
+		t.Fatalf("roomy run = %d occurrences, capped %v, %v", len(occ), capped, err)
+	}
+	// A one-off window can never be capped.
+	start, end := at("2026-09-21T01:00:00Z"), at("2026-09-21T02:00:00Z")
+	oneOff := maintenance.Window{ID: uuid.Must(uuid.NewV7()), Name: "db upgrade", TargetKind: maintenance.TargetOrg, StartsAt: &start, EndsAt: &end}
+	if occ, capped, err := maintenance.Occurrences(oneOff, from, to, 1); err != nil || len(occ) != 1 || capped {
+		t.Fatalf("one-off = %d occurrences, capped %v, %v", len(occ), capped, err)
 	}
 }

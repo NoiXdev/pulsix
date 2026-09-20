@@ -229,9 +229,9 @@ func TestOccurrencesBetweenIsSorted(t *testing.T) {
 	}
 	broken := uuid.Must(uuid.NewV7())
 	store.byID[broken] = maintenance.Window{ID: broken, OrgID: org, TargetKind: maintenance.TargetOrg}
-	got, err := svc.OccurrencesBetween(ctx, org, at("2026-09-23T00:00:00Z"), at("2026-09-25T00:00:00Z"))
-	if err != nil || len(got) != 3 {
-		t.Fatalf("occurrences = %+v, %v", got, err)
+	got, truncated, err := svc.OccurrencesBetween(ctx, org, at("2026-09-23T00:00:00Z"), at("2026-09-25T00:00:00Z"))
+	if err != nil || len(got) != 3 || truncated {
+		t.Fatalf("occurrences = %+v, truncated %v, %v", got, truncated, err)
 	}
 	// 23 Sep 06:00 daily, 24 Sep 06:00 daily, 24 Sep 10:00 late.
 	if got[0].Name != "daily" || got[1].Name != "daily" || got[2].Name != "late" || !got[1].Start.Before(got[2].Start) {
@@ -276,5 +276,30 @@ func TestCreateUpdateDelete(t *testing.T) {
 	}
 	if _, err := svc.Get(ctx, org, w.ID); !errors.Is(err, maintenance.ErrNotFound) {
 		t.Fatalf("after delete = %v", err)
+	}
+}
+
+// TestOccurrencesBetweenReportsAWindowsCap is the final review's
+// Important #3 at the service layer: one frequent window is enough to
+// truncate the answer, and the caller must be told.
+func TestOccurrencesBetweenReportsAWindowsCap(t *testing.T) {
+	store := newFakeStore()
+	org := uuid.Must(uuid.NewV7())
+	svc := maintenance.NewService(store, fakeGroups{}, func() time.Time { return at("2026-09-22T00:00:00Z") }, nil, quiet)
+	in := maintenance.Input{Name: "agent restart", TargetKind: maintenance.TargetOrg, Cron: "*/15 * * * *", Duration: "5m", Timezone: "UTC"}
+	if _, err := svc.Create(ctx, org, uuid.Must(uuid.NewV7()), in); err != nil {
+		t.Fatal(err)
+	}
+	// Six weeks of a */15 window is 4032 stretches against a 500 cap.
+	got, truncated, err := svc.OccurrencesBetween(ctx, org, at("2026-09-22T00:00:00Z"), at("2026-11-03T00:00:00Z"))
+	if err != nil || len(got) != 500 {
+		t.Fatalf("occurrences = %d, %v", len(got), err)
+	}
+	if !truncated {
+		t.Fatal("truncated = false although the window hit its per-window cap")
+	}
+	// A quiet week of the same window fits and is not reported truncated.
+	if _, capped, err := svc.OccurrencesBetween(ctx, org, at("2026-09-22T00:00:00Z"), at("2026-09-23T00:00:00Z")); err != nil || capped {
+		t.Fatalf("a range the window fits in = truncated %v, %v", capped, err)
 	}
 }

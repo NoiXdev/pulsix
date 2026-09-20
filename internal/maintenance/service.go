@@ -157,21 +157,25 @@ func (s *Service) HostsInMaintenance(ctx context.Context, orgID uuid.UUID, hostI
 }
 
 // OccurrencesBetween lists every window's stretches overlapping
-// [from, to), ordered by start.
-func (s *Service) OccurrencesBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]Occurrence, error) {
+// [from, to), ordered by start. The second result says that at least one
+// window hit its per-window cap, so the caller can say so rather than
+// present a partial answer as a complete one (final review, Important #3).
+func (s *Service) OccurrencesBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]Occurrence, bool, error) {
 	windows, err := s.store.List(ctx, orgID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var out []Occurrence
+	truncated := false
 	for _, w := range windows {
-		occ, err := Occurrences(w, from, to, maxOccurrencesPerWindow)
+		occ, capped, err := Occurrences(w, from, to, maxOccurrencesPerWindow)
 		if err != nil {
 			s.log.ErrorContext(ctx, "maintenance window does not evaluate; leaving it out of the calendar", "window", w.ID, "org", orgID, "err", err)
 			continue
 		}
+		truncated = truncated || capped
 		out = append(out, occ...)
 	}
 	sortOccurrences(out)
-	return out, nil
+	return out, truncated, nil
 }
