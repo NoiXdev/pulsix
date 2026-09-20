@@ -175,8 +175,30 @@ func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 			return fmt.Errorf("build digest: %w", err)
 		}
 		sum.Timezone = d.Timezone
-		return t.outbox.EnqueueDigest(ctx, tx, d, sum)
+		// Only the build above runs on the batch deadline: it issues its
+		// statements on *other* pool connections, which is the wait the
+		// deadline exists to bound. The enqueue below writes on the batch
+		// transaction's own connection, so it gets its own detached,
+		// bounded context instead — pgx aborts an in-flight statement by
+		// poisoning its connection, so a deadline reached mid-INSERT here
+		// would destroy the very connection ProcessDue still has to
+		// commit on, failing the whole batch (schedules keeps the same
+		// split: only decide() runs on the batch context, its outbox runs
+		// on the row's write-back context).
+		wctx, cancel := writeCtx(ctx)
+		defer cancel()
+		return t.outbox.EnqueueDigest(wctx, tx, d, sum)
 	})
+}
+
+// writeCtx returns a fresh context for one write on the batch
+// transaction's own connection: detached from the batch deadline, bounded
+// by digestWriteTimeout. Each phase takes its own, immediately before the
+// write it covers — a context created before a long call has already
+// spent its budget by the time the write runs, and an expired context is
+// no safer here than a cancelled one.
+func writeCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), digestWriteTimeout)
 }
 
 // batchDeadline bounds one batch: batchDeadlineFactor x tick, never less
@@ -246,17 +268,31 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 	if t := db.TimePtr(r.NextRunAt); t != nil {
 		due.Occurrence = *t
 	}
-	// Every write below — the savepoint, the disable, the advance and
-	// the savepoint's own commit — runs on a fresh detached context
-	// bounded only by digestWriteTimeout, so a batch deadline reached
-	// while building a *later* digest can never discard a write this row
-	// already earned. Only handle itself runs on ctx, the work phase the
-	// batch deadline is there to bound.
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), digestWriteTimeout)
-	defer cancel()
-	sp, err := tx.Begin(wctx)
+	// Every write here — the savepoint, the disable, the advance and the
+	// savepoint's own commit — runs on a detached context bounded only by
+	// digestWriteTimeout, so a batch deadline reached while building a
+	// *later* digest can never discard a write this row already earned.
+	// Only handle itself runs on ctx, the work phase the batch deadline is
+	// there to bound.
+	//
+	// The writes before handle and the writes after it take *separate*
+	// contexts (writeCtx, called twice), because detaching from
+	// cancellation is not the same as detaching from the clock: handle may
+	// legitimately run for the whole batch deadline (four minutes at the
+	// default tick, against ten seconds here), and a context started
+	// before it would long since have expired by the time the write-back
+	// needs it. pgx aborts an in-flight statement by poisoning its
+	// connection, so that expired context did not merely skip the row's
+	// advance — it destroyed the connection the batch's own commit still
+	// had to run on, failing the whole batch with "conn closed" and losing
+	// every savepoint already committed in it. schedules.DueSQLStore's
+	// processRow opens its write-back context after decide() returns for
+	// exactly this reason.
+	pctx, cancelPre := writeCtx(ctx)
+	defer cancelPre()
+	sp, err := tx.Begin(pctx)
 	if err != nil {
-		st.log.ErrorContext(wctx, "begin digest savepoint", "org", r.OrgID, "err", err)
+		st.log.ErrorContext(pctx, "begin digest savepoint", "org", r.OrgID, "err", err)
 		return
 	}
 	// The next occurrence is computed — and the stored settings' timezone
@@ -269,20 +305,24 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 		// Stored settings that no longer evaluate stop the digest rather
 		// than retry forever (the CHECK needs next_run_at while enabled, so
 		// disable it), and skip the send entirely.
-		st.log.ErrorContext(wctx, "weekly digest settings do not evaluate; disabling the digest", "org", r.OrgID, "err", err)
-		if _, err := sp.Exec(wctx, `UPDATE notification_digests SET enabled = false, next_run_at = NULL WHERE org_id = $1`, r.OrgID); err != nil {
-			_ = sp.Rollback(wctx)
-			st.log.ErrorContext(wctx, "advance weekly digest", "org", r.OrgID, "err", err)
+		st.log.ErrorContext(pctx, "weekly digest settings do not evaluate; disabling the digest", "org", r.OrgID, "err", err)
+		if _, err := sp.Exec(pctx, `UPDATE notification_digests SET enabled = false, next_run_at = NULL WHERE org_id = $1`, r.OrgID); err != nil {
+			_ = sp.Rollback(pctx)
+			st.log.ErrorContext(pctx, "advance weekly digest", "org", r.OrgID, "err", err)
 			return
 		}
-		if err := sp.Commit(wctx); err != nil {
-			st.log.ErrorContext(wctx, "commit digest savepoint", "org", r.OrgID, "err", err)
+		if err := sp.Commit(pctx); err != nil {
+			st.log.ErrorContext(pctx, "commit digest savepoint", "org", r.OrgID, "err", err)
 		}
 		return
 	}
-	if err := handle(ctx, sp, due); err != nil {
+	handleErr := handle(ctx, sp, due)
+	// handle has returned: the write-back's own budget starts here.
+	wctx, cancel := writeCtx(ctx)
+	defer cancel()
+	if handleErr != nil {
 		_ = sp.Rollback(wctx)
-		st.log.ErrorContext(wctx, "weekly digest failed; retrying next tick", "org", r.OrgID, "err", err)
+		st.log.ErrorContext(wctx, "weekly digest failed; retrying next tick", "org", r.OrgID, "err", handleErr)
 		return
 	}
 	if err := gen.New(sp).AdvanceNotificationDigest(wctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: due.Key(), OrgID: r.OrgID}); err != nil {

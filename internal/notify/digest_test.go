@@ -169,3 +169,59 @@ func TestDigestWeekBoundaryCrossesDST(t *testing.T) {
 		t.Fatalf("from = %s, want %s (the DST-correct previous Monday 08:00 Europe/Berlin)", sum.From, want)
 	}
 }
+
+// cancellingBuilder stands in for a build that runs right up to the batch
+// deadline: it ends the tick's own context from inside the build, exactly
+// as the deadline would.
+type cancellingBuilder struct{ cancel context.CancelFunc }
+
+func (b cancellingBuilder) Digest(_ context.Context, _ uuid.UUID, from, to time.Time) (notify.DigestSummary, error) {
+	b.cancel()
+	return notify.DigestSummary{From: from, To: to}, nil
+}
+
+// ctxDigestOutbox records the shape of the context its enqueue was handed.
+type ctxDigestOutbox struct {
+	live     bool
+	bounded  bool
+	enqueued int
+}
+
+func (o *ctxDigestOutbox) EnqueueDigest(ctx context.Context, _ pgx.Tx, _ notify.DueDigest, _ notify.DigestSummary) error {
+	o.enqueued++
+	o.live = ctx.Err() == nil
+	_, o.bounded = ctx.Deadline()
+	return nil
+}
+
+// TestDigestTickEnqueuesOnADetachedContext pins the split the batch
+// deadline depends on. The build runs on the batch context — it issues
+// its statements on other pool connections, and that wait is what the
+// deadline exists to bound — but the enqueue writes on the batch
+// transaction's own connection, and pgx aborts an in-flight statement by
+// poisoning its connection. An enqueue left on the batch context would
+// therefore destroy the connection ProcessDue still has to commit on
+// whenever the deadline landed mid-INSERT, failing the whole batch
+// ("commit digest tick: conn closed") instead of only the late row. It
+// still has to be bounded, just not by the batch's clock.
+func TestDigestTickEnqueuesOnADetachedContext(t *testing.T) {
+	now := time.Date(2026, 9, 28, 6, 0, 30, 0, time.UTC)
+	org := uuid.Must(uuid.NewV7())
+	q := &fakeDigestQueue{due: []notify.DueDigest{{OrgID: org, Occurrence: now.Add(-30 * time.Second), Timezone: "UTC"}}}
+	outbox := &ctxDigestOutbox{}
+	tickCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tk := notify.NewDigestTicker(q, cancellingBuilder{cancel: cancel}, outbox, time.Minute, func() time.Time { return now }, nil, quiet())
+	if _, err := tk.Tick(tickCtx); err != nil {
+		t.Fatal(err)
+	}
+	if outbox.enqueued != 1 || q.handled[org] != nil {
+		t.Fatalf("enqueued %d times, handle = %v, want one clean enqueue", outbox.enqueued, q.handled[org])
+	}
+	if !outbox.live {
+		t.Error("the digest enqueue ran on the batch context; a deadline mid-INSERT would take the batch transaction's connection down with it")
+	}
+	if !outbox.bounded {
+		t.Error("the digest enqueue ran on an unbounded context; an unresponsive database would pin the batch forever")
+	}
+}

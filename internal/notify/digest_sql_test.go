@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/notify"
@@ -133,3 +134,74 @@ func (b fixedBuilder) Digest(context.Context, uuid.UUID, time.Time, time.Time) (
 	}
 	return b.sum, nil
 }
+
+// TestDigestStoreCommitsAfterAHandleSlowerThanTheWriteTimeout is the
+// regression test for the CI failure "commit digest tick: conn closed".
+//
+// processOne used to open its detached write-back context *before*
+// calling handle, so the context's digestWriteTimeout budget was spent by
+// handle itself. Detaching from cancellation is not detaching from the
+// clock: a build that takes longer than that budget — trivial at the
+// default one-minute tick, whose batch deadline is four minutes — left
+// the row's advance, its savepoint commit and its rollback all running on
+// an already-expired context. pgx aborts an in-flight statement by
+// poisoning its connection, so the expired context did not merely skip
+// this row: it destroyed the connection the batch's own (correctly
+// detached) commit still had to run on, so ProcessDue failed with "conn
+// closed" and every savepoint already committed in the batch was lost.
+//
+// The handle here sleeps past digestWriteTimeout without touching the
+// batch context, which carries no deadline at all — so nothing but
+// processOne's own budgeting can fail this, and against the pre-fix code
+// it fails every time rather than as a race.
+func TestDigestStoreCommitsAfterAHandleSlowerThanTheWriteTimeout(t *testing.T) {
+	w := newOutboxWorld(t, "digest-slow-handle")
+	scoped := db.WithOrgScope(ctx, w.org)
+	store := notify.NewSQLStore(w.d)
+	set := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC) // a Tuesday
+	svc := notify.NewService(notify.Deps{Channels: store, Digests: store, Now: func() time.Time { return set }})
+	stored, err := svc.SetDigest(scoped, w.org, notify.DigestInput{
+		Enabled: true, Weekday: "mon", Time: "08:00", Timezone: "UTC", Channels: []uuid.UUID{w.chA.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := stored.NextRunAt.Add(30 * time.Second)
+
+	var handled int
+	n, err := notify.NewDigestSQLStore(w.d, quiet()).ProcessDue(ctx, due, 20,
+		func(context.Context, pgx.Tx, notify.DueDigest) error {
+			handled++
+			// Longer than one row's write-back budget, and shorter than
+			// any batch deadline a real tick would impose.
+			time.Sleep(slowHandle)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("ProcessDue after a slow handle: %v", err)
+	}
+	if n != 1 || handled != 1 {
+		t.Fatalf("processed %d rows, handled %d, want 1 and 1", n, handled)
+	}
+	// The write-back must have landed: a row whose handle succeeded is
+	// advanced to the next week and stamped with the occurrence it sent.
+	after, err := svc.Digest(scoped, w.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+	if after.NextRunAt == nil || !after.NextRunAt.Equal(want) {
+		t.Fatalf("next_run_at = %v, want %s", after.NextRunAt, want)
+	}
+	var period string
+	if err := w.d.Pool().QueryRow(ctx, `SELECT last_period FROM notification_digests WHERE org_id = $1`, w.org).Scan(&period); err != nil {
+		t.Fatal(err)
+	}
+	if period != (notify.DueDigest{Occurrence: *stored.NextRunAt}).Key() {
+		t.Fatalf("last_period = %q, want the sent occurrence", period)
+	}
+}
+
+// slowHandle exceeds digestWriteTimeout (10s, unexported), the budget one
+// row's write-back gets once handle has returned.
+const slowHandle = 11 * time.Second
