@@ -141,3 +141,61 @@ func TestMaintenanceGuardValidation(t *testing.T) {
 		t.Fatalf("unknown guard = %v", err)
 	}
 }
+
+// TestUnknownMaintenanceGuardFailsClosed is the final review's Important
+// #2. Decide tested the stored mode with `mode == MaintenanceSkip || mode
+// == MaintenanceExcludeHosts` and let every other non-empty value fall out
+// of the `if` — so a hand-edited row (`jsonb_set(guards,'{maintenance}',
+// '"exclude"')`), or one restored from a dump written by a later version
+// that renamed the constant, skipped the window guard entirely, with no
+// error and no log line. The guards column is plain jsonb with no CHECK
+// and toSchedule does not validate, so only the write path ever rejects an
+// unknown value. That is the inverse of every sibling guard, and of
+// maintenance.Service's own fail-closed ruling for exactly this threat
+// model. The patch run then executed across the whole fleet during its
+// maintenance window with nothing recording that a guard was bypassed.
+func TestUnknownMaintenanceGuardFailsClosed(t *testing.T) {
+	base := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	hA := uuid.Must(uuid.NewV7())
+	guards := schedules.Guards{Overlap: schedules.OverlapSkip, CatchUp: schedules.CatchUp{Window: "1h"}, Maintenance: schedules.MaintenanceSkip}
+
+	for _, mode := range []schedules.Maintenance{"exclude", "SKIP", "skip_hosts"} {
+		t.Run(string(mode), func(t *testing.T) {
+			w := newWorld(t)
+			w.svc.SetMaintenance(&fakeMaintenance{inWindow: map[uuid.UUID]bool{hA: true}})
+			w.runs.targets = []uuid.UUID{hA}
+			s := due(t, w, "0 * * * *", base, guards)
+			// Create normalises, so the only way a row carries this value
+			// is the one the review names: it was not written through the
+			// API.
+			s.Guards.Maintenance = mode
+			d := w.svc.Decide(ctx, s, base.Add(time.Second), grace)
+			if d.Run.Outcome != schedules.OutcomeFailed {
+				t.Fatalf("outcome = %s, want failed: an unrecognised guard must not run", d.Run.Outcome)
+			}
+			if strings.Contains(d.Run.Reason, string(mode)) {
+				t.Fatalf("reason = %q must not quote the stored value", d.Run.Reason)
+			}
+			if len(w.runs.requests) != 0 {
+				t.Fatal("the run was enqueued although its maintenance guard was not understood")
+			}
+			if d.NextRunAt == nil {
+				t.Fatal("a failed decision must still advance the schedule")
+			}
+		})
+	}
+
+	// The empty string is the documented legacy read of "ignore" (rows
+	// stored before v0.2d have no maintenance key) and must keep running.
+	t.Run("the empty legacy value still means ignore", func(t *testing.T) {
+		w := newWorld(t)
+		w.svc.SetMaintenance(&fakeMaintenance{inWindow: map[uuid.UUID]bool{hA: true}})
+		w.runs.targets = []uuid.UUID{hA}
+		s := due(t, w, "0 * * * *", base, guards)
+		s.Guards.Maintenance = ""
+		d := w.svc.Decide(ctx, s, base.Add(time.Second), grace)
+		if d.Run.Outcome != schedules.OutcomeTriggered || len(w.runs.requests) != 1 {
+			t.Fatalf("outcome = %s, requests = %d; want the legacy read to run", d.Run.Outcome, len(w.runs.requests))
+		}
+	})
+}

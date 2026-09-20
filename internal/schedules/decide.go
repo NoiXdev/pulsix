@@ -102,8 +102,20 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 
 	// The maintenance guard (spec §6) runs before the overlap guard: a
 	// window is the stronger reason not to run.
+	//
+	// The switch is exhaustive on purpose (final review, Important #2).
+	// guards is plain jsonb with no CHECK and toSchedule does not
+	// validate, so only the write path rejects an unknown mode: a
+	// hand-edited row, or one restored from a dump written by a version
+	// that renamed the constant, used to fall out of the guard with no
+	// error and no log — a safety guard silently doing nothing, the
+	// inverse of every sibling guard and of maintenance.Service's own
+	// fail-closed ruling for exactly this threat model. The empty string
+	// keeps its documented legacy reading of ignore (schedule.go).
 	var exclude []uuid.UUID
-	if mode := sch.Guards.Maintenance; mode == MaintenanceSkip || mode == MaintenanceExcludeHosts {
+	switch mode := sch.Guards.Maintenance; mode {
+	case "", MaintenanceIgnore:
+	case MaintenanceSkip, MaintenanceExcludeHosts:
 		inWindow, all, err := s.hostsInMaintenance(ctx, sch, now)
 		switch {
 		case err != nil:
@@ -123,6 +135,11 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 			exclude = inWindow
 			reason = joinReason(reason, fmt.Sprintf("%d host(s) left out for maintenance", len(inWindow)))
 		}
+	default:
+		s.log.ErrorContext(ctx, "schedule has an unrecognised maintenance guard; refusing to run it", "schedule", sch.ID, "org", sch.OrgID)
+		decision.Run.Outcome, decision.Run.Reason = OutcomeFailed, "the schedule's maintenance guard is invalid; edit and save it"
+		s.auditRun(ctx, sch, decision.Run)
+		return decision
 	}
 
 	if sch.Guards.Overlap != OverlapQueue {
