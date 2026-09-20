@@ -57,9 +57,15 @@ func TestDigestSettings(t *testing.T) {
 		t.Fatalf("disabled = %+v, %v", d, err)
 	}
 	for name, in := range map[string]notify.DigestInput{
-		"bad weekday":     {Weekday: "funday", Time: "08:00", Timezone: "UTC"},
-		"bad time":        {Weekday: "mon", Time: "8am", Timezone: "UTC"},
-		"late time":       {Weekday: "mon", Time: "24:00", Timezone: "UTC"},
+		"bad weekday": {Weekday: "funday", Time: "08:00", Timezone: "UTC"},
+		"bad time":    {Weekday: "mon", Time: "8am", Timezone: "UTC"},
+		"late time":   {Weekday: "mon", Time: "24:00", Timezone: "UTC"},
+		// fix round 1, Minor #1: fmt.Sscanf("%02d:%02d", ...) used to
+		// accept a short match and leave the rest of the string
+		// unchecked, so these all used to parse.
+		"trailing junk":   {Weekday: "mon", Time: "08:0a", Timezone: "UTC"},
+		"trailing junk 2": {Weekday: "mon", Time: "08:6a", Timezone: "UTC"},
+		"leading sign":    {Weekday: "mon", Time: "+8:30", Timezone: "UTC"},
 		"no timezone":     {Weekday: "mon", Time: "08:00"},
 		"unknown zone":    {Weekday: "mon", Time: "08:00", Timezone: "Mars/Olympus"},
 		"enabled, no ch":  {Enabled: true, Weekday: "mon", Time: "08:00", Timezone: "UTC"},
@@ -137,8 +143,9 @@ func TestDigestTicker(t *testing.T) {
 	}
 }
 
-// TestDigestWeekBoundaryCrossesDST is the plan's own must-hold: the
-// digest's from/to bounds are computed in the org's timezone, with DST
+// TestDigestWeekBoundaryCrossesDST is the dispatch's own must-hold (not
+// the brief's — see the report's fix-round-1 note): the digest's from/to
+// bounds are computed in the org's timezone, with DST
 // handled with the same care cronexpr gives a schedule's own occurrences.
 // Monday 26 Oct 2026 08:00 Europe/Berlin (CET, UTC+1) is 07:00 UTC; the
 // switch out of summer time happened the day before, on 25 Oct. The

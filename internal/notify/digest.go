@@ -54,11 +54,15 @@ func defaultDigest() DigestSettings {
 
 // digestExpr is the cron expression of a weekly digest.
 func digestExpr(weekday int, at string) (cronexpr.Expr, error) {
-	var h, m int
-	if _, err := fmt.Sscanf(at, "%02d:%02d", &h, &m); err != nil || len(at) != 5 || h > 23 || m > 59 || h < 0 || m < 0 {
+	// time.Parse requires the whole input to match "15:04" — unlike
+	// fmt.Sscanf, which happily accepts a short match against part of the
+	// string (e.g. "08:0a" as 08:00, "+8:30" as 08:30) and leaves the rest
+	// unchecked.
+	hm, err := time.Parse("15:04", at)
+	if err != nil {
 		return cronexpr.Expr{}, fmt.Errorf("%w: time must be HH:MM", ErrInvalidInput)
 	}
-	return cronexpr.Parse(fmt.Sprintf("%d %d * * %d", m, h, weekday))
+	return cronexpr.Parse(fmt.Sprintf("%d %d * * %d", hm.Minute(), hm.Hour(), weekday))
 }
 
 // NextDigestRun is the first digest occurrence strictly after now.

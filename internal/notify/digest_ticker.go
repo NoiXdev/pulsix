@@ -109,21 +109,28 @@ func (t *DigestTicker) tickSafely(ctx context.Context) {
 	}
 }
 
-// weekBefore is the instant one wall-clock week before occurrence, in
-// timezone: it converts to the organization's zone before subtracting
-// seven days, so a week that crosses a DST change still starts at the
-// same local wall-clock time as it ends. Doing the same subtraction on
-// occurrence's own (UTC) Location would instead subtract exactly 168
-// hours — one hour off whenever the intervening week crosses a spring or
-// autumn transition, silently shifting which runs a digest attributes to
-// its week. An unparseable timezone (unreachable once SetDigest has
-// validated it) falls back to the naive subtraction.
-func weekBefore(occurrence time.Time, timezone string) time.Time {
+// digestPeriod resolves timezone once and returns both ends of the
+// digest's week in that same Location: occurrence itself, and the same
+// wall-clock time seven days earlier. Both ends must share the org's
+// Location, not just from — the renderer (render.go's EventDigest case,
+// placeholders.go's digest.period) formats each end with a bare
+// Time.Format and labels the pair with the org's timezone, so an end
+// still carrying occurrence's own UTC Location (as read back from
+// timestamptz) would print the wrong local date whenever the org's date
+// differs from the UTC date at the occurrence — e.g. Pacific/Auckland at
+// a Monday 08:00 due time is still Sunday in UTC — making the printed
+// period six or eight days instead of seven. Converting to the org's
+// zone before subtracting also keeps a week that crosses a DST change
+// starting at the same local wall-clock time it ends at, rather than
+// subtracting exactly 168 hours the way arithmetic on a UTC-located value
+// would.
+func digestPeriod(occurrence time.Time, timezone string) (from, to time.Time, err error) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		return occurrence.AddDate(0, 0, -7)
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: unknown timezone %q", ErrInvalidInput, timezone)
 	}
-	return occurrence.In(loc).AddDate(0, 0, -7)
+	to = occurrence.In(loc)
+	return to.AddDate(0, 0, -7), to, nil
 }
 
 // Tick handles every due digest once.
@@ -134,7 +141,14 @@ func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 			t.log.WarnContext(ctx, "weekly digest more than a day late; skipping it", "org", d.OrgID, "due", d.Occurrence)
 			return nil
 		}
-		sum, err := t.builder.Digest(db.WithOrgScope(ctx, d.OrgID), d.OrgID, weekBefore(d.Occurrence, d.Timezone), d.Occurrence)
+		from, to, err := digestPeriod(d.Occurrence, d.Timezone)
+		if err != nil {
+			// processOne validates the stored timezone (via NextDigestRun)
+			// before ever calling handle, so this is unreachable in
+			// practice; kept as a safe failure rather than a panic.
+			return fmt.Errorf("digest period: %w", err)
+		}
+		sum, err := t.builder.Digest(db.WithOrgScope(ctx, d.OrgID), d.OrgID, from, to)
 		if err != nil {
 			return fmt.Errorf("build digest: %w", err)
 		}
@@ -191,22 +205,33 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 		st.log.ErrorContext(ctx, "begin digest savepoint", "org", r.OrgID, "err", err)
 		return
 	}
+	// The next occurrence is computed — and the stored settings' timezone
+	// therefore validated — before handle runs, not after: otherwise a
+	// digest whose timezone a direct DB edit or a tzdata update broke
+	// would already be built and queued (digestPeriod falling back to a
+	// broken period label) by the time this got around to disabling it.
+	next, err := NextDigestRun(int(r.Weekday), r.AtTime, r.Timezone, now)
+	if err != nil {
+		// Stored settings that no longer evaluate stop the digest rather
+		// than retry forever (the CHECK needs next_run_at while enabled, so
+		// disable it), and skip the send entirely.
+		st.log.ErrorContext(ctx, "weekly digest settings do not evaluate; disabling the digest", "org", r.OrgID, "err", err)
+		if _, err := sp.Exec(ctx, `UPDATE notification_digests SET enabled = false, next_run_at = NULL WHERE org_id = $1`, r.OrgID); err != nil {
+			_ = sp.Rollback(context.WithoutCancel(ctx))
+			st.log.ErrorContext(ctx, "advance weekly digest", "org", r.OrgID, "err", err)
+			return
+		}
+		if err := sp.Commit(ctx); err != nil {
+			st.log.ErrorContext(ctx, "commit digest savepoint", "org", r.OrgID, "err", err)
+		}
+		return
+	}
 	if err := handle(ctx, sp, due); err != nil {
 		_ = sp.Rollback(context.WithoutCancel(ctx))
 		st.log.ErrorContext(ctx, "weekly digest failed; retrying next tick", "org", r.OrgID, "err", err)
 		return
 	}
-	next, err := NextDigestRun(int(r.Weekday), r.AtTime, r.Timezone, now)
-	if err != nil {
-		// Stored settings that no longer evaluate stop the digest rather
-		// than retry forever (the CHECK needs next_run_at while enabled, so
-		// disable it).
-		st.log.ErrorContext(ctx, "weekly digest settings do not evaluate; disabling the digest", "org", r.OrgID, "err", err)
-		_, err = sp.Exec(ctx, `UPDATE notification_digests SET enabled = false, next_run_at = NULL WHERE org_id = $1`, r.OrgID)
-	} else {
-		err = gen.New(sp).AdvanceNotificationDigest(ctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: due.Key(), OrgID: r.OrgID})
-	}
-	if err != nil {
+	if err := gen.New(sp).AdvanceNotificationDigest(ctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: due.Key(), OrgID: r.OrgID}); err != nil {
 		_ = sp.Rollback(context.WithoutCancel(ctx))
 		st.log.ErrorContext(ctx, "advance weekly digest", "org", r.OrgID, "err", err)
 		return

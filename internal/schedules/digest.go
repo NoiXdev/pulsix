@@ -1,6 +1,7 @@
 package schedules
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"time"
@@ -75,7 +76,7 @@ func (s *Service) Digest(ctx context.Context, orgID uuid.UUID, from, to time.Tim
 			ds.Skipped++
 		}
 	}
-	slices.SortFunc(out.Slowest, func(a, b notify.DigestRun) int { return int(b.DurationSeconds - a.DurationSeconds) })
+	slices.SortStableFunc(out.Slowest, func(a, b notify.DigestRun) int { return cmp.Compare(b.DurationSeconds, a.DurationSeconds) })
 	if len(out.Slowest) > digestSlowest {
 		out.Slowest = out.Slowest[:digestSlowest]
 	}

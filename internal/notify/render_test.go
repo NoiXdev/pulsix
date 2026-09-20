@@ -3,8 +3,10 @@ package notify
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderWebhookBodyDefaultIsTheEventJSON(t *testing.T) {
@@ -272,6 +274,79 @@ func TestRenderEmail(t *testing.T) {
 	if subject, _ = renderEmail(ev); subject != "[Pulsix] Test notification from Example" {
 		t.Fatalf("test email = %q", subject)
 	}
+}
+
+// TestDigestPeriodLabelMatchesOrgZone is fix round 1, Important #1:
+// digestPeriod must put *both* ends of the week in the organization's own
+// zone, not just from — otherwise the renderer's bare Time.Format prints
+// to's UTC date, and the "Scheduled runs from … to … (zone)" line either
+// undercounts or overcounts the week by a day for an organization whose
+// local date differs from the UTC date at the due instant. Two zones on
+// opposite sides of UTC, both far enough from it to disagree with UTC on
+// the date at the occurrence:
+//   - Pacific/Auckland (UTC+12 in July, NZ winter/NZST): a Monday 08:00
+//     due time is still Sunday in UTC, so a to still carrying occurrence's
+//     UTC Location would render one day short of the true local date —
+//     a six-day week.
+//   - America/Los_Angeles (UTC-7 in July, PDT): a 20:00 due time has
+//     already rolled into the next UTC day, so a to still in UTC would
+//     render one day past the true local date — an eight-day week.
+func TestDigestPeriodLabelMatchesOrgZone(t *testing.T) {
+	for _, tc := range []struct {
+		zone     string
+		local    time.Time // the occurrence, expressed in zone
+		wantFrom string    // "2 Jan" of the local from date
+		wantTo   string    // "2 Jan 2006" of the local to date
+	}{
+		{
+			zone:     "Pacific/Auckland",
+			local:    time.Date(2026, 7, 6, 8, 0, 0, 0, mustLoadLocation(t, "Pacific/Auckland")), // Mon 6 Jul, NZST
+			wantFrom: "29 Jun", wantTo: "6 Jul 2026",
+		},
+		{
+			zone:     "America/Los_Angeles",
+			local:    time.Date(2026, 7, 6, 20, 0, 0, 0, mustLoadLocation(t, "America/Los_Angeles")), // Mon 6 Jul, PDT
+			wantFrom: "29 Jun", wantTo: "6 Jul 2026",
+		},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			from, to, err := digestPeriod(tc.local.UTC(), tc.zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The DigestSummary values: both ends must report the local
+			// calendar date the organization actually sees, which a
+			// UTC-located to would get wrong for exactly these zones.
+			if got := to.Format("2 Jan 2006"); got != tc.wantTo {
+				t.Fatalf("to = %s, want %s (org-local date)", got, tc.wantTo)
+			}
+			if got := from.Format("2 Jan"); got != tc.wantFrom {
+				t.Fatalf("from = %s, want %s (org-local date)", got, tc.wantFrom)
+			}
+			if to.Sub(from) != 7*24*time.Hour {
+				t.Fatalf("to - from = %s, want exactly 7*24h for a week with no DST change in it", to.Sub(from))
+			}
+
+			// The rendered label: the e-mail body must read a true
+			// seven-day span in the org's own dates, not the UTC ones.
+			ev := sampleEvent()
+			ev.Kind, ev.Digest.From, ev.Digest.To, ev.Digest.Timezone = EventDigest, from, to, tc.zone
+			_, body := renderEmail(ev)
+			wantLine := fmt.Sprintf("Scheduled runs from %s to %s (%s)", tc.wantFrom, tc.wantTo, tc.zone)
+			if !strings.Contains(body, wantLine) {
+				t.Fatalf("body does not contain %q:\n%s", wantLine, body)
+			}
+		})
+	}
+}
+
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loc
 }
 
 func TestEventCategories(t *testing.T) {
