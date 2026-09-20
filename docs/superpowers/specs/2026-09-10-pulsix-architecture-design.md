@@ -125,7 +125,9 @@ playbook_id, limit, extra_vars, credential_id)`, `jobs(template_id, status, zone
 worker_id, trigger manual|schedule|webhook|system, trigger_ref, started, finished, stats
 jsonb)`, `schedules(template_id, mode cron|simple, cron, simple jsonb, timezone, guards
 jsonb, limit, extra_vars, paused, next_run_at)`, `schedule_runs(schedule_id, due_at,
-outcome, reason, job_group_id)`, `job_triggers(kind template_run|repo_sync,
+outcome triggered|skipped_overlap|skipped_maintenance|missed|failed, reason,
+job_group_id)`, `schedule_notifications(schedule_id, channel_id, events[])`,
+`job_triggers(kind template_run|repo_sync,
 template_id|repo_id, preset, auth hmac|token, secret, allow_cidrs, mapping jsonb,
 on_active, rate_limit jsonb)`, `trigger_deliveries(trigger_id, at, source_ip, outcome,
 reason, job_group_id)`, `job_events(job_id, seq, host,
@@ -141,11 +143,18 @@ state, last_value, at)`, `check_items(host_id, definition_id, item_key, discover
 for_duration)`, `check_states(item_id, state, since, last_value, flapping)`, `metrics
 (time, item_id, name, value)` (hypertable, continuous aggregates 1 m / 5 m / 1 h).
 
-Alerting: `alerts(org_id, item_id, severity, opened, acked_by, resolved)`, `channels
+Alerting: `alerts(org_id, item_id, severity, opened, acked_by, resolved)`,
+`notification_channels(org_id, kind email|webhook, name, config jsonb with sealed
+secrets, enabled)` (v0.2d), `notification_deliveries(channel_id, event_key, event_kind,
+payload, status pending|sent|failed, attempts, next_attempt_at, locked_until,
+last_error)` (v0.2d), `notification_digests(org_id, enabled, weekday, at_time,
+timezone, next_run_at)` + `notification_digest_channels` (v0.2d), `channels
 (org_id, kind, config jsonb encrypted)`, `schedules(org_id, name, windows jsonb)`,
 `routes(group_id|org, schedule_id, min_severity, channel_ids)`, `escalations(route_id,
-after, channel_ids, repeat)`, `maintenance_windows(org_id, target host|group|org, start, end, recurrence, note,
-visibility internal|public, public_title, public_text)`, `maintenance_publications
+after, channel_ids, repeat)`, `maintenance_windows(org_id, target_kind host|inventory_group|org,
+host_id, group_id, starts_at, ends_at | cron, duration, timezone, note,
+visibility internal|public, public_title, public_text)` (v0.2d built the columns up to
+`note`; `visibility` and the rest follow in v0.4/v0.5), `maintenance_publications
 (window_id, page_id)`, `notifications(alert_id, channel_id, sent_at, result)`.
 
 Status pages: `status_pages(org_id, slug, custom_domain, theme jsonb)`, `status_components
@@ -281,8 +290,10 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
   due schedules with `FOR UPDATE SKIP LOCKED`, so with several managers each
   occurrence is decided once; enqueueing is at-least-once. Every decision is kept in
   `schedule_runs` (`triggered`, `skipped_overlap`, `missed`, `failed`). Scheduled runs
-  pass the same enqueue validation as manual runs. The maintenance-window guard
-  arrives with maintenance windows (v0.2d).
+  pass the same enqueue validation as manual runs. The maintenance guard (v0.2d) is
+  `ignore`, `skip` (record `skipped_maintenance` when a targeted host is in a window)
+  or `exclude_hosts` (leave those hosts out; skip when none remains); it fails closed.
+  Run now applies no guard.
 - Incoming webhooks (v0.2c): `POST /api/v1/hooks/jobs/{id}` runs a template and
   `POST /api/v1/hooks/repos/{id}` syncs a repository (the push webhook of 2.8).
   Presets: Pulsix, GitHub and Gitea (HMAC-SHA256 of the raw body), GitLab and bearer
@@ -296,9 +307,16 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
   all managers; a per-address limit counts only calls that fail with the uniform 404.
   `on_active` either queues or skips. A trigger keeps its last
   500 deliveries (`trigger_deliveries`) without the body.
-- Schedule notifications (v0.2d): rules per schedule (`on failure`, `on change`, `on
-  success`, `skipped/missed` → channels from §11), an optional weekly digest, and a
-  calendar of scheduled runs together with maintenance windows.
+- Schedule notifications (v0.2d): rules per schedule (`failure`, `change`, `success`,
+  `skipped` → channels from §11), stored merged per channel so a run yields at most
+  one message per channel. A run group is reported once, from the terminal
+  transaction of its last job; `change` means a host reported changed in the stored
+  per-host results; a cancelled run counts as a failure. Skipped, missed and failed
+  decisions are reported from the ticker. Deliveries are written in the same
+  transaction as the fact (idempotent per event and channel) and sent at least once.
+  A weekly digest per organization (runs, failures, skips and misses, slowest runs of
+  7 days) and a calendar of scheduled runs and maintenance windows
+  (`GET /calendar`, at most six weeks) complete it.
 - Queue: `jobs` rows in `queued` state. Workers of the matching zone poll with
   `SELECT … FOR UPDATE SKIP LOCKED` through the manager's gRPC `ClaimJob`; the manager
   owns the SQL, workers never talk to Postgres.
@@ -455,12 +473,21 @@ Layered like Checkmk rulesets and Zabbix templates.
 - **Channels**: email (SMTP), generic webhook (HTTP method, headers, body template with
   alert fields), Telegram bot, Slack, Mattermost, ntfy, Pushover, Twilio SMS, PagerDuty
   Events v2. Each channel has a test button. Delivery is a manager-side job queue with
-  retries and a per-alert notification log.
+  retries and a per-alert notification log. **v0.2d built email and webhook**: e-mail
+  to up to 20 recipients through the instance SMTP; webhooks with sealed URL, header
+  values and signing secret, a body template over a fixed event with a `json` helper,
+  and `X-Pulsix-Signature-256` over `<timestamp>.<body>`; a synchronous test; a queue
+  shared by managers (`SKIP LOCKED`, 2-minute lease, attempts as fencing token, 6
+  attempts with 30 s × 4ⁿ backoff, permanent failures not retried) and a per-channel
+  log of the newest 500 deliveries.
 - **Maintenance windows**: created where they act — on a host, a monitoring group or the
   org — or from the central Monitoring → Maintenance list with a target picker. Start/end
   or recurring; alerts on the target are silenced and marked "in maintenance". Each window
   has a visibility: `internal` (silence only) or `public` with a public title and text
-  and a list of status pages it is announced on. Ends with a summary of states.
+  and a list of status pages it is announced on. Ends with a summary of states. v0.2d
+  built host, inventory-group (subgroups included) and organization windows, one-off or
+  recurring (cron, duration, time zone), used by the schedules' maintenance guard and
+  the calendar; silencing, monitoring-group targets and public windows follow.
 
 ## 12. Status pages
 
@@ -546,8 +573,19 @@ Layered like Checkmk rulesets and Zabbix templates.
   limits, secrets sealed with AAD `trigger:<org>:<id>` and shown only at creation and
   rotation, and no secrets or bodies in URLs, logs, audit entries or delivery rows.
   Webhook and scheduled runs pass the same validation as manual runs (schema, the
-  connection-security denylist, host-key pins). Outbound webhooks (notification
-  channels, with SSRF rules) are v0.2d.
+  connection-security denylist, host-key pins). Outbound webhooks follow below.
+- **Outbound webhooks (v0.2d).** Notification webhooks are requests to addresses
+  operators enter, so every one goes through one client (`internal/outbound`): the
+  name is resolved first and the connection dialled to the checked address, so a
+  second DNS answer cannot slip in; a destination is refused as a whole when any of
+  its addresses is loopback, link-local (metadata `169.254.169.254` included),
+  unspecified, multicast, broadcast, `100.100.100.200` or `fd00:ec2::254`, unless
+  `PULSIX_NOTIFY_ALLOW_CIDRS` re-admits the range; private ranges are allowed;
+  redirects are not followed, proxy variables are ignored, and every request ends
+  after 10 s. The URL (it can carry a token), header values and the signing secret
+  are sealed with AAD `channel:<org>:<id>`; responses show scheme and host only, and
+  transport errors are stored without the URL. Messages carry names, results, counts,
+  durations and links — never run output, variables or secrets.
 - **Webhook payloads are untrusted input (v0.2c final review).** A valid signature
   proves who delivered a payload, not who wrote its values: a GitHub push is signed
   whatever branch name the pusher chose, and a pull request carries a fork author's
