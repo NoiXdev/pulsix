@@ -91,6 +91,19 @@ type (
 			Name string `json:"name"`
 		} `json:"maintenance"`
 	}
+	// scheduleNotifyRulesOut is PUT/GET .../schedules/{id}/notifications'
+	// body: one entry per category that has channels, each split back out
+	// from the merged, one-row-per-channel storage (splitRules,
+	// internal/notify/rules.go) — the category grouping is a read-time
+	// view, not a second stored row.
+	scheduleNotifyRulesOut struct {
+		Rules []struct {
+			On       string `json:"on"`
+			Channels []struct {
+				ID string `json:"id"`
+			} `json:"channels"`
+		} `json:"rules"`
+	}
 )
 
 func (s *scenario) notifications(clock *fakeClock, rec *hookReceiver, hookURL string) {
@@ -111,11 +124,28 @@ func (s *scenario) notifications(clock *fakeClock, rec *hookReceiver, hookURL st
 		"template_id": s.failTID, "name": "failing nightly", "mode": "cron", "cron": "*/5 * * * *", "timezone": "UTC",
 		"guards": map[string]any{"catch_up": map[string]any{"enabled": true, "window": "1h"}},
 	}, &failing)
-	// failure and change both name the channel: still one message per run.
+	// Two rules on the same channel, different categories. fail.yml never
+	// reports a host as changed, so "change" cannot itself fire for this
+	// run — the notify-once claim below does not rest on that. It rests on
+	// SetScheduleRules merging same-channel rules into one row at write
+	// time (mergeRules, internal/notify/rules.go: "One row per (schedule,
+	// channel) is what makes 'at most one message per run and channel'
+	// hold by construction"): the response confirms both categories were
+	// accepted and both still name the one channel, so there is no second,
+	// unmerged row that a genuinely co-occurring category could ever have
+	// enqueued twice through. What remains to prove live is that the
+	// dispatcher itself does not resend an already-sent delivery — the
+	// 5-second wait past two dispatch intervals below.
+	var rules scheduleNotifyRulesOut
 	s.put(prefix+"/schedules/"+failing.Schedule.ID+"/notifications", map[string]any{"rules": []map[string]any{
 		{"on": "failure", "channels": []string{ch.Channel.ID}},
 		{"on": "change", "channels": []string{ch.Channel.ID}},
-	}}, &map[string]any{})
+	}}, &rules)
+	if len(rules.Rules) != 2 || rules.Rules[0].On != "failure" || rules.Rules[1].On != "change" ||
+		len(rules.Rules[0].Channels) != 1 || rules.Rules[0].Channels[0].ID != ch.Channel.ID ||
+		len(rules.Rules[1].Channels) != 1 || rules.Rules[1].Channels[0].ID != ch.Channel.ID {
+		s.t.Fatalf("stored rules = %+v, want failure and change both naming the one channel", rules.Rules)
+	}
 
 	clock.setAt(*failing.Schedule.NextRunAt)
 	fired := s.awaitScheduleRun(failing.Schedule.ID, 30*time.Second)
@@ -167,7 +197,11 @@ func (s *scenario) notifications(clock *fakeClock, rec *hookReceiver, hookURL st
 	if err := json.Unmarshal(msg.body, &ev); err != nil {
 		s.t.Fatal(err)
 	}
-	if ev.Schedule.Name != "failing nightly" || ev.Run.Result != "failed" || ev.Run.Hosts != 1 || ev.Run.HostsFailed != 1 ||
+	// Categories carries only "failure": fail.yml never reports a host as
+	// changed, so the "change" rule genuinely does not match this run —
+	// the channel is told about it through the "failure" rule alone.
+	if ev.Kind != "run.finished" || len(ev.Categories) != 1 || ev.Categories[0] != "failure" ||
+		ev.Schedule.Name != "failing nightly" || ev.Run.Result != "failed" || ev.Run.Hosts != 1 || ev.Run.HostsFailed != 1 ||
 		ev.Run.ID != group.Jobs[0].ID || !strings.HasSuffix(ev.URL, "/runs/"+group.Jobs[0].ID) {
 		s.t.Fatalf("message = %s", msg.body)
 	}
