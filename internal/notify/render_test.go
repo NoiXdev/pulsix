@@ -374,3 +374,51 @@ func TestEventCategories(t *testing.T) {
 		t.Fatal("ParseCategory accepted an unknown category")
 	}
 }
+
+// TestDigestSlowestRunsUseTheOrgZone is the final review's Important #4.
+// The "slowest runs" list printed r.StartedAt.UTC() under a header that
+// labels the period with the organization's own timezone, so the two could
+// disagree on the date: the review's case is Pacific/Auckland, where a run
+// started Mon 21 Sep 08:30 NZST was listed as "Sun 20 Sep 20:30 UTC" — a
+// date *before* the stated period start. This is the same bug class the
+// branch already fixed for the period's own bounds; the sibling was
+// missed.
+//
+// The event goes through the JSON round trip the delivery payload really
+// takes, so the zone has to come from Digest.Timezone: a decoded
+// time.Time carries a fixed offset, never the named zone.
+func TestDigestSlowestRunsUseTheOrgZone(t *testing.T) {
+	const zone = "Pacific/Auckland"
+	loc := mustLoadLocation(t, zone)
+	from, to, err := digestPeriod(time.Date(2026, 9, 28, 8, 0, 0, 0, loc).UTC(), zone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 9, 21, 8, 30, 0, 0, loc)
+	ev := sampleEvent()
+	ev.Kind = EventDigest
+	ev.Digest.From, ev.Digest.To, ev.Digest.Timezone = from, to, zone
+	ev.Digest.Slowest = []DigestRun{{Schedule: "Nightly OS patching", StartedAt: started.UTC(), DurationSeconds: 90}}
+
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Event
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	_, body := renderEmail(decoded)
+
+	const want = "Mon 21 Sep 08:30 NZST"
+	if !strings.Contains(body, want) {
+		t.Fatalf("body does not contain %q:\n%s", want, body)
+	}
+	if strings.Contains(body, "Sun 20 Sep") {
+		t.Fatalf("a slowest run is dated before the period the header states:\n%s", body)
+	}
+	// The period label itself stays org-local, as fix round 1 made it.
+	if !strings.Contains(body, "Scheduled runs from 21 Sep to 28 Sep 2026 ("+zone+")") {
+		t.Fatalf("period label changed:\n%s", body)
+	}
+}

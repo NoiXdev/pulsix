@@ -114,7 +114,8 @@ func renderEmail(ev Event) (subject, body string) {
 	case EventDigest:
 		subject = fmt.Sprintf("[Pulsix] Weekly schedule digest for %s", ev.Org.Name)
 		if d := ev.Digest; d != nil {
-			fmt.Fprintf(&b, "Scheduled runs from %s to %s (%s)\n\n", d.From.Format("2 Jan"), d.To.Format("2 Jan 2006"), d.Timezone)
+			loc := digestLocation(d)
+			fmt.Fprintf(&b, "Scheduled runs from %s to %s (%s)\n\n", d.From.In(loc).Format("2 Jan"), d.To.In(loc).Format("2 Jan 2006"), d.Timezone)
 			if len(d.Schedules) == 0 {
 				b.WriteString("No schedules.\n")
 			}
@@ -124,7 +125,7 @@ func renderEmail(ev Event) (subject, body string) {
 			if len(d.Slowest) > 0 {
 				b.WriteString("\nSlowest runs:\n")
 				for _, r := range d.Slowest {
-					fmt.Fprintf(&b, "%s, %s: %s  %s\n", r.Schedule, r.StartedAt.UTC().Format("Mon 2 Jan 15:04 MST"), time.Duration(r.DurationSeconds)*time.Second, r.URL)
+					fmt.Fprintf(&b, "%s, %s: %s  %s\n", r.Schedule, r.StartedAt.In(loc).Format("Mon 2 Jan 15:04 MST"), time.Duration(r.DurationSeconds)*time.Second, r.URL)
 				}
 			}
 		}
@@ -136,4 +137,23 @@ func renderEmail(ev Event) (subject, body string) {
 		fmt.Fprintf(&b, "\n%s\n", ev.URL)
 	}
 	return subject, b.String()
+}
+
+// digestLocation is the zone every time in a digest message prints in: the
+// organization's own, the one the period header is labelled with. The
+// slowest-run list used to print UTC there, so it could date a run before
+// the period it belongs to — Pacific/Auckland's Monday 08:30 NZST reads as
+// the previous Sunday 20:30 in UTC (final review, Important #4).
+//
+// The zone comes from the summary's Timezone name, not from From's own
+// Location: the event reaches the renderer through the delivery payload's
+// JSON, and a decoded time.Time carries a fixed numeric offset rather than
+// the named zone, so MST would print "+1200" instead of "NZST". From's
+// Location is the fallback for a name that no longer resolves, which keeps
+// the wall-clock reading right even when the abbreviation is not.
+func digestLocation(d *DigestSummary) *time.Location {
+	if loc, err := time.LoadLocation(d.Timezone); err == nil {
+		return loc
+	}
+	return d.From.Location()
 }
