@@ -17,10 +17,25 @@ import (
 // Digest ticker tuning: it looks for due digests every minute; a digest
 // more than maxDigestLate overdue (the manager was down) is skipped, not
 // sent days late, and the next week's is scheduled.
+//
+// batchDeadlineFactor and minBatchDeadline bound one ProcessDue call the
+// way schedules.Ticker bounds its own (final review, Important #5). The
+// batch holds a transaction and FOR NO KEY UPDATE row locks while the
+// builder issues its statements on *other* pool connections, so a starved
+// pool would otherwise pin both indefinitely — the v0.2b pool-exhaustion
+// shape the schedule ticker was explicitly fixed for, of which the digest
+// ticker inherited only the SKIP LOCKED half. The floor keeps a short tick
+// (a test's, a dev instance's) from failing an ordinary slow build.
+// digestWriteTimeout bounds each row's own write-back, which is detached
+// from the batch deadline so a deadline hit while building a *later*
+// digest cannot discard a write an earlier one already earned.
 const (
-	DefaultDigestTick = time.Minute
-	maxDigestLate     = 24 * time.Hour
-	digestBatch       = 20
+	DefaultDigestTick   = time.Minute
+	maxDigestLate       = 24 * time.Hour
+	digestBatch         = 20
+	batchDeadlineFactor = 4
+	minBatchDeadline    = 10 * time.Second
+	digestWriteTimeout  = 10 * time.Second
 )
 
 // DueDigest is one organization's digest occurrence that is due.
@@ -133,10 +148,17 @@ func digestPeriod(occurrence time.Time, timezone string) (from, to time.Time, er
 	return to.AddDate(0, 0, -7), to, nil
 }
 
-// Tick handles every due digest once.
+// Tick handles every due digest once. The batch runs under its own
+// deadline (final review, Important #5): a batch that cannot complete in
+// that time — most likely a starved pool connection — fails fast instead
+// of holding its row locks, and the pool connection an HTTP handler is
+// waiting on, indefinitely. The same digests are still due on the next
+// tick, the same at-least-once guarantee a failed commit already gives.
 func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 	now := t.now()
-	return t.queue.ProcessDue(ctx, now, digestBatch, func(ctx context.Context, tx pgx.Tx, d DueDigest) error {
+	batchCtx, cancel := context.WithTimeout(ctx, t.batchDeadline())
+	defer cancel()
+	return t.queue.ProcessDue(batchCtx, now, digestBatch, func(ctx context.Context, tx pgx.Tx, d DueDigest) error {
 		if now.Sub(d.Occurrence) > maxDigestLate {
 			t.log.WarnContext(ctx, "weekly digest more than a day late; skipping it", "org", d.OrgID, "due", d.Occurrence)
 			return nil
@@ -155,6 +177,12 @@ func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 		sum.Timezone = d.Timezone
 		return t.outbox.EnqueueDigest(ctx, tx, d, sum)
 	})
+}
+
+// batchDeadline bounds one batch: batchDeadlineFactor x tick, never less
+// than minBatchDeadline.
+func (t *DigestTicker) batchDeadline() time.Duration {
+	return max(batchDeadlineFactor*t.tick, minBatchDeadline)
 }
 
 // DigestSQLStore is the digest ticker's store: the raw pool, bypass
@@ -181,15 +209,33 @@ func (st *DigestSQLStore) ProcessDue(ctx context.Context, now time.Time, limit i
 	if err != nil {
 		return 0, fmt.Errorf("begin digest tick: %w", err)
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))                                                       //nolint:errcheck // no-op once committed
+	defer func() {
+		// Detached and bounded, like every other write-back here: a
+		// rollback that waits forever on an unresponsive database is
+		// what makes App.Close hang.
+		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), digestWriteTimeout)
+		defer cancel()
+		tx.Rollback(rbCtx) //nolint:errcheck // no-op once committed
+	}()
 	rows, err := gen.New(tx).LockDueDigests(ctx, gen.LockDueDigestsParams{Now: now, Lim: int32(limit)}) //nolint:gosec // limit is digestBatch
 	if err != nil {
 		return 0, fmt.Errorf("lock due digests: %w", err)
 	}
-	for _, r := range rows {
+	for i, r := range rows {
+		if ctx.Err() != nil {
+			// The batch's own deadline (or the manager's shutdown) is
+			// gone: every digest from here on is left exactly as it is,
+			// still locked until the commit below releases it, and still
+			// due for the next tick — one line here beats one per row.
+			st.log.WarnContext(context.WithoutCancel(ctx), "digest batch deadline reached; leaving the remaining digests due for the next tick",
+				"handled", i, "remaining", len(rows)-i)
+			break
+		}
 		st.processOne(ctx, tx, r, now, handle)
 	}
-	if err := tx.Commit(context.WithoutCancel(ctx)); err != nil {
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), digestWriteTimeout)
+	defer cancel()
+	if err := tx.Commit(commitCtx); err != nil {
 		return 0, fmt.Errorf("commit digest tick: %w", err)
 	}
 	return len(rows), nil
@@ -200,9 +246,17 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 	if t := db.TimePtr(r.NextRunAt); t != nil {
 		due.Occurrence = *t
 	}
-	sp, err := tx.Begin(ctx)
+	// Every write below — the savepoint, the disable, the advance and
+	// the savepoint's own commit — runs on a fresh detached context
+	// bounded only by digestWriteTimeout, so a batch deadline reached
+	// while building a *later* digest can never discard a write this row
+	// already earned. Only handle itself runs on ctx, the work phase the
+	// batch deadline is there to bound.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), digestWriteTimeout)
+	defer cancel()
+	sp, err := tx.Begin(wctx)
 	if err != nil {
-		st.log.ErrorContext(ctx, "begin digest savepoint", "org", r.OrgID, "err", err)
+		st.log.ErrorContext(wctx, "begin digest savepoint", "org", r.OrgID, "err", err)
 		return
 	}
 	// The next occurrence is computed — and the stored settings' timezone
@@ -215,28 +269,28 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 		// Stored settings that no longer evaluate stop the digest rather
 		// than retry forever (the CHECK needs next_run_at while enabled, so
 		// disable it), and skip the send entirely.
-		st.log.ErrorContext(ctx, "weekly digest settings do not evaluate; disabling the digest", "org", r.OrgID, "err", err)
-		if _, err := sp.Exec(ctx, `UPDATE notification_digests SET enabled = false, next_run_at = NULL WHERE org_id = $1`, r.OrgID); err != nil {
-			_ = sp.Rollback(context.WithoutCancel(ctx))
-			st.log.ErrorContext(ctx, "advance weekly digest", "org", r.OrgID, "err", err)
+		st.log.ErrorContext(wctx, "weekly digest settings do not evaluate; disabling the digest", "org", r.OrgID, "err", err)
+		if _, err := sp.Exec(wctx, `UPDATE notification_digests SET enabled = false, next_run_at = NULL WHERE org_id = $1`, r.OrgID); err != nil {
+			_ = sp.Rollback(wctx)
+			st.log.ErrorContext(wctx, "advance weekly digest", "org", r.OrgID, "err", err)
 			return
 		}
-		if err := sp.Commit(ctx); err != nil {
-			st.log.ErrorContext(ctx, "commit digest savepoint", "org", r.OrgID, "err", err)
+		if err := sp.Commit(wctx); err != nil {
+			st.log.ErrorContext(wctx, "commit digest savepoint", "org", r.OrgID, "err", err)
 		}
 		return
 	}
 	if err := handle(ctx, sp, due); err != nil {
-		_ = sp.Rollback(context.WithoutCancel(ctx))
-		st.log.ErrorContext(ctx, "weekly digest failed; retrying next tick", "org", r.OrgID, "err", err)
+		_ = sp.Rollback(wctx)
+		st.log.ErrorContext(wctx, "weekly digest failed; retrying next tick", "org", r.OrgID, "err", err)
 		return
 	}
-	if err := gen.New(sp).AdvanceNotificationDigest(ctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: due.Key(), OrgID: r.OrgID}); err != nil {
-		_ = sp.Rollback(context.WithoutCancel(ctx))
-		st.log.ErrorContext(ctx, "advance weekly digest", "org", r.OrgID, "err", err)
+	if err := gen.New(sp).AdvanceNotificationDigest(wctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: due.Key(), OrgID: r.OrgID}); err != nil {
+		_ = sp.Rollback(wctx)
+		st.log.ErrorContext(wctx, "advance weekly digest", "org", r.OrgID, "err", err)
 		return
 	}
-	if err := sp.Commit(ctx); err != nil {
-		st.log.ErrorContext(ctx, "commit digest savepoint", "org", r.OrgID, "err", err)
+	if err := sp.Commit(wctx); err != nil {
+		st.log.ErrorContext(wctx, "commit digest savepoint", "org", r.OrgID, "err", err)
 	}
 }
