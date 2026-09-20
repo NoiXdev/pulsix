@@ -10,6 +10,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import { usePauseAllSchedules, useSchedules } from '../../api/hooks/useSchedules.ts';
 import { may } from '../../lib/roles.ts';
+import { ScheduleCalendar } from '../calendar/ScheduleCalendar.tsx';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 import { OUTCOME_TONE } from './outcome.ts';
 import { relative } from './simple.ts';
@@ -110,6 +111,9 @@ export function SchedulesPage() {
           ))}
           {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No schedules yet.</p>}
         </Card>
+        <div className="lg:col-start-1">
+          <ScheduleCalendar org={org} />
+        </div>
         {search.id && (
           <ScheduleEditor
             key={search.id}

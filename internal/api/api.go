@@ -15,6 +15,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
@@ -87,6 +88,9 @@ type Deps struct {
 	Notify *notify.Service
 	// Maintenance manages maintenance windows (spec 2026-09-18 §6).
 	Maintenance *maintenance.Service
+	// Calendar lays out schedule occurrences and maintenance windows
+	// (spec 2026-09-18 §8).
+	Calendar *calendar.Service
 	// WorkerEndpoint is what remote workers dial; empty Addr disables enrollment.
 	WorkerEndpoint WorkerEndpoint
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
@@ -204,6 +208,9 @@ func (d Deps) validate() error {
 	}
 	if d.Maintenance == nil {
 		missing = append(missing, "Maintenance")
+	}
+	if d.Calendar == nil {
+		missing = append(missing, "Calendar")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -389,4 +396,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...
 	registerScheduleNotifyRoutes(orgScoped, deps)  // /orgs/{org}/schedules/{id}/notifications
 	registerNotifyDigestRoutes(orgScoped, deps)    // /orgs/{org}/notification-digest
+	registerCalendarRoutes(orgScoped, deps)        // GET /orgs/{org}/calendar
 }

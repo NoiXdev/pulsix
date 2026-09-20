@@ -12,6 +12,7 @@ import (
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
@@ -195,7 +196,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
-		Notify: &notify.Service{}, Maintenance: &maintenance.Service{},
+		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
 
@@ -366,7 +367,7 @@ func testDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
-		Notify: &notify.Service{}, Maintenance: &maintenance.Service{},
+		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
 

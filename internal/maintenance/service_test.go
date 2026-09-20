@@ -242,7 +242,10 @@ func TestOccurrencesBetweenIsSorted(t *testing.T) {
 func TestCreateUpdateDelete(t *testing.T) {
 	store := newFakeStore()
 	org, actor := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	svc := maintenance.NewService(store, fakeGroups{}, nil, nil, quiet)
+	// Fixed at noon UTC: the daily 1h UTC window below runs 00:00-01:00,
+	// so a real clock would make "active" flaky in that hour.
+	now := func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) }
+	svc := maintenance.NewService(store, fakeGroups{}, now, nil, quiet)
 	in := maintenance.Input{Name: "nightly", TargetKind: maintenance.TargetOrg, Cron: "@daily", Duration: "1h", Timezone: "UTC"}
 	w, err := svc.Create(ctx, org, actor, in)
 	if err != nil || *w.CreatedBy != actor || w.OrgID != org {

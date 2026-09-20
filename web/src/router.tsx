@@ -125,6 +125,8 @@ const runsRoute = createRoute({
   validateSearch: (search: Record<string, unknown>) => ({
     status: typeof search.status === 'string' ? search.status : undefined,
     kind: typeof search.kind === 'string' ? search.kind : undefined,
+    trigger: typeof search.trigger === 'string' ? search.trigger : undefined,
+    schedule: typeof search.schedule === 'string' ? search.schedule : undefined,
   }),
   component: RunsPage,
 });

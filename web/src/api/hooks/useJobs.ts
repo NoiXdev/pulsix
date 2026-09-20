@@ -8,6 +8,9 @@ export const JOBS_PAGE_SIZE = 50;
 export interface JobListFilter {
   status?: string;
   kind?: string;
+  trigger?: string;
+  /** Only the runs this schedule (or webhook trigger) started. */
+  triggerRef?: string;
 }
 
 /** useJobs is the keyset-paginated runs list; the filters are part of the
@@ -26,6 +29,8 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
             query: {
               status: filter.status ?? '',
               kind: filter.kind ?? '',
+              trigger: filter.trigger ?? '',
+              trigger_ref: filter.triggerRef ?? '',
               cursor: pageParam || undefined,
               limit: JOBS_PAGE_SIZE,
             },

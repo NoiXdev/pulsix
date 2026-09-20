@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -150,6 +150,31 @@ describe('ActivityPage pagination', () => {
     expect(await screen.findByText('No activity recorded yet.')).toBeInTheDocument();
     expect(requests.at(-1)).toEqual({ cursor: null, objectType: 'host' });
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+});
+
+describe('ActivityPage automation object types', () => {
+  it('filters by the automation object types', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const seen: (string | null)[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme/activity': (req: MockRequest) => {
+        seen.push(req.search.get('object_type'));
+        return {
+          items: [{ id: 'e1', at: '2026-03-01T10:00:00Z', actor_kind: 'schedule', actor_id: 's1', action: 'schedule.run', object_type: 'job_template', summary: 'schedule "Nightly" triggered' }],
+          next_cursor: '',
+        };
+      },
+    });
+    renderPage(qc);
+    expect(await screen.findByText('schedule "Nightly" triggered')).toBeInTheDocument();
+    for (const t of ['schedule', 'trigger', 'worker', 'channel', 'maintenance', 'job_template']) {
+      expect(screen.getByRole('button', { name: t })).toBeInTheDocument();
+    }
+    await user.click(screen.getByRole('button', { name: 'maintenance' }));
+    await waitFor(() => expect(seen).toContain('maintenance'));
   });
 });
 

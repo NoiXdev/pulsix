@@ -452,6 +452,23 @@ export interface paths {
         patch: operations["updateBastion"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org calendar */
+        get: operations["get-api-v1-orgs-by-org-calendar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/credentials": {
         parameters: {
             query?: never;
@@ -1803,6 +1820,49 @@ export interface components {
             /** @description One-time private key; exactly one of password and private_key */
             private_key?: string;
             user: string;
+        };
+        CalendarEntryDTO: {
+            /** Format: date-time */
+            at: string;
+            job_group_id?: string;
+            /** @description The run's first job, for the run view */
+            job_id?: string;
+            /** @enum {string} */
+            job_status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            reason?: string;
+            schedule_id: string;
+            schedule_name: string;
+            /** @enum {string} */
+            state: "planned" | "triggered" | "skipped_overlap" | "skipped_maintenance" | "missed" | "failed";
+            template_id: string;
+        };
+        CalendarOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CalendarOutputBody.json
+             */
+            readonly $schema?: string;
+            entries: components["schemas"]["CalendarEntryDTO"][] | null;
+            /** Format: date-time */
+            from: string;
+            maintenance: components["schemas"]["CalendarWindowDTO"][] | null;
+            /** Format: date-time */
+            to: string;
+            /** @description Some frequent schedules' occurrences were left out */
+            truncated: boolean;
+        };
+        CalendarWindowDTO: {
+            /** Format: date-time */
+            end: string;
+            name: string;
+            /** Format: date-time */
+            start: string;
+            target_id?: string;
+            /** @enum {string} */
+            target_kind: "host" | "inventory_group" | "org";
+            target_name?: string;
+            window_id: string;
         };
         CatchUpDTO: {
             enabled: boolean;
@@ -4886,6 +4946,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BastionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-calendar": {
+        parameters: {
+            query: {
+                /** @description RFC 3339 start of the range */
+                from: string;
+                /** @description RFC 3339 end of the range (exclusive), at most 6 weeks after from */
+                to: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarOutputBody"];
                 };
             };
             /** @description Error */

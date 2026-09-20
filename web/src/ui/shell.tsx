@@ -195,7 +195,7 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
           <Link
             to="/o/$org/runs"
             params={{ org: org.slug }}
-            search={{ status: undefined, kind: undefined }}
+            search={{ status: undefined, kind: undefined, trigger: undefined, schedule: undefined }}
             activeOptions={{ exact: false }}
             activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
             inactiveProps={{ className: INACTIVE_LINK }}

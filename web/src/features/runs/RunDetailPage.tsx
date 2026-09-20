@@ -81,7 +81,7 @@ export function RunDetailPage() {
     <>
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <Link to="/o/$org/runs" params={{ org }} search={{ status: undefined, kind: undefined }} className="font-mono text-xl font-bold hover:text-primary">
+          <Link to="/o/$org/runs" params={{ org }} search={{ status: undefined, kind: undefined, trigger: undefined, schedule: undefined }} className="font-mono text-xl font-bold hover:text-primary">
             {shortId(j.id)}
           </Link>
           <Pill tone={statusTone(status)}>{status}</Pill>

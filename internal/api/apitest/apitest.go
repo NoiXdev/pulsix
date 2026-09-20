@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -375,6 +376,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Workers:     workersSvc,
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
+		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},

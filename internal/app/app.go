@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -319,6 +320,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
+		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
 	})
 	if err != nil {
 		appDB.Close()

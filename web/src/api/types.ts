@@ -59,3 +59,6 @@ export type NotifyDelivery = components['schemas']['NotifyDeliveryDTO'];
 
 export type MaintenanceWindow = components['schemas']['MaintenanceWindowDTO'];
 export type MaintenanceWindowInput = components['schemas']['MaintenanceWindowBody'];
+
+export type CalendarEntry = components['schemas']['CalendarEntryDTO'];
+export type CalendarWindow = components['schemas']['CalendarWindowDTO'];

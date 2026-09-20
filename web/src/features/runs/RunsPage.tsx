@@ -10,25 +10,29 @@ import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { useSchedules } from '../../api/hooks/useSchedules.ts';
 import { may } from '../../lib/roles.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
 import { kindLabel, shortId, statusTone } from './status.ts';
+import { TRIGGER_LABEL, triggerLabel } from './trigger.ts';
 
-const COLUMNS = '90px 120px 110px minmax(0, 0.7fr) 90px 80px 110px';
+const COLUMNS = '90px 120px 110px 90px minmax(0, 0.7fr) 90px 110px';
 
 const STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'error'];
 const KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key', 'sync_repo'];
 
 /**
  * RunsPage is the org's run list (spec §7, backlog 2.12): keyset-paginated,
- * filterable by status and kind, each row a link into the run view. The
- * filters live in the URL (?status=&kind=), validated by the route.
+ * filterable by status, kind, trigger and schedule (spec 2026-09-18 §8),
+ * each row a link into the run view. The filters live in the URL
+ * (?status=&kind=&trigger=&schedule=), validated by the route.
  */
 export function RunsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
-  const search = useSearch({ strict: false }) as { status?: string; kind?: string };
-  const jobs = useJobs(org, { status: search.status, kind: search.kind });
+  const search = useSearch({ strict: false }) as { status?: string; kind?: string; trigger?: string; schedule?: string };
+  const jobs = useJobs(org, { status: search.status, kind: search.kind, trigger: search.trigger, triggerRef: search.schedule });
+  const schedules = useSchedules(search.trigger === 'schedule' ? org : '');
   const orgInfo = useOrg(org);
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const [adhocOpen, setAdhocOpen] = useState(false);
@@ -38,13 +42,17 @@ export function RunsPage() {
   if (!jobs.data) return <QueryLoading />;
   const rows = jobs.data.pages.flatMap((p) => p.jobs ?? []);
 
-  function filter(next: { status?: string; kind?: string }) {
+  function filter(next: { status?: string; kind?: string; trigger?: string; schedule?: string }) {
+    const trigger = next.trigger ?? search.trigger;
     void navigate({
       to: '/o/$org/runs',
       params: { org },
       search: {
         status: next.status ?? search.status,
         kind: next.kind ?? search.kind,
+        trigger,
+        // A schedule filter only makes sense for scheduled runs.
+        schedule: trigger === 'schedule' ? (next.schedule ?? search.schedule) : undefined,
       },
     });
   }
@@ -69,6 +77,20 @@ export function RunsPage() {
               <option key={k} value={k}>{kindLabel(k)}</option>
             ))}
           </select>
+          <select aria-label="Filter by trigger" className="h-[34px] rounded-md border border-border bg-card px-2 text-xs" value={search.trigger ?? ''} onChange={(e) => filter({ trigger: e.target.value })}>
+            <option value="">All triggers</option>
+            {Object.entries(TRIGGER_LABEL).map(([k, label]) => (
+              <option key={k} value={k}>{label}</option>
+            ))}
+          </select>
+          {search.trigger === 'schedule' && (
+            <select aria-label="Filter by schedule" className="h-[34px] rounded-md border border-border bg-card px-2 text-xs" value={search.schedule ?? ''} onChange={(e) => filter({ schedule: e.target.value })}>
+              <option value="">All schedules</option>
+              {(schedules.data?.schedules ?? []).map((sc) => (
+                <option key={sc.id} value={sc.id}>{sc.name}</option>
+              ))}
+            </select>
+          )}
           {canRun && (
             <Button variant="primary" onClick={() => setAdhocOpen(true)}>
               <Terminal size={15} /> Run command
@@ -81,6 +103,7 @@ export function RunsPage() {
           <span>Run</span>
           <span>Kind</span>
           <span>Status</span>
+          <span>Trigger</span>
           <span>Template</span>
           <span>Zone</span>
           <span>Started</span>
@@ -92,6 +115,7 @@ export function RunsPage() {
             </Link>
             <span className="text-xs">{kindLabel(j.kind)}</span>
             <span><Pill tone={statusTone(j.status)}>{j.status}</Pill></span>
+            <span className="text-xs">{triggerLabel(j.trigger)}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{j.template_id ? shortId(j.template_id) : '—'}</span>
             <span className="font-mono text-xs text-muted-foreground">{shortId(j.zone_id)}</span>
             <span className="text-xs text-muted-foreground">{j.created_at.slice(0, 16).replace('T', ' ')}</span>

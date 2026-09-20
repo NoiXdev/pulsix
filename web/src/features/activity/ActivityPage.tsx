@@ -7,7 +7,12 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 
-const OBJECT_TYPES = ['host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite'];
+const OBJECT_TYPES = [
+  'host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite',
+  // Automation (spec 2026-09-18 §8): a scheduled run is recorded against
+  // its job template.
+  'job_template', 'job', 'schedule', 'trigger', 'worker', 'channel', 'maintenance',
+];
 
 const ACTOR_KIND_LABEL: Record<string, string> = { token: 'API token', system: 'Pulsix', schedule: 'Schedule', webhook: 'Webhook' };
 
