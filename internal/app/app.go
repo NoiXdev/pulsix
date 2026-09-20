@@ -295,7 +295,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs), outbound.DefaultTimeout, nil), time.Now)
 	notifyStore := notify.NewSQLStore(appDB)
 	notifySvc := notify.NewService(notify.Deps{
-		Channels: notifyStore, Deliveries: notifyStore, Box: box, Mail: mailer, Sender: notifySender,
+		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Box: box, Mail: mailer, Sender: notifySender,
 		PublicURL: cfg.PublicURL, Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
 	})
 
@@ -338,7 +338,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
 	// several safe. Stopped in Close and on every early return below;
 	// stopping waits for a batch still in flight (startLoop).
-	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default()), cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
+	// The notification outbox (spec §7): a finished scheduled run group is
+	// reported from inside its terminal transaction, a skipped, missed or
+	// failed decision from inside the ticker's row savepoint.
+	outbox := notify.NewOutbox(appDB, cfg.PublicURL, time.Now, rand.Reader, slog.Default())
+	jobsQueue.SetRunGroupSink(outbox)
+	dueStore := schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default())
+	dueStore.SetOutbox(outbox)
+	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, dueStore, cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
 
 	// The notification dispatcher (spec §5): one per manager; the claim's
 	// SKIP LOCKED and lease make several safe. Stopped in Close and on

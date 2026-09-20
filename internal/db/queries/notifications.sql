@@ -78,3 +78,34 @@ WHERE d.org_id = @org_id AND d.channel_id = @channel_id AND d.status <> 'pending
     ORDER BY k.created_at DESC, k.id DESC
     LIMIT @keep
   );
+
+-- name: ListScheduleNotifications :many
+SELECT n.channel_id, n.events, c.name AS channel_name, c.kind AS channel_kind
+FROM schedule_notifications AS n
+JOIN notification_channels AS c ON c.org_id = n.org_id AND c.id = n.channel_id
+WHERE n.org_id = @org_id AND n.schedule_id = @schedule_id
+ORDER BY c.name;
+
+-- name: DeleteScheduleNotifications :exec
+DELETE FROM schedule_notifications WHERE org_id = @org_id AND schedule_id = @schedule_id;
+
+-- name: InsertScheduleNotification :exec
+INSERT INTO schedule_notifications (org_id, schedule_id, channel_id, events)
+VALUES (@org_id, @schedule_id, @channel_id, @events);
+
+-- name: NotifyRuleChannels :many
+-- The enabled channels a schedule's rules route any of the categories to.
+SELECT n.channel_id
+FROM schedule_notifications AS n
+JOIN notification_channels AS c ON c.org_id = n.org_id AND c.id = n.channel_id
+WHERE n.org_id = @org_id AND n.schedule_id = @schedule_id AND c.enabled
+  AND n.events && @categories::text[]
+ORDER BY n.channel_id;
+
+-- name: NotifyScheduleContext :one
+-- The names a message carries, read when the event is enqueued.
+SELECT o.slug AS org_slug, o.name AS org_name, s.name AS schedule_name, s.template_id, t.name AS template_name
+FROM schedules AS s
+JOIN organizations AS o ON o.id = s.org_id
+JOIN job_templates AS t ON t.org_id = s.org_id AND t.id = s.template_id
+WHERE s.org_id = @org_id AND s.id = @schedule_id;

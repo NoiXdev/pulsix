@@ -39,6 +39,7 @@ type Mailer interface {
 type Deps struct {
 	Channels   ChannelStore
 	Deliveries DeliveryLog
+	Rules      RuleStore
 	Box        Sealer
 	Mail       Mailer
 	// Sender delivers "Send test" synchronously (ChannelSender).

@@ -67,3 +67,26 @@ export function useChannelDeliveries(org: string, id: string) {
     enabled: !!org && !!id,
   });
 }
+
+/** useScheduleNotifications reads a schedule's notification rules in the
+ * API's {on, channels} shape. */
+export function useScheduleNotifications(org: string, scheduleId: string) {
+  return useQuery({
+    queryKey: ['schedule-notifications', org, scheduleId],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/schedules/{id}/notifications', { params: { path: { org, id: scheduleId } } })),
+    enabled: !!org && !!scheduleId,
+  });
+}
+
+export type NotifyRuleInput = { on: 'failure' | 'change' | 'success' | 'skipped'; channels: string[] };
+
+/** useSetScheduleNotifications replaces a schedule's rules; the server
+ * merges them per channel, so a run yields at most one message each. */
+export function useSetScheduleNotifications(org: string, scheduleId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rules: NotifyRuleInput[]) =>
+      unwrap(api.PUT('/api/v1/orgs/{org}/schedules/{id}/notifications', { params: { path: { org, id: scheduleId } }, body: { rules } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['schedule-notifications', org, scheduleId] }),
+  });
+}

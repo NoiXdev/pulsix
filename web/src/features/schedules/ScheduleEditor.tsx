@@ -18,6 +18,7 @@ import {
 } from '../../api/hooks/useSchedules.ts';
 import type { Schedule, ScheduleInput, Template } from '../../api/types.ts';
 import { HOUR_STEPS, MINUTE_STEPS, WEEKDAYS, fromSimpleBody, toSimpleBody, type SimpleForm, type SimpleKind } from './simple.ts';
+import { ScheduleNotifications } from './ScheduleNotifications.tsx';
 import { ScheduleRuns } from './ScheduleRuns.tsx';
 
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
@@ -351,6 +352,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
           </Button>
         )}
       </div>
+      {initial && <ScheduleNotifications org={org} scheduleId={initial.id} canWrite={canWrite} />}
       {initial && <ScheduleRuns org={org} id={initial.id} />}
     </>
   );

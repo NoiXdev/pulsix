@@ -1318,6 +1318,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/schedules/{id}/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org schedules by ID notifications */
+        get: operations["get-api-v1-orgs-by-org-schedules-by-id-notifications"];
+        /** Put API v1 orgs by org schedules by ID notifications */
+        put: operations["setScheduleNotifications"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/schedules/{id}/pause": {
         parameters: {
             query?: never;
@@ -2813,6 +2831,41 @@ export interface components {
             name: string;
             /** @description Omit on update to keep the stored value */
             value?: string;
+        };
+        NotifyRuleBody: {
+            /** @description Channel ids */
+            channels: string[] | null;
+            /** @enum {string} */
+            on: "failure" | "change" | "success" | "skipped";
+        };
+        NotifyRuleChannelDTO: {
+            id: string;
+            /** @enum {string} */
+            kind: "email" | "webhook";
+            name: string;
+        };
+        NotifyRuleDTO: {
+            channels: components["schemas"]["NotifyRuleChannelDTO"][] | null;
+            /** @enum {string} */
+            on: "failure" | "change" | "success" | "skipped";
+        };
+        NotifyRulesBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyRulesBody.json
+             */
+            readonly $schema?: string;
+            rules: components["schemas"]["NotifyRuleBody"][] | null;
+        };
+        NotifyRulesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NotifyRulesOutputBody.json
+             */
+            readonly $schema?: string;
+            rules: components["schemas"]["NotifyRuleDTO"][] | null;
         };
         NotifyTestOutputBody: {
             /**
@@ -7568,6 +7621,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-schedules-by-id-notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyRulesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setScheduleNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotifyRulesBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifyRulesOutputBody"];
                 };
             };
             /** @description Error */

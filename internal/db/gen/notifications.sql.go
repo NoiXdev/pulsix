@@ -178,6 +178,20 @@ func (q *Queries) DeleteNotificationChannel(ctx context.Context, arg DeleteNotif
 	return result.RowsAffected(), nil
 }
 
+const deleteScheduleNotifications = `-- name: DeleteScheduleNotifications :exec
+DELETE FROM schedule_notifications WHERE org_id = $1 AND schedule_id = $2
+`
+
+type DeleteScheduleNotificationsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+}
+
+func (q *Queries) DeleteScheduleNotifications(ctx context.Context, arg DeleteScheduleNotificationsParams) error {
+	_, err := q.db.Exec(ctx, deleteScheduleNotifications, arg.OrgID, arg.ScheduleID)
+	return err
+}
+
 const failNotificationDelivery = `-- name: FailNotificationDelivery :execrows
 UPDATE notification_deliveries SET status = 'failed', locked_until = NULL, last_error = $1
 WHERE org_id = $2 AND id = $3 AND attempts = $4 AND status = 'pending'
@@ -277,6 +291,28 @@ func (q *Queries) InsertNotificationDelivery(ctx context.Context, arg InsertNoti
 	return result.RowsAffected(), nil
 }
 
+const insertScheduleNotification = `-- name: InsertScheduleNotification :exec
+INSERT INTO schedule_notifications (org_id, schedule_id, channel_id, events)
+VALUES ($1, $2, $3, $4)
+`
+
+type InsertScheduleNotificationParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+	ChannelID  uuid.UUID `json:"channel_id"`
+	Events     []string  `json:"events"`
+}
+
+func (q *Queries) InsertScheduleNotification(ctx context.Context, arg InsertScheduleNotificationParams) error {
+	_, err := q.db.Exec(ctx, insertScheduleNotification,
+		arg.OrgID,
+		arg.ScheduleID,
+		arg.ChannelID,
+		arg.Events,
+	)
+	return err
+}
+
 const listNotificationChannels = `-- name: ListNotificationChannels :many
 SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 ORDER BY name
 `
@@ -356,6 +392,122 @@ func (q *Queries) ListNotificationDeliveries(ctx context.Context, arg ListNotifi
 		return nil, err
 	}
 	return items, nil
+}
+
+const listScheduleNotifications = `-- name: ListScheduleNotifications :many
+SELECT n.channel_id, n.events, c.name AS channel_name, c.kind AS channel_kind
+FROM schedule_notifications AS n
+JOIN notification_channels AS c ON c.org_id = n.org_id AND c.id = n.channel_id
+WHERE n.org_id = $1 AND n.schedule_id = $2
+ORDER BY c.name
+`
+
+type ListScheduleNotificationsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+}
+
+type ListScheduleNotificationsRow struct {
+	ChannelID   uuid.UUID `json:"channel_id"`
+	Events      []string  `json:"events"`
+	ChannelName string    `json:"channel_name"`
+	ChannelKind string    `json:"channel_kind"`
+}
+
+func (q *Queries) ListScheduleNotifications(ctx context.Context, arg ListScheduleNotificationsParams) ([]ListScheduleNotificationsRow, error) {
+	rows, err := q.db.Query(ctx, listScheduleNotifications, arg.OrgID, arg.ScheduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListScheduleNotificationsRow
+	for rows.Next() {
+		var i ListScheduleNotificationsRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.Events,
+			&i.ChannelName,
+			&i.ChannelKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notifyRuleChannels = `-- name: NotifyRuleChannels :many
+SELECT n.channel_id
+FROM schedule_notifications AS n
+JOIN notification_channels AS c ON c.org_id = n.org_id AND c.id = n.channel_id
+WHERE n.org_id = $1 AND n.schedule_id = $2 AND c.enabled
+  AND n.events && $3::text[]
+ORDER BY n.channel_id
+`
+
+type NotifyRuleChannelsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+	Categories []string  `json:"categories"`
+}
+
+// The enabled channels a schedule's rules route any of the categories to.
+func (q *Queries) NotifyRuleChannels(ctx context.Context, arg NotifyRuleChannelsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, notifyRuleChannels, arg.OrgID, arg.ScheduleID, arg.Categories)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var channel_id uuid.UUID
+		if err := rows.Scan(&channel_id); err != nil {
+			return nil, err
+		}
+		items = append(items, channel_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const notifyScheduleContext = `-- name: NotifyScheduleContext :one
+SELECT o.slug AS org_slug, o.name AS org_name, s.name AS schedule_name, s.template_id, t.name AS template_name
+FROM schedules AS s
+JOIN organizations AS o ON o.id = s.org_id
+JOIN job_templates AS t ON t.org_id = s.org_id AND t.id = s.template_id
+WHERE s.org_id = $1 AND s.id = $2
+`
+
+type NotifyScheduleContextParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ScheduleID uuid.UUID `json:"schedule_id"`
+}
+
+type NotifyScheduleContextRow struct {
+	OrgSlug      string    `json:"org_slug"`
+	OrgName      string    `json:"org_name"`
+	ScheduleName string    `json:"schedule_name"`
+	TemplateID   uuid.UUID `json:"template_id"`
+	TemplateName string    `json:"template_name"`
+}
+
+// The names a message carries, read when the event is enqueued.
+func (q *Queries) NotifyScheduleContext(ctx context.Context, arg NotifyScheduleContextParams) (NotifyScheduleContextRow, error) {
+	row := q.db.QueryRow(ctx, notifyScheduleContext, arg.OrgID, arg.ScheduleID)
+	var i NotifyScheduleContextRow
+	err := row.Scan(
+		&i.OrgSlug,
+		&i.OrgName,
+		&i.ScheduleName,
+		&i.TemplateID,
+		&i.TemplateName,
+	)
+	return i, err
 }
 
 const retryNotificationDelivery = `-- name: RetryNotificationDelivery :execrows

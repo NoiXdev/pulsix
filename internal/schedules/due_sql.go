@@ -13,6 +13,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/notify"
 )
 
 // rowWriteTimeout bounds one row's write-back (its savepoint, run insert,
@@ -44,10 +45,22 @@ const rowWriteTimeout = 10 * time.Second
 // every one of them, forever, if the bad row's failure was persistent
 // (e.g. corrupt stored JSON) rather than transient.
 type DueSQLStore struct {
-	d    *db.DB
-	rand io.Reader
-	log  *slog.Logger
+	d      *db.DB
+	rand   io.Reader
+	log    *slog.Logger
+	outbox DecisionOutbox
 }
+
+// DecisionOutbox queues the notifications of a recorded decision inside
+// the row's savepoint (notify.Outbox), so the notification commits with
+// the decision or not at all.
+type DecisionOutbox interface {
+	EnqueueDecision(ctx context.Context, tx pgx.Tx, d notify.Decision) error
+}
+
+// SetOutbox injects the decision outbox (spec 2026-09-18 §7); nil sends
+// no decision notifications.
+func (st *DueSQLStore) SetOutbox(o DecisionOutbox) { st.outbox = o }
 
 // NewDueSQLStore builds the store. log defaults to slog.Default() when
 // nil, matching Service and Ticker; rand is the entropy source for a
@@ -171,6 +184,16 @@ func (st *DueSQLStore) processRow(ctx context.Context, tx pgx.Tx, r gen.Schedule
 	if err := sq.TrimScheduleRuns(wctx, gen.TrimScheduleRunsParams{OrgID: r.OrgID, ScheduleID: r.ID, Keep: keepRuns}); err != nil {
 		st.log.ErrorContext(wctx, "trim schedule runs; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)
 		return
+	}
+	if st.outbox != nil {
+		// The outbox runs in its own nested savepoint: a failure loses the
+		// notification, never the decision (re-deciding would re-run it).
+		if err := st.outbox.EnqueueDecision(wctx, sp, notify.Decision{
+			OrgID: r.OrgID, ScheduleID: r.ID, RunID: run.ID, Outcome: string(run.Outcome), Reason: run.Reason,
+			DueAt: run.DueAt, DecidedAt: run.DecidedAt,
+		}); err != nil {
+			st.log.ErrorContext(wctx, "queue schedule notification; the decision stands, its notification is lost", "schedule", r.ID, "org", r.OrgID, "err", err)
+		}
 	}
 	if err := sp.Commit(wctx); err != nil {
 		st.log.ErrorContext(wctx, "commit schedule row savepoint; leaving it due for the next tick", "schedule", r.ID, "org", r.OrgID, "err", err)

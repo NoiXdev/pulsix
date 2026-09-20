@@ -334,7 +334,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	notifyStore := notify.NewSQLStore(d)
 	loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
 	notifySvc := notify.NewService(notify.Deps{
-		Channels: notifyStore, Deliveries: notifyStore, Box: crypto.NewBox(testMasterKey), Mail: s.Mail,
+		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Box: crypto.NewBox(testMasterKey), Mail: s.Mail,
 		Sender: notify.NewChannelSender(crypto.NewBox(testMasterKey), s.Mail,
 			outbound.NewClient(outbound.NewPolicy(loopback), 5*time.Second, nil), time.Now),
 		PublicURL: publicURL, Now: time.Now, Rand: rand.Reader,
@@ -344,6 +344,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	// (internal/app.Build).
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(d), app.NewGroupHosts(resolver), time.Now, rand.Reader, nil)
 	schedulesSvc.SetMaintenance(maintenanceSvc)
+	// A finished scheduled run group queues its notifications, as in
+	// production; the dispatcher is not started here (like the reaper).
+	jobsQueue.SetRunGroupSink(notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil))
 	s.Queue = jobsQueue
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,

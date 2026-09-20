@@ -14,12 +14,13 @@ import (
 
 // SQLStore is the org-scoped notification store.
 type SQLStore struct {
+	d *db.DB
 	q *gen.Queries
 }
 
 // NewSQLStore builds the store on *db.DB so every statement runs in the
 // request's org scope.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d)} }
 
 func (st *SQLStore) CreateChannel(ctx context.Context, c Channel) (Channel, error) {
 	row, err := st.q.CreateNotificationChannel(ctx, gen.CreateNotificationChannelParams{
@@ -113,6 +114,53 @@ func (st *SQLStore) ListDeliveries(ctx context.Context, orgID, channelID uuid.UU
 		}
 	}
 	return out, nil
+}
+
+func (st *SQLStore) ScheduleRules(ctx context.Context, orgID, scheduleID uuid.UUID) ([]ChannelRule, error) {
+	rows, err := st.q.ListScheduleNotifications(ctx, gen.ListScheduleNotificationsParams{OrgID: orgID, ScheduleID: scheduleID})
+	if err != nil {
+		return nil, fmt.Errorf("list schedule notifications: %w", err)
+	}
+	out := make([]ChannelRule, len(rows))
+	for i, r := range rows {
+		out[i] = ChannelRule{ChannelID: r.ChannelID, ChannelName: r.ChannelName, ChannelKind: Kind(r.ChannelKind)}
+		for _, e := range r.Events {
+			out[i].Events = append(out[i].Events, Category(e))
+		}
+	}
+	return out, nil
+}
+
+// ReplaceScheduleRules swaps a schedule's rules in one transaction. A
+// foreign key violation means a channel that is not the organization's
+// (the schedule's existence is the caller's check).
+func (st *SQLStore) ReplaceScheduleRules(ctx context.Context, orgID, scheduleID uuid.UUID, rules []ChannelRule) error {
+	tx, err := st.d.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin schedule notifications: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	q := gen.New(tx)
+	if err := q.DeleteScheduleNotifications(ctx, gen.DeleteScheduleNotificationsParams{OrgID: orgID, ScheduleID: scheduleID}); err != nil {
+		return fmt.Errorf("clear schedule notifications: %w", err)
+	}
+	for _, r := range rules {
+		events := make([]string, len(r.Events))
+		for i, e := range r.Events {
+			events[i] = string(e)
+		}
+		err := q.InsertScheduleNotification(ctx, gen.InsertScheduleNotificationParams{OrgID: orgID, ScheduleID: scheduleID, ChannelID: r.ChannelID, Events: events})
+		if db.IsForeignKeyViolation(err) {
+			return fmt.Errorf("%w: unknown channel %s", ErrInvalidInput, r.ChannelID)
+		}
+		if err != nil {
+			return fmt.Errorf("store schedule notification: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit schedule notifications: %w", err)
+	}
+	return nil
 }
 
 func toChannel(r gen.NotificationChannel) Channel {
