@@ -277,6 +277,9 @@ var placeholderFields = map[string]func(Event) (any, bool){
 			return d.From.Format("2 Jan") + " – " + d.To.Format("2 Jan 2006")
 		})
 	},
+	"digest.schedules_note": func(ev Event) (any, bool) {
+		return digestField(ev.Digest, func(d DigestSummary) any { return digestTruncationNote(d) })
+	},
 }
 
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -302,6 +305,10 @@ func decisionField(d *DecisionSummary, get func(DecisionSummary) any) (any, bool
 	return get(*d), true
 }
 
+// digestField resolves a digest summary field: nil (the event kind does
+// not carry a digest) reports ok=false, and the field itself decides —
+// digestTruncationNote is empty for an untruncated summary — whether it
+// is present.
 func digestField(d *DigestSummary, get func(DigestSummary) any) (any, bool) {
 	if d == nil {
 		return nil, false

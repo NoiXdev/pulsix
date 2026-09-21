@@ -14,6 +14,16 @@ import (
 // a placeholder-rendered one alike.
 const maxBodyBytes = 64 << 10
 
+// MaxDigestSchedules is how many schedule entries a digest summary may
+// list. The cap lives here, next to maxBodyBytes, because both bound the
+// same thing — the rendered message: past roughly 600 schedule entries a
+// default webhook body crosses maxBodyBytes and the delivery would be
+// marked permanent, a large organization's digest never arriving (backlog
+// 2.84). schedules.Service caps its list at this and sets
+// DigestSummary.Truncated/ScheduleCountTotal so the renderers can say
+// what was left out.
+const MaxDigestSchedules = 200
+
 var errBodyTooLarge = errors.New("the rendered body exceeds 64 KiB")
 
 // renderWebhookBody renders a webhook body: the event's JSON when tmpl is
@@ -122,6 +132,9 @@ func renderEmail(ev Event) (subject, body string) {
 			for _, s := range d.Schedules {
 				fmt.Fprintf(&b, "%s: %d run(s), %d failure(s), %d skipped or missed\n", s.Name, s.Runs, s.Failures, s.Skipped)
 			}
+			if note := digestTruncationNote(*d); note != "" {
+				b.WriteString(note + "\n")
+			}
 			if len(d.Slowest) > 0 {
 				b.WriteString("\nSlowest runs:\n")
 				for _, r := range d.Slowest {
@@ -137,6 +150,21 @@ func renderEmail(ev Event) (subject, body string) {
 		fmt.Fprintf(&b, "\n%s\n", ev.URL)
 	}
 	return subject, b.String()
+}
+
+// digestTruncationNote is what the e-mail body (and, through the
+// digest.schedules_note placeholder, a webhook body) says when the
+// summary's schedule list was capped: the count of schedules left out.
+// Empty when the list is complete.
+func digestTruncationNote(d DigestSummary) string {
+	if !d.Truncated {
+		return ""
+	}
+	omitted := d.ScheduleCountTotal - len(d.Schedules)
+	if omitted <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("+%d schedules without activity", omitted)
 }
 
 // digestLocation is the zone every time in a digest message prints in: the

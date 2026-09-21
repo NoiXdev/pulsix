@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestRenderWebhookBodyDefaultIsTheEventJSON(t *testing.T) {
@@ -241,6 +243,84 @@ func TestRenderPlaceholderEscapesHostileValuesToValidJSON(t *testing.T) {
 	var doc map[string]any
 	if err := json.Unmarshal(body, &doc); err != nil || doc["text"] != ev.Schedule.Name || doc["j"] != ev.Schedule.Name {
 		t.Fatalf("doc = %+v (%v)", doc, err)
+	}
+}
+
+// TestDigestTruncationNoteInBothBodies is backlog 2.84's renderer half:
+// when the summary is truncated (schedules.Service capped its list), the
+// e-mail body and a rendered webhook body must both say how many
+// schedules were left out, so a large organization's digest still
+// communicates ("+N schedules without activity") instead of silently
+// under-reporting. An untruncated summary must not grow the note.
+func TestDigestTruncationNoteInBothBodies(t *testing.T) {
+	ev := sampleEvent()
+	ev.Kind = EventDigest
+	ev.Digest.Truncated, ev.Digest.ScheduleCountTotal = true, 900
+
+	_, body := renderEmail(ev)
+	if !strings.Contains(body, "+899 schedules without activity") {
+		t.Fatalf("truncated e-mail does not name the omitted schedules:\n%s", body)
+	}
+	webBody, err := renderWebhookBody(`{"digest": "{{ digest.schedules_note | json }}"}`, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(webBody), "+899 schedules without activity") {
+		t.Fatalf("truncated webhook body does not name the omitted schedules: %s", webBody)
+	}
+
+	// Without the cap nothing changes: no note in either body.
+	ev.Digest.Truncated, ev.Digest.ScheduleCountTotal = false, 0
+	_, body = renderEmail(ev)
+	if strings.Contains(body, "schedules without activity") {
+		t.Fatalf("untruncated e-mail grew a truncation note:\n%s", body)
+	}
+	webBody, err = renderWebhookBody(`{"digest": "{{ digest.schedules_note | json }}"}`, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(webBody), "schedules without activity") {
+		t.Fatalf("untruncated webhook body grew a truncation note: %s", webBody)
+	}
+}
+
+// TestDigestTruncatedWebhookBodyStaysUnderMax is backlog 2.84's bound: a
+// 1000-schedule organization (each entry ~110 bytes of JSON, names of the
+// max length validation allows) must render a default webhook body under
+// maxBodyBytes — today exactly that org is the bug, its digest marked
+// permanent on every delivery. The e-mail body must stay sane too and
+// carry the truncation note.
+func TestDigestTruncatedWebhookBodyStaysUnderMax(t *testing.T) {
+	const total = 1000
+	ev := sampleEvent()
+	ev.Kind = EventDigest
+	ev.Digest.Timezone = "UTC"
+	ev.Digest.Schedules = make([]DigestSchedule, MaxDigestSchedules)
+	for i := range ev.Digest.Schedules {
+		ev.Digest.Schedules[i] = DigestSchedule{
+			ID:   uuid.Must(uuid.NewV7()),
+			Name: fmt.Sprintf("schedule-%04d-%s", i, strings.Repeat("n", 80)),
+			Runs: i % 7, Failures: i % 3, Skipped: i % 5,
+		}
+	}
+	ev.Digest.Truncated, ev.Digest.ScheduleCountTotal = true, total
+
+	body, err := renderWebhookBody("", ev)
+	if err != nil {
+		t.Fatalf("a capped digest must always render: %v", err)
+	}
+	if len(body) >= maxBodyBytes {
+		t.Fatalf("capped default body is %d bytes, want under %d", len(body), maxBodyBytes)
+	}
+	if !strings.Contains(string(body), `"truncated":true`) || !strings.Contains(string(body), `"schedule_count_total":1000`) {
+		t.Fatalf("capped body does not carry the truncation fields: %.200s", body)
+	}
+	subject, mailBody := renderEmail(ev)
+	if subject == "" {
+		t.Fatal("no subject")
+	}
+	if !strings.Contains(mailBody, fmt.Sprintf("+%d schedules without activity", total-MaxDigestSchedules)) {
+		t.Fatalf("capped e-mail does not name the omitted schedules:\n%.400s", mailBody)
 	}
 }
 

@@ -95,13 +95,21 @@ type DecisionSummary struct {
 	DueAt   time.Time `json:"due_at"`
 }
 
-// DigestSummary is the weekly digest's content (spec §7).
+// DigestSummary is the weekly digest's content (spec §7). Schedules
+// holds at most MaxDigestSchedules entries (schedules.Service builds
+// it): when the organization has more, Truncated is true and
+// ScheduleCountTotal the true count — the renderers say "+N schedules
+// without activity" for the difference, so a very large organization's
+// digest still renders under maxBodyBytes instead of failing for ever.
 type DigestSummary struct {
 	From      time.Time        `json:"from"`
 	To        time.Time        `json:"to"`
 	Timezone  string           `json:"timezone"`
 	Schedules []DigestSchedule `json:"schedules"`
 	Slowest   []DigestRun      `json:"slowest"`
+
+	Truncated          bool `json:"truncated,omitempty"`
+	ScheduleCountTotal int  `json:"schedule_count_total,omitempty"`
 }
 
 // DigestSchedule is one schedule's week.
