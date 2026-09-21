@@ -324,6 +324,77 @@ func TestGRPCPublicAddr(t *testing.T) {
 	}
 }
 
+// TestGRPCPublicAddrValidation: an explicit PULSIX_GRPC_PUBLIC_ADDR must be
+// host:port with a non-empty host, and every validation failure names the
+// variable the operator actually set wrong (backlog 2.66).
+func TestGRPCPublicAddrValidation(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+		"PULSIX_GRPC_LISTEN":  ":8444",
+	}
+	cases := []struct {
+		name      string
+		env       map[string]string
+		wantAddr  string
+		wantErrIn []string // substrings the error must contain
+		noErrIn   []string // substrings the error must not contain
+	}{
+		{
+			name:     "valid host:port",
+			env:      map[string]string{"PULSIX_GRPC_PUBLIC_ADDR": "workers.example.test:443"},
+			wantAddr: "workers.example.test:443",
+		},
+		{
+			name:      "bare port is refused naming the variable and asking for a host",
+			env:       map[string]string{"PULSIX_GRPC_PUBLIC_ADDR": ":443"},
+			wantErrIn: []string{"PULSIX_GRPC_PUBLIC_ADDR", "host"},
+		},
+		{
+			name:      "missing port is refused naming the variable",
+			env:       map[string]string{"PULSIX_GRPC_PUBLIC_ADDR": "no-port"},
+			wantErrIn: []string{"PULSIX_GRPC_PUBLIC_ADDR"},
+		},
+		{
+			name:      "a listener without a port blames PULSIX_GRPC_LISTEN, not the public addr",
+			env:       map[string]string{"PULSIX_GRPC_LISTEN": "8444"},
+			wantErrIn: []string{"PULSIX_GRPC_LISTEN"},
+			noErrIn:   []string{"PULSIX_GRPC_PUBLIC_ADDR"},
+		},
+	}
+	for _, c := range cases {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range c.env {
+			m[k] = v
+		}
+		cfg, err := config.Load(env(m))
+		if len(c.wantErrIn) == 0 {
+			if err != nil || cfg.GRPCPublicAddr != c.wantAddr {
+				t.Errorf("%s: got %q, %v; want %q", c.name, cfg.GRPCPublicAddr, err, c.wantAddr)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: expected an error", c.name)
+			continue
+		}
+		for _, sub := range c.wantErrIn {
+			if !strings.Contains(err.Error(), sub) {
+				t.Errorf("%s: error %q does not name %q", c.name, err, sub)
+			}
+		}
+		for _, sub := range c.noErrIn {
+			if strings.Contains(err.Error(), sub) {
+				t.Errorf("%s: error %q must not name %q", c.name, err, sub)
+			}
+		}
+	}
+}
+
 // TestNotifyAllowCIDRs: a comma-separated CIDR list, empty by default.
 func TestNotifyAllowCIDRs(t *testing.T) {
 	base := map[string]string{

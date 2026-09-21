@@ -116,9 +116,17 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.GRPCPublicAddr = getenv("PULSIX_GRPC_PUBLIC_ADDR")
 		if cfg.GRPCPublicAddr == "" {
 			cfg.GRPCPublicAddr = defaultGRPCPublicAddr(cfg.PublicURL, cfg.GRPCListen)
-		}
-		if _, _, err := net.SplitHostPort(cfg.GRPCPublicAddr); err != nil {
-			return cfg, fmt.Errorf("PULSIX_GRPC_PUBLIC_ADDR %q must be host:port", cfg.GRPCPublicAddr)
+			// Derivation failed (no usable port on the listener): blame
+			// the variable the operator actually set — PULSIX_GRPC_LISTEN,
+			// not the PULSIX_GRPC_PUBLIC_ADDR they never wrote (backlog
+			// 2.66).
+			if cfg.GRPCPublicAddr == "" {
+				return cfg, fmt.Errorf("PULSIX_GRPC_LISTEN %q has no port to derive a public worker address from", cfg.GRPCListen)
+			}
+		} else if host, _, err := net.SplitHostPort(cfg.GRPCPublicAddr); err != nil || host == "" {
+			// A bare ":443" splits fine but names no host — a public
+			// address remote workers dial must carry one.
+			return cfg, fmt.Errorf("PULSIX_GRPC_PUBLIC_ADDR %q must be host:port with a non-empty host", cfg.GRPCPublicAddr)
 		}
 	}
 	if raw := getenv("PULSIX_EMBEDDED_WORKER"); raw != "" {
