@@ -3,6 +3,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { type DigestInput, useDigest, useSetDigest } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel } from '../../api/types.ts';
 
@@ -15,6 +16,13 @@ const DAY_LABEL: Record<DigestInput['weekday'], string> = { mon: 'Monday', tue: 
  * seven days, sent to the chosen channels on one weekday. */
 export function DigestCard({ org, channels, canWrite }: { org: string; channels: NotifyChannel[]; canWrite: boolean }) {
   const digest = useDigest(org);
+  // Backlog 2.85: the card used to `return null` while the digest query
+  // failed, so the section silently vanished with no hint anything went
+  // wrong — the same class of silent failure the calendar's empty grid
+  // was. The guard renders the error state in the section's place; a
+  // refetch that succeeds brings the form back.
+  const guard = useQueryGuard(digest);
+  if (guard) return guard;
   if (!digest.data) return null;
   const d = digest.data.digest;
   return <DigestForm key={JSON.stringify(d)} org={org} channels={channels} canWrite={canWrite} initial={d} />;

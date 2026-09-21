@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { type NotifyRuleInput, useChannels, useScheduleNotifications, useSetScheduleNotifications } from '../../api/hooks/useNotifications.ts';
 
 type Category = NotifyRuleInput['on'];
@@ -18,6 +19,14 @@ type Matrix = Record<string, Category[]>;
 export function ScheduleNotifications({ org, scheduleId, canWrite }: { org: string; scheduleId: string; canWrite: boolean }) {
   const rules = useScheduleNotifications(org, scheduleId);
   const channels = useChannels(org, canWrite);
+  // Backlog 2.85: a failed rules query used to `return null` — the whole
+  // section vanished with no hint anything went wrong, the same class of
+  // silent failure the calendar's empty grid was. The guard renders the
+  // error state in the section's place. The channel-list failure keeps
+  // the bespoke reader-view surface below: the rules stay readable while
+  // only the editing matrix is missing.
+  const guard = useQueryGuard(rules);
+  if (guard) return guard;
   if (!rules.data) return null;
   const list = rules.data.rules ?? [];
   if (!canWrite || !channels.data) {

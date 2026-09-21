@@ -39,8 +39,15 @@ export function ChannelsPage() {
   const [editing, setEditing] = useState<NotifyChannel | 'new' | null>(null);
   const [logOf, setLogOf] = useState<NotifyChannel | null>(null);
 
+  // Backlog 2.85: orgInfo was guarded, but the channel list itself was
+  // not — a 5xx (or any other refusal) left `channels.data` undefined
+  // forever and the page on its permanent "Loading…" skeleton, the same
+  // silent-failure class the calendar's empty grid was. The guard renders
+  // the error state instead; a refetch that succeeds brings the list back.
   const guard = useQueryGuard(orgInfo);
+  const channelsGuard = useQueryGuard(channels);
   if (guard) return guard;
+  if (channelsGuard) return channelsGuard;
   if (!orgInfo.data) return <QueryLoading />;
   const header = (
     <div className="flex flex-col gap-2">

@@ -15,8 +15,7 @@ const hook = {
 };
 const mailCh = { id: 'c2', kind: 'email', name: 'ops mail', enabled: false, revision: 1, created_at: '', updated_at: '', email: { recipients: ['ops@example.test'] } };
 
-function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const page = createRoute({ getParentRoute: () => orgRoute, path: '/settings/notifications', component: ChannelsPage });
@@ -24,13 +23,14 @@ function renderPage() {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([page])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/settings/notifications'] }),
   });
-  return render(
+  render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return qc;
 }
 
 describe('ChannelsPage', () => {
@@ -172,5 +172,47 @@ describe('ChannelsPage', () => {
     await user.click(within(card).getByRole('button', { name: 'Save digest' }));
     await waitFor(() => expect(put).toEqual({ enabled: true, weekday: 'fri', time: '08:00', timezone: 'UTC', channels: ['c1'] }));
     expect(await screen.findByText('Weekly digest saved')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Backlog 2.85: ChannelsPage guarded `orgInfo` but not the channel list
+ * itself, so a 5xx (or any other refusal) left `channels.data` undefined
+ * forever and the page on its permanent "Loading…" skeleton — the same
+ * silent-failure class the calendar's empty grid was, fixed the same way
+ * (useQueryGuard renders the error state; DigestCard's own tests live in
+ * DigestCard.test.tsx).
+ */
+describe('a failed channel-list query (backlog 2.85)', () => {
+  it('reports the failure instead of loading forever', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/notification-channels': () =>
+        new Response(JSON.stringify({ detail: 'internal error' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderPage();
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByText('internal error')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add channel' })).not.toBeInTheDocument();
+  });
+
+  it('renders the list again once a refetch succeeds', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let failing = true;
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/notification-channels': () =>
+        failing
+          ? new Response(JSON.stringify({ detail: 'internal error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+          : { channels: [hook], mail_available: true },
+    });
+    renderPage(qc);
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    failing = false;
+    await qc.refetchQueries();
+    expect(await screen.findByText('ops hook')).toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
   });
 });
