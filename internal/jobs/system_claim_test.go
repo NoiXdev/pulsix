@@ -625,7 +625,7 @@ func TestBuildPayloadSystemKindsEdgeShapes(t *testing.T) {
 	// The account fallback: a credential with no username takes the
 	// rendered host's.
 	rp := rotationJobPayload{CredentialID: credID,
-		Target: rotationTarget{Kind: rotationTargetHost, ID: hostID},
+		Target:       rotationTarget{Kind: rotationTargetHost, ID: hostID},
 		NewPublicKey: "pub", NewPrivateKey: credentials.Secret{PrivateKey: "pem"}}
 	fallbackRaw, marshalErr := json.Marshal(rp)
 	if marshalErr != nil {

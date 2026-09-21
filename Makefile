@@ -1,6 +1,10 @@
 .PHONY: test lint build sqlc buf-lint buf-generate web-build
+# Two package groups, not one whole-module run (backlog 2.83): a single
+# `go test -race ./...` intermittently hits internal/e2e's SSH loopback
+# timeouts on a loaded machine; the e2e suite runs on its own invocation.
 test:
-	go test -race -cover -timeout 900s ./...
+	go test -race -cover -timeout 900s $$(go list ./... | grep -v /internal/e2e)
+	go test -race -cover -timeout 900s ./internal/e2e/...
 lint:
 	golangci-lint run ./...
 # build depends on web-build so the binary always embeds the real SPA, not

@@ -96,10 +96,20 @@ test_rc=0
 # `go test -race ./...` invocation (Makefile's `test` target does the
 # same). 900s is a generous margin over the slowest observed run, not a
 # tuned minimum.
+#
+# The race suite runs as TWO package groups, not one whole-module
+# invocation (backlog 2.83): on a loaded machine a single
+# `go test -race ./...` intermittently hits internal/e2e's SSH loopback
+# timeouts, because every other package's tests compete for CPU while the
+# e2e fixtures wait on loopback handshakes. Running the module minus e2e
+# first and ./internal/e2e/... on its own keeps the e2e fixtures on an
+# otherwise-idle invocation. The two groups are disjoint, so appending
+# both outputs still gives the coverage table one line per package.
 if [ -n "${COVERAGE_GATE_GO_TEST_OUTPUT:-}" ]; then
 	cp "$COVERAGE_GATE_GO_TEST_OUTPUT" "$test_output"
 else
-	go test -race -cover -timeout 900s ./... >"$test_output" 2>&1 || test_rc=$?
+	go test -race -cover -timeout 900s $(go list ./... | grep -v '/internal/e2e') >"$test_output" 2>&1 || test_rc=$?
+	go test -race -cover -timeout 900s ./internal/e2e/... >>"$test_output" 2>&1 || test_rc=$?
 fi
 
 gate_rc=0

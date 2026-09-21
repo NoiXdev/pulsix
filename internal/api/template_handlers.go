@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
-	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/templates"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 // templateScopeDTO is the scope wire format on the API surface: the same
@@ -95,10 +95,10 @@ type TemplateBody struct {
 	// Scope names the run's targets: group_id, host_ids or both; an empty
 	// scope runs against every managed host of the organization.
 	Scope           templateScopeInput `json:"scope,omitempty"`
-	Limit           string           `json:"limit,omitempty" maxLength:"500" doc:"Free-form ansible limit pattern"`
-	ExtraVars       map[string]any   `json:"extra_vars,omitempty" doc:"Validated against extra_vars_schema when one is set; secrets read back as {\"$secret\": \"set\"}"`
-	ExtraVarsSchema *schema.Schema   `json:"extra_vars_schema,omitempty" doc:"The optional typed schema the extra vars must satisfy"`
-	CredentialID    string           `json:"credential_id,omitempty" doc:"The default SSH credential for hosts without one of their own"`
+	Limit           string             `json:"limit,omitempty" maxLength:"500" doc:"Free-form ansible limit pattern"`
+	ExtraVars       map[string]any     `json:"extra_vars,omitempty" doc:"Validated against extra_vars_schema when one is set; secrets read back as {\"$secret\": \"set\"}"`
+	ExtraVarsSchema *schema.Schema     `json:"extra_vars_schema,omitempty" doc:"The optional typed schema the extra vars must satisfy"`
+	CredentialID    string             `json:"credential_id,omitempty" doc:"The default SSH credential for hosts without one of their own"`
 }
 
 func (b TemplateBody) parseScope() (templates.Scope, error) {

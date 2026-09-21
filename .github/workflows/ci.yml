@@ -22,14 +22,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27" }
+      # Backlog 2.59: the enabled golangci-lint set does not include a
+      # formatter linter, so pre-existing deviations (five files from
+      # v0.2b) never failed CI. `gofmt -l` listing anything fails here.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::files not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
       # golangci-lint v2.13.2 (newest stable, built with go1.27; the repo's
       # .golangci.yml is `version: "2"`): an explicit version instead of
       # `latest`, so a new linter release cannot turn main red on its own.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with: { version: v2.13.2 }
-      # The gate runs `go test -race -cover -timeout 900s ./...`, prints a
-      # per-package table and, when anything fails, the failing packages'
-      # own go test output.
+      # The gate runs the race+coverage suite as two package groups (backlog
+      # 2.83): everything except internal/e2e, then ./internal/e2e/... on
+      # its own, and prints a per-package table plus, when anything fails,
+      # the failing packages' own go test output.
       - run: scripts/coverage-gate.sh
   proto:
     runs-on: ubuntu-latest

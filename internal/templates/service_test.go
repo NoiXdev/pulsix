@@ -80,7 +80,9 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
-type fakePlaybooks struct{ byID map[uuid.UUID]playbooks.Playbook }
+type fakePlaybooks struct {
+	byID map[uuid.UUID]playbooks.Playbook
+}
 
 func (f fakePlaybooks) Get(_ context.Context, orgID, id uuid.UUID) (playbooks.Playbook, error) {
 	p, ok := f.byID[id]
@@ -105,7 +107,9 @@ func (f fakeHosts) ListAllHosts(_ context.Context, _ uuid.UUID) ([]hosts.Host, e
 	return f.list, nil
 }
 
-type fakeCreds struct{ byID map[uuid.UUID]credentials.Credential }
+type fakeCreds struct {
+	byID map[uuid.UUID]credentials.Credential
+}
 
 func (f fakeCreds) Get(_ context.Context, orgID, id uuid.UUID) (credentials.Credential, error) {
 	c, ok := f.byID[id]

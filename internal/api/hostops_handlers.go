@@ -86,8 +86,8 @@ type hostKeyInput struct {
 // stored — it is sealed into the job's payload and wiped from the row
 // when the job reaches a terminal state.
 type bootstrapInput struct {
-	Org string `path:"org"`
-	ID  string `path:"id"`
+	Org  string `path:"org"`
+	ID   string `path:"id"`
 	Body struct {
 		User       string `json:"user" minLength:"1" maxLength:"64"`
 		Password   string `json:"password,omitempty" maxLength:"1024" doc:"One-time password; exactly one of password and private_key"`

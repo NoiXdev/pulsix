@@ -19,9 +19,9 @@ import (
 
 type templateDTOBody struct {
 	Template struct {
-		ID         string           `json:"id"`
-		Name       string           `json:"name"`
-		PlaybookID string           `json:"playbook_id"`
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		PlaybookID string `json:"playbook_id"`
 		Scope      struct {
 			GroupID *string  `json:"group_id"`
 			HostIDs []string `json:"host_ids"`
@@ -39,13 +39,13 @@ type templateDTOBody struct {
 // and a managed plus an unmanaged host, all seeded through the services
 // outside any HTTP session.
 type templateFixture struct {
-	s        *apitest.Server
-	c        *http.Client
-	orgID    uuid.UUID
-	base     string
-	playbook string
-	sshCred  string
-	gitCred  string
+	s         *apitest.Server
+	c         *http.Client
+	orgID     uuid.UUID
+	base      string
+	playbook  string
+	sshCred   string
+	gitCred   string
 	group     string
 	managed   string
 	unmanaged string
@@ -99,7 +99,7 @@ func newTemplateFixture(t *testing.T, slug string) templateFixture {
 	}
 	return templateFixture{
 		s: s, c: s.LoginAs(owner), orgID: orgID,
-		base: s.HTTP.URL + "/api/v1/orgs/" + slug + "/job-templates",
+		base:     s.HTTP.URL + "/api/v1/orgs/" + slug + "/job-templates",
 		playbook: pb.ID.String(), sshCred: sshCred.ID.String(), gitCred: gitCred.ID.String(),
 		group: grp.ID.String(), managed: managed.ID.String(), unmanaged: unmanaged.ID.String(),
 	}
