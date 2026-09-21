@@ -16,7 +16,9 @@
 // field (a template saved before sealing existed), is replaced by the
 // {"$secret": "set"} marker (backlog 2.21's direction, mirrored from
 // inventory reads). A write that sends that marker back — or an explicit
-// {"$secret": "keep", "from": <path>} — keeps the stored secret. The store
+// {"$secret": "keep", "from": <path>} — keeps the stored secret: a sealed
+// envelope, or the legacy plaintext a template saved before sealing holds,
+// which that save seals (backlog 2.47). The store
 // is the raw persistence layer: the job queue's claim path reads through it
 // and opens the sealed values (internal/app's template lookup), the only
 // place they are revealed.
@@ -403,10 +405,12 @@ func maskExtraVars(sc *schema.Schema, vars map[string]any) map[string]any {
 
 // sealExtraVars prepares incoming extra vars for storage under fields: a
 // plaintext value of a secret-typed field is sealed; the masked marker a
-// read returned, or a keep marker, keeps the stored value at that path
-// (it must be sealed — a marker without a stored secret is a validation
-// problem); a sealed envelope sent in directly is refused. The result is
-// validated against the schema afterwards, sealed values included.
+// read returned, or a keep marker, keeps the stored value at that path —
+// a sealed envelope, or the legacy plaintext a template saved before
+// sealing holds (backlog 2.47), which the save seals fresh; a marker
+// without a stored secret is a validation problem; a sealed envelope sent
+// in directly is refused. The result is validated against the schema
+// afterwards, sealed values included.
 func (s *Service) sealExtraVars(aad []byte, fields []schema.Field, incoming, stored map[string]any) (map[string]any, error) {
 	out, err := s.sealSecrets(aad, fields, incoming, stored)
 	if err != nil {
@@ -420,11 +424,19 @@ func (s *Service) sealExtraVars(aad []byte, fields []schema.Field, incoming, sto
 
 // sealSecrets prepares incoming extra vars for storage under fields: a
 // plaintext value of a secret-typed field is sealed; the masked marker a
-// read returned, or a keep marker, keeps the stored value at that path
-// (it must be sealed — a marker without a stored secret is a validation
-// problem); a sealed envelope sent in directly is refused. It does not
-// validate the result against the schema — callers that need strict
-// validation run schema.Validate themselves.
+// read returned, or a keep marker, keeps the stored value at that path.
+// What a marker keeps is a sealed envelope, or the legacy plaintext a
+// template stored before sealing shipped (backlog 2.47, 2.52): the marker
+// resolves to the stored string, which is sealed fresh with the row's AAD —
+// the stored row keeps the plaintext until this save replaces it with the
+// sealed envelope, so a legacy template saves cleanly and its secret is
+// sealed from that save on. A marker without a stored value at all, one
+// over an empty string (no secret stored — the same "nothing to hide" rule
+// the read path applies), or one whose stored value is neither a string nor
+// a sealed envelope (e.g. the number a string→secret schema change leaves
+// behind) is a validation problem. A sealed envelope sent in directly is
+// refused. It does not validate the result against the schema — callers
+// that need strict validation run schema.Validate themselves.
 func (s *Service) sealSecrets(aad []byte, fields []schema.Field, incoming, stored map[string]any) (map[string]any, error) {
 	var problems []schema.Problem
 	out, err := schema.MapSecrets(fields, incoming, func(path string, v any) (any, error) {
@@ -434,6 +446,16 @@ func (s *Service) sealSecrets(aad []byte, fields []schema.Field, incoming, store
 		}
 		if keep {
 			prev, found := schema.Lookup(stored, from)
+			if plain, isStr := prev.(string); isStr && plain != "" {
+				// Legacy plaintext (backlog 2.47): seal it now with this
+				// row's AAD, the same sealing a freshly entered plaintext
+				// goes through.
+				ct, err := s.box.SealAAD([]byte(plain), aad)
+				if err != nil {
+					return nil, fmt.Errorf("seal extra var %s: %w", path, err)
+				}
+				return schema.Sealed(ct), nil
+			}
 			if _, sealed := schema.SealedBytes(prev); !found || !sealed {
 				problems = append(problems, schema.Problem{Path: path, Message: "the stored secret this refers to no longer exists; enter it again"})
 				return nil, nil

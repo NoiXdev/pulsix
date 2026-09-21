@@ -60,6 +60,30 @@ func TestTemplateLookupOpensSealedExtraVars(t *testing.T) {
 		t.Fatalf("claim extra vars = %v, want the sealed secret opened", vars)
 	}
 
+	// A template saved before sealing shipped (backlog 2.47) holds the
+	// plaintext in the clear; the claim payload carries it as the value
+	// until the template's next save seals it — the lookup opens only what
+	// is sealed and passes the rest through unchanged.
+	legacy := uuid.Must(uuid.NewV7())
+	if _, err := store.Create(scoped, templates.Template{
+		ID: legacy, OrgID: org.ID, PlaybookID: pb.ID, Name: "legacy",
+		ExtraVars:       map[string]any{"db_pass": "hunter2-legacy", "region": "eu"},
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{{Name: "db_pass", Type: schema.TypeSecret}, {Name: "region", Type: schema.TypeString}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lrow, err := NewTemplateLookup(store, playbooks.NewSQLStore(d), box).TemplateLookup(scoped, org.ID, legacy)
+	if err != nil {
+		t.Fatalf("TemplateLookup over legacy plaintext: %v", err)
+	}
+	var lvars map[string]any
+	if err := json.Unmarshal(lrow.ExtraVars, &lvars); err != nil {
+		t.Fatal(err)
+	}
+	if lvars["db_pass"] != "hunter2-legacy" || lvars["region"] != "eu" {
+		t.Fatalf("claim extra vars over a legacy plaintext row = %v, want the plaintext as the value", lvars)
+	}
+
 	// A ciphertext that does not open under this template's AAD fails the
 	// lookup (and so the claim) closed.
 	other, err := box.SealAAD([]byte("x"), templates.ExtraVarsAAD(org.ID, uuid.Must(uuid.NewV7())))

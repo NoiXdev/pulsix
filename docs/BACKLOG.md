@@ -169,9 +169,9 @@ Shipped items first, then what was deliberately deferred.
 | 2.49 | Events of an old attempt's still-open stream are stamped with the new attempt and keep its binding alive | planned | re-review N2: carry the bound token or attempt from the stream into the append |
 | 2.50 | Event append scans every hypertable chunk for max(seq) | planned | re-review N3: bound on the job's created_at or keep a per-job counter on jobs |
 | 2.51 | Event payload truncation's UTF-8 back-off is quadratic and can empty the head | planned | re-review N4: back off at most 3 bytes or use strings.ToValidUTF8 |
-| 2.52 | Templates with legacy plaintext secret extra vars cannot be saved with keep markers | planned | re-review N5: accept a plaintext stored value under a secret field as keepable and seal it (makes 2.47 hold) |
+| 2.52 | Templates with legacy plaintext secret extra vars cannot be saved with keep markers | done | v0.2 follow-ups: `sealSecrets` keeps a marker whose stored value is a non-empty plaintext string (the pre-2.34 shape) as well as a sealed envelope — the save seals the stored plaintext fresh with the row's AAD; a marker over no stored value, an empty stored string, or a value of any other shape (e.g. a number after a string→secret schema change) stays the "enter it again" validation problem |
 | 2.53 | Reaper exhaustion does not re-check staleness at the transition | planned | re-review N6: add the staleness predicate to the transition or re-check stream liveness before failing |
-| 2.47 | Re-seal legacy plaintext template secrets without a save | planned | values stored before sealing are sealed on the next save of the template |
+| 2.47 | Re-seal legacy plaintext template secrets without a save | done | v0.2 follow-ups: resolved as on-save sealing — the only possible one, since sealing needs the master-key box at app time and no data-only migration or background pass has it; the claim path serves a stored plaintext as the value unchanged, so a legacy template keeps working until its next save, and that save seals the value (2.52) |
 | 2.48 | Redaction limits | planned | values shorter than 4 characters and transformed secrets (base64, hashes) are not recognized; `no_log` stays the playbook author's tool |
 
 ## v0.2c follow-ups
