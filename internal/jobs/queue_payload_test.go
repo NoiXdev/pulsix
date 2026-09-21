@@ -378,7 +378,7 @@ func TestStreamRegistryLifecycle(t *testing.T) {
 	r := newStreamRegistry()
 	jobID, orgID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	now := time.Now()
-	r.register(jobID, orgID, "tok", 1, now)
+	r.register(jobID, orgID, "tok", 1, time.Time{}, now)
 
 	e, ok := r.get(jobID, "tok")
 	if !ok || e.token != "tok" || e.orgID != orgID || e.attempt != 1 {
@@ -421,8 +421,8 @@ func TestStreamRegistryKeepsOneBindingPerAttempt(t *testing.T) {
 	r := newStreamRegistry()
 	jobID, orgID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	now := time.Now()
-	r.register(jobID, orgID, "tok-attempt-1", 1, now)
-	r.register(jobID, orgID, "tok-attempt-2", 2, now)
+	r.register(jobID, orgID, "tok-attempt-1", 1, time.Time{}, now)
+	r.register(jobID, orgID, "tok-attempt-2", 2, time.Time{}, now)
 
 	first, ok := r.get(jobID, "tok-attempt-1")
 	if !ok || first.attempt != 1 || first.token != "tok-attempt-1" {
@@ -454,12 +454,91 @@ func TestStreamRegistryKeepsOneBindingPerAttempt(t *testing.T) {
 	}
 
 	// The terminal transition drops every binding of the job.
-	r.register(jobID, orgID, "tok-attempt-3", 3, now)
+	r.register(jobID, orgID, "tok-attempt-3", 3, time.Time{}, now)
 	r.removeAll(jobID)
 	for _, tok := range []string{"tok-attempt-1", "tok-attempt-2", "tok-attempt-3"} {
 		if _, ok := r.get(jobID, tok); ok {
 			t.Fatalf("binding %s survived removeAll", tok)
 		}
+	}
+}
+
+// TestLiveBindingCarriesJobCreatedAtIntoAppend (fix round 1 on backlog
+// 2.50): the created_at bound on the max(seq) subquery is only effective
+// if EVERY append path supplies it — and the normal steady state is a
+// live stream appending, i.e. the BOUND path. The binding must carry the
+// job's created_at from the claim row, eventBinding's adoption branch
+// must return it, and the bound stream pins exactly that entry. Asserted
+// per hop: the claim wiring against the row, the adoption branch against
+// a db-less queue (a fall-through to the row read would nil-panic), and
+// the bound stream's pinned entry with a real append through it.
+func TestLiveBindingCarriesJobCreatedAtIntoAppend(t *testing.T) {
+	d := testdb.Open(t)
+	org, err := gen.New(d.Pool()).CreateOrganization(context.Background(), gen.CreateOrganizationParams{
+		ID: uuid.Must(uuid.NewV7()), Slug: "jobs-binding-createdat", Name: "binding createdAt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone := testZone(t, d, org.ID)
+	q := NewSQLQueue(d, fakeBox{}, fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
+	q.SetKeyPins(fakePins{})
+	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: KindAdhoc, HostIDs: testHosts,
+		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, CreatedAt: time.Now()}
+	if err := NewSQLStore(d).CreateJob(db.WithOrgScope(context.Background(), org.ID), j, nil); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := q.Claim(context.Background(), org.ID, []uuid.UUID{zone}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	jobID := uuid.MustParse(claim.Job.GetId())
+
+	// Hop 1: the claim registered the binding with the job row's
+	// created_at.
+	var rowCreatedAt time.Time
+	if err := d.Pool().QueryRow(context.Background(),
+		`SELECT created_at FROM jobs WHERE id = $1`, jobID).Scan(&rowCreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := q.streams.get(jobID, claim.Token)
+	if !ok {
+		t.Fatal("no binding after the claim")
+	}
+	if !e.createdAt.Equal(rowCreatedAt) {
+		t.Fatalf("binding createdAt = %v, want the job row's %v", e.createdAt, rowCreatedAt)
+	}
+
+	// Hop 2: eventBinding's adoption branch returns the binding's
+	// created_at. The queue carries no db, so a fall-through to the row
+	// read would panic instead of silently passing on the row's value.
+	touchQueue := &SQLQueue{streams: q.streams, cancels: q.cancels, now: q.now}
+	e.touch(time.Now())
+	gotOrg, gotAttempt, gotCreatedAt, err := touchQueue.eventBinding(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("eventBinding: %v", err)
+	}
+	if gotOrg != org.ID || gotAttempt != 1 || !gotCreatedAt.Equal(rowCreatedAt) {
+		t.Fatalf("eventBinding adoption = org %s attempt %d createdAt %v; want org %s attempt 1 createdAt %v",
+			gotOrg, gotAttempt, gotCreatedAt, org.ID, rowCreatedAt)
+	}
+
+	// Hop 3: the bound stream pins the same entry, so its Append passes
+	// the job's created_at into the INSERT — verified by appending for
+	// real through the live binding.
+	stream, err := q.BindStream(context.Background(), jobID, claim.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs, ok := stream.(boundStream)
+	if !ok {
+		t.Fatalf("BindStream returned %T, want boundStream", stream)
+	}
+	if !bs.entry.createdAt.Equal(rowCreatedAt) {
+		t.Fatalf("bound stream pins createdAt %v, want %v", bs.entry.createdAt, rowCreatedAt)
+	}
+	if err := stream.Append(context.Background(), Event{Seq: 1, State: "ok", At: time.Now()}); err != nil {
+		t.Fatalf("append through the live binding: %v", err)
 	}
 }
 

@@ -35,6 +35,12 @@ type streamEntry struct {
 	// re-claim registers a NEW binding and an old attempt's still-open
 	// stream keeps stamping its own attempt (backlog 2.49).
 	attempt int
+	// createdAt is the job row's created_at, taken from the claim: the
+	// bound the append's max(seq) subquery filters chunks by (backlog
+	// 2.50). The bound path of the append has no row read of its own, so
+	// the binding must supply the value — a zero here silently disables
+	// chunk pruning on the primary append path.
+	createdAt time.Time
 	// cancel is closed exactly once, when a Cancelled poll first observes
 	// the job in cancelling state.
 	cancel     chan struct{}
@@ -93,11 +99,11 @@ func newStreamRegistry() *streamRegistry {
 	return &streamRegistry{entries: map[streamBindingKey]*streamEntry{}}
 }
 
-func (r *streamRegistry) register(jobID, orgID uuid.UUID, token string, attempt int, now time.Time) {
+func (r *streamRegistry) register(jobID, orgID uuid.UUID, token string, attempt int, createdAt, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entries[streamBindingKey{jobID, token}] = &streamEntry{
-		orgID: orgID, token: token, attempt: attempt,
+		orgID: orgID, token: token, attempt: attempt, createdAt: createdAt,
 		cancel: make(chan struct{}), bound: false, lastSeen: now,
 	}
 }
@@ -241,13 +247,14 @@ type boundStream struct {
 	entry *streamEntry
 }
 
-// Append persists the event under the stream's OWN binding: org and
-// attempt come from the entry the bind resolved, so a re-claimed job's
-// old stream keeps stamping the attempt it ran under (backlog 2.49)
-// instead of adopting the current one from the job row. The touch feeds
-// the reaper's liveness marks.
+// Append persists the event under the stream's OWN binding: org, attempt
+// and the job's created_at come from the entry the bind resolved, so a
+// re-claimed job's old stream keeps stamping the attempt it ran under
+// (backlog 2.49) and every bound append feeds the max(seq) chunk bound
+// the real created_at (backlog 2.50). The touch feeds the reaper's
+// liveness marks.
 func (s boundStream) Append(ctx context.Context, ev Event) error {
-	return s.q.appendEvent(ctx, s.jobID, s.entry.orgID, s.entry.attempt, time.Time{}, ev)
+	return s.q.appendEvent(ctx, s.jobID, s.entry.orgID, s.entry.attempt, s.entry.createdAt, ev)
 }
 
 func (s boundStream) Cancelled() <-chan struct{} { return s.entry.cancel }
@@ -421,9 +428,9 @@ func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) e
 
 // appendEvent is the shared insert: org and attempt already resolved (by
 // the pinned binding or the row read), createdAt carrying the job's
-// created_at for the max(seq) chunk bound (zero when a pinned binding
-// supplied the stamp — the bound is then redundant, not wrong: the job's
-// events all sit in chunks at or after its creation anyway).
+// created_at for the max(seq) chunk bound. Every append path supplies the
+// real value: a pinned binding carries it from the claim row, the
+// unbound adoption rides the binding's, and the row fallback reads it.
 func (q *SQLQueue) appendEvent(ctx context.Context, jobID uuid.UUID, orgID uuid.UUID, attempt int, createdAt time.Time, ev Event) error {
 	tx, err := q.db.Pool().Begin(ctx)
 	if err != nil {
@@ -453,24 +460,26 @@ const eventSeqLockKeyPrefix = "job-event-seq:"
 
 // AppendJobEventSQL is the append statement: the manager assigns the next
 // seq for the job under the advisory lock. The max(seq) subquery filters
-// `at >= $9` — the job's created_at, read by eventBinding and passed on —
-// so TimescaleDB prunes the scan to the chunks the job's own events live
-// in instead of running max() across every chunk (backlog 2.50). The
-// bound is safe as an exclusion: an event's `at` is never before the job
-// existed. Exported only for the SQL-text regression guard.
+// `at >= $9` — the job's created_at, carried by every append path (the
+// pinned binding from the claim row, the adoption branch, or the row
+// fallback) — so TimescaleDB prunes the scan to the chunks the job's own
+// events live in instead of running max() across every chunk (backlog
+// 2.50). The bound is safe as an exclusion: an event's `at` is never
+// before the job existed. Exported only for the SQL-text regression guard.
 const AppendJobEventSQL = `INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
 		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1 AND at >= $9), 0) + 1, $2, $3, $4, $5, $6, $7, $8
 		 RETURNING seq`
 
 // eventBinding resolves the organization and attempt an event row is
 // stamped with for the UNBOUND append path: the job's newest live binding
-// wins (its touch also feeds the reaper's liveness marks), otherwise the
-// job row supplies the org and its CURRENT attempt — together with the
-// created_at the append's max(seq) chunk bound needs (backlog 2.50).
+// wins (its touch also feeds the reaper's liveness marks; its created_at
+// rides along for the seq bound), otherwise the job row supplies the org,
+// its CURRENT attempt and the created_at the append's max(seq) chunk
+// bound needs (backlog 2.50).
 func (q *SQLQueue) eventBinding(ctx context.Context, jobID uuid.UUID) (uuid.UUID, int, time.Time, error) {
 	if e, ok := q.streams.latest(jobID); ok && e.alive(q.now().Add(-claimStaleAfter)) {
 		e.touch(q.now())
-		return e.orgID, e.attempt, time.Time{}, nil
+		return e.orgID, e.attempt, e.createdAt, nil
 	}
 	var orgID uuid.UUID
 	var attempts int

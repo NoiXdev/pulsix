@@ -207,7 +207,10 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		return nil, err
 	}
 	claim.Token = token
-	q.streams.register(job.ID, job.OrgID, token, job.Attempts, q.now())
+	// The binding carries the job row's created_at: the append's max(seq)
+	// subquery filters chunks by it (backlog 2.50), and the bound append
+	// path has no row read of its own to fall back on.
+	q.streams.register(job.ID, job.OrgID, token, job.Attempts, job.CreatedAt, q.now())
 	return claim, nil
 }
 func (q *SQLQueue) newToken() (string, error) {
