@@ -118,7 +118,7 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 		return 0, 0, fmt.Errorf("commit reaper sweep: %w", err)
 	}
 	for _, id := range stale {
-		r.q.streams.remove(id)
+		r.q.streams.removeAll(id)
 		r.q.cancels.remove(id)
 	}
 	// Unconfirmed cancels fail through the one terminal transition, each in

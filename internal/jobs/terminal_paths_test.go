@@ -98,7 +98,7 @@ func TestTerminalPathsWipePayloadAndRunSinks(t *testing.T) {
 			if len(calls) != 1 || calls[0].allSucceeded {
 				t.Fatalf("rotation finalize calls = %+v, want exactly one unsuccessful finalize", calls)
 			}
-			if _, bound := w.q.streams.get(id); bound {
+			if _, bound := w.q.streams.latest(id); bound {
 				t.Fatal("the terminal job kept its stream binding")
 			}
 		})

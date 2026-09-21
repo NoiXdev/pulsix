@@ -30,7 +30,7 @@ func (q *SQLQueue) RequeueWorkerJobs(ctx context.Context, orgID, workerID uuid.U
 		return 0, 0, fmt.Errorf("requeue worker jobs: %w", err)
 	}
 	for _, id := range ids {
-		q.streams.remove(id)
+		q.streams.removeAll(id)
 		q.cancels.remove(id)
 	}
 	rest, err := g.ListWorkerJobsToEnd(ctx, gen.ListWorkerJobsToEndParams{OrgID: orgID, WorkerID: worker, MaxAttempts: int32(maxAttempts)}) //nolint:gosec // as above

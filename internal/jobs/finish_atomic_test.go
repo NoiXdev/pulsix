@@ -193,7 +193,7 @@ func TestFinishIsAtomic(t *testing.T) {
 			if status, payload := w.jobState(t, job.ID); status != StatusRunning || !payload {
 				t.Fatalf("after the failed finish: status=%s payload-at-rest=%v, want running with the payload kept", status, payload)
 			}
-			if _, bound := w.q.streams.get(job.ID); !bound {
+			if _, bound := w.q.streams.latest(job.ID); !bound {
 				t.Fatal("the failed finish dropped the job's stream binding")
 			}
 			var leaked int
@@ -220,7 +220,7 @@ func TestFinishIsAtomic(t *testing.T) {
 			if len(calls) == 0 || !calls[len(calls)-1].allSucceeded || w.zoneCount(t, zones) != 1 {
 				t.Fatalf("after the retry: finalize calls=%+v committed sink writes=%d, want exactly one", calls, w.zoneCount(t, zones))
 			}
-			if _, bound := w.q.streams.get(job.ID); bound {
+			if _, bound := w.q.streams.latest(job.ID); bound {
 				t.Fatal("the completed finish kept the job's stream binding")
 			}
 			// A further retry is the idempotent no-op.

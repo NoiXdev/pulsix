@@ -380,8 +380,8 @@ func TestStreamRegistryLifecycle(t *testing.T) {
 	now := time.Now()
 	r.register(jobID, orgID, "tok", 1, now)
 
-	e, ok := r.get(jobID)
-	if !ok || e.token != "tok" || e.orgID != orgID {
+	e, ok := r.get(jobID, "tok")
+	if !ok || e.token != "tok" || e.orgID != orgID || e.attempt != 1 {
 		t.Fatalf("entry = %+v, %v", e, ok)
 	}
 	if e.alive(now.Add(-time.Second)) {
@@ -401,8 +401,8 @@ func TestStreamRegistryLifecycle(t *testing.T) {
 	if e.alive(now.Add(-time.Second)) {
 		t.Fatal("a closed entry is not alive")
 	}
-	r.remove(jobID)
-	if _, ok := r.get(jobID); ok {
+	r.removeAll(jobID)
+	if _, ok := r.get(jobID, "tok"); ok {
 		t.Fatal("removed entry must be gone")
 	}
 	if ids := r.aliveIDs(now.Add(-time.Second)); len(ids) != 0 {
@@ -410,6 +410,61 @@ func TestStreamRegistryLifecycle(t *testing.T) {
 	}
 }
 
+// TestStreamRegistryKeepsOneBindingPerAttempt (backlog 2.49): a job that
+// was re-claimed while its old attempt's stream was still open has TWO
+// live bindings — the registry keys on (job id, token), so a re-claim
+// must not overwrite the old attempt's binding. The reaper's liveness set
+// consults ANY live binding of a job: a single old-attempt stream keeps
+// the job out of the requeue (and out of the exhausted set), and a job
+// only vanishes from it once every binding is dead.
+func TestStreamRegistryKeepsOneBindingPerAttempt(t *testing.T) {
+	r := newStreamRegistry()
+	jobID, orgID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	now := time.Now()
+	r.register(jobID, orgID, "tok-attempt-1", 1, now)
+	r.register(jobID, orgID, "tok-attempt-2", 2, now)
+
+	first, ok := r.get(jobID, "tok-attempt-1")
+	if !ok || first.attempt != 1 || first.token != "tok-attempt-1" {
+		t.Fatalf("attempt-1 binding = %+v ok=%v; the re-claim must not have evicted it", first, ok)
+	}
+	second, ok := r.get(jobID, "tok-attempt-2")
+	if !ok || second.attempt != 2 {
+		t.Fatalf("attempt-2 binding = %+v ok=%v", second, ok)
+	}
+	if first == second {
+		t.Fatal("both attempts resolved to the same entry")
+	}
+	if _, ok := r.get(jobID, "unknown"); ok {
+		t.Fatal("unknown token must have no binding")
+	}
+	if _, ok := r.get(uuid.Must(uuid.NewV7()), "tok-attempt-1"); ok {
+		t.Fatal("another job must have no binding")
+	}
+
+	// Only the old attempt's stream is alive: the job counts as live.
+	first.touch(now)
+	if ids := r.aliveIDs(now.Add(-time.Second)); len(ids) != 1 || ids[0] != jobID {
+		t.Fatalf("aliveIDs with one live old-attempt binding = %v", ids)
+	}
+	// Both dead: the job drops out of the liveness set.
+	first.markClosed()
+	if ids := r.aliveIDs(now.Add(-time.Second)); len(ids) != 0 {
+		t.Fatalf("aliveIDs after both bindings closed = %v", ids)
+	}
+
+	// The terminal transition drops every binding of the job.
+	r.register(jobID, orgID, "tok-attempt-3", 3, now)
+	r.removeAll(jobID)
+	for _, tok := range []string{"tok-attempt-1", "tok-attempt-2", "tok-attempt-3"} {
+		if _, ok := r.get(jobID, tok); ok {
+			t.Fatalf("binding %s survived removeAll", tok)
+		}
+	}
+}
+
+// TestStreamEntryCancelClosesExactlyOnce is unchanged by the per-attempt
+// keying: one binding's cancel signal closes exactly once.
 func TestStreamEntryCancelClosesExactlyOnce(t *testing.T) {
 	e := &streamEntry{cancel: make(chan struct{})}
 	e.requestCancel()

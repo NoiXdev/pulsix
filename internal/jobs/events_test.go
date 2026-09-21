@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -285,5 +287,93 @@ func TestAppendKeepsSeqMonotonicAcrossAttempts(t *testing.T) {
 	tail, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 2)
 	if err != nil || len(tail) != 2 || tail[0].Task != "second" {
 		t.Fatalf("Events(after 2) = %+v, %v", tail, err)
+	}
+}
+
+// TestOldAttemptStreamStampsItsOwnAttempt (backlog 2.49): a job requeued
+// and re-claimed while its first attempt's stream is still open keeps that
+// stream's OWN binding — its appends are stamped attempt 1 (org from the
+// binding), not the new current attempt. The second attempt's stream, bound
+// with its own token, stamps attempt 2. Before the per-attempt keying the
+// re-claim evicted the old binding and both streams stamped attempt 2.
+func TestOldAttemptStreamStampsItsOwnAttempt(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-events-oldattempt")
+	zone := seedZone(t, d, org)
+	queue := newTestQueue(d)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+
+	claim := claimOne(t, d, org, zone, queue)
+	jobID := uuid.MustParse(claim.Job.GetId())
+	oldStream, err := queue.BindStream(ctx, jobID, claim.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := oldStream.Append(ctx, jobs.Event{Seq: 1, State: "ok", Task: "old-1", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Requeue (the reaper's own statement) and re-claim while the old
+	// stream is open.
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = $1`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := queue.Claim(ctx, org, []uuid.UUID{zone}, "v1")
+	if err != nil || again == nil {
+		t.Fatalf("second claim = %v, %v", again, err)
+	}
+	newStream, err := queue.BindStream(ctx, jobID, again.Token)
+	if err != nil {
+		t.Fatalf("bind new attempt: %v", err)
+	}
+	// The old attempt's stream continues under its own binding; the new
+	// one starts fresh under the new binding.
+	if err := oldStream.Append(ctx, jobs.Event{Seq: 2, State: "ok", Task: "old-2", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newStream.Append(ctx, jobs.Event{Seq: 1, State: "ok", Task: "new-1", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	// An append with no binding (the gRPC append path's unbound late
+	// event) still lands: org and attempt come from the job row.
+	if err := queue.AppendEvent(ctx, jobID, jobs.Event{Seq: 3, State: "ok", Task: "unbound", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTask := []string{"old-1", "old-2", "new-1", "unbound"}
+	wantAttempt := []int{1, 1, 2, 2}
+	if len(events) != len(wantTask) {
+		t.Fatalf("events = %d, want %d: %+v", len(events), len(wantTask), events)
+	}
+	for i, e := range events {
+		if e.Task != wantTask[i] || e.Attempt != wantAttempt[i] {
+			t.Fatalf("event %d = task %q attempt %d; want task %q attempt %d",
+				i, e.Task, e.Attempt, wantTask[i], wantAttempt[i])
+		}
+	}
+}
+
+// TestAppendSeqQueryBoundsMaxSeqToJobChunks is the regression guard for
+// backlog 2.50: the max(seq) subquery of the append's INSERT must carry the
+// job's created_at bound (`AND at >= <created_at>`), so the hypertable scan
+// touches only the job's own chunks instead of every chunk in the table.
+// The INSERT is raw SQL in the queue (not sqlc), so the guard asserts the
+// statement's text — the same pattern as the generated-constants guard in
+// internal/db/gen.
+func TestAppendSeqQueryBoundsMaxSeqToJobChunks(t *testing.T) {
+	if !strings.Contains(jobs.AppendJobEventSQL, "job_events") || !strings.Contains(jobs.AppendJobEventSQL, "max(seq)") {
+		t.Fatalf("AppendJobEventSQL no longer assigns max(seq) itself:\n%s", jobs.AppendJobEventSQL)
+	}
+	// The bound must compare the event's `at` against the job's
+	// created_at — not a second jobs lookup inside the subquery.
+	re := regexp.MustCompile(`(?is)SELECT\s+max\(seq\)\s+FROM\s+job_events\s+WHERE\s+job_id\s*=\s*\$\d+\s+AND\s+at\s*>=\s*\$\d+`)
+	if !re.MatchString(jobs.AppendJobEventSQL) {
+		t.Fatalf("max(seq) subquery lost its created_at bound (backlog 2.50):\n%s", jobs.AppendJobEventSQL)
 	}
 }

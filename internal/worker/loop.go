@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -441,15 +442,16 @@ const truncationHeadBytes = 64 << 10
 // run's record: {"truncated": true, "original_bytes": n, "head": "..."}.
 // Executors redact before they emit (the runner does), so the head never
 // carries a secret the full payload would not have lost to redaction.
+//
+// The head's UTF-8 cut is one strings.ToValidUTF8 pass (backlog 2.51): a
+// multi-byte rune straddling the boundary becomes a replacement character
+// instead of backing the head off byte by byte — the quadratic earlier
+// versions risked, and with a head that always fills its bound.
 func BoundEventPayload(payload string) string {
 	if len(payload) <= workerpb.MaxEventPayloadBytes {
 		return payload
 	}
-	head := payload[:truncationHeadBytes]
-	// Never cut inside a UTF-8 sequence: back off to a rune boundary.
-	for len(head) > 0 && !utf8.ValidString(head) {
-		head = head[:len(head)-1]
-	}
+	head := strings.ToValidUTF8(payload[:truncationHeadBytes], string(utf8.RuneError))
 	b, err := json.Marshal(struct {
 		Truncated     bool   `json:"truncated"`
 		OriginalBytes int    `json:"original_bytes"`

@@ -125,7 +125,7 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		return false, err
 	}
 	if applied {
-		q.streams.remove(t.jobID)
+		q.streams.removeAll(t.jobID)
 		q.cancels.remove(t.jobID)
 	}
 	return applied, nil

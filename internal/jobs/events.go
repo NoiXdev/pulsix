@@ -31,6 +31,9 @@ type streamEntry struct {
 	token string
 	// attempt is the claim attempt this binding belongs to (jobs.attempts
 	// right after the claim); every event appended through it carries it.
+	// Its identity is the (job id, token) pair the registry keys on: a
+	// re-claim registers a NEW binding and an old attempt's still-open
+	// stream keeps stamping its own attempt (backlog 2.49).
 	attempt int
 	// cancel is closed exactly once, when a Cancelled poll first observes
 	// the job in cancelling state.
@@ -67,46 +70,119 @@ func (e *streamEntry) alive(cutoff time.Time) bool {
 
 func (e *streamEntry) requestCancel() { e.cancelOnce.Do(func() { close(e.cancel) }) }
 
-// streamRegistry maps a claimed job to its live stream state. In-process
-// by design (see SQLQueue's doc comment): the gRPC server's own token
-// registry guards the bind, this registry tracks the stream afterwards.
+// streamBindingKey identifies one claim binding: the registry keys on
+// (job id, token) so each attempt's stream is its own entry and a
+// re-claim never evicts a still-open older one.
+type streamBindingKey struct {
+	jobID uuid.UUID
+	token string
+}
+
+// streamRegistry maps every live claim binding to its stream state. One
+// job can hold several bindings at once — its old attempt's stream may
+// still be open while the requeued job was claimed again — and the reaper
+// counts a job as live while ANY of them is. In-process by design (see
+// SQLQueue's doc comment): the gRPC server's own token registry guards
+// the bind, this registry tracks the streams afterwards.
 type streamRegistry struct {
 	mu      sync.Mutex
-	entries map[uuid.UUID]*streamEntry
+	entries map[streamBindingKey]*streamEntry
 }
 
 func newStreamRegistry() *streamRegistry {
-	return &streamRegistry{entries: map[uuid.UUID]*streamEntry{}}
+	return &streamRegistry{entries: map[streamBindingKey]*streamEntry{}}
 }
 
 func (r *streamRegistry) register(jobID, orgID uuid.UUID, token string, attempt int, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.entries[jobID] = &streamEntry{orgID: orgID, token: token, attempt: attempt, cancel: make(chan struct{}), bound: false, lastSeen: now}
+	r.entries[streamBindingKey{jobID, token}] = &streamEntry{
+		orgID: orgID, token: token, attempt: attempt,
+		cancel: make(chan struct{}), bound: false, lastSeen: now,
+	}
 }
 
-func (r *streamRegistry) get(jobID uuid.UUID) (*streamEntry, bool) {
+// get resolves a job's binding by its claim token — the identity the
+// append and cancel paths carry from the bound stream.
+func (r *streamRegistry) get(jobID uuid.UUID, token string) (*streamEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, ok := r.entries[jobID]
+	e, ok := r.entries[streamBindingKey{jobID, token}]
 	return e, ok
 }
 
-func (r *streamRegistry) remove(jobID uuid.UUID) {
+// latest returns the job's most recently registered binding, if any. The
+// only reader is the append path for an event that arrives without a
+// binding identity (a late event on an already-consumed gRPC stream); a
+// still-bound latest entry adopts it, otherwise the caller falls through
+// to the job row.
+func (r *streamRegistry) latest(jobID uuid.UUID) (*streamEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.entries, jobID)
+	var newest *streamEntry
+	for key, e := range r.entries {
+		if key.jobID != jobID {
+			continue
+		}
+		if newest == nil || e.attempt > newest.attempt {
+			newest = e
+		}
+	}
+	return newest, newest != nil
 }
 
-// aliveIDs returns the jobs whose stream is marked alive at cutoff.
+// removeAll drops every binding of a job — the terminal transition and
+// the requeue paths' cleanup: the old claim is void either way, however
+// many attempts of it still hold a binding.
+func (r *streamRegistry) removeAll(jobID uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key := range r.entries {
+		if key.jobID == jobID {
+			delete(r.entries, key)
+		}
+	}
+}
+
+// touchAll marks every live binding of a job seen: the cancel poll runs
+// per job, and each of its open streams — old attempts included — counts
+// as a liveness mark.
+func (r *streamRegistry) touchAll(jobID uuid.UUID, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, e := range r.entries {
+		if key.jobID == jobID {
+			e.touch(now)
+		}
+	}
+}
+
+// requestCancelAll closes the cancel signal of every binding the job
+// holds, once each.
+func (r *streamRegistry) requestCancelAll(jobID uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, e := range r.entries {
+		if key.jobID == jobID {
+			e.requestCancel()
+		}
+	}
+}
+
+// aliveIDs returns the jobs with ANY live binding at cutoff: an old
+// attempt's still-streaming run keeps its job out of the reaper's reach
+// exactly like the current attempt's would (backlog 2.49).
 func (r *streamRegistry) aliveIDs(cutoff time.Time) []uuid.UUID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	seen := map[uuid.UUID]struct{}{}
 	var out []uuid.UUID
-	for id, e := range r.entries {
-		if e.alive(cutoff) {
-			out = append(out, id)
+	for key, e := range r.entries {
+		if _, dup := seen[key.jobID]; dup || !e.alive(cutoff) {
+			continue
 		}
+		seen[key.jobID] = struct{}{}
+		out = append(out, key.jobID)
 	}
 	return out
 }
@@ -145,26 +221,33 @@ func (r *cancelRegistry) remove(jobID uuid.UUID) {
 // stream. The gRPC server binds streams through its own token registry
 // (single-use, 30 s TTL) and then talks to the queue through the
 // EventRecorder port; BindStream is the direct form of the same binding
-// for tests and future callers.
-func (q *SQLQueue) BindStream(ctx context.Context, jobID uuid.UUID, token string) (Stream, error) {
-	e, ok := q.streams.get(jobID)
-	if !ok || e.token != token {
+// for tests and future callers. The returned stream is pinned to ITS
+// binding — the attempt it was claimed under — so appends through it keep
+// stamping that attempt even after a re-claim registered a newer one.
+func (q *SQLQueue) BindStream(_ context.Context, jobID uuid.UUID, token string) (Stream, error) {
+	e, ok := q.streams.get(jobID, token)
+	if !ok {
 		return nil, ErrUnknownStream
 	}
 	e.touch(q.now())
 	return boundStream{q: q, jobID: jobID, entry: e}, nil
 }
 
-// boundStream is the Stream BindStream hands out: job identity fixed by
-// the binding.
+// boundStream is the Stream BindStream hands out: job identity and the
+// claim binding (org, attempt) fixed by the token it was bound with.
 type boundStream struct {
 	q     *SQLQueue
 	jobID uuid.UUID
 	entry *streamEntry
 }
 
+// Append persists the event under the stream's OWN binding: org and
+// attempt come from the entry the bind resolved, so a re-claimed job's
+// old stream keeps stamping the attempt it ran under (backlog 2.49)
+// instead of adopting the current one from the job row. The touch feeds
+// the reaper's liveness marks.
 func (s boundStream) Append(ctx context.Context, ev Event) error {
-	return s.q.AppendEvent(ctx, s.jobID, ev)
+	return s.q.appendEvent(ctx, s.jobID, s.entry.orgID, s.entry.attempt, time.Time{}, ev)
 }
 
 func (s boundStream) Cancelled() <-chan struct{} { return s.entry.cancel }
@@ -298,11 +381,26 @@ func (s *Service) Subscribe(ctx context.Context, orgID, jobID uuid.UUID, after i
 // the broker directly: Subscribe is the read surface.
 func (s *Service) EventsBroker() *Broker { return s.broker }
 
-// AppendEvent persists one streamed event for a job with a live claim
-// binding. Org-unscoped: the caller is the gRPC server, authenticated by
-// the binding token rather than a request context; the registry entry
-// carries the organization the claim belongs to, and that is the org_id
-// the row is stamped with.
+// AppendEvent persists one streamed event for a job, resolving its org
+// and attempt stamp from a live claim binding. Org-unscoped: the caller
+// is the gRPC server, authenticated by the binding token rather than a
+// request context. Two shapes arrive here:
+//
+//   - A bound stream's appends go through boundStream.Append, which pins
+//     the stamp to ITS binding (org, attempt) — a re-claimed job's old
+//     stream keeps stamping the attempt it ran under (backlog 2.49).
+//   - The gRPC EventRecorder port's late appends (the terminal result
+//     report and the stream's last events are independent server-side
+//     paths, so the result can land — and Finish remove the binding —
+//     before the stream handler has drained its last events) call this
+//     directly. Those events are part of the run's record (the same
+//     intent the cancel path's "events after the directive are still
+//     recorded" comment states), so the org and attempt are resolved
+//     here: the job's newest LIVE binding adopts them — its touch also
+//     feeds the reaper's liveness marks — and otherwise the job row,
+//     stamped with the job's CURRENT attempt. The gRPC transport is what
+//     authenticates this path — every append arrives on a stream whose
+//     binding token was validated and consumed before the first event.
 //
 // The stored seq is the MANAGER's (final review I5): a worker numbers its
 // events per run from 1, so a requeued job's next attempt would repeat the
@@ -310,25 +408,23 @@ func (s *Service) EventsBroker() *Broker { return s.broker }
 // deduplicated away. The append assigns max(seq)+1 for the job instead,
 // under a per-job advisory transaction lock, so seqs stay strictly
 // increasing across attempts (the worker's own seq only orders a stream,
-// which one gRPC stream delivers in order anyway), and stamps the event
-// with the attempt its binding belongs to. The broker publishes the event
-// with the stored seq and attempt.
-//
-// A binding that is already gone is not an error: the terminal result
-// report and the stream's last events (the run_end bookend, a task's
-// stdout follow-up) are independent server-side paths, so the result can
-// land — and Finish remove the binding — before the stream handler has
-// drained its last events. Those events are part of the run's record (the
-// same intent the cancel path's "events after the directive are still
-// recorded" comment states), so the org and attempt are resolved from the
-// job row instead and the event lands like any other. The gRPC transport
-// is what authenticates this path — every append arrives on a stream whose
-// binding token was validated and consumed before the first event.
+// which one gRPC stream delivers in order anyway). The max(seq) subquery
+// is bounded by the job's created_at (backlog 2.50) so the hypertable scan
+// touches only the job's own chunks.
 func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) error {
-	orgID, attempt, err := q.eventBinding(ctx, jobID)
+	orgID, attempt, createdAt, err := q.eventBinding(ctx, jobID)
 	if err != nil {
 		return err
 	}
+	return q.appendEvent(ctx, jobID, orgID, attempt, createdAt, ev)
+}
+
+// appendEvent is the shared insert: org and attempt already resolved (by
+// the pinned binding or the row read), createdAt carrying the job's
+// created_at for the max(seq) chunk bound (zero when a pinned binding
+// supplied the stamp — the bound is then redundant, not wrong: the job's
+// events all sit in chunks at or after its creation anyway).
+func (q *SQLQueue) appendEvent(ctx context.Context, jobID uuid.UUID, orgID uuid.UUID, attempt int, createdAt time.Time, ev Event) error {
 	tx, err := q.db.Pool().Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin event append: %w", err)
@@ -338,11 +434,8 @@ func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) e
 		return fmt.Errorf("lock job event sequence: %w", err)
 	}
 	var seq int64
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
-		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1), 0) + 1, $2, $3, $4, $5, $6, $7, $8
-		 RETURNING seq`,
-		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt,
+	if err := tx.QueryRow(ctx, AppendJobEventSQL,
+		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt, createdAt,
 	).Scan(&seq); err != nil {
 		return fmt.Errorf("append job event: %w", err)
 	}
@@ -358,25 +451,38 @@ func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) e
 // hashtext's key space.
 const eventSeqLockKeyPrefix = "job-event-seq:"
 
+// AppendJobEventSQL is the append statement: the manager assigns the next
+// seq for the job under the advisory lock. The max(seq) subquery filters
+// `at >= $9` — the job's created_at, read by eventBinding and passed on —
+// so TimescaleDB prunes the scan to the chunks the job's own events live
+// in instead of running max() across every chunk (backlog 2.50). The
+// bound is safe as an exclusion: an event's `at` is never before the job
+// existed. Exported only for the SQL-text regression guard.
+const AppendJobEventSQL = `INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
+		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1 AND at >= $9), 0) + 1, $2, $3, $4, $5, $6, $7, $8
+		 RETURNING seq`
+
 // eventBinding resolves the organization and attempt an event row is
-// stamped with: the live claim binding's when the stream is still bound
-// (its touch also feeds the reaper's liveness marks), the job row's own
-// otherwise.
-func (q *SQLQueue) eventBinding(ctx context.Context, jobID uuid.UUID) (uuid.UUID, int, error) {
-	if e, ok := q.streams.get(jobID); ok {
+// stamped with for the UNBOUND append path: the job's newest live binding
+// wins (its touch also feeds the reaper's liveness marks), otherwise the
+// job row supplies the org and its CURRENT attempt — together with the
+// created_at the append's max(seq) chunk bound needs (backlog 2.50).
+func (q *SQLQueue) eventBinding(ctx context.Context, jobID uuid.UUID) (uuid.UUID, int, time.Time, error) {
+	if e, ok := q.streams.latest(jobID); ok && e.alive(q.now().Add(-claimStaleAfter)) {
 		e.touch(q.now())
-		return e.orgID, e.attempt, nil
+		return e.orgID, e.attempt, time.Time{}, nil
 	}
 	var orgID uuid.UUID
 	var attempts int
+	var createdAt time.Time
 	if err := q.db.Pool().QueryRow(ctx,
-		`SELECT org_id, attempts FROM jobs WHERE id = $1`, jobID).Scan(&orgID, &attempts); err != nil {
+		`SELECT org_id, attempts, created_at FROM jobs WHERE id = $1`, jobID).Scan(&orgID, &attempts, &createdAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return uuid.Nil, 0, ErrUnknownStream
+			return uuid.Nil, 0, time.Time{}, ErrUnknownStream
 		}
-		return uuid.Nil, 0, fmt.Errorf("resolve event org: %w", err)
+		return uuid.Nil, 0, time.Time{}, fmt.Errorf("resolve event org: %w", err)
 	}
-	return orgID, attempts, nil
+	return orgID, attempts, createdAt, nil
 }
 
 // normalizePayload stores the event payload as jsonb: valid JSON passes
@@ -397,15 +503,13 @@ func normalizePayload(raw json.RawMessage) json.RawMessage {
 }
 
 // Cancelled reports whether the job is in cancelling state, and closes the
-// bound stream's cancel signal on the first yes — that is the one cancel
+// live bindings' cancel signal on the first yes — that is the one cancel
 // directive the gRPC server sends. Org-unscoped, same reasoning as
-// AppendEvent.
+// AppendEvent. Every live binding of the job is closed: a re-claimed job
+// whose old stream is still open must not leave that stream waiting on a
+// directive the current attempt's stream already received.
 func (q *SQLQueue) Cancelled(ctx context.Context, jobID uuid.UUID) (bool, error) {
-	e, ok := q.streams.get(jobID)
-	if !ok {
-		return false, ErrUnknownStream
-	}
-	e.touch(q.now())
+	q.streams.touchAll(jobID, q.now())
 	var status string
 	if err := q.db.Pool().QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -414,7 +518,7 @@ func (q *SQLQueue) Cancelled(ctx context.Context, jobID uuid.UUID) (bool, error)
 		return false, fmt.Errorf("look up job status: %w", err)
 	}
 	if Status(status) == StatusCancelling {
-		e.requestCancel()
+		q.streams.requestCancelAll(jobID)
 		return true, nil
 	}
 	return false, nil

@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"unicode/utf8"
 )
 
 // fakeRunStream is one RunEvents stream a test controls: the test feeds
@@ -1114,6 +1115,56 @@ func TestLoopTruncatesOversizedEventPayloads(t *testing.T) {
 	}
 	if events[1].GetPayload() != `{"x":1}` {
 		t.Fatalf("a small payload must pass untouched: %q", events[1].GetPayload())
+	}
+}
+
+// TestBoundEventPayloadCutMidRuneStaysSinglePass (backlog 2.51): the
+// head's UTF-8 back-off is one strings.ToValidUTF8 pass — a multi-byte
+// rune cut at the head boundary survives as replacement characters (the
+// head keeps its byte bound), and an already valid head is untouched.
+func TestBoundEventPayloadCutMidRuneStaysSinglePass(t *testing.T) {
+	// 64 KiB of ASCII minus two bytes, then one 3-byte rune straddling the
+	// boundary: the naive 64 KiB slice lands inside it.
+	head := strings.Repeat("a", truncationHeadBytes-2)
+	payload := head + "日" + strings.Repeat("b", 3<<20)
+	bounded := BoundEventPayload(payload)
+	if len(bounded) > workerpb.MaxEventPayloadBytes {
+		t.Fatalf("bounded payload is %d bytes, over the %d limit", len(bounded), workerpb.MaxEventPayloadBytes)
+	}
+	var doc struct {
+		Truncated     bool   `json:"truncated"`
+		OriginalBytes int    `json:"original_bytes"`
+		Head          string `json:"head"`
+	}
+	if err := json.Unmarshal([]byte(bounded), &doc); err != nil {
+		t.Fatalf("bounded payload is not JSON: %v", err)
+	}
+	if !doc.Truncated || doc.OriginalBytes != len(payload) {
+		t.Fatalf("truncation doc = truncated:%v original:%d", doc.Truncated, doc.OriginalBytes)
+	}
+	// The head is the payload's first 64 KiB with the split rune's
+	// invalid tail replaced — equal up to the replacement, not a byte
+	// prefix anymore.
+	headPart := payload[:truncationHeadBytes-2]
+	if doc.Head != headPart+"\uFFFD" {
+		t.Fatalf("head = ...%q, want the %d-byte ASCII part plus the replacement character",
+			doc.Head[len(doc.Head)-12:], truncationHeadBytes-2)
+	}
+	if len(doc.Head) != truncationHeadBytes-2+3 {
+		t.Fatalf("head = %d bytes, want the %d-byte bound minus the split rune's invalid tail, plus the 3-byte replacement",
+			len(doc.Head), truncationHeadBytes)
+	}
+	if !utf8.ValidString(doc.Head) {
+		t.Fatal("head is not valid UTF-8")
+	}
+	if want := head + "\xEF\xBF\xBD"; doc.Head != want {
+		t.Fatalf("head must end with the replacement character for the split rune")
+	}
+
+	// A valid payload passes untouched, as before.
+	small := `{"x":"日"}`
+	if got := BoundEventPayload(small); got != small {
+		t.Fatalf("small payload rewritten: %q", got)
 	}
 }
 

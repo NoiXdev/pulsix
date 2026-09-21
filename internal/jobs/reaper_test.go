@@ -88,6 +88,67 @@ func TestReaperSparesLiveStreamsAndRequeuesDeadOnes(t *testing.T) {
 	}
 }
 
+// TestReaperSparesJobWhileOldAttemptStreamIsOpen (backlog 2.49): a job
+// that was requeued and re-claimed while its first attempt's stream was
+// still open must not be requeued (or failed as exhausted) while ANY of
+// its bindings is alive — the old stream's touch marks live. Under the
+// per-attempt keying both bindings coexist; before the fix the re-claim
+// evicted the old binding and the job lost its liveness.
+func TestReaperSparesJobWhileOldAttemptStreamIsOpen(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-reaper-oldattempt")
+	zone := seedZone(t, d, org)
+	queue := newTestQueue(d)
+	reaper := jobs.NewReaper(queue, 0, 0)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+
+	// Attempt 1: claimed, stream bound and alive.
+	claim := claimOne(t, d, org, zone, queue)
+	jobID := uuid.MustParse(claim.Job.GetId())
+	oldStream, err := queue.BindStream(ctx, jobID, claim.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A revoke-style requeue drops the bindings and queues the job again
+	// (same SQL the reaper and the revoke path run), then attempt 2 is
+	// claimed — while the old stream is still open.
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = $1`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := queue.Claim(ctx, org, []uuid.UUID{zone}, "v1")
+	if err != nil || again == nil {
+		t.Fatalf("second claim = %v, %v", again, err)
+	}
+	if again.Job.GetId() != jobID.String() {
+		t.Fatalf("second claim = job %s, want %s", again.Job.GetId(), jobID)
+	}
+
+	// The old attempt's stream keeps appending (it was never closed), so
+	// the job stays alive for the reaper no matter how stale its claim is.
+	if err := oldStream.Append(ctx, jobs.Event{Seq: 1, State: "ok", At: time.Now()}); err != nil {
+		t.Fatalf("old stream append: %v", err)
+	}
+	setClaimAge(t, d, jobID, 61*time.Second)
+	if requeued, failed, err := reaper.Sweep(ctx); err != nil || requeued != 0 || failed != 0 {
+		t.Fatalf("Sweep with old-attempt stream alive = %d/%d, %v", requeued, failed, err)
+	}
+	got, err := svc.Get(db.WithOrgScope(ctx, org), org, jobID)
+	if err != nil || got.Status != jobs.StatusRunning {
+		t.Fatalf("job = %+v, %v; the old stream must keep it running", got, err)
+	}
+
+	// Once the old stream closes and the new claim goes stale, the reaper
+	// acts: attempts remain, so the job is requeued.
+	oldStream.Close()
+	requeued, _, err := reaper.Sweep(ctx)
+	if err != nil || requeued != 1 {
+		t.Fatalf("Sweep after old stream closed = %d, %v", requeued, err)
+	}
+}
+
 func TestReaperFailsUnconfirmedCancels(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
