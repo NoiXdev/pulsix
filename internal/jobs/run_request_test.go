@@ -76,6 +76,76 @@ func TestEnqueueRunWithRejectsUnknownTrigger(t *testing.T) {
 	}
 }
 
+// TestEnqueueRunWithResolvesTheEffectiveLimit pins the limit string the
+// scope resolution gates zones on (backlog 2.45): a run request's own limit
+// replaces the template's — the exact precedence the claim applies when it
+// hands the limit to ansible — while RunTargets (the maintenance guard's
+// look-ahead) never gates and always resolves without one.
+func TestEnqueueRunWithResolvesTheEffectiveLimit(t *testing.T) {
+	const tmplLimit = "template-limit"
+	ovLimit := "override-limit"
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	scope := json.RawMessage(`{"group_id":null,"host_ids":[]}`)
+	targets := []jobs.ZoneTargets{
+		{ZoneID: uuid.Must(uuid.NewV7()), HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
+	}
+
+	setup := func() (*fakeResolver, *jobs.Service) {
+		res := &fakeResolver{targets: targets}
+		tmpl := &fakeTemplates{byID: map[uuid.UUID]jobs.TemplateRow{
+			templateID: {ID: templateID, OrgID: org, Scope: scope, Limit: tmplLimit},
+		}}
+		return res, newService(newFakeStore(), &fakeQueue{}, tmpl, res, &fakeHosts{})
+	}
+
+	t.Run("template limit", func(t *testing.T) {
+		res, svc := setup()
+		if _, err := svc.EnqueueRun(ctx, org, templateID, nil); err != nil {
+			t.Fatalf("EnqueueRun: %v", err)
+		}
+		if len(res.limits) != 1 || res.limits[0] != tmplLimit {
+			t.Fatalf("resolver limits = %v, want [%q]", res.limits, tmplLimit)
+		}
+	})
+
+	t.Run("override limit wins", func(t *testing.T) {
+		res, svc := setup()
+		ref := uuid.Must(uuid.NewV7())
+		if _, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{
+			Trigger: jobs.TriggerWebhook, TriggerRef: &ref,
+			Overrides: &jobs.RunOverrides{Limit: &ovLimit},
+		}); err != nil {
+			t.Fatalf("EnqueueRunWith: %v", err)
+		}
+		if len(res.limits) != 1 || res.limits[0] != ovLimit {
+			t.Fatalf("resolver limits = %v, want [%q]", res.limits, ovLimit)
+		}
+	})
+
+	t.Run("override without limit keeps the template's", func(t *testing.T) {
+		res, svc := setup()
+		ref := uuid.Must(uuid.NewV7())
+		if _, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{
+			Trigger: jobs.TriggerWebhook, TriggerRef: &ref, Overrides: &jobs.RunOverrides{},
+		}); err != nil {
+			t.Fatalf("EnqueueRunWith: %v", err)
+		}
+		if len(res.limits) != 1 || res.limits[0] != tmplLimit {
+			t.Fatalf("resolver limits = %v, want [%q]", res.limits, tmplLimit)
+		}
+	})
+
+	t.Run("RunTargets never gates", func(t *testing.T) {
+		res, svc := setup()
+		if _, err := svc.RunTargets(ctx, org, templateID); err != nil {
+			t.Fatalf("RunTargets: %v", err)
+		}
+		if len(res.limits) != 1 || res.limits[0] != "" {
+			t.Fatalf("resolver limits = %v, want [\"\"]", res.limits)
+		}
+	})
+}
+
 func TestEnqueueRunKeepsManualAttribution(t *testing.T) {
 	svc, _, org, templateID := runFixture(t)
 	actor := uuid.Must(uuid.NewV7())

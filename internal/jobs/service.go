@@ -403,9 +403,11 @@ type ZoneTargets struct {
 }
 
 // ScopeResolver turns a template's scope into the per-zone host lists the
-// enqueue path splits jobs along.
+// enqueue path splits jobs along. limit is the run's effective limit
+// pattern ("" = none): zones none of whose host names match it get no job,
+// while a zone's host list itself is never narrowed by it.
 type ScopeResolver interface {
-	Resolve(ctx context.Context, orgID uuid.UUID, scope render.Scope) ([]ZoneTargets, error)
+	Resolve(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string) ([]ZoneTargets, error)
 }
 
 // HostLookup is the slice of hosts.Service the host kinds need: every
@@ -509,9 +511,12 @@ func (s *Service) newID() uuid.UUID {
 }
 
 // enqueueRunScope is the zone-splitting core EnqueueRunWith and RetryFailed
-// share.
-func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, req RunRequest) ([]Job, error) {
-	targets, err := s.resolver.Resolve(ctx, orgID, scope)
+// share. limit is the run's effective limit pattern ("" = none): the scope
+// resolution gates zones on it — a zone the limit matches no host of gets
+// no job, a run left with zero jobs overall fails with ErrEmptyScope —
+// while each surviving zone's job keeps the zone's full host list.
+func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]Job, error) {
+	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -859,7 +864,7 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, RunRequest{Trigger: TriggerManual, Actor: actor})
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor})
 }
 
 // failedHostIDs intersects the stats' failed/unreachable host ids with the

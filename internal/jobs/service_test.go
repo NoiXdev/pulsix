@@ -220,13 +220,15 @@ type fakeResolver struct {
 	targets []jobs.ZoneTargets
 	err     error
 	scopes  []render.Scope
+	limits  []string
 }
 
-func (f *fakeResolver) Resolve(_ context.Context, _ uuid.UUID, scope render.Scope) ([]jobs.ZoneTargets, error) {
+func (f *fakeResolver) Resolve(_ context.Context, _ uuid.UUID, scope render.Scope, limit string) ([]jobs.ZoneTargets, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	f.scopes = append(f.scopes, scope)
+	f.limits = append(f.limits, limit)
 	return f.targets, nil
 }
 

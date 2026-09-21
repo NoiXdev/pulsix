@@ -26,7 +26,7 @@ func NewGroupHosts(r jobs.ScopeResolver) maintenance.GroupHosts { return groupHo
 // an empty group is a normal outcome, not a failure, and must not make
 // the maintenance guard error out for every other window in the org.
 func (g groupHosts) HostsInGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]uuid.UUID, error) {
-	targets, err := g.r.Resolve(ctx, orgID, render.Scope{GroupID: &groupID})
+	targets, err := g.r.Resolve(ctx, orgID, render.Scope{GroupID: &groupID}, "")
 	if errors.Is(err, jobs.ErrNotFound) || errors.Is(err, jobs.ErrEmptyScope) {
 		return nil, nil
 	}

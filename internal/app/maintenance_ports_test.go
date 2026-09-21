@@ -18,7 +18,7 @@ type fakeScopeResolver struct {
 	scope   render.Scope
 }
 
-func (f *fakeScopeResolver) Resolve(_ context.Context, _ uuid.UUID, scope render.Scope) ([]jobs.ZoneTargets, error) {
+func (f *fakeScopeResolver) Resolve(_ context.Context, _ uuid.UUID, scope render.Scope, _ string) ([]jobs.ZoneTargets, error) {
 	f.scope = scope
 	return f.targets, f.err
 }

@@ -173,6 +173,106 @@ func TestQueueClaimShipsRealPayload(t *testing.T) {
 	}
 }
 
+// TestEnqueueRunGatesZonesByTemplateLimit runs the per-zone limit gate
+// (backlog 2.45) through the real stack: a template whose limit matches
+// only one zone's hosts gets a job for that zone only, the job keeps the
+// zone's full host list (the limit is NOT narrowed at enqueue — it ships on
+// the claim for ansible to apply), a limit matching nothing anywhere fails
+// the enqueue with ErrEmptyScope, and an undecidable pattern keeps both
+// zones' jobs.
+func TestEnqueueRunGatesZonesByTemplateLimit(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-limit-gate-org")
+	box := crypto.NewBox(testBoxKey("jobs-e2e-limit-key-0123456789012"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invSvc := inventory.NewService(inventory.NewSQLStore(d), hostsSvc, sshSvc, box)
+
+	scoped := db.WithOrgScope(ctx, org)
+	zoneA, err := hostsSvc.CreateZone(scoped, org, "lim-a", "Limit zone A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zoneB, err := hostsSvc.CreateZone(scoped, org, "lim-b", "Limit zone B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	web1, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{Name: "web1", Address: "10.1.0.1", ZoneID: zoneA.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db1, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{Name: "db1", Address: "10.2.0.1", ZoneID: zoneB.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	playbookID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(scoped,
+		`INSERT INTO playbooks (id, org_id, inline, source) VALUES ($1, $2, $3, 'editor')`,
+		playbookID, org, "- hosts: all\n  tasks: []"); err != nil {
+		t.Fatal(err)
+	}
+	insertTemplate := func(t *testing.T, limit string) uuid.UUID {
+		t.Helper()
+		id := uuid.Must(uuid.NewV7())
+		scopeJSON, _ := json.Marshal(map[string]any{"group_id": nil})
+		if _, err := d.Exec(scoped,
+			`INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit")
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			id, org, "gated-"+id.String(), playbookID, scopeJSON, limit); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
+	svc := jobs.NewService(
+		jobs.NewSQLStore(d), &fakeQueue{}, lookup,
+		jobs.NewScopeResolver(invSvc, invSvc, hostsSvc), hostsSvc, hostsSvc, box, time.Now, rand.Reader,
+	)
+
+	t.Run("zone without matches gets no job", func(t *testing.T) {
+		created, err := svc.EnqueueRun(scoped, org, insertTemplate(t, "db1"), nil)
+		if err != nil {
+			t.Fatalf("EnqueueRun: %v", err)
+		}
+		if len(created) != 1 || created[0].ZoneID != zoneB.ID {
+			t.Fatalf("jobs = %+v, want one job for zone B", created)
+		}
+		// The gate never narrows the host list.
+		if len(created[0].HostIDs) != 1 || created[0].HostIDs[0] != db1.ID {
+			t.Fatalf("hosts = %v, want the zone's full set", created[0].HostIDs)
+		}
+	})
+
+	t.Run("limit matching nothing is ErrEmptyScope", func(t *testing.T) {
+		if _, err := svc.EnqueueRun(scoped, org, insertTemplate(t, "nomatch*"), nil); !errors.Is(err, jobs.ErrEmptyScope) {
+			t.Fatalf("err = %v, want ErrEmptyScope", err)
+		}
+	})
+
+	t.Run("undecidable pattern keeps every zone", func(t *testing.T) {
+		created, err := svc.EnqueueRun(scoped, org, insertTemplate(t, "~web.*"), nil)
+		if err != nil {
+			t.Fatalf("EnqueueRun: %v", err)
+		}
+		if len(created) != 2 {
+			t.Fatalf("jobs = %d, want one per zone", len(created))
+		}
+		for _, j := range created {
+			if j.ZoneID != zoneA.ID && j.ZoneID != zoneB.ID {
+				t.Fatalf("job zone = %v", j.ZoneID)
+			}
+			if j.ZoneID == zoneA.ID && (len(j.HostIDs) != 1 || j.HostIDs[0] != web1.ID) {
+				t.Fatalf("zone A hosts = %v", j.HostIDs)
+			}
+		}
+	})
+}
+
 // TestQueueClaimFailsUnbuildableJobs covers the poison-job path: a run job
 // whose template scope is broken fails with the reason instead of
 // blocking the queue, and the next claim reports empty.

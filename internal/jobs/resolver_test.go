@@ -57,7 +57,7 @@ func TestScopeResolverGroupsSelectedHostsByZone(t *testing.T) {
 	)
 
 	t.Run("whole org", func(t *testing.T) {
-		targets, err := res.Resolve(ctx, org, render.Scope{})
+		targets, err := res.Resolve(ctx, org, render.Scope{}, "")
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -78,7 +78,7 @@ func TestScopeResolverGroupsSelectedHostsByZone(t *testing.T) {
 	})
 
 	t.Run("group subtree", func(t *testing.T) {
-		targets, err := res.Resolve(ctx, org, render.Scope{GroupID: &g})
+		targets, err := res.Resolve(ctx, org, render.Scope{GroupID: &g}, "")
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -88,7 +88,7 @@ func TestScopeResolverGroupsSelectedHostsByZone(t *testing.T) {
 	})
 
 	t.Run("host intersection", func(t *testing.T) {
-		targets, err := res.Resolve(ctx, org, render.Scope{GroupID: &g, HostIDs: []uuid.UUID{h1.ID, h2.ID}})
+		targets, err := res.Resolve(ctx, org, render.Scope{GroupID: &g, HostIDs: []uuid.UUID{h1.ID, h2.ID}}, "")
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
@@ -99,7 +99,7 @@ func TestScopeResolverGroupsSelectedHostsByZone(t *testing.T) {
 
 	t.Run("unknown group is invisible", func(t *testing.T) {
 		missing := uuid.Must(uuid.NewV7())
-		if _, err := res.Resolve(ctx, org, render.Scope{GroupID: &missing}); err != jobs.ErrNotFound {
+		if _, err := res.Resolve(ctx, org, render.Scope{GroupID: &missing}, ""); err != jobs.ErrNotFound {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
@@ -111,8 +111,76 @@ func TestScopeResolverGroupsSelectedHostsByZone(t *testing.T) {
 			fakeMembers{},
 			fakeAllHosts{},
 		)
-		if _, err := res2.Resolve(ctx, org, render.Scope{GroupID: &leaf}); err != jobs.ErrEmptyScope {
+		if _, err := res2.Resolve(ctx, org, render.Scope{GroupID: &leaf}, ""); err != jobs.ErrEmptyScope {
 			t.Fatalf("err = %v, want ErrEmptyScope", err)
+		}
+	})
+}
+
+// TestScopeResolverAppliesLimitPerZone pins the per-zone limit gate
+// (backlog 2.45): the limit decides whether a zone gets a job at all, and
+// never narrows a zone's host list — the surviving zone keeps its full set
+// and the limit string still ships on the job payload for ansible to apply
+// (defense in depth). A zone whose hosts all fail the match is dropped; a
+// limit that matches nothing anywhere is ErrEmptyScope; an undecidable
+// pattern keeps every zone (fail-open).
+func TestScopeResolverAppliesLimitPerZone(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	z1, z2 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	h := func(z uuid.UUID, name string) hosts.Host {
+		return hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: z, Name: name, Managed: true}
+	}
+	web1, web2, db1 := h(z1, "web1"), h(z1, "web2"), h(z2, "db1")
+	res := jobs.NewScopeResolver(fakeGroups{}, fakeMembers{}, fakeAllHosts{hosts: []hosts.Host{web1, web2, db1}})
+
+	t.Run("limit keeps the matching zone whole", func(t *testing.T) {
+		targets, err := res.Resolve(ctx, org, render.Scope{}, "web*")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if len(targets) != 1 || targets[0].ZoneID != z1 {
+			t.Fatalf("targets = %+v, want only z1", targets)
+		}
+		// The zone keeps BOTH of its hosts: the limit gates the zone's job,
+		// it never narrows the host list.
+		if len(targets[0].HostIDs) != 2 {
+			t.Fatalf("z1 hosts = %v, want the zone's full set", targets[0].HostIDs)
+		}
+	})
+
+	t.Run("zone with no matches gets no job", func(t *testing.T) {
+		targets, err := res.Resolve(ctx, org, render.Scope{}, "db1")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if len(targets) != 1 || targets[0].ZoneID != z2 {
+			t.Fatalf("targets = %+v, want only z2", targets)
+		}
+	})
+
+	t.Run("all zones empty is ErrEmptyScope", func(t *testing.T) {
+		if _, err := res.Resolve(ctx, org, render.Scope{}, "nomatch*"); err != jobs.ErrEmptyScope {
+			t.Fatalf("err = %v, want ErrEmptyScope", err)
+		}
+	})
+
+	t.Run("exclusion keeps the surviving zone", func(t *testing.T) {
+		targets, err := res.Resolve(ctx, org, render.Scope{}, "web*:!web1")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if len(targets) != 1 || targets[0].ZoneID != z1 || len(targets[0].HostIDs) != 2 {
+			t.Fatalf("targets = %+v, want z1 with its full host list", targets)
+		}
+	})
+
+	t.Run("undecidable pattern keeps every zone", func(t *testing.T) {
+		targets, err := res.Resolve(ctx, org, render.Scope{}, "~web.*")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if len(targets) != 2 {
+			t.Fatalf("targets = %+v, want both zones", targets)
 		}
 	})
 }

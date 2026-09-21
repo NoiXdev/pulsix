@@ -41,7 +41,15 @@ func NewScopeResolver(groups GroupSource, memberships MembershipSource, hosts Ho
 // Resolve returns the selected managed hosts grouped by their zone, sorted
 // by zone id and host id for deterministic job creation. An unknown scope
 // group is ErrNotFound, exactly like any other missing row.
-func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope render.Scope) ([]ZoneTargets, error) {
+//
+// limit is the run's effective limit pattern ("" = none): a zone none of
+// whose selected host names match it gets no job, and a limit that matches
+// no zone at all is ErrEmptyScope (backlog 2.45). The gate NEVER narrows a
+// zone's host list — the job keeps the zone's full set and the limit string
+// still ships on the claim for ansible to apply on top of it (defense in
+// depth). Callers without a limit (RunTargets, the maintenance guard's
+// group look-ahead) resolve the full scope.
+func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string) ([]ZoneTargets, error) {
 	groupList, err := r.groups.ListGroups(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list inventory groups: %w", err)
@@ -89,6 +97,16 @@ func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope rend
 	if err != nil {
 		return nil, fmt.Errorf("list hosts: %w", err)
 	}
+	// The limit gates zones by host NAME; an undecidable pattern keeps
+	// every zone (fail-open — limit.go's contract). The verdict is per
+	// host: the zone survives when any of its selected hosts matches.
+	var gate func(name string) (matched, decided bool)
+	if limit != "" {
+		if p := parseLimit(limit); p.decided {
+			gate = p.matches
+		}
+	}
+	zoneHit := map[uuid.UUID]bool{}
 	byZone := map[uuid.UUID][]uuid.UUID{}
 	for _, h := range all {
 		if !h.Managed {
@@ -101,6 +119,16 @@ func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope rend
 			continue
 		}
 		byZone[h.ZoneID] = append(byZone[h.ZoneID], h.ID)
+		if gate != nil {
+			if m, d := gate(h.Name); d && m {
+				zoneHit[h.ZoneID] = true
+			}
+		}
+	}
+	for z := range byZone {
+		if gate != nil && !zoneHit[z] {
+			delete(byZone, z)
+		}
 	}
 	if len(byZone) == 0 {
 		return nil, ErrEmptyScope

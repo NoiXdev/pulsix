@@ -85,7 +85,19 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, req)
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, effectiveLimit(tmpl.Limit, req.Overrides), req)
+}
+
+// effectiveLimit is the limit the scope resolution gates zones on: the run
+// request's own limit replaces the template's, exactly the precedence the
+// claim applies when it hands the limit to ansible — so the enqueue never
+// creates a job whose zone ansible would empty on a different pattern
+// (backlog 2.45).
+func effectiveLimit(tmplLimit string, ov *RunOverrides) string {
+	if ov != nil && ov.Limit != nil {
+		return *ov.Limit
+	}
+	return tmplLimit
 }
 
 // RunTargets resolves the template's scope into the managed host ids a
@@ -101,7 +113,7 @@ func (s *Service) RunTargets(ctx context.Context, orgID, templateID uuid.UUID) (
 	if err != nil {
 		return nil, err
 	}
-	targets, err := s.resolver.Resolve(ctx, orgID, scope)
+	targets, err := s.resolver.Resolve(ctx, orgID, scope, "")
 	if err != nil {
 		return nil, err
 	}
