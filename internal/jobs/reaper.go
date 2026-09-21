@@ -121,16 +121,20 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 		r.q.streams.removeAll(id)
 		r.q.cancels.remove(id)
 	}
-	// Unconfirmed cancels fail through the one terminal transition, each in
-	// its own org-bound transaction: the sealed payload is wiped and the
-	// sinks run exactly as on a worker's finish. One job's failure does not
-	// stop the others; the first error is reported after the pass.
+	// Exhausted stale claims fail through the one terminal transition, each
+	// in its own org-bound transaction: the sealed payload is wiped and the
+	// sinks run exactly as on a worker's finish. The transition re-checks
+	// staleness inside its UPDATE with the same cutoff this sweep's scan
+	// used (backlog 2.53): a job re-claimed between the scan and the write
+	// is skipped, not failed. One job's failure does not stop the others;
+	// the first error is reported after the pass.
 	var firstErr error
 	for _, e := range exhausted {
 		applied, err := r.q.terminate(ctx, terminalTransition{
 			jobID: e.ID, status: StatusError,
-			errText: fmt.Sprintf("the job was claimed %d times and its worker never reported a result; giving up (the claim may be too large for the worker, or the run crashes it)", e.Attempts),
-			from:    []Status{StatusClaimed, StatusRunning},
+			errText:     fmt.Sprintf("the job was claimed %d times and its worker never reported a result; giving up (the claim may be too large for the worker, or the run crashes it)", e.Attempts),
+			from:        []Status{StatusClaimed, StatusRunning},
+			staleBefore: now.Add(-claimStaleAfter), minAttempts: r.maxAttempts,
 		})
 		if err != nil {
 			if firstErr == nil {
@@ -142,6 +146,7 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 			failed++
 		}
 	}
+	// Unconfirmed cancels fail through the one terminal transition too.
 	for _, id := range expired {
 		applied, err := r.q.terminate(ctx, terminalTransition{
 			jobID: id, status: StatusFailed, errText: "cancel was requested but the worker never confirmed it",

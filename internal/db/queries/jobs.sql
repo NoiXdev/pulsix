@@ -121,6 +121,23 @@ WHERE status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamp
   AND NOT (id = ANY(@live::uuid[]))
   AND attempts >= @max_attempts::integer;
 
+-- name: FailExhaustedStaleJob :execrows
+-- The exhaustion transition (backlog 2.53): the reaper lists its exhausted
+-- candidates first and fails each through the queue's terminal transition
+-- afterwards. The staleness and attempts checks ride INSIDE this UPDATE —
+-- the same cutoff the reaper's scan used — so a job that got a fresh claim
+-- (claimed_at refreshed, attempts incremented) or otherwise moved on
+-- between the scan and this write is skipped instead of failed. The row
+-- count is the caller's "was it still the stale exhausted job" signal.
+UPDATE jobs SET status = @failed_status::text,
+    stats = COALESCE(@stats::jsonb, stats), error = @err_text, finished_at = @finished_at
+WHERE id = @id
+  AND status = ANY(@from_statuses::text[])
+  AND (sqlc.narg(worker_id)::uuid IS NULL OR worker_id = sqlc.narg(worker_id)::uuid)
+  AND claimed_at < @stale_before::timestamptz
+  AND status IN ('claimed', 'running')
+  AND attempts >= @max_attempts::integer;
+
 -- name: ListCancellingJobs :many
 -- Reaper pass 2 candidates (org-unscoped, raw pool): every job waiting for
 -- its worker to confirm a cancel. The deadline check happens in Go, where

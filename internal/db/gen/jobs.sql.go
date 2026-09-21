@@ -238,6 +238,54 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 	return i, err
 }
 
+const failExhaustedStaleJob = `-- name: FailExhaustedStaleJob :execrows
+UPDATE jobs SET status = $1::text,
+    stats = COALESCE($2::jsonb, stats), error = $3, finished_at = $4
+WHERE id = $5
+  AND status = ANY($6::text[])
+  AND ($7::uuid IS NULL OR worker_id = $7::uuid)
+  AND claimed_at < $8::timestamptz
+  AND status IN ('claimed', 'running')
+  AND attempts >= $9::integer
+`
+
+type FailExhaustedStaleJobParams struct {
+	FailedStatus string             `json:"failed_status"`
+	Stats        []byte             `json:"stats"`
+	ErrText      string             `json:"err_text"`
+	FinishedAt   pgtype.Timestamptz `json:"finished_at"`
+	ID           uuid.UUID          `json:"id"`
+	FromStatuses []string           `json:"from_statuses"`
+	WorkerID     pgtype.UUID        `json:"worker_id"`
+	StaleBefore  time.Time          `json:"stale_before"`
+	MaxAttempts  int32              `json:"max_attempts"`
+}
+
+// The exhaustion transition (backlog 2.53): the reaper lists its exhausted
+// candidates first and fails each through the queue's terminal transition
+// afterwards. The staleness and attempts checks ride INSIDE this UPDATE —
+// the same cutoff the reaper's scan used — so a job that got a fresh claim
+// (claimed_at refreshed, attempts incremented) or otherwise moved on
+// between the scan and this write is skipped instead of failed. The row
+// count is the caller's "was it still the stale exhausted job" signal.
+func (q *Queries) FailExhaustedStaleJob(ctx context.Context, arg FailExhaustedStaleJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failExhaustedStaleJob,
+		arg.FailedStatus,
+		arg.Stats,
+		arg.ErrText,
+		arg.FinishedAt,
+		arg.ID,
+		arg.FromStatuses,
+		arg.WorkerID,
+		arg.StaleBefore,
+		arg.MaxAttempts,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getJob = `-- name: GetJob :one
 SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name

@@ -3,6 +3,8 @@ package jobs_test
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -257,5 +259,143 @@ func TestReaperFailsJobsThatExhaustTheirAttempts(t *testing.T) {
 	// Nothing is left to claim.
 	if again, err := queue.Claim(ctx, org, []uuid.UUID{zone}, "v1"); err != nil || again != nil {
 		t.Fatalf("claim after exhaustion = %v, %v", again, err)
+	}
+}
+
+// racingSink is the SyncSink fake the exhaustion race (backlog 2.53) rides
+// on: its first call runs inside the FIRST exhausted job's terminal
+// transaction — exactly the window between the reaper's scan, which listed
+// both jobs as stale and exhausted, and the second job's transition write.
+// In that window it requeues and re-claims the OTHER job on the raw pool:
+// claimed_at refreshed, attempts incremented, a fresh running claim — what
+// a worker that was only slow to report would have done concurrently.
+type racingSink struct {
+	t      *testing.T
+	d      *db.DB
+	byRepo map[uuid.UUID]uuid.UUID // repo_id -> job id
+	fired  atomic.Bool
+}
+
+func (s *racingSink) RecordSyncResult(_ context.Context, _ uuid.UUID, repoID uuid.UUID, _ time.Time, _ string) error {
+	if !s.fired.CompareAndSwap(false, true) {
+		return nil
+	}
+	s.t.Helper()
+	trigger, ok := s.byRepo[repoID]
+	if !ok {
+		s.t.Fatalf("sink called with unknown repo %s", repoID)
+	}
+	var target uuid.UUID
+	for _, id := range s.byRepo {
+		if id != trigger {
+			target = id
+		}
+	}
+	for _, stmt := range []string{
+		`UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL WHERE id = $1 AND status IN ('claimed', 'running')`,
+		`UPDATE jobs SET status = 'running', worker_id = NULL, claimed_at = now(), started_at = now(), attempts = attempts + 1 WHERE id = $1 AND status = 'queued'`,
+	} {
+		tag, err := s.d.Pool().Exec(context.Background(), stmt, target)
+		if err != nil {
+			s.t.Errorf("concurrent re-claim: %v", err)
+		}
+		if tag.RowsAffected() != 1 {
+			s.t.Errorf("concurrent re-claim step matched %d rows", tag.RowsAffected())
+		}
+	}
+	return nil
+}
+
+// TestReaperExhaustionReChecksStalenessAtTheTransition (backlog 2.53): the
+// exhaustion transition re-checks staleness INSIDE its UPDATE. Two jobs are
+// stale and exhausted when the reaper scans; while the first is being
+// failed, the second is re-claimed (its claimed_at refreshed by the racing
+// sink). The second job's transition write must then find a fresh claim and
+// affect 0 rows: the job survives running with its re-claim intact — the
+// old read-then-write shape would have failed it for a staleness it no
+// longer had.
+func TestReaperExhaustionReChecksStalenessAtTheTransition(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-reaper-stale-org")
+	zone := seedZone(t, d, org)
+	queue := newTestQueue(d)
+	reaper := jobs.NewReaper(queue, 0, 0)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+
+	sink := &racingSink{t: t, d: d, byRepo: map[uuid.UUID]uuid.UUID{}}
+	queue.SetSyncSink(sink)
+
+	// Two running sync_repo jobs, both stale and exhausted: three claims
+	// counted, no stream ever bound (a worker that claimed and went silent
+	// without an event).
+	store := jobs.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	repoToJob := map[uuid.UUID]uuid.UUID{}
+	for range 2 {
+		repo := uuid.Must(uuid.NewV7())
+		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
+		j.Payload = json.RawMessage(`{"repo_id":"` + repo.String() + `"}`)
+		if err := store.CreateJob(scoped, j, j.Payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Exec(ctx,
+			`UPDATE jobs SET status = 'running', claimed_at = now() - interval '61 seconds', started_at = now(), attempts = 3 WHERE id = $1`,
+			j.ID); err != nil {
+			t.Fatal(err)
+		}
+		repoToJob[repo] = j.ID
+	}
+	sink.byRepo = repoToJob
+
+	requeued, failed, err := reaper.Sweep(ctx)
+	if err != nil || requeued != 0 || failed != 1 {
+		t.Fatalf("Sweep = %d/%d, %v; want only the still-stale job failed and the re-claimed one skipped", requeued, failed, err)
+	}
+
+	var errored, survived int
+	for repo, id := range repoToJob {
+		got, err := svc.Get(scoped, org, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch got.Status {
+		case jobs.StatusError:
+			errored++
+			if got.Error == "" || got.FinishedAt == nil {
+				t.Fatalf("the failed job must say why and carry finished_at: %+v", got)
+			}
+			if got.Attempts != 3 {
+				t.Fatalf("attempts = %d, want the three stale claims", got.Attempts)
+			}
+			if got.Payload != nil {
+				t.Fatal("the failed job's payload must be wiped")
+			}
+		case jobs.StatusRunning:
+			survived++
+			if got.Error != "" || got.FinishedAt != nil {
+				t.Fatalf("the re-claimed job must survive untouched: %+v", got)
+			}
+			if got.ClaimedAt == nil {
+				t.Fatal("the re-claimed job must carry its fresh claim")
+			}
+			if got.Attempts != 4 {
+				t.Fatalf("attempts = %d, want the re-claim counted", got.Attempts)
+			}
+			if got.Payload == nil {
+				t.Fatal("the re-claimed job's payload must be intact")
+			}
+		default:
+			t.Fatalf("job %s (repo %s) = %s; want only error or running", id, repo, got.Status)
+		}
+	}
+	if errored != 1 || survived != 1 {
+		t.Fatalf("outcomes = %d failed / %d survived, want one of each", errored, survived)
+	}
+
+	// The fresh claim is not stale, so the next sweep has nothing to do —
+	// the job is not immediately re-failed either.
+	if requeued, failed, err := reaper.Sweep(ctx); err != nil || requeued != 0 || failed != 0 {
+		t.Fatalf("second Sweep = %d/%d, %v; the re-claimed job must be left alone", requeued, failed, err)
 	}
 }

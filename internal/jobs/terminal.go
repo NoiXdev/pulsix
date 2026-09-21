@@ -10,9 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
 // terminalTransition is one move of a job into a terminal state.
@@ -27,6 +31,15 @@ type terminalTransition struct {
 	// worker binds the transition to the claiming worker (nil: the
 	// manager's own transition, any worker_id matches).
 	worker *uuid.UUID
+	// staleBefore and minAttempts arm the exhaustion transition's
+	// staleness re-check (backlog 2.53): when staleBefore is set, the
+	// status write itself additionally requires claimed_at <
+	// staleBefore AND attempts >= minAttempts — the reaper passes the
+	// same cutoff its scan used, so a job re-claimed between the reaper's
+	// scan and this write is skipped instead of failed. Zero disables the
+	// re-check (every other caller).
+	staleBefore time.Time
+	minAttempts int
 	// onMiss runs inside the transaction when no row matched; nil means a
 	// miss is not an error (the job moved on meanwhile).
 	onMiss func(ctx context.Context) error
@@ -78,15 +91,44 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 				return fmt.Errorf("lock run group: %w", err)
 			}
 		}
-		tag, err := q.db.Exec(ctx,
-			`UPDATE jobs SET status = $2, stats = COALESCE($3::jsonb, stats), error = $4, finished_at = $5
-			 WHERE id = $1 AND status = ANY($6::text[])
-			   AND ($7::uuid IS NULL OR worker_id = $7::uuid)`,
-			t.jobID, string(t.status), stats, t.errText, q.now(), from, t.worker)
-		if err != nil {
-			return fmt.Errorf("finish job: %w", err)
+		matched := false
+		if t.staleBefore.IsZero() {
+			tag, err := q.db.Exec(ctx,
+				`UPDATE jobs SET status = $2, stats = COALESCE($3::jsonb, stats), error = $4, finished_at = $5
+				 WHERE id = $1 AND status = ANY($6::text[])
+				   AND ($7::uuid IS NULL OR worker_id = $7::uuid)`,
+				t.jobID, string(t.status), stats, t.errText, q.now(), from, t.worker)
+			if err != nil {
+				return fmt.Errorf("finish job: %w", err)
+			}
+			matched = tag.RowsAffected() > 0
+		} else {
+			// The exhaustion write re-checks staleness inside the UPDATE
+			// (backlog 2.53): claimed_at must still be behind the cutoff
+			// the reaper's scan used, so a re-claim between the scan and
+			// this write — or any other status move — leaves the row
+			// alone.
+			var worker pgtype.UUID
+			if t.worker != nil {
+				worker = pgtype.UUID{Bytes: *t.worker, Valid: true}
+			}
+			rows, err := gen.New(q.db).FailExhaustedStaleJob(ctx, gen.FailExhaustedStaleJobParams{
+				FailedStatus: string(t.status),
+				Stats:        stats,
+				ErrText:      t.errText,
+				FinishedAt:   pgtype.Timestamptz{Time: q.now(), Valid: true},
+				ID:           t.jobID,
+				FromStatuses: from,
+				WorkerID:     worker,
+				StaleBefore:  t.staleBefore,
+				MaxAttempts:  int32(t.minAttempts), //nolint:gosec // a small configured count
+			})
+			if err != nil {
+				return fmt.Errorf("finish job: %w", err)
+			}
+			matched = rows > 0
 		}
-		if tag.RowsAffected() == 0 {
+		if !matched {
 			if t.onMiss != nil {
 				return t.onMiss(ctx)
 			}
