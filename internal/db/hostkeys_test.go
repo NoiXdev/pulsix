@@ -51,7 +51,7 @@ func TestHostConnectionTestsAreIsolatedPerOrg(t *testing.T) {
 	} {
 		if _, err := q.CreateHostConnectionTest(ctx, gen.CreateHostConnectionTestParams{
 			ID: uuid.Must(uuid.NewV7()), OrgID: r.org, HostID: r.host,
-			Ok: true, HostKey: r.key, HostKeyState: "unpinned", Checks: []byte(`[]`),
+			Ok: true, HostKey: r.key, HostKeyState: "unpinned", Checks: []byte(`[]`), HopKeys: []byte(`[]`),
 		}); err != nil {
 			t.Fatal(err)
 		}

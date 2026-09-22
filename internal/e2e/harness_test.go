@@ -184,6 +184,9 @@ type bastionServer struct {
 	addr      string
 	port      int
 	directTCP int
+	// fingerprint is the bastion's host key (SHA256:…), what the operator
+	// would pin from a connection test's reported hop keys.
+	fingerprint string
 }
 
 // startBastion starts the bastion, authenticating only clientKey.
@@ -198,7 +201,9 @@ func startBastion(t *testing.T, clientKey ssh.PublicKey) *bastionServer {
 			return nil, errors.New("unknown key")
 		},
 	}
-	cfg.AddHostKey(newKeyPair(t).signer)
+	hostKey := newKeyPair(t)
+	cfg.AddHostKey(hostKey.signer)
+	hostFingerprint := ssh.FingerprintSHA256(hostKey.signer.PublicKey())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -218,6 +223,7 @@ func startBastion(t *testing.T, clientKey ssh.PublicKey) *bastionServer {
 	_ = host
 	b.addr = ln.Addr().String()
 	b.port = port
+	b.fingerprint = hostFingerprint
 	return b
 }
 

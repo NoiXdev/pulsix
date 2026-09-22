@@ -63,9 +63,20 @@ func (s *scenario) drive() {
 	if !strings.HasPrefix(test.Test.HostKey, "SHA256:") {
 		s.t.Fatalf("observed host key = %q, want an OpenSSH SHA256 fingerprint", test.Test.HostKey)
 	}
+	// The test reports what the chain's jump host presented (backlog 2.40):
+	// one entry naming the bastion, its fingerprint and the TOFU verdict
+	// (unpinned — trust on first use).
+	if len(test.Test.HopKeys) != 1 {
+		s.t.Fatalf("hop keys = %+v, want one entry for the bastion hop", test.Test.HopKeys)
+	}
+	hop := test.Test.HopKeys[0]
+	if hop.BastionID != s.bastionID || hop.Fingerprint != s.bastionS.fingerprint || hop.State != "unpinned" {
+		s.t.Fatalf("hop entry = %+v, want the bastion's observed key (unpinned)", hop)
+	}
 
-	// Pin what the test saw.
+	// Pin what the test saw — the target's key and the jump host's.
 	s.put(prefix+"/hosts/"+s.hostID+"/host-key", map[string]any{"fingerprint": test.Test.HostKey}, &map[string]any{})
+	s.put(prefix+"/bastions/"+s.bastionID+"/host-key", map[string]any{"fingerprint": hop.Fingerprint}, &map[string]any{})
 
 	// The second test honors the pin: the verdict reads pinned now.
 	var second struct {
@@ -80,6 +91,11 @@ func (s *scenario) drive() {
 	}
 	if pinned.Test.HostKey != test.Test.HostKey {
 		s.t.Fatal("the second test observed a different host key than the pin")
+	}
+	// The pinned jump host's verdict reads pinned too (backlog 2.40): the
+	// test's hop entries carry the bastion's observation against its pin.
+	if len(pinned.Test.HopKeys) != 1 || pinned.Test.HopKeys[0].State != "pinned" {
+		s.t.Fatalf("hop keys after the bastion pin = %+v, want the hop pinned", pinned.Test.HopKeys)
 	}
 
 	// --- The golden inventory (the job's scope, masked) ------------------

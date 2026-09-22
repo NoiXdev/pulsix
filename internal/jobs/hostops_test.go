@@ -380,12 +380,13 @@ type testRecord struct {
 	hostPublicKey string
 	hostKeyState  string
 	checks        []hosts.HostTestCheck
+	hops          []hosts.HopKey
 }
 
 func (f *fakeTestSink) RecordConnectionTest(_ context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck, hops []hosts.HopKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, testRecord{orgID: orgID, hostID: hostID, at: at, ok: ok, hostKey: hostKey, hostPublicKey: hostPublicKey, hostKeyState: hostKeyState, checks: checks})
+	f.calls = append(f.calls, testRecord{orgID: orgID, hostID: hostID, at: at, ok: ok, hostKey: hostKey, hostPublicKey: hostPublicKey, hostKeyState: hostKeyState, checks: checks, hops: hops})
 	return nil
 }
 
@@ -439,7 +440,10 @@ func TestFinishRecordsConnectionTest(t *testing.T) {
 	// Equal to an untruncated one (macOS clocks hide this: they tick in µs).
 	at := time.Now().Add(-time.Minute).Truncate(time.Microsecond)
 	// A failed test: reachable and observed, but authentication refused.
-	result := `{"reachable":true,"host_key":"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","host_key_state":"unpinned","auth":false,"sudo":false,"python":false,"checks":[{"name":"reachability","detail":"connected","ok":true},{"name":"auth","detail":"unable to authenticate","ok":false}]}`
+	// The result carries hop entries (backlog 2.40): one valid, one with a
+	// bastion id that does not parse — the whole list is rejected rather
+	// than half-stored, which is its own sink path.
+	result := `{"reachable":true,"host_key":"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","host_key_state":"unpinned","auth":false,"sudo":false,"python":false,"hop_keys":[{"bastion_id":"` + bastionID.String() + `","fingerprint":"SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","state":"unpinned"}],"checks":[{"name":"reachability","detail":"connected","ok":true},{"name":"auth","detail":"unable to authenticate","ok":false}]}`
 	if err := stream.Append(context.Background(), Event{Seq: 1, Host: "web1", Task: "connection_test", State: "failed", Payload: json.RawMessage(result), At: at}); err != nil {
 		t.Fatal(err)
 	}
@@ -459,6 +463,10 @@ func TestFinishRecordsConnectionTest(t *testing.T) {
 	}
 	if len(rec.checks) != 2 || rec.checks[0].Name != "reachability" || rec.checks[1].Name != "auth" || rec.checks[1].OK {
 		t.Fatalf("checks = %+v", rec.checks)
+	}
+	// The hop entries ride the sink call, in the manager's shape.
+	if len(rec.hops) != 1 || rec.hops[0].BastionID != bastionID || rec.hops[0].State != "unpinned" {
+		t.Fatalf("hops = %+v", rec.hops)
 	}
 }
 
@@ -578,6 +586,31 @@ func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 	}
 	if calls := sink.all(); len(calls) != 0 {
 		t.Fatalf("an unparseable result records nothing: %+v", calls)
+	}
+
+	// A result whose hop entries are malformed (a bastion id that does not
+	// parse): the list is rejected rather than half-stored, nothing records.
+	j3 := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
+	if err := store.CreateJob(scoped, j3, nil); err != nil {
+		t.Fatal(err)
+	}
+	claim3, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1")
+	if err != nil || claim3 == nil {
+		t.Fatalf("Claim = %v, %v", claim3, err)
+	}
+	stream3, err := q.BindStream(context.Background(), j3.ID, claim3.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream3.Append(context.Background(), Event{Seq: 1, State: "failed", Payload: json.RawMessage(`{"reachable":true,"hop_keys":[{"bastion_id":"not-a-uuid","fingerprint":"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","state":"pinned"}]}`), At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Finish(context.Background(), j3.ID, StatusFailed, nil, ""); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if calls := sink.all(); len(calls) != 0 {
+		t.Fatalf("a malformed hop list records nothing: %+v", calls)
 	}
 }
 

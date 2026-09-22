@@ -30,7 +30,7 @@ type bastionFixture struct {
 }
 
 // bastionFP and bastionPub are the generated key pair the tests pin
-	// (set by seedBastionOrg, the same pair for every fixture instance).
+// (set by seedBastionOrg, the same pair for every fixture instance).
 var (
 	bastionFP  string
 	bastionPub string

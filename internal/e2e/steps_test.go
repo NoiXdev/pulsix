@@ -83,6 +83,12 @@ type (
 				Detail string `json:"detail"`
 				OK     bool   `json:"ok"`
 			} `json:"checks"`
+			// HopKeys is what the chain's jump hosts presented (backlog 2.40).
+			HopKeys []struct {
+				BastionID   string `json:"bastion_id"`
+				Fingerprint string `json:"fingerprint"`
+				State       string `json:"state"`
+			} `json:"hop_keys"`
 		} `json:"test"`
 	}
 	repoOut struct {
