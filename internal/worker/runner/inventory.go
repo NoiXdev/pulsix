@@ -32,13 +32,18 @@ type connection struct {
 // blocks for every bastion hop that resolves to a key credential, and the
 // credential ids whose private key the runner must write to keysDir.
 //
+// bastionPins maps the pinned bastions' ids to their pinned fingerprints
+// (backlog 2.40): a pinned hop's block demands the key — and a PINNED hop
+// whose credential cannot be scripted (password-only, or none) fails the
+// merge closed, because an unaliasable hop could never enforce its pin.
+//
 // It changes only hostvars the claim fully explains: a jump chain whose
-// hops cannot be resolved (missing credential ids, a password-only bastion,
-// a chain that does not match its rendering) stays exactly as rendered —
-// an operator-facing value is never mangled into something worse. A broken
-// claim (bad connection JSON, unopenable credential) fails the merge before
-// any file is written.
-func mergeInventory(doc map[string]any, connections map[string]string, secrets map[string]string, sshUser, keysDir string) (map[string]any, []proxyHost, []string, error) {
+// hops cannot be resolved (missing credential ids, an UNPINNED password-only
+// bastion, a chain that does not match its rendering) stays exactly as
+// rendered — an operator-facing value is never mangled into something
+// worse. A broken claim (bad connection JSON, unopenable credential) fails
+// the merge before any file is written.
+func mergeInventory(doc map[string]any, connections map[string]string, secrets map[string]string, sshUser, keysDir string, bastionPins map[string]string) (map[string]any, []proxyHost, []string, error) {
 	meta, _ := doc["_meta"].(map[string]any)
 	hostvars, _ := meta["hostvars"].(map[string]any)
 	var hosts []proxyHost
@@ -91,12 +96,17 @@ func mergeInventory(doc map[string]any, connections map[string]string, secrets m
 			if secret.PrivateKey == "" {
 				// A credential-less or password-only hop cannot be
 				// scripted (ssh has no ProxyJump password entry); the
-				// whole chain stays as rendered rather than half-rewritten.
+				// whole chain stays as rendered rather than half-rewritten
+				// — unless the hop is pinned, whose key could then never
+				// be enforced: fail closed (backlog 2.40).
+				if bastionPins[bastionID] != "" {
+					return nil, nil, nil, fmt.Errorf("bastion %s is pinned but its credential cannot be scripted (password-only or none), so the pin could never be enforced: give the hop an ssh_key credential", bastionID)
+				}
 				blocks = nil
 				break
 			}
 			keySet[credID] = true
-			blocks = append(blocks, hopHost(bastionID, parts[i], keyPath(keysDir, credID)))
+			blocks = append(blocks, hopHost(bastionID, parts[i], keyPath(keysDir, credID), bastionPins[bastionID]))
 			aliases = append(aliases, bastionAlias(bastionID))
 		}
 		if blocks == nil {
@@ -174,7 +184,7 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 		return fmt.Errorf("inventory document: %w", err)
 	}
 	keysDir := filepath.Join(env.WorkDir, keysDirName)
-	merged, blocks, keys, err := mergeInventory(doc, job.GetConnections(), job.GetCredentials(), job.GetSshUsername(), keysDir)
+	merged, blocks, keys, err := mergeInventory(doc, job.GetConnections(), job.GetCredentials(), job.GetSshUsername(), keysDir, job.GetBastionHostKeys())
 	if err != nil {
 		return err
 	}
@@ -182,6 +192,13 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 	if err != nil {
 		return err
 	}
+	// The pinned jump hosts' lines ride the same run's known_hosts (backlog
+	// 2.40) — the hop blocks demand their keys.
+	bastionLines, err := pinBastions(job.GetConnections(), job.GetBastionHostKeys(), job.GetBastionKnownHosts())
+	if err != nil {
+		return err
+	}
+	knownHosts += bastionLines
 	moveCommonArgs(merged)
 	invJSON, err := json.Marshal(merged)
 	if err != nil {
@@ -346,6 +363,44 @@ func moveCommonArgs(doc map[string]any) {
 // port ansible dials (and of every other host sharing them).
 func hostKeyAlias(hostID string) string {
 	return "pulsix-host-" + hostID
+}
+
+// pinBastions returns the known_hosts lines of the route's pinned jump
+// hosts (backlog 2.40): "pulsix-jump-<bastion-id> <key>", one authorized-key
+// line per pinned bastion the connections actually dial. Every pinned
+// bastion must come with its full key (a fingerprint alone cannot fill
+// known_hosts) and one well-formed line — anything else fails the run
+// closed. Pinned ids the claim does not connect to are ignored.
+func pinBastions(connections map[string]string, bastionHostKeys, bastionKnownHosts map[string]string) (string, error) {
+	used := map[string]bool{}
+	for _, raw := range connections {
+		var conn connection
+		if err := json.Unmarshal([]byte(raw), &conn); err != nil {
+			return "", fmt.Errorf("connection: %w", err)
+		}
+		for _, id := range conn.Bastions {
+			used[id] = true
+		}
+	}
+	ids := make([]string, 0, len(bastionHostKeys))
+	for id := range bastionHostKeys {
+		if used[id] {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	var b strings.Builder
+	for _, id := range ids {
+		key := strings.TrimSpace(bastionKnownHosts[id])
+		if key == "" {
+			return "", fmt.Errorf("bastion %s is pinned but the claim carries no pinned key: refusing to connect without host key checking", id)
+		}
+		if strings.ContainsAny(key, "\r\n") || len(strings.Fields(key)) < 2 {
+			return "", fmt.Errorf("bastion %s: the pinned key is not one authorized-key line", id)
+		}
+		fmt.Fprintf(&b, "%s %s\n", bastionAlias(id), key)
+	}
+	return b.String(), nil
 }
 
 // pinHosts enforces the claim's host-key pins on ansible's own SSH

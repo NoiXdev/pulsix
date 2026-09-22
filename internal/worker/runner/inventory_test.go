@@ -60,7 +60,7 @@ func TestMergeInventoryInjectsKeyFileAndRewritesChain(t *testing.T) {
 		"cred-1": secretJSON(t, credentials.Secret{PrivateKey: "host-key"}),
 		"cred-b": secretJSON(t, credentials.Secret{PrivateKey: "bastion-key"}),
 	}
-	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "deploy", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "deploy", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestMergeInventoryFallsBackToTemplateUser(t *testing.T) {
 	delete(varsOf(t, doc, "web1"), "ansible_user")
 	conns := map[string]string{"web1": `{"host_id":"` + testHostID + `","credential_id":"cred-1","bastion_source":"none"}`}
 	secrets := map[string]string{"cred-1": secretJSON(t, credentials.Secret{Password: "pw"})}
-	merged, _, keys, err := mergeInventory(doc, conns, secrets, "deploy", "/w/keys")
+	merged, _, keys, err := mergeInventory(doc, conns, secrets, "deploy", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestMergeInventoryPreservesOperatorPassword(t *testing.T) {
 	varsOf(t, doc, "web1")["ansible_password"] = "operator-pw"
 	conns := map[string]string{"web1": `{"host_id":"` + testHostID + `","credential_id":"cred-1","bastion_source":"none"}`}
 	secrets := map[string]string{"cred-1": secretJSON(t, credentials.Secret{Password: "cred-pw"})}
-	merged, _, _, err := mergeInventory(doc, conns, secrets, "", "/w/keys")
+	merged, _, _, err := mergeInventory(doc, conns, secrets, "", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestMergeInventorySkipsUnrewritableChains(t *testing.T) {
 	// value the claim does not fully explain.
 	conns := map[string]string{"web1": `{"host_id":"` + testHostID + `","credential_id":"cred-1","bastions":["b1"],"bastion_source":"host"}`}
 	secrets := map[string]string{"cred-1": secretJSON(t, credentials.Secret{PrivateKey: "host-key"})}
-	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestMergeInventoryKeepsPasswordBastionOutOfTheChain(t *testing.T) {
 		"cred-1": secretJSON(t, credentials.Secret{PrivateKey: "host-key"}),
 		"cred-b": secretJSON(t, credentials.Secret{Password: "bastion-pw"}),
 	}
-	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestMergeInventoryHostWithoutCredentialUsesTemplateDefault(t *testing.T) {
 	delete(varsOf(t, doc, "web1"), "ansible_user")
 	conns := map[string]string{"web1": `{"host_id":"` + testHostID + `","credential_id":"cred-1","bastion_source":"none"}`}
 	secrets := map[string]string{"cred-1": secretJSON(t, credentials.Secret{PrivateKey: "host-key"})}
-	merged, hosts, keys, err := mergeInventory(doc, conns, secrets, "deploy", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(doc, conns, secrets, "deploy", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestMergeInventoryUnknownHostIsUntouched(t *testing.T) {
 	// unmanaged leftover) is skipped, not invented.
 	conns := map[string]string{"ghost": `{"host_id":"` + testHostID + `","credential_id":"cred-1","bastion_source":"none"}`}
 	secrets := map[string]string{"cred-1": secretJSON(t, credentials.Secret{PrivateKey: "k"})}
-	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "deploy", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(testDoc(), conns, secrets, "deploy", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}
@@ -207,18 +207,18 @@ func TestMergeInventoryUnknownHostIsUntouched(t *testing.T) {
 
 func TestMergeInventoryFailsClosed(t *testing.T) {
 	conns := map[string]string{"web1": `{"host_id":"broken"`}
-	if _, _, _, err := mergeInventory(testDoc(), conns, nil, "", "/w/keys"); err == nil {
+	if _, _, _, err := mergeInventory(testDoc(), conns, nil, "", "/w/keys", nil); err == nil {
 		t.Error("a malformed connection JSON must fail")
 	}
 
 	// A referenced credential with a broken secret JSON fails the merge.
 	conns = map[string]string{"web1": `{"host_id":"` + testHostID + `","credential_id":"cred-1","bastion_source":"none"}`}
-	if _, _, _, err := mergeInventory(testDoc(), conns, map[string]string{"cred-1": `{oops`}, "", "/w/keys"); err == nil {
+	if _, _, _, err := mergeInventory(testDoc(), conns, map[string]string{"cred-1": `{oops`}, "", "/w/keys", nil); err == nil {
 		t.Error("a malformed secret JSON must fail")
 	}
 
 	// A referenced credential the claim does not carry fails the merge.
-	if _, _, _, err := mergeInventory(testDoc(), conns, nil, "", "/w/keys"); err == nil {
+	if _, _, _, err := mergeInventory(testDoc(), conns, nil, "", "/w/keys", nil); err == nil {
 		t.Error("a missing credential secret must fail")
 	}
 }
@@ -226,7 +226,7 @@ func TestMergeInventoryFailsClosed(t *testing.T) {
 func TestMergeInventoryEmptyDocumentIsInert(t *testing.T) {
 	// A sync-style claim ships no inventory at all; the merge must neither
 	// crash nor invent files.
-	merged, hosts, keys, err := mergeInventory(map[string]any{}, nil, nil, "deploy", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(map[string]any{}, nil, nil, "deploy", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}

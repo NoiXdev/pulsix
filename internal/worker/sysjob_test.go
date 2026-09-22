@@ -59,3 +59,25 @@ func (f *captureExecutor) Run(_ context.Context, job *workerpb.Job, _ RunEnv, _ 
 	f.got = job
 	return f.status, f.stats, f.err
 }
+
+// TestSynthRunJobCarriesBastionPins pins the propagation: the system kinds'
+// synthetic claims keep the claim's bastion_host_keys/bastion_known_hosts,
+// so the runner enforces the pinned hops the playbook dial uses.
+func TestSynthRunJobCarriesBastionPins(t *testing.T) {
+	orig := &workerpb.Job{
+		Id: "j", Kind: "bootstrap",
+		BastionHostKeys:   map[string]string{"b1": "SHA256:AAAA"},
+		BastionKnownHosts: map[string]string{"b1": "ssh-ed25519 AAAA"},
+	}
+	doc := map[string]any{"_meta": map[string]any{"hostvars": map[string]any{}}}
+	job, err := synthRunJob(orig, "web1", doc, "{}", map[string]string{}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := job.GetBastionHostKeys()["b1"]; got != "SHA256:AAAA" {
+		t.Fatalf("bastion_host_keys = %v, want the claim's", job.GetBastionHostKeys())
+	}
+	if got := job.GetBastionKnownHosts()["b1"]; got != "ssh-ed25519 AAAA" {
+		t.Fatalf("bastion_known_hosts = %v, want the claim's keys", job.GetBastionKnownHosts())
+	}
+}

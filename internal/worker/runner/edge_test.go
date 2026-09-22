@@ -161,7 +161,7 @@ func TestMergeInventoryWithoutCredentialIsInert(t *testing.T) {
 	// A connection that names no credential at all: the hostvars keep the
 	// rendered shape, no key file is invented.
 	conns := map[string]string{"web1": `{"host_id":"` + testHostID + `","bastion_source":"none"}`}
-	merged, hosts, keys, err := mergeInventory(testDoc(), conns, nil, "", "/w/keys")
+	merged, hosts, keys, err := mergeInventory(testDoc(), conns, nil, "", "/w/keys", nil)
 	if err != nil {
 		t.Fatalf("mergeInventory: %v", err)
 	}

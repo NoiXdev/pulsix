@@ -70,11 +70,15 @@ func (q *SQLQueue) bootstrapSystemPayload(ctx context.Context, job Job) (string,
 	if err != nil {
 		return "", claimPins{}, err
 	}
-	kindPayload, err := q.bootstrapKindPayload(ctx, job, host, hops)
+	// The route's jump hosts: refuse a changed one, ship the pinned ones.
+	if err := q.refuseChangedBastions(ctx, job.OrgID, conn.Bastions); err != nil {
+		return "", claimPins{}, err
+	}
+	pins, err := q.claimRoutePins(ctx, job, map[string]render.Connection{host.Name: conn})
 	if err != nil {
 		return "", claimPins{}, err
 	}
-	pins, err := q.claimHostKeys(ctx, job, map[string]render.Connection{host.Name: conn})
+	kindPayload, err := q.bootstrapKindPayload(ctx, job, host, hops)
 	if err != nil {
 		return "", claimPins{}, err
 	}
@@ -144,11 +148,15 @@ func (q *SQLQueue) credentialTargetPayload(ctx context.Context, job Job, target 
 	if err != nil {
 		return "", claimPins{}, err
 	}
+	// The route's jump hosts: refuse a changed one, ship the pinned ones.
+	if err := q.refuseChangedBastions(ctx, job.OrgID, conn.Bastions); err != nil {
+		return "", claimPins{}, err
+	}
 	kindPayload, err := build(host, hops)
 	if err != nil {
 		return "", claimPins{}, err
 	}
-	pins, err := q.claimHostKeys(ctx, job, map[string]render.Connection{host.Name: conn})
+	pins, err := q.claimRoutePins(ctx, job, map[string]render.Connection{host.Name: conn})
 	if err != nil {
 		return "", claimPins{}, err
 	}
@@ -192,9 +200,11 @@ func (q *SQLQueue) revokeKindPayload(ctx context.Context, job Job, rp revocation
 
 // bastionTargetPayload resolves a jump host target: its own via-chain is
 // walked in dial order (the outermost hop first), each hop's credential
-// opened; build decides what the target itself logs in with. Bastions carry
-// no pin (see BACKLOG: bastion host-key pinning), so the claim ships no host
-// keys and the worker trusts the bastion's key on first use per run.
+// opened; build decides what the target itself logs in with. The target is
+// dialed as the synthetic claim's host, so ITS OWN pin ships as the claim's
+// host keys; the hops' pinned keys ship alongside (backlog 2.40). A route
+// through a changed jump host — the hops or the target — is refused, the
+// same block-on-mismatch a changed host key gets.
 func (q *SQLQueue) bastionTargetPayload(ctx context.Context, job Job, bastionID uuid.UUID, build func(systemHost, []systemHop) (string, error)) (string, claimPins, error) {
 	target, err := q.bastions.GetBastion(ctx, job.OrgID, bastionID)
 	if err != nil {
@@ -223,6 +233,15 @@ func (q *SQLQueue) bastionTargetPayload(ctx context.Context, job Job, bastionID 
 	// runs outermost-first, so the chain reverses and the target (the last
 	// element afterwards) drops off the run's chain.
 	slices.Reverse(chain)
+	hopIDs := make([]uuid.UUID, 0, len(chain))
+	for _, b := range chain {
+		hopIDs = append(hopIDs, b.ID)
+	}
+	// Every jump host the dial touches — the hops AND the target bastion —
+	// is checked: a changed key fails the connection through it.
+	if err := q.refuseChangedBastions(ctx, job.OrgID, hopIDs); err != nil {
+		return "", claimPins{}, err
+	}
 	hops := make([]systemHop, 0, len(chain)-1)
 	for _, b := range chain[:len(chain)-1] {
 		hopCredential := ""
@@ -245,7 +264,88 @@ func (q *SQLQueue) bastionTargetPayload(ctx context.Context, job Job, bastionID 
 	if err != nil {
 		return "", claimPins{}, err
 	}
-	return kindPayload, claimPins{fingerprints: map[string]string{}, publicKeys: map[string]string{}}, nil
+	// The target bastion is the dial's final step: its own pin ships as
+	// the synthetic one-host claim's host keys, keyed by the target's name
+	// (the synth claim's connection name).
+	targetFPs, targetPubs, err := q.claimBastionKeys(ctx, job.OrgID, []uuid.UUID{target.ID})
+	if err != nil {
+		return "", claimPins{}, err
+	}
+	// The hops' pinned keys ride the bastion maps.
+	hopsFPs, hopsPubs, err := q.claimBastionKeys(ctx, job.OrgID, hopIDs[:len(hopIDs)-1])
+	if err != nil {
+		return "", claimPins{}, err
+	}
+	pins := claimPins{
+		fingerprints: map[string]string{}, publicKeys: map[string]string{},
+		bastionFPs: hopsFPs, bastionPubs: hopsPubs,
+	}
+	if fp, ok := targetFPs[target.ID.String()]; ok {
+		pins.fingerprints[target.Name] = fp
+		pins.publicKeys[target.Name] = targetPubs[target.ID.String()]
+	}
+	return kindPayload, pins, nil
+}
+
+// refuseChangedBastions fails with ErrHostKeyChanged when any of the given
+// jump hosts' LATEST hop observation reports a changed key (backlog 2.40,
+// the bastion mirror of refuseChangedHosts). A nil guard routes nothing —
+// a wiring gap, like every other optional sink; the real wiring is
+// hosts.Service, which always implements it. A guard failure fails closed.
+func (q *SQLQueue) refuseChangedBastions(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) error {
+	if len(bastionIDs) == 0 || q.bastionGuard == nil {
+		return nil
+	}
+	if q.bastionGuard == nil {
+		return fmt.Errorf("%w: no bastion key guard wired", ErrHostKeyChanged)
+	}
+	changed, err := q.bastionGuard.ChangedBastions(ctx, orgID, bastionIDs)
+	if err != nil {
+		return fmt.Errorf("resolve changed bastion keys: %w", err)
+	}
+	for _, id := range bastionIDs {
+		if changed[id] {
+			return fmt.Errorf("%w: jump host %s", ErrHostKeyChanged, id)
+		}
+	}
+	return nil
+}
+
+// claimBastionKeys resolves the pinned jump hosts' fingerprints and full
+// public keys (keyed by bastion id on the wire). A pinned bastion without
+// its full key cannot be enforced — fail closed with the remedy.
+func (q *SQLQueue) claimBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[string]string, map[string]string, error) {
+	fps, pubs := map[string]string{}, map[string]string{}
+	if len(bastionIDs) == 0 || q.bastionPins == nil {
+		return fps, pubs, nil
+	}
+	pinned, err := q.bastionPins.PinnedBastionKeys(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve bastion key pins: %w", err)
+	}
+	if len(pinned) == 0 {
+		return fps, pubs, nil
+	}
+	pubsByID, err := q.bastionPins.PinnedBastionPublicKeys(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve pinned bastion public keys: %w", err)
+	}
+	for id, fingerprint := range pinned {
+		pub := pubsByID[id]
+		if pub == "" {
+			return nil, nil, fmt.Errorf("jump host %s was pinned before full jump host keys were recorded, so its pin cannot be enforced: run a connection test routed through it (it completes the pin) and retry", id)
+		}
+		fps[id.String()] = fingerprint
+		pubs[id.String()] = pub
+	}
+	return fps, pubs, nil
+}
+
+// claimRoutePins is claimHostKeys with the same name for the route-shaping
+// callers: the rendered connections' host pins plus their routes' jump
+// hosts.
+func (q *SQLQueue) claimRoutePins(ctx context.Context, job Job, conns map[string]render.Connection) (claimPins, error) {
+	return q.claimHostKeys(ctx, job, conns)
 }
 
 // renderTargetConnection resolves one host through the rendered snapshot:

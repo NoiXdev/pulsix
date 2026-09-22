@@ -8,6 +8,7 @@
 package runner
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -76,7 +77,7 @@ func TestHopHostConfig(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h := hopHost("b1", c.part, c.keyPath)
+			h := hopHost("b1", c.part, c.keyPath, "")
 			if got := h.config("/w/known_hosts"); got != c.want {
 				t.Errorf("config =\n%q\nwant\n%q", got, c.want)
 			}
@@ -113,5 +114,66 @@ func TestRewriteProxyJump(t *testing.T) {
 	// never mangle hostvars that do not name the parsed chain).
 	if got, ok := rewriteProxyJump("-o ProxyJump=other", "different", "aliases"); ok {
 		t.Errorf("a chain that is not present must not rewrite, got %q", got)
+	}
+}
+
+// --- Pinned bastion hops (backlog 2.40): the ssh_config demands the pinned
+// key per hop alias the way pinHosts does for the target.
+
+func TestPinnedHopConfig(t *testing.T) {
+	h := hopHost("b1", proxyPart{User: "u", Addr: "b.example.org", Port: "2222"}, "/w/keys/cred-1", "ssh-ed25519 AAAA")
+	want := "Host pulsix-jump-b1\n    HostName b.example.org\n    Port 2222\n    User u\n" +
+		"    IdentityFile /w/keys/cred-1\n    IdentitiesOnly yes\n    HostKeyAlias pulsix-jump-b1\n" +
+		"    StrictHostKeyChecking yes\n    UserKnownHostsFile /w/known_hosts\n    GlobalKnownHostsFile /dev/null\n"
+	if got := h.config("/w/known_hosts"); got != want {
+		t.Errorf("config =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestPinBastions(t *testing.T) {
+	conns := map[string]string{
+		"web1": `{"host_id":"h1","bastions":["b1","b2"],"bastion_source":"zone"}`,
+	}
+	keys := map[string]string{"b1": "ssh-ed25519 AAAA", "b2": "ssh-ed25519 BBBB"}
+	pub, err := pinBastions(conns, map[string]string{"b1": "SHA256:AAAA", "b2": "SHA256:BBBB"}, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "pulsix-jump-b1 ssh-ed25519 AAAA\npulsix-jump-b2 ssh-ed25519 BBBB\n"
+	if pub != want {
+		t.Errorf("lines = %q, want %q", pub, want)
+	}
+
+	// Fail closed: a pinned bastion without its full key cannot be
+	// enforced — the claim refuses.
+	_, err = pinBastions(conns, map[string]string{"b1": "SHA256:AAAA"}, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "b1") {
+		t.Fatalf("missing full key: %v, want an error naming the bastion", err)
+	}
+	// A key that is not one authorized-key line fails closed too.
+	_, err = pinBastions(conns, map[string]string{"b1": "SHA256:AAAA"}, map[string]string{"b1": "two lines\nsecond"})
+	if err == nil {
+		t.Fatal("a multi-line pinned key must fail closed")
+	}
+}
+
+// TestMergeInventoryPinnedHopStrictArgs checks that the pinned hop's block
+// is built with the pin and that a PINNED password-only bastion fails the
+// run closed (the chain could not be aliased, so nothing would enforce the
+// pin).
+func TestMergeInventoryPinnedHop(t *testing.T) {
+	doc := map[string]any{"all": map[string]any{}, "_meta": map[string]any{"hostvars": map[string]any{
+		"web1": map[string]any{
+			"ansible_host":            "10.0.0.10",
+			"ansible_ssh_common_args": "-o ProxyJump=jump@10.0.0.9:2222",
+		},
+	}}}
+	conns := map[string]string{
+		"web1": `{"host_id":"u1","credential_id":"c1","bastions":["b1"],"bastion_credential_ids":["c2"],"bastion_source":"zone"}`,
+	}
+	secrets := map[string]string{"c1": `{"private_key":"host"}`, "c2": `{"password":"hop"}`}
+	_, _, _, err := mergeInventory(doc, conns, secrets, "", "/w/keys", map[string]string{"b1": "SHA256:AAAA"})
+	if err == nil || !strings.Contains(err.Error(), "b1") {
+		t.Fatalf("a pinned password-only bastion must fail the merge closed: %v", err)
 	}
 }

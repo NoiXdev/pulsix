@@ -115,6 +115,26 @@ func (q *SQLQueue) ListCredentialBastions(ctx context.Context, orgID, credential
 	return out, nil
 }
 
+// ListOrgBastions reads every jump host of the organization (ids only on
+// the wire that matters): the rotation enqueue walks each target's
+// via-chain over them, so a hop that does not itself reference the rotating
+// credential is still checked and still dialed.
+func (q *SQLQueue) ListOrgBastions(ctx context.Context, orgID uuid.UUID) ([]sshconf.Bastion, error) {
+	rows, err := gen.New(q.db).ListBastions(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list bastions: %w", err)
+	}
+	out := make([]sshconf.Bastion, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sshconf.Bastion{
+			ID: r.ID, OrgID: r.OrgID, Name: r.Name, Address: r.Address, Port: int(r.Port),
+			Username: r.Username, CredentialID: db.UUIDPtr(r.CredentialID), ViaBastionID: db.UUIDPtr(r.ViaBastionID),
+			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
 // SetRotationFinisher injects the port recordRotation flows through on the
 // finish path, the rotation sibling of SetSyncSink/SetTestSink. A nil
 // finisher finalizes nothing — a wiring gap an operator sees as a
@@ -172,10 +192,50 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 		return uuid.Nil, uuid.Nil, 0, err
 	}
 	// The pin requirement (backlog 2.44) refuses the rotation when a HOST
-	// target is not fully pinned; bastions carry no pins until backlog
-	// 2.40 and are not hosts, so they are not checked here.
+	// target is not fully pinned; bastion targets verify only through their
+	// playbook runs.
 	if err := s.refuseUnpinnedHosts(ctx, orgID, hostIDs); err != nil {
 		return uuid.Nil, uuid.Nil, 0, err
+	}
+	// The pin requirement (backlog 2.44) refuses the rotation when a HOST
+	// target is not fully pinned; the jump hosts are pinned too since
+	// backlog 2.40, and a rotation INTO a jump host must not be routed
+	// through a changed one: a bastion target whose via-chain includes a
+	// changed jump host refuses the rotation (fail closed, the playbook
+	// dial cannot trust the hop it tunnels through).
+	if s.bastionKeyGuard != nil && len(bastions) > 0 {
+		all, err := s.rotationTargets.ListOrgBastions(ctx, orgID)
+		if err != nil {
+			return uuid.Nil, uuid.Nil, 0, fmt.Errorf("list bastions: %w", err)
+		}
+		allByID := make(map[uuid.UUID]sshconf.Bastion, len(all))
+		for _, b := range all {
+			allByID[b.ID] = b
+		}
+		ids := make([]uuid.UUID, 0, len(bastions))
+		for _, b := range bastions {
+			ids = append(ids, b.ID)
+		}
+		changed, err := s.bastionKeyGuard.ChangedBastions(ctx, orgID, ids)
+		if err != nil {
+			return uuid.Nil, uuid.Nil, 0, fmt.Errorf("resolve changed bastion keys: %w", err)
+		}
+		// The via-chain of each target, walked over the org's full set: a
+		// chain hop that does not itself reference the rotating credential
+		// is still checked (and still dialed).
+		for _, b := range bastions {
+			chain, err := sshconf.Chain(allByID, b.ID)
+			if err != nil {
+				// A broken via-chain cannot be walked: refuse closed (the
+				// rotation must not dial an unresolvable route).
+				return uuid.Nil, uuid.Nil, 0, fmt.Errorf("resolve rotation bastion %s: %w", b.ID, err)
+			}
+			for _, hop := range chain {
+				if changed[hop.ID] {
+					return uuid.Nil, uuid.Nil, 0, fmt.Errorf("%w: jump host %s", ErrHostKeyChanged, hop.ID)
+				}
+			}
+		}
 	}
 	inserter, ok := s.store.(groupInserter)
 	if !ok {

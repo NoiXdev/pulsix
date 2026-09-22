@@ -380,3 +380,126 @@ func TestSQLStorePinPublicKeyAndBackfill(t *testing.T) {
 		t.Fatalf("latest = %+v, %v", latest, err)
 	}
 }
+
+// --- Jump host (bastion) key pins (backlog 2.40) ----------------------
+
+func TestSQLStoreBastionPinRoundtrip(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hostkey-bastion-org")
+	bastionID := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateBastion(ctx, gen.CreateBastionParams{
+		ID: bastionID, OrgID: org, Name: "edge", Address: "10.0.0.9", Port: 22, Username: "ops",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fp := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	pub := "ssh-ed25519 AAAA"
+
+	// Set on a foreign bastion id is invisible, not forbidden.
+	if err := store.SetBastionKeyPin(ctx, org, uuid.Must(uuid.NewV7()), fp, pub); err == nil {
+		t.Fatal("pin of a foreign bastion id must fail")
+	}
+	if err := store.SetBastionKeyPin(ctx, org, bastionID, fp, pub); err != nil {
+		t.Fatalf("SetBastionKeyPin: %v", err)
+	}
+	pins, err := store.ListPinnedBastionKeys(ctx, org, []uuid.UUID{bastionID})
+	if err != nil || pins[bastionID].Fingerprint != fp || pins[bastionID].PublicKey != pub {
+		t.Fatalf("pins = %v, %v", pins, err)
+	}
+	if err := store.ClearBastionKeyPin(ctx, org, bastionID); err != nil {
+		t.Fatalf("ClearBastionKeyPin: %v", err)
+	}
+	// A foreign bastion id's clear matches nothing (invisible, not forbidden).
+	if err := store.ClearBastionKeyPin(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("clear of a foreign bastion id = %v, want ErrNotFound", err)
+	}
+	pins, err = store.ListPinnedBastionKeys(ctx, org, []uuid.UUID{bastionID})
+	if err != nil || len(pins) != 0 {
+		t.Fatalf("pins after clear = %v, %v", pins, err)
+	}
+}
+
+// TestSQLStoreBastionObservationsAndChanged drives the hop_keys query
+// shapes: the newest observation per bastion and the changed set (state
+// changed, or a pin whose fingerprint the latest observation contradicts).
+func TestSQLStoreBastionObservationsAndChanged(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hostkey-bastion-hop-org")
+	zone := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateZone(ctx, gen.CreateZoneParams{ID: zone, OrgID: org, Slug: "default", Name: "Default"}); err != nil {
+		t.Fatal(err)
+	}
+	hostID := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateHost(ctx, gen.CreateHostParams{ID: hostID, OrgID: org, ZoneID: zone, Name: "web1", Managed: true, Facts: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	bA, bB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if _, err := q.CreateBastion(ctx, gen.CreateBastionParams{ID: bA, OrgID: org, Name: "edge-a", Address: "10.0.0.9", Port: 22, Username: "ops"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CreateBastion(ctx, gen.CreateBastionParams{ID: bB, OrgID: org, Name: "edge-b", Address: "10.0.0.8", Port: 22, Username: "ops"}); err != nil {
+		t.Fatal(err)
+	}
+	keyA := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	keyC := "SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+	hop := func(b uuid.UUID, fp, state string) []hosts.HopKey {
+		return []hosts.HopKey{{BastionID: b, Fingerprint: fp, State: state}}
+	}
+	// bA: an older pinned observation, then a changed one — the LATEST
+	// wins. bB: only pinned.
+	if err := store.CreateHostTest(ctx, hosts.HostTest{ID: uuid.Must(uuid.NewV7()), OrgID: org, HostID: hostID, At: time.Now().Add(-2 * time.Hour), OK: true,
+		HostKeyState: hosts.KeyStatePinned, HopKeys: hop(bA, keyA, hosts.KeyStatePinned)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateHostTest(ctx, hosts.HostTest{ID: uuid.Must(uuid.NewV7()), OrgID: org, HostID: hostID, At: time.Now(), OK: false,
+		HostKeyState: hosts.KeyStateUnpinned, HopKeys: hop(bA, keyC, hosts.KeyStateChanged)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateHostTest(ctx, hosts.HostTest{ID: uuid.Must(uuid.NewV7()), OrgID: org, HostID: hostID, At: time.Now().Add(-time.Hour), OK: true,
+		HostKeyState: hosts.KeyStatePinned, HopKeys: hop(bB, keyA, hosts.KeyStatePinned)}); err != nil {
+		t.Fatal(err)
+	}
+
+	obs, err := store.ListLatestBastionObservations(ctx, org, []uuid.UUID{bA, bB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs[bA].State != hosts.KeyStateChanged || obs[bA].Fingerprint != keyC {
+		t.Fatalf("bA observation = %+v, want the newest (changed)", obs[bA])
+	}
+	if obs[bB].State != hosts.KeyStatePinned {
+		t.Fatalf("bB observation = %+v, want pinned", obs[bB])
+	}
+	// A foreign org sees nothing.
+	otherOrg := seedOrg(t, q, "hostkey-bastion-hop-other")
+	foreign, err := store.ListLatestBastionObservations(ctx, otherOrg, []uuid.UUID{bA})
+	if err != nil || len(foreign) != 0 {
+		t.Fatalf("cross-org observations = %v, %v; want none", foreign, err)
+	}
+
+	// The changed set: bA changed, bB not.
+	changed, err := store.ListChangedBastionKeys(ctx, org, []uuid.UUID{bA, bB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 1 || changed[0] != bA {
+		t.Fatalf("changed = %v, want exactly bA", changed)
+	}
+	// The pin comparison (defense in depth): a pin written AFTER the latest
+	// observation, whose fingerprint the observation contradicts, blocks.
+	pinB := "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	if err := store.SetBastionKeyPin(ctx, org, bB, pinB, ""); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = store.ListChangedBastionKeys(ctx, org, []uuid.UUID{bB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("a pin the latest observation contradicts must block: %v", changed)
+	}
+}

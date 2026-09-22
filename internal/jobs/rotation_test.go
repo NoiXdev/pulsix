@@ -25,8 +25,9 @@ import (
 
 // fakeRotationTargets is the RotationTargets fake.
 type fakeRotationTargets struct {
-	hosts    []RotationHost
-	bastions []sshconf.Bastion
+	hosts       []RotationHost
+	bastions    []sshconf.Bastion
+	orgBastions []sshconf.Bastion
 }
 
 func (f fakeRotationTargets) ListCredentialHosts(_ context.Context, _, _ uuid.UUID) ([]RotationHost, error) {
@@ -34,6 +35,15 @@ func (f fakeRotationTargets) ListCredentialHosts(_ context.Context, _, _ uuid.UU
 }
 
 func (f fakeRotationTargets) ListCredentialBastions(_ context.Context, _, _ uuid.UUID) ([]sshconf.Bastion, error) {
+	return f.bastions, nil
+}
+
+// ListOrgBastions reports the full org set the chain walk needs (the
+// referenced set when the test gives nothing else).
+func (f fakeRotationTargets) ListOrgBastions(_ context.Context, _ uuid.UUID) ([]sshconf.Bastion, error) {
+	if f.orgBastions != nil {
+		return f.orgBastions, nil
+	}
 	return f.bastions, nil
 }
 
@@ -364,6 +374,10 @@ func (f errTargets) ListCredentialBastions(context.Context, uuid.UUID, uuid.UUID
 	return nil, f.err
 }
 
+func (f errTargets) ListOrgBastions(context.Context, uuid.UUID) ([]sshconf.Bastion, error) {
+	return nil, f.err
+}
+
 // brokenZones is the DefaultZoneSource that never resolves.
 type brokenZones struct{}
 
@@ -391,6 +405,10 @@ func (f hostOnlyTargets) ListCredentialHosts(context.Context, uuid.UUID, uuid.UU
 }
 
 func (f hostOnlyTargets) ListCredentialBastions(context.Context, uuid.UUID, uuid.UUID) ([]sshconf.Bastion, error) {
+	return nil, f.bastionErr
+}
+
+func (f hostOnlyTargets) ListOrgBastions(context.Context, uuid.UUID) ([]sshconf.Bastion, error) {
 	return nil, f.bastionErr
 }
 

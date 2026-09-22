@@ -766,3 +766,112 @@ func TestBuildPayloadShipsEffectiveCredentialForTemplateDefault(t *testing.T) {
 		t.Fatalf("no bastions, no chain: %v", conn)
 	}
 }
+
+// TestBuildPayloadRunShipsBastionPins: a run whose route dials a pinned
+// jump host ships its fingerprint and full public key, so the worker's
+// ssh_config demands the key per hop alias (backlog 2.40).
+func TestBuildPayloadRunShipsBastionPins(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hostID, credID, bastionID, bastionCredID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+
+	renderer := fakeRenderer{inv: render.Inventory{
+		Doc: map[string]any{"all": map[string]any{}},
+		Connections: map[string]render.Connection{
+			"web1": {HostID: hostID, CredentialID: &credID, Bastions: []uuid.UUID{bastionID}, BastionSource: "host"},
+		},
+	}}
+	creds := fakeCreds{
+		secrets: map[uuid.UUID]credentials.Secret{
+			credID:        {PrivateKey: "host-key"},
+			bastionCredID: {PrivateKey: "hop-key"},
+		},
+		metas: map[uuid.UUID]credentials.Credential{
+			credID: {ID: credID, Username: "ansible"},
+		},
+	}
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()),
+			PlaybookInline: "- hosts: all\n  tasks: []\n",
+			Scope:          json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`),
+			CredentialID:   &credID,
+		},
+	}}
+	q := newTestQueue(renderer, creds, templates, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
+		bastionID: {ID: bastionID, CredentialID: &bastionCredID},
+	}})
+	q.SetKeyPins(fakePins{
+		byID:           map[uuid.UUID]string{hostID: "SHA256:TARGET"},
+		pubByID:        map[uuid.UUID]string{hostID: "ssh-ed25519 T"},
+		bastionByID:    map[uuid.UUID]string{bastionID: "SHA256:AAAA"},
+		bastionPubByID: map[uuid.UUID]string{bastionID: "ssh-ed25519 A"},
+	})
+
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+	out := &workerpb.Job{}
+	if err := q.buildPayload(context.Background(), job, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	if out.BastionHostKeys[bastionID.String()] != "SHA256:AAAA" {
+		t.Fatalf("bastion_host_keys = %v", out.BastionHostKeys)
+	}
+	if out.BastionKnownHosts[bastionID.String()] != "ssh-ed25519 A" {
+		t.Fatalf("bastion_known_hosts = %v", out.BastionKnownHosts)
+	}
+
+	// A pin without its full key cannot be enforced: the claim fails closed
+	// with the connection-test remedy.
+	q2 := newTestQueue(renderer, creds, templates, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
+		bastionID: {ID: bastionID, CredentialID: &bastionCredID},
+	}})
+	q2.SetKeyPins(fakePins{bastionByID: map[uuid.UUID]string{bastionID: "SHA256:AAAA"}})
+	if err := q2.buildPayload(context.Background(), job, &workerpb.Job{}); err == nil || !strings.Contains(err.Error(), "pinned") {
+		t.Fatalf("fingerprint-only bastion pin: %v, want the connection-test remedy", err)
+	}
+}
+
+// TestBuildPayloadRunRefusesChangedBastion: a run whose route dials a
+// changed jump host is refused at claim time (backlog 2.40) — the host
+// rides a connection the worker cannot trust.
+func TestBuildPayloadRunRefusesChangedBastion(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	// The rendered connection names the JOB's own host id (testHosts), so
+	// the scope drop matches the route.
+	hostID, credID, bastionID, bastionCredID := testHosts[0], uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+
+	renderer := fakeRenderer{inv: render.Inventory{
+		Doc: map[string]any{"all": map[string]any{}, "_meta": map[string]any{"hostvars": map[string]any{
+			"web1": map[string]any{"ansible_host": "192.0.2.10", "ansible_user": "ansible"},
+		}}},
+		Connections: map[string]render.Connection{
+			"web1": {HostID: hostID, CredentialID: &credID, Bastions: []uuid.UUID{bastionID}, BastionSource: "host"},
+		},
+	}}
+	creds := fakeCreds{
+		secrets: map[uuid.UUID]credentials.Secret{
+			credID:        {PrivateKey: "host-key"},
+			bastionCredID: {Password: "hop-pw"},
+		},
+		metas: map[uuid.UUID]credentials.Credential{credID: {ID: credID, Username: "ansible"}},
+	}
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()),
+			PlaybookInline: "- hosts: all\n  tasks: []\n",
+			Scope:          json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`),
+			CredentialID:   &credID,
+		},
+	}}
+	q := newTestQueue(renderer, creds, templates, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
+		bastionID: {ID: bastionID, CredentialID: &bastionCredID},
+	}})
+	q.SetKeyPins(fakePins{changedBastions: map[uuid.UUID]bool{bastionID: true}})
+
+	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+	err := q.buildPayload(context.Background(), job, &workerpb.Job{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "host key changed") {
+		t.Fatalf("a run through a changed bastion must be refused: %v", err)
+	}
+}

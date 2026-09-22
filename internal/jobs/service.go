@@ -439,6 +439,10 @@ type Service struct {
 	// type: hosts.Service implements it, unit-test fakes that do not
 	// simply leave the guard off.
 	keyGuard KeyGuardSource
+	// bastionKeyGuard is the ChangedBastions source for the jump hosts'
+	// block-on-mismatch (backlog 2.40), resolved the same way from the
+	// host lookup's type; unwired, the bastion refusal is simply off.
+	bastionKeyGuard BastionKeyGuardSource
 	// fullPins is the PinnedPublicKeys source for the org pin requirement
 	// (backlog 2.44), resolved from the HostLookup's own type like
 	// keyGuard. Unwired, the refusal is simply off.
@@ -468,6 +472,9 @@ func NewService(store Store, queue Queue, templates TemplateSource, resolver Sco
 	s := &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
 	if g, ok := hosts.(KeyGuardSource); ok {
 		s.keyGuard = g
+	}
+	if bg, ok := hosts.(BastionKeyGuardSource); ok {
+		s.bastionKeyGuard = bg
 	}
 	if fp, ok := hosts.(FullPinSource); ok {
 		s.fullPins = fp

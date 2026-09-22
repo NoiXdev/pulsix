@@ -41,10 +41,12 @@ func (fullProbeCreds) Get(_ context.Context, _, id uuid.UUID) (credentials.Crede
 // public keys in pubByID (a pin without an entry is fingerprint-only).
 // The bastion maps are the same shape for jump hosts (backlog 2.40).
 type fakePins struct {
-	byID        map[uuid.UUID]string
-	pubByID     map[uuid.UUID]string
-	bastionByID map[uuid.UUID]string
-	err         error
+	byID            map[uuid.UUID]string
+	pubByID         map[uuid.UUID]string
+	bastionByID     map[uuid.UUID]string
+	bastionPubByID  map[uuid.UUID]string
+	changedBastions map[uuid.UUID]bool
+	err             error
 }
 
 // PinnedPublicKeys implements KnownHostSource.
@@ -67,10 +69,16 @@ func (fakePins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.
 	return map[uuid.UUID]bool{}, nil
 }
 
-// ChangedBastions reports no changed jump host: fakePins doubles as the
-// claim's bastion guard (hosts.Service implements both).
-func (fakePins) ChangedBastions(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
-	return map[uuid.UUID]bool{}, nil
+// ChangedBastions reports the fake's changed set.
+func (f fakePins) ChangedBastions(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := map[uuid.UUID]bool{}
+	for id := range f.changedBastions {
+		out[id] = true
+	}
+	return out, nil
 }
 
 // PinnedBastionKeys implements BastionPinSource.
@@ -89,8 +97,17 @@ func (f fakePins) PinnedBastionKeys(_ context.Context, _ uuid.UUID, bastionIDs [
 
 // PinnedBastionPublicKeys implements BastionPinSource (full keys map to the
 // fingerprint-only fake: no entry means not enforceable).
-func (fakePins) PinnedBastionPublicKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
-	return map[uuid.UUID]string{}, nil
+func (f fakePins) PinnedBastionPublicKeys(_ context.Context, _ uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := map[uuid.UUID]string{}
+	for _, id := range bastionIDs {
+		if pub, ok := f.bastionPubByID[id]; ok {
+			out[id] = pub
+		}
+	}
+	return out, nil
 }
 
 func (f fakePins) PinnedKeys(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {

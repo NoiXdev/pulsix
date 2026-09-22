@@ -22,6 +22,11 @@ type proxyHost struct {
 	id      string
 	part    proxyPart
 	keyPath string // absolute path of the hop's private key; "" without one
+	// publicKey is the pinned bastion's full public key (authorized-key
+	// form): the block then DEMANDS the key (StrictHostKeyChecking yes)
+	// and the run's known_hosts carries it under the alias. Empty means
+	// unpinned — trust on first use.
+	publicKey string
 }
 
 // bastionAlias is the ssh_config Host alias for a bastion hop. The alias is
@@ -97,21 +102,26 @@ func parseHop(hop string) proxyPart {
 // hopHost builds the ssh_config entry for one bastion hop: alias from the
 // bastion's uuid, address unbracketed, port defaulting to 22, and the
 // identity file when the hop's credential is a key (keyPath is the absolute
-// path the runner wrote it to; empty when the hop carries no key).
-func hopHost(bastionID string, part proxyPart, keyPath string) proxyHost {
+// path the runner wrote it to; empty when the hop carries no key). The
+// pinned bastions' full public keys (backlog 2.40) make the block strict.
+func hopHost(bastionID string, part proxyPart, keyPath string, publicKey string) proxyHost {
 	return proxyHost{
-		id:      bastionID,
-		part:    part,
-		keyPath: keyPath,
+		id:        bastionID,
+		part:      part,
+		keyPath:   keyPath,
+		publicKey: publicKey,
 	}
 }
 
-// config renders one Host block of the private ssh_config. Bastions carry
-// no pin of their own, so a hop's host key is trusted on first use —
-// recorded under the hop's alias in the run's own known_hosts (wiped with
-// the work dir) and never the system's. A pinned target is still verified
-// end to end: ProxyJump tunnels the target's handshake through the hop,
-// so a hop cannot impersonate a pinned host.
+// config renders one Host block of the private ssh_config. An unpinned hop
+// is trusted on first use — recorded under the hop's alias in the run's own
+// known_hosts (wiped with the work dir) and never the system's. A pinned
+// hop demands its key: StrictHostKeyChecking yes in the block (the hop's
+// dial is scripted by the ssh_config, so the block is where the pin is
+// enforced), with the key in the run's known_hosts under the alias. A
+// pinned target is still verified end to end: ProxyJump tunnels the
+// target's handshake through the hop, so a hop cannot impersonate a pinned
+// host.
 func (h proxyHost) config(knownHostsPath string) string {
 	port := h.part.Port
 	if port == "" {
@@ -130,7 +140,15 @@ func (h proxyHost) config(knownHostsPath string) string {
 	}
 	b.WriteString("    IdentitiesOnly yes\n")
 	fmt.Fprintf(&b, "    HostKeyAlias %s\n", bastionAlias(h.id))
-	b.WriteString(knownHostsDefaults(knownHostsPath))
+	if h.publicKey != "" {
+		// A pinned hop is strict — the run must never dial it on a key
+		// that stopped matching the pin.
+		b.WriteString("    StrictHostKeyChecking yes\n")
+	} else {
+		b.WriteString("    StrictHostKeyChecking accept-new\n")
+	}
+	b.WriteString("    UserKnownHostsFile " + knownHostsPath + "\n")
+	b.WriteString("    GlobalKnownHostsFile /dev/null\n")
 	return b.String()
 }
 

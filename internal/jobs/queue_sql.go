@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -298,8 +299,13 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
-			InventoryDoc: "{}", HostKeys: pins.fingerprints, KnownHosts: pins.publicKeys, KindPayload: kindPayload,
-			Redact: redact.list,
+			InventoryDoc:      "{}",
+			HostKeys:          pins.fingerprints,
+			KnownHosts:        pins.publicKeys,
+			BastionHostKeys:   pins.bastionFPs,
+			BastionKnownHosts: pins.bastionPubs,
+			KindPayload:       kindPayload,
+			Redact:            redact.list,
 		}
 		return nil
 	}
@@ -421,6 +427,28 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	if err != nil {
 		return fmt.Errorf("render snapshot: %w", err)
 	}
+	// The block-on-mismatch for jump hosts (backlog 2.40): a host whose
+	// route dials a bastion whose LATEST hop observation reports a changed
+	// key is dropped from the scope, exactly like a host whose own key
+	// changed — the connection cannot be trusted, whatever the target's
+	// key says. A route knowledge gap has no cheaper honest check: the
+	// routes are the rendered connections, known only here. A guard
+	// failure fails the claim closed.
+	if q.bastionGuard != nil {
+		hostIDs, err := q.excludeChangedBastions(ctx, job, scope.HostIDs, inv)
+		if err != nil {
+			return err
+		}
+		if len(hostIDs) < len(scope.HostIDs) {
+			if len(hostIDs) == 0 {
+				return fmt.Errorf("%w: job %s", ErrHostKeyChanged, job.ID)
+			}
+			inv, err = q.renderer.Snapshot(ctx, job.OrgID, render.Scope{HostIDs: hostIDs})
+			if err != nil {
+				return fmt.Errorf("render snapshot: %w", err)
+			}
+		}
+	}
 	doc, err := json.Marshal(inv.Doc)
 	if err != nil {
 		return fmt.Errorf("encode inventory document: %w", err)
@@ -511,10 +539,12 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		TemplateId: templateID, Playbook: playbook, Limit: limit,
 		ExtraVars: extraVars, SshUsername: sshUser,
 		InventoryDoc: string(doc), Connections: connections, Credentials: credentials,
-		HostKeys:    pins.fingerprints,
-		KnownHosts:  pins.publicKeys,
-		KindPayload: kindPayload,
-		Redact:      redact.list,
+		HostKeys:          pins.fingerprints,
+		KnownHosts:        pins.publicKeys,
+		BastionHostKeys:   pins.bastionFPs,
+		BastionKnownHosts: pins.bastionPubs,
+		KindPayload:       kindPayload,
+		Redact:            redact.list,
 	}
 	return nil
 }
@@ -545,21 +575,79 @@ func (q *SQLQueue) excludeChangedAtClaim(ctx context.Context, job Job) ([]uuid.U
 	return kept, nil
 }
 
-// claimPins is what a host-bound claim ships about pinned host keys, both
-// maps keyed by host name: the fingerprints (host_keys) and the full public
-// keys the worker writes into the run's known_hosts (known_hosts).
+// excludeChangedBastions is the block-on-mismatch for jump hosts (backlog
+// 2.40): every host whose rendered route dials a bastion whose LATEST hop
+// observation reports a changed key is dropped — the connection through it
+// cannot be trusted. Returns the kept host ids; an empty result means the
+// whole scope is blocked (the caller fails the job).
+// excludeChangedBastions is the block-on-mismatch for jump hosts (backlog
+// 2.40): every host whose rendered route dials a bastion whose LATEST hop
+// observation reports a changed key is dropped — the connection through it
+// cannot be trusted, whatever the target's own key says. Hosts the
+// snapshot renders no connection for are untouched: they fail the claim on
+// their own terms.
+func (q *SQLQueue) excludeChangedBastions(ctx context.Context, job Job, scope []uuid.UUID, inv render.Inventory) ([]uuid.UUID, error) {
+	bastionIDs := map[uuid.UUID]bool{}
+	for _, c := range inv.Connections {
+		for _, id := range c.Bastions {
+			bastionIDs[id] = true
+		}
+	}
+	if len(bastionIDs) == 0 {
+		return scope, nil
+	}
+	ids := make([]uuid.UUID, 0, len(bastionIDs))
+	for id := range bastionIDs {
+		ids = append(ids, id)
+	}
+	changed, err := q.bastionGuard.ChangedBastions(ctx, job.OrgID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("resolve changed bastion keys: %w", err)
+	}
+	blocked := map[uuid.UUID]bool{}
+	for _, c := range inv.Connections {
+		for _, id := range c.Bastions {
+			if changed[id] {
+				blocked[c.HostID] = true
+				break
+			}
+		}
+	}
+	if len(blocked) == 0 {
+		return scope, nil
+	}
+	kept := make([]uuid.UUID, 0, len(scope))
+	for _, id := range scope {
+		if !blocked[id] {
+			kept = append(kept, id)
+		}
+	}
+	return kept, nil
+}
+
+// claimPins is what a host-bound claim ships about pinned host keys: the
+// maps for the hosts are keyed by host NAME, the jump hosts' (backlog 2.40)
+// by bastion id. The fingerprints (host_keys / bastion_host_keys) are what
+// the probe compares, the full public keys (known_hosts /
+// bastion_known_hosts) what the worker writes into the run's known_hosts.
 type claimPins struct {
 	fingerprints map[string]string
 	publicKeys   map[string]string
+	bastionFPs   map[string]string
+	bastionPubs  map[string]string
 }
 
-// claimHostKeys collects the pins of the job's rendered hosts. Every pinned
-// host must come with its full public key: the worker enforces a pin
-// through known_hosts, which a fingerprint cannot fill. A pin made before
-// full keys were recorded fails the claim with the remedy (a connection
-// test confirming the pin stores the key); so does an unwired key source.
+// claimHostKeys collects the pins of the job's rendered hosts and their
+// routes' jump hosts. Every pinned host AND pinned bastion must come with
+// its full public key: the worker enforces a pin through known_hosts, which
+// a fingerprint cannot fill. A pin made before full keys were recorded
+// fails the claim with the remedy (a connection test confirming the pin
+// stores the key); so does an unwired key source.
 func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]render.Connection) (claimPins, error) {
-	out := claimPins{fingerprints: map[string]string{}, publicKeys: map[string]string{}}
+	out := claimPins{
+		fingerprints: map[string]string{}, publicKeys: map[string]string{},
+		bastionFPs: map[string]string{}, bastionPubs: map[string]string{},
+	}
 	if len(conns) == 0 {
 		return out, nil
 	}
@@ -568,17 +656,27 @@ func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]
 	}
 	ids := make([]uuid.UUID, 0, len(conns))
 	names := make(map[uuid.UUID][]string, len(conns))
+	bastionIDs := map[uuid.UUID]bool{}
 	for name, c := range conns {
 		if _, seen := names[c.HostID]; !seen {
 			ids = append(ids, c.HostID)
 		}
 		names[c.HostID] = append(names[c.HostID], name)
+		for _, id := range c.Bastions {
+			bastionIDs[id] = true
+		}
 	}
 	pinned, err := q.pins.PinnedKeys(ctx, job.OrgID, ids)
 	if err != nil {
 		return claimPins{}, fmt.Errorf("resolve host key pins: %w", err)
 	}
-	if len(pinned) == 0 {
+	// The jump hosts the routes dial: pinned ones ship with the claim.
+	bastionList := make([]uuid.UUID, 0, len(bastionIDs))
+	for id := range bastionIDs {
+		bastionList = append(bastionList, id)
+	}
+	slices.SortFunc(bastionList, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	if len(pinned) == 0 && len(bastionList) == 0 {
 		return out, nil
 	}
 	if q.knownHosts == nil {
@@ -596,6 +694,29 @@ func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]
 		for _, name := range names[hostID] {
 			out.fingerprints[name] = fingerprint
 			out.publicKeys[name] = pub
+		}
+	}
+	if len(bastionList) > 0 {
+		if q.bastionPins == nil {
+			return claimPins{}, fmt.Errorf("%s claim %s: no bastion key pin source wired", job.Kind, job.ID)
+		}
+		bastionPins, err := q.bastionPins.PinnedBastionKeys(ctx, job.OrgID, bastionList)
+		if err != nil {
+			return claimPins{}, fmt.Errorf("resolve bastion key pins: %w", err)
+		}
+		if len(bastionPins) > 0 {
+			bastionPubs, err := q.bastionPins.PinnedBastionPublicKeys(ctx, job.OrgID, bastionList)
+			if err != nil {
+				return claimPins{}, fmt.Errorf("resolve pinned bastion public keys: %w", err)
+			}
+			for id, fingerprint := range bastionPins {
+				pub := bastionPubs[id]
+				if pub == "" {
+					return claimPins{}, fmt.Errorf("jump host %s was pinned before full jump host keys were recorded, so its pin cannot be enforced: run a connection test routed through it (it completes the pin) and retry", id)
+				}
+				out.bastionFPs[id.String()] = fingerprint
+				out.bastionPubs[id.String()] = pub
+			}
 		}
 	}
 	return out, nil

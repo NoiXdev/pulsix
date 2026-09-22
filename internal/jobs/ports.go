@@ -82,10 +82,14 @@ type RotationFinisher interface {
 // RotationTargets is the slice of the stores the rotation enqueue path
 // needs (SQLQueue, which runs the org-scoped reads under the caller's
 // scope, implements it): the managed hosts and jump hosts referencing a
-// credential — one rotate_key job each, all sharing the rotation group.
+// credential — one rotate_key job each, all sharing the rotation group —
+// plus every jump host of the organization, whose rows the enqueue walks
+// each target's via-chain over (a chain hop that does not reference the
+// rotating credential is still dialed and still checked).
 type RotationTargets interface {
 	ListCredentialHosts(ctx context.Context, orgID, credentialID uuid.UUID) ([]RotationHost, error)
 	ListCredentialBastions(ctx context.Context, orgID, credentialID uuid.UUID) ([]sshconf.Bastion, error)
+	ListOrgBastions(ctx context.Context, orgID uuid.UUID) ([]sshconf.Bastion, error)
 }
 
 // RotationHost is one rotation target from the hosts table, with the zone
