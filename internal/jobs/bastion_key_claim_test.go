@@ -32,7 +32,7 @@ func fullBastionPins(fps, pubs map[uuid.UUID]string) fakePins {
 
 // bastionHopFixture builds the queue of a bootstrap claim for one host
 // routed through one hop, with the key-pin source the tests shape.
-func bastionHopFixture(t *testing.T, pins fakePins) (*SQLQueue, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
+func bastionHopFixture(t *testing.T, pins KeyPinSource) (*SQLQueue, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	org := uuid.Must(uuid.NewV7())
 	hostID, credID, bastionID, hopCredID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -88,7 +88,6 @@ func TestBuildPayloadBootstrapShipsBastionPins(t *testing.T) {
 	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), job, out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
 	}
-	t.Logf("DEBUG out=%+v bastion=%s", out.BastionHostKeys, bastionID)
 	if out.BastionHostKeys[bastionID.String()] != hopPinFP {
 		t.Fatalf("bastion_host_keys = %v", out.BastionHostKeys)
 	}
@@ -192,5 +191,73 @@ func TestEnqueueRotationRefusesChangedBastion(t *testing.T) {
 	}
 	if len(store.jobs) != 0 {
 		t.Fatalf("the refused rotation must insert nothing: %d jobs", len(store.jobs))
+	}
+}
+
+// guardlessPins is a KeyPinSource fake that wires every key source EXCEPT
+// the bastion guard — the wiring-gap shape the nil-guard tests drive.
+type guardlessPins struct{}
+
+func (guardlessPins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
+func (guardlessPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
+}
+
+func (guardlessPins) PinnedPublicKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
+}
+
+func (guardlessPins) PinnedBastionKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
+}
+
+func (guardlessPins) PinnedBastionPublicKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
+}
+
+// TestNilBastionGuardFailsClaimsClosed pins the chosen nil-guard convention:
+// the excludeChangedAtClaim one — the guard is mandatory for host-bound
+// claims, so an unwired bastion guard fails the claim closed on BOTH
+// host-bound paths: the system kinds' resolved hops and the generic path's
+// rendered connections.
+func TestNilBastionGuardFailsClaimsClosed(t *testing.T) {
+	// The system path: the pins source wired, the bastion guard not.
+	q, org, hostID, credID, _ := bastionHopFixture(t, guardlessPins{})
+	job := bootstrapJob(t, q, org, credID)
+	job.HostIDs = []uuid.UUID{hostID}
+	err := q.buildPayload(db.WithOrgScope(context.Background(), org), job, &workerpb.Job{})
+	if err == nil || !strings.Contains(err.Error(), "no bastion key guard wired") {
+		t.Fatalf("a system claim without a bastion guard must fail closed: %v", err)
+	}
+
+	// The generic path: a run job whose queue never wired SetKeyPins (the
+	// bastion guard stays nil), no bastions in the route — the guard is
+	// still demanded, like the host key guard.
+	renderer := fakeRenderer{inv: render.Inventory{
+		Doc:         map[string]any{"all": map[string]any{}},
+		Connections: map[string]render.Connection{},
+	}}
+	creds := fakeCreds{secrets: map[uuid.UUID]credentials.Secret{}}
+	q2 := &SQLQueue{
+		box: fakeBox{}, renderer: renderer, creds: creds, templates: fakeTemplates{}, bastions: fakeBastions{},
+		// Only the HOST key guard is wired; the bastion guard stays nil.
+		keyGuard: fakePins{},
+		now:      time.Now, rand: rand.Reader, streams: newStreamRegistry(), cancels: newCancelRegistry(),
+	}
+	templateID := uuid.Must(uuid.NewV7())
+	q2.templates = fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()),
+			PlaybookInline: "- hosts: all\n  tasks: []\n",
+			Scope:          json.RawMessage(`{}`),
+		},
+	}}
+	job2 := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: uuid.Must(uuid.NewV7()), Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
+	err = q2.buildPayload(context.Background(), job2, &workerpb.Job{})
+	if err == nil || !strings.Contains(err.Error(), "no bastion key guard wired") {
+		t.Fatalf("a run claim without a bastion guard must fail closed: %v", err)
 	}
 }

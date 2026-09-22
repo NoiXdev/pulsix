@@ -120,10 +120,11 @@ var testHosts = []uuid.UUID{uuid.MustParse("01a0ac45-0000-7000-8000-000000000001
 func newTestQueue(renderer SnapshotSource, creds CredentialSource, templates TemplateSource, bastions BastionSource) *SQLQueue {
 	return &SQLQueue{
 		box: fakeBox{}, renderer: renderer, creds: creds, templates: templates, bastions: bastions,
-		// The key guard defaults to "nothing changed"; the pins source
-		// stays unwired so the fail-closed probe paths remain testable.
-		keyGuard: fakePins{},
-		now:      time.Now, rand: rand.Reader, streams: newStreamRegistry(), cancels: newCancelRegistry(),
+		// The key guards default to "nothing changed" (both hosts and jump
+		// hosts); the pins source stays unwired so the fail-closed probe
+		// paths remain testable.
+		keyGuard: fakePins{}, bastionGuard: fakePins{},
+		now: time.Now, rand: rand.Reader, streams: newStreamRegistry(), cancels: newCancelRegistry(),
 	}
 }
 

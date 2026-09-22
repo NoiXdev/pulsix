@@ -89,6 +89,13 @@ func (emptyPins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid
 	return map[uuid.UUID]bool{}, nil
 }
 
+// ChangedBastions reports no changed jump host, the bastion mirror of
+// ChangedHosts (backlog 2.40): the integration queues wire this fake as
+// their pins source, and the claim path demands the guard.
+func (emptyPins) ChangedBastions(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 func (emptyPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
 	return map[uuid.UUID]string{}, nil
 }

@@ -72,6 +72,13 @@ func (stubPins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.
 	return map[uuid.UUID]bool{}, nil
 }
 
+// ChangedBastions reports no changed jump host, the bastion mirror of
+// ChangedHosts (backlog 2.40): the claim path demands the guard for
+// host-bound claims, so the stub wires it like every other key source.
+func (stubPins) ChangedBastions(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 type stubBastions struct{}
 
 func (stubBastions) GetBastion(context.Context, uuid.UUID, uuid.UUID) (sshconf.Bastion, error) {

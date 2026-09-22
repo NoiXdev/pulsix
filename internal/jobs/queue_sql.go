@@ -432,21 +432,20 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// key is dropped from the scope, exactly like a host whose own key
 	// changed — the connection cannot be trusted, whatever the target's
 	// key says. A route knowledge gap has no cheaper honest check: the
-	// routes are the rendered connections, known only here. A guard
-	// failure fails the claim closed.
-	if q.bastionGuard != nil {
-		hostIDs, err := q.excludeChangedBastions(ctx, job, scope.HostIDs, inv)
-		if err != nil {
-			return err
+	// routes are the rendered connections, known only here. The guard is
+	// mandatory for host-bound claims — an unwired guard fails the claim
+	// closed, like the host key guard.
+	kept, err := q.excludeChangedBastions(ctx, job, scope.HostIDs, inv)
+	if err != nil {
+		return err
+	}
+	if len(kept) < len(scope.HostIDs) {
+		if len(kept) == 0 {
+			return fmt.Errorf("%w: job %s", ErrHostKeyChanged, job.ID)
 		}
-		if len(hostIDs) < len(scope.HostIDs) {
-			if len(hostIDs) == 0 {
-				return fmt.Errorf("%w: job %s", ErrHostKeyChanged, job.ID)
-			}
-			inv, err = q.renderer.Snapshot(ctx, job.OrgID, render.Scope{HostIDs: hostIDs})
-			if err != nil {
-				return fmt.Errorf("render snapshot: %w", err)
-			}
+		inv, err = q.renderer.Snapshot(ctx, job.OrgID, render.Scope{HostIDs: kept})
+		if err != nil {
+			return fmt.Errorf("render snapshot: %w", err)
 		}
 	}
 	doc, err := json.Marshal(inv.Doc)
@@ -578,15 +577,15 @@ func (q *SQLQueue) excludeChangedAtClaim(ctx context.Context, job Job) ([]uuid.U
 // excludeChangedBastions is the block-on-mismatch for jump hosts (backlog
 // 2.40): every host whose rendered route dials a bastion whose LATEST hop
 // observation reports a changed key is dropped — the connection through it
-// cannot be trusted. Returns the kept host ids; an empty result means the
-// whole scope is blocked (the caller fails the job).
-// excludeChangedBastions is the block-on-mismatch for jump hosts (backlog
-// 2.40): every host whose rendered route dials a bastion whose LATEST hop
-// observation reports a changed key is dropped — the connection through it
 // cannot be trusted, whatever the target's own key says. Hosts the
 // snapshot renders no connection for are untouched: they fail the claim on
-// their own terms.
+// their own terms. The guard is mandatory for host-bound claims — an
+// unwired guard fails closed, exactly like the host key guard
+// (excludeChangedAtClaim).
 func (q *SQLQueue) excludeChangedBastions(ctx context.Context, job Job, scope []uuid.UUID, inv render.Inventory) ([]uuid.UUID, error) {
+	if q.bastionGuard == nil {
+		return nil, fmt.Errorf("%s claim %s: no bastion key guard wired", job.Kind, job.ID)
+	}
 	bastionIDs := map[uuid.UUID]bool{}
 	for _, c := range inv.Connections {
 		for _, id := range c.Bastions {

@@ -192,17 +192,17 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 		return uuid.Nil, uuid.Nil, 0, err
 	}
 	// The pin requirement (backlog 2.44) refuses the rotation when a HOST
-	// target is not fully pinned; bastion targets verify only through their
-	// playbook runs.
+	// target is not fully pinned; the jump hosts are pinned too since
+	// backlog 2.40. And a rotation INTO a jump host must not be routed
+	// through a changed one: a bastion target whose via-chain includes a
+	// changed jump host refuses the rotation — fail closed, the playbook
+	// dial cannot trust the hop it tunnels through. An unwired guard skips
+	// the check here, the same convention the host key guard follows at
+	// enqueue; the claim-time guard is mandatory and is what actually
+	// refuses.
 	if err := s.refuseUnpinnedHosts(ctx, orgID, hostIDs); err != nil {
 		return uuid.Nil, uuid.Nil, 0, err
 	}
-	// The pin requirement (backlog 2.44) refuses the rotation when a HOST
-	// target is not fully pinned; the jump hosts are pinned too since
-	// backlog 2.40, and a rotation INTO a jump host must not be routed
-	// through a changed one: a bastion target whose via-chain includes a
-	// changed jump host refuses the rotation (fail closed, the playbook
-	// dial cannot trust the hop it tunnels through).
 	if s.bastionKeyGuard != nil && len(bastions) > 0 {
 		all, err := s.rotationTargets.ListOrgBastions(ctx, orgID)
 		if err != nil {

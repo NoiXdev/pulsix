@@ -289,11 +289,13 @@ func (q *SQLQueue) bastionTargetPayload(ctx context.Context, job Job, bastionID 
 
 // refuseChangedBastions fails with ErrHostKeyChanged when any of the given
 // jump hosts' LATEST hop observation reports a changed key (backlog 2.40,
-// the bastion mirror of refuseChangedHosts). A nil guard routes nothing —
-// a wiring gap, like every other optional sink; the real wiring is
-// hosts.Service, which always implements it. A guard failure fails closed.
+// the bastion mirror of refuseChangedHosts). The guard is mandatory
+// whenever the route names jump hosts — an unwired guard fails closed,
+// exactly like the host key guard (excludeChangedAtClaim); the real
+// wiring is hosts.Service, which always implements it. A guard read
+// failure fails closed too.
 func (q *SQLQueue) refuseChangedBastions(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) error {
-	if len(bastionIDs) == 0 || q.bastionGuard == nil {
+	if len(bastionIDs) == 0 {
 		return nil
 	}
 	if q.bastionGuard == nil {
