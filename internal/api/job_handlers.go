@@ -479,6 +479,11 @@ func mapJobsErr(ctx context.Context, err error) error {
 		return huma.Error422UnprocessableEntity("the template's scope matches no managed host")
 	case errors.Is(err, jobs.ErrHostKeyChanged):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, jobs.ErrUnpinnedHosts):
+		// The organization requires pinned hosts (backlog 2.44): the run
+		// is refused, naming the hosts without a full pin. 422, the same
+		// class huma's body validation reports.
+		return huma.Error422UnprocessableEntity(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped jobs error", "err", err)
 		return huma.Error500InternalServerError("internal error")

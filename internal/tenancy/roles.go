@@ -54,6 +54,12 @@ const (
 
 	PermMaintenanceRead  Permission = "maintenance.read"
 	PermMaintenanceWrite Permission = "maintenance.write"
+
+	// Org settings (backlog 2.44): everyone in the organization may read
+	// its job settings; only an admin changes them, the same bar
+	// org.manage clears.
+	PermOrgSettingsRead  Permission = "org.settings.read"
+	PermOrgSettingsWrite Permission = "org.settings.write"
 )
 
 // rank orders roles from least to most privileged. A role absent from this
@@ -108,6 +114,12 @@ var matrix = map[Permission]Role{
 	// them, operators plan them.
 	PermMaintenanceRead:  RoleViewer,
 	PermMaintenanceWrite: RoleOperator,
+	// Org settings (backlog 2.44): a viewer reads the job settings (a
+	// refusal message names the requirement, so it must be visible); an
+	// admin changes them, since the toggle decides what jobs may run
+	// against at all.
+	PermOrgSettingsRead:  RoleViewer,
+	PermOrgSettingsWrite: RoleAdmin,
 }
 
 // Allows reports whether role may perform perm. It is total: an unknown role

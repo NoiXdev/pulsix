@@ -99,6 +99,11 @@ func (s *Service) EnqueueAdhoc(ctx context.Context, orgID uuid.UUID, hostIDs []u
 	if err := s.refuseChangedHosts(ctx, orgID, targets); err != nil {
 		return nil, err
 	}
+	// The pin requirement (backlog 2.44) refuses the same targets when the
+	// organization requires fully pinned hosts.
+	if err := s.refuseUnpinnedHosts(ctx, orgID, targets); err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(adhocKindPayload{Module: module, Argv: argv})
 	if err != nil {
 		return nil, fmt.Errorf("encode ad-hoc payload: %w", err)

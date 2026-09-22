@@ -30,6 +30,7 @@ func TestMapJobsErr(t *testing.T) {
 		{"nothing to retry", jobs.ErrNothingToRetry, http.StatusUnprocessableEntity},
 		{"empty scope", jobs.ErrEmptyScope, http.StatusUnprocessableEntity},
 		{"host key changed", jobs.ErrHostKeyChanged, http.StatusConflict},
+		{"unpinned hosts", jobs.ErrUnpinnedHosts, http.StatusUnprocessableEntity},
 		{"unmapped error", errors.New("database exploded"), http.StatusInternalServerError},
 	}
 	for _, c := range cases {

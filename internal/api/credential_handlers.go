@@ -316,6 +316,12 @@ func mapCredentialsErr(ctx context.Context, err error) error {
 	case errors.Is(err, jobs.ErrHostKeyChanged):
 		// A rotation target's host key changed: the rotation is refused.
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, jobs.ErrUnpinnedHosts):
+		// The organization requires pinned hosts (backlog 2.44): a host
+		// target of the rotation is not fully pinned, the rotation is
+		// refused and the error names it. 422: the org's requirement is
+		// not satisfied by this request.
+		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, jobs.ErrRotationInProgress):
 		return huma.Error409Conflict("a rotation of this credential is still in progress")
 	default:

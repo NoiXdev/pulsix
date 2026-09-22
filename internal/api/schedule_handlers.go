@@ -348,6 +348,11 @@ func mapSchedulesErr(ctx context.Context, err error) error {
 		return huma.Error422UnprocessableEntity("the template's scope resolves to no host")
 	case errors.Is(err, jobs.ErrHostKeyChanged):
 		return huma.Error409Conflict("every targeted host has a changed host key; re-test and re-pin first")
+	case errors.Is(err, jobs.ErrUnpinnedHosts):
+		// The organization requires pinned hosts (backlog 2.44): the
+		// schedule's run now is refused, naming the hosts without a full
+		// pin. 422: the org's requirement is not satisfied by this run.
+		return huma.Error422UnprocessableEntity(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped schedules error", "err", err)
 		return huma.Error500InternalServerError("internal error")

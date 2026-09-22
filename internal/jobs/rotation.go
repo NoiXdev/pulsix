@@ -171,6 +171,12 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 	if err := s.refuseChangedHosts(ctx, orgID, hostIDs); err != nil {
 		return uuid.Nil, uuid.Nil, 0, err
 	}
+	// The pin requirement (backlog 2.44) refuses the rotation when a HOST
+	// target is not fully pinned; bastions carry no pins until backlog
+	// 2.40 and are not hosts, so they are not checked here.
+	if err := s.refuseUnpinnedHosts(ctx, orgID, hostIDs); err != nil {
+		return uuid.Nil, uuid.Nil, 0, err
+	}
 	inserter, ok := s.store.(groupInserter)
 	if !ok {
 		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("rotation enqueue: the store cannot insert the group atomically")

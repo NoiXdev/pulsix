@@ -362,6 +362,12 @@ type NotificationDigestChannel struct {
 	ChannelID uuid.UUID `json:"channel_id"`
 }
 
+type OrgJobSetting struct {
+	OrgID                  uuid.UUID `json:"org_id"`
+	JobsRequirePinnedHosts bool      `json:"jobs_require_pinned_hosts"`
+	UpdatedAt              time.Time `json:"updated_at"`
+}
+
 type OrgMembership struct {
 	OrgID     uuid.UUID `json:"org_id"`
 	UserID    uuid.UUID `json:"user_id"`

@@ -1439,6 +1439,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/settings/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org settings jobs */
+        get: operations["get-api-v1-orgs-by-org-settings-jobs"];
+        /** Put API v1 orgs by org settings jobs */
+        put: operations["updateOrgJobSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/tags": {
         parameters: {
             query?: never;
@@ -3044,6 +3062,18 @@ export interface components {
             role: string;
             slug: string;
         };
+        OrgJobSettingsDTO: {
+            jobs_require_pinned_hosts: boolean;
+        };
+        OrgJobSettingsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgJobSettingsOutputBody.json
+             */
+            readonly $schema?: string;
+            settings: components["schemas"]["OrgJobSettingsDTO"];
+        };
         OrgListOutputBody: {
             /**
              * Format: uri
@@ -3810,6 +3840,15 @@ export interface components {
             readonly $schema?: string;
             outcome: string;
             run_id?: string;
+        };
+        UpdateOrgJobSettingsRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateOrgJobSettingsRequest.json
+             */
+            readonly $schema?: string;
+            jobs_require_pinned_hosts: boolean;
         };
         UserStruct: {
             display_name: string;
@@ -8039,6 +8078,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleRunsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-settings-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgJobSettingsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateOrgJobSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateOrgJobSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgJobSettingsOutputBody"];
                 };
             };
             /** @description Error */

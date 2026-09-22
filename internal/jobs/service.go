@@ -439,6 +439,15 @@ type Service struct {
 	// type: hosts.Service implements it, unit-test fakes that do not
 	// simply leave the guard off.
 	keyGuard KeyGuardSource
+	// fullPins is the PinnedPublicKeys source for the org pin requirement
+	// (backlog 2.44), resolved from the HostLookup's own type like
+	// keyGuard. Unwired, the refusal is simply off.
+	fullPins FullPinSource
+	// settings is the org-level job settings store (backlog 2.44),
+	// resolved from the Store's own type; a store that does not carry the
+	// capability keeps the refusal off and the settings routes failing
+	// closed.
+	settings jobSettingsStore
 	// rotationTargets is the credential-referencing store the rotation
 	// enqueue needs, resolved from the queue's own type (SQLQueue
 	// implements it with org-scoped reads); a queue that does not leaves
@@ -459,6 +468,12 @@ func NewService(store Store, queue Queue, templates TemplateSource, resolver Sco
 	s := &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
 	if g, ok := hosts.(KeyGuardSource); ok {
 		s.keyGuard = g
+	}
+	if fp, ok := hosts.(FullPinSource); ok {
+		s.fullPins = fp
+	}
+	if st, ok := store.(jobSettingsStore); ok {
+		s.settings = st
 	}
 	if rt, ok := queue.(RotationTargets); ok {
 		s.rotationTargets = rt
@@ -546,6 +561,13 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			return nil, ErrAllHostsExcluded
 		}
 	}
+	// Refuse unpinned hosts (backlog 2.44) when the organization requires
+	// them: the run's whole scope is refused, naming the hosts without a
+	// full pin, so an operator can pin (or exclude) instead of silently
+	// running against untrusted keys.
+	if err := s.refuseUnpinnedHosts(ctx, orgID, zoneTargetIDs(targets)); err != nil {
+		return nil, err
+	}
 	group := s.newID()
 	now := s.now()
 	tmplID := templateID
@@ -569,10 +591,9 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 	return out, nil
 }
 
-// excludeKeyChanged drops every targeted host whose latest connection test
-// reports a changed host key from the per-zone targets. A guard failure
-// fails the enqueue closed.
-func (s *Service) excludeKeyChanged(ctx context.Context, orgID uuid.UUID, targets []ZoneTargets) ([]ZoneTargets, error) {
+// zoneTargetIDs collects the deduplicated host ids across the per-zone
+// targets, the guard checks' input.
+func zoneTargetIDs(targets []ZoneTargets) []uuid.UUID {
 	ids := make([]uuid.UUID, 0, len(targets))
 	seen := map[uuid.UUID]bool{}
 	for _, t := range targets {
@@ -583,6 +604,14 @@ func (s *Service) excludeKeyChanged(ctx context.Context, orgID uuid.UUID, target
 			}
 		}
 	}
+	return ids
+}
+
+// excludeKeyChanged drops every targeted host whose latest connection test
+// reports a changed host key from the per-zone targets. A guard failure
+// fails the enqueue closed.
+func (s *Service) excludeKeyChanged(ctx context.Context, orgID uuid.UUID, targets []ZoneTargets) ([]ZoneTargets, error) {
+	ids := zoneTargetIDs(targets)
 	if len(ids) == 0 {
 		return targets, nil
 	}
@@ -655,6 +684,12 @@ func (s *Service) EnqueueHostJob(ctx context.Context, orgID uuid.UUID, kind Kind
 	}
 	if kind == KindBootstrap || kind == KindRotateKey || kind == KindAdhoc {
 		if err := s.refuseChangedHosts(ctx, orgID, hostIDs); err != nil {
+			return Job{}, err
+		}
+		// The pin requirement (backlog 2.44) guards the same SSH-driving
+		// kinds; the connection test is how a host gets pinned and stays
+		// refused by neither.
+		if err := s.refuseUnpinnedHosts(ctx, orgID, hostIDs); err != nil {
 			return Job{}, err
 		}
 	}

@@ -95,6 +95,12 @@ func mapAdhocErr(ctx context.Context, err error) error {
 		// A targeted host's key changed: the command is refused until a
 		// connection test confirms the pinned key again.
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, jobs.ErrUnpinnedHosts):
+		// The organization requires pinned hosts (backlog 2.44): the
+		// command is refused, naming the hosts without a full pin. 422,
+		// not 409: nothing changed, the org's requirement is simply not
+		// satisfied by this request.
+		return huma.Error422UnprocessableEntity(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped adhoc error", "err", err)
 		return huma.Error500InternalServerError("internal error")

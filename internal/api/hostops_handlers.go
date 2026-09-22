@@ -307,6 +307,11 @@ func mapHostopsErr(ctx context.Context, err error) error {
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, jobs.ErrHostKeyChanged):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, jobs.ErrUnpinnedHosts):
+		// The organization requires pinned hosts (backlog 2.44): the
+		// bootstrap is refused, naming the unpinned host. 422: the org's
+		// requirement is not satisfied by this request.
+		return huma.Error422UnprocessableEntity(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped hostops error", "err", err)
 		return huma.Error500InternalServerError("internal error")

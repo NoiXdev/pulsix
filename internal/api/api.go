@@ -397,4 +397,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerScheduleNotifyRoutes(orgScoped, deps)  // /orgs/{org}/schedules/{id}/notifications
 	registerNotifyDigestRoutes(orgScoped, deps)    // /orgs/{org}/notification-digest
 	registerCalendarRoutes(orgScoped, deps)        // GET /orgs/{org}/calendar
+	registerOrgSettingsRoutes(orgScoped, deps)     // /orgs/{org}/settings/jobs
 }

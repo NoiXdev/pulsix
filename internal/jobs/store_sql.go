@@ -27,6 +27,28 @@ type SQLStore struct {
 // NewSQLStore builds the store on d itself, never on its raw pool.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 
+// GetOrgJobSettings implements the jobSettingsStore capability (backlog
+// 2.44): the organization's stored settings; ok false when none are
+// stored, which the service turns into the defaults.
+func (s *SQLStore) GetOrgJobSettings(ctx context.Context, orgID uuid.UUID) (OrgJobSettings, bool, error) {
+	require, err := s.q.GetOrgJobSettings(ctx, orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrgJobSettings{}, false, nil
+	}
+	if err != nil {
+		return OrgJobSettings{}, false, fmt.Errorf("get org job settings: %w", err)
+	}
+	return OrgJobSettings{JobsRequirePinnedHosts: require}, true, nil
+}
+
+// PutOrgJobSettings implements the jobSettingsStore capability.
+func (s *SQLStore) PutOrgJobSettings(ctx context.Context, orgID uuid.UUID, st OrgJobSettings) error {
+	if _, err := s.q.UpsertOrgJobSettings(ctx, gen.UpsertOrgJobSettingsParams{OrgID: orgID, JobsRequirePinnedHosts: st.JobsRequirePinnedHosts}); err != nil {
+		return fmt.Errorf("store org job settings: %w", err)
+	}
+	return nil
+}
+
 // CreateJobGroup inserts every job of one enqueue group inside a single
 // transaction: all rows commit together or nothing does — a rotation
 // enqueue that fails halfway must never leave an orphaned partial group
