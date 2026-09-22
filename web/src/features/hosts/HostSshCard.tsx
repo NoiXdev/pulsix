@@ -10,6 +10,7 @@ import { useHostInventoryPreview } from '../../api/hooks/useInventory.ts';
 import type { Bastion, Credential, HostSSH } from '../../api/types.ts';
 import { PublicKeyPanel } from '../credentials/PublicKeyPanel.tsx';
 import { routeLabel } from '../credentials/labels.ts';
+import { PinStateBadge } from './PinStateBadge.tsx';
 
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
@@ -74,6 +75,9 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
     <Card className="p-4">
       <h2 className="mb-3 text-[13px] font-semibold">SSH access</h2>
       <form onSubmit={submit} className="flex flex-col gap-3">
+        <div className="flex items-center gap-2" aria-label="Host key pin state">
+          <PinStateBadge state={current.pin_state} />
+        </div>
         <div className="grid grid-cols-[1fr_90px] gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="ssh-user">User</Label>

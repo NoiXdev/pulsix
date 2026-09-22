@@ -97,6 +97,13 @@ type hostSSHDTO struct {
 	CredentialID *string `json:"credential_id,omitempty"`
 	BastionMode  string  `json:"bastion_mode" enum:"inherit,none,explicit"`
 	BastionID    *string `json:"bastion_id,omitempty"`
+	// PinState is the host's host-key pin state (backlog 2.43): "full"
+	// when the pin carries the full public key (enforceable),
+	// "fingerprint_only" when it holds only the fingerprint (a pin made
+	// before migration 00021 — its claims fail with the connection-test
+	// remedy until a test completes it). Absent while the host is
+	// unpinned.
+	PinState *string `json:"pin_state,omitempty" enum:"full,fingerprint_only"`
 }
 
 func toHostSSHDTO(h sshconf.HostSSH) hostSSHDTO {
@@ -266,6 +273,11 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &hostSSHOutput{}
 		out.Body.SSH = toHostSSHDTO(h)
+		pin, err := hostPinState(ctx, deps, scope.OrgID, id)
+		if err != nil {
+			return nil, mapSSHErr(ctx, err)
+		}
+		out.Body.SSH.PinState = pin
 		return out, nil
 	})
 
@@ -296,6 +308,13 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, id.String(), "updated SSH settings")
 		out := &hostSSHOutput{}
 		out.Body.SSH = toHostSSHDTO(h)
+		// The pin is untouched by this write, but the response keeps the
+		// read's shape: the same pin state travels back.
+		pin, err := hostPinState(ctx, deps, scope.OrgID, id)
+		if err != nil {
+			return nil, mapSSHErr(ctx, err)
+		}
+		out.Body.SSH.PinState = pin
 		return out, nil
 	}, withAudit("setHostSSH", "host"))
 }

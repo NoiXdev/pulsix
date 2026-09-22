@@ -1,8 +1,14 @@
 package api_test
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -25,6 +31,7 @@ type hostSSHBody struct {
 		CredentialID *string `json:"credential_id"`
 		BastionMode  string  `json:"bastion_mode"`
 		BastionID    *string `json:"bastion_id"`
+		PinState     *string `json:"pin_state"`
 	} `json:"ssh"`
 }
 
@@ -56,6 +63,77 @@ func newSSHFixture(t *testing.T, slug string) sshFixture {
 	decodeInto(t, postJSON(t, f.c, f.org+"/credentials", map[string]any{"name": "tok", "kind": "git_token", "token": "x"}), &cred)
 	f.tokenID = cred.Credential.ID
 	return f
+}
+
+// TestHostSSHShowsPinState (backlog 2.43): the SSH settings read carries
+// the host's pin state — full for a pin that holds the key, fingerprint_only
+// for a pin made before migration 00021, and nothing at all while the host
+// is unpinned.
+func TestHostSSHShowsPinState(t *testing.T) {
+	f := newSSHFixture(t, "pinstate-org")
+	orgID := orgIDBySlug(t, f.s, "pinstate-org")
+	hostID := mustUUID(t, f.hostID)
+
+	fullFP, fullPub := hostKeyPairForAPI(t)
+	if err := f.s.Deps.Hosts.SetHostKey(hctx, orgID, hostID, fullFP, fullPub); err != nil {
+		t.Fatal(err)
+	}
+	sshURL := f.org + "/hosts/" + f.hostID + "/ssh"
+	var full hostSSHBody
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, sshURL, nil), &full)
+	if full.SSH.PinState == nil || *full.SSH.PinState != "full" {
+		t.Fatalf("full pin: ssh.pin_state = %v, want \"full\"", full.SSH.PinState)
+	}
+
+	// A pin made before migration 00021 carries only the fingerprint.
+	legacyFP, _ := hostKeyPairForAPI(t)
+	if _, err := f.s.DB.Pool().Exec(hctx,
+		`INSERT INTO host_ssh (host_id, org_id, ssh_host_key) VALUES ($1, $2, $3)
+		 ON CONFLICT (host_id) DO UPDATE SET ssh_host_key = EXCLUDED.ssh_host_key, ssh_host_public_key = NULL`,
+		hostID, orgID, legacyFP); err != nil {
+		t.Fatal(err)
+	}
+	var legacy hostSSHBody
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, sshURL, nil), &legacy)
+	if legacy.SSH.PinState == nil || *legacy.SSH.PinState != "fingerprint_only" {
+		t.Fatalf("legacy pin: ssh.pin_state = %v, want \"fingerprint_only\"", legacy.SSH.PinState)
+	}
+
+	// Unpinned: the field is absent.
+	if _, err := f.s.DB.Pool().Exec(hctx,
+		`UPDATE host_ssh SET ssh_host_key = NULL, ssh_host_public_key = NULL WHERE org_id = $1 AND host_id = $2`,
+		orgID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	var plain hostSSHBody
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, sshURL, nil), &plain)
+	if plain.SSH.PinState != nil {
+		t.Fatalf("unpinned: ssh.pin_state = %v, want absent", plain.SSH.PinState)
+	}
+}
+
+// orgIDBySlug resolves a seeded organization's id through its slug.
+func orgIDBySlug(t *testing.T, s *apitest.Server, slug string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := s.DB.Pool().QueryRow(hctx, `SELECT id FROM organizations WHERE slug = $1`, slug).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// hostKeyPairForAPI generates a host key for the API-level pin fixtures.
+func hostKeyPairForAPI(t *testing.T) (fingerprint, publicKey string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ssh.FingerprintSHA256(sshPub), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
 }
 
 func TestBastionLifecycle(t *testing.T) {

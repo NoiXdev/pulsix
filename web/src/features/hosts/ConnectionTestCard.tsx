@@ -5,6 +5,7 @@ import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useClearHostKey, useHostTest, useSetHostKey, useStartConnectionTest } from '../../api/hooks/useHostOps.ts';
+import { PinStateBadge } from './PinStateBadge.tsx';
 
 const KEY_STATE_TONE: Record<string, Tone> = { pinned: 'ok', changed: 'crit', unpinned: 'warn' };
 
@@ -69,6 +70,7 @@ function TestResult({
     ok: boolean;
     host_key: string;
     host_key_state: string;
+    pin_state?: string | null;
     checks: { name: string; detail: string; ok: boolean }[] | null;
   };
   canWrite: boolean;
@@ -89,18 +91,19 @@ function TestResult({
           </li>
         ))}
       </ul>
-      <HostKey org={org} hostId={hostId} fingerprint={test.host_key} state={test.host_key_state} canWrite={canWrite} />
+      <HostKey org={org} hostId={hostId} fingerprint={test.host_key} state={test.host_key_state} pinState={test.pin_state} canWrite={canWrite} />
     </div>
   );
 }
 
 function HostKey({
-  org, hostId, fingerprint, state, canWrite,
+  org, hostId, fingerprint, state, pinState, canWrite,
 }: {
   org: string;
   hostId: string;
   fingerprint: string;
   state: string;
+  pinState?: string | null;
   canWrite: boolean;
 }) {
   const tone = KEY_STATE_TONE[state] ?? 'unknown';
@@ -110,9 +113,15 @@ function HostKey({
         <Lock size={13} className="text-muted-foreground" />
         <span className="font-mono text-[11px]">{fingerprint || 'no key observed'}</span>
         <Pill tone={tone}>{state}</Pill>
+        <PinStateBadge state={pinState} />
         {canWrite && state !== 'pinned' && <PinButton org={org} hostId={hostId} fingerprint={fingerprint} />}
         {canWrite && state === 'pinned' && <UnpinButton org={org} hostId={hostId} />}
       </div>
+      {pinState === 'fingerprint_only' && (
+        <p className="text-[11px] text-muted-foreground">
+          The pin holds only a fingerprint and cannot be enforced yet — the next connection test that observes the key completes it.
+        </p>
+      )}
       {state === 'changed' && (
         <p className="text-[11px]" style={{ color: 'var(--px-crit)' }}>
           The host key changed since it was pinned — jobs are blocked until the new key is pinned and a new connection test confirms it.

@@ -47,6 +47,12 @@ type hostTestDTO struct {
 	HostKey      string     `json:"host_key"`
 	HostKeyState string     `json:"host_key_state"`
 	Checks       []checkDTO `json:"checks"`
+	// PinState is the host's pin state (backlog 2.43): "full" when the pin
+	// carries the full public key, "fingerprint_only" when it holds only
+	// the fingerprint (a pin made before migration 00021 — its claims fail
+	// with the connection-test remedy until a test completes it). Absent
+	// while the host is unpinned.
+	PinState *string `json:"pin_state,omitempty" enum:"full,fingerprint_only"`
 }
 
 type checkDTO struct {
@@ -206,8 +212,13 @@ func registerHostopsRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapHostopsErr(ctx, err)
 		}
+		pin, err := hostPinState(ctx, deps, scope.OrgID, hostID)
+		if err != nil {
+			return nil, mapHostopsErr(ctx, err)
+		}
 		out := &hostTestOutput{}
 		out.Body.Test = toHostTestDTO(test)
+		out.Body.Test.PinState = pin
 		return out, nil
 	})
 
@@ -268,6 +279,20 @@ func registerHostopsRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, hostID.String(), "cleared host key pin")
 		return &okOutput{}, nil
 	}, withAudit("clearHostKey", "host"))
+}
+
+// hostPinState resolves a host's pin state (backlog 2.43) for the SSH
+// card DTOs: nil while the host is unpinned, else hosts.PinStateFull or
+// hosts.PinStateFingerprintOnly. A lookup failure fails the request.
+func hostPinState(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (*string, error) {
+	states, err := deps.Hosts.PinStates(ctx, orgID, []uuid.UUID{hostID})
+	if err != nil {
+		return nil, err
+	}
+	if state, ok := states[hostID]; ok {
+		return &state, nil
+	}
+	return nil, nil
 }
 
 // mapHostopsErr converts the jobs and hosts errors the two write routes

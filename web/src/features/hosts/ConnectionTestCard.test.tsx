@@ -136,4 +136,26 @@ describe('ConnectionTestCard', () => {
     expect(screen.queryByRole('button', { name: 'Unpin' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Pin host key' })).not.toBeInTheDocument();
   });
+
+  it('shows the pin needs confirmation badge and hint for a fingerprint-only pin (backlog 2.43)', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/connection-test': {
+        test: test({ host_key_state: 'pinned', pin_state: 'fingerprint_only' }),
+      },
+    });
+    renderCard();
+    expect(await screen.findByText('pin needs confirmation')).toBeInTheDocument();
+    expect(screen.getByText(/the pin holds only a fingerprint/i)).toBeInTheDocument();
+  });
+
+  it('shows the pin complete badge for a full pin and nothing while unpinned', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/connection-test': {
+        test: test({ host_key_state: 'pinned', pin_state: 'full' }),
+      },
+    });
+    renderCard();
+    expect(await screen.findByText('pin complete')).toBeInTheDocument();
+    expect(screen.queryByText('pin needs confirmation')).not.toBeInTheDocument();
+  });
 });

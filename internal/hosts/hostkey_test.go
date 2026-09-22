@@ -414,3 +414,50 @@ func TestRecordConnectionTestCompletesAFingerprintOnlyPin(t *testing.T) {
 		})
 	}
 }
+
+// TestPinStatesDerivation (backlog 2.43): PinStates reports full for a pin
+// that carries the full public key, fingerprint_only for a pin made before
+// migration 00021 (fingerprint only), and nothing at all for an unpinned
+// host — unpinned is trust-on-first-use, not a pin state. A pin of another
+// organization is invisible, exactly like everywhere else.
+func TestPinStatesDerivation(t *testing.T) {
+	fullFP, fullPub := hostKeyPair(t)
+	legacyFP, _ := hostKeyPair(t)
+	foreignOrg := uuid.Must(uuid.NewV7())
+
+	svc, store, org, host := seededService(t)
+	zones, err := svc.ListZones(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "legacy-01", Address: "192.0.2.11", ZoneID: zones[0].ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A full pin (made since migration 00021) and a fingerprint-only pin
+	// (made before it, not yet completed by a confirming connection test).
+	store.pinnedKeys[host] = hosts.HostKeyPin{Fingerprint: fullFP, PublicKey: fullPub}
+	store.pinnedKeys[legacy.ID] = hosts.HostKeyPin{Fingerprint: legacyFP}
+
+	states, err := svc.PinStates(ctx, org, []uuid.UUID{host, legacy.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states[host] != hosts.PinStateFull {
+		t.Fatalf("full-key pin state = %q, want %q", states[host], hosts.PinStateFull)
+	}
+	if states[legacy.ID] != hosts.PinStateFingerprintOnly {
+		t.Fatalf("fingerprint-only pin state = %q, want %q", states[legacy.ID], hosts.PinStateFingerprintOnly)
+	}
+	unpinned := uuid.Must(uuid.NewV7())
+	if _, ok := states[unpinned]; ok {
+		t.Fatal("an unpinned host id must be absent from the map")
+	}
+	foreign, err := svc.PinStates(ctx, foreignOrg, []uuid.UUID{host, legacy.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(foreign) != 0 {
+		t.Fatalf("cross-org read = %v, want nothing", foreign)
+	}
+}

@@ -79,4 +79,21 @@ describe('HostSshCard', () => {
     expect(screen.getByLabelText(/Direct connection/)).toBeDisabled();
     expect(screen.getByLabelText(/This jump host/)).toBeDisabled();
   });
+
+  it('shows the pin state badge only while a pin exists (backlog 2.43)', async () => {
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { ...base['GET /api/v1/orgs/acme/hosts/h1/ssh'].ssh, pin_state: 'fingerprint_only' } },
+    });
+    renderCard(true);
+    expect(await screen.findByText('pin needs confirmation')).toBeInTheDocument();
+  });
+
+  it('shows no pin badge while the host is unpinned', async () => {
+    mockApi(base);
+    renderCard(true);
+    expect(await screen.findByLabelText('Host key pin state')).toBeInTheDocument();
+    expect(screen.queryByText('pin complete')).not.toBeInTheDocument();
+    expect(screen.queryByText('pin needs confirmation')).not.toBeInTheDocument();
+  });
 });

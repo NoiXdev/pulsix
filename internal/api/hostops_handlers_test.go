@@ -168,6 +168,7 @@ func TestGetLatestConnectionTest(t *testing.T) {
 			OK           bool      `json:"ok"`
 			HostKey      string    `json:"host_key"`
 			HostKeyState string    `json:"host_key_state"`
+			PinState     *string   `json:"pin_state"`
 		} `json:"test"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
@@ -175,6 +176,42 @@ func TestGetLatestConnectionTest(t *testing.T) {
 	}
 	if listed.Test.HostKeyState != "changed" || listed.Test.OK || listed.Test.HostKey != changedKey || !listed.Test.At.Equal(at2) {
 		t.Fatalf("test = %+v, want the newest changed row", listed.Test)
+	}
+	if listed.Test.PinState != nil {
+		t.Fatalf("unpinned host: test.pin_state = %v, want absent", listed.Test.PinState)
+	}
+}
+
+// TestGetLatestConnectionTestShowsPinState (backlog 2.43): the connection
+// test read carries the host's pin state so the SPA can show whether the
+// pin is complete or still needs a confirming test — even when the latest
+// test row itself predates the state.
+func TestGetLatestConnectionTestShowsPinState(t *testing.T) {
+	f := seedHostopsOrg(t)
+	hostID := mustUUID(t, f.hostID)
+
+	// A fingerprint-only pin (the pre-00021 shape), with the pin's own
+	// fingerprint as the latest test's observation.
+	legacyFP, legacyPub := hostKeyPairForAPI(t)
+	if err := f.s.Deps.Hosts.SetHostKey(hctx, f.orgID, hostID, legacyFP, legacyPub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.DB.Pool().Exec(hctx,
+		`UPDATE host_ssh SET ssh_host_public_key = NULL WHERE org_id = $1 AND host_id = $2`, f.orgID, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, hostID, time.Now().Truncate(time.Microsecond), true, legacyFP, "", "pinned", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var listed struct {
+		Test struct {
+			PinState *string `json:"pin_state"`
+		} `json:"test"`
+	}
+	decodeInto(t, requestJSON(t, f.ownerC, http.MethodGet, f.testURL(), nil), &listed)
+	if listed.Test.PinState == nil || *listed.Test.PinState != "fingerprint_only" {
+		t.Fatalf("test.pin_state = %v, want \"fingerprint_only\"", listed.Test.PinState)
 	}
 }
 

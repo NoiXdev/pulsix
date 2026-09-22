@@ -2395,6 +2395,8 @@ export interface components {
             bastion_mode: "inherit" | "none" | "explicit";
             credential_id?: string;
             host_id: string;
+            /** @enum {string} */
+            pin_state?: "full" | "fingerprint_only";
             /** Format: int64 */
             port: number;
             username: string;
@@ -2445,6 +2447,8 @@ export interface components {
             host_key: string;
             host_key_state: string;
             ok: boolean;
+            /** @enum {string} */
+            pin_state?: "full" | "fingerprint_only";
         };
         HostTestOutputBody: {
             /**

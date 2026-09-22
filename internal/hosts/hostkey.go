@@ -73,6 +73,37 @@ type HostKeyPin struct {
 	PublicKey   string
 }
 
+// Pin states (backlog 2.43), what the hosts read APIs report about a
+// host's pin: full means the pin carries the full public key (the
+// claimable, enforceable shape), fingerprint_only means it holds only the
+// fingerprint — a pin made before migration 00021 — whose claims fail with
+// the connection-test remedy until a test confirms the fingerprint and
+// fills the key in.
+const (
+	PinStateFull            = "full"
+	PinStateFingerprintOnly = "fingerprint_only"
+)
+
+// PinStates reports each given host's pin state. A host without a pin is
+// absent from the map: unpinned is trust-on-first-use, not a pin state.
+// Hosts of another organization are invisible, exactly like everywhere
+// else in this package.
+func (s *Service) PinStates(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	pins, err := s.store.ListPinnedKeys(ctx, orgID, hostIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(pins))
+	for id, pin := range pins {
+		if pin.PublicKey != "" {
+			out[id] = PinStateFull
+		} else {
+			out[id] = PinStateFingerprintOnly
+		}
+	}
+	return out, nil
+}
+
 // SetHostKey pins a host key: the fingerprint in the OpenSSH
 // "SHA256:<base64>" shape and the key itself in authorized-key form, whose
 // fingerprint must equal the given one. The host must exist in the
