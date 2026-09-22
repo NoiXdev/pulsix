@@ -238,6 +238,31 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 	return i, err
 }
 
+const createRotationGroupTargets = `-- name: CreateRotationGroupTargets :exec
+INSERT INTO rotation_groups (id, org_id, credential_id, targets)
+VALUES ($1, $2, $3, $4)
+`
+
+type CreateRotationGroupTargetsParams struct {
+	ID           uuid.UUID `json:"id"`
+	OrgID        uuid.UUID `json:"org_id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	Targets      []byte    `json:"targets"`
+}
+
+// The revocation targets snapshot (backlog 2.46), written inside the
+// rotation group's own insert transaction: the referencing host and jump
+// host ids as they stood at enqueue time, keyed by the group id.
+func (q *Queries) CreateRotationGroupTargets(ctx context.Context, arg CreateRotationGroupTargetsParams) error {
+	_, err := q.db.Exec(ctx, createRotationGroupTargets,
+		arg.ID,
+		arg.OrgID,
+		arg.CredentialID,
+		arg.Targets,
+	)
+	return err
+}
+
 const failExhaustedStaleJob = `-- name: FailExhaustedStaleJob :execrows
 UPDATE jobs SET status = $1::text,
     stats = COALESCE($2::jsonb, stats), error = $3, finished_at = $4
@@ -372,6 +397,25 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.TemplateName,
 	)
 	return i, err
+}
+
+const getRotationGroupTargets = `-- name: GetRotationGroupTargets :one
+SELECT targets FROM rotation_groups WHERE org_id = $1 AND id = $2
+`
+
+type GetRotationGroupTargetsParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// The snapshot the revoke_key phase reads its targets from — NOT the live
+// reference lists: a target that stopped referencing the credential
+// mid-rotation is still revoked (backlog 2.46).
+func (q *Queries) GetRotationGroupTargets(ctx context.Context, arg GetRotationGroupTargetsParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getRotationGroupTargets, arg.OrgID, arg.ID)
+	var targets []byte
+	err := row.Scan(&targets)
+	return targets, err
 }
 
 const hasActiveRepoSync = `-- name: HasActiveRepoSync :one

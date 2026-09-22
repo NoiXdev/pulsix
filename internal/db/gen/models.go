@@ -418,6 +418,14 @@ type RecoveryCode struct {
 	UsedAt   pgtype.Timestamptz `json:"used_at"`
 }
 
+type RotationGroup struct {
+	ID           uuid.UUID `json:"id"`
+	OrgID        uuid.UUID `json:"org_id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	Targets      []byte    `json:"targets"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type Schedule struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`

@@ -75,8 +75,10 @@ type rotationOnlyStore struct {
 	payloads       map[uuid.UUID]json.RawMessage
 	nextErr        error
 	groupCalls     int
-	failGroupAt    int   // 1-based job index whose insert fails; 0 = no failure
-	groupErr       error // the failure the staged insert trips
+	groupID        uuid.UUID       // the group id the last group insert carried
+	groupTargets   json.RawMessage // the targets snapshot the last group insert carried
+	failGroupAt    int             // 1-based job index whose insert fails; 0 = no failure
+	groupErr       error           // the failure the staged insert trips
 	stagedPayloads map[uuid.UUID]json.RawMessage
 }
 
@@ -98,11 +100,13 @@ func (s *rotationOnlyStore) CreateJob(_ context.Context, j Job, payload json.Raw
 // CreateJobGroup implements the groupInserter capability with the same
 // all-or-nothing contract the real store's transaction gives: rows stage
 // into the group's own slice and only become visible when the whole call
-// succeeds, so a mid-group failure leaves nothing behind.
-func (s *rotationOnlyStore) CreateRotationGroup(ctx context.Context, orgID, _ uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+// succeeds, so a mid-group failure leaves nothing behind. The group id and
+// targets snapshot are recorded with it — they ride the same transaction.
+func (s *rotationOnlyStore) CreateRotationGroup(ctx context.Context, orgID, _, groupID uuid.UUID, targets json.RawMessage, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groupCalls++
+	s.groupID, s.groupTargets = groupID, targets
 	if s.nextErr != nil {
 		return s.nextErr
 	}
@@ -292,6 +296,62 @@ func TestEnqueueRotationCreatesOneJobPerTarget(t *testing.T) {
 	}
 }
 
+// TestEnqueueRotationSnapshotsItsTargets pins backlog 2.46: the enqueue
+// writes the referencing host and jump host ids into a rotation_groups row
+// keyed by the group id, inside the SAME transactional insert call the
+// group's jobs ride — the snapshot the revocation phase later reads, so a
+// target that stops referencing the credential mid-rotation is still
+// revoked (the old key sits in its authorized_keys and must be removed).
+func TestEnqueueRotationSnapshotsItsTargets(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	zoneA, zoneDefault := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	credID := uuid.Must(uuid.NewV7())
+	host1, bastion1 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	store := newRotationOnlyStore()
+	svc := &Service{
+		store: store, queue: noQueue{},
+		zones: oneZone{zoneDefault},
+		box:   fakeBox{}, now: time.Now, rand: rand.Reader,
+	}
+	svc.rotationTargets = fakeRotationTargets{
+		hosts:    []RotationHost{{ID: host1, ZoneID: zoneA}},
+		bastions: []sshconf.Bastion{{ID: bastion1, Name: "jump-01", Address: "10.0.0.9", Port: 22}},
+	}
+	key := credentials.PendingKey{
+		PrivateKey: credentials.Secret{PrivateKey: "new-pem"}, PublicKey: "ssh-ed25519 AAAA new",
+		Fingerprint: "SHA256:new", KeyType: "ed25519",
+		PreviousPublicKey: "ssh-ed25519 AAAA old",
+	}
+
+	group, _, _, err := svc.EnqueueRotation(db.WithOrgScope(context.Background(), org), org, credID, key, nil)
+	if err != nil {
+		t.Fatalf("EnqueueRotation: %v", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.groupID != group {
+		t.Fatalf("snapshot keyed by group %s, want %s", store.groupID, group)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(store.groupTargets, &raw); err != nil {
+		t.Fatalf("snapshot is not a JSON object: %v (%s)", err, store.groupTargets)
+	}
+	if len(raw) != 2 || raw["host_ids"] == nil || raw["bastion_ids"] == nil {
+		t.Fatalf("snapshot keys = %v, want exactly host_ids and bastion_ids", raw)
+	}
+	var snap rotationTargetSnapshot
+	if err := json.Unmarshal(store.groupTargets, &snap); err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.HostIDs) != 1 || snap.HostIDs[0] != host1 {
+		t.Fatalf("snapshot hosts = %v, want [%s]", snap.HostIDs, host1)
+	}
+	if len(snap.BastionIDs) != 1 || snap.BastionIDs[0] != bastion1 {
+		t.Fatalf("snapshot bastions = %v, want [%s]", snap.BastionIDs, bastion1)
+	}
+}
+
 // TestEnqueueRotationEmptyGroupIsCountZero pins the immediate-rekey path.
 func TestEnqueueRotationEmptyGroupIsCountZero(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
@@ -308,6 +368,9 @@ func TestEnqueueRotationEmptyGroupIsCountZero(t *testing.T) {
 	}
 	if len(store.jobs) != 0 {
 		t.Fatalf("no job may exist: %+v", store.jobs)
+	}
+	if store.groupID != uuid.Nil || store.groupTargets != nil {
+		t.Fatalf("a rotation without references must not snapshot targets: %s %s", store.groupID, store.groupTargets)
 	}
 }
 

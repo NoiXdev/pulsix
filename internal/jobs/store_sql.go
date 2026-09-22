@@ -67,7 +67,11 @@ func (s *SQLStore) CreateJobGroup(ctx context.Context, orgID uuid.UUID, jobs []J
 // lock it refuses with ErrRotationInProgress while any job of an earlier
 // rotation group of the same credential is not terminal, and inserts the
 // group otherwise — two concurrent Rotate calls cannot both pass the check.
-func (s *SQLStore) CreateRotationGroup(ctx context.Context, orgID, credentialID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
+// The group's revocation-targets snapshot (backlog 2.46) rides the same
+// transaction: the revoke_key phase reads its targets from it, never from
+// the live references, so a target that stopped referencing the credential
+// mid-rotation is still revoked.
+func (s *SQLStore) CreateRotationGroup(ctx context.Context, orgID, credentialID, groupID uuid.UUID, targets json.RawMessage, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
 	return s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, rotationLockKeyPrefix+credentialID.String()); err != nil {
 			return fmt.Errorf("lock credential rotation: %w", err)
@@ -81,6 +85,11 @@ func (s *SQLStore) CreateRotationGroup(ctx context.Context, orgID, credentialID 
 		}
 		if active > 0 {
 			return ErrRotationInProgress
+		}
+		if err := q.CreateRotationGroupTargets(ctx, gen.CreateRotationGroupTargetsParams{
+			ID: groupID, OrgID: orgID, CredentialID: credentialID, Targets: []byte(targets),
+		}); err != nil {
+			return fmt.Errorf("snapshot rotation targets: %w", err)
 		}
 		return insertJobs(ctx, q, jobs, payloads)
 	})

@@ -79,6 +79,19 @@ type rotationTarget struct {
 	ID   uuid.UUID `json:"id"`
 }
 
+// rotationTargetSnapshot is the persisted revocation-target list (backlog
+// 2.46): the referencing host and jump host ids as they stood at enqueue
+// time, stored in the group's rotation_groups row inside the enqueue's own
+// transaction. The revoke_key phase reads ITS targets from here — not from
+// the live reference lists — because the old key is still in a dropped
+// target's authorized_keys and must be removed: revoking a key that no
+// longer authenticates anything is harmless, leaving it is not. Ids only;
+// no keys, no secrets.
+type rotationTargetSnapshot struct {
+	HostIDs    []uuid.UUID `json:"host_ids"`
+	BastionIDs []uuid.UUID `json:"bastion_ids"`
+}
+
 // ListCredentialHosts reads the managed hosts referencing a credential,
 // org-scoped (the caller's ctx carries the scope — the service passes the
 // request's own).
@@ -142,14 +155,15 @@ func (q *SQLQueue) ListOrgBastions(ctx context.Context, orgID uuid.UUID) ([]sshc
 func (q *SQLQueue) SetRotationFinisher(finisher RotationFinisher) { q.rotation = finisher }
 
 // groupInserter is the store capability the rotation enqueue needs: the
-// whole group's inserts inside one transaction, refused with
+// whole group's inserts inside one transaction — the rotation_groups
+// snapshot row with them (backlog 2.46) — refused with
 // ErrRotationInProgress while an earlier rotation group of the credential
 // is not finished. The real SQLStore implements it; a store that does not
 // makes the enqueue fail closed — per-row inserts would leave an orphaned
 // partial group on a mid-loop failure, whose jobs could run and finalize
 // on their own.
 type groupInserter interface {
-	CreateRotationGroup(ctx context.Context, orgID, credentialID uuid.UUID, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error
+	CreateRotationGroup(ctx context.Context, orgID, credentialID, groupID uuid.UUID, targets json.RawMessage, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error
 }
 
 // EnqueueRotation enqueues the credential's rotation group: one rotate_key
@@ -187,6 +201,18 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 	hostIDs := make([]uuid.UUID, len(hosts))
 	for i, h := range hosts {
 		hostIDs[i] = h.ID
+	}
+	// The revocation targets snapshot (backlog 2.46): the references as
+	// they stand NOW, written into the group's rotation_groups row inside
+	// the same transaction as the jobs. The revoke_key phase targets
+	// exactly these, so a reference dropped mid-rotation is still revoked.
+	bastionIDs := make([]uuid.UUID, len(bastions))
+	for i, b := range bastions {
+		bastionIDs[i] = b.ID
+	}
+	snapshot, err := json.Marshal(rotationTargetSnapshot{HostIDs: hostIDs, BastionIDs: bastionIDs})
+	if err != nil {
+		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("encode rotation targets: %w", err)
 	}
 	if err := s.refuseChangedHosts(ctx, orgID, hostIDs); err != nil {
 		return uuid.Nil, uuid.Nil, 0, err
@@ -309,7 +335,7 @@ func (s *Service) EnqueueRotation(ctx context.Context, orgID, credentialID uuid.
 			}
 		}
 	}
-	if err := inserter.CreateRotationGroup(ctx, orgID, credentialID, jobs, payloads); err != nil {
+	if err := inserter.CreateRotationGroup(ctx, orgID, credentialID, group, snapshot, jobs, payloads); err != nil {
 		return uuid.Nil, uuid.Nil, 0, fmt.Errorf("insert rotation group: %w", err)
 	}
 	return group, jobs[0].ID, len(jobs), nil
@@ -396,17 +422,21 @@ func (q *SQLQueue) recordRotation(ctx context.Context, jobID uuid.UUID, status S
 
 // enqueueRevocations queues the group's last phase once every rotation and
 // verification succeeded and the new key is sealed onto the credential:
-// one revoke_key job per target currently referencing the credential (the
-// same source the rotation enqueue used), removing the PREVIOUS public key
-// from its authorized_keys. Removing it only now is what keeps a partial
-// rotation safe: while any host could not be verified, every host keeps the
-// old key the credential still holds. The revocations belong to the group
-// (and its credential), log in with the credential's current secret — the
-// new key — and run inside the finish's transaction, so a crash either
-// finalizes and queues them together or does neither. A group that already
-// has revocations (a second finalize observing the completed group) queues
-// none; a rotation without a recorded previous key (enqueued before
-// revocations existed) queues none either.
+// one revoke_key job per target of the group's SNAPSHOT (backlog 2.46 —
+// the referencing hosts and jump hosts as they stood at enqueue time, so a
+// target that stopped referencing the credential mid-rotation is still
+// revoked), removing the PREVIOUS public key from its authorized_keys.
+// Removing it only now is what keeps a partial rotation safe: while any
+// host could not be verified, every host keeps the old key the credential
+// still holds. The revocations belong to the group (and its credential),
+// log in with the credential's current secret — the new key — and run
+// inside the finish's transaction, so a crash either finalizes and queues
+// them together or does neither. A group that already has revocations (a
+// second finalize observing the completed group) queues none; a rotation
+// without a recorded previous key (enqueued before revocations existed)
+// queues none either; a group without a snapshot row (enqueued before the
+// snapshot existed) falls back to the live reference lists, the accepted
+// pre-2.46 semantics.
 func (q *SQLQueue) enqueueRevocations(ctx context.Context, orgID, groupID uuid.UUID, rp rotationJobPayload) error {
 	if rp.OldPublicKey == "" {
 		slog.WarnContext(ctx, "finalize rotation: no previous public key recorded; the old key is not revoked", "group", groupID)
@@ -421,11 +451,7 @@ func (q *SQLQueue) enqueueRevocations(ctx context.Context, orgID, groupID uuid.U
 	if existing > 0 {
 		return nil
 	}
-	hostTargets, err := q.ListCredentialHosts(ctx, orgID, rp.CredentialID)
-	if err != nil {
-		return fmt.Errorf("finalize rotation: %w", err)
-	}
-	bastionTargets, err := q.ListCredentialBastions(ctx, orgID, rp.CredentialID)
+	hostTargets, bastionTargets, err := q.revocationTargets(ctx, orgID, groupID, rp.CredentialID)
 	if err != nil {
 		return fmt.Errorf("finalize rotation: %w", err)
 	}
@@ -468,11 +494,75 @@ func (q *SQLQueue) enqueueRevocations(ctx context.Context, orgID, groupID uuid.U
 		}
 	}
 	for _, b := range bastionTargets {
-		if err := insert(defaultZone, []uuid.UUID{}, rotationTarget{Kind: rotationTargetBastion, ID: b.ID}); err != nil {
+		if err := insert(defaultZone, []uuid.UUID{}, rotationTarget{Kind: rotationTargetBastion, ID: b}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// revocationTargets resolves the revoke_key phase's targets: the group's
+// rotation_groups snapshot first (backlog 2.46 — read inside the finish's
+// transaction, org-scoped like everything else), the live reference lists
+// only as the legacy fallback for a group enqueued before the snapshot
+// existed. Snapshot host ids resolve to their current zone for the claim;
+// a target whose host row is gone by now is skipped with a log line — its
+// authorized_keys left with the host, there is nothing left to revoke.
+func (q *SQLQueue) revocationTargets(ctx context.Context, orgID, groupID, credentialID uuid.UUID) ([]RotationHost, []uuid.UUID, error) {
+	raw, err := gen.New(q.db).GetRotationGroupTargets(ctx, gen.GetRotationGroupTargetsParams{OrgID: orgID, ID: groupID})
+	switch {
+	case err == nil:
+		var snap rotationTargetSnapshot
+		if err := json.Unmarshal(raw, &snap); err != nil {
+			return nil, nil, fmt.Errorf("decode rotation targets: %w", err)
+		}
+		hosts, err := q.snapshotHostTargets(ctx, orgID, groupID, snap.HostIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		return hosts, snap.BastionIDs, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		// A pre-2.46 group: no snapshot was ever written. The revocations
+		// go to the references as they stand now — the previously accepted
+		// semantics — rather than to nobody.
+		hosts, err := q.ListCredentialHosts(ctx, orgID, credentialID)
+		if err != nil {
+			return nil, nil, err
+		}
+		bastions, err := q.ListCredentialBastions(ctx, orgID, credentialID)
+		if err != nil {
+			return nil, nil, err
+		}
+		ids := make([]uuid.UUID, len(bastions))
+		for i, b := range bastions {
+			ids[i] = b.ID
+		}
+		return hosts, ids, nil
+	default:
+		return nil, nil, fmt.Errorf("read rotation targets: %w", err)
+	}
+}
+
+// snapshotHostTargets resolves the snapshot's host ids onto their current
+// zone (the revoke_key job claims in the host's zone). Deleted hosts are
+// absent from the query's result and dropped from the target list.
+func (q *SQLQueue) snapshotHostTargets(ctx context.Context, orgID, groupID uuid.UUID, ids []uuid.UUID) ([]RotationHost, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := gen.New(q.db).ListHostZones(ctx, gen.ListHostZonesParams{OrgID: orgID, HostIds: ids})
+	if err != nil {
+		return nil, fmt.Errorf("resolve rotation target zones: %w", err)
+	}
+	out := make([]RotationHost, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, RotationHost{ID: r.ID, ZoneID: r.ZoneID})
+	}
+	if missing := len(ids) - len(out); missing > 0 {
+		slog.WarnContext(ctx, "finalize rotation: snapshot targets whose host is gone are not revoked",
+			"count", missing, "group", groupID)
+	}
+	return out, nil
 }
 
 // ClearTerminalPayload is the exported clear Service.Cancel reaches

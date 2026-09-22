@@ -23,6 +23,14 @@ RETURNING *;
 -- which this query guarantees on its own, independent of RLS.
 SELECT * FROM hosts WHERE id = $1 AND org_id = $2;
 
+-- name: ListHostZones :many
+-- The zone of each named host, in no particular order: the revocation
+-- phase (backlog 2.46) resolves each snapshot target's claim zone. A host
+-- deleted mid-rotation is simply absent from the result — its
+-- authorized_keys left with it, so nothing remains to revoke.
+SELECT id, zone_id FROM hosts
+WHERE org_id = $1 AND id = ANY(sqlc.arg(host_ids)::uuid[]);
+
 -- name: UpdateHost :one
 -- Sets every mutable column except facts and last_seen_at, which this task
 -- gives no route to change — an omitted column here is never silently

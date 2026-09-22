@@ -97,7 +97,7 @@ func TestStoreReadsReportDatabaseFailures(t *testing.T) {
 	if _, err := st.HasActiveRepoSync(dead, w.org, id); err == nil {
 		t.Error("HasActiveRepoSync reported no error on a dead connection")
 	}
-	if err := st.CreateRotationGroup(dead, w.org, id, nil, nil); err == nil {
+	if err := st.CreateRotationGroup(dead, w.org, id, id, nil, nil, nil); err == nil {
 		t.Error("CreateRotationGroup reported no error on a dead connection")
 	}
 	if _, _, err := st.ListJobs(dead, w.org, Filter{}, "", 10); err == nil {

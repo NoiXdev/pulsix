@@ -188,6 +188,19 @@ SELECT count(*) FROM jobs
 WHERE org_id = $1 AND rotation_credential_id = $2
   AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error');
 
+-- name: CreateRotationGroupTargets :exec
+-- The revocation targets snapshot (backlog 2.46), written inside the
+-- rotation group's own insert transaction: the referencing host and jump
+-- host ids as they stood at enqueue time, keyed by the group id.
+INSERT INTO rotation_groups (id, org_id, credential_id, targets)
+VALUES ($1, $2, $3, $4);
+
+-- name: GetRotationGroupTargets :one
+-- The snapshot the revoke_key phase reads its targets from — NOT the live
+-- reference lists: a target that stopped referencing the credential
+-- mid-rotation is still revoked (backlog 2.46).
+SELECT targets FROM rotation_groups WHERE org_id = $1 AND id = $2;
+
 -- name: HasActiveTemplateJob :one
 SELECT EXISTS (
   SELECT 1 FROM jobs

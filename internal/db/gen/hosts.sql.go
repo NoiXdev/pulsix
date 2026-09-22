@@ -241,6 +241,45 @@ func (q *Queries) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, er
 	return items, nil
 }
 
+const listHostZones = `-- name: ListHostZones :many
+SELECT id, zone_id FROM hosts
+WHERE org_id = $1 AND id = ANY($2::uuid[])
+`
+
+type ListHostZonesParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	HostIds []uuid.UUID `json:"host_ids"`
+}
+
+type ListHostZonesRow struct {
+	ID     uuid.UUID `json:"id"`
+	ZoneID uuid.UUID `json:"zone_id"`
+}
+
+// The zone of each named host, in no particular order: the revocation
+// phase (backlog 2.46) resolves each snapshot target's claim zone. A host
+// deleted mid-rotation is simply absent from the result — its
+// authorized_keys left with it, so nothing remains to revoke.
+func (q *Queries) ListHostZones(ctx context.Context, arg ListHostZonesParams) ([]ListHostZonesRow, error) {
+	rows, err := q.db.Query(ctx, listHostZones, arg.OrgID, arg.HostIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHostZonesRow
+	for rows.Next() {
+		var i ListHostZonesRow
+		if err := rows.Scan(&i.ID, &i.ZoneID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHosts = `-- name: ListHosts :many
 SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts
 WHERE org_id = $1
