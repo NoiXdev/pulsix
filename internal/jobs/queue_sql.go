@@ -78,8 +78,12 @@ type SQLQueue struct {
 	// bastion pins, a pinned bastion's claim then fails closed.
 	bastionPins BastionPinSource
 	// bastionGuard is the changed-jump-host read the host-bound claims
-	// re-apply (the pins source implements it — hosts.Service does); nil
-	// routes nothing (see BastionKeyGuardSource).
+	// re-apply (the pins source implements it — hosts.Service does). The
+	// claim-side guard is mandatory whenever a rendered route names jump
+	// hosts: a nil guard fails the claim closed with the wiring remedy
+	// (refuseChangedBastions, excludeChangedBastions), exactly like the
+	// host key guard — TestNilBastionGuardFailsClaimsClosed pins it. The
+	// enqueue-side rotation guard skips by design; the claim enforces.
 	bastionGuard BastionKeyGuardSource
 	// test is the optional sink a finished connection_test job's outcome is
 	// recorded through (SetTestSink, the same post-construction wiring the

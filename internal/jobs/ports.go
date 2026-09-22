@@ -123,9 +123,14 @@ type BastionPinSource interface {
 
 // BastionKeyGuardSource is the slice of hosts.Service the claim path's
 // block-on-mismatch needs for jump hosts (backlog 2.40): which of the given
-// bastions' LATEST hop observation reports a changed key. Declared next to
-// its consumer so unit tests drive fakes (a nil guard routes nothing —
-// the real wiring is hosts.Service, which always implements it).
+// bastions' LATEST hop observation reports a changed key. The claim-side
+// guard is mandatory whenever a rendered route names jump hosts: a nil
+// guard fails the claim closed with the wiring remedy — the fail-closed
+// convention of the key-data claims (excludeChangedAtClaim,
+// refuseChangedBastions), pinned by TestNilBastionGuardFailsClaimsClosed.
+// The enqueue-side rotation guard skips by design; the claim enforces.
+// Declared next to its consumer so unit tests drive fakes (the real
+// wiring is hosts.Service, which always implements it).
 type BastionKeyGuardSource interface {
 	ChangedBastions(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
