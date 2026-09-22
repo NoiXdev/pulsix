@@ -147,36 +147,11 @@ func startProbeServer(t *testing.T, opts ...serverOption) *probeServer {
 type bastion struct {
 	addr      string
 	directTCP atomic.Int32
+	hostKey   keyFixture
 }
 
 func startBastion(t *testing.T, clientKey keyFixture) *bastion {
-	t.Helper()
-	cfg := &ssh.ServerConfig{
-		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			if bytes.Equal(key.Marshal(), clientKey.signer.PublicKey().Marshal()) {
-				return &ssh.Permissions{}, nil
-			}
-			return nil, errors.New("unknown key")
-		},
-	}
-	cfg.AddHostKey(newKey(t).signer)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := &bastion{}
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go b.handle(conn, cfg)
-		}
-	}()
-	t.Cleanup(func() { _ = ln.Close() })
-	b.addr = ln.Addr().String()
-	return b
+	return startBastionWithKey(t, clientKey, newKey(t))
 }
 
 func (b *bastion) handle(conn net.Conn, cfg *ssh.ServerConfig) {
@@ -557,6 +532,140 @@ func TestProbeHopCredentialFailureIsUnreachable(t *testing.T) {
 	if !strings.Contains(res.Err, "hop 1") {
 		t.Fatalf("err must name the hop: %q", res.Err)
 	}
+}
+
+// --- Per-hop host keys (backlog 2.40) ---------------------------------
+
+// startBastionWithKey starts a jump host whose host key is FIXED, so a test
+// can pin exactly what the probe observed (and then a different one).
+func startBastionWithKey(t *testing.T, clientKey, hostKey keyFixture) *bastion {
+	t.Helper()
+	cfg := &ssh.ServerConfig{
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if bytes.Equal(key.Marshal(), clientKey.signer.PublicKey().Marshal()) {
+				return &ssh.Permissions{}, nil
+			}
+			return nil, errors.New("unknown key")
+		},
+	}
+	cfg.AddHostKey(hostKey.signer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &bastion{hostKey: hostKey}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go b.handle(conn, cfg)
+		}
+	}()
+	t.Cleanup(func() { _ = ln.Close() })
+	b.addr = ln.Addr().String()
+	return b
+}
+
+func TestProbeCapturesHopKeys(t *testing.T) {
+	targetKey, hop1Key, hop2Key := newKey(t), newKey(t), newKey(t)
+	srv := startProbeServer(t, withAuthorizedKey(targetKey))
+	hop1 := startBastion(t, hop1Key)
+	hop2 := startBastion(t, hop2Key)
+	tgt := srv.asTarget()
+	h1, h2 := hop1.asHop(), hop2.asHop()
+	h1.Username, h1.Credential = "j1", hop1Key.secret()
+	h2.Username, h2.Credential = "j2", hop2Key.secret()
+
+	res := runProbe(t, tgt, targetKey.secret(), h1, h2)
+	if !res.OK() {
+		t.Fatalf("two-hop probe failed: %+v", res)
+	}
+	if len(res.HopKeys) != 2 {
+		t.Fatalf("hop keys = %+v, want one entry per hop", res.HopKeys)
+	}
+	h1.ID, h2.ID = "hop-1", "hop-2"
+	res = runProbe(t, tgt, targetKey.secret(), h1, h2)
+	if len(res.HopKeys) != 2 {
+		t.Fatalf("hop keys = %+v, want one entry per hop", res.HopKeys)
+	}
+	want := []struct{ id, fp string }{
+		{h1.ID, ssh.FingerprintSHA256(hop1.hostKey.signer.PublicKey())},
+		{h2.ID, ssh.FingerprintSHA256(hop2.hostKey.signer.PublicKey())},
+	}
+	for i, w := range want {
+		got := res.HopKeys[i]
+		if got.BastionID != w.id {
+			t.Fatalf("hop %d bastion id = %q, want %q", i, got.BastionID, w.id)
+		}
+		if got.Fingerprint != w.fp {
+			t.Fatalf("hop %d fingerprint = %q, want %q", i, got.Fingerprint, w.fp)
+		}
+		if got.State != string(KeyStateUnpinned) {
+			t.Fatalf("hop %d state = %q, want unpinned", i, got.State)
+		}
+		if !strings.HasPrefix(got.PublicKey, "ssh-ed25519 ") {
+			t.Fatalf("hop %d public key = %q, want an authorized-key line", i, got.PublicKey)
+		}
+	}
+	wantCheck(t, res, "bastion_key", true)
+}
+
+func TestProbePinnedHopMatchProceeds(t *testing.T) {
+	targetKey, hopKey := newKey(t), newKey(t)
+	srv := startProbeServer(t, withAuthorizedKey(targetKey))
+	bastionHostKey := newKey(t)
+	hop := startBastionWithKey(t, hopKey, bastionHostKey)
+	tgt := srv.asTarget()
+	h := hop.asHop()
+	h.Username, h.Credential = "jumper", hopKey.secret()
+	h.PinnedKey = ssh.FingerprintSHA256(bastionHostKey.signer.PublicKey())
+
+	res := runProbe(t, tgt, targetKey.secret(), h)
+	if !res.OK() {
+		t.Fatalf("a probe through a bastion matching its pin must proceed: %+v", res)
+	}
+	if len(res.HopKeys) != 1 || res.HopKeys[0].State != string(KeyStatePinned) {
+		t.Fatalf("hop keys = %+v, want one entry with state pinned", res.HopKeys)
+	}
+}
+
+func TestProbePinnedHopChangedAbortsBeforeAuth(t *testing.T) {
+	targetKey, hopKey := newKey(t), newKey(t)
+	srv := startProbeServer(t, withAuthorizedKey(targetKey))
+	bastionHostKey := newKey(t)
+	hop := startBastionWithKey(t, hopKey, bastionHostKey)
+	tgt := srv.asTarget()
+	h := hop.asHop()
+	h.Username, h.Credential = "jumper", hopKey.secret()
+	// A pin that does not match: the probe must abort at the hop — nothing
+	// is authenticated through it, the target is never reached.
+	h.PinnedKey = wrongFingerprint(ssh.FingerprintSHA256(bastionHostKey.signer.PublicKey()))
+
+	res := runProbe(t, tgt, targetKey.secret(), h)
+	if res.OK() || res.Reachable {
+		t.Fatalf("a changed bastion key must abort the probe: %+v", res)
+	}
+	if len(res.HopKeys) != 1 || res.HopKeys[0].State != string(KeyStateChanged) {
+		t.Fatalf("hop keys = %+v, want the changed bastion reported as changed", res.HopKeys)
+	}
+	if res.HopKeys[0].Fingerprint != ssh.FingerprintSHA256(bastionHostKey.signer.PublicKey()) {
+		t.Fatalf("the changed bastion's observed key must still be reported: %+v", res.HopKeys[0])
+	}
+	if !strings.Contains(res.Err, "hop 1") || !strings.Contains(res.Err, "host key changed") {
+		t.Fatalf("err must name the hop and the change: %q", res.Err)
+	}
+	wantCheck(t, res, "bastion_key", false)
+}
+
+// wrongFingerprint derives a fingerprint that is guaranteed to differ from
+// the given one (same shape, different digest).
+func wrongFingerprint(fp string) string {
+	if strings.HasPrefix(fp[7:], "A") {
+		return "SHA256:B" + fp[8:]
+	}
+	return "SHA256:A" + fp[8:]
 }
 
 func TestProbeCancelledContext(t *testing.T) {

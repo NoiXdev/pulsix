@@ -45,6 +45,20 @@ type HostTestCheck struct {
 	OK     bool   `json:"ok"`
 }
 
+// HopKey is one jump host's host key a connection test observed: the
+// bastion's id, the fingerprint and the key itself (authorized-key form)
+// and the TOFU verdict of the observation against the bastion's pin
+// (unpinned, pinned, changed — the bastion-side mirror of the host's own
+// host_key_state). Backlog 2.40: the operator pins what a test saw, and a
+// bastion whose pinned key no longer matches its latest observation blocks
+// every connection through it.
+type HopKey struct {
+	BastionID   uuid.UUID `json:"bastion_id"`
+	Fingerprint string    `json:"fingerprint"`
+	PublicKey   string    `json:"public_key"`
+	State       string    `json:"state"`
+}
+
 // HostTest is one stored connection-test outcome.
 type HostTest struct {
 	ID     uuid.UUID `json:"id"`
@@ -62,6 +76,9 @@ type HostTest struct {
 	// HostKeyState is the TOFU verdict: unpinned, pinned or changed.
 	HostKeyState string          `json:"host_key_state"`
 	Checks       []HostTestCheck `json:"checks"`
+	// HopKeys is what each hop of the chain presented (migration 00034);
+	// empty when the dial reached no hop.
+	HopKeys []HopKey `json:"hop_keys,omitempty"`
 }
 
 // HostKeyPin is one host's pin: the OpenSSH fingerprint and the full
@@ -128,6 +145,123 @@ func (s *Service) SetHostKey(ctx context.Context, orgID, hostID uuid.UUID, finge
 	return s.store.SetHostKeyPin(ctx, orgID, hostID, fingerprint, publicKey)
 }
 
+// SetBastionKey pins a jump host's key (backlog 2.40), the bastion mirror
+// of SetHostKey: the same fingerprint shape, the key in authorized-key form
+// matching it, and the bastion must exist in the organization. The pin
+// lives on the bastions row; like a host's, it is what the runner enforces
+// per hop alias and what a changed observation blocks on.
+func (s *Service) SetBastionKey(ctx context.Context, orgID, bastionID uuid.UUID, fingerprint, publicKey string) error {
+	if !fingerprintPattern.MatchString(fingerprint) {
+		return fmt.Errorf("%w: host key fingerprint must match SHA256:<43 base64 characters>", ErrInvalidInput)
+	}
+	if err := checkPublicKey(fingerprint, publicKey); err != nil {
+		return err
+	}
+	if err := s.store.SetBastionKeyPin(ctx, orgID, bastionID, fingerprint, publicKey); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ClearBastionKey removes a jump host's pin. The bastion must exist in the
+// organization (ErrNotFound otherwise — a foreign bastion is invisible).
+func (s *Service) ClearBastionKey(ctx context.Context, orgID, bastionID uuid.UUID) error {
+	return s.store.ClearBastionKeyPin(ctx, orgID, bastionID)
+}
+
+// BastionHopObservation is the newest hop observation of one jump host:
+// what the operator can pin (only what was seen) and what the jump hosts
+// read shows.
+type BastionHopObservation struct {
+	At          time.Time
+	Fingerprint string
+	PublicKey   string
+	State       string
+}
+
+// LatestBastionObservation returns the newest hop observation of the jump
+// host across the organization's connection tests, ErrNotFound when no
+// test has ever observed it as a hop.
+func (s *Service) LatestBastionObservation(ctx context.Context, orgID, bastionID uuid.UUID) (BastionHopObservation, error) {
+	obs, err := s.store.ListLatestBastionObservations(ctx, orgID, []uuid.UUID{bastionID})
+	if err != nil {
+		return BastionHopObservation{}, err
+	}
+	if obs, ok := obs[bastionID]; ok {
+		return obs, nil
+	}
+	return BastionHopObservation{}, ErrNotFound
+}
+
+// LatestBastionObservations is LatestBastionObservation for a list of jump
+// hosts (the jump hosts read's batch). Bastions never observed are absent
+// from the map.
+func (s *Service) LatestBastionObservations(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]BastionHopObservation, error) {
+	return s.store.ListLatestBastionObservations(ctx, orgID, bastionIDs)
+}
+
+// BastionPinState mirrors a host's pin state for jump hosts (backlog
+// 2.43's field, filled by 2.40): "full" when the pin carries the full
+// public key (the enforceable shape), "fingerprint_only" when it holds
+// only the fingerprint — not enforceable until a connection test confirms
+// the fingerprint and fills the key. Unpinned bastions are absent from the
+// map: trust on first use is not a pin state.
+const (
+	BastionPinStateFull            = "full"
+	BastionPinStateFingerprintOnly = "fingerprint_only"
+)
+
+// BastionPinStates reports each given bastion's pin state. Hosts of another
+// organization are invisible, exactly like everywhere else in this package.
+func (s *Service) BastionPinStates(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	pins, err := s.store.ListPinnedBastionKeys(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(pins))
+	for id, pin := range pins {
+		if pin.PublicKey != "" {
+			out[id] = BastionPinStateFull
+		} else {
+			out[id] = BastionPinStateFingerprintOnly
+		}
+	}
+	return out, nil
+}
+
+// PinnedBastionKeys maps each pinned bastion id to its fingerprint. The
+// job queue's claim path turns the ids into the claim's bastion_host_keys
+// map (keyed by bastion id on the wire).
+func (s *Service) PinnedBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	pins, err := s.store.ListPinnedBastionKeys(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(pins))
+	for id, pin := range pins {
+		out[id] = pin.Fingerprint
+	}
+	return out, nil
+}
+
+// PinnedBastionPublicKeys maps each pinned bastion id whose pin carries the
+// full public key to that key (authorized-key form). A pinned bastion
+// missing here has a fingerprint-only pin: the claim path refuses to route
+// through it.
+func (s *Service) PinnedBastionPublicKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	pins, err := s.store.ListPinnedBastionKeys(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]string, len(pins))
+	for id, pin := range pins {
+		if pin.PublicKey != "" {
+			out[id] = pin.PublicKey
+		}
+	}
+	return out, nil
+}
+
 // checkPublicKey verifies that publicKey is exactly one authorized-key
 // line whose fingerprint is fingerprint.
 func checkPublicKey(fingerprint, publicKey string) error {
@@ -168,8 +302,10 @@ func (s *Service) LatestTest(ctx context.Context, orgID, hostID uuid.UUID) (Host
 //
 // A test that confirmed the pin (state pinned) and observed the full key
 // completes a pin made before full keys were stored: the store fills the
-// key only when the pin's fingerprint equals the observed key's.
-func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []HostTestCheck) error {
+// key only when the pin's fingerprint equals the observed key's — the same
+// auto-completion the daily re-test relies on (hosts and, since backlog
+// 2.40, the chain's bastions).
+func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []HostTestCheck, hops []HopKey) error {
 	// The host must exist in the organization: a job id pointing at a
 	// foreign host is a wiring bug, and the store-level foreign key alone
 	// would turn it into an opaque database error.
@@ -184,16 +320,51 @@ func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.U
 	if hostPublicKey != "" && checkPublicKey(hostKey, hostPublicKey) != nil {
 		hostPublicKey = ""
 	}
+	hops = validHops(hops)
 	if err := s.store.CreateHostTest(ctx, HostTest{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, HostID: hostID, At: at,
 		OK: ok, HostKey: hostKey, HostPublicKey: hostPublicKey, HostKeyState: hostKeyState, Checks: checks,
+		HopKeys: hops,
 	}); err != nil {
 		return err
 	}
 	if hostKeyState == KeyStatePinned && hostPublicKey != "" {
-		return s.store.BackfillHostKeyPin(ctx, orgID, hostID, hostKey, hostPublicKey)
+		if err := s.store.BackfillHostKeyPin(ctx, orgID, hostID, hostKey, hostPublicKey); err != nil {
+			return err
+		}
+	}
+	// A bastion whose pin the test confirmed (its hop state reads pinned)
+	// has its fingerprint-only pin completed the same way: the observed key
+	// fills the column only when the pin equals the observed fingerprint.
+	for _, hop := range hops {
+		if hop.State == KeyStatePinned && hop.PublicKey != "" {
+			if err := s.store.BackfillBastionKeyPin(ctx, orgID, hop.BastionID, hop.Fingerprint, hop.PublicKey); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// validHops keeps only the hop entries that are genuinely usable: a known
+// bastion id, a fingerprint, a known state and — for the key — a key whose
+// fingerprint is its own. Anything else is a malformed probe result and is
+// dropped rather than stored: the row keeps what can be trusted.
+func validHops(hops []HopKey) []HopKey {
+	out := make([]HopKey, 0, len(hops))
+	for _, hop := range hops {
+		if hop.BastionID == uuid.Nil || hop.Fingerprint == "" {
+			continue
+		}
+		if hop.State != KeyStateUnpinned && hop.State != KeyStatePinned && hop.State != KeyStateChanged {
+			continue
+		}
+		if hop.PublicKey != "" && checkPublicKey(hop.Fingerprint, hop.PublicKey) != nil {
+			hop.PublicKey = ""
+		}
+		out = append(out, hop)
+	}
+	return out
 }
 
 // ChangedHosts reports which of the given hosts' LATEST connection test
@@ -203,6 +374,25 @@ func (s *Service) RecordConnectionTest(ctx context.Context, orgID, hostID uuid.U
 // change (re-pinning alone does not unblock the host).
 func (s *Service) ChangedHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	ids, err := s.store.ListChangedKeys(ctx, orgID, hostIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}
+
+// ChangedBastions reports which of the given jump hosts' LATEST hop
+// observation reports a changed key (backlog 2.40, the bastion mirror of
+// ChangedHosts). A bastion in this state fails every connection through it:
+// the claim path refuses any route that includes it (fail closed, the same
+// block-on-mismatch a changed host key gets) until a fresh connection test
+// through it no longer reports the change — re-pinning alone does not
+// unblock the bastion, the next test must confirm the key.
+func (s *Service) ChangedBastions(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	ids, err := s.store.ListChangedBastionKeys(ctx, orgID, bastionIDs)
 	if err != nil {
 		return nil, err
 	}

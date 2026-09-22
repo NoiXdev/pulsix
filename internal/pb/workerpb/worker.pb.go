@@ -154,9 +154,22 @@ type Job struct {
 	// secrets, secret-typed extra vars, secret inventory vars, one-time
 	// logins — which the worker removes from every run event (payload and
 	// stdout) before it leaves the worker. Never logged.
-	Redact        []string `protobuf:"bytes,17,rep,name=redact,proto3" json:"redact,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Redact []string `protobuf:"bytes,17,rep,name=redact,proto3" json:"redact,omitempty"`
+	// bastion_host_keys maps the bastion uuid to the pinned jump host's
+	// public-key fingerprint ("SHA256:..."), for every pinned bastion the
+	// job's route dials (a run's hop chain, a connection test's hops). The
+	// worker verifies each hop against the pin — a probe aborts before
+	// authenticating through a changed bastion, a run's ssh_config demands
+	// the pinned key per hop alias.
+	BastionHostKeys map[string]string `protobuf:"bytes,18,rep,name=bastion_host_keys,json=bastionHostKeys,proto3" json:"bastion_host_keys,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// bastion_known_hosts maps the bastion uuid to the pinned jump host's
+	// full public key in authorized-key form ("ssh-ed25519 AAAA..."), one
+	// entry for every bastion in bastion_host_keys. The worker writes them
+	// into the run's known_hosts under the hop aliases; a bastion in
+	// bastion_host_keys without an entry here fails the job closed.
+	BastionKnownHosts map[string]string `protobuf:"bytes,19,rep,name=bastion_known_hosts,json=bastionKnownHosts,proto3" json:"bastion_known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
@@ -304,6 +317,20 @@ func (x *Job) GetKnownHosts() map[string]string {
 func (x *Job) GetRedact() []string {
 	if x != nil {
 		return x.Redact
+	}
+	return nil
+}
+
+func (x *Job) GetBastionHostKeys() map[string]string {
+	if x != nil {
+		return x.BastionHostKeys
+	}
+	return nil
+}
+
+func (x *Job) GetBastionKnownHosts() map[string]string {
+	if x != nil {
+		return x.BastionKnownHosts
 	}
 	return nil
 }
@@ -773,7 +800,8 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xef\a\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xaf\n" +
+	"\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -795,7 +823,9 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\fworker_token\x18\x0f \x01(\tR\vworkerToken\x12F\n" +
 	"\vknown_hosts\x18\x10 \x03(\v2%.pulsix.worker.v1.Job.KnownHostsEntryR\n" +
 	"knownHosts\x12\x16\n" +
-	"\x06redact\x18\x11 \x03(\tR\x06redact\x1a<\n" +
+	"\x06redact\x18\x11 \x03(\tR\x06redact\x12V\n" +
+	"\x11bastion_host_keys\x18\x12 \x03(\v2*.pulsix.worker.v1.Job.BastionHostKeysEntryR\x0fbastionHostKeys\x12\\\n" +
+	"\x13bastion_known_hosts\x18\x13 \x03(\v2,.pulsix.worker.v1.Job.BastionKnownHostsEntryR\x11bastionKnownHosts\x1a<\n" +
 	"\x0eExtraVarsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
@@ -809,6 +839,12 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
 	"\x0fKnownHostsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aB\n" +
+	"\x14BastionHostKeysEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aD\n" +
+	"\x16BastionKnownHostsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb7\x01\n" +
 	"\bRunEvent\x12\x15\n" +
@@ -859,7 +895,7 @@ func file_pulsix_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_pulsix_worker_v1_worker_proto_rawDescData
 }
 
-var file_pulsix_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_pulsix_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_pulsix_worker_v1_worker_proto_goTypes = []any{
 	(*ClaimJobRequest)(nil),          // 0: pulsix.worker.v1.ClaimJobRequest
 	(*ClaimJobResponse)(nil),         // 1: pulsix.worker.v1.ClaimJobResponse
@@ -877,7 +913,9 @@ var file_pulsix_worker_v1_worker_proto_goTypes = []any{
 	nil,                              // 13: pulsix.worker.v1.Job.CredentialsEntry
 	nil,                              // 14: pulsix.worker.v1.Job.HostKeysEntry
 	nil,                              // 15: pulsix.worker.v1.Job.KnownHostsEntry
-	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
+	nil,                              // 16: pulsix.worker.v1.Job.BastionHostKeysEntry
+	nil,                              // 17: pulsix.worker.v1.Job.BastionKnownHostsEntry
+	(*timestamppb.Timestamp)(nil),    // 18: google.protobuf.Timestamp
 }
 var file_pulsix_worker_v1_worker_proto_depIdxs = []int32{
 	2,  // 0: pulsix.worker.v1.ClaimJobResponse.job:type_name -> pulsix.worker.v1.Job
@@ -886,22 +924,24 @@ var file_pulsix_worker_v1_worker_proto_depIdxs = []int32{
 	13, // 3: pulsix.worker.v1.Job.credentials:type_name -> pulsix.worker.v1.Job.CredentialsEntry
 	14, // 4: pulsix.worker.v1.Job.host_keys:type_name -> pulsix.worker.v1.Job.HostKeysEntry
 	15, // 5: pulsix.worker.v1.Job.known_hosts:type_name -> pulsix.worker.v1.Job.KnownHostsEntry
-	16, // 6: pulsix.worker.v1.RunEvent.at:type_name -> google.protobuf.Timestamp
-	0,  // 7: pulsix.worker.v1.WorkerService.ClaimJob:input_type -> pulsix.worker.v1.ClaimJobRequest
-	3,  // 8: pulsix.worker.v1.WorkerService.RunEvents:input_type -> pulsix.worker.v1.RunEvent
-	5,  // 9: pulsix.worker.v1.WorkerService.ReportResult:input_type -> pulsix.worker.v1.ReportResultRequest
-	7,  // 10: pulsix.worker.v1.WorkerService.Enroll:input_type -> pulsix.worker.v1.EnrollRequest
-	9,  // 11: pulsix.worker.v1.WorkerService.RenewCertificate:input_type -> pulsix.worker.v1.RenewCertificateRequest
-	1,  // 12: pulsix.worker.v1.WorkerService.ClaimJob:output_type -> pulsix.worker.v1.ClaimJobResponse
-	4,  // 13: pulsix.worker.v1.WorkerService.RunEvents:output_type -> pulsix.worker.v1.ManagerDirective
-	6,  // 14: pulsix.worker.v1.WorkerService.ReportResult:output_type -> pulsix.worker.v1.ReportResultResponse
-	8,  // 15: pulsix.worker.v1.WorkerService.Enroll:output_type -> pulsix.worker.v1.EnrollResponse
-	10, // 16: pulsix.worker.v1.WorkerService.RenewCertificate:output_type -> pulsix.worker.v1.RenewCertificateResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	16, // 6: pulsix.worker.v1.Job.bastion_host_keys:type_name -> pulsix.worker.v1.Job.BastionHostKeysEntry
+	17, // 7: pulsix.worker.v1.Job.bastion_known_hosts:type_name -> pulsix.worker.v1.Job.BastionKnownHostsEntry
+	18, // 8: pulsix.worker.v1.RunEvent.at:type_name -> google.protobuf.Timestamp
+	0,  // 9: pulsix.worker.v1.WorkerService.ClaimJob:input_type -> pulsix.worker.v1.ClaimJobRequest
+	3,  // 10: pulsix.worker.v1.WorkerService.RunEvents:input_type -> pulsix.worker.v1.RunEvent
+	5,  // 11: pulsix.worker.v1.WorkerService.ReportResult:input_type -> pulsix.worker.v1.ReportResultRequest
+	7,  // 12: pulsix.worker.v1.WorkerService.Enroll:input_type -> pulsix.worker.v1.EnrollRequest
+	9,  // 13: pulsix.worker.v1.WorkerService.RenewCertificate:input_type -> pulsix.worker.v1.RenewCertificateRequest
+	1,  // 14: pulsix.worker.v1.WorkerService.ClaimJob:output_type -> pulsix.worker.v1.ClaimJobResponse
+	4,  // 15: pulsix.worker.v1.WorkerService.RunEvents:output_type -> pulsix.worker.v1.ManagerDirective
+	6,  // 16: pulsix.worker.v1.WorkerService.ReportResult:output_type -> pulsix.worker.v1.ReportResultResponse
+	8,  // 17: pulsix.worker.v1.WorkerService.Enroll:output_type -> pulsix.worker.v1.EnrollResponse
+	10, // 18: pulsix.worker.v1.WorkerService.RenewCertificate:output_type -> pulsix.worker.v1.RenewCertificateResponse
+	14, // [14:19] is the sub-list for method output_type
+	9,  // [9:14] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_pulsix_worker_v1_worker_proto_init() }
@@ -915,7 +955,7 @@ func file_pulsix_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pulsix_worker_v1_worker_proto_rawDesc), len(file_pulsix_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

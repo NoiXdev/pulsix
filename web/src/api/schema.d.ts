@@ -452,6 +452,24 @@ export interface paths {
         patch: operations["updateBastion"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/bastions/{id}/host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org bastions by ID host key */
+        put: operations["setBastionKey"];
+        post?: never;
+        /** Delete API v1 orgs by org bastions by ID host key */
+        delete: operations["clearBastionKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/calendar": {
         parameters: {
             query?: never;
@@ -1803,10 +1821,26 @@ export interface components {
             credential_id?: string;
             id: string;
             name: string;
+            /** Format: date-time */
+            observed_at?: string;
+            observed_key?: string;
+            observed_state?: string;
+            /** @enum {string} */
+            pin_state?: "full" | "fingerprint_only";
             /** Format: int64 */
             port: number;
+            ssh_host_key?: string;
             username: string;
             via_bastion_id?: string;
+        };
+        BastionKeyInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BastionKeyInputBody.json
+             */
+            readonly $schema?: string;
+            fingerprint: string;
         };
         BastionListOutputBody: {
             /**
@@ -2292,6 +2326,11 @@ export interface components {
              */
             status?: "skipped";
         };
+        HopKeyDTO: {
+            bastion_id: string;
+            fingerprint: string;
+            state: string;
+        };
         HostCapabilitiesInputBody: {
             /**
              * Format: uri
@@ -2462,6 +2501,7 @@ export interface components {
             /** Format: date-time */
             at: string;
             checks: components["schemas"]["CheckDTO"][] | null;
+            hop_keys?: components["schemas"]["HopKeyDTO"][] | null;
             host_key: string;
             host_key_state: string;
             ok: boolean;
@@ -4989,6 +5029,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BastionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setBastionKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BastionKeyInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    clearBastionKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */

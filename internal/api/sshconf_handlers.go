@@ -5,9 +5,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -20,13 +23,75 @@ type bastionDTO struct {
 	Username     string  `json:"username"`
 	CredentialID *string `json:"credential_id,omitempty"`
 	ViaBastionID *string `json:"via_bastion_id,omitempty"`
+	// SSHHostKey is the jump host's pinned key fingerprint (backlog 2.40),
+	// absent while the jump host is unpinned (trust on first use).
+	SSHHostKey *string `json:"ssh_host_key,omitempty"`
+	// PinState is the jump host's pin state (backlog 2.43's field, filled
+	// by 2.40): "full" when the pin carries the full public key
+	// (enforceable), "fingerprint_only" when it holds only the fingerprint
+	// — not enforceable until a connection test confirms the fingerprint
+	// and fills the key. Absent while unpinned.
+	PinState *string `json:"pin_state,omitempty" enum:"full,fingerprint_only"`
+	// ObservedKey, ObservedState and ObservedAt are the newest hop
+	// observation of the jump host from the connection tests — the
+	// pin-what-you-saw surface: only what a test saw can be pinned. All
+	// three are absent when no test has ever observed the jump host.
+	ObservedKey   *string    `json:"observed_key,omitempty"`
+	ObservedState *string    `json:"observed_state,omitempty"`
+	ObservedAt    *time.Time `json:"observed_at,omitempty"`
 }
 
-func toBastionDTO(b sshconf.Bastion) bastionDTO {
-	return bastionDTO{
+// bastionPinData is the pin enrichment of one or more jump hosts: the pin
+// state and pinned fingerprint from the hosts service's reads, plus the
+// newest hop observation from the connection tests (the pin-what-you-saw
+// surface).
+type bastionPinData struct {
+	pinStates map[uuid.UUID]string
+	fps       map[uuid.UUID]string
+	obs       map[uuid.UUID]hosts.BastionHopObservation
+}
+
+// resolveBastionPinData gathers the enrichment for the given jump hosts.
+// A lookup failure fails the request.
+func resolveBastionPinData(ctx context.Context, deps Deps, orgID uuid.UUID, bastionIDs []uuid.UUID) (*bastionPinData, error) {
+	data := &bastionPinData{}
+	states, err := deps.Hosts.BastionPinStates(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, err
+	}
+	data.pinStates = states
+	fps, err := deps.Hosts.PinnedBastionKeys(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, err
+	}
+	data.fps = fps
+	obs, err := deps.Hosts.LatestBastionObservations(ctx, orgID, bastionIDs)
+	if err != nil {
+		return nil, err
+	}
+	data.obs = obs
+	return data, nil
+}
+
+func toBastionDTO(b sshconf.Bastion, data *bastionPinData) bastionDTO {
+	out := bastionDTO{
 		ID: b.ID.String(), Name: b.Name, Address: b.Address, Port: b.Port, Username: b.Username,
 		CredentialID: optionalString(b.CredentialID), ViaBastionID: optionalString(b.ViaBastionID),
 	}
+	if data == nil {
+		return out
+	}
+	if state, ok := data.pinStates[b.ID]; ok {
+		out.PinState = &state
+	}
+	if fp, ok := data.fps[b.ID]; ok {
+		out.SSHHostKey = &fp
+	}
+	if obs, ok := data.obs[b.ID]; ok {
+		key, state := obs.Fingerprint, obs.State
+		out.ObservedKey, out.ObservedState, out.ObservedAt = &key, &state, &obs.At
+	}
+	return out
 }
 
 type bastionBodyDTO struct {
@@ -63,6 +128,17 @@ type bastionListOutput struct {
 type bastionGetInput struct {
 	Org string `path:"org"`
 	ID  string `path:"id"`
+}
+
+// bastionKeyInput is the jump host pin request: the fingerprint the
+// newest connection test observed at this hop (the same shape the host
+// route's hostKeyInput takes).
+type bastionKeyInput struct {
+	Org  string `path:"org"`
+	ID   string `path:"id"`
+	Body struct {
+		Fingerprint string `json:"fingerprint" minLength:"1" maxLength:"71" pattern:"^SHA256:[A-Za-z0-9+/]{43}$"`
+	}
 }
 
 type bastionOutput struct {
@@ -150,10 +226,18 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}
+		ids := make([]uuid.UUID, 0, len(list))
+		for _, b := range list {
+			ids = append(ids, b.ID)
+		}
+		data, err := resolveBastionPinData(ctx, deps, scope.OrgID, ids)
+		if err != nil {
+			return nil, mapHostsErr(ctx, err)
+		}
 		out := &bastionListOutput{}
 		out.Body.Bastions = make([]bastionDTO, len(list))
 		for i, b := range list {
-			out.Body.Bastions[i] = toBastionDTO(b)
+			out.Body.Bastions[i] = toBastionDTO(b, data)
 		}
 		return out, nil
 	})
@@ -173,7 +257,7 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		}
 		setAuditObject(ctx, b.ID.String(), "created jump host "+b.Name)
 		out := &bastionOutput{}
-		out.Body.Bastion = toBastionDTO(b)
+		out.Body.Bastion = toBastionDTO(b, nil)
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createBastion", "bastion"))
 
@@ -190,10 +274,76 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}
+		data, err := resolveBastionPinData(ctx, deps, scope.OrgID, []uuid.UUID{id})
+		if err != nil {
+			return nil, mapHostsErr(ctx, err)
+		}
 		out := &bastionOutput{}
-		out.Body.Bastion = toBastionDTO(b)
+		out.Body.Bastion = toBastionDTO(b, data)
 		return out, nil
 	})
+
+	huma.Put(hapi, "/api/v1/orgs/{org}/bastions/{id}/host-key", func(ctx context.Context, in *bastionKeyInput) (*okOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermInventoryWrite)
+		if err != nil {
+			return nil, err
+		}
+		bastionID, err := parseUUID(in.ID, "jump host id")
+		if err != nil {
+			return nil, err
+		}
+		// The bastion is resolved first: a jump host of another
+		// organization is as invisible as one that does not exist (404),
+		// before anything about its test history is asked.
+		if _, err := deps.SSH.GetBastion(ctx, scope.OrgID, bastionID); err != nil {
+			return nil, mapSSHErr(ctx, err)
+		}
+		// Only pin what you saw: the pin must equal the fingerprint the
+		// newest connection test observed at this hop. A pin made from a
+		// value the manager never saw would blind trust-on-first-use —
+		// the mismatch case this feature exists to catch.
+		obs, err := deps.Hosts.LatestBastionObservation(ctx, scope.OrgID, bastionID)
+		if err != nil {
+			if errors.Is(err, hosts.ErrNotFound) {
+				return nil, huma.Error422UnprocessableEntity("no connection test has observed this jump host's key yet; run a connection test for a host routed through it and pin the fingerprint it reports")
+			}
+			return nil, mapHostsErr(ctx, err)
+		}
+		if obs.Fingerprint == "" || obs.Fingerprint != in.Body.Fingerprint {
+			return nil, huma.Error422UnprocessableEntity("the fingerprint does not match the latest connection test result; only the observed key can be pinned")
+		}
+		// The pin stores the observed key itself (the worker's known_hosts
+		// enforces it on every connection). A test whose hop key arrived
+		// without the full key cannot provide it: a fresh test must
+		// observe it.
+		if obs.PublicKey == "" {
+			return nil, huma.Error422UnprocessableEntity("the latest connection test did not record the full jump host key; run a new connection test and pin its result")
+		}
+		if err := deps.Hosts.SetBastionKey(ctx, scope.OrgID, bastionID, in.Body.Fingerprint, obs.PublicKey); err != nil {
+			return nil, mapHostsErr(ctx, err)
+		}
+		setAuditObject(ctx, bastionID.String(), "pinned jump host key")
+		return &okOutput{}, nil
+	}, withAudit("setBastionKey", "bastion"))
+
+	huma.Delete(hapi, "/api/v1/orgs/{org}/bastions/{id}/host-key", func(ctx context.Context, in *bastionGetInput) (*okOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermInventoryWrite)
+		if err != nil {
+			return nil, err
+		}
+		bastionID, err := parseUUID(in.ID, "jump host id")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := deps.SSH.GetBastion(ctx, scope.OrgID, bastionID); err != nil {
+			return nil, mapSSHErr(ctx, err)
+		}
+		if err := deps.Hosts.ClearBastionKey(ctx, scope.OrgID, bastionID); err != nil {
+			return nil, mapHostsErr(ctx, err)
+		}
+		setAuditObject(ctx, bastionID.String(), "cleared jump host key pin")
+		return &okOutput{}, nil
+	}, withAudit("clearBastionKey", "bastion"))
 
 	huma.Patch(hapi, "/api/v1/orgs/{org}/bastions/{id}", func(ctx context.Context, in *bastionUpdateInput) (*bastionOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermCredentialsWrite)
@@ -214,7 +364,7 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		}
 		setAuditObject(ctx, b.ID.String(), "updated jump host "+b.Name)
 		out := &bastionOutput{}
-		out.Body.Bastion = toBastionDTO(b)
+		out.Body.Bastion = toBastionDTO(b, nil)
 		return out, nil
 	}, withAudit("updateBastion", "bastion"))
 

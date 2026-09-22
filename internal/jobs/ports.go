@@ -60,8 +60,11 @@ type SyncSink interface {
 // host_connection_tests row. Declared here so the queue half never imports
 // the hosts service; checks are the manager-side mirror of the probe's
 // check rows (hosts.HostTestCheck), parsed from the job's final event.
+// hops are the jump hosts the chain dialed (hosts.HopKey, backlog 2.40) —
+// recorded with the test so the operator can pin a bastion's key and the
+// claim path can refuse routes through a changed one.
 type TestSink interface {
-	RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck) error
+	RecordConnectionTest(ctx context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck, hops []hosts.HopKey) error
 }
 
 // RotationFinisher is the optional port a rotation group's terminal
@@ -100,6 +103,26 @@ type RotationHost struct {
 // simply ship no pins.
 type KeyPinSource interface {
 	PinnedKeys(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error)
+}
+
+// BastionPinSource is the slice of hosts.Service the claim path needs for
+// pinned jump hosts (backlog 2.40): each bastion's pinned fingerprint and,
+// when stored, its full public key — the claim turns them into the job's
+// bastion_host_keys/bastion_known_hosts maps (keyed by bastion id). A
+// pinned bastion without its full key (a pin made from a fingerprint-only
+// observation) fails the claim closed, exactly like a host's.
+type BastionPinSource interface {
+	PinnedBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error)
+	PinnedBastionPublicKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error)
+}
+
+// BastionKeyGuardSource is the slice of hosts.Service the claim path's
+// block-on-mismatch needs for jump hosts (backlog 2.40): which of the given
+// bastions' LATEST hop observation reports a changed key. Declared next to
+// its consumer so unit tests drive fakes (a nil guard routes nothing —
+// the real wiring is hosts.Service, which always implements it).
+type BastionKeyGuardSource interface {
+	ChangedBastions(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 // KnownHostSource is the slice of hosts.Service that makes a pin

@@ -57,6 +57,10 @@ type fakeHostStore struct {
 	tests        map[uuid.UUID][]hosts.HostTest
 	latestTestAt map[uuid.UUID]time.Time
 	queuedTests  map[uuid.UUID]bool
+	// The jump-host (bastion) mirror of the same state (backlog 2.40).
+	bastionPins     map[uuid.UUID]hosts.HostKeyPin
+	changedBastions map[uuid.UUID]bool
+	bastionObs      map[uuid.UUID]hosts.BastionHopObservation
 }
 
 func newFakeHostStore() *fakeHostStore {

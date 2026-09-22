@@ -74,6 +74,19 @@ message Job {
   // logins — which the worker removes from every run event (payload and
   // stdout) before it leaves the worker. Never logged.
   repeated string redact = 17;
+  // bastion_host_keys maps the bastion uuid to the pinned jump host's
+  // public-key fingerprint ("SHA256:..."), for every pinned bastion the
+  // job's route dials (a run's hop chain, a connection test's hops). The
+  // worker verifies each hop against the pin — a probe aborts before
+  // authenticating through a changed bastion, a run's ssh_config demands
+  // the pinned key per hop alias.
+  map<string, string> bastion_host_keys = 18;
+  // bastion_known_hosts maps the bastion uuid to the pinned jump host's
+  // full public key in authorized-key form ("ssh-ed25519 AAAA..."), one
+  // entry for every bastion in bastion_host_keys. The worker writes them
+  // into the run's known_hosts under the hop aliases; a bastion in
+  // bastion_host_keys without an entry here fails the job closed.
+  map<string, string> bastion_known_hosts = 19;
 }
 
 message RunEvent {

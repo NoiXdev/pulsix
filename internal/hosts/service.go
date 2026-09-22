@@ -222,6 +222,33 @@ type Store interface {
 	// ListHostsDueForTest returns the org's managed hosts with no test
 	// newer than since and none still queued — the daily re-test selector.
 	ListHostsDueForTest(ctx context.Context, orgID uuid.UUID, since time.Time) ([]Host, error)
+
+	// Jump-host (bastion) key pins (backlog 2.40), the bastion mirror of
+	// the host-key methods above. The pins live on the bastions rows;
+	// the observations they are compared against come from the
+	// connection tests' hop_keys.
+	//
+	// SetBastionKeyPin stores the pin (fingerprint plus full key) on the
+	// bastions row; zero rows affected means the bastion does not exist
+	// in the organization (ErrNotFound).
+	SetBastionKeyPin(ctx context.Context, orgID, bastionID uuid.UUID, fingerprint, publicKey string) error
+	// ClearBastionKeyPin clears the pin; ErrNotFound when the bastion
+	// does not exist in the organization.
+	ClearBastionKeyPin(ctx context.Context, orgID, bastionID uuid.UUID) error
+	// BackfillBastionKeyPin stores publicKey on a pin that carries only
+	// the fingerprint, and only when the pin equals fingerprint
+	// (anything else is a no-op).
+	BackfillBastionKeyPin(ctx context.Context, orgID, bastionID uuid.UUID, fingerprint, publicKey string) error
+	// ListPinnedBastionKeys maps each bastion id that carries a pin to its
+	// fingerprint and, when stored, its full public key.
+	ListPinnedBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]HostKeyPin, error)
+	// ListChangedBastionKeys returns the bastion ids whose LATEST hop
+	// observation reports a changed key — the bastion block-on-mismatch
+	// input.
+	ListChangedBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) ([]uuid.UUID, error)
+	// ListLatestBastionObservations maps each bastion id that a connection
+	// test has observed as a hop to its newest observation.
+	ListLatestBastionObservations(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]BastionHopObservation, error)
 }
 
 // DefaultListLimit and MaxListLimit bound ListHosts' page size, the same

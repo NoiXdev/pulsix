@@ -129,4 +129,71 @@ describe('JumpHostsPage', () => {
     await user.selectOptions(select, 'b1');
     expect(await screen.findByText('the zone could not be updated')).toBeInTheDocument();
   });
+
+  // --- Host-key pins (backlog 2.40) -------------------------------------
+  const FP = 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+  it('shows the pinned fingerprint and the pin state badge, and unpins', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
+      'GET /api/v1/orgs/acme/bastions': {
+        bastions: [{ ...BASTIONS.bastions[0], ssh_host_key: FP, pin_state: 'full', observed_key: FP, observed_state: 'pinned' }],
+      },
+      'DELETE /api/v1/orgs/acme/bastions/b1/host-key': () => ({}),
+    });
+    renderPage();
+    expect(await screen.findByText(FP)).toBeInTheDocument();
+    expect(screen.getByText('pin complete')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Unpin bastion-a host key' }));
+    expect(await screen.findByText('Jump host pin cleared')).toBeInTheDocument();
+  });
+
+  it('pins the observed fingerprint of an unpinned jump host', async () => {
+    const user = userEvent.setup();
+    let pinned: unknown;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
+      'GET /api/v1/orgs/acme/bastions': {
+        bastions: [{ ...BASTIONS.bastions[0], observed_key: FP, observed_state: 'unpinned' }],
+      },
+      'PUT /api/v1/orgs/acme/bastions/b1/host-key': (req: MockRequest) => {
+        pinned = req.body;
+        return {};
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Pin bastion-a host key' }));
+    await waitFor(() => expect(pinned).toEqual({ fingerprint: FP }));
+    expect(await screen.findByText('Jump host key of bastion-a pinned')).toBeInTheDocument();
+  });
+
+  it('flags a changed jump host key as blocking', async () => {
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
+      'GET /api/v1/orgs/acme/bastions': {
+        bastions: [{ ...BASTIONS.bastions[0], ssh_host_key: FP, pin_state: 'full', observed_key: FP, observed_state: 'changed' }],
+      },
+    });
+    renderPage();
+    expect(await screen.findByText('key changed — connections through it are blocked')).toBeInTheDocument();
+    // No unpin here — the operator first pins what the test saw.
+    expect(screen.queryByRole('button', { name: 'Unpin bastion-a host key' })).not.toBeInTheDocument();
+  });
+
+  it('shows nothing interactive for a viewer (no pin/unpin)', async () => {
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
+      'GET /api/v1/orgs/acme/bastions': {
+        bastions: [{ ...BASTIONS.bastions[0], observed_key: FP, observed_state: 'unpinned' }],
+      },
+    });
+    renderPage();
+    expect(await screen.findByText(FP)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pin bastion-a host key' })).not.toBeInTheDocument();
+  });
 });

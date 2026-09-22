@@ -151,11 +151,11 @@ func TestGetLatestConnectionTest(t *testing.T) {
 	at1 := time.Now().Add(-2 * time.Hour).Truncate(time.Microsecond)
 	at2 := time.Now().Add(-time.Hour).Truncate(time.Microsecond)
 	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), at1, true, observedKey, "", "unpinned",
-		[]hosts.HostTestCheck{{Name: "reachability", Detail: "connected", OK: true}}); err != nil {
+		[]hosts.HostTestCheck{{Name: "reachability", Detail: "connected", OK: true}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	changedKey := "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
-	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), at2, false, changedKey, "", "changed", nil); err != nil {
+	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), at2, false, changedKey, "", "changed", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	resp := requestJSON(t, f.ownerC, http.MethodGet, f.testURL(), nil)
@@ -200,7 +200,7 @@ func TestGetLatestConnectionTestShowsPinState(t *testing.T) {
 		`UPDATE host_ssh SET ssh_host_public_key = NULL WHERE org_id = $1 AND host_id = $2`, f.orgID, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, hostID, time.Now().Truncate(time.Microsecond), true, legacyFP, "", "pinned", nil); err != nil {
+	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, hostID, time.Now().Truncate(time.Microsecond), true, legacyFP, "", "pinned", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,14 +226,14 @@ func TestPutHostKeyOnlyPinsWhatWasSeen(t *testing.T) {
 	// A test that observed the fingerprint but not the full key (a row
 	// from before full keys were recorded) cannot be pinned: 422 asking
 	// for a fresh test.
-	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), time.Now().Add(-time.Minute), true, seenFP, "", "unpinned", nil); err != nil {
+	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), time.Now().Add(-time.Minute), true, seenFP, "", "unpinned", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if resp := requestJSON(t, f.ownerC, http.MethodPut, f.pinURL(), map[string]any{"fingerprint": seenFP}); resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("pin without the observed key: %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 	// A fresh test observed the key.
-	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), time.Now(), true, seenFP, seenPub, "unpinned", nil); err != nil {
+	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), time.Now(), true, seenFP, seenPub, "unpinned", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	// A pin of a key no test observed → 422 (you can only pin what you saw).
@@ -280,7 +280,7 @@ func testHostKey(t *testing.T) (string, string) {
 
 func TestPutHostKeyValidatesFingerprintShape(t *testing.T) {
 	f := seedHostopsOrg(t)
-	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), time.Now(), true, observedKey, "", "unpinned", nil); err != nil {
+	if err := f.s.Deps.Hosts.RecordConnectionTest(hctx, f.orgID, mustUUID(t, f.hostID), time.Now(), true, observedKey, "", "unpinned", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	// huma's body validation rejects a malformed fingerprint with 422

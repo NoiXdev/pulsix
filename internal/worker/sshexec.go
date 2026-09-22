@@ -95,10 +95,13 @@ func (e *SSHProbeExecutor) Run(ctx context.Context, job *workerpb.Job, _ RunEnv,
 			if err := json.Unmarshal([]byte(hop.Credential), &hopSecret); err != nil {
 				return StatusError, nil, fmt.Errorf("connection-test hop %s credential: %w", hop.ID, err)
 			}
-			target.Bastions = append(target.Bastions, sshprobe.BastionHop{
-				Address: hop.Address, Port: hop.Port, Username: hop.Username, Credential: hopSecret,
-			})
 		}
+		target.Bastions = append(target.Bastions, sshprobe.BastionHop{
+			ID: hop.ID, Address: hop.Address, Port: hop.Port, Username: hop.Username, Credential: hopSecret,
+			// The hop's own pin (if the bastion carries one) — the TOFU
+			// input for the chain, exactly the target's PinnedKey.
+			PinnedKey: job.GetBastionHostKeys()[hop.ID],
+		})
 	}
 
 	res, err := e.probe.Run(ctx, target)

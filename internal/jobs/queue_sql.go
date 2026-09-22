@@ -24,6 +24,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/sshconf"
+	"github.com/noixdev/pulsix/internal/worker/sshprobe"
 )
 
 // SQLQueue is the claim half of the job queue and the ONE org-unscoped
@@ -71,6 +72,14 @@ type SQLQueue struct {
 	// knownHosts is the pinned hosts' full public keys (the pins source
 	// implements it); nil fails every claim for a pinned host closed.
 	knownHosts KnownHostSource
+	// bastionPins is the pinned jump hosts' fingerprints and full public
+	// keys (backlog 2.40, the pins source implements it); nil ships no
+	// bastion pins, a pinned bastion's claim then fails closed.
+	bastionPins BastionPinSource
+	// bastionGuard is the changed-jump-host read the host-bound claims
+	// re-apply (the pins source implements it — hosts.Service does); nil
+	// routes nothing (see BastionKeyGuardSource).
+	bastionGuard BastionKeyGuardSource
 	// test is the optional sink a finished connection_test job's outcome is
 	// recorded through (SetTestSink, the same post-construction wiring the
 	// sync sink has; the concrete sink is the hosts service).
@@ -126,12 +135,18 @@ func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
 // field); run and ad-hoc jobs then ship no host keys.
 func (q *SQLQueue) SetKeyPins(source KeyPinSource) {
 	q.pins = source
-	q.keyGuard, q.knownHosts = nil, nil
+	q.keyGuard, q.knownHosts, q.bastionPins, q.bastionGuard = nil, nil, nil, nil
 	if g, ok := source.(KeyGuardSource); ok {
 		q.keyGuard = g
 	}
 	if k, ok := source.(KnownHostSource); ok {
 		q.knownHosts = k
+	}
+	if bp, ok := source.(BastionPinSource); ok {
+		q.bastionPins = bp
+	}
+	if bg, ok := source.(BastionKeyGuardSource); ok {
+		q.bastionGuard = bg
 	}
 }
 
@@ -252,7 +267,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// claim, but the probe consumes a self-contained payload and the
 	// inventory document (hostvars with revealed secrets) is discarded.
 	if job.Kind == KindConnectionTest {
-		kindPayload, hostKeys, err := q.connectionTestPayload(ctx, job)
+		kindPayload, hostKeys, bastionKeys, err := q.connectionTestPayload(ctx, job)
 		if err != nil {
 			return err
 		}
@@ -261,7 +276,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		*out = workerpb.Job{
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
-			InventoryDoc: "{}", HostKeys: hostKeys, KindPayload: kindPayload,
+			InventoryDoc: "{}", HostKeys: hostKeys, BastionHostKeys: bastionKeys, KindPayload: kindPayload,
 			Redact: redact.list,
 		}
 		return nil
@@ -599,20 +614,22 @@ func (q *SQLQueue) claimHostKeys(ctx context.Context, job Job, conns map[string]
 // bastion's own chain expanded). Nothing secret ships outside the payload:
 // the inventory document is discarded, and the credentials map stays
 // empty. The second return is the host_keys map: the pinned fingerprint
-// for the host when it carries one.
-func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, map[string]string, error) {
+// for the host when it carries one. The third is the bastion_host_keys
+// map: each hop's pinned fingerprint (backlog 2.40) — the probe verifies
+// the chain hop by hop and reports what it observed, TOFU per hop.
+func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, map[string]string, map[string]string, error) {
 	if len(job.HostIDs) != 1 {
-		return "", nil, fmt.Errorf("%w: connection_test targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
+		return "", nil, nil, fmt.Errorf("%w: connection_test targets exactly one host, job %s carries %d", ErrInvalidInput, job.ID, len(job.HostIDs))
 	}
 	// The pin needs the hosts store: nil pins source is a wiring bug that
 	// would silently run the probe unpinned — fail closed.
 	if q.pins == nil {
-		return "", nil, fmt.Errorf("connection test claim: no host key pin source wired")
+		return "", nil, nil, fmt.Errorf("connection test claim: no host key pin source wired")
 	}
 	hostID := job.HostIDs[0]
 	inv, err := q.renderer.Snapshot(ctx, job.OrgID, render.Scope{HostIDs: job.HostIDs})
 	if err != nil {
-		return "", nil, fmt.Errorf("render connection: %w", err)
+		return "", nil, nil, fmt.Errorf("render connection: %w", err)
 	}
 	var conn render.Connection
 	connName := ""
@@ -623,7 +640,7 @@ func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, 
 		}
 	}
 	if connName == "" {
-		return "", nil, fmt.Errorf("connection test %s: host %s renders no connection (not managed, or scope mismatch)", job.ID, hostID)
+		return "", nil, nil, fmt.Errorf("connection test %s: host %s renders no connection (not managed, or scope mismatch)", job.ID, hostID)
 	}
 	host := probeHost{
 		ID:      hostID,
@@ -646,7 +663,7 @@ func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, 
 	if len(job.Payload) > 0 {
 		plain, err := q.openKindPayload(job)
 		if err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 		var rp rotationJobPayload
 		if json.Unmarshal([]byte(plain), &rp) == nil && rp.CredentialID != uuid.Nil && rp.NewPrivateKey.PrivateKey != "" {
@@ -666,53 +683,67 @@ func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, 
 	case override.PrivateKey != "":
 		secret, err := secretJSON(override)
 		if err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 		credential = secret
 	case conn.CredentialID != nil:
 		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *conn.CredentialID)
 		if err != nil {
-			return "", nil, fmt.Errorf("open credential %s: %w", *conn.CredentialID, err)
+			return "", nil, nil, fmt.Errorf("open credential %s: %w", *conn.CredentialID, err)
 		}
 		if credential, err = secretJSON(secret); err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 	}
 	hops := make([]probeBastion, 0, len(conn.Bastions))
 	for _, bastionID := range conn.Bastions {
 		b, err := q.bastions.GetBastion(ctx, job.OrgID, bastionID)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve bastion %s: %w", bastionID, err)
+			return "", nil, nil, fmt.Errorf("resolve bastion %s: %w", bastionID, err)
 		}
 		hopCredential := ""
 		if b.CredentialID != nil {
 			secret, err := q.creds.OpenSecret(ctx, job.OrgID, *b.CredentialID)
 			if err != nil {
-				return "", nil, fmt.Errorf("open bastion credential %s: %w", *b.CredentialID, err)
+				return "", nil, nil, fmt.Errorf("open bastion credential %s: %w", *b.CredentialID, err)
 			}
 			if hopCredential, err = secretJSON(secret); err != nil {
-				return "", nil, err
+				return "", nil, nil, err
 			}
 		}
 		hops = append(hops, probeBastion{ID: bastionID, Address: b.Address, Port: b.Port, Username: b.Username, Credential: hopCredential})
 	}
 
-	// The pinned fingerprint, if the host carries one.
+	// The pinned fingerprints: the host's own, and every hop's (backlog
+	// 2.40) — the probe compares and reports per hop.
 	hostKeys := map[string]string{}
 	pinned, err := q.pins.PinnedKeys(ctx, job.OrgID, []uuid.UUID{hostID})
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve host key pins: %w", err)
+		return "", nil, nil, fmt.Errorf("resolve host key pins: %w", err)
 	}
 	if fingerprint, ok := pinned[hostID]; ok {
 		hostKeys[connName] = fingerprint
+	}
+	bastionKeys := map[string]string{}
+	if len(conn.Bastions) > 0 {
+		if q.bastionPins == nil {
+			return "", nil, nil, fmt.Errorf("connection test claim %s: no bastion key pin source wired", job.ID)
+		}
+		bastionPins, err := q.bastionPins.PinnedBastionKeys(ctx, job.OrgID, conn.Bastions)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("resolve bastion key pins: %w", err)
+		}
+		for id, fingerprint := range bastionPins {
+			bastionKeys[id.String()] = fingerprint
+		}
 	}
 
 	payload := map[string]any{"host": host, "credential": credential, "bastions": hops}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return "", nil, fmt.Errorf("encode connection-test kind payload: %w", err)
+		return "", nil, nil, fmt.Errorf("encode connection-test kind payload: %w", err)
 	}
-	return string(b), hostKeys, nil
+	return string(b), hostKeys, bastionKeys, nil
 }
 
 // probeHost is the host object of the kind payload.
@@ -1136,7 +1167,12 @@ func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Statu
 		slog.ErrorContext(ctx, "record test result: result event is not a result", "err", err, "job", jobID)
 		return nil
 	}
-	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostPublicKey, res.HostKeyState, res.Checks); err != nil {
+	hops, err := res.hopKeys()
+	if err != nil {
+		slog.ErrorContext(ctx, "record test result: hop keys are not a hop key list", "err", err, "job", jobID)
+		return nil
+	}
+	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostPublicKey, res.HostKeyState, res.Checks, hops); err != nil {
 		if sinkGone(err) {
 			slog.WarnContext(ctx, "record test result: host no longer exists", "job", jobID)
 			return nil
@@ -1160,9 +1196,34 @@ type testResultPayload struct {
 	Sudo          bool                  `json:"sudo"`
 	Python        bool                  `json:"python"`
 	Checks        []hosts.HostTestCheck `json:"checks"`
-	Err           string                `json:"err,omitempty"`
+	// HopKeys is the jump chain's observed host keys (backlog 2.40); the
+	// sink validates the entries, so the wire shape travels as-is.
+	HopKeys []sshprobe.HopKey `json:"hop_keys,omitempty"`
+	Err     string            `json:"err,omitempty"`
 }
 
 func (r testResultPayload) ok() bool {
 	return r.Reachable && r.Auth && r.Sudo && r.Python
+}
+
+// hopKeys converts the probe's per-hop entries into the sink's shape: the
+// bastion id must parse (anything else is a malformed result and the whole
+// list is rejected rather than half-stored). sshprobe.HopKey carries the
+// same fields in the same JSON spellings; the wire type differs only in
+// the id's string form.
+func (r testResultPayload) hopKeys() ([]hosts.HopKey, error) {
+	if len(r.HopKeys) == 0 {
+		return nil, nil
+	}
+	out := make([]hosts.HopKey, 0, len(r.HopKeys))
+	for _, hop := range r.HopKeys {
+		id, err := uuid.Parse(hop.BastionID)
+		if err != nil {
+			return nil, fmt.Errorf("hop entry %q: %w", hop.BastionID, err)
+		}
+		out = append(out, hosts.HopKey{
+			BastionID: id, Fingerprint: hop.Fingerprint, PublicKey: hop.PublicKey, State: hop.State,
+		})
+	}
+	return out, nil
 }

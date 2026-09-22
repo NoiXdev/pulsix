@@ -1,20 +1,28 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { Server } from 'lucide-react';
+import { Lock, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { useBastions, useDeleteBastion, useSetZoneBastion } from '../../api/hooks/useSsh.ts';
+import {
+  useBastions, useClearBastionKey, useDeleteBastion, useSetBastionKey, useSetZoneBastion,
+} from '../../api/hooks/useSsh.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useZones } from '../../api/hooks/useHosts.ts';
+import { may } from '../../lib/roles.ts';
 import type { Bastion } from '../../api/types.ts';
 import { BastionDialog } from './BastionDialog.tsx';
+import { PinStateBadge } from '../hosts/PinStateBadge.tsx';
+import { Pill, type Tone } from '../../ui/badge.tsx';
 
-const COLUMNS = 'minmax(0, 1fr) minmax(0, 1.4fr) 160px 160px 120px';
+const COLUMNS = 'minmax(0, 1fr) minmax(0, 1.2fr) 130px 130px minmax(0, 1.6fr) 120px';
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
+
+const KEY_STATE_TONE: Record<string, Tone> = { pinned: 'ok', changed: 'crit', unpinned: 'warn' };
 
 export function JumpHostsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -22,6 +30,7 @@ export function JumpHostsPage() {
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
   const zones = useZones(org);
+  const orgInfo = useOrg(org);
   const remove = useDeleteBastion(org);
   const setZone = useSetZoneBastion(org);
   const [dialog, setDialog] = useState<{ bastion?: Bastion } | null>(null);
@@ -33,6 +42,8 @@ export function JumpHostsPage() {
   // A viewer may read jump hosts but not credentials; names fall back to "—".
   const creds = credentials.data?.credentials ?? [];
   const bastionName = (id?: string | null) => list.find((b) => b.id === id)?.name ?? 'directly';
+  // Pinning is inventory.write, the same gate the host card mirrors.
+  const canWrite = may(orgInfo.data?.org.role, 'inventory.write');
 
   return (
     <>
@@ -52,6 +63,7 @@ export function JumpHostsPage() {
           <span>Login</span>
           <span>Reached</span>
           <span>Credential</span>
+          <span>Host key</span>
           <span />
         </GridHeader>
         {list.map((b) => (
@@ -60,6 +72,7 @@ export function JumpHostsPage() {
             <span className="truncate font-mono text-xs">{`${b.username}@${b.address}:${b.port}`}</span>
             <span className="text-xs text-muted-foreground">{b.via_bastion_id ? `via ${bastionName(b.via_bastion_id)}` : 'directly'}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{creds.find((c) => c.id === b.credential_id)?.name ?? '—'}</span>
+            <BastionHostKey org={org} bastion={b} canWrite={canWrite} />
             <span className="flex justify-end gap-1">
               <Button variant="ghost" aria-label={`Edit ${b.name}`} onClick={() => setDialog({ bastion: b })}>
                 Edit
@@ -117,5 +130,80 @@ export function JumpHostsPage() {
       </Card>
       {dialog && <BastionDialog org={org} bastion={dialog.bastion} bastions={list} credentials={creds} onClose={() => setDialog(null)} />}
     </>
+  );
+}
+
+/**
+ * BastionHostKey is the jump host's TOFU cell (backlog 2.40), mirroring the
+ * host card's key block: the pinned fingerprint (or the newest observation),
+ * the pin-state badge and the pin/unpin actions — a `changed` key fails
+ * every connection through the jump host until the new key is pinned and a
+ * fresh connection test confirms it.
+ */
+function BastionHostKey({ org, bastion, canWrite }: { org: string; bastion: Bastion; canWrite: boolean }) {
+  const toast = useToast();
+  const pin = useSetBastionKey(org, bastion.id);
+  const unpin = useClearBastionKey(org, bastion.id);
+
+  const state = bastion.observed_state ?? (bastion.ssh_host_key ? 'pinned' : '');
+  const fingerprint = bastion.ssh_host_key ?? bastion.observed_key ?? '';
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Lock size={12} className="text-muted-foreground" />
+        <span className="truncate font-mono text-[11px]" title={fingerprint}>
+          {fingerprint || 'no key observed'}
+        </span>
+        {state && <Pill tone={KEY_STATE_TONE[state] ?? 'unknown'}>{state}</Pill>}
+        <PinStateBadge state={bastion.pin_state} />
+      </div>
+      {canWrite && state && state !== 'pinned' && (
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-6 px-2 text-[11px]"
+          disabled={pin.isPending || !bastion.observed_key}
+          aria-label={`Pin ${bastion.name} host key`}
+          onClick={async () => {
+            if (!bastion.observed_key) return;
+            try {
+              await pin.mutateAsync(bastion.observed_key);
+              toast.show(`Jump host key of ${bastion.name} pinned`);
+            } catch (err) {
+              toast.show(err instanceof Error ? err.message : 'Pinning failed', 'destructive');
+            }
+          }}
+        >
+          Pin
+        </Button>
+      )}
+      {canWrite && state === 'pinned' && (
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-6 px-2 text-[11px]"
+          disabled={unpin.isPending}
+          aria-label={`Unpin ${bastion.name} host key`}
+          onClick={async () => {
+            try {
+              await unpin.mutateAsync();
+              toast.show('Jump host pin cleared');
+            } catch (err) {
+              toast.show(err instanceof Error ? err.message : 'Clearing the pin failed', 'destructive');
+            }
+          }}
+        >
+          Unpin
+        </Button>
+      )}
+      {bastion.pin_state === 'fingerprint_only' && (
+        <span className="text-[11px] text-muted-foreground">pin needs confirmation</span>
+      )}
+      {state === 'changed' && (
+        <span className="text-[11px]" style={{ color: 'var(--px-crit)' }}>
+          key changed — connections through it are blocked
+        </span>
+      )}
+    </div>
   );
 }

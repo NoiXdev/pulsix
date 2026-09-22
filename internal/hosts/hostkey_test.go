@@ -118,6 +118,81 @@ func (f *fakeHostStore) ListHostsDueForTest(_ context.Context, orgID uuid.UUID, 
 	return out, nil
 }
 
+// --- Jump host (bastion) pins (backlog 2.40): the same shapes, on the
+// bastion ids. The backfill keeps the SQL statement's predicate: only a pin
+// whose fingerprint equals the observation's gains a key.
+
+func (f *fakeHostStore) SetBastionKeyPin(_ context.Context, orgID, bastionID uuid.UUID, fingerprint, publicKey string) error {
+	if err := f.take("SetBastionKeyPin"); err != nil {
+		return err
+	}
+	f.bastionPins[bastionID] = hosts.HostKeyPin{Fingerprint: fingerprint, PublicKey: publicKey}
+	return nil
+}
+
+func (f *fakeHostStore) ClearBastionKeyPin(_ context.Context, orgID, bastionID uuid.UUID) error {
+	if err := f.take("ClearBastionKeyPin"); err != nil {
+		return err
+	}
+	// The SQL statement's shape: zero rows affected means the bastion does
+	// not exist in the organization (ErrNotFound).
+	if _, ok := f.bastionPins[bastionID]; !ok {
+		return hosts.ErrNotFound
+	}
+	delete(f.bastionPins, bastionID)
+	return nil
+}
+
+func (f *fakeHostStore) BackfillBastionKeyPin(_ context.Context, _, bastionID uuid.UUID, fingerprint, publicKey string) error {
+	if err := f.take("BackfillBastionKeyPin"); err != nil {
+		return err
+	}
+	if pin, ok := f.bastionPins[bastionID]; ok && pin.Fingerprint == fingerprint && pin.PublicKey == "" {
+		pin.PublicKey = publicKey
+		f.bastionPins[bastionID] = pin
+	}
+	return nil
+}
+
+func (f *fakeHostStore) ListPinnedBastionKeys(_ context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]hosts.HostKeyPin, error) {
+	if err := f.take("ListPinnedBastionKeys"); err != nil {
+		return nil, err
+	}
+	out := map[uuid.UUID]hosts.HostKeyPin{}
+	for _, id := range bastionIDs {
+		if pin, ok := f.bastionPins[id]; ok {
+			out[id] = pin
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeHostStore) ListChangedBastionKeys(_ context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if err := f.take("ListChangedBastionKeys"); err != nil {
+		return nil, err
+	}
+	var out []uuid.UUID
+	for _, id := range bastionIDs {
+		if f.changedBastions[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeHostStore) ListLatestBastionObservations(_ context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]hosts.BastionHopObservation, error) {
+	if err := f.take("ListLatestBastionObservations"); err != nil {
+		return nil, err
+	}
+	out := map[uuid.UUID]hosts.BastionHopObservation{}
+	for _, id := range bastionIDs {
+		if obs, ok := f.bastionObs[id]; ok {
+			out[id] = obs
+		}
+	}
+	return out, nil
+}
+
 func newHostKeyStore() *fakeHostStore {
 	store := newFakeHostStore()
 	store.pins = []pinRecord{}
@@ -127,6 +202,9 @@ func newHostKeyStore() *fakeHostStore {
 	store.latestTestAt = map[uuid.UUID]time.Time{}
 	store.queuedTests = map[uuid.UUID]bool{}
 	store.orgIDs = []uuid.UUID{}
+	store.bastionPins = map[uuid.UUID]hosts.HostKeyPin{}
+	store.changedBastions = map[uuid.UUID]bool{}
+	store.bastionObs = map[uuid.UUID]hosts.BastionHopObservation{}
 	return store
 }
 
@@ -211,7 +289,7 @@ func TestLatestTest(t *testing.T) {
 	at1 := time.Now().Add(-2 * time.Hour)
 	at2 := time.Now().Add(-time.Hour)
 	if err := svc.RecordConnectionTest(ctx, org, host, at1, true, "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", hosts.KeyStateUnpinned,
-		[]hosts.HostTestCheck{{Name: "reachability", Detail: "connected", OK: true}}); err != nil {
+		[]hosts.HostTestCheck{{Name: "reachability", Detail: "connected", OK: true}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.CreateHostTest(ctx, hosts.HostTest{
@@ -234,7 +312,7 @@ func TestLatestTest(t *testing.T) {
 
 func TestRecordConnectionTestNormalizesEmptyState(t *testing.T) {
 	svc, store, org, host := seededService(t)
-	if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), false, "", "", "", nil); err != nil {
+	if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), false, "", "", "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.tests[host][0].HostKeyState; got != hosts.KeyStateUnpinned {
@@ -245,7 +323,7 @@ func TestRecordConnectionTestNormalizesEmptyState(t *testing.T) {
 func TestRecordConnectionTestForeignHostFails(t *testing.T) {
 	svc, _, _, _ := seededService(t)
 	orgB := uuid.Must(uuid.NewV7())
-	if err := svc.RecordConnectionTest(ctx, orgB, uuid.Must(uuid.NewV7()), time.Now(), true, "", "", hosts.KeyStateUnpinned, nil); err == nil {
+	if err := svc.RecordConnectionTest(ctx, orgB, uuid.Must(uuid.NewV7()), time.Now(), true, "", "", hosts.KeyStateUnpinned, nil, nil); err == nil {
 		t.Fatal("recording a test for a foreign host must fail")
 	}
 }
@@ -394,7 +472,7 @@ func TestRecordConnectionTestCompletesAFingerprintOnlyPin(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			svc, store, org, host := seededService(t)
 			store.pinnedKeys[host] = hosts.HostKeyPin{Fingerprint: fingerprint}
-			if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), true, c.seen, c.seenKey, c.state, nil); err != nil {
+			if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), true, c.seen, c.seenKey, c.state, nil, nil); err != nil {
 				t.Fatal(err)
 			}
 			if got := store.pinnedKeys[host].PublicKey; got != c.wantPin {
@@ -459,5 +537,104 @@ func TestPinStatesDerivation(t *testing.T) {
 	}
 	if len(foreign) != 0 {
 		t.Fatalf("cross-org read = %v, want nothing", foreign)
+	}
+}
+
+// --- Jump host (bastion) key pins (backlog 2.40) ----------------------
+
+func bastionTestKey(t *testing.T) (string, string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ssh.FingerprintSHA256(sshPub), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+}
+
+func TestSetBastionKeyValidatesShape(t *testing.T) {
+	svc, _, orgID, _ := seededService(t)
+	bastion := uuid.Must(uuid.NewV7())
+	fp, line := bastionTestKey(t)
+
+	if err := svc.SetBastionKey(ctx, orgID, bastion, "not-a-fingerprint", line); !errors.Is(err, hosts.ErrInvalidInput) {
+		t.Fatalf("bad fingerprint: %v, want ErrInvalidInput", err)
+	}
+	if err := svc.SetBastionKey(ctx, orgID, bastion, "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", line); !errors.Is(err, hosts.ErrInvalidInput) {
+		t.Fatalf("key does not match the fingerprint: %v, want ErrInvalidInput", err)
+	}
+	if err := svc.SetBastionKey(ctx, orgID, bastion, fp, line); err != nil {
+		t.Fatalf("a valid pin: %v", err)
+	}
+	// A foreign bastion id (nothing stored) is invisible, not forbidden.
+	if err := svc.ClearBastionKey(ctx, orgID, uuid.Must(uuid.NewV7())); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("clear of a never-pinned bastion id: %v, want ErrNotFound", err)
+	}
+	pins, err := svc.PinnedBastionKeys(ctx, orgID, []uuid.UUID{bastion})
+	if err != nil || pins[bastion] != fp {
+		t.Fatalf("pins = %v, %v; want the fingerprint", pins, err)
+	}
+}
+
+func TestRecordConnectionTestStoresAndBackfillsHops(t *testing.T) {
+	svc, store, org, host := seededService(t)
+	bastion := uuid.Must(uuid.NewV7())
+	fp, line := bastionTestKey(t)
+
+	// A pin that only carries a fingerprint (the pre-migration shape).
+	if err := store.SetBastionKeyPin(ctx, org, bastion, fp, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), true,
+		"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", hosts.KeyStateUnpinned, nil,
+		[]hosts.HopKey{
+			{BastionID: bastion, Fingerprint: fp, PublicKey: line, State: hosts.KeyStatePinned},
+		}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	// The hop observation rides the test row.
+	test, err := svc.LatestTest(ctx, org, host)
+	if err != nil || len(test.HopKeys) != 1 {
+		t.Fatalf("test = %+v, %v; want one hop entry", test, err)
+	}
+	// The confirming observation completed the fingerprint-only pin.
+	pins, err := svc.PinnedBastionPublicKeys(ctx, org, []uuid.UUID{bastion})
+	if err != nil || pins[bastion] != line {
+		t.Fatalf("backfill = %v, %v; want the observed key", pins, err)
+	}
+	states, err := svc.BastionPinStates(ctx, org, []uuid.UUID{bastion})
+	if err != nil || states[bastion] != hosts.BastionPinStateFull {
+		t.Fatalf("states = %v, %v; want full", states, err)
+	}
+}
+
+func TestRecordConnectionTestDropsMalformedHops(t *testing.T) {
+	svc, store, org, host := seededService(t)
+	const fp = "SHA256:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+	if err := svc.RecordConnectionTest(ctx, org, host, time.Now(), true,
+		"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", hosts.KeyStateUnpinned, nil,
+		[]hosts.HopKey{
+			{BastionID: uuid.Nil, Fingerprint: fp, State: hosts.KeyStateUnpinned},                // no bastion id
+			{BastionID: uuid.Must(uuid.NewV7()), Fingerprint: "", State: hosts.KeyStateUnpinned}, // no fingerprint
+			{BastionID: uuid.Must(uuid.NewV7()), Fingerprint: fp, State: "weird"},                // unknown state
+		}); err != nil {
+		t.Fatal(err)
+	}
+	tests := store.tests[host]
+	if len(tests) != 1 || len(tests[0].HopKeys) != 0 {
+		t.Fatalf("hops = %+v, want every malformed entry dropped", tests[0].HopKeys)
+	}
+}
+
+func TestChangedBastions(t *testing.T) {
+	svc, store, org, _ := seededService(t)
+	bastion := uuid.Must(uuid.NewV7())
+	store.changedBastions[bastion] = true
+	changed, err := svc.ChangedBastions(ctx, org, []uuid.UUID{bastion})
+	if err != nil || !changed[bastion] {
+		t.Fatalf("changed = %v, %v; want the bastion flagged", changed, err)
 	}
 }

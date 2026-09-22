@@ -47,6 +47,12 @@ type hostTestDTO struct {
 	HostKey      string     `json:"host_key"`
 	HostKeyState string     `json:"host_key_state"`
 	Checks       []checkDTO `json:"checks"`
+	// HopKeys is what the chain's jump hosts presented (backlog 2.40): the
+	// bastion's id, the fingerprint and key it was observed with and the
+	// TOFU verdict of the observation against its pin — the pin-what-you-
+	// saw surface the jump hosts page pins from. Absent when the dial
+	// reached no hop.
+	HopKeys []hopKeyDTO `json:"hop_keys,omitempty"`
 	// PinState is the host's pin state (backlog 2.43): "full" when the pin
 	// carries the full public key, "fingerprint_only" when it holds only
 	// the fingerprint (a pin made before migration 00021 — its claims fail
@@ -55,6 +61,15 @@ type hostTestDTO struct {
 	PinState *string `json:"pin_state,omitempty" enum:"full,fingerprint_only"`
 }
 
+// hopKeyDTO is one jump host's observed key in the wire shape.
+type hopKeyDTO struct {
+	BastionID   string `json:"bastion_id"`
+	Fingerprint string `json:"fingerprint"`
+	State       string `json:"state"`
+}
+
+// checkDTO is one probe stage's outcome, the wire mirror of
+// hosts.HostTestCheck.
 type checkDTO struct {
 	Name   string `json:"name"`
 	Detail string `json:"detail"`
@@ -67,6 +82,12 @@ func toHostTestDTO(t hosts.HostTest) hostTestDTO {
 		out.Checks = make([]checkDTO, len(t.Checks))
 		for i, c := range t.Checks {
 			out.Checks[i] = checkDTO{Name: c.Name, Detail: c.Detail, OK: c.OK}
+		}
+	}
+	if t.HopKeys != nil {
+		out.HopKeys = make([]hopKeyDTO, len(t.HopKeys))
+		for i, h := range t.HopKeys {
+			out.HopKeys[i] = hopKeyDTO{BastionID: h.BastionID.String(), Fingerprint: h.Fingerprint, State: h.State}
 		}
 	}
 	return out

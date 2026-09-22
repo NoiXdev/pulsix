@@ -39,10 +39,12 @@ func (fullProbeCreds) Get(_ context.Context, _, id uuid.UUID) (credentials.Crede
 
 // fakePins is a KeyPinSource fake: pins by host id, with the pinned full
 // public keys in pubByID (a pin without an entry is fingerprint-only).
+// The bastion maps are the same shape for jump hosts (backlog 2.40).
 type fakePins struct {
-	byID    map[uuid.UUID]string
-	pubByID map[uuid.UUID]string
-	err     error
+	byID        map[uuid.UUID]string
+	pubByID     map[uuid.UUID]string
+	bastionByID map[uuid.UUID]string
+	err         error
 }
 
 // PinnedPublicKeys implements KnownHostSource.
@@ -63,6 +65,32 @@ func (f fakePins) PinnedPublicKeys(_ context.Context, _ uuid.UUID, hostIDs []uui
 // key guard (hosts.Service implements both).
 func (fakePins) ChangedHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
 	return map[uuid.UUID]bool{}, nil
+}
+
+// ChangedBastions reports no changed jump host: fakePins doubles as the
+// claim's bastion guard (hosts.Service implements both).
+func (fakePins) ChangedBastions(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
+// PinnedBastionKeys implements BastionPinSource.
+func (f fakePins) PinnedBastionKeys(_ context.Context, _ uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := map[uuid.UUID]string{}
+	for _, id := range bastionIDs {
+		if pin, ok := f.bastionByID[id]; ok {
+			out[id] = pin
+		}
+	}
+	return out, nil
+}
+
+// PinnedBastionPublicKeys implements BastionPinSource (full keys map to the
+// fingerprint-only fake: no entry means not enforceable).
+func (fakePins) PinnedBastionPublicKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return map[uuid.UUID]string{}, nil
 }
 
 func (f fakePins) PinnedKeys(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]string, error) {
@@ -337,7 +365,7 @@ type testRecord struct {
 	checks        []hosts.HostTestCheck
 }
 
-func (f *fakeTestSink) RecordConnectionTest(_ context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck) error {
+func (f *fakeTestSink) RecordConnectionTest(_ context.Context, orgID, hostID uuid.UUID, at time.Time, ok bool, hostKey, hostPublicKey, hostKeyState string, checks []hosts.HostTestCheck, hops []hosts.HopKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, testRecord{orgID: orgID, hostID: hostID, at: at, ok: ok, hostKey: hostKey, hostPublicKey: hostPublicKey, hostKeyState: hostKeyState, checks: checks})
@@ -552,7 +580,7 @@ func claimJobID(t *testing.T, d *db.DB, org, zone uuid.UUID) uuid.UUID {
 // job's terminal status already stands, the failure is logged, never fatal.
 type failingTestSink struct{}
 
-func (failingTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck) error {
+func (failingTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck, []hosts.HopKey) error {
 	return errors.New("disk full")
 }
 
@@ -652,6 +680,6 @@ func TestFinishConnectionTestSinkFailureFailsTheFinish(t *testing.T) {
 
 type goneTestSink struct{}
 
-func (goneTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck) error {
+func (goneTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck, []hosts.HopKey) error {
 	return hosts.ErrNotFound
 }

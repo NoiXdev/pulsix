@@ -126,7 +126,8 @@ func TestExecSessionFailureAfterDeadConnection(t *testing.T) {
 		HostKeyCallback: hostKeyCallback("", &seen),
 		Timeout:         p.dialTimeout(),
 	}
-	client, conn, err := p.dial(context.Background(), nil, joinHostPort(tgt.Address, tgt.Port), cfg)
+	var hopSeen []observedHop
+	client, conn, err := p.dial(context.Background(), nil, joinHostPort(tgt.Address, tgt.Port), cfg, &hopSeen)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -53,10 +53,19 @@ type Probe struct {
 // order: the first hop directly, every later one through the previous hop's
 // direct-tcpip channel. Each hop authenticates with its own credential.
 type BastionHop struct {
+	// ID is the bastion's uuid — the key the manager's pin state is keyed
+	// by and what the result's hop entries report. Empty when the caller
+	// does not know ids (the chain is then reported positionally).
+	ID         string
 	Address    string
 	Port       int
 	Username   string
 	Credential credentials.Secret
+	// PinnedKey is the hop's pinned fingerprint ("SHA256:…") the observed
+	// host key must match; empty means unpinned (trust on first use). A
+	// mismatch aborts the chain before the hop can carry anything — fail
+	// closed, exactly like the target's pin.
+	PinnedKey string
 }
 
 // ProbeTarget is the host the probe tests.
@@ -110,10 +119,28 @@ type Result struct {
 	// Checks is the per-stage detail list in stage order; a stage that was
 	// never reached is omitted, not failed.
 	Checks []Check `json:"checks"`
+	// HopKeys reports each jump host the chain dialed: its id, the host key
+	// the probe observed there (fingerprint plus the key in authorized-key
+	// form) and the TOFU verdict of the observation against the hop's pin.
+	// Empty when the dial never got to a hop. The manager records them with
+	// the test so the operator can pin a bastion's key and the runner can
+	// refuse routes through a bastion whose pinned key no longer matches
+	// (backlog 2.40).
+	HopKeys []HopKey `json:"hop_keys,omitempty"`
 	// Err names the first failing stage in one operator-readable line,
 	// built from exit statuses and SSH error texts only — it never
 	// echoes credential material.
 	Err string `json:"err,omitempty"`
+}
+
+// HopKey is one jump host's observed host key: what the probe saw at one
+// hop of the chain, in the manager's recordable form. It carries no
+// credential material — the key is the BASTION's public key.
+type HopKey struct {
+	BastionID   string `json:"bastion_id"`
+	Fingerprint string `json:"fingerprint"`
+	PublicKey   string `json:"public_key,omitempty"`
+	State       string `json:"state"`
 }
 
 // OK reports whether the test passed (spec §5: the test covers
@@ -149,9 +176,11 @@ func (p *Probe) Run(ctx context.Context, target ProbeTarget) (Result, error) {
 	}
 	seenKey := func() string { return seen.fingerprint }
 
-	client, conn, err := p.dial(ctx, target.Bastions, joinHostPort(target.Address, target.Port), cfg)
+	// Every hop whose handshake ran reports what it saw, dial order.
+	var hopSeen []observedHop
+	client, conn, err := p.dial(ctx, target.Bastions, joinHostPort(target.Address, target.Port), cfg, &hopSeen)
 	if err != nil {
-		res := p.dialOutcome(target.PinnedKey, seen.fingerprint, err)
+		res := p.dialOutcome(target.PinnedKey, seen.fingerprint, hopSeen, err)
 		if res.HostKey != "" {
 			res.HostPublicKey = seen.publicKey
 		}
@@ -178,10 +207,19 @@ func (p *Probe) Run(ctx context.Context, target ProbeTarget) (Result, error) {
 		HostPublicKey: seen.publicKey,
 		HostKeyState:  string(Compare(target.PinnedKey, seenKey())),
 		Auth:          true,
+		HopKeys:       hopKeys(hopSeen),
 	}
 	res.Checks = append(res.Checks,
 		Check{Name: "reachability", Detail: "connected " + route(target.Bastions), OK: true},
 		Check{Name: "host_key", Detail: keyDetail(seenKey(), res.HostKeyState), OK: true},
+	)
+	for _, hk := range res.HopKeys {
+		// A hop whose handshake completed never reports changed here — a
+		// changed hop aborts the chain — so the check is informative, not
+		// gating: pinned and unpinned (trust on first use) both pass.
+		res.Checks = append(res.Checks, Check{Name: "bastion_key", Detail: keyDetail(hk.Fingerprint, hk.State), OK: true})
+	}
+	res.Checks = append(res.Checks,
 		Check{Name: "auth", Detail: "ssh authentication ok", OK: true},
 	)
 
@@ -208,21 +246,34 @@ func (p *Probe) Run(ctx context.Context, target ProbeTarget) (Result, error) {
 	return res, nil
 }
 
-// dialOutcome maps a failed dial to a result. Four shapes matter: a hop's
+// dialOutcome maps a failed dial to a result. Five shapes matter: a hop's
 // own failure (its credential rejected, its route dead — the target was
-// never reached), the host-key callback's abort (the key changed — fail
-// closed, nothing was authenticated), an authentication failure at the
-// target (reachable, key seen, not authenticated), and everything else
+// never reached), a hop's PINNED host key changing (the chain aborts at the
+// hop — fail closed, the observed key is still reported), the host-key
+// callback's abort at the target, an authentication failure at the target
+// (reachable, key seen, not authenticated), and everything else
 // (unreachable — a failed TCP dial or a dead handshake). Only the final
 // dial step's errors are unwrapped, so intermediate hop failures can never
 // be misattributed to the target.
-func (p *Probe) dialOutcome(pinned, seenKey string, err error) Result {
-	res := Result{}
+func (p *Probe) dialOutcome(pinned, seenKey string, hopSeen []observedHop, err error) Result {
+	res := Result{HopKeys: hopKeys(hopSeen)}
 	switch {
+	case changedHop(hopSeen, err) >= 0:
+		i := changedHop(hopSeen, err)
+		hop := hopSeen[i]
+		res.Err = fmt.Sprintf("hop %d: host key changed: bastion presents %s, pin is %s", hop.index+1, hop.seen.fingerprint, hop.pinned)
+		res.Checks = append(res.Checks,
+			Check{Name: "reachability", Detail: res.Err, OK: false},
+			Check{Name: "bastion_key", Detail: keyDetail(hop.seen.fingerprint, string(KeyStateChanged)), OK: false},
+		)
 	case isHopFailure(err):
-		// A hop's own failure: the target was never reached.
+		// A hop's own failure: the target was never reached. Every hop the
+		// chain dialed before it still reports its observed key.
 		res.Err = err.Error()
 		res.Checks = append(res.Checks, Check{Name: "reachability", Detail: err.Error(), OK: false})
+		for _, hk := range res.HopKeys {
+			res.Checks = append(res.Checks, Check{Name: "bastion_key", Detail: keyDetail(hk.Fingerprint, hk.State), OK: true})
+		}
 	case errors.Is(err, errHostKeyChanged):
 		res.Reachable = true
 		res.HostKey = seenKey
@@ -232,6 +283,9 @@ func (p *Probe) dialOutcome(pinned, seenKey string, err error) Result {
 			Check{Name: "reachability", Detail: "connected", OK: true},
 			Check{Name: "host_key", Detail: keyDetail(seenKey, res.HostKeyState), OK: false},
 		)
+		for _, hk := range res.HopKeys {
+			res.Checks = append(res.Checks, Check{Name: "bastion_key", Detail: keyDetail(hk.Fingerprint, hk.State), OK: true})
+		}
 	case strings.Contains(err.Error(), sshAuthFailedFragment):
 		res.Reachable = true
 		res.HostKey = seenKey
@@ -240,11 +294,17 @@ func (p *Probe) dialOutcome(pinned, seenKey string, err error) Result {
 		res.Checks = append(res.Checks,
 			Check{Name: "reachability", Detail: "connected", OK: true},
 			Check{Name: "host_key", Detail: keyDetail(seenKey, res.HostKeyState), OK: true},
-			Check{Name: "auth", Detail: err.Error(), OK: false},
 		)
+		for _, hk := range res.HopKeys {
+			res.Checks = append(res.Checks, Check{Name: "bastion_key", Detail: keyDetail(hk.Fingerprint, hk.State), OK: true})
+		}
+		res.Checks = append(res.Checks, Check{Name: "auth", Detail: err.Error(), OK: false})
 	default:
 		res.Err = err.Error()
 		res.Checks = append(res.Checks, Check{Name: "reachability", Detail: err.Error(), OK: false})
+		for _, hk := range res.HopKeys {
+			res.Checks = append(res.Checks, Check{Name: "bastion_key", Detail: keyDetail(hk.Fingerprint, hk.State), OK: true})
+		}
 	}
 	return res
 }
@@ -298,25 +358,41 @@ func (e *hopError) Unwrap() error { return e.err }
 // idle chain. On success it returns the final client and the root
 // connection the exec phase bounds; on failure everything opened so far
 // is closed and intermediate hop failures are wrapped in hopError, so the
-// target's own errors stay classifiable.
-func (p *Probe) dial(ctx context.Context, hops []BastionHop, target string, targetCfg *ssh.ClientConfig) (*ssh.Client, net.Conn, error) {
+// target's own errors stay classifiable. hopSeen collects every hop whose
+// handshake ran — dial order, each one's observed key and pin — so the
+// result reports them even when a later step (or a changed hop key) ends
+// the dial.
+func (p *Probe) dial(ctx context.Context, hops []BastionHop, target string, targetCfg *ssh.ClientConfig, hopSeen *[]observedHop) (*ssh.Client, net.Conn, error) {
 	timeout := p.dialTimeout()
 	type step struct {
 		addr string
 		cfg  *ssh.ClientConfig
+		seen *observedKey
 	}
+	*hopSeen = make([]observedHop, 0, len(hops))
 	steps := make([]step, 0, len(hops)+1)
 	for i, h := range hops {
 		hopAuth, err := authMethods(h.Credential)
 		if err != nil {
 			return nil, nil, &hopError{index: i + 1, err: fmt.Errorf("credential: %w", err)}
 		}
+		seen := &observedKey{}
+		*hopSeen = append(*hopSeen, observedHop{index: i, id: h.ID, pinned: h.PinnedKey, seen: seen})
 		steps = append(steps, step{
 			addr: joinHostPort(h.Address, h.Port),
-			cfg:  &ssh.ClientConfig{User: h.Username, Auth: hopAuth, HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: timeout},
+			cfg: &ssh.ClientConfig{
+				User: h.Username, Auth: hopAuth,
+				// The hop's own pin: a pinned hop is verified exactly like
+				// the target (a mismatch aborts the chain); unpinned hops
+				// are trusted on first use — the callback still captures
+				// what they presented, the result reports it.
+				HostKeyCallback: hostKeyCallback(h.PinnedKey, seen),
+				Timeout:         timeout,
+			},
+			seen: seen,
 		})
 	}
-	steps = append(steps, step{target, targetCfg})
+	steps = append(steps, step{target, targetCfg, nil})
 
 	var client *ssh.Client
 	var conn net.Conn
@@ -383,11 +459,62 @@ func (p *Probe) dial(ctx context.Context, hops []BastionHop, target string, targ
 	return nil, nil, errors.New("no dial steps") // unreachable: steps always ends with the target
 }
 
-// observedKey is the target host key one handshake saw: its OpenSSH
-// fingerprint and the key itself in authorized-key form.
+// observedKey is one host key one handshake saw: its OpenSSH fingerprint
+// and the key itself in authorized-key form.
 type observedKey struct {
 	fingerprint string
 	publicKey   string
+}
+
+// observedHop is one jump host's observation: which chain position and
+// bastion it belongs to, the pin it was verified against, and the key its
+// own handshake saw (filled by that step's callback).
+type observedHop struct {
+	index  int // 0-based into the chain
+	id     string
+	pinned string
+	seen   *observedKey
+}
+
+// hopKeys folds the dial's hop observations into the result's reportable
+// entries. A hop the dial never reached (its handshake never ran) carries
+// no observation and is omitted; an id the caller did not know is reported
+// empty, positionally.
+func hopKeys(seen []observedHop) []HopKey {
+	out := make([]HopKey, 0, len(seen))
+	for _, h := range seen {
+		if h.seen.fingerprint == "" {
+			continue // the handshake never got to this hop
+		}
+		out = append(out, HopKey{
+			BastionID:   h.id,
+			Fingerprint: h.seen.fingerprint,
+			PublicKey:   h.seen.publicKey,
+			State:       string(Compare(h.pinned, h.seen.fingerprint)),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// changedHop reports the index of the hop whose pinned key mismatch ended
+// the dial, -1 when the error is not a hop's changed key. The mismatch
+// aborts the chain at the hop (the callback's errHostKeyChanged, wrapped
+// in hopError for every non-final step): the chain position identifies
+// which hop it was.
+func changedHop(seen []observedHop, err error) int {
+	var hop *hopError
+	if !errors.As(err, &hop) {
+		return -1
+	}
+	for i := range seen {
+		if seen[i].index == hop.index-1 && errors.Is(hop.err, errHostKeyChanged) {
+			return i
+		}
+	}
+	return -1
 }
 
 // hostKeyCallback captures the key and its fingerprint and enforces the

@@ -99,10 +99,17 @@ func (s *SQLStore) CreateHostTest(ctx context.Context, t HostTest) error {
 	if checks == nil {
 		checks = []byte("[]")
 	}
+	hops, err := json.Marshal(t.HopKeys)
+	if err != nil {
+		return err
+	}
+	if hops == nil {
+		hops = []byte("[]")
+	}
 	_, err = s.q.CreateHostConnectionTest(ctx, gen.CreateHostConnectionTestParams{
 		ID: t.ID, OrgID: t.OrgID, HostID: t.HostID, At: t.At,
 		Ok: t.OK, HostKey: t.HostKey, HostKeyState: t.HostKeyState, Checks: checks,
-		HostPublicKey: t.HostPublicKey,
+		HostPublicKey: t.HostPublicKey, HopKeys: hops,
 	})
 	return err
 }
@@ -141,8 +148,94 @@ func toHostTest(r gen.HostConnectionTest) (HostTest, error) {
 			return HostTest{}, errors.New("host connection test: checks are not a check list")
 		}
 	}
+	var hops []HopKey
+	if len(r.HopKeys) > 0 {
+		if err := json.Unmarshal(r.HopKeys, &hops); err != nil {
+			return HostTest{}, errors.New("host connection test: hop keys are not a hop key list")
+		}
+	}
 	return HostTest{
 		ID: r.ID, OrgID: r.OrgID, HostID: r.HostID, At: r.At,
 		OK: r.Ok, HostKey: r.HostKey, HostPublicKey: r.HostPublicKey, HostKeyState: r.HostKeyState, Checks: checks,
+		HopKeys: hops,
 	}, nil
+}
+
+// SetBastionKeyPin implements Store (see the interface's own comment).
+func (s *SQLStore) SetBastionKeyPin(ctx context.Context, orgID, bastionID uuid.UUID, fingerprint, publicKey string) error {
+	var pub *string
+	if publicKey != "" {
+		pub = &publicKey
+	}
+	rowsAffected, err := s.q.UpsertBastionKeyPin(ctx, gen.UpsertBastionKeyPinParams{OrgID: orgID, ID: bastionID, SshHostKey: &fingerprint, SshHostPublicKey: pub})
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClearBastionKeyPin implements Store (see the interface's own comment).
+func (s *SQLStore) ClearBastionKeyPin(ctx context.Context, orgID, bastionID uuid.UUID) error {
+	rowsAffected, err := s.q.ClearBastionKeyPin(ctx, gen.ClearBastionKeyPinParams{OrgID: orgID, ID: bastionID})
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// BackfillBastionKeyPin implements Store (see the interface's own comment).
+func (s *SQLStore) BackfillBastionKeyPin(ctx context.Context, orgID, bastionID uuid.UUID, fingerprint, publicKey string) error {
+	_, err := s.q.BackfillBastionKeyPinPublicKey(ctx, gen.BackfillBastionKeyPinPublicKeyParams{
+		OrgID: orgID, BastionID: bastionID, Fingerprint: &fingerprint, PublicKey: &publicKey,
+	})
+	return err
+}
+
+// ListPinnedBastionKeys implements Store (see the interface's own comment).
+func (s *SQLStore) ListPinnedBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]HostKeyPin, error) {
+	rows, err := s.q.ListPinnedBastionKeys(ctx, gen.ListPinnedBastionKeysParams{OrgID: orgID, BastionIds: bastionIDs})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]HostKeyPin, len(rows))
+	for _, r := range rows {
+		if r.SshHostKey == nil {
+			continue // the query filters to non-null pins; never expected
+		}
+		pin := HostKeyPin{Fingerprint: *r.SshHostKey}
+		if r.SshHostPublicKey != nil {
+			pin.PublicKey = *r.SshHostPublicKey
+		}
+		out[r.ID] = pin
+	}
+	return out, nil
+}
+
+// ListChangedBastionKeys implements Store (see the interface's own comment).
+func (s *SQLStore) ListChangedBastionKeys(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) ([]uuid.UUID, error) {
+	return s.q.ListBastionKeyChanged(ctx, gen.ListBastionKeyChangedParams{OrgID: orgID, BastionIds: bastionIDs})
+}
+
+// ListLatestBastionObservations implements Store (see the interface's own
+// comment).
+func (s *SQLStore) ListLatestBastionObservations(ctx context.Context, orgID uuid.UUID, bastionIDs []uuid.UUID) (map[uuid.UUID]BastionHopObservation, error) {
+	rows, err := s.q.ListLatestBastionObservations(ctx, gen.ListLatestBastionObservationsParams{OrgID: orgID, BastionIds: bastionIDs})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]BastionHopObservation, len(rows))
+	for _, r := range rows {
+		// The rows are ordered oldest first, so the last row per bastion
+		// is its newest observation (a tie keeps the later id).
+		out[r.BastionID] = BastionHopObservation{
+			At: r.At, Fingerprint: r.Fingerprint.(string), PublicKey: r.Key.(string), State: r.State.(string),
+		}
+	}
+	return out, nil
 }
