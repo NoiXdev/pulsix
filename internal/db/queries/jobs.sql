@@ -154,6 +154,18 @@ SELECT id, claimed_at FROM jobs WHERE status = 'cancelling';
 UPDATE git_repos SET last_sync = @last_sync, last_sync_error = @last_sync_error
 WHERE org_id = @org_id AND id = @id;
 
+-- name: PinRepoHostKey :execrows
+-- The TOFU completion of the sync sink (backlog 2.41): the first successful
+-- sync's observed git-server key pins the repository. The WHERE clause is
+-- what makes it pure TOFU — a row that already carries a pin is left alone
+-- (the worker's strict check refuses a changed key before any data is
+-- transferred, so a sync that succeeded against a changed key can never
+-- happen; the sink never needs to overwrite). Zero rows affected means the
+-- repository was unpinned meanwhile or is gone — recorded by the caller's
+-- other statements.
+UPDATE git_repos SET ssh_host_key = @host_key, ssh_host_public_key = @public_key, updated_at = now()
+WHERE org_id = @org_id AND id = @id AND ssh_host_key IS NULL;
+
 -- name: CancelQueuedDependents :many
 -- A job that ended without succeeding can never let its dependents run:
 -- they (and their own dependents, transitively) are cancelled in the same

@@ -15,7 +15,7 @@ import (
 const createRepo = `-- name: CreateRepo :one
 INSERT INTO git_repos (id, org_id, name, url, branch, subpath, credential_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at
+RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key
 `
 
 type CreateRepoParams struct {
@@ -51,6 +51,8 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (GitRepo
 		&i.LastSyncError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }
@@ -75,7 +77,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, arg DeleteRepoParams) (int64, 
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at FROM git_repos WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM git_repos WHERE org_id = $1 AND id = $2
 `
 
 type GetRepoParams struct {
@@ -101,12 +103,14 @@ func (q *Queries) GetRepo(ctx context.Context, arg GetRepoParams) (GitRepo, erro
 		&i.LastSyncError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }
 
 const listRepos = `-- name: ListRepos :many
-SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at FROM git_repos WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM git_repos WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListRepos(ctx context.Context, orgID uuid.UUID) ([]GitRepo, error) {
@@ -130,6 +134,8 @@ func (q *Queries) ListRepos(ctx context.Context, orgID uuid.UUID) ([]GitRepo, er
 			&i.LastSyncError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SshHostKey,
+			&i.SshHostPublicKey,
 		); err != nil {
 			return nil, err
 		}
@@ -141,26 +147,54 @@ func (q *Queries) ListRepos(ctx context.Context, orgID uuid.UUID) ([]GitRepo, er
 	return items, nil
 }
 
+const unpinRepoHostKey = `-- name: UnpinRepoHostKey :execrows
+UPDATE git_repos SET ssh_host_key = NULL, ssh_host_public_key = NULL, updated_at = now()
+WHERE org_id = $1 AND id = $2
+`
+
+type UnpinRepoHostKeyParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// Clears the git server key pin (the operator's re-TOFU escape hatch, the
+// repos mirror of ClearBastionKeyPin): the next successful sync pins
+// whatever the server then presents. Zero rows affected means the
+// repository does not exist in the organization (ErrNotFound).
+func (q *Queries) UnpinRepoHostKey(ctx context.Context, arg UnpinRepoHostKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unpinRepoHostKey, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE git_repos
 SET name = $1, url = $2, branch = $3, subpath = $4,
-    credential_id = $5, updated_at = now()
-WHERE org_id = $6 AND id = $7
-RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at
+    credential_id = $5, ssh_host_key = $6, ssh_host_public_key = $7,
+    updated_at = now()
+WHERE org_id = $8 AND id = $9
+RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key
 `
 
 type UpdateRepoParams struct {
-	Name         string      `json:"name"`
-	Url          string      `json:"url"`
-	Branch       string      `json:"branch"`
-	Subpath      string      `json:"subpath"`
-	CredentialID pgtype.UUID `json:"credential_id"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	ID           uuid.UUID   `json:"id"`
+	Name             string      `json:"name"`
+	Url              string      `json:"url"`
+	Branch           string      `json:"branch"`
+	Subpath          string      `json:"subpath"`
+	CredentialID     pgtype.UUID `json:"credential_id"`
+	SshHostKey       *string     `json:"ssh_host_key"`
+	SshHostPublicKey *string     `json:"ssh_host_public_key"`
+	OrgID            uuid.UUID   `json:"org_id"`
+	ID               uuid.UUID   `json:"id"`
 }
 
 // Replaces every editable field, name included; the unique (org_id, name)
-// constraint is the name-clash guard the store maps to ErrNameTaken.
+// constraint is the name-clash guard the store maps to ErrNameTaken. The
+// git server key pin travels with the row (the store passes the current
+// values on; only the service decides when it changes — a URL change drops
+// the pin, the pin's own server is gone).
 func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (GitRepo, error) {
 	row := q.db.QueryRow(ctx, updateRepo,
 		arg.Name,
@@ -168,6 +202,8 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (GitRepo
 		arg.Branch,
 		arg.Subpath,
 		arg.CredentialID,
+		arg.SshHostKey,
+		arg.SshHostPublicKey,
 		arg.OrgID,
 		arg.ID,
 	)
@@ -184,6 +220,8 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (GitRepo
 		&i.LastSyncError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }

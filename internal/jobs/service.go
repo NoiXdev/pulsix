@@ -316,8 +316,10 @@ type Store interface {
 	// repository row it ran for: last_sync carries at, last_sync_error the
 	// failure reason (an empty errText clears it). ErrNotFound when no
 	// repository of the organization matches — e.g. one deleted while its
-	// sync was running.
-	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error
+	// sync was running. hostKey/hostPublicKey are the git server key the
+	// sync observed on an unpinned repository (backlog 2.41): only a valid
+	// pair completes the TOFU pin, anything else is dropped.
+	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error
 	// HasActiveTemplateJob reports whether a job of the template is not
 	// terminal yet — the overlap guard schedules and webhooks ask before
 	// enqueuing another run of the same template.
@@ -776,6 +778,17 @@ type syncPayload struct {
 	RepoID uuid.UUID `json:"repo_id"`
 }
 
+// syncResultPayload is the manager-side mirror of the worker's sync result
+// event (backlog 2.41): the ok event the sync executor sends carries the
+// requirements outcome and — on an unpinned repository whose fetch spoke
+// ssh — the git server key it observed (fingerprint plus full key) for the
+// TOFU pin. Both fields are empty when the repository was already pinned
+// (the worker verified the pin itself) or fetched over https.
+type syncResultPayload struct {
+	HostKey       string `json:"host_key"`
+	HostPublicKey string `json:"host_public_key"`
+}
+
 // EnqueueSync enqueues one sync_repo job for the repository. sync_repo is
 // deliberately NOT host-bound: it runs once, in the organization's default
 // zone (resolved through the DefaultZoneSource port), so the git fetch
@@ -829,11 +842,27 @@ func (s *Service) defaultZone(ctx context.Context, orgID uuid.UUID) (uuid.UUID, 
 
 // RecordSyncResult stamps a sync_repo job's terminal outcome onto its
 // repository row (last_sync / last_sync_error), so the repository list can
-// show when the org's playbook sources last fetched. The sync sink wiring
-// (SQLQueue.SetSyncSink) calls this on the finish path; it is exposed as a
-// service method because the repository row is org-scoped data.
-func (s *Service) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
-	return s.store.RecordSyncResult(ctx, orgID, repoID, at, errText)
+// show when the org's playbook sources last fetched — and, backlog 2.41,
+// completes the repository's git server key pin from what the worker
+// observed. The sync sink wiring (SQLQueue.SetSyncSink) calls this on the
+// finish path; it is exposed as a service method because the repository
+// row is org-scoped data.
+//
+// hostKey/hostPublicKey are the git server key the sync observed on an
+// unpinned repository: the fingerprint and the full key in authorized-key
+// form. Only a valid pair — one key line whose fingerprint is hostKey —
+// completes the TOFU pin; a malformed or half-paired report is dropped
+// rather than stored, the same keep-what-can-be-trusted rule
+// RecordConnectionTest applies. The sync result itself is recorded either
+// way: the pin is a security artifact, not the sync's outcome.
+func (s *Service) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error {
+	if hostKey != "" && hostPublicKey != "" && checkRepoHostKey(hostKey, hostPublicKey) != nil {
+		hostKey, hostPublicKey = "", ""
+	}
+	if hostKey == "" || hostPublicKey == "" {
+		hostKey, hostPublicKey = "", ""
+	}
+	return s.store.RecordSyncResult(ctx, orgID, repoID, at, errText, hostKey, hostPublicKey)
 }
 
 // payloadCleaner is the optional queue hook Service.Cancel uses to drop a

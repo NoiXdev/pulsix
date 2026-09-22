@@ -2,6 +2,7 @@ package jobs_test
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/render"
@@ -47,6 +49,21 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{jobs: map[uuid.UUID]storedJob{}, cancelled: map[uuid.UUID]jobs.Status{}}
+}
+
+// hostKeyPair generates a host key and returns its fingerprint and
+// authorized-key line — what the sync worker reports.
+func hostKeyPair(t *testing.T) (fingerprint, publicKey string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ssh.FingerprintSHA256(sshPub), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
 }
 
 func (f *fakeStore) CreateJob(_ context.Context, j jobs.Job, payload json.RawMessage) error {
@@ -134,15 +151,17 @@ type fakeSyncResult struct {
 	orgID, repoID uuid.UUID
 	at            time.Time
 	errText       string
+	hostKey       string
+	hostPublicKey string
 }
 
-func (f *fakeStore) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+func (f *fakeStore) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.syncErr != nil {
 		return f.syncErr
 	}
-	f.syncs = append(f.syncs, fakeSyncResult{orgID, repoID, at, errText})
+	f.syncs = append(f.syncs, fakeSyncResult{orgID, repoID, at, errText, hostKey, hostPublicKey})
 	return nil
 }
 
@@ -758,31 +777,61 @@ func TestEnqueueSyncFailsClosed(t *testing.T) {
 }
 
 // TestRecordSyncResult proves the org-scoped half records the terminal sync
-// outcome on the repository.
+// outcome on the repository, and that the observed git server key (backlog
+// 2.41) completes the sink call only as a well-formed pair.
 func TestRecordSyncResult(t *testing.T) {
 	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	at := time.Date(2026, 9, 14, 13, 0, 0, 0, time.UTC)
 	store := newFakeStore()
 	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, &fakeZones{})
+	fp, pub := hostKeyPair(t)
+	_, otherPub := hostKeyPair(t)
 
-	if err := svc.RecordSyncResult(ctx, org, repoID, at, ""); err != nil {
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, "", "", ""); err != nil {
 		t.Fatalf("RecordSyncResult: %v", err)
 	}
-	if err := svc.RecordSyncResult(ctx, org, repoID, at, "git pull failed"); err != nil {
+	// A valid observed pair rides to the store (the TOFU write decision is
+	// the store's WHERE clause).
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, "", fp, pub); err != nil {
 		t.Fatalf("RecordSyncResult: %v", err)
 	}
-	if len(store.syncs) != 2 {
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, "git pull failed", "", ""); err != nil {
+		t.Fatalf("RecordSyncResult: %v", err)
+	}
+	if len(store.syncs) != 3 {
 		t.Fatalf("syncs = %+v", store.syncs)
 	}
-	success, failure := store.syncs[0], store.syncs[1]
+	success, pinned, failure := store.syncs[0], store.syncs[1], store.syncs[2]
 	if success.orgID != org || success.repoID != repoID || !success.at.Equal(at) || success.errText != "" {
 		t.Fatalf("success record = %+v", success)
+	}
+	if pinned.hostKey != fp || pinned.hostPublicKey != pub {
+		t.Fatalf("pin record = %+v", pinned)
 	}
 	if failure.errText != "git pull failed" {
 		t.Fatalf("failure record = %+v", failure)
 	}
+
+	// A malformed pair is dropped, the sync still recorded.
+	store.syncs = nil
+	for name, pair := range map[string][2]string{
+		"bad fingerprint": {"SHA256:short", pub},
+		"bad key":         {fp, "not a key"},
+		"key mismatch":    {fp, otherPub},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := svc.RecordSyncResult(ctx, org, repoID, at, "", pair[0], pair[1]); err != nil {
+				t.Fatalf("RecordSyncResult: %v", err)
+			}
+			last := store.syncs[len(store.syncs)-1]
+			if last.hostKey != "" || last.hostPublicKey != "" {
+				t.Fatalf("an untrustable key must be dropped: %+v", last)
+			}
+		})
+	}
+
 	store.syncErr = jobs.ErrNotFound
-	if err := svc.RecordSyncResult(ctx, org, repoID, at, ""); !errors.Is(err, jobs.ErrNotFound) {
+	if err := svc.RecordSyncResult(ctx, org, repoID, at, "", "", ""); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("store failure = %v, want ErrNotFound", err)
 	}
 }

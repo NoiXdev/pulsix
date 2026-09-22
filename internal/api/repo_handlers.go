@@ -15,12 +15,21 @@ import (
 )
 
 type repoDTO struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	URL           string     `json:"url"`
-	Branch        string     `json:"branch"`
-	Subpath       string     `json:"subpath"`
-	CredentialID  string     `json:"credential_id,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	Branch       string `json:"branch"`
+	Subpath      string `json:"subpath"`
+	CredentialID string `json:"credential_id,omitempty"`
+	// SSHHostKey is the git server's pinned host-key fingerprint (backlog
+	// 2.41), absent while the repository is unpinned (trust on first use).
+	SSHHostKey *string `json:"ssh_host_key,omitempty"`
+	// PinState is the repository's pin state, the hosts/bastion field shape:
+	// "full" while pinned (a repo pin always carries the full public key —
+	// no legacy fingerprint-only pins exist), absent while unpinned.
+	PinState *string `json:"pin_state,omitempty" enum:"full,fingerprint_only"`
+	// LastSync is when the last sync_repo job for this repo reached a
+	// terminal state, and LastSyncError its failure reason ("" on success).
 	LastSync      *time.Time `json:"last_sync,omitempty"`
 	LastSyncError string     `json:"last_sync_error,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -35,6 +44,12 @@ func toRepoDTO(r repos.Repo) repoDTO {
 	}
 	if r.CredentialID != nil {
 		dto.CredentialID = r.CredentialID.String()
+	}
+	if r.SSHHostKey != "" {
+		dto.SSHHostKey = &r.SSHHostKey
+	}
+	if state := r.PinState(); state != "" {
+		dto.PinState = &state
 	}
 	return dto
 }
@@ -200,6 +215,26 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, id.String(), "deleted repo")
 		return &okOutput{}, nil
 	}, withAudit("deleteRepo", "repo"))
+
+	// DELETE .../host-key clears the git server key pin (backlog 2.41): the
+	// next successful sync pins whatever the server then presents (TOFU).
+	// The repository is resolved first: a foreign repository is invisible,
+	// exactly like every other org-scoped resource.
+	huma.Delete(hapi, "/api/v1/orgs/{org}/repos/{id}/host-key", func(ctx context.Context, in *repoGetInput) (*okOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermReposWrite)
+		if err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "repo id")
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Repos.ClearHostKey(ctx, scope.OrgID, id); err != nil {
+			return nil, mapReposErr(ctx, err)
+		}
+		setAuditObject(ctx, id.String(), "cleared repo host key pin")
+		return &okOutput{}, nil
+	}, withAudit("clearRepoHostKey", "repo"))
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/repos/{id}/sync", func(ctx context.Context, in *repoGetInput) (*repoSyncOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermReposWrite)

@@ -200,7 +200,7 @@ func (s *SQLStore) ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, af
 	return out, nil
 }
 
-func (s *SQLStore) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+func (s *SQLStore) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error {
 	n, err := s.q.UpdateRepoSyncState(ctx, gen.UpdateRepoSyncStateParams{
 		OrgID: orgID, ID: repoID,
 		LastSync:      pgtype.Timestamptz{Time: at, Valid: true},
@@ -211,6 +211,17 @@ func (s *SQLStore) RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID
 	}
 	if n == 0 {
 		return ErrNotFound
+	}
+	// The TOFU pin completion (backlog 2.41): the observed key pins the
+	// repository only while it is unpinned (the query's WHERE clause). Zero
+	// rows here means the repository was unpinned meanwhile or is already
+	// pinned with another key — both leave the pin exactly as it is.
+	if hostKey != "" && hostPublicKey != "" {
+		if _, err := s.q.PinRepoHostKey(ctx, gen.PinRepoHostKeyParams{
+			OrgID: orgID, ID: repoID, HostKey: &hostKey, PublicKey: &hostPublicKey,
+		}); err != nil {
+			return fmt.Errorf("pin repo host key: %w", err)
+		}
 	}
 	return nil
 }

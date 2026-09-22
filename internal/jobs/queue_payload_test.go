@@ -237,6 +237,85 @@ func TestBuildPayloadRunShipsSnapshotConnectionsAndSecrets(t *testing.T) {
 	}
 }
 
+// TestBuildPayloadRepoPlaybookShipsTheGitServerPin proves a pinned
+// repository's claim carries the pin (backlog 2.41): the run's repo fetch
+// demands the pinned key exactly like a sync job's, and an unpinned repo's
+// payload carries neither field.
+func TestBuildPayloadRepoPlaybookShipsTheGitServerPin(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+	repoID := uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()),
+			PlaybookRepo: &repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`),
+		},
+	}}
+	pinned := fakeRepos{byID: map[uuid.UUID]RepoRef{
+		repoID: {ID: repoID, URL: "ssh://git@example.org/ansible.git", Branch: "main",
+			SSHHostKey:       "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+			SSHHostPublicKey: "ssh-ed25519 AAAA pinned"},
+	}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{
+		Doc:         map[string]any{"all": map[string]any{}},
+		Connections: map[string]render.Connection{"web1": {HostID: hostID}},
+	}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetRepoSource(pinned)
+	q.SetKeyPins(fakePins{})
+
+	out := &workerpb.Job{}
+	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts,
+	}, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	var payload struct {
+		Repo struct {
+			ID            string `json:"id"`
+			HostKey       string `json:"host_key"`
+			HostPublicKey string `json:"host_public_key"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(out.KindPayload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Repo.HostKey != "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" ||
+		payload.Repo.HostPublicKey != "ssh-ed25519 AAAA pinned" {
+		t.Fatalf("pinned repo payload = %+v", payload.Repo)
+	}
+
+	// Unpinned: neither field rides.
+	unpinned := fakeRepos{byID: map[uuid.UUID]RepoRef{
+		repoID: {ID: repoID, URL: "https://git.example.org/ansible.git", Branch: "main"},
+	}}
+	q = newTestQueue(fakeRenderer{inv: render.Inventory{
+		Doc:         map[string]any{"all": map[string]any{}},
+		Connections: map[string]render.Connection{"web1": {HostID: hostID}},
+	}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetRepoSource(unpinned)
+	q.SetKeyPins(fakePins{})
+	out = &workerpb.Job{}
+	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts,
+	}, out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+	var unpinnedPayload struct {
+		Repo struct {
+			HostKey       string `json:"host_key"`
+			HostPublicKey string `json:"host_public_key"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(out.KindPayload), &unpinnedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if unpinnedPayload.Repo.HostKey != "" || unpinnedPayload.Repo.HostPublicKey != "" {
+		t.Fatalf("an unpinned repo's payload must carry no pin: %+v", unpinnedPayload.Repo)
+	}
+}
+
 func TestBuildPayloadHostJobOpensSealedKindPayload(t *testing.T) {
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	q := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{})

@@ -1,6 +1,7 @@
 package repos_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -220,5 +221,78 @@ func TestSQLStoreSyncStateColumns(t *testing.T) {
 	}
 	if got.LastSync == nil || !got.LastSync.Equal(at) || got.LastSyncError != errText {
 		t.Fatalf("sync columns = %+v", got)
+	}
+}
+
+// TestSQLStoreHostKeyPin round-trips the git server key pin (backlog 2.41):
+// the sync sink's pin write (raw SQL, the jobs finish path's shape) reads
+// back through the store, an edit keeping the URL keeps the pin, the unpin
+// action clears both columns, and a foreign repository is invisible to the
+// unpin — a two-org isolation check.
+func TestSQLStoreHostKeyPin(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := repos.NewSQLStore(d)
+	org := seedOrg(t, q, "repo-pin-org")
+	other := seedOrg(t, q, "repo-pin-other")
+	scoped := db.WithOrgScope(ctx, org)
+
+	fingerprint, publicKey := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "ssh-ed25519 AAAA pinned"
+	created, err := store.Create(scoped, repos.Repo{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra", URL: "ssh://git@git.example.com/x.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.PinState() != "" {
+		t.Fatalf("a new repository must be unpinned: %+v", created)
+	}
+	// The sync sink's TOFU write (jobs store's PinRepoHostKey).
+	if _, err := d.Pool().Exec(context.Background(),
+		`UPDATE git_repos SET ssh_host_key = $3, ssh_host_public_key = $4 WHERE org_id = $1 AND id = $2`,
+		org, created.ID, fingerprint, publicKey); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Get(scoped, org, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SSHHostKey != fingerprint || got.SSHHostPublicKey != publicKey || got.PinState() != repos.PinStateFull {
+		t.Fatalf("pin round-trip = %+v", got)
+	}
+	// A foreign org sees nothing of the pin: its own id-space is invisible.
+	if _, err := store.Get(db.WithOrgScope(ctx, other), other, created.ID); !errors.Is(err, repos.ErrNotFound) {
+		t.Fatalf("cross-org pinned read = %v, want ErrNotFound", err)
+	}
+
+	// An edit keeping the URL keeps the pin (Update passes the row through).
+	renamed := got
+	renamed.Name = "infra-2"
+	updated, err := store.Update(scoped, renamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.SSHHostKey != fingerprint || updated.SSHHostPublicKey != publicKey {
+		t.Fatalf("pin lost on an edit: %+v", updated)
+	}
+
+	// The unpin action clears both columns.
+	if err := store.ClearHostKey(scoped, org, created.ID); err != nil {
+		t.Fatalf("ClearHostKey: %v", err)
+	}
+	cleared, err := store.Get(scoped, org, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.SSHHostKey != "" || cleared.SSHHostPublicKey != "" {
+		t.Fatalf("pin survived the unpin: %+v", cleared)
+	}
+	// Unpinning an unpinned repository is the idempotent no-op the bastion
+	// clear shares: zero rows means the REPO is missing, not the pin.
+	if err := store.ClearHostKey(scoped, org, created.ID); err != nil {
+		t.Fatalf("second unpin = %v, want the idempotent no-op", err)
+	}
+	// A cross-org unpin targets nothing.
+	if err := store.ClearHostKey(db.WithOrgScope(ctx, other), other, created.ID); !errors.Is(err, repos.ErrNotFound) {
+		t.Fatalf("cross-org unpin = %v, want ErrNotFound", err)
 	}
 }

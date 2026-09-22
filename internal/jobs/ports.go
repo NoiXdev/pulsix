@@ -48,10 +48,11 @@ type DefaultZoneSource interface {
 // SyncSink is the optional port a finished sync_repo job's terminal outcome
 // flows through (SQLQueue.SetSyncSink): the concrete implementation is the
 // org-scoped jobs.Service.RecordSyncResult, updating the repository's
-// last_sync/last_sync_error. Declared here so the queue half never imports
-// the service half.
+// last_sync/last_sync_error and — when the sync observed one — completing
+// the repository's git server key pin (backlog 2.41). Declared here so the
+// queue half never imports the service half.
 type SyncSink interface {
-	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error
+	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error
 }
 
 // TestSink is the optional port a finished connection_test job's outcome
@@ -173,10 +174,15 @@ type RepoSource interface {
 // worker: the fetch needs url, branch and the playbook's file path (the
 // repo's own subpath joined with the playbook's path), and the git
 // credential id opens the secret the claim ships as `git:<repo-id>`.
+// SSHHostKey/SSHHostPublicKey are the repository's git server key pin
+// (backlog 2.41) — the fingerprint plus the full key the worker pre-seeds
+// into the fetch's own known_hosts; both empty while unpinned.
 type RepoRef struct {
-	ID           uuid.UUID
-	URL          string
-	Branch       string
-	Subpath      string
-	CredentialID *uuid.UUID
+	ID               uuid.UUID
+	URL              string
+	Branch           string
+	Subpath          string
+	CredentialID     *uuid.UUID
+	SSHHostKey       string
+	SSHHostPublicKey string
 }

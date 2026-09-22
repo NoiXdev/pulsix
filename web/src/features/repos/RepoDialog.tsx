@@ -5,7 +5,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
-import { useCreateRepo, useDeleteRepo, useUpdateRepo } from '../../api/hooks/useRepos.ts';
+import { useCreateRepo, useClearRepoKey, useDeleteRepo, useUpdateRepo } from '../../api/hooks/useRepos.ts';
 import type { Credential } from '../../api/types.ts';
 import { repoErrorsFromServer, validateRepoInput, type RepoFormValues } from './validate.ts';
 
@@ -13,8 +13,9 @@ const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 te
 
 export interface RepoDialogProps {
   org: string;
-  /** A repo to edit; absent means create. */
-  repo?: { id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string };
+  /** A repo to edit; absent means create. sshHostKey is the git server
+   * key pin the last sync observed (SHA256:…), absent while unpinned. */
+  repo?: { id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; ssh_host_key?: string; pin_state?: string };
   credentials: readonly Credential[];
   onClose: () => void;
 }
@@ -29,10 +30,12 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
   const create = useCreateRepo(org);
   const update = useUpdateRepo(org, repo?.id ?? '');
   const remove = useDeleteRepo(org);
+  const clearKey = useClearRepoKey(org, repo?.id ?? '');
   const [values, setValues] = useState<RepoFormValues>(
     repo ? { name: repo.name, url: repo.url, branch: repo.branch, subpath: repo.subpath } : { name: '', url: '', branch: '', subpath: '' },
   );
   const [credentialId, setCredentialId] = useState(repo?.credential_id ?? '');
+  const [pinnedKey, setPinnedKey] = useState(repo?.ssh_host_key ?? '');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -108,6 +111,41 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
           </select>
           <span className="text-[11px] text-muted-foreground">Deploy key or token the checkout authenticates with.</span>
         </div>
+        {repo && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-[11px] font-medium">Git server key</span>
+              {pinnedKey ? (
+                <>
+                  <span className="truncate font-mono text-[11px]" title={pinnedKey}>
+                    {pinnedKey}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">pinned on first sync — a changed key blocks every fetch</span>
+                </>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">not pinned yet — the first successful sync pins it</span>
+              )}
+            </div>
+            {pinnedKey && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={clearKey.isPending}
+                onClick={async () => {
+                  try {
+                    await clearKey.mutateAsync();
+                    setPinnedKey('');
+                    toast.show('Key pin cleared — the next sync re-pins the server');
+                  } catch (err) {
+                    toast.show(err instanceof Error ? err.message : 'Unpinning failed', 'destructive');
+                  }
+                }}
+              >
+                Unpin key
+              </Button>
+            )}
+          </div>
+        )}
         {formError && (
           <p role="alert" className="text-xs text-destructive">
             {formError}

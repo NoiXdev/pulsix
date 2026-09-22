@@ -195,4 +195,42 @@ describe('ReposPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('No repositories yet.')).toBeInTheDocument();
   });
+
+  it('shows the git server key pin in the dialog and unpins it', async () => {
+    const user = userEvent.setup();
+    let cleared = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/repos': () => ({
+        repos: cleared ? [repo()] : [repo({ ssh_host_key: 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', pin_state: 'full' })],
+      }),
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+      'DELETE /api/v1/orgs/acme/repos/r1/host-key': () => {
+        cleared = true;
+        return {};
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'infra' }));
+    const dialog = await screen.findByRole('dialog', { name: 'infra' });
+    expect(within(dialog).getByText('SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Unpin key' }));
+    // The unpin reloads the registry, and the refreshed dialog shows the
+    // repository went back to trust on first use.
+    expect(await within(dialog).findByText(/not pinned yet/)).toBeInTheDocument();
+  });
+
+  it('shows an unpinned repository without pin controls', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [repo()] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'infra' }));
+    const dialog = await screen.findByRole('dialog', { name: 'infra' });
+    expect(within(dialog).getByText(/not pinned yet/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Unpin key' })).not.toBeInTheDocument();
+  });
 });

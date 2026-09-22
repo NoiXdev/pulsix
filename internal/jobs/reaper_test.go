@@ -276,7 +276,7 @@ type racingSink struct {
 	fired  atomic.Bool
 }
 
-func (s *racingSink) RecordSyncResult(_ context.Context, _ uuid.UUID, repoID uuid.UUID, _ time.Time, _ string) error {
+func (s *racingSink) RecordSyncResult(_ context.Context, _ uuid.UUID, repoID uuid.UUID, _ time.Time, _, _, _ string) error {
 	if !s.fired.CompareAndSwap(false, true) {
 		return nil
 	}

@@ -998,6 +998,13 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	payload := map[string]any{"repo": map[string]any{
 		"id": repoID.String(), "url": repo.URL, "branch": repo.Branch, "subpath": sub,
 	}}
+	// The repository's git server key pin (backlog 2.41): a run job's repo
+	// fetch enforces the pin exactly like a sync job's (the same git
+	// server), so the claim carries it the same way.
+	if repo.SSHHostKey != "" {
+		payload["repo"].(map[string]any)["host_key"] = repo.SSHHostKey
+		payload["repo"].(map[string]any)["host_public_key"] = repo.SSHHostPublicKey
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("encode repo kind payload: %w", err)
@@ -1231,7 +1238,24 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 		slog.ErrorContext(ctx, "record sync result: job payload carries no repo id", "job", jobID)
 		return nil
 	}
-	if err := q.sync.RecordSyncResult(ctx, orgID, sp.RepoID, q.now(), errText); err != nil {
+	// The observed git server key rides the sync result event (backlog
+	// 2.41): the newest ok/failed event is parsed the way recordTest parses
+	// the probe result. A sync without a result event (a failed fetch) — or
+	// a malformed one — records nothing to pin; the sink drops what cannot
+	// be trusted.
+	var res syncResultPayload
+	if err := q.db.QueryRow(ctx,
+		`SELECT payload FROM job_events WHERE job_id = $1 AND state IN ('ok','failed') ORDER BY seq DESC LIMIT 1`,
+		jobID,
+	).Scan(&payload); err == nil {
+		if err := json.Unmarshal(payload, &res); err != nil {
+			slog.ErrorContext(ctx, "record sync result: result event is not a result", "err", err, "job", jobID)
+			res = syncResultPayload{}
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("record sync result: look up result event: %w", err)
+	}
+	if err := q.sync.RecordSyncResult(ctx, orgID, sp.RepoID, q.now(), errText, res.HostKey, res.HostPublicKey); err != nil {
 		if sinkGone(err) {
 			slog.WarnContext(ctx, "record sync result: repository no longer exists", "job", jobID)
 			return nil

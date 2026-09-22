@@ -143,7 +143,7 @@ func (s *rotationOnlyStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID,
 	return nil, nil
 }
 
-func (s *rotationOnlyStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string) error {
+func (s *rotationOnlyStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string, string, string) error {
 	return nil
 }
 
@@ -479,7 +479,7 @@ func (plainRotationStore) CancelJob(context.Context, uuid.UUID, uuid.UUID) (Stat
 func (plainRotationStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, int64) ([]Event, error) {
 	return nil, nil
 }
-func (plainRotationStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string) error {
+func (plainRotationStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string, string, string) error {
 	return nil
 }
 

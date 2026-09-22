@@ -54,9 +54,17 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Repo, error) {
 }
 
 func (s *SQLStore) Update(ctx context.Context, r Repo) (Repo, error) {
+	var hostKey, hostPub *string
+	if r.SSHHostKey != "" {
+		hostKey = &r.SSHHostKey
+	}
+	if r.SSHHostPublicKey != "" {
+		hostPub = &r.SSHHostPublicKey
+	}
 	row, err := s.q.UpdateRepo(ctx, gen.UpdateRepoParams{
 		OrgID: r.OrgID, ID: r.ID, Name: r.Name, Url: r.URL, Branch: r.Branch,
 		Subpath: r.Subpath, CredentialID: db.NullUUID(r.CredentialID),
+		SshHostKey: hostKey, SshHostPublicKey: hostPub,
 	})
 	if err != nil {
 		if db.IsUniqueViolation(err) {
@@ -65,6 +73,18 @@ func (s *SQLStore) Update(ctx context.Context, r Repo) (Repo, error) {
 		return Repo{}, mapErr(err)
 	}
 	return toRepo(row), nil
+}
+
+// ClearHostKey implements Store (see the interface's own comment).
+func (s *SQLStore) ClearHostKey(ctx context.Context, orgID, id uuid.UUID) error {
+	n, err := s.q.UnpinRepoHostKey(ctx, gen.UnpinRepoHostKeyParams{OrgID: orgID, ID: id})
+	if err != nil {
+		return fmt.Errorf("unpin repo host key: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
@@ -94,7 +114,8 @@ func toRepo(r gen.GitRepo) Repo {
 	return Repo{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, URL: r.Url, Branch: r.Branch, Subpath: r.Subpath,
 		CredentialID: db.UUIDPtr(r.CredentialID),
-		LastSync:     db.TimePtr(r.LastSync), LastSyncError: textOrEmpty(r.LastSyncError),
+		SSHHostKey:   textOrEmpty(r.SshHostKey), SSHHostPublicKey: textOrEmpty(r.SshHostPublicKey),
+		LastSync: db.TimePtr(r.LastSync), LastSyncError: textOrEmpty(r.LastSyncError),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

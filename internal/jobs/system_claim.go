@@ -539,6 +539,14 @@ func (q *SQLQueue) syncRepoPayload(ctx context.Context, job Job) (string, map[st
 	payload := map[string]any{"repo": map[string]any{
 		"id": sp.RepoID.String(), "url": repo.URL, "branch": repo.Branch, "subpath": repo.Subpath,
 	}}
+	// The repository's git server key pin (backlog 2.41): a pinned repo's
+	// fetch demands its pinned key (the worker pre-seeds the run's
+	// known_hosts and connects strict), an unpinned one stays trust on
+	// first use. Both ride the plain payload — a host public key is public.
+	if repo.SSHHostKey != "" {
+		payload["repo"].(map[string]any)["host_key"] = repo.SSHHostKey
+		payload["repo"].(map[string]any)["host_public_key"] = repo.SSHHostPublicKey
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return "", nil, fmt.Errorf("encode sync kind payload: %w", err)

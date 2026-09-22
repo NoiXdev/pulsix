@@ -52,6 +52,16 @@ export function useDeleteRepo(org: string) {
   });
 }
 
+/** useClearRepoKey removes a repository's git server key pin; the next
+ * successful sync re-pins whatever the server then presents. */
+export function useClearRepoKey(org: string, id: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: () => unwrap(api.DELETE('/api/v1/orgs/{org}/repos/{id}/host-key', { params: { path: { org, id } } })),
+    onSuccess: invalidate,
+  });
+}
+
 /** useSyncRepo starts a repo sync (a sync_repo job) and returns its 202
  * body — { job } — so the page can point at the run view. */
 export function useSyncRepo(org: string) {

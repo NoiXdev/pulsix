@@ -33,6 +33,13 @@ var (
 // default.
 const DefaultBranch = "main"
 
+// Pin states (backlog 2.41), the repo mirror of the hosts/bastion shapes:
+// a repository's pin is written by the sync sink from the key the worker
+// observed on the first successful sync and always carries the full public
+// key, so the state is full while pinned; unpinned is not a pin state (the
+// DTO leaves the field out, like the hosts read does).
+const PinStateFull = "full"
+
 // MaxURLLength bounds a repository URL; git URLs are short by construction
 // and 500 characters leave generous room for path-style remotes.
 const MaxURLLength = 500
@@ -46,19 +53,37 @@ var (
 
 // Repo is one registered git repository.
 type Repo struct {
-	ID           uuid.UUID
-	OrgID        uuid.UUID
-	Name         string
-	URL          string
-	Branch       string
-	Subpath      string
+	ID      uuid.UUID
+	OrgID   uuid.UUID
+	Name    string
+	URL     string
+	Branch  string
+	Subpath string
+	// CredentialID is nil when the checkout fetches without a credential.
 	CredentialID *uuid.UUID
+	// SSHHostKey is the git server's pinned host-key fingerprint
+	// (SHA256:…) and SSHHostPublicKey the full key in authorized-key form —
+	// written by the sync sink from what the FIRST (unpinned) successful
+	// sync observed (TOFU per repository, backlog 2.41), cleared by the
+	// unpin action. Both empty while unpinned.
+	SSHHostKey       string
+	SSHHostPublicKey string
 	// LastSync is when the last sync_repo job for this repo reached a
 	// terminal state, and LastSyncError its failure reason ("" on success).
 	LastSync      *time.Time
 	LastSyncError string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+// PinState is the read APIs' pin state: full while the repository carries a
+// pin (a repo pin always carries the full key), "" while unpinned — trust
+// on first use is not a pin state.
+func (r Repo) PinState() string {
+	if r.SSHHostKey != "" {
+		return PinStateFull
+	}
+	return ""
 }
 
 // CreateInput is a new repository. An empty Branch becomes DefaultBranch.
@@ -102,6 +127,10 @@ type Store interface {
 	List(ctx context.Context, orgID uuid.UUID) ([]Repo, error)
 	Update(ctx context.Context, r Repo) (Repo, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
+	// ClearHostKey removes the repository's git server key pin (backlog
+	// 2.41's unpin); ErrNotFound when the repository does not exist in the
+	// organization.
+	ClearHostKey(ctx context.Context, orgID, id uuid.UUID) error
 }
 
 // Service implements the repository registry.
@@ -139,7 +168,10 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Repo, error) {
 }
 
 // Update replaces every editable field, name included (a clash with another
-// repository's name is ErrNameTaken).
+// repository's name is ErrNameTaken). The git server key pin is not an
+// editable field: it survives the edit unless the URL changes — the pin
+// pins the server the URL names, so a moved checkout is unpinned and the
+// next sync re-pins whatever the new server presents (backlog 2.41).
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInput) (Repo, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
@@ -151,6 +183,9 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	next := cur
 	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID =
 		in.Name, in.URL, defaultBranch(in.Branch), in.Subpath, in.CredentialID
+	if next.URL != cur.URL {
+		next.SSHHostKey, next.SSHHostPublicKey = "", ""
+	}
 	return s.store.Update(ctx, next)
 }
 
@@ -158,6 +193,17 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 // is the guard (no cascade), so a referenced repository is ErrInUse.
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.store.Delete(ctx, orgID, id)
+}
+
+// ClearHostKey removes the repository's git server key pin (backlog 2.41's
+// unpin): the next successful sync pins whatever the server then presents
+// (TOFU). ErrNotFound when the repository does not exist in the
+// organization — a foreign repository is invisible, never cleared.
+func (s *Service) ClearHostKey(ctx context.Context, orgID, id uuid.UUID) error {
+	if _, err := s.store.Get(ctx, orgID, id); err != nil {
+		return err
+	}
+	return s.store.ClearHostKey(ctx, orgID, id)
 }
 
 // Sync enqueues one sync_repo job for the repository (jobs.Service's

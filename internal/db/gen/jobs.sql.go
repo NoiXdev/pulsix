@@ -677,6 +677,39 @@ func (q *Queries) ListWorkerJobsToEnd(ctx context.Context, arg ListWorkerJobsToE
 	return items, nil
 }
 
+const pinRepoHostKey = `-- name: PinRepoHostKey :execrows
+UPDATE git_repos SET ssh_host_key = $1, ssh_host_public_key = $2, updated_at = now()
+WHERE org_id = $3 AND id = $4 AND ssh_host_key IS NULL
+`
+
+type PinRepoHostKeyParams struct {
+	HostKey   *string   `json:"host_key"`
+	PublicKey *string   `json:"public_key"`
+	OrgID     uuid.UUID `json:"org_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+// The TOFU completion of the sync sink (backlog 2.41): the first successful
+// sync's observed git-server key pins the repository. The WHERE clause is
+// what makes it pure TOFU — a row that already carries a pin is left alone
+// (the worker's strict check refuses a changed key before any data is
+// transferred, so a sync that succeeded against a changed key can never
+// happen; the sink never needs to overwrite). Zero rows affected means the
+// repository was unpinned meanwhile or is gone — recorded by the caller's
+// other statements.
+func (q *Queries) PinRepoHostKey(ctx context.Context, arg PinRepoHostKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pinRepoHostKey,
+		arg.HostKey,
+		arg.PublicKey,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const requeueStaleJobs = `-- name: RequeueStaleJobs :many
 UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz

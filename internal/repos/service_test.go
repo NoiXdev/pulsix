@@ -23,6 +23,7 @@ type fakeStore struct {
 	byID    map[uuid.UUID]repos.Repo
 	names   map[string]string // name -> id string, for uniqueness bookkeeping
 	nextErr error
+	cleared []uuid.UUID
 }
 
 func newFakeStore() *fakeStore {
@@ -92,6 +93,19 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 		return repos.ErrInUse
 	}
 	delete(f.byID, id)
+	return nil
+}
+
+func (f *fakeStore) ClearHostKey(_ context.Context, orgID, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.byID[id]
+	if !ok || r.OrgID != orgID {
+		return repos.ErrNotFound
+	}
+	r.SSHHostKey, r.SSHHostPublicKey = "", ""
+	f.byID[id] = r
+	f.cleared = append(f.cleared, id)
 	return nil
 }
 
@@ -318,6 +332,98 @@ func TestDeletePropagatesStoreOutcomes(t *testing.T) {
 	}
 	if err := svc.Delete(ctx, org, created.ID); !errors.Is(err, repos.ErrInUse) {
 		t.Fatalf("delete referenced = %v, want ErrInUse", err)
+	}
+}
+
+// TestUpdateDropsThePinOnURLChange proves the pin's one service-side rule
+// (backlog 2.41): the pin pins the server the URL names, so an edit that
+// changes the URL drops it (the next sync re-pins whatever the new server
+// presents); an edit that keeps the URL keeps the pin.
+func TestUpdateDropsThePinOnURLChange(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, &fakeCreds{}, &fakeEnqueuer{})
+	created, err := svc.Create(ctx, org, repos.CreateInput{Name: "infra", URL: "ssh://git@git.example.com/acme/infra.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created.SSHHostKey = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	created.SSHHostPublicKey = "ssh-ed25519 AAAA pinned"
+	if _, err := store.Update(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+
+	// An edit keeping the URL keeps the pin.
+	same, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{Name: "infra", URL: created.URL, Branch: "release/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.SSHHostKey != created.SSHHostKey || same.SSHHostPublicKey != created.SSHHostPublicKey {
+		t.Fatalf("pin lost on a same-URL edit: %+v", same)
+	}
+
+	// An edit changing the URL drops it.
+	moved, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{Name: "infra", URL: "https://git.example.com/acme/infra.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.SSHHostKey != "" || moved.SSHHostPublicKey != "" {
+		t.Fatalf("pin survived a URL change: %+v", moved)
+	}
+}
+
+// TestPinState pins the pin-state shape the read APIs expose (backlog 2.41,
+// the hosts 2.43 mirror): a pin always carries the full key for repos, so
+// the state is full or nothing.
+func TestPinState(t *testing.T) {
+	cases := []struct {
+		name string
+		repo repos.Repo
+		want string
+	}{
+		{"pinned", repos.Repo{SSHHostKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", SSHHostPublicKey: "ssh-ed25519 AAAA"}, repos.PinStateFull},
+		{"unpinned", repos.Repo{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.repo.PinState(); got != tc.want {
+				t.Fatalf("PinState = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClearHostKey proves the unpin action: the pin is gone after the call,
+// an unknown repository is ErrNotFound and never reaches the store.
+func TestClearHostKey(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, &fakeCreds{}, &fakeEnqueuer{})
+	created, err := svc.Create(ctx, org, repos.CreateInput{Name: "infra", URL: "ssh://git@git.example.com/x.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created.SSHHostKey = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	created.SSHHostPublicKey = "ssh-ed25519 AAAA pinned"
+	if _, err := store.Update(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.ClearHostKey(ctx, org, created.ID); err != nil {
+		t.Fatalf("ClearHostKey: %v", err)
+	}
+	got, err := store.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SSHHostKey != "" || got.SSHHostPublicKey != "" {
+		t.Fatalf("pin survived the unpin: %+v", got)
+	}
+	if err := svc.ClearHostKey(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, repos.ErrNotFound) {
+		t.Fatalf("clear unknown = %v, want ErrNotFound", err)
+	}
+	if len(store.cleared) != 1 {
+		t.Fatalf("an unknown repository must not reach the store: %+v", store.cleared)
 	}
 }
 

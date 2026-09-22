@@ -116,17 +116,19 @@ type Credential struct {
 }
 
 type GitRepo struct {
-	ID            uuid.UUID          `json:"id"`
-	OrgID         uuid.UUID          `json:"org_id"`
-	Name          string             `json:"name"`
-	Url           string             `json:"url"`
-	Branch        string             `json:"branch"`
-	Subpath       string             `json:"subpath"`
-	CredentialID  pgtype.UUID        `json:"credential_id"`
-	LastSync      pgtype.Timestamptz `json:"last_sync"`
-	LastSyncError *string            `json:"last_sync_error"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	Name             string             `json:"name"`
+	Url              string             `json:"url"`
+	Branch           string             `json:"branch"`
+	Subpath          string             `json:"subpath"`
+	CredentialID     pgtype.UUID        `json:"credential_id"`
+	LastSync         pgtype.Timestamptz `json:"last_sync"`
+	LastSyncError    *string            `json:"last_sync_error"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	SshHostKey       *string            `json:"ssh_host_key"`
+	SshHostPublicKey *string            `json:"ssh_host_public_key"`
 }
 
 type Host struct {

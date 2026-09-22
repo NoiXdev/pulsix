@@ -100,6 +100,7 @@ func (a repoRefSource) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.R
 		Branch:       r.Branch,
 		Subpath:      r.Subpath,
 		CredentialID: r.CredentialID,
+		SSHHostKey:   r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey,
 	}, nil
 }
 

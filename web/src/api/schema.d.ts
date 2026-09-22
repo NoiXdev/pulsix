@@ -1283,6 +1283,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{id}/host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org repos by ID host key */
+        delete: operations["clearRepoHostKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{id}/sync": {
         parameters: {
             query?: never;
@@ -3356,6 +3373,9 @@ export interface components {
             last_sync?: string;
             last_sync_error?: string;
             name: string;
+            /** @enum {string} */
+            pin_state?: "full" | "fingerprint_only";
+            ssh_host_key?: string;
             subpath: string;
             /** Format: date-time */
             updated_at: string;
@@ -7695,6 +7715,38 @@ export interface operations {
         };
     };
     deleteRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    clearRepoHostKey: {
         parameters: {
             query?: never;
             header?: never;

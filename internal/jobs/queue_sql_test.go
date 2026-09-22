@@ -328,6 +328,11 @@ type sinkCall struct {
 	orgID, repoID uuid.UUID
 	at            time.Time
 	errText       string
+	// hostKey/hostPublicKey are the observed git server key the sink call
+	// carries (backlog 2.41's TOFU write-back); empty when the sync
+	// reported none.
+	hostKey       string
+	hostPublicKey string
 }
 
 // recordingSink is a SyncSink that records every call.
@@ -337,13 +342,13 @@ type recordingSink struct {
 	err   error
 }
 
-func (s *recordingSink) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID, at time.Time, errText string) error {
+func (s *recordingSink) RecordSyncResult(_ context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return s.err
 	}
-	s.calls = append(s.calls, sinkCall{orgID, repoID, at, errText})
+	s.calls = append(s.calls, sinkCall{orgID, repoID, at, errText, hostKey, hostPublicKey})
 	return nil
 }
 
@@ -429,6 +434,96 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 	}
 }
 
+// TestQueueClaimSyncRepoCarriesTheGitServerPin proves the claim-time
+// enrichment ships a pinned repository's git server key (backlog 2.41):
+// the claimed kind payload's repo object carries the pin's fingerprint and
+// full key, so the fetch demands the pinned key; an unpinned repository's
+// payload carries neither field (trust on first use stays the default).
+func TestQueueClaimSyncRepoCarriesTheGitServerPin(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-sync-pin-claim-org")
+	box := crypto.NewBox(testBoxKey("jobs-sync-pin-claim-key-01234567"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+
+	scoped := db.WithOrgScope(ctx, org)
+	if _, err := hostsSvc.CreateZone(scoped, org, hosts.DefaultZoneSlug, hosts.DefaultZoneName); err != nil {
+		t.Fatal(err)
+	}
+	repoID := uuid.Must(uuid.NewV7())
+	fp, pub := "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "ssh-ed25519 AAAA pinned"
+	if _, err := d.Exec(scoped,
+		`INSERT INTO git_repos (id, org_id, name, url, ssh_host_key, ssh_host_public_key)
+		 VALUES ($1, $2, 'infra', 'ssh://git.example.com/acme/infra.git', $3, $4)`,
+		repoID, org, fp, pub); err != nil {
+		t.Fatal(err)
+	}
+
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
+	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
+	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
+
+	job, err := svc.EnqueueSync(scoped, org, repoID, nil)
+	if err != nil {
+		t.Fatalf("EnqueueSync: %v", err)
+	}
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{job.ZoneID}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	var claimedPayload struct {
+		Repo struct {
+			ID            string `json:"id"`
+			HostKey       string `json:"host_key"`
+			HostPublicKey string `json:"host_public_key"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(claim.Job.GetKindPayload()), &claimedPayload); err != nil {
+		t.Fatalf("kind payload = %q: %v", claim.Job.GetKindPayload(), err)
+	}
+	if claimedPayload.Repo.HostKey != fp || claimedPayload.Repo.HostPublicKey != pub {
+		t.Fatalf("pinned repo payload = %+v", claimedPayload.Repo)
+	}
+
+	// An unpinned repository (https, no host key) carries no pin fields.
+	unpinnedID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(scoped,
+		`INSERT INTO git_repos (id, org_id, name, url) VALUES ($1, $2, 'plain', 'https://git.example.com/acme/plain.git')`,
+		unpinnedID, org); err != nil {
+		t.Fatal(err)
+	}
+	job, err = svc.EnqueueSync(scoped, org, unpinnedID, nil)
+	if err != nil {
+		t.Fatalf("EnqueueSync (unpinned): %v", err)
+	}
+	claim, err = queue.Claim(ctx, org, []uuid.UUID{job.ZoneID}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim (unpinned) = %v, %v", claim, err)
+	}
+	var unpinnedPayload struct {
+		Repo struct {
+			HostKey       string `json:"host_key"`
+			HostPublicKey string `json:"host_public_key"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(claim.Job.GetKindPayload()), &unpinnedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if unpinnedPayload.Repo.HostKey != "" || unpinnedPayload.Repo.HostPublicKey != "" {
+		t.Fatalf("unpinned repo payload = %+v", unpinnedPayload.Repo)
+	}
+}
+
 // repoRefAdapter adapts repos.Service to the queue's RepoSource port, the
 // way internal/app wires it.
 type repoRefAdapter struct{ reposSvc *repos.Service }
@@ -438,7 +533,8 @@ func (a repoRefAdapter) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.
 	if err != nil {
 		return jobs.RepoRef{}, err
 	}
-	return jobs.RepoRef{ID: r.ID, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath, CredentialID: r.CredentialID}, nil
+	return jobs.RepoRef{ID: r.ID, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath, CredentialID: r.CredentialID,
+		SSHHostKey: r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey}, nil
 }
 
 // TestQueueFinishRecordsSyncResults pins the finish-path sync recording:
@@ -477,6 +573,34 @@ func TestQueueFinishRecordsSyncResults(t *testing.T) {
 		calls := sink.all()
 		if len(calls) != 1 || calls[0].orgID != org || calls[0].repoID != repoID || calls[0].errText != "" || calls[0].at.IsZero() {
 			t.Fatalf("sink calls = %+v", calls)
+		}
+		if calls[0].hostKey != "" || calls[0].hostPublicKey != "" {
+			t.Fatalf("a sync without a result event carries no host key: %+v", calls[0])
+		}
+	})
+	t.Run("the observed git server key rides the sink call", func(t *testing.T) {
+		// Its own sink so the later count assertions stay untouched.
+		keySink := &recordingSink{}
+		queue.SetSyncSink(keySink)
+		t.Cleanup(func() { queue.SetSyncSink(sink) })
+		j := syncJob(jobs.StatusRunning)
+		if err := queue.AppendEvent(ctx, j.ID, jobs.Event{
+			Seq: 1, Task: "sync_repo", State: "ok",
+			Payload: json.RawMessage(`{"repo_id":"` + repoID.String() + `","requirements_installed":false,` +
+				`"host_key":"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","host_public_key":"ssh-ed25519 AAAA observed"}`),
+			At: time.Now(),
+		}); err != nil {
+			t.Fatalf("append sync event: %v", err)
+		}
+		if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, map[string]any{}, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		calls := keySink.all()
+		if len(calls) != 1 {
+			t.Fatalf("sink calls = %+v", calls)
+		}
+		if calls[0].hostKey != "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" || calls[0].hostPublicKey != "ssh-ed25519 AAAA observed" {
+			t.Fatalf("the observed key must ride the sink call: %+v", calls[0])
 		}
 	})
 	t.Run("failure carries the reason", func(t *testing.T) {
@@ -647,5 +771,121 @@ func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
 	}
 	if err := queue.Finish(ctx, j3.ID, jobs.StatusSucceeded, nil, ""); err != nil {
 		t.Fatalf("a vanished repository must not fail the finish: %v", err)
+	}
+}
+
+// TestQueueFinishCompletesTheRepoKeyPin runs the TOFU completion through
+// the production wiring (backlog 2.41): the first successful sync whose ok
+// event carries the observed git server key pins the repository row; a
+// later sync reporting a different key leaves the pin untouched (the pin
+// write is TOFU-only — the worker's strict check refuses a changed key, so
+// a synced-against-a-changed-key success can never happen); a malformed
+// report pins nothing, and a failed sync records no pin.
+func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-sync-pin-org")
+	box := crypto.NewBox(testBoxKey("jobs-sync-pin-key-0123456789"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
+	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
+
+	scoped := db.WithOrgScope(ctx, org)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	queue.SetSyncSink(svc)
+
+	if _, err := hostsSvc.CreateZone(scoped, org, hosts.DefaultZoneSlug, hosts.DefaultZoneName); err != nil {
+		t.Fatal(err)
+	}
+	repoID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(scoped,
+		`INSERT INTO git_repos (id, org_id, name, url) VALUES ($1, $2, 'infra', 'ssh://git@git.example.com/acme/infra.git')`,
+		repoID, org); err != nil {
+		t.Fatal(err)
+	}
+	store := jobs.NewSQLStore(d)
+	zone := seedZone(t, d, org)
+	fp1, pub1 := hostKeyPair(t)
+	_, pub2 := hostKeyPair(t)
+
+	syncJob := func() jobs.Job {
+		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
+		j.Payload = json.RawMessage(`{"repo_id":"` + repoID.String() + `"}`)
+		if err := store.CreateJob(scoped, j, j.Payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Exec(ctx, `UPDATE jobs SET status = 'running' WHERE id = $1`, j.ID); err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	pinOf := func(t *testing.T) (*string, *string) {
+		t.Helper()
+		var hostKey, hostPub *string
+		if err := d.Pool().QueryRow(ctx, `SELECT ssh_host_key, ssh_host_public_key FROM git_repos WHERE org_id = $1 AND id = $2`, org, repoID).Scan(&hostKey, &hostPub); err != nil {
+			t.Fatal(err)
+		}
+		return hostKey, hostPub
+	}
+
+	// The first successful sync's observed key completes the TOFU pin.
+	j := syncJob()
+	if err := queue.AppendEvent(ctx, j.ID, jobs.Event{
+		Seq: 1, Task: "sync_repo", State: "ok",
+		Payload: json.RawMessage(`{"repo_id":"` + repoID.String() + `","requirements_installed":false,"host_key":"` + fp1 + `","host_public_key":"` + pub1 + `"}`),
+		At:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	hostKey, hostPub := pinOf(t)
+	if hostKey == nil || *hostKey != fp1 || hostPub == nil || *hostPub != pub1 {
+		t.Fatalf("TOFU pin after the first sync = %v / %v", hostKey, hostPub)
+	}
+
+	// A later sync reporting a DIFFERENT key leaves the pin (the query's
+	// WHERE clause — the worker itself refuses such a sync, the sink is
+	// defense in depth).
+	j = syncJob()
+	if err := queue.AppendEvent(ctx, j.ID, jobs.Event{
+		Seq: 1, Task: "sync_repo", State: "ok",
+		Payload: json.RawMessage(`{"repo_id":"` + repoID.String() + `","requirements_installed":false,"host_key":"` + fp1 + `","host_public_key":"` + pub2 + `"}`),
+		At:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	hostKey, hostPub = pinOf(t)
+	if hostKey == nil || *hostKey != fp1 || hostPub == nil || *hostPub != pub1 {
+		t.Fatalf("the TOFU pin must never be overwritten: %v / %v", hostKey, hostPub)
+	}
+
+	// A failed sync reports no pin even if an event rode along.
+	j = syncJob()
+	if err := queue.AppendEvent(ctx, j.ID, jobs.Event{
+		Seq: 1, Task: "sync_repo", State: "ok",
+		Payload: json.RawMessage(`{"repo_id":"` + repoID.String() + `","requirements_installed":false}`),
+		At:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Finish(ctx, j.ID, jobs.StatusFailed, nil, "git fetch failed"); err != nil {
+		t.Fatal(err)
+	}
+	hostKey, hostPub = pinOf(t)
+	if hostKey == nil || *hostKey != fp1 || hostPub == nil || *hostPub != pub1 {
+		t.Fatalf("a failed sync must not change the pin: %v / %v", hostKey, hostPub)
 	}
 }

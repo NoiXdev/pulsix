@@ -18,12 +18,14 @@ import (
 
 type repoBody struct {
 	Repo struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		URL          string `json:"url"`
-		Branch       string `json:"branch"`
-		Subpath      string `json:"subpath"`
-		CredentialID string `json:"credential_id"`
+		ID           string  `json:"id"`
+		Name         string  `json:"name"`
+		URL          string  `json:"url"`
+		Branch       string  `json:"branch"`
+		Subpath      string  `json:"subpath"`
+		CredentialID string  `json:"credential_id"`
+		SSHHostKey   *string `json:"ssh_host_key"`
+		PinState     *string `json:"pin_state"`
 	} `json:"repo"`
 }
 
@@ -254,6 +256,100 @@ func TestRepoPermissionsAndCrossOrgIsolation(t *testing.T) {
 	otherC := s.LoginAs(outsider)
 	if resp := requestJSON(t, otherC, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/repo-perm-other/repos/"+repoID, nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-org repo read: %d", resp.StatusCode)
+	}
+}
+
+// TestRepoHostKeyPin covers the git server key pin surface (backlog 2.41):
+// the read carries pin_state/ssh_host_key only while pinned, the unpin
+// route (repos.write) clears it and lands on the activity feed, a viewer is
+// refused, and a foreign organization's repository is as invisible as a
+// missing one.
+func TestRepoHostKeyPin(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("repo-pin-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("repo-pin-org", owner)
+	operator := s.SeedUser("repo-pin-op@example.test", "correct horse battery")
+	viewer := s.SeedUser("repo-pin-viewer@example.test", "correct horse battery")
+	outsider := s.SeedUser("repo-pin-out@example.test", "correct horse battery")
+	s.AddMember(org, operator, tenancy.RoleOperator)
+	s.AddMember(org, viewer, tenancy.RoleViewer)
+	base := s.HTTP.URL + "/api/v1/orgs/repo-pin-org/repos"
+
+	c := s.LoginAs(owner)
+	resp := postJSON(t, c, base, map[string]any{"name": "infra", "url": "ssh://git@git.example.com/acme/infra.git"})
+	var created repoBody
+	decodeInto(t, resp, &created)
+	repoID := created.Repo.ID
+
+	// Unpinned: neither field is present, exactly like the hosts read.
+	if resp := requestJSON(t, c, http.MethodGet, base+"/"+repoID, nil); resp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, resp))
+	} else {
+		var got repoBody
+		decodeInto(t, resp, &got)
+		if got.Repo.PinState != nil || got.Repo.SSHHostKey != nil {
+			t.Fatalf("unpinned DTO = %+v, want no pin fields", got.Repo)
+		}
+	}
+
+	// Seed the pin the way the sync sink does.
+	scoped := db.WithOrgScope(context.Background(), org)
+	if _, err := s.DB.Exec(scoped,
+		`UPDATE git_repos SET ssh_host_key = $3, ssh_host_public_key = $4 WHERE org_id = $1 AND id = $2`,
+		org, repoID, "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "ssh-ed25519 AAAA pinned"); err != nil {
+		t.Fatal(err)
+	}
+	resp = requestJSON(t, c, http.MethodGet, base, nil)
+	var list struct {
+		Repos []struct {
+			ID         string  `json:"id"`
+			SSHHostKey *string `json:"ssh_host_key"`
+			PinState   *string `json:"pin_state"`
+		} `json:"repos"`
+	}
+	decodeInto(t, resp, &list)
+	if len(list.Repos) != 1 || list.Repos[0].PinState == nil || *list.Repos[0].PinState != "full" ||
+		list.Repos[0].SSHHostKey == nil || *list.Repos[0].SSHHostKey != "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" {
+		t.Fatalf("pinned list = %+v", list.Repos)
+	}
+
+	// A viewer can see the pin state, cannot clear it.
+	vc := s.LoginAs(viewer)
+	if resp := requestJSON(t, vc, http.MethodDelete, base+"/"+repoID+"/host-key", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer unpin: %d", resp.StatusCode)
+	}
+	// An anonymous call is 401.
+	if resp := requestJSON(t, s.Client(), http.MethodDelete, base+"/"+repoID+"/host-key", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous unpin: %d", resp.StatusCode)
+	}
+
+	// The operator's unpin clears the pin and is on the activity feed.
+	oc := s.LoginAs(operator)
+	if resp := requestJSON(t, oc, http.MethodDelete, base+"/"+repoID+"/host-key", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("unpin: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp = requestJSON(t, c, http.MethodGet, base+"/"+repoID, nil)
+	var cleared repoBody
+	decodeInto(t, resp, &cleared)
+	if cleared.Repo.PinState != nil || cleared.Repo.SSHHostKey != nil {
+		t.Fatalf("unpinned DTO = %+v, want no pin fields", cleared.Repo)
+	}
+	// A second unpin is the idempotent no-op (the repository still exists).
+	if resp := requestJSON(t, oc, http.MethodDelete, base+"/"+repoID+"/host-key", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("second unpin: %d, want 200", resp.StatusCode)
+	}
+
+	// A foreign org's repo id is invisible to the unpin.
+	s.SeedOrg("repo-pin-other", outsider)
+	otherC := s.LoginAs(outsider)
+	if resp := requestJSON(t, otherC, http.MethodDelete, s.HTTP.URL+"/api/v1/orgs/repo-pin-other/repos/"+repoID+"/host-key", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-org unpin: %d, want 404", resp.StatusCode)
+	}
+
+	resp = requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/repo-pin-org/activity", nil)
+	activity := mustReadBody(t, resp)
+	if !strings.Contains(activity, "DELETE clearRepoHostKey") {
+		t.Fatalf("activity missing the unpin: %s", activity)
 	}
 }
 
