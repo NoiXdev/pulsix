@@ -777,10 +777,10 @@ func TestQueueFinishWiresTheRealSyncSink(t *testing.T) {
 // TestQueueFinishCompletesTheRepoKeyPin runs the TOFU completion through
 // the production wiring (backlog 2.41): the first successful sync whose ok
 // event carries the observed git server key pins the repository row; a
-// later sync reporting a different key leaves the pin untouched (the pin
-// write is TOFU-only — the worker's strict check refuses a changed key, so
-// a synced-against-a-changed-key success can never happen); a malformed
-// report pins nothing, and a failed sync records no pin.
+// later sync reporting a different but VALID pair leaves the pin untouched
+// (PinRepoHostKey's WHERE ssh_host_key IS NULL — the pin write is
+// TOFU-only, the re-trust guard the threat model relies on); a malformed
+// pair is dropped in the service; a failed sync records no pin.
 func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -814,7 +814,7 @@ func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
 	store := jobs.NewSQLStore(d)
 	zone := seedZone(t, d, org)
 	fp1, pub1 := hostKeyPair(t)
-	_, pub2 := hostKeyPair(t)
+	fp2, pub2 := hostKeyPair(t)
 
 	syncJob := func() jobs.Job {
 		j := newJob(org, zone, jobs.KindSyncRepo, jobs.StatusQueued)
@@ -853,9 +853,31 @@ func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
 		t.Fatalf("TOFU pin after the first sync = %v / %v", hostKey, hostPub)
 	}
 
-	// A later sync reporting a DIFFERENT key leaves the pin (the query's
-	// WHERE clause — the worker itself refuses such a sync, the sink is
-	// defense in depth).
+	// A later sync reporting a DIFFERENT — but valid — pair leaves the pin:
+	// the service accepts the pair, so this exercises PinRepoHostKey's
+	// WHERE ssh_host_key IS NULL guard itself, the property the threat
+	// model pins (a compromised worker cannot re-trust a changed server —
+	// the sink cannot overwrite a pin by itself; the worker's strict check
+	// refusing a changed key is the first line, this query the second).
+	j = syncJob()
+	if err := queue.AppendEvent(ctx, j.ID, jobs.Event{
+		Seq: 1, Task: "sync_repo", State: "ok",
+		Payload: json.RawMessage(`{"repo_id":"` + repoID.String() + `","requirements_installed":false,"host_key":"` + fp2 + `","host_public_key":"` + pub2 + `"}`),
+		At:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Finish(ctx, j.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	hostKey, hostPub = pinOf(t)
+	if hostKey == nil || *hostKey != fp1 || hostPub == nil || *hostPub != pub1 {
+		t.Fatalf("the TOFU pin must never be overwritten by a valid second pair: %v / %v", hostKey, hostPub)
+	}
+
+	// A malformed pair (fingerprint and key that belong to different
+	// servers) is dropped in the service — the sync still records, and the
+	// pin is untouched.
 	j = syncJob()
 	if err := queue.AppendEvent(ctx, j.ID, jobs.Event{
 		Seq: 1, Task: "sync_repo", State: "ok",
@@ -869,7 +891,7 @@ func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
 	}
 	hostKey, hostPub = pinOf(t)
 	if hostKey == nil || *hostKey != fp1 || hostPub == nil || *hostPub != pub1 {
-		t.Fatalf("the TOFU pin must never be overwritten: %v / %v", hostKey, hostPub)
+		t.Fatalf("a malformed report must pin nothing: %v / %v", hostKey, hostPub)
 	}
 
 	// A failed sync reports no pin even if an event rode along.
