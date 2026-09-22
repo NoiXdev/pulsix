@@ -1,8 +1,9 @@
 // The worker-side git fetch for repo playbooks (backlog 2.11): the runner
 // clones or updates the organization's repository itself — the claim's
-// KindPayload carries {"repo": {"id","url","branch","subpath"}} and the
-// repo's git credential ships in the Credentials map under `git:<repo-id>`
-// (the claim-time enrichment internal/jobs does at claim time).
+// KindPayload carries {"repo": {"id","url","branch","subpath"}} (plus the
+// git server key pin, backlog 2.41) and the repo's git credential ships in
+// the Credentials map under `git:<repo-id>` (the claim-time enrichment
+// internal/jobs does at claim time).
 //
 // Hygiene:
 //   - The cache layout is RepoCacheDir/<org-id>/<repo-id> — org-scoped, so
@@ -39,13 +40,16 @@ import (
 )
 
 // gitRepoSpec is one repository the run must materialize, straight from the
-// claim's kind payload.
+// claim's kind payload. HostKey/HostPublicKey are the repository's git
+// server key pin (backlog 2.41) — empty while unpinned.
 type gitRepoSpec struct {
-	OrgID   uuid.UUID
-	RepoID  uuid.UUID
-	URL     string
-	Branch  string
-	Subpath string
+	OrgID         uuid.UUID
+	RepoID        uuid.UUID
+	URL           string
+	Branch        string
+	Subpath       string
+	HostKey       string
+	HostPublicKey string
 }
 
 // gitCredential is one claim credential's revealed Secret, parsed for the
@@ -66,8 +70,9 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 	if err != nil {
 		return "", fmt.Errorf("repo subpath: %w", err)
 	}
-	dir, err := r.FetchRepoDir(ctx, worker.RepoSpec{
+	dir, _, err := r.FetchRepoDir(ctx, worker.RepoSpec{
 		OrgID: spec.OrgID, RepoID: spec.RepoID, URL: spec.URL, Branch: spec.Branch,
+		HostKey: spec.HostKey, HostPublicKey: spec.HostPublicKey,
 	}, secretJSON, cacheRoot, workDir)
 	if err != nil {
 		return "", err
@@ -81,30 +86,40 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 }
 
 // FetchRepoDir materializes a repository in the org-scoped cache and
-// returns the clone's local directory: clone into
+// returns the clone's local directory — plus the git server key the fetch
+// observed (nil without one; backlog 2.41's TOFU capture): clone into
 // RepoCacheDir/<org-id>/<repo-id> when absent, fetch+reset to the branch
 // tip when present. It is the sync_repo executor's fetch too — a repo sync
 // materializes the same directory a repo playbook's claim fetches, minus
 // the playbook-file resolution the run jobs need. secretJSON is the claim's
 // Secret JSON for `git:<repo-id>`; empty means the repo fetches without a
 // credential.
-func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJSON, cacheRoot, workDir string) (string, error) {
+//
+// The git server key pin (backlog 2.41): a pinned repo's fetch pre-seeds
+// the run's known_hosts with the pinned key and connects strict — a
+// changed key fails the connection before any data is transferred (the
+// diagnostic names the key the server now presents). An unenforceable pin
+// (a key that is not one authorized-key line, or a URL that names no ssh
+// host) fails closed before git runs. An unpinned repo stays trust on
+// first use; the presented key lands in the run's own known_hosts, where
+// the capture reads it for the manager's TOFU write.
+func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJSON, cacheRoot, workDir string) (string, *worker.GitHostKey, error) {
 	if spec.URL == "" {
-		return "", errors.New("repo has no url")
+		return "", nil, errors.New("repo has no url")
 	}
 	if spec.Branch == "" {
-		return "", errors.New("repo has no branch")
+		return "", nil, errors.New("repo has no branch")
 	}
 	// A value starting with "-" would reach git's argument parser as an
 	// option; the manager refuses such values, the worker defends again.
 	if strings.HasPrefix(spec.URL, "-") || strings.HasPrefix(spec.Branch, "-") {
-		return "", errors.New(`repo url or branch must not start with "-"`)
+		return "", nil, errors.New(`repo url or branch must not start with "-"`)
 	}
 
 	var cred gitCredential
 	if secretJSON != "" {
 		if err := json.Unmarshal([]byte(secretJSON), &cred); err != nil {
-			return "", fmt.Errorf("git credential: %w", err)
+			return "", nil, fmt.Errorf("git credential: %w", err)
 		}
 	}
 
@@ -119,26 +134,36 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 	// out-of-scope 2).
 	knownHosts, err := worker.RunGitKnownHosts(workDir)
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	pinned := spec.HostPublicKey != ""
+	if pinned {
+		if err := worker.SeedGitHostKey(knownHosts, spec.URL, spec.HostKey, spec.HostPublicKey); err != nil {
+			return "", nil, fmt.Errorf("repo %s: the git server pin is unenforceable: %w", spec.RepoID, err)
+		}
 	}
 
 	// Credential plumbing: the secret reaches git only through a file path.
+	gitSSH := worker.GitSSHCommand
+	if pinned {
+		gitSSH = worker.GitSSHPinnedCommand
+	}
 	switch {
 	case cred.PrivateKey != "":
 		keyFile := filepath.Join(workDir, gitKeysDir, spec.RepoID.String())
 		if err := writeSecretFile(keyFile, cred.PrivateKey, 0o600); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		defer func() { _ = os.Remove(keyFile) }()
-		env = append(env, "GIT_SSH_COMMAND="+worker.GitSSHCommand(keyFile, knownHosts), "GIT_TERMINAL_PROMPT=0")
+		env = append(env, "GIT_SSH_COMMAND="+gitSSH(keyFile, knownHosts), "GIT_TERMINAL_PROMPT=0")
 	case cred.Token != "":
 		tokenFile := filepath.Join(workDir, gitTokensDir, spec.RepoID.String())
 		if err := writeSecretFile(tokenFile, cred.Token, 0o600); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		askpass, err := writeAskpass(workDir, spec.RepoID.String(), tokenFile)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		// Both files are wiped when the fetch ends.
 		defer func() {
@@ -154,38 +179,72 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 	if cred.PrivateKey == "" {
 		// No key: an ssh:// or scp-like remote still reads and writes
 		// host keys only in the run's known_hosts.
-		env = append(env, "GIT_SSH_COMMAND="+worker.GitSSHCommand("", knownHosts))
+		env = append(env, "GIT_SSH_COMMAND="+gitSSH("", knownHosts))
 	}
 
-	target := filepath.Join(cacheRoot, spec.OrgID.String(), spec.RepoID.String())
+	if err := r.fetchGit(ctx, gitBin, spec, env, cacheRoot, pinned); err != nil {
+		return "", nil, err
+	}
+	if pinned {
+		// The pin was enforced by the connection itself: what the server
+		// presented equals the pin (the worker reports nothing new — the
+		// manager's pin stands).
+		return r.repoDir(cacheRoot, spec), nil, nil
+	}
+	observed, err := worker.ObservedGitHostKey(knownHosts, spec.URL)
+	if err != nil {
+		return "", nil, fmt.Errorf("observe the git server key: %w", err)
+	}
+	return r.repoDir(cacheRoot, spec), observed, nil
+}
+
+// repoDir is the clone's local directory, the fetch's layout.
+func (r *Runner) repoDir(cacheRoot string, spec worker.RepoSpec) string {
+	return filepath.Join(cacheRoot, spec.OrgID.String(), spec.RepoID.String())
+}
+
+// fetchGit runs the clone-or-update behind FetchRepoDir: fetch+reset into
+// an existing clone, a fresh clone otherwise (with a leftover that is not a
+// verifiable clone re-cloned rather than built on). A pinned fetch's
+// failure is wrapped with the repository it refused — the error names the
+// repo, and the redacted stderr tail carries the key the server now
+// presented (backlog 2.41's changed-key message).
+func (r *Runner) fetchGit(ctx context.Context, gitBin string, spec worker.RepoSpec, env []string, cacheRoot string, pinned bool) error {
+	target := r.repoDir(cacheRoot, spec)
+	wrap := func(err error) error {
+		if !pinned {
+			return err
+		}
+		return fmt.Errorf("repo %s: %w", spec.RepoID, err)
+	}
 	if _, statErr := os.Stat(filepath.Join(target, ".git")); statErr == nil {
 		// Present: bring it to the branch's tip — the run must see the
 		// branch's current state, not a stale cache.
 		if err := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "--", "origin", spec.Branch); err != nil {
-			return "", err
+			return wrap(err)
 		}
 		if err := runGit(ctx, gitBin, target, env, spec.URL, "reset", "--hard", "FETCH_HEAD"); err != nil {
-			return "", err
+			return wrap(err)
 		}
-	} else {
-		if err := os.MkdirAll(cacheRoot, 0o700); err != nil {
-			return "", fmt.Errorf("create repo cache root: %w", err)
-		}
-		if _, statErr := os.Stat(target); statErr == nil {
-			// A leftover that is not a verifiable clone (a killed earlier
-			// run's partial copy): re-clone rather than build on it.
-			if err := os.RemoveAll(target); err != nil {
-				return "", fmt.Errorf("clear stale cache dir: %w", err)
-			}
-		}
-		if err := runGit(ctx, gitBin, cacheRoot, env, spec.URL,
-			"clone", "--quiet", "--branch="+spec.Branch, "--single-branch", "--", spec.URL, target); err != nil {
-			_ = os.RemoveAll(target) // a partial clone must not linger
-			return "", err
-		}
-		_ = os.Chmod(target, 0o700)
+		return nil
 	}
-	return target, nil
+	if err := os.MkdirAll(cacheRoot, 0o700); err != nil {
+		return fmt.Errorf("create repo cache root: %w", err)
+	}
+	if _, statErr := os.Stat(target); statErr == nil {
+		// A leftover that is not a verifiable clone (a killed earlier
+		// run's partial copy): re-clone rather than build on it.
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("clear stale cache dir: %w", err)
+		}
+	}
+	if err := runGit(ctx, gitBin, cacheRoot, env, spec.URL,
+		"clone", "--quiet", "--branch="+spec.Branch, "--single-branch", "--", spec.URL, target); err != nil {
+		_ = os.RemoveAll(target) // a partial clone must not linger
+		return wrap(err)
+	}
+	_ = os.Chmod(target, 0o700)
+	return nil
 }
 
 // writeAskpass writes the GIT_ASKPASS script: secret-free (it cats the

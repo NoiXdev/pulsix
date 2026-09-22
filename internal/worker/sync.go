@@ -44,20 +44,27 @@ const defaultInstallTimeout = 10 * time.Minute
 // RepoSpec identifies one repository the worker materializes: the fetch
 // needs url and branch; subpath is the playbook root inside the clone
 // (where requirements.yml is looked up first). The shape the runner's
-// repo-playbook fetch shares.
+// repo-playbook fetch shares. HostKey/HostPublicKey are the repository's
+// git server key pin (backlog 2.41) — the fingerprint plus the full key
+// the fetch's own known_hosts is pre-seeded with; empty means unpinned,
+// trust on first use.
 type RepoSpec struct {
-	OrgID   uuid.UUID
-	RepoID  uuid.UUID
-	URL     string
-	Branch  string
-	Subpath string
+	OrgID         uuid.UUID
+	RepoID        uuid.UUID
+	URL           string
+	Branch        string
+	Subpath       string
+	HostKey       string
+	HostPublicKey string
 }
 
 // RepoFetcher materializes a repository into the worker's persistent cache
-// and returns the clone's local directory. The runner executor implements
+// and returns the clone's local directory plus — when the fetch spoke ssh
+// and the server's key landed in the run's known_hosts — the host key the
+// git server presented (nil without one). The runner executor implements
 // it — its repo-playbook fetch is the same mechanism.
 type RepoFetcher interface {
-	FetchRepoDir(ctx context.Context, spec RepoSpec, secretJSON, cacheRoot, workDir string) (string, error)
+	FetchRepoDir(ctx context.Context, spec RepoSpec, secretJSON, cacheRoot, workDir string) (string, *GitHostKey, error)
 }
 
 // SyncExecutor executes sync_repo jobs: materialize the repository, then
@@ -80,13 +87,16 @@ func NewSyncExecutor(fetcher RepoFetcher, galaxyBin string) *SyncExecutor {
 }
 
 // syncPayload is the claim's kind payload: the repository the manager
-// resolved at claim time.
+// resolved at claim time. host_key/host_public_key are the repo's git
+// server key pin (backlog 2.41) — empty while the repo is unpinned.
 type syncPayload struct {
 	Repo *struct {
-		ID      string `json:"id"`
-		URL     string `json:"url"`
-		Branch  string `json:"branch"`
-		Subpath string `json:"subpath"`
+		ID            string `json:"id"`
+		URL           string `json:"url"`
+		Branch        string `json:"branch"`
+		Subpath       string `json:"subpath"`
+		HostKey       string `json:"host_key"`
+		HostPublicKey string `json:"host_public_key"`
 	} `json:"repo"`
 }
 
@@ -116,8 +126,9 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	spec := RepoSpec{
 		OrgID: orgID, RepoID: repoID,
 		URL: payload.Repo.URL, Branch: payload.Repo.Branch, Subpath: payload.Repo.Subpath,
+		HostKey: payload.Repo.HostKey, HostPublicKey: payload.Repo.HostPublicKey,
 	}
-	dir, err := e.Fetcher.FetchRepoDir(ctx, spec, job.GetCredentials()["git:"+repoID.String()], env.RepoCacheDir, env.WorkDir)
+	dir, observed, err := e.Fetcher.FetchRepoDir(ctx, spec, job.GetCredentials()["git:"+repoID.String()], env.RepoCacheDir, env.WorkDir)
 	if err != nil {
 		// The fetcher's reasons name the command and exit code with URLs
 		// redacted; the git key/token files are already wiped.
@@ -134,8 +145,16 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	}
 
 	// The one run event the sync reports; its payload carries no
-	// credential material.
+	// credential material. The observed git server key (backlog 2.41) is
+	// the manager's TOFU input: an unpinned repo reports what its git
+	// server presented (https fetches present none), a pinned one nothing
+	// — the fetch already enforced the pin itself, so there is nothing new
+	// to record. The values are non-secret host-key material.
 	report := map[string]any{"repo_id": payload.Repo.ID, "requirements_installed": requirementsInstalled}
+	if observed != nil && payload.Repo.HostKey == "" {
+		report["host_key"] = observed.Fingerprint
+		report["host_public_key"] = observed.PublicKey
+	}
 	raw, err := json.Marshal(report)
 	if err != nil {
 		return StatusError, nil, fmt.Errorf("encode sync result: %w", err)

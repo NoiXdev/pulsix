@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,17 +17,20 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
 
-// fakeFetcher is the RepoFetcher fake: it returns a canned directory or
-// error, recording the spec it received.
+// fakeFetcher is the RepoFetcher fake: it returns a canned directory and
+// observed key or error, recording the spec it received.
 type fakeFetcher struct {
-	dir   string
-	err   error
-	calls int
+	dir      string
+	observed *GitHostKey
+	err      error
+	calls    int
+	specs    []RepoSpec
 }
 
-func (f *fakeFetcher) FetchRepoDir(context.Context, RepoSpec, string, string, string) (string, error) {
+func (f *fakeFetcher) FetchRepoDir(_ context.Context, spec RepoSpec, _, _, _ string) (string, *GitHostKey, error) {
 	f.calls++
-	return f.dir, f.err
+	f.specs = append(f.specs, spec)
+	return f.dir, f.observed, f.err
 }
 
 // syncClaim is the claim the manager's enriched sync branch ships.
@@ -251,4 +255,63 @@ func TestSyncExecutorUnknownKindIsAnError(t *testing.T) {
 	if err == nil || status != StatusError {
 		t.Fatalf("status = %q err = %v", status, err)
 	}
+}
+
+// TestSyncExecutorShipsTheGitServerPin proves the claim's pin reaches the
+// fetcher's spec (backlog 2.41) and the observed key reaches the result —
+// the manager's TOFU input — only for an unpinned repository.
+func TestSyncExecutorShipsTheGitServerPin(t *testing.T) {
+	pinnedClaim := sysJob(t, "sync_repo", sysPayload(t, map[string]any{
+		"repo": map[string]any{"id": "01900000-0000-7000-8000-000000000123",
+			"url": "ssh://git.example.com/x.git", "branch": "main",
+			"host_key": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "host_public_key": "ssh-ed25519 AAAA pinned"},
+	}), nil)
+
+	// Pinned: the spec carries the pin and the pinned-and-verified report
+	// names no key (the fetch enforced it itself).
+	f := &fakeFetcher{dir: t.TempDir()}
+	c := &evCollector{}
+	stats, err := runSync(t, f, pinnedClaim, c)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(f.specs) != 1 || f.specs[0].HostKey != "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" ||
+		f.specs[0].HostPublicKey != "ssh-ed25519 AAAA pinned" {
+		t.Fatalf("fetcher specs = %+v", f.specs)
+	}
+	if _, carried := stats["host_key"]; carried {
+		t.Fatalf("a pinned-and-verified sync reports no host key: %v", stats)
+	}
+	// ... and the ok event's payload is empty of it too.
+	payload := c.events[0].GetPayload()
+	if strings.Contains(payload, "host_key") {
+		t.Fatalf("event payload = %s", payload)
+	}
+
+	// Unpinned with an observation: the observed key is the report.
+	observed := &GitHostKey{Fingerprint: "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", PublicKey: "ssh-ed25519 AAAA observed"}
+	f = &fakeFetcher{dir: t.TempDir(), observed: observed}
+	c = &evCollector{}
+	stats, err = runSync(t, f, sysJob(t, "sync_repo", sysPayload(t, map[string]any{
+		"repo": map[string]any{"id": "01900000-0000-7000-8000-000000000123", "url": "https://git.example.com/x.git", "branch": "main"},
+	}), nil), c)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if stats["host_key"] != observed.Fingerprint || stats["host_public_key"] != observed.PublicKey {
+		t.Fatalf("stats = %v", stats)
+	}
+	if !strings.Contains(c.events[0].GetPayload(), `"host_key":"`+observed.Fingerprint+`"`) {
+		t.Fatalf("event payload = %s", c.events[0].GetPayload())
+	}
+}
+
+// runSync is the executor's one-shot: Run with the collector's sink.
+func runSync(t *testing.T, f *fakeFetcher, job *workerpb.Job, c *evCollector) (map[string]any, error) {
+	t.Helper()
+	status, stats, err := (&SyncExecutor{Fetcher: f}).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, c.sink)
+	if err != nil || status != StatusSucceeded {
+		return stats, fmt.Errorf("Run = %q, %v", status, err)
+	}
+	return stats, nil
 }

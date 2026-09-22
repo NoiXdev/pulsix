@@ -89,9 +89,10 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 }
 
 // repoSpec reads the repository out of the claim: the kind payload carries
-// {"repo": {"id","url","branch","subpath"}} (the claim-time enrichment), the
-// repo's git credential rides in the credentials map as `git:<repo-id>`
-// (empty when the repo fetches without one).
+// {"repo": {"id","url","branch","subpath"}} (the claim-time enrichment,
+// plus the git server key pin, backlog 2.41), the repo's git credential
+// rides in the credentials map as `git:<repo-id>` (empty when the repo
+// fetches without one).
 func repoSpec(job *workerpb.Job, repoID uuid.UUID) (gitRepoSpec, string, error) {
 	orgID, err := uuid.Parse(job.GetOrgId())
 	if err != nil {
@@ -99,10 +100,12 @@ func repoSpec(job *workerpb.Job, repoID uuid.UUID) (gitRepoSpec, string, error) 
 	}
 	var payload struct {
 		Repo *struct {
-			ID      string `json:"id"`
-			URL     string `json:"url"`
-			Branch  string `json:"branch"`
-			Subpath string `json:"subpath"`
+			ID            string `json:"id"`
+			URL           string `json:"url"`
+			Branch        string `json:"branch"`
+			Subpath       string `json:"subpath"`
+			HostKey       string `json:"host_key"`
+			HostPublicKey string `json:"host_public_key"`
 		} `json:"repo"`
 	}
 	if err := json.Unmarshal([]byte(job.GetKindPayload()), &payload); err != nil {
@@ -115,11 +118,13 @@ func repoSpec(job *workerpb.Job, repoID uuid.UUID) (gitRepoSpec, string, error) 
 		return gitRepoSpec{}, "", fmt.Errorf("kind payload names repo %s, the playbook references %s", payload.Repo.ID, repoID)
 	}
 	spec := gitRepoSpec{
-		OrgID:   orgID,
-		RepoID:  repoID,
-		URL:     payload.Repo.URL,
-		Branch:  payload.Repo.Branch,
-		Subpath: payload.Repo.Subpath,
+		OrgID:         orgID,
+		RepoID:        repoID,
+		URL:           payload.Repo.URL,
+		Branch:        payload.Repo.Branch,
+		Subpath:       payload.Repo.Subpath,
+		HostKey:       payload.Repo.HostKey,
+		HostPublicKey: payload.Repo.HostPublicKey,
 	}
 	return spec, job.GetCredentials()["git:"+repoID.String()], nil
 }

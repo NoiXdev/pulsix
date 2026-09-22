@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/credentials"
+	"golang.org/x/crypto/ssh"
 )
 
 // gitEnv returns a PATH that reaches the git binary tests use for fixtures.
@@ -220,6 +221,103 @@ func TestFetchRepoWipesKeyEvenOnFailure(t *testing.T) {
 	if files, _ := os.ReadDir(filepath.Join(workDir, "gitkeys")); len(files) != 0 {
 		t.Errorf("key files survived the failed fetch: %v", files)
 	}
+}
+
+// TestFetchRepoEnforcesPinnedGitServerKey covers the pin mechanics
+// (backlog 2.41) over a wrapped git binary: the pinned spec pre-seeds the
+// run's known_hosts and composes the strict GIT_SSH_COMMAND (the assertion
+// the brief asks for), an unenforceable pin fails closed before git runs,
+// and an unpinned fetch keeps today's accept-new posture. The composed
+// command and the pre-seed are observable before the connection itself —
+// an unreachable ssh URL is enough for the env dump.
+func TestFetchRepoEnforcesPinnedGitServerKey(t *testing.T) {
+	gitOnPATH(t)
+	// A REAL key pair: the seed verifies that the pinned key carries the
+	// pinned fingerprint, so a fake fingerprint would fail closed here.
+	_, pinnedPub := sshKey(t)
+	fp := ssh.FingerprintSHA256(pinnedPub)
+	pub := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pinnedPub)))
+
+	envDump := filepath.Join(t.TempDir(), "env")
+	wrapper := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nenv >> \"" + envDump + "\"\nexec git \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{GitBin: wrapper}
+	// An ssh:// URL that parses (the seed needs its name) but dials
+	// nothing: the composed command and the pre-seed are observable before
+	// git fails to connect.
+	const sshURL = "ssh://git@127.0.0.1:2222/x.git"
+
+	gitSSHCommandLine := func(t *testing.T) string {
+		t.Helper()
+		envText, err := os.ReadFile(envDump)
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := ""
+		for _, l := range strings.Split(string(envText), "\n") {
+			if strings.HasPrefix(l, "GIT_SSH_COMMAND=") {
+				line = l
+			}
+		}
+		return line
+	}
+
+	t.Run("pinned fetch composes strict checking and seeds the pin", func(t *testing.T) {
+		workDir := t.TempDir()
+		spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: sshURL, Branch: "main",
+			Subpath: "playbooks/site.yml", HostKey: fp, HostPublicKey: pub}
+		if _, err := r.fetchRepo(context.Background(), spec, "", t.TempDir(), workDir); err == nil {
+			t.Fatal("the unreachable ssh server must fail the fetch")
+		}
+		line := gitSSHCommandLine(t)
+		if !strings.Contains(line, "-o StrictHostKeyChecking=yes") {
+			t.Errorf("GIT_SSH_COMMAND = %q, must demand the pinned key", line)
+		}
+		if strings.Contains(line, "accept-new") {
+			t.Errorf("a pinned fetch must not trust on first use: %q", line)
+		}
+		// The pre-seed: the entry the fetch's own ssh connection matches
+		// (the run's own known_hosts, final re-review out-of-scope 2).
+		seeded, err := os.ReadFile(filepath.Join(workDir, homeDirName, ".ssh", "known_hosts"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "[127.0.0.1]:2222 " + pub + "\n"; string(seeded) != want {
+			t.Errorf("known_hosts = %q, want the seeded pin %q", seeded, want)
+		}
+	})
+	t.Run("unpinned fetch keeps accept-new", func(t *testing.T) {
+		_ = os.Remove(envDump)
+		workDir := t.TempDir()
+		spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: sshURL, Branch: "main", Subpath: "playbooks/site.yml"}
+		if _, err := r.fetchRepo(context.Background(), spec, "", t.TempDir(), workDir); err == nil {
+			t.Fatal("the unreachable ssh server must fail the fetch")
+		}
+		line := gitSSHCommandLine(t)
+		if !strings.Contains(line, "accept-new") {
+			t.Fatalf("an unpinned fetch must stay accept-new: %q", line)
+		}
+	})
+	t.Run("an unenforceable pin fails closed before git runs", func(t *testing.T) {
+		_ = os.Remove(envDump)
+		for name, spec := range map[string]gitRepoSpec{
+			"multi-line key":  {OrgID: orgID, RepoID: repoID, URL: sshURL, Branch: "main", Subpath: "p", HostKey: fp, HostPublicKey: pub + "\nevil ssh-ed25519 AAAA"},
+			"fp key mismatch": {OrgID: orgID, RepoID: repoID, URL: sshURL, Branch: "main", Subpath: "p", HostKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", HostPublicKey: pub},
+			"non-ssh url":     {OrgID: orgID, RepoID: repoID, URL: "https://git.example.com/x.git", Branch: "main", Subpath: "p", HostKey: fp, HostPublicKey: pub},
+		} {
+			t.Run(name, func(t *testing.T) {
+				if _, err := r.fetchRepo(context.Background(), spec, "", t.TempDir(), t.TempDir()); err == nil {
+					t.Fatal("an unenforceable pin must fail closed")
+				}
+				if _, err := os.Stat(envDump); err == nil {
+					t.Fatal("git ran with an unenforceable pin")
+				}
+			})
+		}
+	})
 }
 
 func TestFetchRepoRejectsBadSpecs(t *testing.T) {
