@@ -15,7 +15,7 @@ import (
 const createBastion = `-- name: CreateBastion :one
 INSERT INTO bastions (id, org_id, name, address, port, username, credential_id, via_bastion_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at
+RETURNING id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at, ssh_host_key, ssh_host_public_key
 `
 
 type CreateBastionParams struct {
@@ -52,6 +52,8 @@ func (q *Queries) CreateBastion(ctx context.Context, arg CreateBastionParams) (B
 		&i.ViaBastionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }
@@ -74,7 +76,7 @@ func (q *Queries) DeleteBastion(ctx context.Context, arg DeleteBastionParams) (i
 }
 
 const getBastion = `-- name: GetBastion :one
-SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at FROM bastions WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM bastions WHERE org_id = $1 AND id = $2
 `
 
 type GetBastionParams struct {
@@ -96,6 +98,8 @@ func (q *Queries) GetBastion(ctx context.Context, arg GetBastionParams) (Bastion
 		&i.ViaBastionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }
@@ -128,7 +132,7 @@ func (q *Queries) GetHostSSH(ctx context.Context, arg GetHostSSHParams) (HostSsh
 }
 
 const listBastions = `-- name: ListBastions :many
-SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at FROM bastions WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM bastions WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListBastions(ctx context.Context, orgID uuid.UUID) ([]Bastion, error) {
@@ -151,6 +155,8 @@ func (q *Queries) ListBastions(ctx context.Context, orgID uuid.UUID) ([]Bastion,
 			&i.ViaBastionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SshHostKey,
+			&i.SshHostPublicKey,
 		); err != nil {
 			return nil, err
 		}
@@ -248,7 +254,7 @@ const updateBastion = `-- name: UpdateBastion :one
 UPDATE bastions
 SET name = $3, address = $4, port = $5, username = $6, credential_id = $7, via_bastion_id = $8, updated_at = now()
 WHERE org_id = $1 AND id = $2
-RETURNING id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at
+RETURNING id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at, ssh_host_key, ssh_host_public_key
 `
 
 type UpdateBastionParams struct {
@@ -285,6 +291,8 @@ func (q *Queries) UpdateBastion(ctx context.Context, arg UpdateBastionParams) (B
 		&i.ViaBastionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
 	)
 	return i, err
 }

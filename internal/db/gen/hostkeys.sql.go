@@ -12,6 +12,36 @@ import (
 	"github.com/google/uuid"
 )
 
+const backfillBastionKeyPinPublicKey = `-- name: BackfillBastionKeyPinPublicKey :execrows
+UPDATE bastions SET ssh_host_public_key = $1, updated_at = now()
+WHERE org_id = $2 AND id = $3 AND ssh_host_key = $4
+  AND ssh_host_public_key IS NULL
+`
+
+type BackfillBastionKeyPinPublicKeyParams struct {
+	PublicKey   *string   `json:"public_key"`
+	OrgID       uuid.UUID `json:"org_id"`
+	BastionID   uuid.UUID `json:"bastion_id"`
+	Fingerprint *string   `json:"fingerprint"`
+}
+
+// A pin made before full jump-host keys were recorded carries a fingerprint
+// only; a later connection test that observed a key with exactly that
+// fingerprint completes it. The fingerprint predicate is what makes this
+// safe: only the pinned key itself can fill the column.
+func (q *Queries) BackfillBastionKeyPinPublicKey(ctx context.Context, arg BackfillBastionKeyPinPublicKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, backfillBastionKeyPinPublicKey,
+		arg.PublicKey,
+		arg.OrgID,
+		arg.BastionID,
+		arg.Fingerprint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const backfillHostKeyPinPublicKey = `-- name: BackfillHostKeyPinPublicKey :execrows
 UPDATE host_ssh SET ssh_host_public_key = $1, updated_at = now()
 WHERE org_id = $2 AND host_id = $3 AND ssh_host_key = $4
@@ -42,6 +72,24 @@ func (q *Queries) BackfillHostKeyPinPublicKey(ctx context.Context, arg BackfillH
 	return result.RowsAffected(), nil
 }
 
+const clearBastionKeyPin = `-- name: ClearBastionKeyPin :execrows
+UPDATE bastions SET ssh_host_key = NULL, ssh_host_public_key = NULL, updated_at = now()
+WHERE org_id = $1 AND id = $2
+`
+
+type ClearBastionKeyPinParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) ClearBastionKeyPin(ctx context.Context, arg ClearBastionKeyPinParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearBastionKeyPin, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearHostKeyPin = `-- name: ClearHostKeyPin :execrows
 UPDATE host_ssh SET ssh_host_key = NULL, ssh_host_public_key = NULL, updated_at = now()
 WHERE org_id = $1 AND host_id = $2
@@ -61,8 +109,8 @@ func (q *Queries) ClearHostKeyPin(ctx context.Context, arg ClearHostKeyPinParams
 }
 
 const createHostConnectionTest = `-- name: CreateHostConnectionTest :execrows
-INSERT INTO host_connection_tests (id, org_id, host_id, at, ok, host_key, host_key_state, checks, host_public_key)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO host_connection_tests (id, org_id, host_id, at, ok, host_key, host_key_state, checks, host_public_key, hop_keys)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type CreateHostConnectionTestParams struct {
@@ -75,6 +123,7 @@ type CreateHostConnectionTestParams struct {
 	HostKeyState  string    `json:"host_key_state"`
 	Checks        []byte    `json:"checks"`
 	HostPublicKey string    `json:"host_public_key"`
+	HopKeys       []byte    `json:"hop_keys"`
 }
 
 func (q *Queries) CreateHostConnectionTest(ctx context.Context, arg CreateHostConnectionTestParams) (int64, error) {
@@ -88,6 +137,7 @@ func (q *Queries) CreateHostConnectionTest(ctx context.Context, arg CreateHostCo
 		arg.HostKeyState,
 		arg.Checks,
 		arg.HostPublicKey,
+		arg.HopKeys,
 	)
 	if err != nil {
 		return 0, err
@@ -96,7 +146,7 @@ func (q *Queries) CreateHostConnectionTest(ctx context.Context, arg CreateHostCo
 }
 
 const getLatestHostConnectionTest = `-- name: GetLatestHostConnectionTest :one
-SELECT id, org_id, host_id, at, ok, host_key, host_key_state, checks, host_public_key FROM host_connection_tests
+SELECT id, org_id, host_id, at, ok, host_key, host_key_state, checks, host_public_key, hop_keys FROM host_connection_tests
 WHERE org_id = $1 AND host_id = $2
 ORDER BY at DESC
 LIMIT 1
@@ -122,8 +172,59 @@ func (q *Queries) GetLatestHostConnectionTest(ctx context.Context, arg GetLatest
 		&i.HostKeyState,
 		&i.Checks,
 		&i.HostPublicKey,
+		&i.HopKeys,
 	)
 	return i, err
+}
+
+const listBastionKeyChanged = `-- name: ListBastionKeyChanged :many
+SELECT DISTINCT (hop->>'bastion_id')::uuid AS bastion_id
+FROM host_connection_tests t
+CROSS JOIN LATERAL jsonb_array_elements(t.hop_keys) AS hop
+LEFT JOIN bastions b ON b.org_id = t.org_id AND b.id = (hop->>'bastion_id')::uuid
+WHERE t.org_id = $1
+  AND (hop->>'bastion_id')::uuid = ANY($2::uuid[])
+  AND t.at = (
+    SELECT max(latest.at) FROM host_connection_tests latest
+    CROSS JOIN LATERAL jsonb_array_elements(latest.hop_keys) AS lhop
+    WHERE latest.org_id = t.org_id AND (lhop->>'bastion_id')::uuid = (hop->>'bastion_id')::uuid
+  )
+  AND (
+    hop->>'state' = 'changed'
+    OR (b.ssh_host_key IS NOT NULL AND b.ssh_host_key <> '' AND hop->>'fingerprint' <> '' AND b.ssh_host_key <> hop->>'fingerprint')
+  )
+`
+
+type ListBastionKeyChangedParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	BastionIds []uuid.UUID `json:"bastion_ids"`
+}
+
+// The named jump hosts whose LATEST recorded hop observation reports a
+// changed host key (backlog 2.40's fail-closed block, the mirror of
+// ListHostKeyChanged): the pin comparison is defense in depth for a pin
+// written after the latest observation without a fresh test observing it.
+// "Latest" is the newest test row that observed the bastion as a hop —
+// a later test whose route no longer includes the bastion says nothing
+// about it.
+func (q *Queries) ListBastionKeyChanged(ctx context.Context, arg ListBastionKeyChangedParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listBastionKeyChanged, arg.OrgID, arg.BastionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var bastion_id uuid.UUID
+		if err := rows.Scan(&bastion_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bastion_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listHostKeyChanged = `-- name: ListHostKeyChanged :many
@@ -229,6 +330,60 @@ func (q *Queries) ListHostsDueForTest(ctx context.Context, arg ListHostsDueForTe
 	return items, nil
 }
 
+const listLatestBastionObservations = `-- name: ListLatestBastionObservations :many
+SELECT t.at, (hop->>'bastion_id')::uuid AS bastion_id, hop->>'fingerprint' AS fingerprint, hop->>'public_key' AS key, hop->>'state' AS state
+FROM host_connection_tests t
+CROSS JOIN LATERAL jsonb_array_elements(t.hop_keys) AS hop
+WHERE t.org_id = $1
+  AND (hop->>'bastion_id')::uuid = ANY($2::uuid[])
+ORDER BY t.at, t.id
+`
+
+type ListLatestBastionObservationsParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	BastionIds []uuid.UUID `json:"bastion_ids"`
+}
+
+type ListLatestBastionObservationsRow struct {
+	At          time.Time   `json:"at"`
+	BastionID   uuid.UUID   `json:"bastion_id"`
+	Fingerprint interface{} `json:"fingerprint"`
+	Key         interface{} `json:"key"`
+	State       interface{} `json:"state"`
+}
+
+// The newest hop observation of each named jump host: the pin API's
+// pin-what-you-saw input and the jump hosts read's fingerprint display.
+// "key" is quoted: KEY is reserved as a record field name. The rows are
+// every test observation of the named bastions; the service keeps the
+// newest per bastion (ties — two tests with an identical `at` — keep the
+// last row scanned, an arbitrary but stable choice).
+func (q *Queries) ListLatestBastionObservations(ctx context.Context, arg ListLatestBastionObservationsParams) ([]ListLatestBastionObservationsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestBastionObservations, arg.OrgID, arg.BastionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestBastionObservationsRow
+	for rows.Next() {
+		var i ListLatestBastionObservationsRow
+		if err := rows.Scan(
+			&i.At,
+			&i.BastionID,
+			&i.Fingerprint,
+			&i.Key,
+			&i.State,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrgIDs = `-- name: ListOrgIDs :many
 SELECT id FROM organizations ORDER BY id
 `
@@ -249,6 +404,45 @@ func (q *Queries) ListOrgIDs(ctx context.Context) ([]uuid.UUID, error) {
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPinnedBastionKeys = `-- name: ListPinnedBastionKeys :many
+SELECT id, ssh_host_key, ssh_host_public_key FROM bastions
+WHERE org_id = $1 AND id = ANY($2::uuid[]) AND ssh_host_key IS NOT NULL
+`
+
+type ListPinnedBastionKeysParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	BastionIds []uuid.UUID `json:"bastion_ids"`
+}
+
+type ListPinnedBastionKeysRow struct {
+	ID               uuid.UUID `json:"id"`
+	SshHostKey       *string   `json:"ssh_host_key"`
+	SshHostPublicKey *string   `json:"ssh_host_public_key"`
+}
+
+// The pinned fingerprint of each named jump host that carries one (empty
+// when none does): the claim path turns the ids into the job's
+// bastion_host_keys map, exactly like ListPinnedHostKeys does for hosts.
+func (q *Queries) ListPinnedBastionKeys(ctx context.Context, arg ListPinnedBastionKeysParams) ([]ListPinnedBastionKeysRow, error) {
+	rows, err := q.db.Query(ctx, listPinnedBastionKeys, arg.OrgID, arg.BastionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPinnedBastionKeysRow
+	for rows.Next() {
+		var i ListPinnedBastionKeysRow
+		if err := rows.Scan(&i.ID, &i.SshHostKey, &i.SshHostPublicKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -292,6 +486,35 @@ func (q *Queries) ListPinnedHostKeys(ctx context.Context, arg ListPinnedHostKeys
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertBastionKeyPin = `-- name: UpsertBastionKeyPin :execrows
+UPDATE bastions SET ssh_host_key = $3, ssh_host_public_key = $4, updated_at = now()
+WHERE org_id = $1 AND id = $2
+`
+
+type UpsertBastionKeyPinParams struct {
+	OrgID            uuid.UUID `json:"org_id"`
+	ID               uuid.UUID `json:"id"`
+	SshHostKey       *string   `json:"ssh_host_key"`
+	SshHostPublicKey *string   `json:"ssh_host_public_key"`
+}
+
+// Stores the jump host's pin (fingerprint plus full public key). The
+// bastions row always exists (the API resolved it first), so this is a
+// plain update; zero rows affected means the bastion does not exist in the
+// organization (reported like any other missing row).
+func (q *Queries) UpsertBastionKeyPin(ctx context.Context, arg UpsertBastionKeyPinParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertBastionKeyPin,
+		arg.OrgID,
+		arg.ID,
+		arg.SshHostKey,
+		arg.SshHostPublicKey,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertHostKeyPin = `-- name: UpsertHostKeyPin :execrows

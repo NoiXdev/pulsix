@@ -159,7 +159,7 @@ func (q *Queries) GetCredentialSecret(ctx context.Context, arg GetCredentialSecr
 }
 
 const listCredentialBastions = `-- name: ListCredentialBastions :many
-SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at FROM bastions WHERE org_id = $1 AND credential_id = $2 ORDER BY name
+SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM bastions WHERE org_id = $1 AND credential_id = $2 ORDER BY name
 `
 
 type ListCredentialBastionsParams struct {
@@ -189,6 +189,8 @@ func (q *Queries) ListCredentialBastions(ctx context.Context, arg ListCredential
 			&i.ViaBastionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SshHostKey,
+			&i.SshHostPublicKey,
 		); err != nil {
 			return nil, err
 		}

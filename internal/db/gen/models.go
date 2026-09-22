@@ -85,16 +85,18 @@ type AuditEvent struct {
 }
 
 type Bastion struct {
-	ID           uuid.UUID   `json:"id"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	Name         string      `json:"name"`
-	Address      string      `json:"address"`
-	Port         int32       `json:"port"`
-	Username     string      `json:"username"`
-	CredentialID pgtype.UUID `json:"credential_id"`
-	ViaBastionID pgtype.UUID `json:"via_bastion_id"`
-	CreatedAt    time.Time   `json:"created_at"`
-	UpdatedAt    time.Time   `json:"updated_at"`
+	ID               uuid.UUID   `json:"id"`
+	OrgID            uuid.UUID   `json:"org_id"`
+	Name             string      `json:"name"`
+	Address          string      `json:"address"`
+	Port             int32       `json:"port"`
+	Username         string      `json:"username"`
+	CredentialID     pgtype.UUID `json:"credential_id"`
+	ViaBastionID     pgtype.UUID `json:"via_bastion_id"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	SshHostKey       *string     `json:"ssh_host_key"`
+	SshHostPublicKey *string     `json:"ssh_host_public_key"`
 }
 
 type Credential struct {
@@ -151,6 +153,7 @@ type HostConnectionTest struct {
 	HostKeyState  string    `json:"host_key_state"`
 	Checks        []byte    `json:"checks"`
 	HostPublicKey string    `json:"host_public_key"`
+	HopKeys       []byte    `json:"hop_keys"`
 }
 
 type HostSsh struct {
