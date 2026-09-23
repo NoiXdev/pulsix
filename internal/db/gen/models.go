@@ -58,6 +58,29 @@ func (ns NullOrgRole) Value() (driver.Value, error) {
 	return string(ns.OrgRole), nil
 }
 
+type AgentCertificate struct {
+	Serial    string             `json:"serial"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	HostID    uuid.UUID          `json:"host_id"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt time.Time          `json:"created_at"`
+}
+
+type AgentEnrollment struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	ZoneID     uuid.UUID          `json:"zone_id"`
+	HostID     pgtype.UUID        `json:"host_id"`
+	NameHint   *string            `json:"name_hint"`
+	SecretHash []byte             `json:"secret_hash"`
+	MaxUses    int32              `json:"max_uses"`
+	Uses       int32              `json:"uses"`
+	ExpiresAt  time.Time          `json:"expires_at"`
+	UsedAt     pgtype.Timestamptz `json:"used_at"`
+	CreatedBy  pgtype.UUID        `json:"created_by"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
 type ApiToken struct {
 	ID         uuid.UUID          `json:"id"`
 	UserID     uuid.UUID          `json:"user_id"`
@@ -143,6 +166,16 @@ type Host struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	CreatedAt  time.Time          `json:"created_at"`
 	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
+type HostAgent struct {
+	HostID     uuid.UUID          `json:"host_id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	AgentName  string             `json:"agent_name"`
+	CertSerial string             `json:"cert_serial"`
+	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+	Version    string             `json:"version"`
+	CreatedAt  time.Time          `json:"created_at"`
 }
 
 type HostConnectionTest struct {
