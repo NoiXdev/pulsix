@@ -44,11 +44,6 @@ func workerOf(ctx context.Context) (workers.Worker, bool) {
 	return w, ok
 }
 
-// IdentityOf returns the verified client identity the interceptor stashed
-// in ctx, if it ran. Exported for the services mounted on the shared
-// listener (internal/agentapi reads the certificate serial from it).
-func IdentityOf(ctx context.Context) (*ca.ClientIdentity, bool) { return identityOf(ctx) }
-
 // AgentIdentityOf returns the agent registry row the interceptor resolved
 // for an authenticated agent certificate (ca.KindAgent), if it ran.
 // Exported for internal/agentapi's Renew and AgentStream handlers.

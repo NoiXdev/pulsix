@@ -5,7 +5,12 @@ package grpcsrv
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"math/big"
 	"net"
 	"sync"
@@ -390,16 +395,31 @@ func (h *harness) issue(name string, orgID, zoneID uuid.UUID, register bool) (ce
 	return certPEM, keyPEM, serial
 }
 
-// issueAgent issues an agent certificate and registers its serial with the
-// agent registry service — the state Enroll leaves behind (the agentapi
-// service itself is stubbed here; Task 7's tests live in internal/agentapi).
+// issueAgent signs an agent certificate for a fresh key and registers its
+// serial with the agent registry service — the state Enroll leaves behind
+// (the agentapi service itself is stubbed here; Task 7's tests live in
+// internal/agentapi).
 func (h *harness) issueAgent(name string, orgID uuid.UUID, register bool) (certPEM, keyPEM []byte, serial *big.Int) {
 	t := h.t
 	t.Helper()
-	certPEM, keyPEM, serial, err := h.ca.IssueAgentCert(context.Background(), orgID, name)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, crt, err := h.ca.SignAgentCSR(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), orgID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kder, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder})
+	serial = crt.SerialNumber
 	if register {
 		if err := agents.NewService(h.agents).Register(context.Background(), orgID, uuid.Must(uuid.NewV7()), name, "v0.3a", serial.String()); err != nil {
 			t.Fatal(err)

@@ -199,16 +199,59 @@ func TestReceiveMessagesSendFaultEndsTheLoop(t *testing.T) {
 	}
 }
 
-// TestEnrollOverlongHintRefused: a hint the CA cannot put behind the
-// pulsix-agent common name (past 64 runes) fails the signing step with
-// InvalidArgument. Task 5 bounds the hint at 253 runes, the certificate
-// shape needs 1-64 — this pins the refusal shape of that gap.
-func TestEnrollOverlongHintRefused(t *testing.T) {
+// TestEnrollOverlongHintRefusesPreClaim: a hint the CA cannot put behind
+// the pulsix-agent common name (past 64 runes) is refused by the claim
+// itself — before the use is consumed, before a host is created, before
+// anything is flipped.
+func TestEnrollOverlongHintRefusesPreClaim(t *testing.T) {
 	h := newHarness(t)
 	tok := h.enrollToken(testOrg, tokenInput(strings.Repeat("a", 65)))
 	_, csr := newKeyAndCSR(t)
-	if _, err := h.enroll(tok.raw, csr, "x"); status.Code(err) != codes.InvalidArgument {
+	if _, err := h.enroll(tok.raw, csr, "short"); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("overlong hint: %v, want InvalidArgument", err)
+	}
+	if uses, used := h.store.useOf(tok.parsed.ID); uses != 0 || used {
+		t.Fatalf("the refusal burned a use: uses=%d used=%v", uses, used)
+	}
+	if len(h.prov.hosts[testOrg]) != 0 || len(h.prov.monitored) != 0 {
+		t.Fatalf("the refusal touched hosts: %v / %v", h.prov.hosts[testOrg], h.prov.monitored)
+	}
+}
+
+// TestEnrollBindFlowLongNameRefused: a bound token with an over-long
+// presented name is refused before the claim — the use is not burned and
+// the bound host is untouched.
+func TestEnrollBindFlowLongNameRefused(t *testing.T) {
+	h := newHarness(t)
+	bound := h.prov.seedHost(testOrg, "web-1")
+	in := tokenInput("")
+	in.HostID = &bound
+	tok := h.enrollToken(testOrg, in)
+	_, csr := newKeyAndCSR(t)
+	if _, err := h.enroll(tok.raw, csr, strings.Repeat("b", 65)); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("overlong presented name: %v, want InvalidArgument", err)
+	}
+	if uses, used := h.store.useOf(tok.parsed.ID); uses != 0 || used {
+		t.Fatalf("the refusal burned a use: uses=%d used=%v", uses, used)
+	}
+	if h.prov.monitoredOf(bound) {
+		t.Fatal("the refusal flipped the bound host's monitored flag")
+	}
+}
+
+// TestEnrollBindFlowWithoutName: a bound token, no hint, no presented
+// name — the certificate cannot be named, the signing step refuses with
+// InvalidArgument (the claim has committed at that point: this is the
+// documented residual of the bind flow's empty-name case).
+func TestEnrollBindFlowWithoutName(t *testing.T) {
+	h := newHarness(t)
+	bound := h.prov.seedHost(testOrg, "web-1")
+	in := tokenInput("")
+	in.HostID = &bound
+	tok := h.enrollToken(testOrg, in)
+	_, csr := newKeyAndCSR(t)
+	if _, err := h.enroll(tok.raw, csr, ""); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("bind flow without a name: %v, want InvalidArgument", err)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"sync"
@@ -122,6 +123,8 @@ type fakeAgentStore struct {
 	orgErr            error // EnrollmentOrg fault
 	claimErr          error // Claim fault (after fn)
 	registerErr       error // Register fault
+	faultNextLookup   bool  // arm: the next lookup proceeds, the one after fails
+	faultAfterNext    bool
 }
 
 func newFakeAgentStore() *fakeAgentStore {
@@ -228,6 +231,15 @@ func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
 func (f *fakeAgentStore) GetBySerial(_ context.Context, serial string) (agents.AgentIdentity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.faultNextLookup {
+		// This lookup proceeds normally and arms the one after it — the
+		// handler's post-track re-check — to fail.
+		f.faultNextLookup = false
+		f.faultAfterNext = true
+	} else if f.faultAfterNext {
+		f.faultAfterNext = false
+		return agents.AgentIdentity{}, errors.New("db down")
+	}
 	if f.lookupErr != nil {
 		return agents.AgentIdentity{}, f.lookupErr
 	}
@@ -313,12 +325,21 @@ func (f *fakeAgentStore) useOf(id uuid.UUID) (uses int, used bool) {
 	return t.Uses, t.UsedAt != nil
 }
 
-// revokeAfterNextLookup arms the post-track re-check race: the next
+// armRevokeAfterLookup arms the post-track re-check race: the next
 // GetBySerial still succeeds and then revokes the serial.
 func (f *fakeAgentStore) armRevokeAfterLookup(serial string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.revokeAfterLookup = serial
+}
+
+// armLookupFaultAfterNext makes the GetBySerial AFTER the next one fail —
+// the interceptor's lookup succeeds, the handler's post-track re-check
+// runs into the fault.
+func (f *fakeAgentStore) armLookupFaultAfterNext() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.faultNextLookup = true
 }
 
 // fakeFacts records facts pushed through the FactsSink port.

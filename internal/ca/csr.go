@@ -44,16 +44,13 @@ func CheckCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
 	return req, nil
 }
 
-// parseCSR is CheckCSR under the internal name the signers call it by.
-func parseCSR(csrPEM []byte) (*x509.CertificateRequest, error) { return CheckCSR(csrPEM) }
-
 // SignCSR issues a worker certificate for the key in csrPEM: the CA names
 // the worker (CN, org and zone URI SANs).
 func (c *CA) SignCSR(csrPEM []byte, orgID, zoneID uuid.UUID, workerName string) ([]byte, *x509.Certificate, error) {
 	if c.cert == nil {
 		return nil, nil, fmt.Errorf("sign certificate request: %w", ErrNotReady)
 	}
-	req, err := parseCSR(csrPEM)
+	req, err := CheckCSR(csrPEM)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -83,7 +80,7 @@ func (c *CA) SignAgentCSR(csrPEM []byte, orgID uuid.UUID, agentName string) ([]b
 	if c.cert == nil {
 		return nil, nil, fmt.Errorf("sign agent certificate request: %w", ErrNotReady)
 	}
-	req, err := parseCSR(csrPEM)
+	req, err := CheckCSR(csrPEM)
 	if err != nil {
 		return nil, nil, err
 	}

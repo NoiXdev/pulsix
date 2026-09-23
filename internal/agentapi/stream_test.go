@@ -381,13 +381,12 @@ func TestStreamOpenTouchFaultIsLogged(t *testing.T) {
 }
 
 // TestStreamRecheckFaultIsInternal: a registry fault in the post-track
-// re-check is a server fault, not a revocation.
+// re-check is a server fault, not a revocation. The fault is armed to land
+// between the interceptor's lookup (succeeds) and the handler's re-check.
 func TestStreamRecheckFaultIsInternal(t *testing.T) {
 	h := newHarness(t)
 	_, client := enrollAnAgent(t, h, "web-1")
-	h.store.mu.Lock()
-	h.store.lookupErr = errors.New("db down")
-	h.store.mu.Unlock()
+	h.store.armLookupFaultAfterNext()
 	stream, err := (*client).AgentStream(t.Context())
 	if err == nil {
 		_, err = stream.Recv()

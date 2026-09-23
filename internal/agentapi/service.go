@@ -137,9 +137,17 @@ func (s *Service) Enroll(ctx context.Context, req *agentpb.EnrollRequest) (*agen
 	}
 	// The certificate request is checked before anything is consumed: a
 	// rejected request must not burn a token use (the claim below commits
-	// its use before the signing step runs).
+	// its use before the signing step runs). The same holds for the
+	// presented name — it names the certificate in the bind flow and in a
+	// hintless create; a token hint's length is enforced inside the claim,
+	// which rolls back.
 	if _, err := ca.CheckCSR([]byte(req.GetCsrPem())); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if name := req.GetName(); name != "" {
+		if err := ca.CheckAgentName(name); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
 	}
 	// The token's organization scopes everything that follows (the claim
 	// and the audit record); an unknown token is indistinguishable from a

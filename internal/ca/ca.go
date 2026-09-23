@@ -36,7 +36,8 @@ var (
 	ErrBadIdentity = errors.New("bad client identity")
 	ErrNotReady    = errors.New("CA not initialised; call Ensure first")
 	ErrCASealed    = errors.New("sealed CA material unusable")
-	// ErrInvalidInput rejects a malformed IssueAgentCert name.
+	// ErrInvalidInput rejects a malformed agent name (CheckAgentName /
+	// SignAgentCSR).
 	ErrInvalidInput = errors.New("invalid input")
 )
 
@@ -285,7 +286,7 @@ func (c *CA) leafTemplate(orgID *uuid.UUID, zoneID uuid.UUID, workerName string)
 	return tpl, nil
 }
 
-// agentTemplate is the certificate IssueAgentCert signs: a 90-day agent
+// agentTemplate is the certificate SignAgentCSR signs: a 90-day agent
 // client certificate carrying only the org URI SAN — the missing zone SAN
 // is what distinguishes an agent identity from a worker one.
 func (c *CA) agentTemplate(orgID uuid.UUID, name string) (*x509.Certificate, error) {
@@ -347,29 +348,16 @@ func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, worker
 	return c.issue(tpl)
 }
 
-// IssueAgentCert signs a fresh ECDSA P-384 key with the root: a 90-day
-// agent certificate for (orgID, name) with the org URI SAN and no zone
-// SAN. It returns the certificate and key as PEM and the certificate's
-// serial number.
-func (c *CA) IssueAgentCert(_ context.Context, orgID uuid.UUID, name string) (certPEM, keyPEM []byte, serial *big.Int, err error) {
-	if err := validateAgentName(name); err != nil {
-		return nil, nil, nil, fmt.Errorf("issue agent certificate: %w", err)
-	}
-	if c.cert == nil {
-		return nil, nil, nil, fmt.Errorf("issue agent certificate: %w", ErrNotReady)
-	}
-	tpl, err := c.agentTemplate(orgID, name)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return c.issue(tpl)
-}
-
 // maxAgentNameRunes bounds the agent common name's payload.
 const maxAgentNameRunes = 64
 
-// validateAgentName accepts the 1-64 character names IssueAgentCert puts
-// behind the "pulsix-agent " common-name prefix.
+// CheckAgentName reports whether name can go behind the "pulsix-agent "
+// common-name prefix (1-64 characters). Enrollment paths run it before
+// consuming anything; SignAgentCSR runs it again before issuing.
+func CheckAgentName(name string) error { return validateAgentName(name) }
+
+// validateAgentName accepts the 1-64 character names the agent
+// certificates put behind the "pulsix-agent " common-name prefix.
 func validateAgentName(name string) error {
 	if name == "" || utf8.RuneCountInString(name) > maxAgentNameRunes {
 		return fmt.Errorf("%w: agent name must be 1-%d characters", ErrInvalidInput, maxAgentNameRunes)

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -697,6 +698,42 @@ func TestRevokeEndsStreams(t *testing.T) {
 	}
 	if err := svc2.Revoke(ctx, org, host); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestClaimRefusesOverlongNames: the resolved host/agent name must fit the
+// certificate's 1-64-rune common name, and the refusal happens inside the
+// claim — before the host is created and before the use is consumed.
+func TestClaimRefusesOverlongNames(t *testing.T) {
+	svc, st, p, now := newService(t)
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	hinted, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: strings.Repeat("a", 65), MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ClaimToken(ctx, org, hinted, "short"); !errors.Is(err, agents.ErrInvalidInput) {
+		t.Fatalf("overlong hint: %v, want ErrInvalidInput", err)
+	}
+	if got := st.tokens[hinted.ID]; got.Uses != 0 || got.UsedAt != nil {
+		t.Fatalf("the refused claim burned a use: uses=%d used=%v", got.Uses, got.UsedAt != nil)
+	}
+	if len(p.hosts[org]) != 0 || len(p.monitored) != 0 {
+		t.Fatalf("the refused claim touched hosts: %v / %v", p.hosts[org], p.monitored)
+	}
+
+	blank, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ClaimToken(ctx, org, blank, strings.Repeat("b", 65)); !errors.Is(err, agents.ErrInvalidInput) {
+		t.Fatalf("overlong presented name: %v, want ErrInvalidInput", err)
+	}
+	if got := st.tokens[blank.ID]; got.Uses != 0 || got.UsedAt != nil {
+		t.Fatalf("the refused claim burned a use: uses=%d used=%v", got.Uses, got.UsedAt != nil)
+	}
+	if len(p.hosts[org]) != 0 {
+		t.Fatalf("the refused claim created hosts: %v", p.hosts[org])
 	}
 }
 

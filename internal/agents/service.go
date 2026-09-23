@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/hosts"
 )
@@ -300,6 +301,13 @@ func (s *Service) ClaimToken(ctx context.Context, orgID uuid.UUID, token enrollt
 		}
 		if hostName == "" {
 			return fmt.Errorf("%w: token carries no name hint and none was presented", ErrInvalidInput)
+		}
+		// The resolved name becomes both the host's name and the agent
+		// certificate's common name, so it must fit the certificate's
+		// 1-64-rune shape — refused here, inside the claim, so an over-long
+		// hint or name burns nothing (the transaction rolls back).
+		if err := ca.CheckAgentName(hostName); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 		}
 		id, err := s.provisioner.CreateHost(ctx, t.OrgID, t.ZoneID, hostName)
 		if err != nil {
