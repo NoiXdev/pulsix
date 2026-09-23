@@ -52,6 +52,9 @@ func TestSignCSRAcceptedKeysAndIdentity(t *testing.T) {
 			if err != nil || id.ZoneID != zone || id.OrgID == nil || *id.OrgID != org || id.WorkerName != "fra-1" {
 				t.Fatalf("identity = %+v, %v", id, err)
 			}
+			if id.Kind != ca.KindWorker {
+				t.Fatalf("kind = %v, want KindWorker", id.Kind)
+			}
 			parsed, err := ca.ParseLeaf(certPEM)
 			if err != nil || parsed.SerialNumber.Cmp(crt.SerialNumber) != 0 {
 				t.Fatalf("ParseLeaf = %v, %v", parsed, err)

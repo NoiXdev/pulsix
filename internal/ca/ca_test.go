@@ -136,6 +136,9 @@ func TestIssueAndVerifyRoundTrip(t *testing.T) {
 	if id.Serial.Cmp(serial) != 0 || id.ZoneID != zone || id.WorkerName != "fra-1" {
 		t.Errorf("identity = %+v", id)
 	}
+	if id.Kind != ca.KindWorker {
+		t.Errorf("kind = %v, want KindWorker", id.Kind)
+	}
 	if id.OrgID != nil {
 		t.Errorf("org id = %v, want nil", id.OrgID)
 	}
@@ -239,6 +242,9 @@ func TestIssueWorkerCertificateWithOrg(t *testing.T) {
 	}
 	if id.OrgID == nil || *id.OrgID != org || id.ZoneID != zone || id.WorkerName != "ham-2" {
 		t.Errorf("identity = %+v", id)
+	}
+	if id.Kind != ca.KindWorker {
+		t.Errorf("kind = %v, want KindWorker", id.Kind)
 	}
 }
 

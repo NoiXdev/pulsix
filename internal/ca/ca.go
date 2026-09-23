@@ -1,10 +1,10 @@
 // Package ca is the instance's internal certificate authority (spec §14).
 // On first start it generates a self-signed ECDSA P-384 root, seals it with
 // the instance master key and stores it; afterwards it issues client
-// certificates for workers and the server certificate for the gRPC
-// listener, and verifies presented client chains against that root. This
-// package knows nothing about gRPC: the transport layer feeds the chain the
-// TLS handshake accepted into VerifyClient.
+// certificates for workers and agents and the server certificate for the
+// gRPC listener, and verifies presented client chains against that root.
+// This package knows nothing about gRPC: the transport layer feeds the
+// chain the TLS handshake accepted into VerifyClient.
 package ca
 
 import (
@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -35,12 +36,18 @@ var (
 	ErrBadIdentity = errors.New("bad client identity")
 	ErrNotReady    = errors.New("CA not initialised; call Ensure first")
 	ErrCASealed    = errors.New("sealed CA material unusable")
+	// ErrInvalidInput rejects a malformed IssueAgentCert name.
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 const (
 	// workerCNPrefix starts the common name of every issued worker
 	// certificate; VerifyClient strips it back into the worker name.
 	workerCNPrefix = "pulsix-worker "
+
+	// agentCNPrefix starts the common name of every issued agent
+	// certificate; VerifyClient strips it back into the agent name.
+	agentCNPrefix = "pulsix-agent "
 
 	// The urn:pulsix:org:<uuid> and urn:pulsix:zone:<uuid> URI SANs carry
 	// the identity a verified worker certificate stands for (spec §14).
@@ -54,6 +61,21 @@ const (
 // LeafValidity is the lifetime of every worker and server certificate
 // (spec 2026-09-18 §4: 90 days; the worker renews once a third is left).
 const LeafValidity = 90 * 24 * time.Hour
+
+// AgentCertValidity is the lifetime of every agent certificate (spec
+// 2026-09-23: 90 days; the agent renews at two thirds of its lifetime).
+const AgentCertValidity = 90 * 24 * time.Hour
+
+// Kind discriminates the two client-certificate classes VerifyClient
+// extracts. The zone URI SAN is the discriminator: it is present on every
+// worker certificate (org-free ones included) and absent on every agent
+// certificate, whose only SAN is the org URI.
+type Kind string
+
+const (
+	KindWorker Kind = "worker"
+	KindAgent  Kind = "agent"
+)
 
 // Config names the CA's common name and, optionally, the host the gRPC
 // listener serves the server certificate for.
@@ -75,9 +97,14 @@ type Store interface {
 	Save(ctx context.Context, sealed []byte) error
 }
 
-// ClientIdentity is what a verified worker certificate stands for.
+// ClientIdentity is what a verified worker or agent certificate stands
+// for. Kind says which; for KindWorker the certificate also carries the
+// zone URI SAN, for KindAgent only the org URI SAN. WorkerName is the
+// name stripped from the common name — the worker name for KindWorker,
+// the agent name for KindAgent.
 type ClientIdentity struct {
 	Serial     *big.Int
+	Kind       Kind
 	OrgID      *uuid.UUID // nil for instance-wide workers
 	ZoneID     uuid.UUID
 	WorkerName string
@@ -231,10 +258,6 @@ func (c *CA) generate() (caBlob, error) {
 // client certificate with the pulsix URI SANs, or (orgID nil, workerName
 // empty) the gRPC server certificate.
 func (c *CA) leafTemplate(orgID *uuid.UUID, zoneID uuid.UUID, workerName string) (*x509.Certificate, error) {
-	leafSerial, err := newSerial(c.rand)
-	if err != nil {
-		return nil, fmt.Errorf("draw serial: %w", err)
-	}
 	server := orgID == nil && workerName == ""
 	commonName := c.cfg.CommonName
 	if !server {
@@ -247,11 +270,9 @@ func (c *CA) leafTemplate(orgID *uuid.UUID, zoneID uuid.UUID, workerName string)
 	if !server {
 		uris = append(uris, pulsixURI("zone", zoneID))
 	}
-	now := c.now()
-	tpl := &x509.Certificate{
-		SerialNumber: leafSerial, Subject: pkix.Name{CommonName: commonName},
-		NotBefore: now, NotAfter: now.Add(LeafValidity),
-		KeyUsage: x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, URIs: uris,
+	tpl, err := c.leaf(commonName, uris, LeafValidity)
+	if err != nil {
+		return nil, err
 	}
 	if server {
 		tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
@@ -264,22 +285,40 @@ func (c *CA) leafTemplate(orgID *uuid.UUID, zoneID uuid.UUID, workerName string)
 	return tpl, nil
 }
 
-// Issue signs a fresh ECDSA P-384 key with the root: a worker certificate
-// for (orgID, zoneID, workerName) with the pulsix-* URI SANs, or — when
-// orgID is nil and workerName is empty — the gRPC server certificate with
-// ExtKeyUsageServerAuth and the listen host as DNS SAN. It returns the
-// certificate and key as PEM and the certificate's serial number.
-func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, workerName string) (certPEM, keyPEM []byte, serial *big.Int, err error) {
-	if c.cert == nil {
-		return nil, nil, nil, fmt.Errorf("issue certificate: %w", ErrNotReady)
+// agentTemplate is the certificate IssueAgentCert signs: a 90-day agent
+// client certificate carrying only the org URI SAN — the missing zone SAN
+// is what distinguishes an agent identity from a worker one.
+func (c *CA) agentTemplate(orgID uuid.UUID, name string) (*x509.Certificate, error) {
+	tpl, err := c.leaf(agentCNPrefix+name, []*url.URL{pulsixURI("org", orgID)}, AgentCertValidity)
+	if err != nil {
+		return nil, err
 	}
+	tpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	return tpl, nil
+}
+
+// leaf is the common shape of every leaf the CA signs: a fresh serial, the
+// DigitalSignature key usage, the given common name, URI SANs and validity.
+// The callers add their ExtKeyUsage (and the server's DNS SAN) on top.
+func (c *CA) leaf(commonName string, uris []*url.URL, validity time.Duration) (*x509.Certificate, error) {
+	leafSerial, err := newSerial(c.rand)
+	if err != nil {
+		return nil, fmt.Errorf("draw serial: %w", err)
+	}
+	now := c.now()
+	return &x509.Certificate{
+		SerialNumber: leafSerial, Subject: pkix.Name{CommonName: commonName},
+		NotBefore: now, NotAfter: now.Add(validity),
+		KeyUsage: x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, URIs: uris,
+	}, nil
+}
+
+// issue signs a fresh ECDSA P-384 key with the root against tpl and
+// returns the certificate and key as PEM and the certificate's serial.
+func (c *CA) issue(tpl *x509.Certificate) (certPEM, keyPEM []byte, serial *big.Int, err error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P384(), c.rand)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("generate key: %w", err)
-	}
-	tpl, err := c.leafTemplate(orgID, zoneID, workerName)
-	if err != nil {
-		return nil, nil, nil, err
 	}
 	der, err := x509.CreateCertificate(c.rand, tpl, c.cert, &priv.PublicKey, c.key)
 	if err != nil {
@@ -290,6 +329,52 @@ func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, worker
 		return nil, nil, nil, err
 	}
 	return pemCert(der), []byte(out), tpl.SerialNumber, nil
+}
+
+// Issue signs a fresh ECDSA P-384 key with the root: a worker certificate
+// for (orgID, zoneID, workerName) with the pulsix-* URI SANs, or — when
+// orgID is nil and workerName is empty — the gRPC server certificate with
+// ExtKeyUsageServerAuth and the listen host as DNS SAN. It returns the
+// certificate and key as PEM and the certificate's serial number.
+func (c *CA) Issue(_ context.Context, orgID *uuid.UUID, zoneID uuid.UUID, workerName string) (certPEM, keyPEM []byte, serial *big.Int, err error) {
+	if c.cert == nil {
+		return nil, nil, nil, fmt.Errorf("issue certificate: %w", ErrNotReady)
+	}
+	tpl, err := c.leafTemplate(orgID, zoneID, workerName)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return c.issue(tpl)
+}
+
+// IssueAgentCert signs a fresh ECDSA P-384 key with the root: a 90-day
+// agent certificate for (orgID, name) with the org URI SAN and no zone
+// SAN. It returns the certificate and key as PEM and the certificate's
+// serial number.
+func (c *CA) IssueAgentCert(_ context.Context, orgID uuid.UUID, name string) (certPEM, keyPEM []byte, serial *big.Int, err error) {
+	if err := validateAgentName(name); err != nil {
+		return nil, nil, nil, fmt.Errorf("issue agent certificate: %w", err)
+	}
+	if c.cert == nil {
+		return nil, nil, nil, fmt.Errorf("issue agent certificate: %w", ErrNotReady)
+	}
+	tpl, err := c.agentTemplate(orgID, name)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return c.issue(tpl)
+}
+
+// maxAgentNameRunes bounds the agent common name's payload.
+const maxAgentNameRunes = 64
+
+// validateAgentName accepts the 1-64 character names IssueAgentCert puts
+// behind the "pulsix-agent " common-name prefix.
+func validateAgentName(name string) error {
+	if name == "" || utf8.RuneCountInString(name) > maxAgentNameRunes {
+		return fmt.Errorf("%w: agent name must be 1-%d characters", ErrInvalidInput, maxAgentNameRunes)
+	}
+	return nil
 }
 
 // VerifyClient checks that rawCerts (as crypto/tls hands them to a
@@ -315,20 +400,24 @@ func (c *CA) VerifyClient(rawCerts [][]byte) (*ClientIdentity, error) {
 	return identityFrom(leaf)
 }
 
-// identityFrom extracts the identity from a verified leaf: the mandatory
-// zone and optional organization URI SANs and the worker name behind the
-// "pulsix-worker <name>" common name.
+// identityFrom extracts the identity from a verified leaf. The zone URI
+// SAN is the kind discriminator: present means a worker certificate (the
+// org SAN optional), absent means an agent certificate with exactly the
+// org URI SAN; a certificate with neither is a server certificate and is
+// rejected. The common name must carry the kind's prefix —
+// "pulsix-worker <name>" or "pulsix-agent <name>" — and the stripped name
+// lands in WorkerName.
 func identityFrom(leaf *x509.Certificate) (*ClientIdentity, error) {
 	id := &ClientIdentity{Serial: leaf.SerialNumber}
-	zoneSeen := false
+	zoneSeen, orgSeen := false, false
 	for _, u := range leaf.URIs {
 		switch s := u.String(); {
-		case strings.HasPrefix(s, orgURIPrefix) && id.OrgID == nil:
+		case strings.HasPrefix(s, orgURIPrefix) && !orgSeen:
 			v, err := uuid.Parse(s[len(orgURIPrefix):])
 			if err != nil {
 				return nil, fmt.Errorf("%w: %s SAN %q: %v", ErrBadIdentity, orgURIPrefix, s, err)
 			}
-			id.OrgID = &v
+			id.OrgID, orgSeen = &v, true
 		case strings.HasPrefix(s, zoneURIPrefix) && !zoneSeen:
 			v, err := uuid.Parse(s[len(zoneURIPrefix):])
 			if err != nil {
@@ -337,12 +426,21 @@ func identityFrom(leaf *x509.Certificate) (*ClientIdentity, error) {
 			id.ZoneID, zoneSeen = v, true
 		}
 	}
-	if !zoneSeen {
-		return nil, fmt.Errorf("%w: certificate %v carries no %s SAN", ErrBadIdentity, leaf.SerialNumber, zoneURIPrefix)
+	switch {
+	case zoneSeen:
+		id.Kind = KindWorker
+	case orgSeen:
+		id.Kind = KindAgent
+	default:
+		return nil, fmt.Errorf("%w: certificate %v carries neither a %s nor a %s SAN", ErrBadIdentity, leaf.SerialNumber, zoneURIPrefix, orgURIPrefix)
 	}
-	name, ok := strings.CutPrefix(leaf.Subject.CommonName, workerCNPrefix)
+	prefix := workerCNPrefix
+	if id.Kind == KindAgent {
+		prefix = agentCNPrefix
+	}
+	name, ok := strings.CutPrefix(leaf.Subject.CommonName, prefix)
 	if !ok || name == "" {
-		return nil, fmt.Errorf("%w: common name %q is not a %s<name>", ErrBadIdentity, leaf.Subject.CommonName, workerCNPrefix)
+		return nil, fmt.Errorf("%w: common name %q is not a %s<name>", ErrBadIdentity, leaf.Subject.CommonName, prefix)
 	}
 	id.WorkerName = name
 	return id, nil

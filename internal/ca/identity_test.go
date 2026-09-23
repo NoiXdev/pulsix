@@ -64,8 +64,60 @@ func TestIdentityFrom(t *testing.T) {
 	if id.WorkerName != "fra-1" || id.ZoneID.String() != zone || id.OrgID == nil || id.OrgID.String() != org {
 		t.Fatalf("identity = %+v", id)
 	}
+	if id.Kind != KindWorker {
+		t.Fatalf("kind = %v, want KindWorker", id.Kind)
+	}
 	if id.Serial.Sign() <= 0 {
 		t.Fatalf("serial = %v", id.Serial)
+	}
+}
+
+func TestIdentityFromKindDiscrimination(t *testing.T) {
+	org, zone := "11111111-1111-7111-8111-111111111111", "22222222-2222-7222-8222-222222222222"
+	cases := []struct {
+		name     string
+		mutate   func(*x509.Certificate)
+		kind     Kind
+		workerID bool // whether the CN carries the worker prefix
+	}{
+		{
+			"zone SAN present: worker (org-free variant)",
+			func(c *x509.Certificate) {
+				c.Subject.CommonName = workerCNPrefix + "fra-1"
+				c.URIs = []*url.URL{uri(zoneURIPrefix + zone)}
+			},
+			KindWorker, true,
+		},
+		{
+			"zone and org SANs: worker",
+			func(c *x509.Certificate) {
+				c.Subject.CommonName = workerCNPrefix + "fra-1"
+				c.URIs = []*url.URL{uri(orgURIPrefix + org), uri(zoneURIPrefix + zone)}
+			},
+			KindWorker, true,
+		},
+		{
+			"org SAN only: agent",
+			func(c *x509.Certificate) {
+				c.Subject.CommonName = agentCNPrefix + "agt-1"
+				c.URIs = []*url.URL{uri(orgURIPrefix + org)}
+			},
+			KindAgent, true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			id, err := identityFrom(selfSigned(t, c.mutate))
+			if err != nil {
+				t.Fatalf("identityFrom: %v", err)
+			}
+			if id.Kind != c.kind {
+				t.Fatalf("kind = %v, want %v", id.Kind, c.kind)
+			}
+			if c.workerID != (id.WorkerName != "") {
+				t.Fatalf("worker name = %q", id.WorkerName)
+			}
+		})
 	}
 }
 
@@ -76,10 +128,23 @@ func TestIdentityFromRejectsBadCertificates(t *testing.T) {
 		mutate func(*x509.Certificate)
 	}{
 		{
-			"no zone SAN",
+			"no zone SAN (neither prefix)",
+			func(c *x509.Certificate) {
+				c.Subject.CommonName = workerCNPrefix + "fra-1"
+				c.URIs = []*url.URL{uri("urn:other:thing")}
+			},
+		},
+		{
+			"org SAN only with worker CN (mixed shape)",
 			func(c *x509.Certificate) {
 				c.Subject.CommonName = workerCNPrefix + "fra-1"
 				c.URIs = []*url.URL{uri(orgURIPrefix + org)}
+			},
+		},
+		{
+			"no SANs at all",
+			func(c *x509.Certificate) {
+				c.Subject.CommonName = agentCNPrefix + "agt-1"
 			},
 		},
 		{
@@ -90,10 +155,10 @@ func TestIdentityFromRejectsBadCertificates(t *testing.T) {
 			},
 		},
 		{
-			"malformed org uuid",
+			"malformed org uuid (agent shape)",
 			func(c *x509.Certificate) {
-				c.Subject.CommonName = workerCNPrefix + "fra-1"
-				c.URIs = []*url.URL{uri(orgURIPrefix + "not-a-uuid"), uri(zoneURIPrefix + zone)}
+				c.Subject.CommonName = agentCNPrefix + "agt-1"
+				c.URIs = []*url.URL{uri(orgURIPrefix + "not-a-uuid")}
 			},
 		},
 		{
