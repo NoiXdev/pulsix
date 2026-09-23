@@ -88,14 +88,18 @@ test_output=$(mktemp)
 trap 'rm -f "$test_output"' EXIT
 test_rc=0
 
-# -timeout 900s (Task 17): go test's per-package default is 600s, and
+# -timeout 1800s (Task 17): go test's per-package default is 600s, and
 # internal/api -race alone exceeds it on some machines (its ~190 handler
 # tests each build a full apitest.New app against the shared testcontainer
 # database) — a package hitting the default timeout panics the whole test
 # binary instead of failing cleanly, which would abort this gate and every
 # `go test -race ./...` invocation (Makefile's `test` target does the
-# same). 900s is a generous margin over the slowest observed run, not a
-# tuned minimum.
+# same). Measured reality under -race -cover under load: internal/api ran
+# 1089s solo and 1441s inside the full group (task 8 fix round 1), so the
+# old 900s margin was itself below the measured slowest run — 1800s is
+# the measured reality with headroom, not a tuned minimum. The 2.83-style
+# two-group split already limits how much one slow package can stretch
+# the run: only its own group waits on it.
 #
 # The race suite runs as TWO package groups, not one whole-module
 # invocation (backlog 2.83): on a loaded machine a single
@@ -108,8 +112,8 @@ test_rc=0
 if [ -n "${COVERAGE_GATE_GO_TEST_OUTPUT:-}" ]; then
 	cp "$COVERAGE_GATE_GO_TEST_OUTPUT" "$test_output"
 else
-	go test -race -cover -timeout 900s $(go list ./... | grep -v '/internal/e2e') >"$test_output" 2>&1 || test_rc=$?
-	go test -race -cover -timeout 900s ./internal/e2e/... >>"$test_output" 2>&1 || test_rc=$?
+	go test -race -cover -timeout 1800s $(go list ./... | grep -v '/internal/e2e') >"$test_output" 2>&1 || test_rc=$?
+	go test -race -cover -timeout 1800s ./internal/e2e/... >>"$test_output" 2>&1 || test_rc=$?
 fi
 
 gate_rc=0
