@@ -28,6 +28,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pquerna/otp v1.5.0
 	github.com/pressly/goose/v3 v3.28.0
+	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/theory/jsonpath v0.12.1
@@ -84,7 +85,6 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.8 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect

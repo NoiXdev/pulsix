@@ -531,8 +531,9 @@ func tagsOf(t *testing.T, d *db.DB, orgID, hostID uuid.UUID) map[string]string {
 }
 
 // TestRecordFactsMergesFactsAndTags: the round trip through the real
-// store — reported keys replace, unreported keys survive, new keys are
-// added, and the three automatic tags appear with source='fact'.
+// store — reported keys replace, OMITTED keys survive with their old
+// values, genuinely new keys arrive, and the three automatic tags appear
+// with source='fact'.
 func TestRecordFactsMergesFactsAndTags(t *testing.T) {
 	svc, _, d, org, zone := newAgentWorld(t, "agent-facts")
 	h := createHost(t, d, org, zone, "facts-1")
@@ -549,23 +550,29 @@ func TestRecordFactsMergesFactsAndTags(t *testing.T) {
 		t.Fatalf("first push tags = %v", tags)
 	}
 
-	// The second push: a changed value REPLACES, a dropped key is KEPT
-	// (stale facts from an older agent version stay visible), a new key
-	// arrives.
-	second := map[string]string{"os": "linux", "arch": "arm64", "virt": "", "hostname": "facts-1"}
+	// The second push OMITS virt and hostname entirely (not as empty
+	// strings — a full-replace implementation must fail this test) and
+	// adds one genuinely new key: the changed values REPLACE, the omitted
+	// keys survive with their OLD values (stale facts from an older agent
+	// version stay visible), the new key lands.
+	second := map[string]string{"os": "linux", "arch": "arm64", "kernel": "6.1.0-generic"}
 	if err := svc.RecordFacts(ctx, org, h.ID, second); err != nil {
 		t.Fatal(err)
 	}
 	got := factsOf(t, d, org, h.ID)
-	if got["arch"] != "arm64" || got["os"] != "linux" {
-		t.Fatalf("second push replaced wrongly: %v", got)
+	if got["arch"] != "arm64" || got["os"] != "linux" || got["kernel"] != "6.1.0-generic" {
+		t.Fatalf("second push replace/add wrong: %v", got)
 	}
-	if _, ok := got["virt"]; !ok {
-		t.Fatalf("the first push's virt fact must survive the second (unreported keys are kept): %v", got)
+	if got["virt"] != "kvm" || got["hostname"] != "facts-1" {
+		t.Fatalf("omitted keys must survive with their old values: %v", got)
 	}
-	// Tags: virt dropped from the push stays as a fact tag (the merge
-	// never deletes), arch updates in place.
-	if tags := tagsOf(t, d, org, h.ID); tags["arch"] != "arm64" || tags["virt"] != "kvm" {
+	if len(got) != 5 {
+		t.Fatalf("facts after second push = %v (want os, arch, virt, hostname, kernel)", got)
+	}
+	// Tags: arch updates in place; virt dropped from the push stays as a
+	// fact tag (the merge never deletes); kernel is stored but never
+	// tagged.
+	if tags := tagsOf(t, d, org, h.ID); tags["arch"] != "arm64" || tags["virt"] != "kvm" || len(tags) != 3 {
 		t.Fatalf("second push tags = %v", tags)
 	}
 }
