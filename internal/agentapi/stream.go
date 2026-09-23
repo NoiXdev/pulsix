@@ -32,16 +32,22 @@ func (s *Service) AgentStream(stream agentpb.AgentService_AgentStreamServer) err
 	}
 	// The stream's open counts as its first heartbeat: last_seen moves,
 	// the stored version is kept (the agent's heartbeats carry the
-	// authoritative build).
+	// authoritative build). A fault recording it is logged, not fatal —
+	// the heartbeats that follow retry at their own cadence.
 	if err := s.deps.Agents.Touch(ctx, agent.Serial, agent.Version); err != nil {
-		return status.Errorf(codes.Internal, "touch agent: %v", err)
+		slog.ErrorContext(ctx, "touch agent at stream open", "serial", agent.Serial, "err", err)
 	}
 	tracked, release := s.streams.track(agent.Serial, agent.HostID)
 	defer release()
 	// Track happens before this second lookup, so either CloseHost sees
-	// the stream or the lookup sees the revocation.
+	// the stream or the lookup sees the revocation. A registry fault here
+	// is a server fault; a revoked serial is the revocation speaking.
 	live, err := s.deps.Agents.GetBySerial(ctx, agent.Serial)
-	if err != nil || live.Revoked {
+	if err != nil {
+		slog.ErrorContext(ctx, "re-check agent after track", "serial", agent.Serial, "err", err)
+		return status.Error(codes.Internal, "agent re-check failed")
+	}
+	if live.Revoked {
 		return status.Error(codes.Unauthenticated, "agent revoked")
 	}
 

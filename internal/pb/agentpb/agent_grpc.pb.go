@@ -34,8 +34,9 @@ type AgentServiceClient interface {
 	// in its token before sending anything.
 	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
 	// Renew issues a fresh certificate for the calling agent's key. Identity
-	// comes from the client certificate; the old certificate stays valid
-	// until it expires.
+	// comes from the client certificate; the swap revokes the previous serial
+	// in the same transaction, so the agent reconnects with the new
+	// certificate right away.
 	Renew(ctx context.Context, in *RenewRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
 	// AgentStream is the agent's long-lived bidirectional stream. The agent
 	// sends heartbeats and facts; the manager may answer with acknowledgements.
@@ -93,8 +94,9 @@ type AgentServiceServer interface {
 	// in its token before sending anything.
 	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
 	// Renew issues a fresh certificate for the calling agent's key. Identity
-	// comes from the client certificate; the old certificate stays valid
-	// until it expires.
+	// comes from the client certificate; the swap revokes the previous serial
+	// in the same transaction, so the agent reconnects with the new
+	// certificate right away.
 	Renew(context.Context, *RenewRequest) (*EnrollResponse, error)
 	// AgentStream is the agent's long-lived bidirectional stream. The agent
 	// sends heartbeats and facts; the manager may answer with acknowledgements.

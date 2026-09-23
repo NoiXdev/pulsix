@@ -234,6 +234,83 @@ func TestRevokedSerialRejected(t *testing.T) {
 	}
 }
 
+// TestReenrollCutsTheReplacedStream: re-enrolling a host replaces its
+// active agent — the old serial is revoked by the swap, so the old
+// stream is cut while the fresh serial's stream works.
+func TestReenrollCutsTheReplacedStream(t *testing.T) {
+	h := newHarness(t)
+	resp, client := enrollAnAgent(t, h, "web-1")
+	hostID := uuid.MustParse(resp.GetHostId())
+	oldStream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for trackedStreams(h.svc.Streams(), hostID) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the old stream never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Re-enroll the same host under a fresh token and key.
+	key2, csr2 := newKeyAndCSR(t)
+	in := tokenInput("")
+	in.HostID = &hostID
+	tok := h.enrollToken(testOrg, in)
+	resp2, err := h.enroll(tok.raw, csr2, "web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2.GetHostId() != hostID.String() {
+		t.Fatalf("re-enroll moved hosts: %s", resp2.GetHostId())
+	}
+
+	// The replaced serial's stream is cut.
+	if _, err := oldStream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("old stream after re-enroll: %v, want Unauthenticated", err)
+	}
+	// The fresh serial's stream works.
+	newClient := h.client([]byte(resp2.GetCertPem()), keyPEMOf(t, key2))
+	stream2, err := newClient.AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream2.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v2"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if ack, err := stream2.Recv(); err != nil || !ack.GetAck() {
+		t.Fatalf("new stream heartbeat ack = %+v, %v", ack, err)
+	}
+}
+
+// TestRenewalKeepsTheStream: renewal swaps the serial but pins the stream —
+// the open connection keeps processing after the swap.
+func TestRenewalKeepsTheStream(t *testing.T) {
+	h := newHarness(t)
+	_, client := enrollAnAgent(t, h, "web-1")
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+		t.Fatalf("pre-renewal heartbeat = %+v, %v", ack, err)
+	}
+	_, csr := newKeyAndCSR(t)
+	if _, err := (*client).Renew(t.Context(), &agentpb.RenewRequest{CsrPem: csr}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v2"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+		t.Fatalf("post-renewal heartbeat = %+v, %v — renewal must not cut the stream", ack, err)
+	}
+}
+
 // TestRevocationEndsStreams: an open stream is cut when the agent is
 // revoked — the handler ends it with Unauthenticated and the registry
 // entry is gone.
@@ -282,20 +359,41 @@ func TestRevocationBetweenAuthAndTrackEndsTheStream(t *testing.T) {
 	}
 }
 
-// TestStreamOpenTouchFault: a heartbeat that cannot be recorded is a
-// server fault, not a silent loss.
-func TestStreamOpenTouchFault(t *testing.T) {
+// TestStreamOpenTouchFaultIsLogged: a fault recording the open-touch is
+// logged, not fatal — the stream opens and the heartbeats that follow
+// carry the retry (here: failing while the fault is armed).
+func TestStreamOpenTouchFaultIsLogged(t *testing.T) {
 	h := newHarness(t)
 	h.store.mu.Lock()
 	h.store.touchErr = errors.New("db down")
 	h.store.mu.Unlock()
 	_, client := enrollAnAgent(t, h, "web-1")
 	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+		t.Fatalf("heartbeat with the touch fault armed: %v, want Internal", err)
+	}
+}
+
+// TestStreamRecheckFaultIsInternal: a registry fault in the post-track
+// re-check is a server fault, not a revocation.
+func TestStreamRecheckFaultIsInternal(t *testing.T) {
+	h := newHarness(t)
+	_, client := enrollAnAgent(t, h, "web-1")
+	h.store.mu.Lock()
+	h.store.lookupErr = errors.New("db down")
+	h.store.mu.Unlock()
+	stream, err := (*client).AgentStream(t.Context())
 	if err == nil {
 		_, err = stream.Recv()
 	}
 	if status.Code(err) != codes.Internal {
-		t.Fatalf("open-touch fault: %v, want Internal", err)
+		t.Fatalf("re-check fault: %v, want Internal", err)
 	}
 }
 

@@ -105,3 +105,28 @@ func (r *StreamRegistry) CloseHost(hostID uuid.UUID) int {
 	}
 	return len(streams)
 }
+
+// CloseHostExcept ends every open stream of hostID authenticated with a
+// serial other than keepSerial and reports how many it cut — the
+// re-enrollment path's cut: the swap revokes the replaced serial, so its
+// streams end, while the fresh serial's (if any) stay registered. The
+// same in-flight guarantee as CloseHost applies to the cut streams.
+func (r *StreamRegistry) CloseHostExcept(hostID uuid.UUID, keepSerial string) int {
+	r.mu.Lock()
+	streams := r.byHost[hostID]
+	var stale []*trackedStream
+	for id, ts := range streams {
+		if ts.serial != keepSerial {
+			stale = append(stale, ts)
+			delete(streams, id)
+		}
+	}
+	if len(streams) == 0 {
+		delete(r.byHost, hostID)
+	}
+	r.mu.Unlock()
+	for _, ts := range stale {
+		ts.shut()
+	}
+	return len(stale)
+}

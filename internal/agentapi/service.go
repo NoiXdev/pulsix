@@ -187,6 +187,11 @@ func (s *Service) Enroll(ctx context.Context, req *agentpb.EnrollRequest) (*agen
 		slog.ErrorContext(ctx, "register agent", "token_id", tok.ID.String(), "host_id", res.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "enrollment failed")
 	}
+	// Re-enrollment replaces the host's active agent: the swap revoked the
+	// replaced serial, so its open streams end here. The fresh serial has
+	// no streams yet, and a renewal (the same Register) is not given this
+	// cut — the renewing agent keeps its stream.
+	s.streams.CloseHostExcept(res.HostID, crt.SerialNumber.String())
 	s.audit(ctx, grpcsrv.SystemEvent{Operation: "agent.enroll", ObjectType: "agent", ObjectID: res.HostID.String(),
 		OrgID: orgID.String(), Summary: "agent " + name + " enrolled on host " + res.HostID.String() + " from " + ip.String()})
 	return &agentpb.EnrollResponse{CertPem: string(certPEM), CaPem: string(s.deps.CA.CAPEM()), HostId: res.HostID.String()}, nil

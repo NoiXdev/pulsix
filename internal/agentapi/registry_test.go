@@ -40,6 +40,34 @@ func TestStreamRegistryTracksAndCuts(t *testing.T) {
 	}
 }
 
+// TestStreamRegistryCloseHostExcept: the re-enrollment cut ends the
+// replaced serial's streams and keeps the fresh serial's — the same
+// in-flight guarantee as CloseHost applies to the cut ones.
+func TestStreamRegistryCloseHostExcept(t *testing.T) {
+	r := NewStreamRegistry()
+	host := uuid.Must(uuid.NewV7())
+	stale, releaseStale := r.track("serial-old", host)
+	fresh, releaseFresh := r.track("serial-new", host)
+	defer releaseFresh()
+
+	if n := r.CloseHostExcept(host, "serial-new"); n != 1 {
+		t.Fatalf("CloseHostExcept = %d, want the one stale stream", n)
+	}
+	select {
+	case <-stale.revoked:
+	default:
+		t.Fatal("the stale stream was not signalled")
+	}
+	var steps int
+	if done, err := fresh.store(func() error { steps++; return nil }); err != nil || !done || steps != 1 {
+		t.Fatalf("the fresh stream must keep processing: done=%v err=%v steps=%d", done, err, steps)
+	}
+	releaseStale() // after the cut: a no-op
+	if n := r.CloseHostExcept(host, "serial-new"); n != 0 {
+		t.Fatalf("second CloseHostExcept = %d", n)
+	}
+}
+
 // TestStreamRegistryCloseHostWaitsForInFlightWork: CloseHost returns only
 // once a processing step that started before the cut has finished — the
 // same guarantee the worker stream registry gives the job requeue.
