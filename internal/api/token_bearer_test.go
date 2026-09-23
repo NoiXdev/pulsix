@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/noixdev/pulsix/internal/api/apitest"
 )
 
@@ -165,5 +167,53 @@ func TestBearerTokenCannotCreateTokens(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("token list with a bearer token: status %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestBearerRequestsTouchLastUsedAtMostOncePerMinute drives backlog 1.22's
+// throttle end to end through the real HTTP stack: two rapid bearer requests
+// with the same token each resolve through BearerMiddleware → Tokens.Resolve
+// → TouchLastUsed, but only the first may write api_tokens.last_used_at —
+// the SQL predicate in TouchAPIToken (the source of truth) suppresses the
+// second write inside the 60 s window, so the row the two requests leave
+// behind must be identical. The row itself is the assertion: the test reads
+// last_used_at through the raw pool after each request and requires the
+// second request to leave it unchanged.
+func TestBearerRequestsTouchLastUsedAtMostOncePerMinute(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("touch-throttle@example.test", "correct horse battery")
+	org := s.SeedOrg("touch-throttle-org", uid)
+	plain, tok, err := s.Deps.Tokens.Create(context.Background(), uid, org, "ci", "admin", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	resp := bearerRequest(t, s, http.MethodGet, "/api/v1/orgs/touch-throttle-org/members", plain)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first members request with a valid bearer token: status %d, want 200", resp.StatusCode)
+	}
+
+	ctx := context.Background()
+	var first pgtype.Timestamptz
+	if err := s.DB.Pool().QueryRow(ctx, `SELECT last_used_at FROM api_tokens WHERE id = $1`, tok.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if !first.Valid {
+		t.Fatal("first bearer request did not record last_used_at")
+	}
+
+	resp = bearerRequest(t, s, http.MethodGet, "/api/v1/orgs/touch-throttle-org/members", plain)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second members request with a valid bearer token: status %d, want 200", resp.StatusCode)
+	}
+
+	var second pgtype.Timestamptz
+	if err := s.DB.Pool().QueryRow(ctx, `SELECT last_used_at FROM api_tokens WHERE id = $1`, tok.ID).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if !second.Time.Equal(first.Time) {
+		t.Fatalf("second rapid request moved last_used_at %v -> %v, want one write per minute", first.Time, second.Time)
 	}
 }

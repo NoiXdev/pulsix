@@ -27,4 +27,14 @@ FROM api_tokens WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at;
 UPDATE api_tokens SET revoked_at = now() WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL;
 
 -- name: TouchAPIToken :exec
-UPDATE api_tokens SET last_used_at = $2 WHERE id = $1;
+-- Backlog 1.22: resolves touch last_used_at on every bearer-authenticated
+-- request, so the write is throttled to at most once per minute per token
+-- right here in the statement rather than with in-process state: the
+-- predicate reads the database's own now(), so it holds identically across
+-- managers and needs no synchronization. last_used_at IS NULL admits the
+-- token's very first touch; afterwards a row only matches once its
+-- last_used_at has aged past the window, so repeated resolves inside the
+-- minute affect zero rows. A zero-row outcome is success (the touch was
+-- throttled), not an error — see SQLTokenStore.TouchLastUsed.
+UPDATE api_tokens SET last_used_at = $2
+WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');

@@ -254,6 +254,65 @@ func TestSQLTokenStoreTouchLastUsed(t *testing.T) {
 	}
 }
 
+// TestSQLTokenStoreTouchLastUsedThrottlesToOncePerMinute pins backlog
+// 1.22's write-amplification fix: TouchLastUsed must write at most once per
+// minute per token, and the SQL predicate inside the UPDATE — not any
+// in-process state — is the source of truth, so a repeated touch inside the
+// window is a plain no-op that leaves the row untouched. A touch after the
+// window has passed applies again: the test drives the clock side by
+// backdating the row through the raw pool, because the predicate reads the
+// database's own now(), which no test can move.
+func TestSQLTokenStoreTouchLastUsedThrottlesToOncePerMinute(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := seedUser(t, q, "throttled-touch@example.test")
+	org := seedOrg(t, q, "throttled-touch-org")
+	store := auth.NewSQLTokenStore(d)
+	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer"}
+	hash := hashOf("throttled-touch")
+	if err := store.Insert(ctx, tok, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	first := time.Now().Truncate(time.Microsecond)
+	if err := store.TouchLastUsed(ctx, tok.ID, first); err != nil {
+		t.Fatalf("first TouchLastUsed: %v", err)
+	}
+
+	// A second touch well inside the window must leave the row untouched:
+	// exactly one write lands no matter how many requests resolve the
+	// token within the minute.
+	if err := store.TouchLastUsed(ctx, tok.ID, first.Add(30*time.Second)); err != nil {
+		t.Fatalf("second TouchLastUsed: %v", err)
+	}
+	got, _, err := store.GetByHash(ctx, hash, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastUsedAt == nil || !got.LastUsedAt.Equal(first) {
+		t.Fatalf("LastUsedAt after a touch inside the window = %v, want %v unchanged (the second touch must be a no-op)", got.LastUsedAt, first)
+	}
+
+	// Once the stored last_used_at is older than the window the predicate
+	// admits the write again. now() - interval '2 minutes' backdates the
+	// row past the window on the database's own clock.
+	if _, err := d.Pool().Exec(ctx, `UPDATE api_tokens SET last_used_at = now() - interval '2 minutes' WHERE id = $1`, tok.ID); err != nil {
+		t.Fatal(err)
+	}
+	third := time.Now().Truncate(time.Microsecond)
+	if err := store.TouchLastUsed(ctx, tok.ID, third); err != nil {
+		t.Fatalf("TouchLastUsed after the window: %v", err)
+	}
+	got, _, err = store.GetByHash(ctx, hash, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastUsedAt == nil || !got.LastUsedAt.Equal(third) {
+		t.Fatalf("LastUsedAt after the window passed = %v, want %v (the touch must apply again once the minute has passed)", got.LastUsedAt, third)
+	}
+}
+
 // TestSQLTokenStoreGetByHashUsesInjectedNow proves GetByHash evaluates
 // expiry against the now argument it is given, not the database's own
 // now() (Finding 3, fix round 1): a token expiring one hour from the real

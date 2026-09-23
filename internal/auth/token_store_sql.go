@@ -88,6 +88,17 @@ func (s *SQLTokenStore) Revoke(ctx context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
+// TouchLastUsed writes last_used_at at most once per minute per token:
+// the UPDATE's own WHERE clause (tokens.sql, backlog 1.22) only matches
+// rows whose last_used_at is still NULL or older than the database's own
+// now() minus one minute, so repeated resolves inside the window affect
+// zero rows. The throttle lives in the statement rather than an in-process
+// map — it then holds identically across managers and needs no
+// synchronization here — and a zero-row outcome is success (the touch was
+// throttled), not an error. The caller-supplied at still supplies the
+// written value whenever the predicate admits a write; in production the
+// manager's clock and the database's are the same wall clock, which is
+// what makes the comparison between the stored value and now() meaningful.
 func (s *SQLTokenStore) TouchLastUsed(ctx context.Context, id uuid.UUID, at time.Time) error {
 	return s.q.TouchAPIToken(ctx, gen.TouchAPITokenParams{ID: id, LastUsedAt: pgtype.Timestamptz{Time: at, Valid: true}})
 }

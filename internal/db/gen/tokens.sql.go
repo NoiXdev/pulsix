@@ -160,7 +160,8 @@ func (q *Queries) RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) 
 }
 
 const touchAPIToken = `-- name: TouchAPIToken :exec
-UPDATE api_tokens SET last_used_at = $2 WHERE id = $1
+UPDATE api_tokens SET last_used_at = $2
+WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')
 `
 
 type TouchAPITokenParams struct {
@@ -168,6 +169,15 @@ type TouchAPITokenParams struct {
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
 }
 
+// Backlog 1.22: resolves touch last_used_at on every bearer-authenticated
+// request, so the write is throttled to at most once per minute per token
+// right here in the statement rather than with in-process state: the
+// predicate reads the database's own now(), so it holds identically across
+// managers and needs no synchronization. last_used_at IS NULL admits the
+// token's very first touch; afterwards a row only matches once its
+// last_used_at has aged past the window, so repeated resolves inside the
+// minute affect zero rows. A zero-row outcome is success (the touch was
+// throttled), not an error — see SQLTokenStore.TouchLastUsed.
 func (q *Queries) TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error {
 	_, err := q.db.Exec(ctx, touchAPIToken, arg.ID, arg.LastUsedAt)
 	return err

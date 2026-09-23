@@ -58,10 +58,14 @@ type TokenStore interface {
 	// revoked through an org it does not belong to. It returns ErrNotFound
 	// when no matching, not-yet-revoked row exists.
 	Revoke(ctx context.Context, orgID, id uuid.UUID) error
-	// TouchLastUsed best-effort records when id was last resolved. A
-	// failure here is bookkeeping, not an authentication decision: Resolve
-	// logs it but does not reject an otherwise-valid token over it (see
-	// Resolve).
+	// TouchLastUsed best-effort records when id was last resolved,
+	// throttled by the store to at most one write per minute per token
+	// (backlog 1.22): the SQL predicate inside the store's UPDATE — not an
+	// in-process map — is the source of truth, so the throttle holds
+	// identically across managers and a repeated touch inside the window
+	// is a no-op, not an error. A store failure here is still bookkeeping,
+	// not an authentication decision: Resolve logs it but does not reject
+	// an otherwise-valid token over it (see Resolve).
 	TouchLastUsed(ctx context.Context, id uuid.UUID, at time.Time) error
 }
 

@@ -241,7 +241,12 @@ func New(deps Deps) (http.Handler, error) {
 	// later task can add a spoof-safe replacement once the deployment's
 	// reverse-proxy trust boundary is known.
 	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
-	r.Use(auth.CookieMiddleware(deps.Sessions))
+	// staticSessionSkip wraps CookieMiddleware with backlog 1.22's
+	// short-circuit: requests outside the API subtree (the SPA routes and
+	// embedded assets web.Handler serves as the NotFound fallback, plus
+	// /healthz) skip the session lookup entirely — see session_skip.go for
+	// the documented route set.
+	r.Use(staticSessionSkip(auth.CookieMiddleware(deps.Sessions)))
 	// auth.BearerMiddleware is deliberately NOT mounted here (Finding 1, fix
 	// round 1; carried forward from Task 9). Mounting it on this router —
 	// the router every route in this package attaches to — would make a
