@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package pulsix.agent.v1;
+
+option go_package = "github.com/noixdev/pulsix/internal/pb/agentpb";
+
+service AgentService {
+  // Enroll exchanges a one-time enrollment token and a certificate request
+  // for the agent's first client certificate. It is the only method callable
+  // without a client certificate; the agent pins the CA by the fingerprint
+  // in its token before sending anything.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  // Renew issues a fresh certificate for the calling agent's key. Identity
+  // comes from the client certificate; the old certificate stays valid
+  // until it expires.
+  rpc Renew(RenewRequest) returns (EnrollResponse);
+  // AgentStream is the agent's long-lived bidirectional stream. The agent
+  // sends heartbeats and facts; the manager may answer with acknowledgements.
+  rpc AgentStream(stream AgentMessage) returns (stream ManagerMessage);
+}
+
+message EnrollRequest {
+  string token = 1; // the one-time enrollment token
+  string csr_pem = 2; // PEM "CERTIFICATE REQUEST"
+  string name = 3; // requested hostname
+  string version = 4; // agent build version
+}
+
+message EnrollResponse {
+  string cert_pem = 1; // PEM leaf
+  string ca_pem = 2; // PEM CA certificate
+  string host_id = 3;
+}
+
+message RenewRequest {
+  string csr_pem = 1; // PEM "CERTIFICATE REQUEST"
+}
+
+message AgentMessage {
+  oneof body {
+    Heartbeat heartbeat = 1; // periodic liveness signal
+    Facts facts = 2; // gathered host facts
+  }
+}
+
+message Heartbeat {
+  string version = 1; // agent build version
+}
+
+message Facts {
+  map<string, string> values = 1;
+}
+
+message ManagerMessage {
+  bool ack = 1;
+}
