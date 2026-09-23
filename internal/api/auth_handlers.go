@@ -79,6 +79,9 @@ type logoutOutput struct {
 }
 
 func registerAuthRoutes(hapi huma.API, deps Deps) {
+	// Backlog 1.20: the login endpoint is rate limited per client address —
+	// the one path where guessing a password is the attack, so only failed
+	// attempts charge the budget (see withAuthRateLimit).
 	huma.Post(hapi, "/api/v1/auth/login", func(ctx context.Context, in *loginInput) (*loginOutput, error) {
 		res, err := deps.Auth.Login(ctx, in.Body.Email, in.Body.Password)
 		if err != nil {
@@ -89,7 +92,7 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		out.Body.MFARequired = res.MFARequired
 		out.Body.MFAEnrolmentRequired = res.EnrolmentRequired
 		return out, nil
-	})
+	}, withAuthRateLimit(deps))
 
 	huma.Post(hapi, "/api/v1/auth/logout", func(ctx context.Context, _ *struct{}) (*logoutOutput, error) {
 		p, err := requireSession(ctx)

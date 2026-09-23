@@ -9,6 +9,8 @@ package apitest_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/netip"
 	"testing"
 
 	"github.com/google/uuid"
@@ -92,6 +94,31 @@ func TestWithAuthWrapper(t *testing.T) {
 	}))
 	if err := s.Deps.Auth.Logout(context.Background(), auth.Principal{}); !errors.Is(err, sentinel) {
 		t.Fatalf("Deps.Auth.Logout = %v, want the wrapper's sentinel error", err)
+	}
+}
+
+func TestWithAuthRateLimit(t *testing.T) {
+	s := apitest.New(t, apitest.WithAuthRateLimit(3))
+	if s.Deps.AuthRateLimit != 3 {
+		t.Fatalf("Deps.AuthRateLimit = %d, want 3", s.Deps.AuthRateLimit)
+	}
+	// The default (no option) stays disabled so no existing test's logins
+	// are throttled.
+	s2 := apitest.New(t)
+	if s2.Deps.AuthRateLimit != 0 {
+		t.Fatalf("default Deps.AuthRateLimit = %d, want 0 (limiter disabled)", s2.Deps.AuthRateLimit)
+	}
+}
+
+func TestWithTrustedProxies(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	s := apitest.New(t, apitest.WithTrustedProxies(trusted))
+	addr := s.Deps.ClientIP.FromRequest(&http.Request{
+		RemoteAddr: "127.0.0.1:40000",
+		Header:     http.Header{"X-Forwarded-For": []string{"198.51.100.7"}},
+	})
+	if addr != netip.MustParseAddr("198.51.100.7") {
+		t.Fatalf("resolved = %s, want the forwarded address", addr)
 	}
 }
 

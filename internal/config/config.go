@@ -64,6 +64,16 @@ type Config struct {
 	// schedules (PULSIX_SCHEDULE_TICK, default 15s, minimum 5s). Twice the
 	// tick is the grace period after which a due run counts as late.
 	ScheduleTick time.Duration
+	// AuthRateLimit is how many failed authentication attempts one client
+	// address may make per minute across each of the public auth
+	// endpoints — login, TOTP verify, passkey login finish and invite
+	// accept (PULSIX_AUTH_RATE_LIMIT, a non-negative integer; default
+	// DefaultAuthRateLimit). Each endpoint counts its own budget, and only
+	// failed attempts are counted, so ordinary sign-ins are never charged.
+	// 0 disables the limiter — that is what the tests use, not a
+	// production setting; production should keep the default or set a
+	// value its user count can live with.
+	AuthRateLimit int
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For the
 	// API believes (PULSIX_TRUSTED_PROXIES, CIDRs or addresses, comma
 	// separated, default empty: the TCP peer is the client).
@@ -92,6 +102,12 @@ const (
 	DefaultScheduleTick = 15 * time.Second
 	MinScheduleTick     = 5 * time.Second
 )
+
+// DefaultAuthRateLimit is the default PULSIX_AUTH_RATE_LIMIT: failed auth
+// attempts per minute per address, per endpoint. Generous enough that a
+// mistyped password a few times never trips it, tight enough that a
+// credential-stuffing run stalls out.
+const DefaultAuthRateLimit = 20
 
 // Load reads and validates configuration. getenv is injected for tests.
 func Load(getenv func(string) string) (Config, error) {
@@ -162,6 +178,14 @@ func Load(getenv func(string) string) (Config, error) {
 			return cfg, fmt.Errorf("PULSIX_SCHEDULE_TICK must be a duration of at least %s (e.g. 15s)", MinScheduleTick)
 		}
 		cfg.ScheduleTick = d
+	}
+	cfg.AuthRateLimit = DefaultAuthRateLimit
+	if raw := getenv("PULSIX_AUTH_RATE_LIMIT"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return cfg, fmt.Errorf("PULSIX_AUTH_RATE_LIMIT must be a non-negative integer (failed attempts per minute per address; 0 disables the limit, for tests)")
+		}
+		cfg.AuthRateLimit = n
 	}
 	proxies, err := clientip.ParsePrefixes(getenv("PULSIX_TRUSTED_PROXIES"))
 	if err != nil {

@@ -100,6 +100,10 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	}, withAudit("confirmTOTP", "totp"))
 
+	// Backlog 1.20: verify is the step-up where guessing TOTP or recovery
+	// codes is the attack, so it is rate limited per client address; the
+	// enrolment routes above already require a session a password had to
+	// buy (and login itself is limited).
 	huma.Post(hapi, "/api/v1/auth/totp/verify", func(ctx context.Context, in *codeInput) (*okOutput, error) {
 		p, err := requireSession(ctx)
 		if err != nil {
@@ -121,7 +125,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 			return nil, mapAuthErr(ctx, err)
 		}
 		return &okOutput{}, nil
-	})
+	}, withAuthRateLimit(deps))
 
 	huma.Delete(hapi, "/api/v1/auth/totp", func(ctx context.Context, in *codeInput) (*okOutput, error) {
 		p, err := requireInteractiveSession(ctx)

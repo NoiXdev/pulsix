@@ -58,7 +58,7 @@ Last updated: 2026-09-11
 | 1.12 | SPA shell: sidebar, org switcher, ⌘K search, zone filter, notifications | planned | |
 | 1.13 | Docker Compose single-node install (manager, worker, db) | planned | `docker compose up` |
 | 1.14 | Light theme | idea | dark-first, light later |
-| 1.15 | Rate limiting on auth endpoints (login, TOTP verify, passkey finish, invite accept) | planned | before v0.1 release |
+| 1.15 | Rate limiting on auth endpoints (login, TOTP verify, passkey finish, invite accept) | done | v0.3a Task 1: shared `clientip` fixed-window bucket, per route family, failed attempts only (hook semantics), 429 + Retry-After; `PULSIX_AUTH_RATE_LIMIT` default 20/min, 0 disables (tests) |
 | 1.19 | Account recovery when the second factor is lost: a recovery code must also authorise re-enrolling or disabling TOTP, otherwise the only way back is an administrator reset | planned | found during v0.1 Task 7 review |
 | 1.16 | User management: invitations by e-mail, roles (owner/admin/operator/viewer), remove, instance-admin deactivate | planned | plan v0.1 Task 10 |
 | 1.17 | Activity feed per org and per user from the audit log, filters by actor/object | planned | plan v0.1 Task 11 |
@@ -71,7 +71,7 @@ the rest are follow-ups. Recorded 2026-09-11.
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 1.20 | Rate limiting on login, TOTP verify, passkey finish and invite accept | planned | **release blocker** (with 1.15) |
+| 1.20 | Rate limiting on login, TOTP verify, passkey finish and invite accept | done | v0.3a Task 1 (with 1.15): middleware at the route registration before the handler, address via `PULSIX_TRUSTED_PROXIES` resolution; refused calls answer 429 without running the handler, a 4xx outcome charges, 2xx/5xx never; `PULSIX_AUTH_RATE_LIMIT=0` documented as the tests' disable switch, not a production setting |
 | 1.21 | Reapers for expired `webauthn_ceremonies` and `sessions` rows | planned | **release blocker**: unauthenticated write path grows without bound |
 | 1.22 | Throttle `TouchLastUsed`; skip the session lookup for static assets | planned | **release blocker**: per-request write and read amplification |
 | 1.23 | Batch `set_config` with the statement in one round trip for org-scoped queries | planned | today four round trips per scoped statement |

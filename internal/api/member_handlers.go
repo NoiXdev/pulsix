@@ -247,7 +247,11 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 			out.Body.SignedIn = true
 		}
 		return out, nil
-	}, withAudit("acceptInvite", "member"))
+		// Backlog 1.20: accept mutates membership state (and can create the
+		// account itself) on the strength of the invite token alone, so it
+		// is rate limited per client address like the other public auth
+		// endpoints.
+	}, withAuthRateLimit(deps), withAudit("acceptInvite", "member"))
 }
 
 // registerAdminRoutes wires the one instance-level (not org-scoped) route

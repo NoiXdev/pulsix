@@ -149,6 +149,24 @@ func WithSecureCookies() Option {
 	return func(s *Server) { s.Deps.Secure = true }
 }
 
+// WithAuthRateLimit sets Deps.AuthRateLimit — the failed-auth-attempt
+// budget per address per minute of the four rate-limited auth endpoints
+// (login, TOTP verify, passkey login finish, invite accept; backlog 1.20).
+// The apitest default leaves the limiter disabled (Deps.AuthRateLimit 0),
+// so no existing test's logins are throttled; the rate-limit tests turn it
+// on here with a small budget.
+func WithAuthRateLimit(n int) Option {
+	return func(s *Server) { s.Deps.AuthRateLimit = n }
+}
+
+// WithTrustedProxies replaces Deps.ClientIP with a resolver trusting the
+// given ranges (PULSIX_TRUSTED_PROXIES), so a test can drive the forwarded
+// address the API's rate limiting keys on — the default resolver trusts
+// nothing and counts every request under the loopback peer.
+func WithTrustedProxies(trusted []netip.Prefix) Option {
+	return func(s *Server) { s.Deps.ClientIP = clientip.New(trusted) }
+}
+
 // WithAuthWrapper replaces Deps.Auth with wrap's return value, applied to
 // the default real auth.Service. It exists so a test can make one method
 // fail on demand — the real service, backed by a working test database,

@@ -91,6 +91,14 @@ type Deps struct {
 	// Calendar lays out schedule occurrences and maintenance windows
 	// (spec 2026-09-18 §8).
 	Calendar *calendar.Service
+	// AuthRateLimit is how many failed authentication attempts one client
+	// address may make per minute on each rate-limited auth endpoint
+	// (login, TOTP verify, passkey login finish, invite accept) —
+	// PULSIX_AUTH_RATE_LIMIT, wired by app.Build from config.Load, which
+	// defaults it to config.DefaultAuthRateLimit. 0 disables the limiter
+	// (for tests); production leaves the default or higher. See
+	// withAuthRateLimit (auth_rate_limit.go).
+	AuthRateLimit int
 	// WorkerEndpoint is what remote workers dial; empty Addr disables enrollment.
 	WorkerEndpoint WorkerEndpoint
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer

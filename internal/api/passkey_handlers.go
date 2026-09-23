@@ -183,6 +183,9 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
+	// Backlog 1.20: the login ceremony's finish verifies an assertion
+	// against the manager's ceremonies — the passkey equivalent of a
+	// password login, and rate limited like it, per client address.
 	huma.Post(hapi, "/api/v1/auth/passkeys/login/finish", func(ctx context.Context, in *passkeyLoginFinishInput) (*passkeyLoginFinishOutput, error) {
 		cid, err := uuid.Parse(in.Body.CeremonyID)
 		if err != nil {
@@ -195,7 +198,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		out := &passkeyLoginFinishOutput{}
 		out.SetCookie = sessionCookie(cookie, deps.Secure)
 		return out, nil
-	})
+	}, withAuthRateLimit(deps))
 }
 
 // mapPasskeyErr is mapAuthErr plus one override: auth.ErrNotFound becomes

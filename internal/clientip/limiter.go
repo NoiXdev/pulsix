@@ -17,10 +17,11 @@ const maxTracked = 10000
 const ipv6KeyBits = 64
 
 // Limiter is a fixed-window call counter per client address, in process.
-// The unauthenticated write paths use it (webhook deliveries and worker
-// enrollment) so one source cannot flood them. It is per manager: with
-// several managers, each counts on its own. IPv4 addresses are counted one
-// by one, IPv6 addresses per /64.
+// The unauthenticated write paths use it (webhook deliveries, worker
+// enrollment and, with Refused/Charge, the authentication endpoints) so one
+// source cannot flood them. It is per manager: with several managers, each
+// counts on its own. IPv4 addresses are counted one by one, IPv6 addresses
+// per /64.
 type Limiter struct {
 	mu        sync.Mutex
 	now       func() time.Time
@@ -66,6 +67,46 @@ func (l *Limiter) Allow(a netip.Addr) bool {
 	}
 	l.seen[k] = &window{start: now, count: 1}
 	return true
+}
+
+// Refused reports whether a's budget for the current window is spent and,
+// when it is, how much of the window still runs — the ceil of that
+// duration is a refused call's Retry-After. It charges nothing: repeated
+// refused calls neither deepen the lockout nor extend the window, so once
+// the window ends the address simply starts over.
+func (l *Limiter) Refused(a netip.Addr) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	w, ok := l.seen[key(a)]
+	if !ok || now.Sub(w.start) >= l.window || w.count < l.limit {
+		return 0, false
+	}
+	return l.window - now.Sub(w.start), true
+}
+
+// Charge counts one failed call from a, starting a fresh window when the
+// old one has ended (or a has not been seen at all). It is what callers
+// that count only failed attempts charge instead of Allow, and it caps at
+// the limit the same way Allow does: once a window's budget is spent,
+// further charges are ignored, so a flood of refused calls cannot keep its
+// window alive.
+func (l *Limiter) Charge(a netip.Addr) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	k := key(a)
+	w, ok := l.seen[k]
+	if ok && now.Sub(w.start) < l.window {
+		if w.count < l.limit {
+			w.count++
+		}
+		return
+	}
+	if !ok && len(l.seen) >= l.max {
+		l.makeRoom(now)
+	}
+	l.seen[k] = &window{start: now, count: 1}
 }
 
 // makeRoom frees one slot for a new address. Expired windows go first, at

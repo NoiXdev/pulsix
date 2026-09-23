@@ -237,6 +237,54 @@ func TestJobMaxAttempts(t *testing.T) {
 	}
 }
 
+// TestAuthRateLimit: PULSIX_AUTH_RATE_LIMIT is how many failed
+// authentication attempts one client address may make per minute on the
+// public auth endpoints (login, TOTP verify, passkey login finish, invite
+// accept); the default is 20 and only a non-negative integer is accepted —
+// 0 disables the limiter, a value the tests need (an operator who wants
+// brute-force protection off must get a config error instead of silence,
+// so 0 documents the tests' own disablement rather than being sold as a
+// production setting).
+func TestAuthRateLimit(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cases := []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{raw: "", want: config.DefaultAuthRateLimit},
+		{raw: "50", want: 50},
+		{raw: "1", want: 1},
+		{raw: "0", want: 0},
+		{raw: "-2", wantErr: true},
+		{raw: "many", wantErr: true},
+	}
+	for _, c := range cases {
+		m := map[string]string{"PULSIX_AUTH_RATE_LIMIT": c.raw}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := config.Load(env(m))
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("PULSIX_AUTH_RATE_LIMIT=%q: expected an error", c.raw)
+				continue
+			}
+			if !strings.Contains(err.Error(), "PULSIX_AUTH_RATE_LIMIT") {
+				t.Errorf("PULSIX_AUTH_RATE_LIMIT=%q: error does not name the variable: %v", c.raw, err)
+			}
+			continue
+		}
+		if err != nil || cfg.AuthRateLimit != c.want {
+			t.Errorf("PULSIX_AUTH_RATE_LIMIT=%q: got %d, %v; want %d", c.raw, cfg.AuthRateLimit, err, c.want)
+		}
+	}
+}
+
 // TestScheduleTick: PULSIX_SCHEDULE_TICK drives the schedule ticker; the
 // default is 15s and anything below 5s is refused (spec §2 "Ticker").
 func TestScheduleTick(t *testing.T) {
