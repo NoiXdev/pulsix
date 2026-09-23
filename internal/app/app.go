@@ -70,6 +70,9 @@ type App struct {
 	stopReaper func()
 	stopRetest func()
 	stopTicker func()
+	// stopAuthReaper stops the expired-ceremony and expired-session reaper
+	// (backlog 1.21), waiting until its goroutine has returned.
+	stopAuthReaper func()
 	// stopDispatch stops the notification dispatcher (spec 2026-09-18
 	// §5), waiting for a batch in flight.
 	stopDispatch func()
@@ -90,6 +93,9 @@ func (a *App) Close() {
 	}
 	if a.stopRetest != nil {
 		a.stopRetest()
+	}
+	if a.stopAuthReaper != nil {
+		a.stopAuthReaper()
 	}
 	if a.stopTicker != nil {
 		a.stopTicker()
@@ -345,6 +351,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// staggered per host, under its own advisory lock. Stopped in Close.
 	retestStop := startLoop(schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run)
 
+	// The expired-ceremony and expired-session reaper (backlog 1.21): one
+	// DELETE pass per interval (default 1h) under its own advisory key,
+	// bounding the two unauthenticated/expired write paths' growth.
+	// Stopped in Close.
+	authReaperStop := startLoop(auth.NewReaper(q, schedule.NewAdvisoryLocker(appDB.Pool(), auth.AdvisoryKeyAuthReaper), o.authReaperInterval, time.Now, slog.Default()).Run)
+
 	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
 	// several safe. Stopped in Close and on every early return below;
 	// stopping waits for a batch still in flight (startLoop).
@@ -377,6 +389,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		if err != nil {
 			reaperStop()
 			retestStop()
+			authReaperStop()
 			tickerStop()
 			dispatchStop()
 			digestStop()
@@ -397,6 +410,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			if splitErr != nil {
 				reaperStop()
 				retestStop()
+				authReaperStop()
 				tickerStop()
 				dispatchStop()
 				digestStop()
@@ -410,7 +424,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEmbedded: stopEmbedded,
 	}, nil
 }
 

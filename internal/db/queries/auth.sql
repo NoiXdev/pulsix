@@ -17,6 +17,19 @@ UPDATE sessions SET mfa_complete = true WHERE id = $1;
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;
 
+-- name: DeleteExpiredSessions :execrows
+-- The auth reaper's session pass (backlog 1.21, auth.Reaper). GetSession's
+-- expires_at > now() clause already makes an expired row unauthenticated
+-- at read time — the reaper exists to bound the table's growth, not for
+-- correctness — so a row is retained for a 7-day grace past its expiry
+-- (auth.SessionRetentionGrace: a fixed forensic window, not a security
+-- margin). revoked_at plays no role: an early revoke does not earn an
+-- earlier deletion, the natural expiry bounds the row's life at
+-- created + SessionTTL + SessionRetentionGrace. expired_before arrives as
+-- now - SessionRetentionGrace, computed by the reaper from its own
+-- injected clock so the predicate (and its boundary) is testable.
+DELETE FROM sessions WHERE expires_at < @expired_before::timestamptz;
+
 -- name: UpsertTOTPSecret :exec
 INSERT INTO totp_secrets (user_id, secret_sealed) VALUES ($1, $2)
 ON CONFLICT (user_id) DO UPDATE SET secret_sealed = EXCLUDED.secret_sealed, confirmed_at = NULL, last_used_step = 0;

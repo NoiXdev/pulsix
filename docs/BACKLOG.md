@@ -72,7 +72,7 @@ the rest are follow-ups. Recorded 2026-09-11.
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 1.20 | Rate limiting on login, TOTP verify, passkey finish and invite accept | done | v0.3a Task 1 (with 1.15): middleware at the route registration before the handler, address via `PULSIX_TRUSTED_PROXIES` resolution; refused calls answer 429 without running the handler, a 4xx outcome charges, 2xx/5xx never; `PULSIX_AUTH_RATE_LIMIT=0` documented as the tests' disable switch, not a production setting |
-| 1.21 | Reapers for expired `webauthn_ceremonies` and `sessions` rows | planned | **release blocker**: unauthenticated write path grows without bound |
+| 1.21 | Reapers for expired `webauthn_ceremonies` and `sessions` rows | done | v0.3a Task 2: hourly `auth.Reaper` (ticker, injected clock) deletes ceremonies past their expiry (`expires_at` carries the begin + `CeremonyTTL` written by PutCeremony) and sessions past a 7-day retention grace (expired sessions are already unauthenticated at read; grace is forensic window, not a security margin); strict predicates, boundaries pinned; advisory key 8312 against multi-manager double-runs |
 | 1.22 | Throttle `TouchLastUsed`; skip the session lookup for static assets | planned | **release blocker**: per-request write and read amplification |
 | 1.23 | Batch `set_config` with the statement in one round trip for org-scoped queries | planned | today four round trips per scoped statement |
 | 1.24 | SMTP settings `PUT`: an omitted password keeps the stored one | planned | today saving another field wipes the password |

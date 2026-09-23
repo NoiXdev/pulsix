@@ -13,6 +13,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteExpiredCeremonies = `-- name: DeleteExpiredCeremonies :execrows
+DELETE FROM webauthn_ceremonies WHERE expires_at < $1::timestamptz
+`
+
+// The auth reaper's ceremony pass (backlog 1.21, auth.Reaper): bounds the
+// growth of the unauthenticated BeginRegistration/BeginLogin write path. A
+// finished ceremony's row is consumed by TakeCeremony; the reaper catches
+// the abandoned ones (a flood of login begins that never finish would
+// otherwise live for ever). The row's expires_at IS its TTL as written by
+// PutCeremony (begin + auth.CeremonyTTL, the auth package's own constant —
+// the only writer of the column), so "older than the ceremony TTL" is
+// exactly "expires_at past", and the TTL is reused through the column it
+// produced. expired_before is the sweep's now, from the reaper's injected
+// clock.
+func (q *Queries) DeleteExpiredCeremonies(ctx context.Context, expiredBefore time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredCeremonies, expiredBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deletePasskey = `-- name: DeletePasskey :execrows
 DELETE FROM passkeys WHERE id = $1 AND user_id = $2
 `

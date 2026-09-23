@@ -45,6 +45,28 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
+DELETE FROM sessions WHERE expires_at < $1::timestamptz
+`
+
+// The auth reaper's session pass (backlog 1.21, auth.Reaper). GetSession's
+// expires_at > now() clause already makes an expired row unauthenticated
+// at read time — the reaper exists to bound the table's growth, not for
+// correctness — so a row is retained for a 7-day grace past its expiry
+// (auth.SessionRetentionGrace: a fixed forensic window, not a security
+// margin). revoked_at plays no role: an early revoke does not earn an
+// earlier deletion, the natural expiry bounds the row's life at
+// created + SessionTTL + SessionRetentionGrace. expired_before arrives as
+// now - SessionRetentionGrace, computed by the reaper from its own
+// injected clock so the predicate (and its boundary) is testable.
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, expiredBefore time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredSessions, expiredBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTOTP = `-- name: DeleteTOTP :exec
 DELETE FROM totp_secrets WHERE user_id = $1
 `
