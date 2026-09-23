@@ -39,6 +39,12 @@ func (p hostServiceProvisioner) CreateHost(ctx context.Context, orgID, zoneID uu
 	return h.ID, nil
 }
 
+func (p hostServiceProvisioner) SetMonitored(ctx context.Context, orgID, hostID uuid.UUID) error {
+	monitored := true
+	_, err := p.svc.SetCapabilities(ctx, orgID, hostID, nil, &monitored)
+	return err
+}
+
 func seedOrg(t *testing.T, q *gen.Queries, slug string) uuid.UUID {
 	t.Helper()
 	org, err := q.CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: slug, Name: slug})

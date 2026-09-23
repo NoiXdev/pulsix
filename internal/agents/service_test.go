@@ -23,9 +23,11 @@ var ctx = context.Background()
 // reports (hosts.ErrNameTaken → Service maps it to agents.ErrTokenConflict
 // via the port contract below).
 type fakeProvisioner struct {
-	mu    sync.Mutex
-	hosts map[uuid.UUID][]string // orgID -> existing names
-	ids   []uuid.UUID
+	mu        sync.Mutex
+	hosts     map[uuid.UUID][]string // orgID -> existing names
+	ids       []uuid.UUID
+	monitored map[uuid.UUID]bool // hostID -> monitored flag
+	flipErr   error
 }
 
 func (f *fakeProvisioner) seedHost(orgID uuid.UUID, name string) uuid.UUID {
@@ -41,6 +43,9 @@ func (f *fakeProvisioner) seedHost(orgID uuid.UUID, name string) uuid.UUID {
 func (f *fakeProvisioner) init() {
 	if f.hosts == nil {
 		f.hosts = map[uuid.UUID][]string{}
+	}
+	if f.monitored == nil {
+		f.monitored = map[uuid.UUID]bool{}
 	}
 }
 
@@ -74,6 +79,17 @@ func (f *fakeProvisioner) CreateHost(_ context.Context, orgID, _ uuid.UUID, name
 	f.hosts[orgID] = append(f.hosts[orgID], name)
 	f.ids = append(f.ids, id)
 	return id, nil
+}
+
+func (f *fakeProvisioner) SetMonitored(_ context.Context, _, hostID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.flipErr != nil {
+		return f.flipErr
+	}
+	f.init()
+	f.monitored[hostID] = true
+	return nil
 }
 
 // fakeStore is the in-memory agents.Store the service tests run on.
@@ -195,6 +211,7 @@ func (f *fakeStore) GetBySerial(_ context.Context, serial string) (agents.AgentI
 	if !ok {
 		return agents.AgentIdentity{}, agents.ErrNotFound
 	}
+	id.Serial = serial
 	id.Revoked = f.revokedC[serial]
 	return id, nil
 }
@@ -559,5 +576,147 @@ func TestRevokeAgent(t *testing.T) {
 func TestEnrollTokenFormatUnchanged(t *testing.T) {
 	if got := enrolltoken.AgentPrefix; got != "pxa1" {
 		t.Fatalf("AgentPrefix = %q", got)
+	}
+}
+
+// TestClaimResultCarriesResolvedName pins Task 7's contract: the claim
+// reports the name the host was created with (hint wins over the
+// presenter's name) so the gRPC layer can name the certificate the same
+// way; a bound host reports no created name.
+func TestClaimResultCarriesResolvedName(t *testing.T) {
+	svc, _, p, now := newService(t)
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hinted, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: "from-hint", MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.ClaimToken(ctx, org, hinted, "presented")
+	if err != nil || res.Name != "from-hint" {
+		t.Fatalf("hinted claim = %+v, %v", res, err)
+	}
+	blank, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = svc.ClaimToken(ctx, org, blank, "presented")
+	if err != nil || res.Name != "presented" {
+		t.Fatalf("blank-hint claim = %+v, %v", res, err)
+	}
+	bound := p.seedHost(org, "web-1")
+	boundTok, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, HostID: &bound, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = svc.ClaimToken(ctx, org, boundTok, "")
+	if err != nil || res.Name != "" {
+		t.Fatalf("bound claim = %+v, %v", res, err)
+	}
+}
+
+// TestClaimFlipsMonitored: the claim flips the claimed host's monitored
+// capability inside the claim (the SQL store runs the flip through the
+// provisioner with the transaction-bound context, so it commits and rolls
+// back with the claim).
+func TestClaimFlipsMonitored(t *testing.T) {
+	svc, _, p, now := newService(t)
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	tok, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: "web-1", MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.ClaimToken(ctx, org, tok, "web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.monitored[res.HostID] {
+		t.Fatal("the claim did not flip the created host's monitored flag")
+	}
+
+	// The bind flow flips the bound host too.
+	bound := p.seedHost(org, "web-2")
+	boundTok, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, HostID: &bound, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ClaimToken(ctx, org, boundTok, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !p.monitored[bound] {
+		t.Fatal("the claim did not flip the bound host's monitored flag")
+	}
+
+	// A claim that fails (vanished bound host) flips nothing new.
+	missing := uuid.Must(uuid.NewV7())
+	deadTok, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, HostID: &missing, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ClaimToken(ctx, org, deadTok, ""); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("dead bind: %v", err)
+	}
+	if p.monitored[missing] {
+		t.Fatal("a failed claim must not flip anything")
+	}
+
+	// A provisioner fault fails the claim.
+	flipTok, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: "web-3", MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.flipErr = errors.New("db down")
+	p.mu.Unlock()
+	if _, err := svc.ClaimToken(ctx, org, flipTok, "x"); err == nil || errors.Is(err, agents.ErrTokenInvalid) {
+		t.Fatalf("flip fault: %v, want a non-refusal claim failure", err)
+	}
+}
+
+// TestRevokeEndsStreams: the revocation hook (agentapi's stream registry,
+// wired post-construction like the workers' SetRevokeHooks) cuts the
+// revoked agent's open streams; without a hook a revocation stays a
+// registry-row operation.
+func TestRevokeEndsStreams(t *testing.T) {
+	svc, _, _, _ := newService(t)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-s"); err != nil {
+		t.Fatal(err)
+	}
+	cutter := &fakeCutter{}
+	svc.SetRevokeHook(cutter)
+	if err := svc.Revoke(ctx, org, host); err != nil {
+		t.Fatal(err)
+	}
+	if cutter.closed != host {
+		t.Fatalf("cutter closed %+v, want host %s", cutter.closed, host)
+	}
+
+	// No hook wired: revoke still succeeds.
+	svc2, _, _, _ := newService(t)
+	if err := svc2.Register(ctx, org, host, "agent-b", "v1", "serial-t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc2.Revoke(ctx, org, host); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type fakeCutter struct{ closed uuid.UUID }
+
+func (f *fakeCutter) CloseHost(hostID uuid.UUID) int {
+	f.closed = hostID
+	return 1
+}
+
+// TestGetBySerialCarriesSerial pins that the identity reports the serial
+// it was resolved by (the stream's Touch is by serial).
+func TestGetBySerialCarriesSerial(t *testing.T) {
+	svc, _, _, _ := newService(t)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-x"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := svc.GetBySerial(ctx, "serial-x")
+	if err != nil || id.Serial != "serial-x" {
+		t.Fatalf("identity = %+v, %v", id, err)
 	}
 }

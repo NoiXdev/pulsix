@@ -56,8 +56,10 @@ type Agent struct {
 
 // AgentIdentity is the org-unscoped serial lookup's answer: which
 // organization and host the serial belongs to, and whether its certificate
-// has been revoked. Task 7's interceptor decides on Revoked.
+// has been revoked. Task 7's interceptor decides on Revoked; Serial echoes
+// the serial the lookup resolved by (the stream's Touch is by serial).
 type AgentIdentity struct {
+	Serial   string
 	OrgID    uuid.UUID
 	HostID   uuid.UUID
 	Name     string
@@ -97,15 +99,31 @@ type TokenInput struct {
 }
 
 // ClaimResult is the outcome of a successful Claim: the host the agent now
-// belongs to and whether this claim created it.
+// belongs to, whether this claim created it, and — for a created host — the
+// name it was created under (token name hint, else the presenter-provided
+// name; Task 7's gRPC layer names the certificate the same way). A bound
+// host keeps its own name, so Name is empty there.
 type ClaimResult struct {
 	HostID  uuid.UUID
 	Created bool
+	Name    string
+}
+
+// StreamCutter ends an agent's open streams (agentapi's StreamRegistry,
+// wired post-construction with SetRevokeHook — the same shape as the
+// workers' StreamCloser). Streams are keyed by host id: it is the stable
+// revocation handle across certificate renewals, and Revoke is host-scoped.
+type StreamCutter interface {
+	CloseHost(hostID uuid.UUID) int
 }
 
 // HostProvisioner is the narrow slice of the hosts service Claim needs:
 // resolve a bound host inside the organization, create an unbound claim's
-// host in the token's zone. The implementation is hosts.Service, wired in
+// host in the token's zone, and flip the claimed host's monitored
+// capability — enrollment is what makes a host monitored, and the flip
+// runs inside the claim's transaction (the closure's context is
+// transaction-bound, so a store-backed implementation commits and rolls
+// back with the claim). The implementation is hosts.Service, wired in
 // Task 7's build-up (it must not be imported here: hosts depends on nothing
 // of agents, and agents must not depend on hosts' full surface to stay
 // testable with a fake). The fake in this package's tests stands in until
@@ -113,6 +131,7 @@ type ClaimResult struct {
 type HostProvisioner interface {
 	GetHost(ctx context.Context, orgID, hostID uuid.UUID) error
 	CreateHost(ctx context.Context, orgID, zoneID uuid.UUID, name string) (uuid.UUID, error)
+	SetMonitored(ctx context.Context, orgID, hostID uuid.UUID) error
 }
 
 // Store persists agents, their certificates and enrollment tokens.
@@ -155,6 +174,9 @@ type Service struct {
 	provisioner HostProvisioner
 	now         func() time.Time
 	rand        io.Reader
+	// streams is the revocation hook (SetRevokeHook); nil leaves a
+	// revocation at the registry rows.
+	streams StreamCutter
 }
 
 // Option configures a Service.
@@ -168,6 +190,10 @@ func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = 
 
 // WithRand injects the entropy source for ids and enrollment secrets.
 func WithRand(r io.Reader) Option { return func(s *Service) { s.rand = r } }
+
+// SetRevokeHook wires the stream cutter a revocation triggers
+// (post-construction, like the workers' SetRevokeHooks). nil is a no-op.
+func (s *Service) SetRevokeHook(c StreamCutter) { s.streams = c }
 
 // NewService wires the store; claim needs WithProvisioner.
 func NewService(store Store, opts ...Option) *Service {
@@ -236,13 +262,17 @@ func (s *Service) RevokeToken(ctx context.Context, orgID, id uuid.UUID) error {
 // ErrNotFound, the use is NOT consumed — the failure rolls the transaction
 // back); HostID nil → the host is created, named by the token's NameHint,
 // else the presenter-provided name; neither present is ErrInvalidInput. A
-// name the provisioner reports as taken is ErrTokenConflict.
+// name the provisioner reports as taken is ErrTokenConflict. Either way
+// the claimed host's monitored capability flips to true inside the claim
+// transaction (the provisioner's SetMonitored, on the transaction-bound
+// context) — enrollment is what makes a host monitored.
 func (s *Service) ClaimToken(ctx context.Context, orgID uuid.UUID, token enrolltoken.Token, name string) (ClaimResult, error) {
 	if s.provisioner == nil {
 		return ClaimResult{}, errors.New("agents: claim: service was built without WithProvisioner")
 	}
 	var hostID uuid.UUID
 	created := false
+	resolvedName := ""
 	err := s.store.Claim(ctx, orgID, token.ID, func(ctx context.Context, t Token, secretHash []byte) error {
 		sum := sha256.Sum256(token.Secret)
 		if subtle.ConstantTimeCompare(sum[:], secretHash) != 1 || t.UsedAt != nil || !s.now().Before(t.ExpiresAt) {
@@ -259,6 +289,9 @@ func (s *Service) ClaimToken(ctx context.Context, orgID uuid.UUID, token enrollt
 				return err
 			}
 			hostID = *t.HostID
+			if err := s.provisioner.SetMonitored(ctx, t.OrgID, hostID); err != nil {
+				return fmt.Errorf("flip host monitored: %w", err)
+			}
 			return nil
 		}
 		hostName := t.NameHint
@@ -278,7 +311,10 @@ func (s *Service) ClaimToken(ctx context.Context, orgID uuid.UUID, token enrollt
 			}
 			return err
 		}
-		hostID, created = id, true
+		hostID, created, resolvedName = id, true, hostName
+		if err := s.provisioner.SetMonitored(ctx, t.OrgID, hostID); err != nil {
+			return fmt.Errorf("flip host monitored: %w", err)
+		}
 		return nil
 	})
 	// The store owns the unknown-token refusal (ErrTokenInvalid); the
@@ -288,7 +324,7 @@ func (s *Service) ClaimToken(ctx context.Context, orgID uuid.UUID, token enrollt
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	return ClaimResult{HostID: hostID, Created: created}, nil
+	return ClaimResult{HostID: hostID, Created: created, Name: resolvedName}, nil
 }
 
 // EnrollmentOrg resolves the organization an enrollment token belongs to
@@ -322,7 +358,12 @@ func (s *Service) GetBySerial(ctx context.Context, serial string) (AgentIdentity
 	if serial == "" {
 		return AgentIdentity{}, ErrNotFound
 	}
-	return s.store.GetBySerial(ctx, serial)
+	id, err := s.store.GetBySerial(ctx, serial)
+	if err != nil {
+		return AgentIdentity{}, err
+	}
+	id.Serial = serial
+	return id, nil
 }
 
 // Touch records a heartbeat: last_seen becomes now, version the agent's
@@ -337,9 +378,16 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 }
 
 // Revoke ends an agent: every certificate serial the host's agent held is
-// marked revoked (the interceptor refuses them from then on) and the
-// host_agents row is removed. hosts.monitored is NOT flipped here — the
-// caller owns that flip (documented on Store.Revoke).
+// marked revoked (the interceptor refuses them from then on), the
+// host_agents row is removed, and the agent's open streams are cut (the
+// SetRevokeHook port; nil leaves the cut to nothing). hosts.monitored is
+// NOT flipped here — the caller owns that flip (documented on Store.Revoke).
 func (s *Service) Revoke(ctx context.Context, orgID, hostID uuid.UUID) error {
-	return s.store.Revoke(ctx, orgID, hostID)
+	if err := s.store.Revoke(ctx, orgID, hostID); err != nil {
+		return err
+	}
+	if s.streams != nil {
+		s.streams.CloseHost(hostID)
+	}
+	return nil
 }

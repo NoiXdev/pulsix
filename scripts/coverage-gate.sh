@@ -161,6 +161,7 @@ awk -v module="$module" -v generated="$generated_list" '
 		    pkg == module "/internal/inventory/schema" || pkg == module "/internal/inventory/grouptree" ||
 		    pkg == module "/internal/inventory/render" || pkg == module "/internal/credentials" ||
 		    pkg == module "/internal/ca" || pkg == module "/internal/jobs" ||
+		    pkg == module "/internal/agentapi" || pkg == module "/internal/agent" ||
 		    pkg == module "/internal/worker/runner" || pkg == module "/internal/worker/sshprobe" ||
 		    pkg == module "/internal/clientip" || pkg == module "/internal/cronexpr" ||
 		    pkg == module "/internal/enrolltoken" || pkg == module "/internal/outbound" ||

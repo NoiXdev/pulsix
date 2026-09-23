@@ -17,8 +17,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/crypto"
+	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/workers"
 )
@@ -206,6 +208,75 @@ func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(worker
 	return w, nil
 }
 
+// fakeAgentStore is the in-memory agents.Store the harness runs the agent
+// registry service on: serial → identity, with revocation and fault
+// injection for the interceptor tests. Only GetBySerial is functional; the
+// gRPC layer resolves identities through it alone.
+type fakeAgentStore struct {
+	mu                sync.Mutex
+	bySerial          map[string]agents.AgentIdentity
+	revoked           map[string]bool
+	lookupErr         error
+	revokeAfterLookup string
+}
+
+func newFakeAgentStore() *fakeAgentStore {
+	return &fakeAgentStore{bySerial: map[string]agents.AgentIdentity{}, revoked: map[string]bool{}}
+}
+
+func (f *fakeAgentStore) GetBySerial(_ context.Context, serial string) (agents.AgentIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lookupErr != nil {
+		return agents.AgentIdentity{}, f.lookupErr
+	}
+	id, ok := f.bySerial[serial]
+	if !ok {
+		return agents.AgentIdentity{}, agents.ErrNotFound
+	}
+	id.Serial = serial
+	id.Revoked = f.revoked[serial]
+	if f.revokeAfterLookup == serial {
+		f.revokeAfterLookup, f.revoked[serial] = "", true
+	}
+	return id, nil
+}
+
+func (f *fakeAgentStore) CreateToken(context.Context, agents.Token, []byte) (agents.Token, error) {
+	return agents.Token{}, agents.ErrNotFound
+}
+
+func (f *fakeAgentStore) ListTokens(context.Context, uuid.UUID, time.Time) ([]agents.Token, error) {
+	return nil, nil
+}
+
+func (f *fakeAgentStore) RevokeToken(context.Context, uuid.UUID, uuid.UUID) error {
+	return agents.ErrNotFound
+}
+
+func (f *fakeAgentStore) EnrollmentOrg(context.Context, uuid.UUID) (uuid.UUID, error) {
+	return uuid.Nil, agents.ErrTokenInvalid
+}
+
+func (f *fakeAgentStore) Claim(context.Context, uuid.UUID, uuid.UUID, func(context.Context, agents.Token, []byte) error) error {
+	return agents.ErrTokenInvalid
+}
+
+func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bySerial[a.CertSerial] = agents.AgentIdentity{OrgID: a.OrgID, HostID: a.HostID, Name: a.AgentName, Version: a.Version}
+	return nil
+}
+
+func (f *fakeAgentStore) Touch(context.Context, string, string) error { return nil }
+
+func (f *fakeAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
+
+func (f *fakeAgentStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error {
+	return agents.ErrNotFound
+}
+
 // harness is one fully wired server over a bufconn listener.
 type harness struct {
 	t *testing.T
@@ -217,6 +288,7 @@ type harness struct {
 	gs      *grpc.Server
 	lis     *bufconn.Listener
 	store   *fakeWorkerStore
+	agents  *fakeAgentStore
 
 	claims  *FakeClaimer
 	events  *FakeEventRecorder
@@ -245,13 +317,15 @@ func (h *harness) advance(d time.Duration) {
 }
 
 // newHarness builds the server, serves it on a fresh bufconn listener and
-// registers cleanup.
+// registers cleanup. The AgentService is registered as a stub: the agent
+// method-kind tests only need the interceptor to run ahead of the handler.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
 		t: t,
 		store: &fakeWorkerStore{bySerial: map[string]workers.Worker{}, revoked: map[string]bool{}, touched: map[string]string{},
 			enrollments: map[uuid.UUID]workers.Enrollment{}, hashes: map[uuid.UUID][]byte{}},
+		agents:  newFakeAgentStore(),
 		claims:  &FakeClaimer{},
 		events:  &FakeEventRecorder{},
 		results: &FakeResultRecorder{},
@@ -271,6 +345,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	deps := Deps{
 		CA: h.ca, Workers: workers.NewService(h.store, workers.WithSigner(h.ca)),
+		Agents: agents.NewService(h.agents), AgentService: agentpb.UnimplementedAgentServiceServer{},
 		Claims: h.claims, Events: h.events, Results: h.results, Audit: h.audit,
 		Clock: h.clock, CancelPollInterval: 10 * time.Millisecond,
 	}
@@ -309,6 +384,24 @@ func (h *harness) issue(name string, orgID, zoneID uuid.UUID, register bool) (ce
 		if _, err := workers.NewService(h.store).Register(context.Background(), orgID, workers.RegisterInput{
 			ZoneID: zoneID, Name: name, CertSerial: serial,
 		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return certPEM, keyPEM, serial
+}
+
+// issueAgent issues an agent certificate and registers its serial with the
+// agent registry service — the state Enroll leaves behind (the agentapi
+// service itself is stubbed here; Task 7's tests live in internal/agentapi).
+func (h *harness) issueAgent(name string, orgID uuid.UUID, register bool) (certPEM, keyPEM []byte, serial *big.Int) {
+	t := h.t
+	t.Helper()
+	certPEM, keyPEM, serial, err := h.ca.IssueAgentCert(context.Background(), orgID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if register {
+		if err := agents.NewService(h.agents).Register(context.Background(), orgID, uuid.Must(uuid.NewV7()), name, "v0.3a", serial.String()); err != nil {
 			t.Fatal(err)
 		}
 	}

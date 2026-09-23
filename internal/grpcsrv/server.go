@@ -17,8 +17,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/clientip"
+	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/workers"
 )
@@ -67,11 +69,19 @@ const maxConnectionAge = 24 * time.Hour
 type Deps struct {
 	CA      *ca.CA
 	Workers *workers.Service
-	Claims  Claimer
-	Events  EventRecorder
-	Results ResultRecorder
-	Audit   SystemAuditor
-	Clock   func() time.Time
+	// Agents is the agent registry (v0.3a): the interceptor resolves every
+	// presented agent certificate's serial here. Required when AgentService
+	// is set.
+	Agents *agents.Service
+	// AgentService is the second service class served on the shared
+	// listener (agentpb.AgentServiceServer, built in internal/agentapi);
+	// nil keeps the listener worker-only.
+	AgentService agentpb.AgentServiceServer
+	Claims       Claimer
+	Events       EventRecorder
+	Results      ResultRecorder
+	Audit        SystemAuditor
+	Clock        func() time.Time
 
 	// CancelPollInterval overrides DefaultCancelPollInterval; zero keeps
 	// the default. Injected so tests can poll without waiting half a
@@ -116,6 +126,9 @@ func newServer(deps Deps) (*Server, error) {
 	}
 	if deps.CA == nil || deps.Workers == nil {
 		return nil, fmt.Errorf("grpcsrv: CA and Workers must be set")
+	}
+	if deps.AgentService != nil && deps.Agents == nil {
+		return nil, fmt.Errorf("grpcsrv: AgentService requires the Agents registry")
 	}
 	caPool, _ := deps.CA.Pool()
 	certs, err := newServerCertSource(deps.CA, deps.Clock)
@@ -177,6 +190,12 @@ func (s *Server) newGRPCServer() *grpc.Server {
 		}),
 	)
 	workerpb.RegisterWorkerServiceServer(gs, s)
+	// The agent service rides the same listener, mTLS credentials and
+	// interceptors; the interceptor segregates the two certificate classes
+	// by method (auth.go).
+	if s.deps.AgentService != nil {
+		agentpb.RegisterAgentServiceServer(gs, s.deps.AgentService)
+	}
 	return gs
 }
 

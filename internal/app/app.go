@@ -19,6 +19,8 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/noixdev/pulsix/internal/agentapi"
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
@@ -299,6 +301,24 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// A revocation ends the worker's open streams and requeues its jobs.
 	workersSvc.SetRevokeHooks(streams, workerJobRequeuer{q: jobsQueue, maxAttempts: cfg.JobMaxAttempts})
 
+	// The agent registry and its gRPC service (v0.3a): enrollment tokens,
+	// the host claim (hosts.Service is the narrow provisioner), the
+	// certificate lifecycle and the persistent agent stream. The agent
+	// stream registry doubles as the revoke hook — a revoked agent's open
+	// streams end with its registry rows. Facts stay unwired until Task 8
+	// (the service drops them with a log line).
+	agentsSvc := agents.NewService(agents.NewSQLStore(appDB), agents.WithProvisioner(agentHostProvisioner{hostsSvc}))
+	agentStreams := agentapi.NewStreamRegistry()
+	agentsSvc.SetRevokeHook(agentStreams)
+	agentSvc, err := agentapi.New(agentapi.Deps{
+		CA: caInst, Agents: agentsSvc, Audit: systemAuditor{auditRec},
+		Streams: agentStreams, Clock: time.Now, ClientIP: clientip.New(cfg.TrustedProxies),
+	})
+	if err != nil {
+		appDB.Close()
+		return nil, fmt.Errorf("build agent service: %w", err)
+	}
+
 	// Notifications (spec §5): every outbound request goes through the
 	// outbound client, which refuses internal destinations unless
 	// PULSIX_NOTIFY_ALLOW_CIDRS admits them. The sender is shared by the
@@ -340,7 +360,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// are the real job queue from Task 5 (jobs_ports.go adapts it to the
 	// grpcsrv interfaces). It shares workersSvc and the stream registry
 	// built above; the certificate lookup and Touch behind the interceptor
-	// run outside any org scope (workers.Store).
+	// run outside any org scope (workers.Store). v0.3a mounts the agent
+	// service on the same listener; the interceptor resolves agent
+	// certificates through agentsSvc (agents.Store, org-unscoped serial
+	// lookups).
 	//
 	// The reaper runs regardless of the gRPC listener: enqueued jobs need
 	// their stale claims swept even before a worker ever connects. It is
@@ -383,6 +406,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	if cfg.GRPCListen != "" {
 		grpcServer, err = grpcsrv.New(ctx, grpcsrv.Deps{
 			CA: caInst, Workers: workersSvc,
+			Agents: agentsSvc, AgentService: agentSvc,
 			Claims: jobsClaimer{jobsQueue}, Events: jobsEventRecorder{jobsQueue}, Results: jobsResultRecorder{jobsQueue},
 			Audit: systemAuditor{auditRec}, Clock: time.Now, Streams: streams, ClientIP: clientip.New(cfg.TrustedProxies),
 		})

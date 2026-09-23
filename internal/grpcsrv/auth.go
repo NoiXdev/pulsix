@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -16,7 +17,9 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/workers"
 )
@@ -24,6 +27,7 @@ import (
 type (
 	identityKey struct{}
 	workerKey   struct{}
+	agentKey    struct{}
 )
 
 // identityOf returns the verified client identity the interceptor stashed
@@ -40,16 +44,42 @@ func workerOf(ctx context.Context) (workers.Worker, bool) {
 	return w, ok
 }
 
+// IdentityOf returns the verified client identity the interceptor stashed
+// in ctx, if it ran. Exported for the services mounted on the shared
+// listener (internal/agentapi reads the certificate serial from it).
+func IdentityOf(ctx context.Context) (*ca.ClientIdentity, bool) { return identityOf(ctx) }
+
+// AgentIdentityOf returns the agent registry row the interceptor resolved
+// for an authenticated agent certificate (ca.KindAgent), if it ran.
+// Exported for internal/agentapi's Renew and AgentStream handlers.
+func AgentIdentityOf(ctx context.Context) (agents.AgentIdentity, bool) {
+	a, ok := ctx.Value(agentKey{}).(agents.AgentIdentity)
+	return a, ok
+}
+
 // unauthenticatedMethods may be called without a client certificate:
-// token enrollment is how a worker gets its first one.
-var unauthenticatedMethods = map[string]bool{workerpb.WorkerService_Enroll_FullMethodName: true}
+// token enrollment is how a worker or agent gets its first one.
+var unauthenticatedMethods = map[string]bool{
+	workerpb.WorkerService_Enroll_FullMethodName: true,
+	agentpb.AgentService_Enroll_FullMethodName:   true,
+}
+
+// The two service classes sharing the listener. A certificate class is
+// segregated by method: an agent certificate is refused on the
+// WorkerService and a worker certificate on the AgentService, so a
+// compromise of either cannot reach the other's surface. The prefixes are
+// pinned against the generated constants by TestMethodKindServicePrefixes.
+const (
+	workerServicePrefix = "/pulsix.worker.v1.WorkerService/"
+	agentServicePrefix  = "/pulsix.agent.v1.AgentService/"
+)
 
 // authUnaryInterceptor authenticates a unary call before the handler runs.
 func (s *Server) authUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if unauthenticatedMethods[info.FullMethod] {
 		return handler(ctx, req)
 	}
-	ctx, err := s.authenticate(ctx)
+	ctx, err := s.authenticate(ctx, info.FullMethod)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +89,8 @@ func (s *Server) authUnaryInterceptor(ctx context.Context, req any, info *grpc.U
 // authStreamInterceptor authenticates a stream before the handler runs.
 // Interceptors cannot change a stream's context directly, so the handler is
 // handed a wrapper that overrides Context.
-func (s *Server) authStreamInterceptor(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	ctx, err := s.authenticate(ss.Context())
+func (s *Server) authStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	ctx, err := s.authenticate(ss.Context(), info.FullMethod)
 	if err != nil {
 		return err
 	}
@@ -77,11 +107,14 @@ type ctxServerStream struct {
 func (s *ctxServerStream) Context() context.Context { return s.ctx }
 
 // authenticate turns the presented client certificate into a stashed
-// identity and worker row. A missing or untrustworthy certificate is
-// Unauthenticated, and so are unknown and revoked serials (spec 2026-09-18
-// §4) — one answer, so neither can be told apart — and a certificate whose
-// org or zone SAN differs from the registry row it resolves to.
-func (s *Server) authenticate(ctx context.Context) (context.Context, error) {
+// identity and its registry row. A missing or untrustworthy certificate is
+// Unauthenticated, and so are unknown and revoked serials (spec
+// 2026-09-18 §4) — one answer, so neither can be told apart — and a
+// certificate whose org or zone SAN differs from the registry row it
+// resolves to. The certificate's kind decides which registry resolves the
+// serial (worker or agent, v0.3a); a kind the method's service does not
+// serve is PermissionDenied.
+func (s *Server) authenticate(ctx context.Context, fullMethod string) (context.Context, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.AuthInfo == nil {
 		return ctx, status.Error(codes.Unauthenticated, "no peer credentials")
@@ -105,11 +138,44 @@ func (s *Server) authenticate(ctx context.Context) (context.Context, error) {
 		// malformed identity — still untrustworthy, still Unauthenticated.
 		return ctx, status.Errorf(codes.Unauthenticated, "bad client certificate: %v", err)
 	}
-	worker, err := s.lookupWorker(ctx, identity)
-	if err != nil {
+	if err := s.checkMethodKind(identity, fullMethod); err != nil {
 		return ctx, err
 	}
-	return context.WithValue(context.WithValue(ctx, identityKey{}, identity), workerKey{}, worker), nil
+	switch identity.Kind {
+	case ca.KindWorker:
+		worker, err := s.lookupWorker(ctx, identity)
+		if err != nil {
+			return ctx, err
+		}
+		return context.WithValue(context.WithValue(ctx, identityKey{}, identity), workerKey{}, worker), nil
+	case ca.KindAgent:
+		agent, err := s.lookupAgent(ctx, identity)
+		if err != nil {
+			return ctx, err
+		}
+		return context.WithValue(context.WithValue(ctx, identityKey{}, identity), agentKey{}, agent), nil
+	default:
+		return ctx, status.Error(codes.Unauthenticated, "bad client certificate: unknown certificate kind")
+	}
+}
+
+// checkMethodKind refuses a certificate whose class does not match the
+// service the method belongs to: WorkerService/* wants KindWorker,
+// AgentService/* wants KindAgent. A method of neither service carries no
+// class requirement. The check runs before any registry lookup, so a
+// mis-classed certificate costs nothing and the refusal is unambiguous.
+func (s *Server) checkMethodKind(identity *ca.ClientIdentity, fullMethod string) error {
+	switch {
+	case strings.HasPrefix(fullMethod, agentServicePrefix):
+		if identity.Kind != ca.KindAgent {
+			return status.Error(codes.PermissionDenied, "this method requires an agent certificate")
+		}
+	case strings.HasPrefix(fullMethod, workerServicePrefix):
+		if identity.Kind != ca.KindWorker {
+			return status.Error(codes.PermissionDenied, "this method requires a worker certificate")
+		}
+	}
+	return nil
 }
 
 // lookupWorker resolves identity's serial to its registry row and checks
@@ -129,6 +195,32 @@ func (s *Server) lookupWorker(ctx context.Context, identity *ca.ClientIdentity) 
 		return workers.Worker{}, status.Error(codes.Unauthenticated, "certificate does not match the worker's enrollment")
 	}
 	return worker, nil
+}
+
+// lookupAgent is lookupWorker's agent counterpart (v0.3a): the serial is
+// resolved in the agent registry, the certificate's org SAN must match the
+// row's organization (agent certificates carry no zone SAN). Revoked
+// serials read exactly like unknown ones.
+func (s *Server) lookupAgent(ctx context.Context, identity *ca.ClientIdentity) (agents.AgentIdentity, error) {
+	if s.deps.Agents == nil {
+		slog.ErrorContext(ctx, "agent certificate presented but no agent registry is wired")
+		return agents.AgentIdentity{}, status.Error(codes.Internal, "agent lookup failed")
+	}
+	agent, err := s.deps.Agents.GetBySerial(ctx, identity.Serial.String())
+	if errors.Is(err, agents.ErrNotFound) {
+		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "look up agent certificate", "serial", identity.Serial.String(), "err", err)
+		return agents.AgentIdentity{}, status.Error(codes.Internal, "agent lookup failed")
+	}
+	if agent.Revoked {
+		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
+	}
+	if identity.OrgID == nil || *identity.OrgID != agent.OrgID {
+		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "certificate does not match the agent's enrollment")
+	}
+	return agent, nil
 }
 
 // authenticated returns the handler-side pieces the interceptor stashed.

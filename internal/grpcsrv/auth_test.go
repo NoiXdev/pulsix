@@ -5,7 +5,10 @@ package grpcsrv
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +19,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/crypto"
+	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/workers"
 )
@@ -115,36 +120,140 @@ func claimRequest(zone uuid.UUID) *workerpb.ClaimJobRequest {
 }
 
 // TestEveryMethodButEnrollNeedsACertificate: without a client certificate
-// the handshake succeeds (VerifyClientCertIfGiven), and every method of the
-// service except Enroll answers Unauthenticated. The methods come from the
-// service descriptor, so a future RPC is covered without editing this test
-// and is callable anonymously only once it is allowlisted explicitly.
+// the handshake succeeds (VerifyClientCertIfGiven), and every method of
+// both services except their Enroll answers Unauthenticated. The methods
+// come from the service descriptors, so a future RPC is covered without
+// editing this test and is callable anonymously only once it is
+// allowlisted explicitly.
 func TestEveryMethodButEnrollNeedsACertificate(t *testing.T) {
 	h := newHarness(t)
 	conn := h.conn(nil, nil)
-	desc := workerpb.WorkerService_ServiceDesc
-	if len(unauthenticatedMethods) != 1 || !unauthenticatedMethods[workerpb.WorkerService_Enroll_FullMethodName] {
-		t.Fatalf("only Enroll may skip authentication: %v", unauthenticatedMethods)
+	if len(unauthenticatedMethods) != 2 ||
+		!unauthenticatedMethods[workerpb.WorkerService_Enroll_FullMethodName] ||
+		!unauthenticatedMethods[agentpb.AgentService_Enroll_FullMethodName] {
+		t.Fatalf("only the two Enroll methods may skip authentication: %v", unauthenticatedMethods)
 	}
-	for _, m := range desc.Methods {
-		method := "/" + desc.ServiceName + "/" + m.MethodName
-		if method == workerpb.WorkerService_Enroll_FullMethodName {
-			continue
+	for _, desc := range []grpc.ServiceDesc{workerpb.WorkerService_ServiceDesc, agentpb.AgentService_ServiceDesc} {
+		for _, m := range desc.Methods {
+			method := "/" + desc.ServiceName + "/" + m.MethodName
+			if method == workerpb.WorkerService_Enroll_FullMethodName || method == agentpb.AgentService_Enroll_FullMethodName {
+				continue
+			}
+			if err := conn.Invoke(t.Context(), method, &emptypb.Empty{}, &emptypb.Empty{}); status.Code(err) != codes.Unauthenticated {
+				t.Errorf("%s without a certificate: %v, want Unauthenticated", method, err)
+			}
 		}
-		if err := conn.Invoke(t.Context(), method, &emptypb.Empty{}, &emptypb.Empty{}); status.Code(err) != codes.Unauthenticated {
-			t.Errorf("%s without a certificate: %v, want Unauthenticated", method, err)
+		for _, sd := range desc.Streams {
+			method := "/" + desc.ServiceName + "/" + sd.StreamName
+			stream, err := conn.NewStream(t.Context(), &grpc.StreamDesc{StreamName: sd.StreamName, ServerStreams: sd.ServerStreams, ClientStreams: sd.ClientStreams}, method)
+			if err == nil {
+				err = stream.RecvMsg(&emptypb.Empty{})
+			}
+			if status.Code(err) != codes.Unauthenticated {
+				t.Errorf("%s without a certificate: %v, want Unauthenticated", method, err)
+			}
 		}
 	}
-	for _, sd := range desc.Streams {
-		method := "/" + desc.ServiceName + "/" + sd.StreamName
-		stream, err := conn.NewStream(t.Context(), &grpc.StreamDesc{StreamName: sd.StreamName, ServerStreams: sd.ServerStreams, ClientStreams: sd.ClientStreams}, method)
+}
+
+// TestMethodKindServicePrefixes pins the hardcoded service prefixes
+// checkMethodKind matches against the generated full-method constants: a
+// proto package change must fail here rather than silently disable the
+// class segregation.
+func TestMethodKindServicePrefixes(t *testing.T) {
+	if !strings.HasPrefix(workerpb.WorkerService_Enroll_FullMethodName, workerServicePrefix) {
+		t.Fatalf("worker prefix %q does not match %q", workerServicePrefix, workerpb.WorkerService_Enroll_FullMethodName)
+	}
+	if !strings.HasPrefix(agentpb.AgentService_Enroll_FullMethodName, agentServicePrefix) {
+		t.Fatalf("agent prefix %q does not match %q", agentServicePrefix, agentpb.AgentService_Enroll_FullMethodName)
+	}
+}
+
+// TestMethodKindEnforcement: the two certificate classes are segregated by
+// method — an agent certificate is refused on the WorkerService and a
+// worker certificate on the AgentService (PermissionDenied, before any
+// handler runs), while each class reaches its own service (the agent
+// service's stub answers Unimplemented, proving the interceptor let the
+// call through).
+func TestMethodKindEnforcement(t *testing.T) {
+	h := newHarness(t)
+	agentCert, agentKey, _ := h.issueAgent("agt-1", orgID, true)
+	workerCertPEM, workerKeyPEM := h.worker()
+	agentConn := h.conn(agentCert, agentKey)
+	workerConn := h.conn(workerCertPEM, workerKeyPEM)
+
+	// An agent certificate is refused on the WorkerService...
+	if _, err := workerpb.NewWorkerServiceClient(agentConn).ClaimJob(t.Context(), claimRequest(zoneID)); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("agent cert on ClaimJob: %v, want PermissionDenied", err)
+	}
+	// ...and a worker certificate on the AgentService.
+	if _, err := agentpb.NewAgentServiceClient(workerConn).Renew(t.Context(), &agentpb.RenewRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("worker cert on Renew: %v, want PermissionDenied", err)
+	}
+	// The right class reaches its own service: the agent service's stub
+	// answers Unimplemented, proving the interceptor let the call through.
+	if _, err := agentpb.NewAgentServiceClient(agentConn).Renew(t.Context(), &agentpb.RenewRequest{}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("agent cert on Renew: %v, want the interceptor to let it through (Unimplemented stub)", err)
+	}
+}
+
+// TestAuthAgentUnknownOrRevokedCertificate: an agent certificate whose
+// serial the agent registry does not know or has revoked is refused with
+// the same indistinguishable Unauthenticated the worker path answers.
+func TestAuthAgentUnknownOrRevokedCertificate(t *testing.T) {
+	h := newHarness(t)
+	unknownCert, unknownKey, _ := h.issueAgent("unregistered-agent", orgID, false)
+	revokedCert, revokedKey, revokedSerial := h.issueAgent("revoked-agent", orgID, true)
+	h.agents.mu.Lock()
+	h.agents.revoked[revokedSerial.String()] = true
+	h.agents.mu.Unlock()
+	for name, pair := range map[string][2][]byte{"unknown": {unknownCert, unknownKey}, "revoked": {revokedCert, revokedKey}} {
+		conn := h.conn(pair[0], pair[1])
+		stream, err := agentpb.NewAgentServiceClient(conn).AgentStream(t.Context())
 		if err == nil {
-			err = stream.RecvMsg(&emptypb.Empty{})
+			_, err = stream.Recv()
 		}
-		if status.Code(err) != codes.Unauthenticated {
-			t.Errorf("%s without a certificate: %v, want Unauthenticated", method, err)
+		if status.Code(err) != codes.Unauthenticated || !strings.Contains(status.Convert(err).Message(), "unknown or revoked certificate") {
+			t.Fatalf("%s agent certificate: %v, want Unauthenticated", name, err)
 		}
 	}
+}
+
+// TestAuthAgentOrgMismatch: an agent certificate whose org SAN differs from
+// the registry row it resolves to is refused, like the worker org check.
+func TestAuthAgentOrgMismatch(t *testing.T) {
+	h := newHarness(t)
+	otherOrg := uuid.Must(uuid.NewV7())
+	certPEM, keyPEM, _ := h.issueAgent("foreign-agent", otherOrg, false)
+	// Register it under orgID's registry — the certificate's org SAN does
+	// not match the row it resolves to.
+	serial := MustSerial(t, h, certPEM)
+	h.agents.mu.Lock()
+	h.agents.bySerial[serial.String()] = agents.AgentIdentity{OrgID: orgID, HostID: uuid.Must(uuid.NewV7()), Name: "foreign-agent"}
+	h.agents.mu.Unlock()
+	stream, err := agentpb.NewAgentServiceClient(h.conn(certPEM, keyPEM)).AgentStream(t.Context())
+	if err == nil {
+		_, err = stream.Recv()
+	}
+	if status.Code(err) != codes.Unauthenticated || !strings.Contains(status.Convert(err).Message(), "does not match") {
+		t.Fatalf("agent org mismatch: %v, want Unauthenticated", err)
+	}
+}
+
+// MustSerial parses the leaf certificate's serial out of certPEM (test
+// helper for the org-mismatch case where the cert was issued but never
+// registered through the service).
+func MustSerial(t *testing.T, h *harness, certPEM []byte) *big.Int {
+	t.Helper()
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("no PEM block")
+	}
+	crt, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return crt.SerialNumber
 }
 
 // TestRevocationRefusesTheNextCall: the interceptor resolves the serial on
