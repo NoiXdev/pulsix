@@ -70,36 +70,47 @@ func TestStreamRegistryCloseHostExcept(t *testing.T) {
 
 // TestStreamRegistryCloseHostWaitsForInFlightWork: CloseHost returns only
 // once a processing step that started before the cut has finished — the
-// same guarantee the worker stream registry gives the job requeue.
+// same guarantee the worker stream registry gives the job requeue. The
+// step is parked mid-flight BEFORE the cut goroutine is spawned, so "the
+// cut lands while a step is in flight" is a construction, not a race:
+// spawned the other way around, a slow schedule can run the cut first
+// (the store sees the cut and never starts the step) and the test then
+// waits for a step that never began — the -cover slowdown makes that
+// window wide enough to hit.
 func TestStreamRegistryCloseHostWaitsForInFlightWork(t *testing.T) {
 	r := NewStreamRegistry()
 	host := uuid.Must(uuid.NewV7())
 	ts, release := r.track("serial-1", host)
 	defer release()
 
-	var steps atomic.Int64
+	started := make(chan struct{})
+	finished := make(chan struct{})
 	proceed := make(chan struct{})
 	cutReturned := make(chan struct{})
 	go func() {
+		defer close(finished)
 		_, _ = ts.store(func() error {
-			steps.Add(1)
+			close(started)
 			<-proceed // the cut lands while this step is in flight
 			return nil
 		})
 	}()
+	<-started // the step is parked mid-flight, holding the stream's lock
 	go func() {
 		r.CloseHost(host)
 		close(cutReturned)
 	}()
-	for steps.Load() == 0 {
-	}
+	// The cut is now in flight BEHIND the step's lock: CloseHost can only
+	// return once the step finishes, so cutReturned cannot be closed yet.
+	// (If it ever is, the guarantee this test exists for is broken.)
 	select {
 	case <-cutReturned:
 		t.Fatal("CloseHost returned while a step was still in flight")
 	default:
 	}
 	close(proceed)
-	<-cutReturned
+	<-finished    // the step finished...
+	<-cutReturned // ...and only then did CloseHost return
 	select {
 	case <-ts.revoked:
 	default:

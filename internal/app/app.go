@@ -305,14 +305,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// the host claim (hosts.Service is the narrow provisioner), the
 	// certificate lifecycle and the persistent agent stream. The agent
 	// stream registry doubles as the revoke hook — a revoked agent's open
-	// streams end with its registry rows. Facts stay unwired until Task 8
-	// (the service drops them with a log line).
+	// streams end with its registry rows. The agents service is the
+	// FactsSink itself (agents.Service.RecordFacts): facts merge into
+	// hosts.facts and re-apply the os/arch/virt automatic tags.
 	agentsSvc := agents.NewService(agents.NewSQLStore(appDB), agents.WithProvisioner(agentHostProvisioner{hostsSvc}))
 	agentStreams := agentapi.NewStreamRegistry()
 	agentsSvc.SetRevokeHook(agentStreams)
 	agentSvc, err := agentapi.New(agentapi.Deps{
 		CA: caInst, Agents: agentsSvc, Audit: systemAuditor{auditRec},
-		Streams: agentStreams, Clock: time.Now, ClientIP: clientip.New(cfg.TrustedProxies),
+		Streams: agentStreams, Facts: agentsSvc, Clock: time.Now, ClientIP: clientip.New(cfg.TrustedProxies),
 	})
 	if err != nil {
 		appDB.Close()

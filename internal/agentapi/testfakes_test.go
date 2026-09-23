@@ -284,6 +284,10 @@ func (f *fakeAgentStore) List(_ context.Context, orgID uuid.UUID) ([]agents.Agen
 	return out, nil
 }
 
+func (f *fakeAgentStore) RecordFacts(context.Context, uuid.UUID, uuid.UUID, map[string]string) error {
+	return nil
+}
+
 func (f *fakeAgentStore) Revoke(_ context.Context, orgID, hostID uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

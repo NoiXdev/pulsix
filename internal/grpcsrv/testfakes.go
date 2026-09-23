@@ -282,6 +282,10 @@ func (f *fakeAgentStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error {
 	return agents.ErrNotFound
 }
 
+func (f *fakeAgentStore) RecordFacts(context.Context, uuid.UUID, uuid.UUID, map[string]string) error {
+	return nil
+}
+
 // harness is one fully wired server over a bufconn listener.
 type harness struct {
 	t *testing.T

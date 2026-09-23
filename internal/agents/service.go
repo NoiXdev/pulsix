@@ -167,6 +167,18 @@ type Store interface {
 	// hosts.monitored: the caller owns that flip (the API layer sets
 	// monitored=false when the last agent of the host is gone).
 	Revoke(ctx context.Context, orgID, hostID uuid.UUID) error
+	// RecordFacts (Task 8) merges agent-reported facts into hosts.facts
+	// and re-applies the automatic tags, in ONE org-bound transaction.
+	// Reported keys replace their previous values, keys the agent did
+	// not report survive (stale facts from an older agent version stay
+	// visible); the three automatic tags (os, arch, virt) upsert with
+	// source='fact', skipping any key that carries a manual row — a
+	// manual tag always wins, and once it is removed the next push
+	// re-applies the fact. ErrNotFound when the host does not exist in
+	// orgID (or belongs to another organization — invisible, not
+	// forbidden). Validation of the bounds themselves is the service's
+	// job (RecordFacts below); the store receives only well-bounded maps.
+	RecordFacts(ctx context.Context, orgID, hostID uuid.UUID, facts map[string]string) error
 }
 
 // Service implements the agent registry.

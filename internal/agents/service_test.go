@@ -102,6 +102,34 @@ type fakeStore struct {
 	certs    map[string]agents.AgentIdentity // serial → identity
 	touched  []string
 	revokedC map[string]bool
+	// facts recording (Task 8): factCalls/factsErr serve the facts
+	// service tests; the merge and tag semantics themselves live in the
+	// SQL store's integration tests.
+	factsCalls []factsCall
+	factsErr   error
+}
+
+// factsCall is one forwarded RecordFacts call.
+type factsCall struct {
+	OrgID  uuid.UUID
+	HostID uuid.UUID
+	Facts  map[string]string
+}
+
+func (f *fakeStore) factCalls() []factsCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]factsCall(nil), f.factsCalls...)
+}
+
+func (f *fakeStore) RecordFacts(_ context.Context, orgID, hostID uuid.UUID, facts map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.factsErr != nil {
+		return f.factsErr
+	}
+	f.factsCalls = append(f.factsCalls, factsCall{OrgID: orgID, HostID: hostID, Facts: facts})
+	return nil
 }
 
 func (f *fakeStore) init() {

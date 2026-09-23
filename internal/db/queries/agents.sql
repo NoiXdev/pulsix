@@ -79,3 +79,35 @@ SELECT sqlc.embed(h), c.serial AS cert_serial_presented, c.revoked_at AS cert_re
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = sqlc.arg(serial);
+
+-- name: UpsertHostFacts :execrows
+-- The facts push's merge (RecordFacts, Task 8): the jsonb || concatenation
+-- is an object merge where the RIGHT side wins for duplicate keys — every
+-- reported key REPLACES its previous value, every key the agent did not
+-- report survives untouched. That asymmetry is the semantics on purpose:
+-- the agent sends the complete set each push, so an unreported key is a
+-- stale fact from an older agent version, and keeping it (instead of
+-- deleting it) is the simplest honest behavior — the operator still sees
+-- what the host used to report. 0 affected rows is the caller's
+-- ErrNotFound (unknown host, or one belonging to another organization).
+UPDATE hosts SET
+  facts = COALESCE(facts, '{}'::jsonb) || sqlc.arg(facts)::jsonb,
+  updated_at = now()
+WHERE id = sqlc.arg(host_id) AND org_id = sqlc.arg(org_id);
+
+-- name: UpsertFactTag :exec
+-- One automatic fact tag (source = 'fact'): the guarded upsert — a manual
+-- row for the same key ALWAYS wins, so the SELECT produces no row while
+-- the operator's tag exists (nothing inserted, nothing updated), a manual
+-- row that was removed re-admits the fact on the next push, and an
+-- existing fact row is updated in place. The guard and the conflict
+-- target are both (host_id, key): source is part of the primary key, so a
+-- manual and a fact row for the same key coexist by design (00011) and
+-- every reader merges them with manual winning.
+INSERT INTO host_tags (host_id, org_id, key, value, source)
+SELECT sqlc.arg(host_id), sqlc.arg(org_id), sqlc.arg(key), sqlc.arg(value), 'fact'
+WHERE NOT EXISTS (
+  SELECT 1 FROM host_tags
+  WHERE host_id = sqlc.arg(host_id) AND key = sqlc.arg(key) AND source = 'manual'
+)
+ON CONFLICT (host_id, key, source) DO UPDATE SET value = EXCLUDED.value;

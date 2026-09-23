@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -489,5 +491,180 @@ func TestAgentTwoOrgIsolation(t *testing.T) {
 	// and carries the org it belongs to.
 	if id, err := svc.GetBySerial(ctx, "5252"); err != nil || id.OrgID != org {
 		t.Fatalf("unscoped serial = %+v, %v", id, err)
+	}
+}
+
+// --- facts push and auto tags (Task 8) ----------------------------------
+
+// factsOf reads the host's facts jsonb back as a plain map.
+func factsOf(t *testing.T, d *db.DB, orgID, hostID uuid.UUID) map[string]string {
+	t.Helper()
+	var raw []byte
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT facts FROM hosts WHERE id = $1 AND org_id = $2`, hostID, orgID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return out
+}
+
+// tagsOf reads every tag row of the host.
+func tagsOf(t *testing.T, d *db.DB, orgID, hostID uuid.UUID) map[string]string {
+	t.Helper()
+	rows, err := gen.New(d.Pool()).ListHostTags(ctx, gen.ListHostTagsParams{OrgID: orgID, HostID: hostID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, r := range rows {
+		if r.Source != "fact" {
+			t.Fatalf("unexpected tag source %q on (%q)", r.Source, r.Key)
+		}
+		out[r.Key] = r.Value
+	}
+	return out
+}
+
+// TestRecordFactsMergesFactsAndTags: the round trip through the real
+// store — reported keys replace, unreported keys survive, new keys are
+// added, and the three automatic tags appear with source='fact'.
+func TestRecordFactsMergesFactsAndTags(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-facts")
+	h := createHost(t, d, org, zone, "facts-1")
+	first := map[string]string{
+		"os": "linux", "arch": "amd64", "virt": "kvm", "hostname": "facts-1",
+	}
+	if err := svc.RecordFacts(ctx, org, h.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	if got := factsOf(t, d, org, h.ID); got["os"] != "linux" || got["arch"] != "amd64" {
+		t.Fatalf("first push stored %v", got)
+	}
+	if tags := tagsOf(t, d, org, h.ID); tags["os"] != "linux" || tags["arch"] != "amd64" || tags["virt"] != "kvm" || len(tags) != 3 {
+		t.Fatalf("first push tags = %v", tags)
+	}
+
+	// The second push: a changed value REPLACES, a dropped key is KEPT
+	// (stale facts from an older agent version stay visible), a new key
+	// arrives.
+	second := map[string]string{"os": "linux", "arch": "arm64", "virt": "", "hostname": "facts-1"}
+	if err := svc.RecordFacts(ctx, org, h.ID, second); err != nil {
+		t.Fatal(err)
+	}
+	got := factsOf(t, d, org, h.ID)
+	if got["arch"] != "arm64" || got["os"] != "linux" {
+		t.Fatalf("second push replaced wrongly: %v", got)
+	}
+	if _, ok := got["virt"]; !ok {
+		t.Fatalf("the first push's virt fact must survive the second (unreported keys are kept): %v", got)
+	}
+	// Tags: virt dropped from the push stays as a fact tag (the merge
+	// never deletes), arch updates in place.
+	if tags := tagsOf(t, d, org, h.ID); tags["arch"] != "arm64" || tags["virt"] != "kvm" {
+		t.Fatalf("second push tags = %v", tags)
+	}
+}
+
+// TestRecordFactsManualPrecedence: a manual tag of the same key wins at
+// push time (the guarded upsert writes nothing for that key), and once
+// the manual tag is removed the next push re-applies the fact — the
+// natural re-push semantics.
+func TestRecordFactsManualPrecedence(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-tags")
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	h := createHost(t, d, org, zone, "tags-1")
+	facts := map[string]string{"os": "linux", "arch": "amd64", "virt": "kvm"}
+
+	// The operator sets os manually BEFORE any facts push exists.
+	if err := hostsSvc.SetTags(db.WithOrgScope(ctx, org), org, h.ID, []hosts.Tag{
+		{Key: "os", Value: "windows"}, // the operator insists
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecordFacts(ctx, org, h.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := gen.New(d.Pool()).ListHostTags(ctx, gen.ListHostTagsParams{OrgID: org, HostID: h.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 { // manual os + fact arch + fact virt; NO fact os
+		t.Fatalf("tags after guarded push = %+v", rows)
+	}
+	for _, r := range rows {
+		if r.Key == "os" && r.Source == "fact" {
+			t.Fatal("a fact tag must not be written while a manual row holds the key")
+		}
+		if r.Key == "os" && (r.Source != "manual" || r.Value != "windows") {
+			t.Fatalf("manual os tag = %+v", r)
+		}
+	}
+
+	// The manual tag is removed (a SetTags without it): the next push
+	// re-applies the fact tag — and updates arch while at it.
+	if err := hostsSvc.SetTags(db.WithOrgScope(ctx, org), org, h.ID, []hosts.Tag{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecordFacts(ctx, org, h.ID, map[string]string{"os": "linux", "arch": "arm64", "virt": "kvm"}); err != nil {
+		t.Fatal(err)
+	}
+	if tags := tagsOf(t, d, org, h.ID); tags["os"] != "linux" || tags["arch"] != "arm64" || tags["virt"] != "kvm" {
+		t.Fatalf("tags after manual removal + re-push = %v", tags)
+	}
+}
+
+// TestRecordFactsBoundsRejected: the service's sentinel rejection holds
+// through the SQL world — 65 keys and a 513-char value are refused and
+// store NOTHING (no partial merge, no tags).
+func TestRecordFactsBoundsRejected(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-facts-bounds")
+	h := createHost(t, d, org, zone, "facts-bounds")
+	tooMany := map[string]string{}
+	for i := 0; i < agents.MaxFactsKeys+1; i++ {
+		tooMany[strings.Repeat("k", i+1)+"x"] = "v" // distinct valid keys
+	}
+	if err := svc.RecordFacts(ctx, org, h.ID, tooMany); !errors.Is(err, agents.ErrInvalidInput) {
+		t.Fatalf("65 keys: %v", err)
+	}
+	if err := svc.RecordFacts(ctx, org, h.ID, map[string]string{
+		"os": strings.Repeat("o", agents.MaxFactsValueLen+1),
+	}); !errors.Is(err, agents.ErrInvalidInput) {
+		t.Fatalf("513-char value: %v", err)
+	}
+	if got := factsOf(t, d, org, h.ID); len(got) != 0 {
+		t.Fatalf("rejected push left facts behind: %v", got)
+	}
+	if tags := tagsOf(t, d, org, h.ID); len(tags) != 0 {
+		t.Fatalf("rejected push left tags behind: %v", tags)
+	}
+}
+
+// TestRecordFactsTwoOrgIsolation: a host of another organization is
+// invisible — ErrNotFound, not a leak — and its stored facts stay
+// untouched.
+func TestRecordFactsTwoOrgIsolation(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-facts-iso")
+	q := gen.New(d.Pool())
+	other := seedOrg(t, q, "agent-facts-iso-other")
+	h := createHost(t, d, org, zone, "facts-iso")
+	if err := svc.RecordFacts(ctx, org, h.ID, map[string]string{"os": "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	// The other org's push for the same host id is a refusal (invisible,
+	// not forbidden), with RLS beneath the org filter.
+	if err := svc.RecordFacts(db.WithOrgScope(ctx, other), other, h.ID, map[string]string{"os": "evil"}); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("cross-org facts push: %v", err)
+	}
+	if got := factsOf(t, d, org, h.ID); got["os"] != "linux" || len(got) != 1 {
+		t.Fatalf("cross-org push disturbed the facts: %v", got)
+	}
+	// An unknown host is the same ErrNotFound.
+	if err := svc.RecordFacts(ctx, org, uuid.Must(uuid.NewV7()), map[string]string{"os": "linux"}); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("unknown host push: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ package agentapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 
@@ -79,6 +80,13 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		}
 		done, err := tracked.store(func() error { return s.process(ctx, agent, msg) })
 		if err != nil {
+			if errors.Is(err, agents.ErrInvalidInput) {
+				// A facts push over the facts contract's bounds (too
+				// many keys, an over-long value) is the caller's fault,
+				// not the server's — the agent's own collector
+				// normalizes, so this refusal means the agent lied.
+				return status.Errorf(codes.InvalidArgument, "agent facts rejected: %v", err)
+			}
 			return status.Errorf(codes.Internal, "process agent message: %v", err)
 		}
 		if !done {

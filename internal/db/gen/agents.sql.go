@@ -349,6 +349,41 @@ func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerial
 	return err
 }
 
+const upsertFactTag = `-- name: UpsertFactTag :exec
+INSERT INTO host_tags (host_id, org_id, key, value, source)
+SELECT $1, $2, $3, $4, 'fact'
+WHERE NOT EXISTS (
+  SELECT 1 FROM host_tags
+  WHERE host_id = $1 AND key = $3 AND source = 'manual'
+)
+ON CONFLICT (host_id, key, source) DO UPDATE SET value = EXCLUDED.value
+`
+
+type UpsertFactTagParams struct {
+	HostID uuid.UUID `json:"host_id"`
+	OrgID  uuid.UUID `json:"org_id"`
+	Key    string    `json:"key"`
+	Value  string    `json:"value"`
+}
+
+// One automatic fact tag (source = 'fact'): the guarded upsert — a manual
+// row for the same key ALWAYS wins, so the SELECT produces no row while
+// the operator's tag exists (nothing inserted, nothing updated), a manual
+// row that was removed re-admits the fact on the next push, and an
+// existing fact row is updated in place. The guard and the conflict
+// target are both (host_id, key): source is part of the primary key, so a
+// manual and a fact row for the same key coexist by design (00011) and
+// every reader merges them with manual winning.
+func (q *Queries) UpsertFactTag(ctx context.Context, arg UpsertFactTagParams) error {
+	_, err := q.db.Exec(ctx, upsertFactTag,
+		arg.HostID,
+		arg.OrgID,
+		arg.Key,
+		arg.Value,
+	)
+	return err
+}
+
 const upsertHostAgent = `-- name: UpsertHostAgent :one
 INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES ($1, $2, $3, $4, $5)
@@ -389,4 +424,34 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const upsertHostFacts = `-- name: UpsertHostFacts :execrows
+UPDATE hosts SET
+  facts = COALESCE(facts, '{}'::jsonb) || $1::jsonb,
+  updated_at = now()
+WHERE id = $2 AND org_id = $3
+`
+
+type UpsertHostFactsParams struct {
+	Facts  []byte    `json:"facts"`
+	HostID uuid.UUID `json:"host_id"`
+	OrgID  uuid.UUID `json:"org_id"`
+}
+
+// The facts push's merge (RecordFacts, Task 8): the jsonb || concatenation
+// is an object merge where the RIGHT side wins for duplicate keys — every
+// reported key REPLACES its previous value, every key the agent did not
+// report survives untouched. That asymmetry is the semantics on purpose:
+// the agent sends the complete set each push, so an unreported key is a
+// stale fact from an older agent version, and keeping it (instead of
+// deleting it) is the simplest honest behavior — the operator still sees
+// what the host used to report. 0 affected rows is the caller's
+// ErrNotFound (unknown host, or one belonging to another organization).
+func (q *Queries) UpsertHostFacts(ctx context.Context, arg UpsertHostFactsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertHostFacts, arg.Facts, arg.HostID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

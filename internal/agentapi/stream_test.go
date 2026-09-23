@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
@@ -401,4 +402,28 @@ func trackedStreams(r *StreamRegistry, hostID uuid.UUID) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.byHost[hostID])
+}
+
+// TestStreamFactsBoundsRejected: a facts push over the facts contract's
+// bounds is the CALLER's fault — the sink's ErrInvalidInput surfaces as
+// InvalidArgument (not Internal), so the agent's log says what it did
+// wrong, not that the server broke.
+func TestStreamFactsBoundsRejected(t *testing.T) {
+	h := newHarness(t)
+	h.sink.mu.Lock()
+	h.sink.err = agents.ErrInvalidInput
+	h.sink.mu.Unlock()
+	_, client := enrollAnAgent(t, h, "web-1")
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Facts{Facts: &agentpb.Facts{
+		Values: map[string]string{"os": "linux"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("over-bounds facts: %v, want InvalidArgument", err)
+	}
 }

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -213,6 +214,43 @@ func (s *SQLStore) Revoke(ctx context.Context, orgID, hostID uuid.UUID) error {
 		}
 		if n == 0 {
 			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// RecordFacts merges the reported facts into hosts.facts and re-applies
+// the automatic tags, in one org-bound transaction (the service contract
+// is on Store.RecordFacts; the merge/tag semantics are documented there
+// and on the queries themselves).
+func (s *SQLStore) RecordFacts(ctx context.Context, orgID, hostID uuid.UUID, facts map[string]string) error {
+	return s.d.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
+		payload, err := json.Marshal(facts)
+		if err != nil {
+			return fmt.Errorf("encode facts: %w", err)
+		}
+		n, err := s.q.UpsertHostFacts(ctx, gen.UpsertHostFactsParams{
+			OrgID: orgID, HostID: hostID, Facts: payload,
+		})
+		if err != nil {
+			return fmt.Errorf("merge host facts: %w", err)
+		}
+		if n == 0 {
+			// The host does not exist in this organization (or belongs
+			// to another one) — invisible, not forbidden, the same
+			// contract hosts.GetHost carries.
+			return ErrNotFound
+		}
+		for _, key := range factTagKeys {
+			value, ok := facts[key]
+			if !ok || value == "" {
+				continue // no fact, no tag (and no deletion: the merge never removes)
+			}
+			if err := s.q.UpsertFactTag(ctx, gen.UpsertFactTagParams{
+				OrgID: orgID, HostID: hostID, Key: key, Value: value,
+			}); err != nil {
+				return fmt.Errorf("upsert fact tag: %w", err)
+			}
 		}
 		return nil
 	})
