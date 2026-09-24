@@ -145,10 +145,12 @@ jobs:
     # A hung global-setup (a manager that never becomes ready, a stuck
     # docker compose pull/up) would otherwise run until the workflow's own
     # default six-hour ceiling — this bounds it to comfortably more than
-    # the suite's own ~1.5 minute runtime plus dependency install, chromium
-    # download and image pulls, so a genuine hang fails fast instead of
-    # quietly eating CI minutes.
-    timeout-minutes: 15
+    # the suite's own runtime plus dependency install, chromium download
+    # and image pulls, so a genuine hang fails fast instead of quietly
+    # eating CI minutes. Raised from 15 with v0.3a: global-setup now also
+    # builds cmd/agent, and the agent journey waits on a real enrollment
+    # over the manager's gRPC surface.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web

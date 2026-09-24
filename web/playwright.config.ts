@@ -48,6 +48,11 @@ export default defineConfig({
     // in the compose test stack — Task 17's image — so its spec self-skips
     // (with a visible reason, via web/e2e/worker.ts) until that merge;
     // the project is wired so it activates without config changes then.
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['inventory'] },
+    // The agent journey (backlog 3.4a, v0.3a): the real agent binary
+    // enrolling against this stack's manager. It needs no compose service
+    // — global-setup builds the binary and the manager exposes its gRPC
+    // surface — so unlike `ansible` below it runs for real from the start.
+    { name: 'agent', testMatch: /agent\.spec\.ts/, dependencies: ['inventory'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['agent'] },
   ],
 });

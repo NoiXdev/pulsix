@@ -13,6 +13,11 @@ export const DB_PORT = 55432;
 export const MAILPIT_SMTP_PORT = 45025;
 export const MAILPIT_HTTP_PORT = 48025;
 
+// The manager's gRPC surface (PULSIX_GRPC_LISTEN), which workers and
+// agents dial. Off by default in production; the e2e manager enables it
+// so agent.spec can enrol a real agent against this stack.
+export const AGENT_GRPC_PORT = 48444;
+
 // --- The manager under test ---
 export const MANAGER_PORT = 48090;
 // "localhost", not "127.0.0.1": go-webauthn (internal/auth's passkey
@@ -27,6 +32,9 @@ export const DATABASE_URL = `postgres://pulsix:pulsix@localhost:${DB_PORT}/pulsi
 export const MASTER_KEY = 'ab'.repeat(32);
 
 export const MAILPIT_HTTP_URL = `http://localhost:${MAILPIT_HTTP_PORT}`;
+
+// The agent binary global-setup builds for agent.spec (see e2e/agent.ts).
+export const AGENT_BINARY_PATH = path.resolve(import.meta.dirname, '../.tmp/pulsix-agent-e2e');
 
 export const COMPOSE_FILE = path.resolve(import.meta.dirname, '../../deploy/compose/docker-compose.test.yml');
 

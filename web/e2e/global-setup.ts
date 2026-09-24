@@ -45,6 +45,7 @@ import { execFileSync, spawnSync, spawn, type ChildProcess } from 'node:child_pr
 import { chmodSync, closeSync, mkdirSync, openSync, rmSync, cpSync } from 'node:fs';
 import path from 'node:path';
 import {
+  AGENT_GRPC_PORT,
   BASE_URL,
   COMPOSE_FILE,
   DATABASE_URL,
@@ -58,6 +59,7 @@ const webDir = path.resolve(import.meta.dirname, '..');
 const repoRoot = path.resolve(webDir, '..');
 const distDir = path.join(repoRoot, 'internal', 'web', 'dist');
 const managerBinaryPath = path.join(webDir, '.tmp', 'pulsix-manager-e2e');
+const agentBinaryPath = path.join(webDir, '.tmp', 'pulsix-agent-e2e');
 
 function run(cmd: string, args: string[], cwd = repoRoot): void {
   execFileSync(cmd, args, { cwd, stdio: 'inherit' });
@@ -142,6 +144,17 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   });
   chmodSync(managerBinaryPath, 0o755);
 
+  // The agent binary agent.spec enrols with. Built here for the same
+  // reason the manager is: the spec must exercise the real binary, and a
+  // `go run` child would outlive its parent on teardown.
+  console.log('[e2e] building the agent binary …');
+  execFileSync('go', ['build', '-o', agentBinaryPath, './cmd/agent'], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    env: { ...process.env, CGO_ENABLED: '0' },
+  });
+  chmodSync(agentBinaryPath, 0o755);
+
   console.log('[e2e] starting the manager …');
   const logFd = openSync(MANAGER_LOG_PATH, 'w');
   const manager: ChildProcess = spawn(managerBinaryPath, [], {
@@ -152,6 +165,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       PULSIX_MASTER_KEY: MASTER_KEY,
       PULSIX_PUBLIC_URL: BASE_URL,
       PULSIX_LISTEN: `:${MANAGER_PORT}`,
+      // The gRPC surface agents (and workers) dial. "localhost" is both
+      // the bind host and the CA's server-certificate SAN, which is what
+      // an enrolling agent verifies against.
+      PULSIX_GRPC_LISTEN: `localhost:${AGENT_GRPC_PORT}`,
+      PULSIX_GRPC_PUBLIC_ADDR: `localhost:${AGENT_GRPC_PORT}`,
     },
     stdio: ['ignore', logFd, logFd],
   });
