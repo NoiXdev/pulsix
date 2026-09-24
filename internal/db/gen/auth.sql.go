@@ -13,17 +13,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const confirmTOTP = `-- name: ConfirmTOTP :exec
-UPDATE totp_secrets SET confirmed_at = now() WHERE user_id = $1
+const confirmTOTP = `-- name: ConfirmTOTP :execrows
+UPDATE totp_secrets
+SET secret_sealed = pending_secret_sealed,
+    confirmed_at = now(),
+    pending_secret_sealed = NULL,
+    pending_created_at = NULL
+WHERE user_id = $1 AND pending_secret_sealed IS NOT NULL
 `
 
-func (q *Queries) ConfirmTOTP(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, confirmTOTP, userID)
-	return err
+// Promotes the pending secret to the confirmed one. last_used_step is
+// deliberately NOT reset: the code that just proved this secret claimed
+// its step, and the step counter is secret-independent — resetting it
+// would let that very code be replayed as a login within the same window.
+// 0 rows means there was nothing in flight to confirm.
+func (q *Queries) ConfirmTOTP(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmTOTP, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createSession = `-- name: CreateSession :exec
-INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
+VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END)
 `
 
 type CreateSessionParams struct {
@@ -34,6 +48,11 @@ type CreateSessionParams struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// A session created already MFA-complete is one whose factor was just
+// proven — the passkey login path creates exactly that — so it carries
+// the proof's timestamp from the start (backlog 1.28). Without it a
+// passkey user would never hold a fresh factor and could never reach the
+// account-security actions at all.
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.Exec(ctx, createSession,
 		arg.ID,
@@ -77,7 +96,7 @@ func (q *Queries) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, u.instance_admin FROM sessions s JOIN users u ON u.id = s.user_id
+SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, s.mfa_at, u.instance_admin FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL
 `
 
@@ -89,6 +108,7 @@ type GetSessionRow struct {
 	CreatedAt     time.Time          `json:"created_at"`
 	ExpiresAt     time.Time          `json:"expires_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	MfaAt         pgtype.Timestamptz `json:"mfa_at"`
 	InstanceAdmin bool               `json:"instance_admin"`
 }
 
@@ -109,13 +129,14 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (GetSessionRow, 
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.MfaAt,
 		&i.InstanceAdmin,
 	)
 	return i, err
 }
 
 const getTOTPSecret = `-- name: GetTOTPSecret :one
-SELECT user_id, secret_sealed, confirmed_at, last_used_step, created_at FROM totp_secrets WHERE user_id = $1
+SELECT user_id, secret_sealed, confirmed_at, last_used_step, created_at, pending_secret_sealed, pending_created_at FROM totp_secrets WHERE user_id = $1
 `
 
 func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TotpSecret, error) {
@@ -127,6 +148,8 @@ func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TotpSecr
 		&i.ConfirmedAt,
 		&i.LastUsedStep,
 		&i.CreatedAt,
+		&i.PendingSecretSealed,
+		&i.PendingCreatedAt,
 	)
 	return i, err
 }
@@ -145,13 +168,23 @@ func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCode
 	return err
 }
 
-const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :exec
-UPDATE sessions SET mfa_complete = true WHERE id = $1
+const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :execrows
+UPDATE sessions SET mfa_complete = true, mfa_at = now() WHERE id = $1
 `
 
-func (q *Queries) MarkSessionMFAComplete(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markSessionMFAComplete, id)
-	return err
+// :execrows, not :exec — completing the second factor is a security state
+// change, and an id that matches nothing must reach the caller as a
+// failure rather than as a silent success (backlog 1.26).
+// mfa_at is stamped on every call, not only the first: the same endpoints
+// that complete a pending session are what an already-complete one
+// re-proves its factor through, and that re-proof is the whole point of
+// the freshness window (backlog 1.28).
+func (q *Queries) MarkSessionMFAComplete(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markSessionMFAComplete, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const replaceRecoveryCodes = `-- name: ReplaceRecoveryCodes :exec
@@ -190,8 +223,15 @@ func (q *Queries) SetTOTPLastStep(ctx context.Context, arg SetTOTPLastStepParams
 }
 
 const upsertTOTPSecret = `-- name: UpsertTOTPSecret :exec
-INSERT INTO totp_secrets (user_id, secret_sealed) VALUES ($1, $2)
-ON CONFLICT (user_id) DO UPDATE SET secret_sealed = EXCLUDED.secret_sealed, confirmed_at = NULL, last_used_step = 0
+INSERT INTO totp_secrets (user_id, secret_sealed, pending_secret_sealed, pending_created_at)
+VALUES ($1, $2, $2, now())
+ON CONFLICT (user_id) DO UPDATE
+SET pending_secret_sealed = EXCLUDED.pending_secret_sealed,
+    pending_created_at = now(),
+    -- A row that was never confirmed carries no factor worth keeping, so
+    -- its stale secret_sealed follows the pending one; a confirmed row's
+    -- does not move until the new secret is proven.
+    secret_sealed = CASE WHEN totp_secrets.confirmed_at IS NULL THEN EXCLUDED.pending_secret_sealed ELSE totp_secrets.secret_sealed END
 `
 
 type UpsertTOTPSecretParams struct {
@@ -199,6 +239,12 @@ type UpsertTOTPSecretParams struct {
 	SecretSealed []byte    `json:"secret_sealed"`
 }
 
+// The enrolling secret goes into the pending columns; a confirmed secret
+// already in secret_sealed is left exactly as it is, so an abandoned
+// re-enrolment takes nothing away (backlog 1.27). A first enrolment has
+// nothing to keep: the same bytes seed secret_sealed too, and
+// confirmed_at stays NULL, which is what makes it unusable until
+// PromoteTOTPSecret runs.
 func (q *Queries) UpsertTOTPSecret(ctx context.Context, arg UpsertTOTPSecretParams) error {
 	_, err := q.db.Exec(ctx, upsertTOTPSecret, arg.UserID, arg.SecretSealed)
 	return err

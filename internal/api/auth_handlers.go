@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -242,6 +243,37 @@ func requireInteractiveSession(ctx context.Context) (auth.Principal, error) {
 		return p, huma.Error403Forbidden("interactive session required")
 	}
 	return p, nil
+}
+
+// stepUpRequired is the detail a refusal for a stale factor carries. The
+// SPA matches on it to re-prompt and retry, so it is part of the contract
+// rather than prose: changing it changes behaviour.
+const stepUpRequired = "step_up_required"
+
+// requireFreshFactor guards the account-security actions (backlog 1.28):
+// registering or deleting a passkey, moving or disabling TOTP. A session
+// that proved its second factor more than auth.StepUpWindow ago must
+// prove it again first — otherwise a session left open on an unlocked
+// screen is enough to add a credential to the account and own it.
+//
+// An account with no second factor yet is exempt, and must be: its very
+// first enrolment has nothing to prove, and demanding a proof there would
+// lock every new account out of finishing setup. The check is therefore
+// conditional on the account already carrying a factor, which is also
+// what makes it meaningful for a passkey-only account — where TOTP
+// enrolment's own code check proves nothing at all.
+func requireFreshFactor(ctx context.Context, deps Deps, p auth.Principal) error {
+	enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)
+	if err != nil {
+		return mapAuthErr(ctx, err)
+	}
+	if !enrolled {
+		return nil
+	}
+	if !p.FactorFresh(time.Now()) {
+		return huma.Error403Forbidden(stepUpRequired)
+	}
+	return nil
 }
 
 // requireEnrolmentSession admits an interactive session that may enrol a

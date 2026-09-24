@@ -45,8 +45,11 @@ type Deps struct {
 	TOTP     *auth.TOTP
 	Passkeys *auth.Passkeys
 	Tokens   *auth.Tokens
-	Tenancy  *tenancy.Service
-	Audit    *audit.Recorder
+	// Enrolment composes confirming a second factor with completing the
+	// session it was pending for, in one transaction (backlog 1.26).
+	Enrolment *auth.Enrolment
+	Tenancy   *tenancy.Service
+	Audit     *audit.Recorder
 	// ClientIP resolves request source addresses behind
 	// PULSIX_TRUSTED_PROXIES; required.
 	ClientIP *clientip.Resolver
@@ -178,6 +181,9 @@ func (d Deps) validate() error {
 	if d.Tokens == nil {
 		missing = append(missing, "Tokens")
 	}
+	if d.Enrolment == nil {
+		missing = append(missing, "Enrolment")
+	}
 	if d.Tenancy == nil {
 		missing = append(missing, "Tenancy")
 	}
@@ -262,6 +268,9 @@ func New(deps Deps) (http.Handler, error) {
 	// later task can add a spoof-safe replacement once the deployment's
 	// reverse-proxy trust boundary is known.
 	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
+	// Before anything can answer: the headers belong on every response,
+	// including the ones the middleware below produces (backlog 1.29).
+	r.Use(securityHeaders)
 	// staticSessionSkip wraps CookieMiddleware with backlog 1.22's
 	// short-circuit: requests outside the API subtree (the SPA routes and
 	// embedded assets web.Handler serves as the NotFound fallback, plus

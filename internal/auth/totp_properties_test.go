@@ -178,8 +178,13 @@ func TestTOTPReEnrolWithValidCodeSucceeds(t *testing.T) {
 	if secondSecret == firstSecret {
 		t.Fatal("re-enrolment reused the previous secret")
 	}
-	if on, _ := tp.Enabled(ctx, uid); on {
-		t.Fatal("still enabled after re-enrolment started, before the new secret is confirmed")
+	// The account keeps its working factor while the new one is in flight
+	// (backlog 1.27). This assertion used to demand the opposite — that
+	// beginning a re-enrolment immediately disables the account — which
+	// is the very behaviour that left an abandoned dialog with
+	// password-only sign-in.
+	if on, err := tp.Enabled(ctx, uid); err != nil || !on {
+		t.Fatalf("the confirmed factor must stay enabled while a re-enrolment is unconfirmed: on=%v err=%v", on, err)
 	}
 }
 

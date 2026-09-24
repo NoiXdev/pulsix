@@ -28,6 +28,25 @@ type Principal struct {
 	TokenID       *uuid.UUID
 	InstanceAdmin bool
 	MFAComplete   bool
+	// MFAAt is when this session last proved a second factor, or nil for
+	// one that never did (and for every session that predates the column).
+	// The account-security actions ask FactorFresh about it.
+	MFAAt *time.Time
+}
+
+// StepUpWindow is how long a proven second factor keeps the
+// account-security actions open — registering or deleting a passkey,
+// moving or disabling TOTP (backlog 1.28). Long enough to manage several
+// credentials in one sitting, short enough that an unattended screen is
+// not an account takeover waiting to happen.
+const StepUpWindow = 5 * time.Minute
+
+// FactorFresh reports whether this session proved a second factor recently
+// enough for an account-security action. A session that never proved one
+// is never fresh — including a bearer token principal, which has no
+// session and therefore no factor to have proven.
+func (p Principal) FactorFresh(now time.Time) bool {
+	return p.MFAAt != nil && now.Sub(*p.MFAAt) < StepUpWindow
 }
 
 // Sessions stores cookie sessions as id + hashed secret.
@@ -84,12 +103,28 @@ func (s *Sessions) Lookup(ctx context.Context, cookie string) (Principal, error)
 	if subtle.ConstantTimeCompare(sum[:], row.SecretHash) != 1 {
 		return Principal{}, ErrUnauthenticated
 	}
-	return Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete}, nil
+	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete}
+	if row.MfaAt.Valid {
+		at := row.MfaAt.Time
+		p.MFAAt = &at
+	}
+	return p, nil
 }
 
 // MarkMFAComplete upgrades a session after a successful second factor.
 func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) error {
-	return s.q.MarkSessionMFAComplete(ctx, id)
+	n, err := s.q.MarkSessionMFAComplete(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// Nothing was updated: the session is gone (revoked, reaped, or
+		// never existed). Reporting success here would let the caller
+		// believe a second factor had been completed for a session that
+		// cannot carry it.
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Revoke ends a session.

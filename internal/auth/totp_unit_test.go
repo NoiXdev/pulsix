@@ -245,6 +245,9 @@ func TestTOTPBeginEnrolPropagatesUpsertError(t *testing.T) {
 func TestTOTPConfirmEnrolPropagatesStoreError(t *testing.T) {
 	unconfirmed, code := sealedConfirmedSecret(t)
 	unconfirmed.Confirmed = false
+	// The confirmation path reads the secret being enrolled, which lives
+	// in the pending column (backlog 1.27); here it is the same material.
+	unconfirmed.PendingSealed = unconfirmed.SecretSealed
 	sentinel := errors.New("confirm enrol failed")
 	store := &fakeTOTPStore{hasSecret: true, secret: unconfirmed, setLastStepOK: true, confirmEnrolErr: sentinel}
 	tp := auth.NewTOTP(store, testTOTPBox(), "Pulsix Test", testTOTPNow)

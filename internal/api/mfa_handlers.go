@@ -56,6 +56,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// Moving the factor is an account-security action: an account that
+		// already has one must have proved it recently (backlog 1.28).
+		if err := requireFreshFactor(ctx, deps, p); err != nil {
+			return nil, err
+		}
 		u, err := deps.Auth.Me(ctx, p)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
@@ -78,14 +83,13 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		codes, err := deps.TOTP.ConfirmEnrol(ctx, p.UserID, in.Body.Code)
+		// Confirming the factor and completing the session are one write
+		// (backlog 1.26): the recovery codes below exist in readable form
+		// exactly once, in this response, so they must not be committed
+		// unless the session upgrade commits with them.
+		codes, err := deps.Enrolment.ConfirmTOTP(ctx, p.UserID, p.SessionID, in.Body.Code)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
-		}
-		// The account now has a second factor: a session that was pending
-		// only for want of one is complete from here on.
-		if err := completeEnrolment(ctx, deps, p); err != nil {
-			return nil, err
 		}
 		// Instance-level event, same mechanism as POST
 		// /admin/users/{id}/deactivate (Task 11 fix round 1, Finding 1): a
@@ -130,6 +134,9 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 	huma.Delete(hapi, "/api/v1/auth/totp", func(ctx context.Context, in *codeInput) (*okOutput, error) {
 		p, err := requireInteractiveSession(ctx)
 		if err != nil {
+			return nil, err
+		}
+		if err := requireFreshFactor(ctx, deps, p); err != nil {
 			return nil, err
 		}
 		ok, err := deps.TOTP.Verify(ctx, p.UserID, in.Body.Code)

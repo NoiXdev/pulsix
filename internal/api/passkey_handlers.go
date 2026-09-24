@@ -91,6 +91,12 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// Adding a credential to an account that already has a factor
+		// requires having proved one recently (backlog 1.28); a first
+		// enrolment has nothing to prove and is exempt.
+		if err := requireFreshFactor(ctx, deps, p); err != nil {
+			return nil, err
+		}
 		opts, cid, err := deps.Passkeys.BeginRegistration(ctx, p.UserID)
 		if err != nil {
 			return nil, mapPasskeyErr(ctx, err)
@@ -103,6 +109,11 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*okOutput, error) {
 		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
+			return nil, err
+		}
+		// Checked at both ends of the ceremony: a registration begun while
+		// the factor was fresh must not be finishable an hour later.
+		if err := requireFreshFactor(ctx, deps, p); err != nil {
 			return nil, err
 		}
 		cid, err := uuid.Parse(in.Body.CeremonyID)
@@ -152,6 +163,11 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	huma.Delete(hapi, "/api/v1/auth/passkeys/{id}", func(ctx context.Context, in *passkeyIDInput) (*okOutput, error) {
 		p, err := requireInteractiveSession(ctx)
 		if err != nil {
+			return nil, err
+		}
+		// Removing a credential is as security-relevant as adding one:
+		// an attacker who strips the factors owns the account next login.
+		if err := requireFreshFactor(ctx, deps, p); err != nil {
 			return nil, err
 		}
 		id, err := uuid.Parse(in.ID)

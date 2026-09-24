@@ -191,7 +191,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 	t.Helper()
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
 		ClientIP: clientip.New(nil),
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
@@ -268,60 +268,60 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(),
 	}); err == nil {
 		t.Fatal("api.New without Audit did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
 	}); err == nil {
 		t.Fatal("api.New without Setup did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 	}); err == nil {
 		t.Fatal("api.New without Mailer did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(),
 	}); err == nil {
 		t.Fatal("api.New without Hosts did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(),
 	}); err == nil {
 		t.Fatal("api.New without Credentials did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(),
 	}); err == nil {
 		t.Fatal("api.New without SSH did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 	}); err == nil {
 		t.Fatal("api.New without Inventory did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 	}); err == nil {
 		t.Fatal("api.New without Renderer did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 		Renderer: testRenderer(),
 	}); err == nil {
@@ -329,7 +329,7 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 		Renderer: testRenderer(), Repos: testRepos(),
 	}); err == nil {
@@ -337,7 +337,7 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 		Renderer: testRenderer(), Repos: testRepos(), Playbooks: testPlaybooks(),
 	}); err == nil {
@@ -362,7 +362,7 @@ func testDeps(t *testing.T) api.Deps {
 	t.Helper()
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Tenancy: testTenancy(), Audit: testAudit(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
 		ClientIP: clientip.New(nil),
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),

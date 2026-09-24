@@ -508,14 +508,17 @@ type Session struct {
 	CreatedAt   time.Time          `json:"created_at"`
 	ExpiresAt   time.Time          `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	MfaAt       pgtype.Timestamptz `json:"mfa_at"`
 }
 
 type TotpSecret struct {
-	UserID       uuid.UUID          `json:"user_id"`
-	SecretSealed []byte             `json:"secret_sealed"`
-	ConfirmedAt  pgtype.Timestamptz `json:"confirmed_at"`
-	LastUsedStep int64              `json:"last_used_step"`
-	CreatedAt    time.Time          `json:"created_at"`
+	UserID              uuid.UUID          `json:"user_id"`
+	SecretSealed        []byte             `json:"secret_sealed"`
+	ConfirmedAt         pgtype.Timestamptz `json:"confirmed_at"`
+	LastUsedStep        int64              `json:"last_used_step"`
+	CreatedAt           time.Time          `json:"created_at"`
+	PendingSecretSealed []byte             `json:"pending_secret_sealed"`
+	PendingCreatedAt    pgtype.Timestamptz `json:"pending_created_at"`
 }
 
 type TriggerBucket struct {

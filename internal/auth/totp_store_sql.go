@@ -41,7 +41,11 @@ func (s *SQLTOTPStore) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TOT
 		}
 		return TOTPSecretRow{}, err
 	}
-	return TOTPSecretRow{SecretSealed: row.SecretSealed, Confirmed: row.ConfirmedAt.Valid}, nil
+	return TOTPSecretRow{
+		SecretSealed:  row.SecretSealed,
+		Confirmed:     row.ConfirmedAt.Valid,
+		PendingSealed: row.PendingSecretSealed,
+	}, nil
 }
 
 func (s *SQLTOTPStore) SetTOTPLastStep(ctx context.Context, userID uuid.UUID, step int64) (bool, error) {
@@ -76,8 +80,14 @@ func (s *SQLTOTPStore) ConfirmEnrol(ctx context.Context, userID uuid.UUID, recov
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op once Commit succeeds; the error path is what matters and is already returned below.
 
 	q := s.q.WithTx(tx)
-	if err := q.ConfirmTOTP(ctx, userID); err != nil {
+	n, err := q.ConfirmTOTP(ctx, userID)
+	if err != nil {
 		return err
+	}
+	if n == 0 {
+		// Nothing was in flight: no enrolment to confirm (or a concurrent
+		// call already promoted it).
+		return ErrNoTOTPSecret
 	}
 	if err := q.ReplaceRecoveryCodes(ctx, userID); err != nil {
 		return err

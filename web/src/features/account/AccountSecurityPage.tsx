@@ -10,6 +10,7 @@ import { useMe } from '../../api/hooks/useMe.ts';
 import { useDeletePasskey, usePasskeys } from '../../api/hooks/usePasskeys.ts';
 import { useConfirmTotp, useEnrolTotp } from '../../api/hooks/useTotp.ts';
 import { registerPasskey } from '../auth/passkeys.ts';
+import { useStepUp } from './stepUp.tsx';
 
 /**
  * AccountSecurityPage follows design/mockups/build.mjs's ACCOUNT SECURITY
@@ -56,6 +57,9 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
   const enrolTotp = useEnrolTotp();
   const confirmTotp = useConfirmTotp();
 
+  // Account-security actions need a recently proven factor; this re-asks
+  // and repeats the action rather than failing it (backlog 1.28).
+  const stepUp = useStepUp();
   const [newPasskeyName, setNewPasskeyName] = useState('');
   const [enrolling, setEnrolling] = useState<{ secret: string; otpauth_url: string } | null>(null);
   const [code, setCode] = useState('');
@@ -92,14 +96,15 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                   type="button"
                   aria-label={`remove ${p.name}`}
                   className="text-destructive"
-                  onClick={async () => {
-                    try {
-                      await deletePasskey.mutateAsync(p.id);
-                      toast.show(`Passkey ${p.name} removed`);
-                    } catch (err) {
-                      toast.show(err instanceof Error ? err.message : 'failed to remove passkey', 'destructive');
-                    }
-                  }}
+                  onClick={() =>
+                    void stepUp.run(
+                      async () => {
+                        await deletePasskey.mutateAsync(p.id);
+                        toast.show(`Passkey ${p.name} removed`);
+                      },
+                      (err) => toast.show(err instanceof Error ? err.message : 'failed to remove passkey', 'destructive'),
+                    )
+                  }
                 >
                   <Trash2 size={14} />
                 </button>
@@ -110,18 +115,19 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
             )}
             <form
               className="flex items-center gap-2 pt-1"
-              onSubmit={async (e) => {
+              onSubmit={(e) => {
                 e.preventDefault();
                 if (!newPasskeyName.trim()) return;
-                try {
-                  await registerPasskey(newPasskeyName.trim());
-                  toast.show('Passkey added');
-                  setNewPasskeyName('');
-                  await passkeys.refetch();
-                  await onEnrolled?.();
-                } catch (err) {
-                  toast.show(err instanceof Error ? err.message : 'failed to add passkey', 'destructive');
-                }
+                void stepUp.run(
+                  async () => {
+                    await registerPasskey(newPasskeyName.trim());
+                    toast.show('Passkey added');
+                    setNewPasskeyName('');
+                    await passkeys.refetch();
+                    await onEnrolled?.();
+                  },
+                  (err) => toast.show(err instanceof Error ? err.message : 'failed to add passkey', 'destructive'),
+                );
               }}
             >
               <Input
@@ -142,14 +148,15 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
             {!enrolling && !recoveryCodes && (
               <Button
                 variant="primary"
-                onClick={async () => {
-                  try {
-                    const res = await enrolTotp.mutateAsync(undefined);
-                    setEnrolling({ secret: res.secret, otpauth_url: res.otpauth_url });
-                  } catch (err) {
-                    toast.show(err instanceof Error ? err.message : 'failed to start enrolment', 'destructive');
-                  }
-                }}
+                onClick={() =>
+                  void stepUp.run(
+                    async () => {
+                      const res = await enrolTotp.mutateAsync(undefined);
+                      setEnrolling({ secret: res.secret, otpauth_url: res.otpauth_url });
+                    },
+                    (err) => toast.show(err instanceof Error ? err.message : 'failed to start enrolment', 'destructive'),
+                  )
+                }
               >
                 Enrol authenticator app
               </Button>
@@ -230,6 +237,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
           </div>
         </Card>
       </div>
+      {stepUp.dialog}
     </>
   );
 }

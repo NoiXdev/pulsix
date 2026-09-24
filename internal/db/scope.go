@@ -122,6 +122,37 @@ func (d *DB) WithWriteTx(ctx context.Context, orgID uuid.UUID, fn func(ctx conte
 	return nil
 }
 
+// WithInstanceTx runs fn inside one read-write transaction that is NOT
+// bound to an organization, for the instance-level tables that have no
+// org_id at all: users, sessions, totp_secrets, recovery_codes,
+// webauthn_ceremonies and the settings store. Every store built on this
+// *DB picks the transaction up from the context exactly as it does for
+// WithWriteTx, so a caller can compose writes across two of them — the
+// second-factor confirmation writes the secret, its recovery codes and
+// the session's upgrade, and either all three land or none do.
+//
+// It deliberately does not set `pulsix.org_id`: leaving it unset is what
+// keeps the org_isolation_bypass policy active, and an organization-owned
+// table has no business in this transaction in the first place. Use
+// WithWriteTx for anything that touches one.
+func (d *DB) WithInstanceTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin instance transaction: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	if err := fn(context.WithValue(ctx, boundTxKey{}, boundTx{tx: tx, write: true})); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("commit instance transaction: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit instance transaction: %w", err)
+	}
+	return nil
+}
+
 // txOf reports the transaction WithReadTx or WithWriteTx bound to ctx, if
 // any.
 func txOf(ctx context.Context) (boundTx, bool) {

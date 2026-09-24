@@ -146,8 +146,11 @@ func TestSQLStoreAdminMFAEnrolledReflectsConfirmedTOTP(t *testing.T) {
 	if err := q.UpsertTOTPSecret(ctx, gen.UpsertTOTPSecretParams{UserID: res.UserID, SecretSealed: []byte("sealed")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.ConfirmTOTP(ctx, res.UserID); err != nil {
-		t.Fatal(err)
+	// ConfirmTOTP promotes the pending secret and reports how many rows it
+	// touched (backlog 1.27), so the seeded row above is confirmed only if
+	// it actually had one in flight — which UpsertTOTPSecret gives it.
+	if n, err := q.ConfirmTOTP(ctx, res.UserID); err != nil || n != 1 {
+		t.Fatalf("ConfirmTOTP = %d rows, %v", n, err)
 	}
 
 	after, err := svc.Status(ctx)

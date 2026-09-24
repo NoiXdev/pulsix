@@ -50,6 +50,11 @@ var ErrNoTOTPSecret = errors.New("no totp secret")
 type TOTPSecretRow struct {
 	SecretSealed []byte
 	Confirmed    bool
+	// PendingSealed is the secret of an enrolment in flight, if any. It
+	// sits beside the confirmed one so asking for a new factor never
+	// takes the working one away (backlog 1.27); ConfirmEnrol is what
+	// promotes it, and only its own first code can do that.
+	PendingSealed []byte
 }
 
 // TOTPStore is what the TOTP service needs from persistence, mirroring how
@@ -212,7 +217,19 @@ func (t *TOTP) verifyAndConsume(ctx context.Context, userID uuid.UUID, code stri
 	if requireConfirmed && !row.Confirmed {
 		return false, nil
 	}
-	secret, err := t.box.Open(row.SecretSealed)
+	// The confirmation path checks the code against the secret being
+	// enrolled, the login path against the confirmed one. They are
+	// different secrets while a re-enrolment is in flight, and that is
+	// the whole point of keeping both (backlog 1.27).
+	sealed := row.SecretSealed
+	if !requireConfirmed {
+		if row.PendingSealed == nil {
+			// Nothing is enrolling: there is no first code to accept.
+			return false, nil
+		}
+		sealed = row.PendingSealed
+	}
+	secret, err := t.box.Open(sealed)
 	if err != nil {
 		return false, err
 	}

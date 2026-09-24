@@ -382,11 +382,12 @@ func New(t *testing.T, opts ...Option) *Server {
 		agents.WithCA(testCA))
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
-		Tokens:   auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
-		Tenancy:  tenancySvc,
-		Audit:    auditRec,
-		ClientIP: clientip.New(nil),
-		Setup:    setupSvc,
+		Tokens:    auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
+		Enrolment: auth.NewEnrolment(totp, s.Sessions, d),
+		Tenancy:   tenancySvc,
+		Audit:     auditRec,
+		ClientIP:  clientip.New(nil),
+		Setup:     setupSvc,
 		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
 		// exercises whatever a test actually stored through
 		// PUT /admin/settings/smtp — no separate fake needed, since the

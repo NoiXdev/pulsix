@@ -216,3 +216,42 @@ describe('AccountSecurityPage error handling', () => {
     expect(within(toast).getByText('a fresh code is required to re-enrol')).toBeInTheDocument();
   });
 });
+
+describe('step-up (backlog 1.28)', () => {
+  it('re-asks for the second factor when the server says the proof is stale, then completes the action', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let stale = true;
+    let verified = 0;
+    let enrolAttempts = 0;
+    mockApi({
+      'GET /api/v1/auth/me': { id: 'u1', email: 'a@b.c', display_name: 'A', instance_admin: false, mfa_complete: true, totp_confirmed: false },
+      'GET /api/v1/auth/passkeys': { passkeys: [{ id: 'p1', name: 'yubikey', created_at: new Date().toISOString() }] },
+      'POST /api/v1/auth/totp/verify': () => {
+        verified += 1;
+        stale = false;
+        return { ok: true };
+      },
+      'POST /api/v1/auth/totp/enrol': () => {
+        enrolAttempts += 1;
+        return stale
+          ? new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail: 'step_up_required' }), { status: 403 })
+          : { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/Pulsix:a@b.c?secret=JBSWY3DPEHPK3PXP' };
+      },
+    });
+    renderPage(qc);
+
+    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+
+    // No error toast — a dialog asking for the factor.
+    expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Authenticator or recovery code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    // The factor is re-proved once, and the action the user actually
+    // wanted goes through without them repeating it.
+    await waitFor(() => expect(verified).toBe(1));
+    expect(await screen.findByText(/Scan this with your authenticator|JBSWY3DPEHPK3PXP/)).toBeInTheDocument();
+    expect(enrolAttempts).toBe(2);
+  });
+});

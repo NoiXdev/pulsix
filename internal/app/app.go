@@ -170,6 +170,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	sessions := auth.NewSessions(q, time.Now)
 
 	totp := auth.NewTOTP(auth.NewSQLTOTPStore(appDB), box, "Pulsix", time.Now)
+	// Confirming a second factor writes the secret, its recovery codes and
+	// the session upgrade together or not at all (backlog 1.26).
+	enrolment := auth.NewEnrolment(totp, sessions, appDB)
 	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, cfg.RPID(), "Pulsix", cfg.Origin(), time.Now)
 	if err != nil {
 		appDB.Close()
@@ -342,7 +345,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	schedulesSvc.SetMaintenance(maintenanceSvc)
 
 	handler, err := api.New(api.Deps{
-		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens,
+		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		// Backlog 1.20: the auth endpoints' per-address limiter size
 		// (PULSIX_AUTH_RATE_LIMIT; 0 from config disables it).
