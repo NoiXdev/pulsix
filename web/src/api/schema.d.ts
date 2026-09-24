@@ -415,6 +415,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org agents */
+        get: operations["get-api-v1-orgs-by-org-agents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/agents/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org agents tokens */
+        get: operations["get-api-v1-orgs-by-org-agents-tokens"];
+        put?: never;
+        /** Post API v1 orgs by org agents tokens */
+        post: operations["createAgentToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/agents/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org agents tokens by ID */
+        delete: operations["withdrawAgentToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/agents/{host_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org agents by host ID revoke */
+        post: operations["revokeAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/bastions": {
         parameters: {
             query?: never;
@@ -610,6 +679,23 @@ export interface paths {
         head?: never;
         /** Patch API v1 orgs by org hosts by ID */
         patch: operations["updateHost"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID agent */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-agent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/orgs/{org}/hosts/{id}/bootstrap": {
@@ -1814,6 +1900,108 @@ export interface components {
             host_ids: string[] | null;
             /** @description Only shell is supported in v0.2b */
             module: string;
+        };
+        AgentDTO: {
+            agent_name: string;
+            /** Format: date-time */
+            cert_expires_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            host_id: string;
+            host_name: string;
+            /** Format: date-time */
+            last_seen?: string;
+            /**
+             * @description online = a heartbeat within three heartbeat intervals
+             * @enum {string}
+             */
+            status: "online" | "offline";
+            version?: string;
+        };
+        AgentListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AgentListOutputBody.json
+             */
+            readonly $schema?: string;
+            agents: components["schemas"]["AgentDTO"][] | null;
+        };
+        AgentOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AgentOutputBody.json
+             */
+            readonly $schema?: string;
+            agent: components["schemas"]["AgentDTO"];
+        };
+        AgentTokenCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AgentTokenCreateInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Lifetime from now; 60 when omitted
+             */
+            expires_in_minutes?: number;
+            /**
+             * Format: uuid
+             * @description Bind the token to an existing host; omit to let the first enrollment create one
+             */
+            host_id?: string;
+            /**
+             * Format: int64
+             * @description How many agents may redeem this token
+             */
+            max_uses: number;
+            /** @description The name a created host gets; the agent's own name wins when empty */
+            name_hint?: string;
+            /**
+             * Format: uuid
+             * @description The zone a host created by this token lands in
+             */
+            zone_id: string;
+        };
+        AgentTokenCreateOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AgentTokenCreateOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Run this on the host to install and enrol the agent */
+            install_command: string;
+            /** @description Shown once — the manager stores only its hash */
+            token: string;
+            token_record: components["schemas"]["AgentTokenDTO"];
+        };
+        AgentTokenDTO: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description Set when the token is bound to an existing host */
+            host_id?: string;
+            id: string;
+            /** Format: int64 */
+            max_uses: number;
+            name_hint?: string;
+            /** Format: int64 */
+            uses: number;
+            zone_id: string;
+        };
+        AgentTokenListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AgentTokenListOutputBody.json
+             */
+            readonly $schema?: string;
+            tokens: components["schemas"]["AgentTokenDTO"][] | null;
         };
         BastionBodyDTO: {
             /**
@@ -4896,6 +5084,167 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-agents-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTokenListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createAgentToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTokenCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTokenCreateOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    withdrawAgentToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    revokeAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-bastions": {
         parameters: {
             query?: never;
@@ -5594,6 +5943,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostGetOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-hosts-by-id-agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentOutputBody"];
                 };
             };
             /** @description Error */

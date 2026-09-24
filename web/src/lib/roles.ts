@@ -21,6 +21,8 @@ export type UiPermission =
   | 'jobs.run'
   | 'workers.read'
   | 'workers.write'
+  | 'agents.read'
+  | 'agents.write'
   | 'channels.read'
   | 'channels.write'
   | 'maintenance.write';
@@ -41,6 +43,11 @@ const MINIMUM_ROLE: Record<UiPermission, Role> = {
   'jobs.run': 'operator',
   'workers.read': 'admin',
   'workers.write': 'admin',
+  // Agents (v0.3a) follow hosts, not workers: an agent belongs to one
+  // host, so a viewer sees which hosts report and an operator enrols and
+  // revokes them.
+  'agents.read': 'viewer',
+  'agents.write': 'operator',
   'channels.read': 'operator',
   'channels.write': 'admin',
   'maintenance.write': 'operator',

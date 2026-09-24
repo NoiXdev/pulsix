@@ -14,6 +14,7 @@ import { useCreateHost, useCreateZone, useHosts, useZones, type HostListFilter }
 import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { hostFormSchema, zoneFormSchema, type HostFormValues, type ZoneFormValues } from '../../lib/schemas.ts';
+import { useAgents } from '../../api/hooks/useAgents.ts';
 import { HostRow } from './HostRow.tsx';
 
 const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 210px 210px 70px 24px';
@@ -45,6 +46,7 @@ export function HostsListPage() {
 
   const hosts = useHosts(org, filter);
   const zones = useZones(org);
+  const agents = useAgents(org);
   const createHost = useCreateHost(org);
   const createZone = useCreateZone(org);
   const hostQuery = useHostQuery(org);
@@ -74,6 +76,10 @@ export function HostsListPage() {
   const listedHosts = hosts.data?.pages.flatMap((page) => page.hosts ?? []) ?? [];
   const displayedHosts = selectorActive ? (hostQuery.data?.hosts ?? []) : listedHosts;
   const zoneSlugById = new Map((zones.data?.zones ?? []).map((z) => [z.id, z.slug]));
+  // One query for the whole page rather than one per row: the list shows
+  // each host's agent as its status dot, and the agents read is org-wide
+  // anyway (v0.3a, spec §8).
+  const agentStatusByHost = new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a.status]));
 
   const hostsGuard = useQueryGuard(hosts, { enabled: !selectorActive });
   if (hostsGuard) return hostsGuard;
@@ -160,7 +166,7 @@ export function HostsListPage() {
           </GridRow>
         )}
         {displayedHosts.map((h) => (
-          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} />
+          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} agentStatus={agentStatusByHost.get(h.id)} />
         ))}
       </Card>
       {!selectorActive && hosts.hasNextPage && (

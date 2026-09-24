@@ -21,6 +21,7 @@ export function HostRow({
   host,
   columns,
   zoneName,
+  agentStatus,
 }: {
   org: string;
   host: Host;
@@ -29,15 +30,26 @@ export function HostRow({
    * already loads the org's zones for the "Add host" dialog) — cheap fix,
    * task-15a-report.md fix round 1: this used to show a raw UUID prefix. */
   zoneName?: string;
+  /** The status of this host's agent, resolved by the caller from its one
+   * org-wide agents query (v0.3a). Undefined means the host runs no agent
+   * — which is what the dot showed for every host before there was any
+   * monitoring backend at all. */
+  agentStatus?: string;
 }) {
   const tags = useHostTags(org, host.id);
   const setCapabilities = useSetHostCapabilities(org, host.id);
 
   return (
     <GridRow columns={columns}>
-      {/* Always "unknown": there is no monitoring backend yet in v0.1, so
-         last_seen_at cannot honestly claim "ok" — cheap fix. */}
-      <span className="h-2 w-2 rounded-full" style={{ background: 'var(--px-unknown)' }} title="unknown" />
+      {/* The host's agent is what can honestly claim a state (v0.3a): it
+         reports on a heartbeat, and the server decides online from its
+         age. A host without an agent stays unknown — remote checks
+         (v0.3b) are what will speak for those. */}
+      <span
+        className="h-2 w-2 rounded-full"
+        style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus ? 'var(--px-warn)' : 'var(--px-unknown)' }}
+        title={agentStatus ? `agent ${agentStatus}` : 'unknown'}
+      />
       <Link
         to="/o/$org/hosts/$id"
         params={{ org, id: host.id }}

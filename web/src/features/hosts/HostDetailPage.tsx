@@ -12,6 +12,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { parseTagChip } from './selectorInput.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { may } from '../../lib/roles.ts';
+import { HostAgentCard } from './HostAgentCard.tsx';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
 import { HostSshCard } from './HostSshCard.tsx';
 import { ConnectionTestCard } from './ConnectionTestCard.tsx';
@@ -181,6 +182,7 @@ export function HostDetailPage() {
         </Card>
       </div>
 
+      <HostAgentCard org={org} hostId={h.id} canWrite={may(orgInfo.data?.org.role, 'agents.write')} />
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
       <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} />
       {h.managed && <ConnectionTestCard org={org} hostId={h.id} canWrite={canWrite} />}

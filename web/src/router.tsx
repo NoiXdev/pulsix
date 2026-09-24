@@ -23,6 +23,7 @@ import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
 import { WorkersPage } from './features/workers/WorkersPage.tsx';
+import { AgentsPage } from './features/agents/AgentsPage.tsx';
 import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 
@@ -132,6 +133,7 @@ const runsRoute = createRoute({
 });
 const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: RunDetailPage });
 const workersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/workers', component: WorkersPage });
+const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents', component: AgentsPage });
 const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
 
 /**
@@ -186,6 +188,7 @@ const routeTree = rootRoute.addChildren([
     runsRoute,
     runDetailRoute,
     workersRoute,
+    agentsRoute,
     maintenanceRoute,
     settingsRoute.addChildren([
       settingsIndexRoute,
