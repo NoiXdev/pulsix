@@ -258,14 +258,10 @@ func TestAgentEnrollmentGate(t *testing.T) {
 	// The host it created is monitored and carries the facts the agent
 	// collected from this machine, with the automatic tags derived from
 	// them (os is the one every platform reports).
-	var host struct {
-		Host struct {
-			ID        string            `json:"id"`
-			Monitored bool              `json:"monitored"`
-			Facts     map[string]string `json:"facts"`
-		} `json:"host"`
-	}
-	w.api.do(http.MethodGet, "/api/v1/orgs/"+w.org+"/hosts/"+first.HostID, nil, &host)
+	// The facts ride their own message on the stream: the heartbeat that
+	// made the agent "online" says nothing about them having arrived yet,
+	// so the read waits for them rather than racing the push.
+	host := waitForFacts(t, w, first.HostID)
 	if !host.Host.Monitored {
 		t.Error("the enrolled host is not monitored")
 	}
@@ -373,7 +369,7 @@ func TestAgentEnrollmentGate(t *testing.T) {
 			t.Fatal("the revoked agent is still listed")
 		}
 	}
-	w.api.do(http.MethodGet, "/api/v1/orgs/"+w.org+"/hosts/"+first.HostID, nil, &host)
+	host = hostOf(t, w, first.HostID)
 	if host.Host.Monitored {
 		t.Error("the host stayed monitored after its agent was revoked")
 	}
@@ -415,6 +411,40 @@ func assertSerialRefused(t *testing.T, w agentWorld, dir string) {
 	if code := status.Code(err); code != codes.Unauthenticated {
 		t.Fatalf("stream with the revoked certificate = %v (code %s), want Unauthenticated", err, code)
 	}
+}
+
+// hostRead is the host detail the gate asserts against.
+type hostRead struct {
+	Host struct {
+		ID        string            `json:"id"`
+		Monitored bool              `json:"monitored"`
+		Facts     map[string]string `json:"facts"`
+	} `json:"host"`
+}
+
+func hostOf(t *testing.T, w agentWorld, hostID string) hostRead {
+	t.Helper()
+	var out hostRead
+	w.api.do(http.MethodGet, "/api/v1/orgs/"+w.org+"/hosts/"+hostID, nil, &out)
+	return out
+}
+
+// waitForFacts polls the host until the agent's first facts push has
+// landed. An agent reports its heartbeat and its facts as two separate
+// messages, so "online" arrives strictly before the facts do.
+func waitForFacts(t *testing.T, w agentWorld, hostID string) hostRead {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var last hostRead
+	for time.Now().Before(deadline) {
+		last = hostOf(t, w, hostID)
+		if last.Host.Facts["os"] != "" {
+			return last
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for the agent's facts; host = %+v", last.Host)
+	return last
 }
 
 // serialOf reads the serial of the certificate persisted in dir — the
