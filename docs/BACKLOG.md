@@ -5,6 +5,12 @@ One line per deliverable, grouped by milestone. Update the status column as work
 
 Status legend: `idea` · `mockup` · `spec` · `planned` · `in progress` · `done`
 
+The status column is only useful if it is true. `done` means the thing
+ships and is covered by tests — not that a plan once named it. When part
+of a row ships and part does not, the row says which part (see 1.1b,
+1.12, 1.19): half-truths here cost more than an open row, because the
+next person reads this table instead of the code.
+
 Last updated: 2026-09-24
 
 ## Milestones
@@ -36,33 +42,33 @@ Last updated: 2026-09-24
 | 0.10 | Mockup: status page (public) + status page admin | mockup | |
 | 0.11 | Design spec (architecture, data model, protocols) | spec | `docs/superpowers/specs/2026-09-10-pulsix-architecture-design.md`, in review |
 | 0.13 | Mockups: setup wizard, account security, members/ACL, activity feed, credentials, playbooks/repos, schedules + webhook triggers, SSH access step, workers & zones, synthetic web/port check, monitoring group hierarchy | mockup | canvas pages "Core & monitoring" and "Admin & Ansible" |
-| 0.12 | Implementation plan v0.1 Core | planned | `docs/superpowers/plans/2026-09-10-v0.1-core.md`; later milestones get their own plans |
+| 0.12 | Implementation plan v0.1 Core | done | `docs/superpowers/plans/2026-09-10-v0.1-core.md`, executed; later milestones each got their own plan |
 
 ## v0.1 · Core
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 1.1 | Repo layout: Go monorepo (manager, worker, agent, proto), `web/` React SPA | planned | |
-| 1.1a | CI: lint, unit + integration tests on PR, coverage gates (Go ≥ 80 %, critical ≥ 90 %, SPA ≥ 70 %), Conventional Commits check | planned | test policy: no feature without tests |
-| 1.1b | E2E harness: Compose stack in CI, Playwright, Go scenario runner, mock SMTP/webhook, SSH + bastion + agent containers | planned | scenarios listed in spec §18 |
-| 1.2 | PostgreSQL + TimescaleDB schema, migrations | planned | single DB for everything |
-| 1.3 | Organizations, users, roles (owner, admin, operator, viewer) | planned | multi-tenant from day one |
-| 1.4 | Auth: password + TOTP MFA | planned | |
-| 1.5 | Auth: passkeys (WebAuthn), recovery codes | planned | go-webauthn |
-| 1.6 | API tokens (per user / per org, scoped) | planned | |
-| 1.7 | REST API, OpenAPI 3.1 spec generated from code | planned | API-first, SPA uses only the public API |
-| 1.8 | API explorer in the GUI (Scalar or Swagger UI) | planned | |
-| 1.9 | Hosts: CRUD, zones, capability flags `managed` / `monitored` | planned | independent, per host |
-| 1.10 | Host tags (key=value), manual + auto from facts | planned | link for monitoring groups and filters |
-| 1.11 | Audit log | planned | |
-| 1.12 | SPA shell: sidebar, org switcher, ⌘K search, zone filter, notifications | planned | |
-| 1.13 | Docker Compose single-node install (manager, worker, db) | planned | `docker compose up` |
+| 1.1 | Repo layout: Go monorepo (manager, worker, agent, proto), `web/` React SPA | done | v0.1; `cmd/agent` joined it in v0.3a |
+| 1.1a | CI: lint, unit + integration tests on PR, coverage gates (Go ≥ 80 %, critical ≥ 90 %, SPA ≥ 70 %), Conventional Commits check | done | `.github/workflows/ci.yml` + `scripts/coverage-gate.sh`, which prints a per-package table and fails on any package below its floor |
+| 1.1b | E2E harness: Compose stack in CI, Playwright, Go scenario runner, mock SMTP/webhook, SSH + bastion + agent containers | done | everything but the agent container: v0.3a runs the real agent binary as a process instead (the manager under test is one too, and the enrolment token only exists once the operator asks for it — see `web/e2e/agent.ts`). A container waits for a reason to exist, i.e. v0.6's relay |
+| 1.2 | PostgreSQL + TimescaleDB schema, migrations | done | goose, additive only; 41 migrations as of v0.3a |
+| 1.3 | Organizations, users, roles (owner, admin, operator, viewer) | done | row-level security per organization, enforced in the database and not only in the queries |
+| 1.4 | Auth: password + TOTP MFA | done | argon2id; TOTP with per-step replay protection |
+| 1.5 | Auth: passkeys (WebAuthn), recovery codes | done | go-webauthn |
+| 1.6 | API tokens (per user / per org, scoped) | done | |
+| 1.7 | REST API, OpenAPI 3.1 spec generated from code | done | huma v2; CI fails on drift between the document and the generated SPA client |
+| 1.8 | API explorer in the GUI (Scalar or Swagger UI) | done | Scalar, behind an MFA-complete session |
+| 1.9 | Hosts: CRUD, zones, capability flags `managed` / `monitored` | done | independent, per host |
+| 1.10 | Host tags (key=value), manual + auto from facts | done | manual in v0.1; the automatic half landed with the agent's facts in v0.3a (`source='fact'`, manual always wins) |
+| 1.11 | Audit log | done | a test enumerates every mutating route and fails the build for any that is neither audited nor explicitly allowlisted |
+| 1.12 | SPA shell: sidebar, org switcher, ⌘K search, zone filter, notifications | in progress | sidebar, org switcher and ⌘K search work. The zone filter and the notification bell are still placeholders in `web/src/ui/shell.tsx`: a static "All zones" label with a chevron that opens nothing, and a button with no handler |
+| 1.13 | Docker Compose single-node install (manager, worker, db) | done | `deploy/compose/docker-compose.yml` |
 | 1.14 | Light theme | idea | dark-first, light later |
 | 1.15 | Rate limiting on auth endpoints (login, TOTP verify, passkey finish, invite accept) | done | v0.3a Task 1: shared `clientip` fixed-window bucket, per route family, failed attempts only (hook semantics), 429 + Retry-After; `PULSIX_AUTH_RATE_LIMIT` default 20/min, 0 disables (tests) |
-| 1.19 | Account recovery when the second factor is lost: a recovery code must also authorise re-enrolling or disabling TOTP, otherwise the only way back is an administrator reset | planned | found during v0.1 Task 7 review |
-| 1.16 | User management: invitations by e-mail, roles (owner/admin/operator/viewer), remove, instance-admin deactivate | planned | plan v0.1 Task 10 |
-| 1.17 | Activity feed per org and per user from the audit log, filters by actor/object | planned | plan v0.1 Task 11 |
-| 1.18 | First-run setup wizard: instance admin, first org, SMTP, forced second-factor enrolment | planned | plan v0.1 Task 12 |
+| 1.19 | Account recovery when the second factor is lost: a recovery code must also authorise re-enrolling or disabling TOTP, otherwise the only way back is an administrator reset | planned | still open, and now half-true: v0.3a's step-up accepts a recovery code (it goes through `/auth/totp/verify`), but `DELETE /auth/totp` itself still calls `TOTP.Verify` with the code field only — so someone who lost their authenticator can prove themselves and still not remove it |
+| 1.16 | User management: invitations by e-mail, roles (owner/admin/operator/viewer), remove, instance-admin deactivate | done | |
+| 1.17 | Activity feed per org and per user from the audit log, filters by actor/object | done | |
+| 1.18 | First-run setup wizard: instance admin, first org, SMTP, forced second-factor enrolment | done | |
 
 ## v0.1 follow-ups from the final branch review
 
