@@ -29,7 +29,10 @@ const (
 	// MaxFactsKeys bounds one push; an agent reporting more is broken
 	// (or probing).
 	MaxFactsKeys = 64
-	// MaxFactsValueLen caps every value; the store keeps them verbatim.
+	// MaxFactsValueLen caps every value, measured in BYTES (len on the
+	// string, not runes) — the bound exists to keep the stored document
+	// small, and bytes are what it costs. The store keeps values verbatim
+	// up to it.
 	MaxFactsValueLen = 512
 )
 

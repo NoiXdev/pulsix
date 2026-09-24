@@ -311,6 +311,40 @@ func TestSQLTokenStoreTouchLastUsedThrottlesToOncePerMinute(t *testing.T) {
 	if got.LastUsedAt == nil || !got.LastUsedAt.Equal(third) {
 		t.Fatalf("LastUsedAt after the window passed = %v, want %v (the touch must apply again once the minute has passed)", got.LastUsedAt, third)
 	}
+
+	// The boundary itself, from both sides: the throttle is "at most one
+	// write per minute", so 59 seconds ago must still be throttled and 61
+	// seconds ago must write. Everything above only proves the far ends.
+	for _, tc := range []struct {
+		name  string
+		age   string
+		wrote bool
+	}{
+		{"just inside the window", "59 seconds", false},
+		{"just outside the window", "61 seconds", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := d.Pool().Exec(ctx, `UPDATE api_tokens SET last_used_at = now() - $2::interval WHERE id = $1`, tok.ID, tc.age); err != nil {
+				t.Fatal(err)
+			}
+			before, _, err := store.GetByHash(ctx, hash, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now().Truncate(time.Microsecond)
+			if err := store.TouchLastUsed(ctx, tok.ID, at); err != nil {
+				t.Fatalf("TouchLastUsed: %v", err)
+			}
+			after, _, err := store.GetByHash(ctx, hash, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if wrote := after.LastUsedAt.Equal(at); wrote != tc.wrote {
+				t.Errorf("last_used_at %s old: wrote = %v, want %v (before %v, after %v)",
+					tc.age, wrote, tc.wrote, before.LastUsedAt, after.LastUsedAt)
+			}
+		})
+	}
 }
 
 // TestSQLTokenStoreGetByHashUsesInjectedNow proves GetByHash evaluates

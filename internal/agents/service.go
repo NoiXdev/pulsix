@@ -168,10 +168,10 @@ type CAPinner interface {
 // runs inside the claim's transaction (the closure's context is
 // transaction-bound, so a store-backed implementation commits and rolls
 // back with the claim). The implementation is hosts.Service, wired in
-// Task 7's build-up (it must not be imported here: hosts depends on nothing
-// of agents, and agents must not depend on hosts' full surface to stay
-// testable with a fake). The fake in this package's tests stands in until
-// then.
+// app.Build; this package depends only on the port, so its own tests run
+// against a fake. It does import internal/hosts for one thing — mapping
+// that service's sentinel errors (a taken name) onto its own — which is a
+// dependency on hosts' error values, not on its surface.
 type HostProvisioner interface {
 	GetHost(ctx context.Context, orgID, hostID uuid.UUID) error
 	CreateHost(ctx context.Context, orgID, zoneID uuid.UUID, name string) (uuid.UUID, error)
@@ -436,11 +436,16 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 }
 
 // GetBySerial is the gRPC authentication path: the presented serial's
-// identity, org-unscoped. Unknown serials are ErrNotFound; a revoked
-// certificate is reported through AgentIdentity.Revoked — Task 7's
-// interceptor refuses on it (workers refuse inside the service; here the
-// renewal path needs to distinguish a live from a revoked serial, so the
-// raw fact is returned).
+// identity, org-unscoped, with the interceptor deciding on Revoked rather
+// than this service (the renewal path needs to tell a live serial from a
+// revoked one).
+//
+// Two different answers mean "revoked", and which one a caller gets
+// depends on how the serial was retired: a serial replaced by a
+// re-enrollment keeps its row and comes back with Revoked true, while
+// Revoke deletes the host's agent row, so its serials resolve to nothing
+// and come back as ErrNotFound. Both refuse the caller; only a diagnostic
+// reading them apart needs to know the difference.
 func (s *Service) GetBySerial(ctx context.Context, serial string) (AgentIdentity, error) {
 	if serial == "" {
 		return AgentIdentity{}, ErrNotFound

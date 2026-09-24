@@ -96,9 +96,11 @@ func (s *SQLTokenStore) Revoke(ctx context.Context, orgID, id uuid.UUID) error {
 // map — it then holds identically across managers and needs no
 // synchronization here — and a zero-row outcome is success (the touch was
 // throttled), not an error. The caller-supplied at still supplies the
-// written value whenever the predicate admits a write; in production the
-// manager's clock and the database's are the same wall clock, which is
-// what makes the comparison between the stored value and now() meaningful.
+// written value whenever the predicate admits a write. The comparison is
+// between a value this manager wrote and the database's own now(), so
+// what it needs is not one shared clock but bounded drift between them:
+// a manager running seconds ahead or behind still throttles to roughly a
+// minute, which is all the throttle promises.
 func (s *SQLTokenStore) TouchLastUsed(ctx context.Context, id uuid.UUID, at time.Time) error {
 	return s.q.TouchAPIToken(ctx, gen.TouchAPITokenParams{ID: id, LastUsedAt: pgtype.Timestamptz{Time: at, Valid: true}})
 }

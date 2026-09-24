@@ -135,6 +135,18 @@ func TestIdentityFromRejectsBadCertificates(t *testing.T) {
 			},
 		},
 		{
+			// The other mixed shape: an agent common name on a
+			// certificate that carries the zone SAN only a worker gets.
+			// The kind is read from the SANs, so this would otherwise
+			// resolve as a worker named "pulsix-agent …" — a worker
+			// identity minted through the agent path.
+			"zone SAN with agent CN (mixed shape)",
+			func(c *x509.Certificate) {
+				c.Subject.CommonName = agentCNPrefix + "agt-1"
+				c.URIs = []*url.URL{uri(zoneURIPrefix + zone)}
+			},
+		},
+		{
 			"org SAN only with worker CN (mixed shape)",
 			func(c *x509.Certificate) {
 				c.Subject.CommonName = workerCNPrefix + "fra-1"

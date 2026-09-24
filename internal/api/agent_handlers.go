@@ -26,11 +26,12 @@ import (
 // once, by the route that creates it.
 
 // defaultTokenMinutes and maxTokenMinutes bound how long an agent
-// enrollment token may live. The default matches the worker side's fixed
-// hour; the ceiling (a week) is what a staged rollout needs — a token
-// left valid for longer is a credential nobody is watching.
+// enrollment token may live. The default is the registry's own
+// agents.AgentTTL (an hour, like the worker side's fixed one), so the two
+// cannot drift apart; the ceiling (a week) is what a staged rollout needs
+// — a token left valid for longer is a credential nobody is watching.
 const (
-	defaultTokenMinutes = 60
+	defaultTokenMinutes = int(agents.AgentTTL / time.Minute)
 	maxTokenMinutes     = 7 * 24 * 60
 )
 

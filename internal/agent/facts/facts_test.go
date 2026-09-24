@@ -309,6 +309,11 @@ func TestCollectClampsOverlongValues(t *testing.T) {
 // version); the full live fact set is the v0.3a e2e gate's business
 // (Task 11, agent container on Linux).
 func TestPackageCollectUsesDefaultProviders(t *testing.T) {
+	// AgentVersion is package state the binary stamps once at startup;
+	// restore it so a later test in this package never reads this one's
+	// value.
+	restore := facts.AgentVersion
+	t.Cleanup(func() { facts.AgentVersion = restore })
 	facts.AgentVersion = "build-id-42"
 	got, err := facts.Collect(context.Background())
 	if err != nil {

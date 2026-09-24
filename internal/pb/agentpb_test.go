@@ -1,4 +1,4 @@
-package workerpb_test
+package pb_test
 
 import (
 	"reflect"

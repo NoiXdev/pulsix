@@ -227,7 +227,7 @@ func TestAuthAgentOrgMismatch(t *testing.T) {
 	certPEM, keyPEM, _ := h.issueAgent("foreign-agent", otherOrg, false)
 	// Register it under orgID's registry — the certificate's org SAN does
 	// not match the row it resolves to.
-	serial := MustSerial(t, h, certPEM)
+	serial := serialOf(t, h, certPEM)
 	h.agents.mu.Lock()
 	h.agents.bySerial[serial.String()] = agents.AgentIdentity{OrgID: orgID, HostID: uuid.Must(uuid.NewV7()), Name: "foreign-agent"}
 	h.agents.mu.Unlock()
@@ -240,10 +240,10 @@ func TestAuthAgentOrgMismatch(t *testing.T) {
 	}
 }
 
-// MustSerial parses the leaf certificate's serial out of certPEM (test
+// serialOf parses the leaf certificate's serial out of certPEM (test
 // helper for the org-mismatch case where the cert was issued but never
 // registered through the service).
-func MustSerial(t *testing.T, h *harness, certPEM []byte) *big.Int {
+func serialOf(t *testing.T, h *harness, certPEM []byte) *big.Int {
 	t.Helper()
 	block, _ := pem.Decode(certPEM)
 	if block == nil {

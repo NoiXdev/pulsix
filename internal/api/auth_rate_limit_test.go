@@ -142,9 +142,16 @@ func TestAuthRateLimitTripsOnLogin(t *testing.T) {
 	}
 }
 
-// TestAuthRateLimitTripsOnTOTPVerify enrols a TOTP factor first, so a wrong
-// code reaches the real verification path (401 "invalid code") rather than
-// bouncing off the missing secret.
+// TestAuthRateLimitTripsOnTOTPVerify pins that the endpoint is limited per
+// address. What each call below is charged for is the session check's 401:
+// the calls carry no cookie, so they never reach the code comparison — and
+// that is the flood this limit exists for, an address hammering the
+// endpoint without a half-authenticated session to its name. (The
+// enrolment and login above put the account in the state a real caller
+// would find, so the route under test is the live one.) Whether a wrong
+// code with a valid pending session is also charged is settled by
+// authRateLimitMiddleware's own rule — any 4xx charges — and by
+// TestAuthRateLimitCountsFailuresOnly.
 func TestAuthRateLimitTripsOnTOTPVerify(t *testing.T) {
 	s := limitedServer(t)
 	uid := s.SeedUser("totp@example.test", "correct horse battery")
