@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -157,7 +158,15 @@ func (s *SQLStore) Register(ctx context.Context, a Agent) error {
 		if err := s.q.RevokeAgentCertificates(ctx, gen.RevokeAgentCertificatesParams{OrgID: a.OrgID, HostID: a.HostID}); err != nil {
 			return fmt.Errorf("revoke previous agent certificate: %w", err)
 		}
-		if err := s.q.InsertAgentCertificate(ctx, gen.InsertAgentCertificateParams{Serial: a.CertSerial, OrgID: a.OrgID, HostID: a.HostID}); err != nil {
+		notAfter := time.Time{}
+		if a.CertNotAfter != nil {
+			notAfter = *a.CertNotAfter
+		}
+		if err := s.q.InsertAgentCertificate(ctx, gen.InsertAgentCertificateParams{
+			Serial: a.CertSerial, OrgID: a.OrgID, HostID: a.HostID,
+			NotBefore: pgtype.Timestamptz{Time: a.CertNotBefore, Valid: !a.CertNotBefore.IsZero()},
+			NotAfter:  pgtype.Timestamptz{Time: notAfter, Valid: !notAfter.IsZero()},
+		}); err != nil {
 			return fmt.Errorf("insert agent certificate: %w", err)
 		}
 		return nil
@@ -193,12 +202,36 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 	}
 	out := make([]Agent, len(rows))
 	for i, r := range rows {
-		out[i] = Agent{
-			HostID: r.HostID, OrgID: r.OrgID, AgentName: r.AgentName, CertSerial: r.CertSerial,
-			LastSeen: db.TimePtr(r.LastSeen), Version: r.Version, CreatedAt: r.CreatedAt,
-		}
+		out[i] = toAgent(r.HostAgent, r.CertNotAfter, r.HostName)
 	}
 	return out, nil
+}
+
+// toAgent maps one host_agents row plus its certificate's expiry (the
+// LEFT JOIN's column, absent for a row the 00039 backfill could not
+// reach) onto the domain type.
+func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) Agent {
+	a := Agent{
+		HostID: h.HostID, OrgID: h.OrgID, AgentName: h.AgentName, CertSerial: h.CertSerial,
+		LastSeen: db.TimePtr(h.LastSeen), Version: h.Version, CreatedAt: h.CreatedAt, HostName: hostName,
+	}
+	if certNotAfter.Valid {
+		t := certNotAfter.Time
+		a.CertNotAfter = &t
+	}
+	return a
+}
+
+// GetByHost is one host's active agent, with its certificate's expiry.
+func (s *SQLStore) GetByHost(ctx context.Context, orgID, hostID uuid.UUID) (Agent, error) {
+	row, err := s.q.GetHostAgent(ctx, gen.GetHostAgentParams{OrgID: orgID, HostID: hostID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Agent{}, ErrNotFound
+	}
+	if err != nil {
+		return Agent{}, fmt.Errorf("get host agent: %w", err)
+	}
+	return toAgent(row.HostAgent, row.CertNotAfter, row.HostName), nil
 }
 
 // Revoke marks every certificate of the host's agent revoked and removes

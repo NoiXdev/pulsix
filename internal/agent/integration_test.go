@@ -186,6 +186,12 @@ func (f *integAgentStore) Touch(_ context.Context, serial, version string) error
 
 func (f *integAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
 
+// GetByHost belongs to the API's host card, which this harness does not
+// exercise: the agent reaches the manager over gRPC only.
+func (f *integAgentStore) GetByHost(context.Context, uuid.UUID, uuid.UUID) (agents.Agent, error) {
+	return agents.Agent{}, agents.ErrNotFound
+}
+
 func (f *integAgentStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error {
 	return agents.ErrNotFound
 }
@@ -369,7 +375,10 @@ func newIntegHarness(t *testing.T) *integHarness {
 		zoneID: uuid.Must(uuid.NewV7()),
 	}
 	h.ca = newTestCA(t)
-	h.agentSvc = agents.NewService(h.store, agents.WithProvisioner(h.prov))
+	// The same CA the manager signs with: the token the harness mints
+	// then carries the fingerprint the agent pins its first connection
+	// against, exactly as in production.
+	h.agentSvc = agents.NewService(h.store, agents.WithProvisioner(h.prov), agents.WithCA(h.ca))
 	svc, err := agentapi.New(agentapi.Deps{
 		CA: h.ca, Agents: h.agentSvc, Audit: &integAuditor{},
 		Streams: agentapi.NewStreamRegistry(), Facts: h.sink, Clock: time.Now, ClientIP: clientip.New(nil),

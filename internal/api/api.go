@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/calendar"
@@ -84,6 +85,9 @@ type Deps struct {
 	Triggers *triggers.Service
 	// Workers is the worker registry (Workers page, enrollment tokens).
 	Workers *workers.Service
+	// Agents is the host-agent registry (Agents page, host Agent card,
+	// enrollment tokens); v0.3a, spec §8.
+	Agents *agents.Service
 	// Notify manages notification channels, their delivery log, schedule
 	// notification rules and the weekly digest (spec 2026-09-18 §5, §7).
 	Notify *notify.Service
@@ -224,6 +228,9 @@ func (d Deps) validate() error {
 	}
 	if d.Workers == nil {
 		missing = append(missing, "Workers")
+	}
+	if d.Agents == nil {
+		missing = append(missing, "Agents")
 	}
 	if d.Notify == nil {
 		missing = append(missing, "Notify")
@@ -426,6 +433,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerScheduleRoutes(orgScoped, deps)        // /orgs/{org}/schedules...
 	registerTriggerRoutes(orgScoped, deps)         // /orgs/{org}/triggers...
 	registerWorkerRoutes(orgScoped, deps)          // /orgs/{org}/workers..., /orgs/{org}/worker-enrollments...
+	registerAgentRoutes(orgScoped, deps)           // /orgs/{org}/agents..., /orgs/{org}/hosts/{id}/agent
 	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...
 	registerScheduleNotifyRoutes(orgScoped, deps)  // /orgs/{org}/schedules/{id}/notifications

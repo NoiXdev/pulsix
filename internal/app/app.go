@@ -309,7 +309,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// streams end with its registry rows. The agents service is the
 	// FactsSink itself (agents.Service.RecordFacts): facts merge into
 	// hosts.facts and re-apply the os/arch/virt automatic tags.
-	agentsSvc := agents.NewService(agents.NewSQLStore(appDB), agents.WithProvisioner(agentHostProvisioner{hostsSvc}))
+	agentsSvc := agents.NewService(agents.NewSQLStore(appDB), agents.WithProvisioner(NewAgentHostProvisioner(hostsSvc)),
+		// Every enrollment token carries this manager's CA fingerprint:
+		// it is what the agent pins its very first connection against.
+		agents.WithCA(caInst))
 	agentStreams := agentapi.NewStreamRegistry()
 	agentsSvc.SetRevokeHook(agentStreams)
 	agentSvc, err := agentapi.New(agentapi.Deps{
@@ -349,6 +352,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
+		// The Agents page and the host Agent card read the same registry
+		// the gRPC enrollment surface writes (agentapi above).
+		Agents: agentsSvc,
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
 		// out are the ones embedded at build time — nil in a build made

@@ -38,10 +38,24 @@ WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
   AND expires_at > now();
 
 -- name: GetHostAgent :one
-SELECT * FROM host_agents WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
+-- One host's agent for its detail card, with the same certificate window
+-- ListHostAgents reports.
+SELECT sqlc.embed(h), c.not_after AS cert_not_after, ho.name AS host_name
+FROM host_agents h
+JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
+LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
+WHERE h.org_id = sqlc.arg(org_id) AND h.host_id = sqlc.arg(host_id);
 
 -- name: ListHostAgents :many
-SELECT * FROM host_agents WHERE org_id = sqlc.arg(org_id) ORDER BY agent_name;
+-- The Agents page's rows: the agent plus the validity window of the
+-- certificate it currently authenticates with (the join is by the active
+-- serial, so a revoked predecessor's window never shows).
+SELECT sqlc.embed(h), c.not_after AS cert_not_after, ho.name AS host_name
+FROM host_agents h
+JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
+LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
+WHERE h.org_id = sqlc.arg(org_id)
+ORDER BY h.agent_name;
 
 -- name: UpsertHostAgent :one
 -- The active agent of a host: re-enrollment replaces the row in place
@@ -65,7 +79,10 @@ WHERE cert_serial = sqlc.arg(serial);
 DELETE FROM host_agents WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
 
 -- name: InsertAgentCertificate :exec
-INSERT INTO agent_certificates (serial, org_id, host_id) VALUES (sqlc.arg(serial), sqlc.arg(org_id), sqlc.arg(host_id));
+-- The validity window comes from the issued leaf; it is display data (the
+-- agent renews from its own certificate, the manager never re-reads this).
+INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after)
+VALUES (sqlc.arg(serial), sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(not_before), sqlc.arg(not_after));
 
 -- name: RevokeAgentCertificates :exec
 -- Idempotent: a second revoke keeps the first timestamp.

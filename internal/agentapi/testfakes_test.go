@@ -284,6 +284,19 @@ func (f *fakeAgentStore) List(_ context.Context, orgID uuid.UUID) ([]agents.Agen
 	return out, nil
 }
 
+// GetByHost is the API's host-card read; this package's service never
+// calls it, but the fake must satisfy the same Store.
+func (f *fakeAgentStore) GetByHost(_ context.Context, orgID, hostID uuid.UUID) (agents.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.agentsR {
+		if a.OrgID == orgID && a.HostID == hostID {
+			return a, nil
+		}
+	}
+	return agents.Agent{}, agents.ErrNotFound
+}
+
 func (f *fakeAgentStore) RecordFacts(context.Context, uuid.UUID, uuid.UUID, map[string]string) error {
 	return nil
 }
@@ -513,7 +526,7 @@ func newHarnessOpts(t *testing.T, withFacts bool) *harness {
 	if err := h.ca.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h.agentSvc = agents.NewService(h.store, agents.WithProvisioner(h.prov))
+	h.agentSvc = agents.NewService(h.store, agents.WithProvisioner(h.prov), agents.WithCA(h.ca))
 	h.signer = &fakeSigner{inner: h.ca}
 	deps := Deps{
 		CA: h.signer, Agents: h.agentSvc, Audit: h.audit,

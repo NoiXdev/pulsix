@@ -278,6 +278,12 @@ func (f *fakeAgentStore) Touch(context.Context, string, string) error { return n
 
 func (f *fakeAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
 
+// GetByHost serves the API's host card, which this package never calls:
+// the interceptor resolves by serial.
+func (f *fakeAgentStore) GetByHost(context.Context, uuid.UUID, uuid.UUID) (agents.Agent, error) {
+	return agents.Agent{}, agents.ErrNotFound
+}
+
 func (f *fakeAgentStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error {
 	return agents.ErrNotFound
 }
@@ -425,7 +431,10 @@ func (h *harness) issueAgent(name string, orgID uuid.UUID, register bool) (certP
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder})
 	serial = crt.SerialNumber
 	if register {
-		if err := agents.NewService(h.agents).Register(context.Background(), orgID, uuid.Must(uuid.NewV7()), name, "v0.3a", serial.String()); err != nil {
+		if err := agents.NewService(h.agents).Register(context.Background(), agents.Registration{
+			OrgID: orgID, HostID: uuid.Must(uuid.NewV7()), AgentName: name, Version: "v0.3a",
+			Serial: serial.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

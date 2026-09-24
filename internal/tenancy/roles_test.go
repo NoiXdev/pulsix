@@ -53,6 +53,13 @@ func TestRoleMatrix(t *testing.T) {
 		{tenancy.RoleOperator, tenancy.PermChannelsRead, true},
 		{tenancy.RoleOperator, tenancy.PermChannelsWrite, false},
 		{tenancy.RoleAdmin, tenancy.PermChannelsWrite, true},
+		// Agents are part of operating a host, not of running the
+		// platform: a viewer sees which hosts report, an operator
+		// enrolls and revokes them.
+		{tenancy.RoleViewer, tenancy.PermAgentsRead, true},
+		{tenancy.RoleViewer, tenancy.PermAgentsWrite, false},
+		{tenancy.RoleOperator, tenancy.PermAgentsWrite, true},
+		{tenancy.RoleAdmin, tenancy.PermAgentsWrite, true},
 		{tenancy.RoleViewer, tenancy.PermMaintenanceRead, true},
 		{tenancy.RoleViewer, tenancy.PermMaintenanceWrite, false},
 		{tenancy.RoleOperator, tenancy.PermMaintenanceWrite, true},

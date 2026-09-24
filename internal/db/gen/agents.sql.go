@@ -141,7 +141,11 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at FROM host_agents WHERE org_id = $1 AND host_id = $2
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, c.not_after AS cert_not_after, ho.name AS host_name
+FROM host_agents h
+JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
+LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
+WHERE h.org_id = $1 AND h.host_id = $2
 `
 
 type GetHostAgentParams struct {
@@ -149,57 +153,94 @@ type GetHostAgentParams struct {
 	HostID uuid.UUID `json:"host_id"`
 }
 
-func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (HostAgent, error) {
+type GetHostAgentRow struct {
+	HostAgent    HostAgent          `json:"host_agent"`
+	CertNotAfter pgtype.Timestamptz `json:"cert_not_after"`
+	HostName     string             `json:"host_name"`
+}
+
+// One host's agent for its detail card, with the same certificate window
+// ListHostAgents reports.
+func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (GetHostAgentRow, error) {
 	row := q.db.QueryRow(ctx, getHostAgent, arg.OrgID, arg.HostID)
-	var i HostAgent
+	var i GetHostAgentRow
 	err := row.Scan(
-		&i.HostID,
-		&i.OrgID,
-		&i.AgentName,
-		&i.CertSerial,
-		&i.LastSeen,
-		&i.Version,
-		&i.CreatedAt,
+		&i.HostAgent.HostID,
+		&i.HostAgent.OrgID,
+		&i.HostAgent.AgentName,
+		&i.HostAgent.CertSerial,
+		&i.HostAgent.LastSeen,
+		&i.HostAgent.Version,
+		&i.HostAgent.CreatedAt,
+		&i.CertNotAfter,
+		&i.HostName,
 	)
 	return i, err
 }
 
 const insertAgentCertificate = `-- name: InsertAgentCertificate :exec
-INSERT INTO agent_certificates (serial, org_id, host_id) VALUES ($1, $2, $3)
+INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertAgentCertificateParams struct {
-	Serial string    `json:"serial"`
-	OrgID  uuid.UUID `json:"org_id"`
-	HostID uuid.UUID `json:"host_id"`
+	Serial    string             `json:"serial"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	HostID    uuid.UUID          `json:"host_id"`
+	NotBefore pgtype.Timestamptz `json:"not_before"`
+	NotAfter  pgtype.Timestamptz `json:"not_after"`
 }
 
+// The validity window comes from the issued leaf; it is display data (the
+// agent renews from its own certificate, the manager never re-reads this).
 func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCertificateParams) error {
-	_, err := q.db.Exec(ctx, insertAgentCertificate, arg.Serial, arg.OrgID, arg.HostID)
+	_, err := q.db.Exec(ctx, insertAgentCertificate,
+		arg.Serial,
+		arg.OrgID,
+		arg.HostID,
+		arg.NotBefore,
+		arg.NotAfter,
+	)
 	return err
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at FROM host_agents WHERE org_id = $1 ORDER BY agent_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, c.not_after AS cert_not_after, ho.name AS host_name
+FROM host_agents h
+JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
+LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
+WHERE h.org_id = $1
+ORDER BY h.agent_name
 `
 
-func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]HostAgent, error) {
+type ListHostAgentsRow struct {
+	HostAgent    HostAgent          `json:"host_agent"`
+	CertNotAfter pgtype.Timestamptz `json:"cert_not_after"`
+	HostName     string             `json:"host_name"`
+}
+
+// The Agents page's rows: the agent plus the validity window of the
+// certificate it currently authenticates with (the join is by the active
+// serial, so a revoked predecessor's window never shows).
+func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHostAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listHostAgents, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []HostAgent
+	var items []ListHostAgentsRow
 	for rows.Next() {
-		var i HostAgent
+		var i ListHostAgentsRow
 		if err := rows.Scan(
-			&i.HostID,
-			&i.OrgID,
-			&i.AgentName,
-			&i.CertSerial,
-			&i.LastSeen,
-			&i.Version,
-			&i.CreatedAt,
+			&i.HostAgent.HostID,
+			&i.HostAgent.OrgID,
+			&i.HostAgent.AgentName,
+			&i.HostAgent.CertSerial,
+			&i.HostAgent.LastSeen,
+			&i.HostAgent.Version,
+			&i.HostAgent.CreatedAt,
+			&i.CertNotAfter,
+			&i.HostName,
 		); err != nil {
 			return nil, err
 		}

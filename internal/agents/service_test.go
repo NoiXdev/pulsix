@@ -210,6 +210,29 @@ func (f *fakeStore) EnrollmentOrg(_ context.Context, id uuid.UUID) (uuid.UUID, e
 	return t.OrgID, nil
 }
 
+// setLastSeen backdates a registered agent's heartbeat, which is what
+// the staleness verdict reads.
+func (f *fakeStore) setLastSeen(hostID uuid.UUID, seen *time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.agentsR {
+		if f.agentsR[i].HostID == hostID {
+			f.agentsR[i].LastSeen = seen
+		}
+	}
+}
+
+func (f *fakeStore) GetByHost(_ context.Context, orgID, hostID uuid.UUID) (agents.Agent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.agentsR {
+		if a.OrgID == orgID && a.HostID == hostID {
+			return a, nil
+		}
+	}
+	return agents.Agent{}, agents.ErrNotFound
+}
+
 func (f *fakeStore) Register(_ context.Context, a agents.Agent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -303,8 +326,47 @@ func newService(t *testing.T) (*agents.Service, *fakeStore, *fakeProvisioner, *t
 	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	p := &fakeProvisioner{}
 	st := &fakeStore{}
-	svc := agents.NewService(st, agents.WithProvisioner(p), agents.WithClock(func() time.Time { return now }))
+	svc := agents.NewService(st, agents.WithProvisioner(p), agents.WithClock(func() time.Time { return now }),
+		agents.WithCA(fakeCA{}))
 	return svc, st, p, &now
+}
+
+// The token an operator copies out of the GUI carries the CA fingerprint
+// the agent pins the manager against on its very first connection. A
+// service without a CA cannot mint one — and must say so instead of
+// handing out a token whose zero pin fails every enrollment.
+func TestCreateTokenCarriesTheCAPin(t *testing.T) {
+	svc, _, _, now := newService(t)
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	in := agents.TokenInput{ZoneID: zone, MaxUses: 1, ExpiresAt: now.Add(time.Hour)}
+	unpinned := agents.NewService(&fakeStore{}, agents.WithClock(func() time.Time { return *now }))
+	if _, err := unpinned.CreateToken(ctx, org, in); err == nil {
+		t.Fatal("a service without a CA minted a token, want a refusal")
+	}
+
+	tok, err := svc.CreateToken(ctx, org, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.CAPin != (fakeCA{}).CAPin() {
+		t.Errorf("token pin = %x, want the CA's own %x", tok.CAPin, (fakeCA{}).CAPin())
+	}
+	// It renders as an agent token: a worker parser must not take it.
+	printed := enrolltoken.AgentString(tok)
+	if _, err := enrolltoken.ParseAgent(printed); err != nil {
+		t.Errorf("ParseAgent(%q): %v", printed, err)
+	}
+}
+
+// fakeCA is a CA whose fingerprint is recognisable in assertions.
+type fakeCA struct{}
+
+func (fakeCA) CAPin() [32]byte {
+	var pin [32]byte
+	for i := range pin {
+		pin[i] = byte(i + 1)
+	}
+	return pin
 }
 
 func TestCreateTokenValidatesAndHashes(t *testing.T) {
@@ -521,11 +583,114 @@ func TestRevokeToken(t *testing.T) {
 	}
 }
 
+// reg is the registration a test that does not care about the
+// certificate window uses: a plain 90-day leaf, like the CA issues.
+func reg(orgID, hostID uuid.UUID, name, version, serial string) agents.Registration {
+	now := time.Now()
+	return agents.Registration{OrgID: orgID, HostID: hostID, AgentName: name, Version: version, Serial: serial,
+		NotBefore: now, NotAfter: now.Add(90 * 24 * time.Hour)}
+}
+
+// A registration without a usable validity window is refused: the window
+// is what the Agents page shows, and a zero one would read as "expired
+// in 1970" there.
+// The GUI's two reads: the Agents page's list and the host card's single
+// agent, both carrying the staleness verdict. An agent counts as online
+// while its last heartbeat is younger than three heartbeat intervals —
+// one missed heartbeat is a hiccup, three is an agent that stopped
+// reporting — and one that never reported at all is not online.
+func TestListViewMarksStaleAgents(t *testing.T) {
+	svc, st, _, now := newService(t)
+	org := uuid.Must(uuid.NewV7())
+	fresh, stale, silent := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, tc := range []struct {
+		host uuid.UUID
+		name string
+		seen *time.Time
+	}{
+		{fresh, "fresh", ptrTime(now.Add(-agents.StaleAfter + time.Second))},
+		{stale, "stale", ptrTime(now.Add(-agents.StaleAfter - time.Second))},
+		{silent, "silent", nil},
+	} {
+		if err := svc.Register(ctx, reg(org, tc.host, tc.name, "v1", "serial-"+tc.name)); err != nil {
+			t.Fatal(err)
+		}
+		st.setLastSeen(tc.host, tc.seen)
+	}
+
+	views, err := svc.ListView(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	online := map[string]bool{}
+	for _, v := range views {
+		online[v.AgentName] = v.Online
+	}
+	for name, want := range map[string]bool{"fresh": true, "stale": false, "silent": false} {
+		if got, ok := online[name]; !ok || got != want {
+			t.Errorf("agent %q online = %v (present %v), want %v", name, got, ok, want)
+		}
+	}
+
+	v, err := svc.ViewByHost(ctx, org, fresh)
+	if err != nil || !v.Online || v.AgentName != "fresh" {
+		t.Fatalf("ViewByHost = %+v, %v", v, err)
+	}
+	if _, err := svc.ViewByHost(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("unknown host: err = %v, want ErrNotFound", err)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+// The host detail card asks for one host's agent; an unmonitored host or
+// one whose agent was revoked has none, and that is ErrNotFound, not an
+// empty agent.
+func TestGetByHostReportsTheHostsAgent(t *testing.T) {
+	svc, _, _, _ := newService(t)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if _, err := svc.GetByHost(ctx, org, host); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("before enrollment: err = %v, want ErrNotFound", err)
+	}
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-h1")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetByHost(ctx, org, host)
+	if err != nil || got.AgentName != "agent-a" || got.CertSerial != "serial-h1" || got.CertNotAfter == nil {
+		t.Fatalf("GetByHost = %+v, %v", got, err)
+	}
+	// Another organization cannot see it: invisible, not forbidden.
+	if _, err := svc.GetByHost(ctx, uuid.Must(uuid.NewV7()), host); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("cross-org: err = %v, want ErrNotFound", err)
+	}
+	if err := svc.Revoke(ctx, org, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetByHost(ctx, org, host); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("after revocation: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRegisterRequiresAValidityWindow(t *testing.T) {
+	svc, _, _, _ := newService(t)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	now := time.Now()
+	for name, r := range map[string]agents.Registration{
+		"no window":     {OrgID: org, HostID: host, AgentName: "a", Serial: "s1"},
+		"inverted":      {OrgID: org, HostID: host, AgentName: "a", Serial: "s2", NotBefore: now, NotAfter: now.Add(-time.Hour)},
+		"zero duration": {OrgID: org, HostID: host, AgentName: "a", Serial: "s3", NotBefore: now, NotAfter: now},
+	} {
+		if err := svc.Register(ctx, r); !errors.Is(err, agents.ErrInvalidInput) {
+			t.Errorf("%s: err = %v, want ErrInvalidInput", name, err)
+		}
+	}
+}
+
 func TestRegisterReplacesAndRevokes(t *testing.T) {
 	svc, _, _, _ := newService(t)
 	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 
-	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-1"); err != nil {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-1")); err != nil {
 		t.Fatal(err)
 	}
 	id, err := svc.GetBySerial(ctx, "serial-1")
@@ -533,7 +698,7 @@ func TestRegisterReplacesAndRevokes(t *testing.T) {
 		t.Fatalf("first identity = %+v, %v", id, err)
 	}
 	// Re-enrollment: new serial, old revoked.
-	if err := svc.Register(ctx, org, host, "agent-a", "v2", "serial-2"); err != nil {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v2", "serial-2")); err != nil {
 		t.Fatal(err)
 	}
 	if id, err := svc.GetBySerial(ctx, "serial-2"); err != nil || id.HostID != host || id.Revoked {
@@ -546,10 +711,10 @@ func TestRegisterReplacesAndRevokes(t *testing.T) {
 	if err != nil || len(agents1) != 1 || agents1[0].AgentName != "agent-a" || agents1[0].Version != "v2" {
 		t.Fatalf("list = %+v, %v", agents1, err)
 	}
-	if err := svc.Register(ctx, org, host, "", "v1", "serial-3"); !errors.Is(err, agents.ErrInvalidInput) {
+	if err := svc.Register(ctx, reg(org, host, "", "v1", "serial-3")); !errors.Is(err, agents.ErrInvalidInput) {
 		t.Fatalf("empty name: %v", err)
 	}
-	if err := svc.Register(ctx, org, host, "agent-a", "v1", ""); !errors.Is(err, agents.ErrInvalidInput) {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "")); !errors.Is(err, agents.ErrInvalidInput) {
 		t.Fatalf("empty serial: %v", err)
 	}
 }
@@ -557,7 +722,7 @@ func TestRegisterReplacesAndRevokes(t *testing.T) {
 func TestTouchUpdatesList(t *testing.T) {
 	svc, _, _, _ := newService(t)
 	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-9"); err != nil {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-9")); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Touch(ctx, "serial-9", "v2"); err != nil {
@@ -572,7 +737,7 @@ func TestTouchUpdatesList(t *testing.T) {
 func TestRevokeAgent(t *testing.T) {
 	svc, _, _, _ := newService(t)
 	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-r"); err != nil {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-r")); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Revoke(ctx, org, host); err != nil {
@@ -588,7 +753,7 @@ func TestRevokeAgent(t *testing.T) {
 	// left to revoke — the API layer flips monitored=false on the first,
 	// Task 7's wiring).
 	others := uuid.Must(uuid.NewV7())
-	if err := svc.Register(ctx, others, host, "agent-b", "v1", "serial-o"); err != nil {
+	if err := svc.Register(ctx, reg(others, host, "agent-b", "v1", "serial-o")); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Revoke(ctx, org, host); !errors.Is(err, agents.ErrNotFound) {
@@ -707,7 +872,7 @@ func TestClaimFlipsMonitored(t *testing.T) {
 func TestRevokeEndsStreams(t *testing.T) {
 	svc, _, _, _ := newService(t)
 	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-s"); err != nil {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-s")); err != nil {
 		t.Fatal(err)
 	}
 	cutter := &fakeCutter{}
@@ -721,7 +886,7 @@ func TestRevokeEndsStreams(t *testing.T) {
 
 	// No hook wired: revoke still succeeds.
 	svc2, _, _, _ := newService(t)
-	if err := svc2.Register(ctx, org, host, "agent-b", "v1", "serial-t"); err != nil {
+	if err := svc2.Register(ctx, reg(org, host, "agent-b", "v1", "serial-t")); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc2.Revoke(ctx, org, host); err != nil {
@@ -777,7 +942,7 @@ func (f *fakeCutter) CloseHost(hostID uuid.UUID) int {
 func TestGetBySerialCarriesSerial(t *testing.T) {
 	svc, _, _, _ := newService(t)
 	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if err := svc.Register(ctx, org, host, "agent-a", "v1", "serial-x"); err != nil {
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-x")); err != nil {
 		t.Fatal(err)
 	}
 	id, err := svc.GetBySerial(ctx, "serial-x")

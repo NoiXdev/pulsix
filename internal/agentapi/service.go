@@ -191,7 +191,10 @@ func (s *Service) Enroll(ctx context.Context, req *agentpb.EnrollRequest) (*agen
 		slog.ErrorContext(ctx, "sign agent certificate", "token_id", tok.ID.String(), "err", err)
 		return nil, status.Error(codes.Internal, "enrollment failed")
 	}
-	if err := s.deps.Agents.Register(ctx, orgID, res.HostID, name, req.GetVersion(), crt.SerialNumber.String()); err != nil {
+	if err := s.deps.Agents.Register(ctx, agents.Registration{
+		OrgID: orgID, HostID: res.HostID, AgentName: name, Version: req.GetVersion(),
+		Serial: crt.SerialNumber.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
+	}); err != nil {
 		slog.ErrorContext(ctx, "register agent", "token_id", tok.ID.String(), "host_id", res.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "enrollment failed")
 	}
@@ -225,7 +228,10 @@ func (s *Service) Renew(ctx context.Context, req *agentpb.RenewRequest) (*agentp
 		slog.ErrorContext(ctx, "sign renewed agent certificate", "host_id", agent.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "certificate renewal failed")
 	}
-	if err := s.deps.Agents.Register(ctx, agent.OrgID, agent.HostID, agent.Name, agent.Version, crt.SerialNumber.String()); err != nil {
+	if err := s.deps.Agents.Register(ctx, agents.Registration{
+		OrgID: agent.OrgID, HostID: agent.HostID, AgentName: agent.Name, Version: agent.Version,
+		Serial: crt.SerialNumber.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
+	}); err != nil {
 		slog.ErrorContext(ctx, "swap agent certificate serial", "host_id", agent.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "certificate renewal failed")
 	}

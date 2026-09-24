@@ -64,6 +64,8 @@ type AgentCertificate struct {
 	HostID    uuid.UUID          `json:"host_id"`
 	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt time.Time          `json:"created_at"`
+	NotBefore pgtype.Timestamptz `json:"not_before"`
+	NotAfter  pgtype.Timestamptz `json:"not_after"`
 }
 
 type AgentEnrollment struct {

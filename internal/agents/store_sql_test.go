@@ -75,8 +75,22 @@ func newAgentWorld(t *testing.T, slug string) (*agents.Service, *agents.SQLStore
 	zone := seedZone(t, q, org, "default")
 	store := agents.NewSQLStore(d)
 	prov := hostServiceProvisioner{svc: hosts.NewService(hosts.NewSQLStore(d), time.Now)}
-	svc := agents.NewService(store, agents.WithProvisioner(prov))
+	// A pin source, like production's CA: every created token carries the
+	// fingerprint the enrolling agent pins against.
+	svc := agents.NewService(store, agents.WithProvisioner(prov), agents.WithCA(pinnedCA{}))
 	return svc, store, d, org, zone
+}
+
+// pinnedCA stands in for internal/ca here: these tests are about the
+// registry's SQL, not about certificate issuance.
+type pinnedCA struct{}
+
+func (pinnedCA) CAPin() [32]byte {
+	var pin [32]byte
+	for i := range pin {
+		pin[i] = byte(255 - i)
+	}
+	return pin
 }
 
 // createHost seeds one host through the real hosts service.
@@ -376,10 +390,26 @@ func TestAgentTokenMultiUse(t *testing.T) {
 // (org-unscoped, the gRPC path), touch it, list it — then replace it
 // through re-registration and verify the old serial is revoked and the row
 // rewritten (one row per host).
+// registrationOf is the boilerplate-free registration for tests that do
+// not care about the certificate's validity window.
+func registrationOf(orgID, hostID uuid.UUID, name, version, serial string) agents.Registration {
+	now := time.Now()
+	return agents.Registration{OrgID: orgID, HostID: hostID, AgentName: name, Version: version, Serial: serial,
+		NotBefore: now, NotAfter: now.Add(90 * 24 * time.Hour)}
+}
+
 func TestAgentRegisterRoundTrip(t *testing.T) {
 	svc, _, d, org, zone := newAgentWorld(t, "agent-registry")
 	h := createHost(t, d, org, zone, "web-6")
-	if err := svc.Register(ctx, org, h.ID, "agent-a", "v1", "4242"); err != nil {
+	// The certificate's own validity window travels with the
+	// registration: the Agents page shows when each agent's certificate
+	// expires, and nothing else in the system knows the leaf.
+	notBefore := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	notAfter := notBefore.Add(90 * 24 * time.Hour)
+	if err := svc.Register(ctx, agents.Registration{
+		OrgID: org, HostID: h.ID, AgentName: "agent-a", Version: "v1", Serial: "4242",
+		NotBefore: notBefore, NotAfter: notAfter,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	id, err := svc.GetBySerial(ctx, "4242")
@@ -393,12 +423,33 @@ func TestAgentRegisterRoundTrip(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].CertSerial != "4242" || got[0].Version != "v2" || got[0].LastSeen == nil {
 		t.Fatalf("after touch = %+v, %v", got, err)
 	}
+	if got[0].CertNotAfter == nil || !got[0].CertNotAfter.Equal(notAfter) {
+		t.Fatalf("CertNotAfter = %v, want %v", got[0].CertNotAfter, notAfter)
+	}
+	// The Agents page names its rows by host, so the read carries the
+	// host's name rather than making the page resolve every id itself.
+	if got[0].HostName != "web-6" {
+		t.Errorf("HostName = %q, want %q", got[0].HostName, "web-6")
+	}
+	one, err := svc.GetByHost(db.WithOrgScope(ctx, org), org, h.ID)
+	if err != nil || one.HostName != "web-6" || one.CertNotAfter == nil {
+		t.Fatalf("GetByHost = %+v, %v", one, err)
+	}
 
 	// Replace: a re-registration revokes the old serial and rewrites the
 	// row (one row per host). The old serial still RESOLVES — the join is
 	// by host — and carries Revoked (the caller refuses on it).
-	if err := svc.Register(ctx, org, h.ID, "agent-a", "v3", "4243"); err != nil {
+	renewedNotAfter := notAfter.Add(90 * 24 * time.Hour)
+	if err := svc.Register(ctx, agents.Registration{
+		OrgID: org, HostID: h.ID, AgentName: "agent-a", Version: "v3", Serial: "4243",
+		NotBefore: notAfter.Add(-time.Hour), NotAfter: renewedNotAfter,
+	}); err != nil {
 		t.Fatal(err)
+	}
+	// The replacement's window is what the page shows from then on.
+	if after, err := svc.List(db.WithOrgScope(ctx, org), org); err != nil ||
+		len(after) != 1 || after[0].CertNotAfter == nil || !after[0].CertNotAfter.Equal(renewedNotAfter) {
+		t.Fatalf("after renewal = %+v, %v", after, err)
 	}
 	if id, err := svc.GetBySerial(ctx, "4242"); err != nil || !id.Revoked {
 		t.Fatalf("old serial = %+v (revoked=%v), %v", id, id.Revoked, err)
@@ -437,7 +488,7 @@ func TestAgentTwoOrgIsolation(t *testing.T) {
 	q := gen.New(d.Pool())
 	other := seedOrg(t, q, "agent-iso-other")
 	h := createHost(t, d, org, zone, "web-7")
-	if err := svc.Register(ctx, org, h.ID, "agent-iso", "v1", "5252"); err != nil {
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-iso", "v1", "5252")); err != nil {
 		t.Fatal(err)
 	}
 	if tok, err := svc.CreateToken(db.WithOrgScope(ctx, org), org, agents.TokenInput{ZoneID: zone, NameHint: "iso", MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
@@ -484,7 +535,7 @@ func TestAgentTwoOrgIsolation(t *testing.T) {
 	}
 	// Registering an agent for a host of another organization is refused
 	// (the composite FK to hosts (org_id, id)).
-	if err := svc.Register(ctx, other, h.ID, "agent-iso", "v1", "5253"); err == nil {
+	if err := svc.Register(ctx, registrationOf(other, h.ID, "agent-iso", "v1", "5253")); err == nil {
 		t.Fatal("cross-org host register accepted")
 	}
 	// A presented serial still resolves org-unscoped (the gRPC path) —

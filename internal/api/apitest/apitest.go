@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/audit"
@@ -377,6 +378,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	// production; the dispatcher is not started here (like the reaper).
 	jobsQueue.SetRunGroupSink(notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil))
 	s.Queue = jobsQueue
+	agentsSvc := agents.NewService(agents.NewSQLStore(d), agents.WithProvisioner(app.NewAgentHostProvisioner(hostsSvc)),
+		agents.WithCA(testCA))
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
 		Tokens:   auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
@@ -402,6 +405,10 @@ func New(t *testing.T, opts ...Option) *Server {
 		Schedules:   schedulesSvc,
 		Triggers:    triggersSvc,
 		Workers:     workersSvc,
+		// The agent registry, wired exactly as app.Build wires it (the
+		// same store and host provisioner), so the API tests exercise the
+		// real thing rather than a stand-in.
+		Agents:      agentsSvc,
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),

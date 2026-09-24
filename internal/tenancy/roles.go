@@ -49,6 +49,11 @@ const (
 	PermWorkersRead  Permission = "workers.read"
 	PermWorkersWrite Permission = "workers.write"
 
+	// Agents (v0.3a, spec §8): the host agents that report monitoring
+	// data, and the enrollment tokens that admit them.
+	PermAgentsRead  Permission = "agents.read"
+	PermAgentsWrite Permission = "agents.write"
+
 	PermChannelsRead  Permission = "channels.read"
 	PermChannelsWrite Permission = "channels.write"
 
@@ -104,6 +109,13 @@ var matrix = map[Permission]Role{
 	// (spec 2026-09-18 §4).
 	PermWorkersRead:  RoleAdmin,
 	PermWorkersWrite: RoleAdmin,
+	// Agents (v0.3a) follow hosts, not workers: an agent belongs to one
+	// host and is part of operating it, so a viewer sees which hosts
+	// report and an operator enrolls and revokes them. Workers sit a
+	// level higher (they execute for the whole organization) and stay
+	// admin-only.
+	PermAgentsRead:  RoleViewer,
+	PermAgentsWrite: RoleOperator,
 	// Notification channels (spec 2026-09-18 §5): operators see them —
 	// they pick channels for a schedule's rules and read the delivery log —
 	// and admins manage them, because a channel decides where the

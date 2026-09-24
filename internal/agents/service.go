@@ -39,6 +39,17 @@ var (
 	ErrTokenConflict = errors.New("host name already in use")
 )
 
+// HeartbeatInterval is the cadence the agent reports at by default
+// (PULSIX_HEARTBEAT_INTERVAL, spec §8) and StaleAfter is three of them:
+// the window the GUI calls an agent online in. One missed heartbeat is a
+// hiccup — a reconnect, a slow network — three is an agent that stopped
+// reporting. The verdict is computed at read time from last_seen, so
+// nothing has to run to keep it current.
+const (
+	HeartbeatInterval = 30 * time.Second
+	StaleAfter        = 3 * HeartbeatInterval
+)
+
 // AgentTTL is how long a token is valid by default shape (the caller
 // passes ExpiresAt explicitly; the worker side pins one hour).
 const AgentTTL = time.Hour
@@ -53,6 +64,29 @@ type Agent struct {
 	LastSeen   *time.Time
 	Version    string
 	CreatedAt  time.Time
+	// CertNotBefore/CertNotAfter is the validity window of CertSerial's
+	// certificate — display data for the Agents page and the host's Agent
+	// card. Register carries it in from the issued leaf; reads fill only
+	// CertNotAfter (what the GUI shows), and it is nil for a row written
+	// before migration 00039 that the backfill could not reach.
+	CertNotBefore time.Time
+	CertNotAfter  *time.Time
+	// HostName is the host's name, read along with the agent so the
+	// Agents page can name its rows without resolving every host id.
+	HostName string
+}
+
+// Registration is one enrollment's or renewal's identity as the registry
+// records it: which host now runs which agent, under which certificate
+// serial, and the window that certificate is valid in.
+type Registration struct {
+	OrgID     uuid.UUID
+	HostID    uuid.UUID
+	AgentName string
+	Version   string
+	Serial    string
+	NotBefore time.Time
+	NotAfter  time.Time
 }
 
 // AgentIdentity is the org-unscoped serial lookup's answer: which
@@ -118,6 +152,15 @@ type StreamCutter interface {
 	CloseHost(hostID uuid.UUID) int
 }
 
+// CAPinner is the slice of the CA a created enrollment token needs: the
+// SHA-256 of the manager's own CA certificate. It travels inside the
+// token, and the enrolling agent pins the manager's chain against it on
+// its first connection (internal/agent's pinned dial) — a token without
+// it cannot enrol anything, which is why CreateToken refuses to mint one.
+type CAPinner interface {
+	CAPin() [32]byte
+}
+
 // HostProvisioner is the narrow slice of the hosts service Claim needs:
 // resolve a bound host inside the organization, create an unbound claim's
 // host in the token's zone, and flip the claimed host's monitored
@@ -162,6 +205,9 @@ type Store interface {
 	// Touch records a heartbeat by serial, org-unscoped.
 	Touch(ctx context.Context, serial, version string) error
 	List(ctx context.Context, orgID uuid.UUID) ([]Agent, error)
+	// GetByHost is one host's active agent, org-scoped; ErrNotFound when
+	// the host runs none (never enrolled, or revoked).
+	GetByHost(ctx context.Context, orgID, hostID uuid.UUID) (Agent, error)
 	// Revoke marks every certificate of the host's agent revoked and
 	// removes the host_agents row in one transaction. It does NOT touch
 	// hosts.monitored: the caller owns that flip (the API layer sets
@@ -190,6 +236,9 @@ type Service struct {
 	// streams is the revocation hook (SetRevokeHook); nil leaves a
 	// revocation at the registry rows.
 	streams StreamCutter
+	// ca supplies the fingerprint a created token carries; without it
+	// CreateToken refuses (see CAPinner).
+	ca CAPinner
 }
 
 // Option configures a Service.
@@ -197,6 +246,9 @@ type Option func(*Service)
 
 // WithProvisioner wires the host resolution/creation port claim needs.
 func WithProvisioner(p HostProvisioner) Option { return func(s *Service) { s.provisioner = p } }
+
+// WithCA wires the CA whose fingerprint created tokens carry.
+func WithCA(p CAPinner) Option { return func(s *Service) { s.ca = p } }
 
 // WithClock injects the clock (tests).
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
@@ -221,6 +273,9 @@ func NewService(store Store, opts ...Option) *Service {
 // only SHA-256(secret) is stored. Zone must be validated by the caller
 // (the API layer holds the zone list, agents does not).
 func (s *Service) CreateToken(ctx context.Context, orgID uuid.UUID, in TokenInput) (enrolltoken.Token, error) {
+	if s.ca == nil {
+		return enrolltoken.Token{}, errors.New("agents: create token: service was built without WithCA")
+	}
 	if in.ZoneID == uuid.Nil {
 		return enrolltoken.Token{}, fmt.Errorf("%w: zone is required", ErrInvalidInput)
 	}
@@ -242,6 +297,11 @@ func (s *Service) CreateToken(ctx context.Context, orgID uuid.UUID, in TokenInpu
 	if err != nil {
 		return enrolltoken.Token{}, err
 	}
+	// Taken before the store write, like the worker side: a CA that is
+	// wired but not initialised panics inside CAPin, and asking after the
+	// insert would leave a pending token row behind that panic — one that
+	// nothing can ever redeem.
+	pin := s.ca.CAPin()
 	t := Token{
 		ID: id, OrgID: orgID, ZoneID: in.ZoneID, HostID: in.HostID, NameHint: in.NameHint,
 		MaxUses: in.MaxUses, ExpiresAt: in.ExpiresAt, CreatedBy: in.CreatedBy, CreatedAt: s.now(),
@@ -250,9 +310,9 @@ func (s *Service) CreateToken(ctx context.Context, orgID uuid.UUID, in TokenInpu
 	if err != nil {
 		return enrolltoken.Token{}, err
 	}
-	// The pin travels inside the token; the CA ensures it matches the
-	// manager's own certificate (Task 6/7 wire the real CA here).
-	return enrolltoken.Token{ID: stored.ID, Secret: secret, CAPin: [32]byte{}}, nil
+	// The pin travels inside the token: it is what lets the agent trust
+	// this manager's CA on a connection it has no certificate for yet.
+	return enrolltoken.Token{ID: stored.ID, Secret: secret, CAPin: pin}, nil
 }
 
 // ListTokens returns orgID's pending (unused-up, unexpired) tokens.
@@ -358,14 +418,21 @@ func (s *Service) EnrollmentOrg(ctx context.Context, tokenID uuid.UUID) (uuid.UU
 // Register records a newly enrolled agent as its host's active one and
 // issues the identity: the certificate row is written and any previous
 // serial of the host is revoked, all in the store's single transaction.
-func (s *Service) Register(ctx context.Context, orgID, hostID uuid.UUID, agentName, version, serial string) error {
-	if agentName == "" {
+func (s *Service) Register(ctx context.Context, r Registration) error {
+	if r.AgentName == "" {
 		return fmt.Errorf("%w: agent name is required", ErrInvalidInput)
 	}
-	if serial == "" {
+	if r.Serial == "" {
 		return fmt.Errorf("%w: certificate serial is required", ErrInvalidInput)
 	}
-	return s.store.Register(ctx, Agent{HostID: hostID, OrgID: orgID, AgentName: agentName, CertSerial: serial, Version: version})
+	if r.NotAfter.IsZero() || !r.NotAfter.After(r.NotBefore) {
+		return fmt.Errorf("%w: the certificate validity window is required (not_before < not_after)", ErrInvalidInput)
+	}
+	notAfter := r.NotAfter
+	return s.store.Register(ctx, Agent{
+		HostID: r.HostID, OrgID: r.OrgID, AgentName: r.AgentName, CertSerial: r.Serial, Version: r.Version,
+		CertNotBefore: r.NotBefore, CertNotAfter: &notAfter,
+	})
 }
 
 // GetBySerial is the gRPC authentication path: the presented serial's
@@ -395,6 +462,52 @@ func (s *Service) Touch(ctx context.Context, serial, version string) error {
 // List returns orgID's agents ordered by agent name.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 	return s.store.List(ctx, orgID)
+}
+
+// View is one agent as the GUI shows it: the registry row plus the
+// staleness verdict (see StaleAfter). The host's name rides along so the
+// Agents page can name its rows without a second query.
+type View struct {
+	Agent
+	Online bool
+}
+
+// ListView is the Agents page's read: every agent of the organization
+// with its staleness verdict.
+func (s *Service) ListView(ctx context.Context, orgID uuid.UUID) ([]View, error) {
+	list, err := s.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	out := make([]View, len(list))
+	for i, a := range list {
+		out[i] = View{Agent: a, Online: isOnline(a.LastSeen, now)}
+	}
+	return out, nil
+}
+
+// ViewByHost is the host detail card's read: the host's agent with the
+// same verdict, ErrNotFound when the host runs none.
+func (s *Service) ViewByHost(ctx context.Context, orgID, hostID uuid.UUID) (View, error) {
+	a, err := s.GetByHost(ctx, orgID, hostID)
+	if err != nil {
+		return View{}, err
+	}
+	return View{Agent: a, Online: isOnline(a.LastSeen, s.now())}, nil
+}
+
+// isOnline: an agent that never reported is not online, and one whose
+// last heartbeat is older than StaleAfter has stopped reporting.
+func isOnline(lastSeen *time.Time, now time.Time) bool {
+	return lastSeen != nil && now.Sub(*lastSeen) < StaleAfter
+}
+
+// GetByHost is the host detail card's read: the host's active agent, or
+// ErrNotFound when it runs none — a host of another organization is
+// invisible the same way.
+func (s *Service) GetByHost(ctx context.Context, orgID, hostID uuid.UUID) (Agent, error) {
+	return s.store.GetByHost(ctx, orgID, hostID)
 }
 
 // Revoke ends an agent: every certificate serial the host's agent held is

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
@@ -195,7 +196,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
@@ -366,7 +367,7 @@ func testDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }

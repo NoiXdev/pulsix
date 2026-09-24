@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/hosts"
 )
 
@@ -16,6 +17,13 @@ import (
 // The claim calls all three with its transaction-bound context, so a
 // created host and the monitored flip join the claim's atomicity.
 type agentHostProvisioner struct{ svc *hosts.Service }
+
+// NewAgentHostProvisioner wires the adapter (also used by
+// internal/api/apitest, which builds the agent registry the same way
+// Build does so the API tests run against the real wiring).
+func NewAgentHostProvisioner(svc *hosts.Service) agents.HostProvisioner {
+	return agentHostProvisioner{svc: svc}
+}
 
 // GetHost implements agents.HostProvisioner.
 func (p agentHostProvisioner) GetHost(ctx context.Context, orgID, hostID uuid.UUID) error {
