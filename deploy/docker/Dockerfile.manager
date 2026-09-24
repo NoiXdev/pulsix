@@ -63,6 +63,13 @@ COPY . .
 RUN rm -rf internal/web/dist
 COPY --from=web /src/web/dist ./internal/web/dist
 ARG VERSION=dev
+# The agent binaries the manager embeds and serves at GET /agents/bin/...
+# (internal/agentdist): cross-compiled here, into the same dist directory
+# `make agent-binaries` fills outside Docker, BEFORE the manager build
+# below embeds it — a manager built without this step serves 503 there
+# and a host could not install an agent from this image. The script is
+# POSIX sh on purpose: this base has busybox ash, no bash.
+RUN sh scripts/agent-binaries.sh "${VERSION}"
 # CGO_ENABLED=0 for a fully static binary the distroless "static" base can
 # run with no libc. -trimpath removes this build's absolute source paths
 # from the binary; -s -w strip the symbol table and DWARF debug info both

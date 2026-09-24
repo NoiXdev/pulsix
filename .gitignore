@@ -17,3 +17,11 @@ web/.tmp/
 internal/web/dist/*
 !internal/web/dist/index.html
 !internal/web/dist/robots.txt
+
+# `scripts/agent-binaries.sh` (make agent-binaries) cross-compiles the
+# agent binaries the manager embeds and serves at GET /agents/bin/... .
+# They are build output, never committed; the committed .placeholder is
+# what keeps `go:embed all:dist` compilable in a tree that never ran the
+# script (see internal/agentdist/dist/.placeholder).
+internal/agentdist/dist/*
+!internal/agentdist/dist/.placeholder

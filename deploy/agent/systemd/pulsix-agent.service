@@ -1,0 +1,36 @@
+# The Pulsix agent's systemd unit. The install script (deploy/install.sh,
+# served by the manager at GET /install.sh) writes this file verbatim to
+# /etc/systemd/system/pulsix-agent.service, so the manager embeds a copy
+# (internal/agentdist) and a drift test keeps the two in lockstep.
+#
+# The agent runs as root: it writes its identity into /etc/pulsix and
+# reads system facts (/proc, sysfs, network state). The hardening here
+# bounds what it can touch to exactly that.
+[Unit]
+Description=Pulsix agent
+Documentation=https://docs.noix.dev/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/pulsix/agent.env
+ExecStart=/usr/local/bin/pulsix-agent
+Restart=on-failure
+RestartSec=5s
+User=root
+Group=root
+# Hardening: the agent needs /etc/pulsix (identity) and nothing else
+# writable; everything else is read-only or hidden. network-online is the
+# only ordering it needs.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/pulsix
+ProtectHome=true
+PrivateTmp=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

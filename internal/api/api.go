@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"strings"
 
@@ -101,6 +102,19 @@ type Deps struct {
 	AuthRateLimit int
 	// WorkerEndpoint is what remote workers dial; empty Addr disables enrollment.
 	WorkerEndpoint WorkerEndpoint
+	// PublicURL is this manager's own externally reachable base URL
+	// (PULSIX_PUBLIC_URL). The agent install script is templated with it,
+	// so a host that pipes GET /install.sh into a shell downloads the
+	// agent binary from the manager it is being installed against; empty
+	// (only tests and a half-wired Deps) makes that route answer 503
+	// instead of serving a script with nowhere to download from.
+	PublicURL string
+	// AgentBinaries is the agent distribution GET /agents/bin/... serves:
+	// agentdist.Files(), which is nil in a build that did not run
+	// `make agent-binaries` (the committed placeholder dist carries no
+	// binary). nil makes the binary route answer 503 naming that build
+	// step — the manager, the SPA and every other route work regardless.
+	AgentBinaries fs.FS
 	// Mailer is the concrete SMTP sender, not the narrower tenancy.Mailer
 	// interface tenancy.Service is built with: only this package's own
 	// POST /admin/settings/smtp/test handler needs it, to run a live
@@ -282,6 +296,13 @@ func New(deps Deps) (http.Handler, error) {
 			Version string `json:"version"`
 		}{Status: "ok", Version: healthzVersion})
 	})
+
+	// The public agent distribution (GET /install.sh, GET /agents/bin/...):
+	// outside /api on purpose — an installing host fetches them with curl
+	// before it has any credential at all. See agent_install.go.
+	if err := registerInstallRoutes(r, deps); err != nil {
+		return nil, err
+	}
 
 	r.Get("/api/explorer", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

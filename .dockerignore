@@ -29,3 +29,10 @@ web/.tmp/
 # any .env* file inside the image build context.
 **/.env
 **/.env.*
+
+# A developer's locally built agent binaries (make agent-binaries). The
+# image build cross-compiles its own inside the build stage, so shipping
+# these into the context would only make it ~25 MB heavier per build.
+# internal/agentdist/dist/.placeholder is deliberately NOT excluded: it
+# is what keeps `go:embed all:dist` compilable.
+internal/agentdist/dist/pulsix-agent-*

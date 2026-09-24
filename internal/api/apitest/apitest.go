@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -157,6 +158,15 @@ func WithSecureCookies() Option {
 // on here with a small budget.
 func WithAuthRateLimit(n int) Option {
 	return func(s *Server) { s.Deps.AuthRateLimit = n }
+}
+
+// WithAgentBinaries sets Deps.AgentBinaries — the agent distribution
+// GET /agents/bin/{os}/{arch} serves. A test build embeds no real agent
+// binaries (that needs `make agent-binaries`), so a test that wants the
+// download route to serve something hands it a small in-memory filesystem
+// named the way the distribution is: pulsix-agent-<os>-<arch>[.sha256].
+func WithAgentBinaries(dist fs.FS) Option {
+	return func(s *Server) { s.Deps.AgentBinaries = dist }
 }
 
 // WithTrustedProxies replaces Deps.ClientIP with a resolver trusting the
@@ -398,6 +408,9 @@ func New(t *testing.T, opts ...Option) *Server {
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},
+		// The same URL the passkey origin and the notification links use:
+		// what GET /install.sh templates the agent download into.
+		PublicURL: publicURL,
 	}
 	for _, opt := range opts {
 		opt(s)

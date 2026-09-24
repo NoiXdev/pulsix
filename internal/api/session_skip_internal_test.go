@@ -9,7 +9,8 @@ import (
 // TestSkipsSessionLookup pins the route set that skips the session lookup
 // for backlog 1.22: every path outside the API subtree — the SPA routes and
 // embedded assets web.Handler serves as the router's NotFound fallback,
-// plus /healthz — skips, while every /api path (all handler operations live
+// plus /healthz and the public agent distribution (/install.sh,
+// /agents/bin/...) — skips, while every /api path (all handler operations live
 // under /api/v1; the explorer and the OpenAPI document sit at /api/explorer
 // and /api/openapi*) keeps the lookup the session principal is read from.
 func TestSkipsSessionLookup(t *testing.T) {
@@ -28,6 +29,9 @@ func TestSkipsSessionLookup(t *testing.T) {
 		{"/totally-unknown", true},
 		// Public and principal-free.
 		{"/healthz", true},
+		{"/install.sh", true},
+		{"/agents/bin/linux/amd64", true},
+		{"/agents/bin/linux/amd64.sha256", true},
 		// API territory: the session principal is consulted here.
 		{"/api", false},
 		{"/api/v1/auth/me", false},

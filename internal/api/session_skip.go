@@ -17,13 +17,16 @@ import (
 // web.Handler (internal/api/api.go): the SPA's client-side routes (/,
 // /login, /o/{org}/hosts, ...), its embedded assets (/assets/*,
 // /robots.txt, any other embedded file, and any non-API path that 404s),
-// plus /healthz, whose handler reads no principal. The principal the
-// session cookie resolves to is read exclusively under /api — every
-// handler operation lives under /api/v1, and requireMFAForExplorer gates
-// /api/explorer and /api/openapi — so no authenticated route is ever
-// affected. An unmatched /api path (which web.Handler 404s) still pays the
-// lookup on purpose: the decision is a single conservative prefix check
-// rather than a second, drift-prone copy of chi's routing table.
+// plus /healthz, whose handler reads no principal, and the public agent
+// distribution (/install.sh, /agents/bin/...), which a host being
+// installed fetches with curl before it has any credential at all. The
+// principal the session cookie resolves to is read exclusively under
+// /api — every handler operation lives under /api/v1, and
+// requireMFAForExplorer gates /api/explorer and /api/openapi — so no
+// authenticated route is ever affected. An unmatched /api path (which
+// web.Handler 404s) still pays the lookup on purpose: the decision is a
+// single conservative prefix check rather than a second, drift-prone copy
+// of chi's routing table.
 func staticSessionSkip(sessionMW func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		sessioned := sessionMW(next)

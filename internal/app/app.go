@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/noixdev/pulsix/internal/agentapi"
+	"github.com/noixdev/pulsix/internal/agentdist"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
@@ -348,6 +349,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
+		// The public agent distribution: the install script is templated
+		// with this manager's own public URL, and the binaries it hands
+		// out are the ones embedded at build time — nil in a build made
+		// without `make agent-binaries`, which the route reports.
+		PublicURL: cfg.PublicURL, AgentBinaries: agentdist.Files(),
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),

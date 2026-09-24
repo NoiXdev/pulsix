@@ -1,0 +1,8 @@
+Internal build artifact placeholder.
+
+`make agent-binaries` fills this directory with the cross-compiled
+agent binaries (pulsix-agent-linux-{amd64,arm64} plus their .sha256
+checksums), which the manager then serves at
+GET /agents/bin/linux/{arch}. This placeholder keeps `go:embed all:dist`
+compilable without them — the binary routes answer 503 with
+"run make agent-binaries" until they exist.
