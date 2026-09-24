@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -77,6 +77,46 @@ describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', (
     expect(screen.getByLabelText('Host')).toHaveValue('smtp.acme.io');
     // The stored password is never shown back.
     expect(screen.getByLabelText('Password')).toHaveValue('');
+  });
+
+  it('keeps the stored password when the field is left empty, and removes it on request', async () => {
+    const user = userEvent.setup();
+    const saves: Array<Record<string, unknown>> = [];
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/settings/smtp': {
+        configured: true, host: 'smtp.acme.io', port: 2525, username: 'mailer', from: 'pulsix@acme.io', start_tls: false,
+      },
+      'PUT /api/v1/admin/settings/smtp': (req: MockRequest) => {
+        saves.push(req.body as Record<string, unknown>);
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    renderPage();
+    expect(await screen.findByText('configured')).toBeInTheDocument();
+
+    // Changing the host alone: the password field stays empty because the
+    // page cannot show it, so the save must not carry one at all.
+    await user.clear(screen.getByLabelText('Host'));
+    await user.type(screen.getByLabelText('Host'), 'smtp2.acme.io');
+    await user.click(screen.getByRole('button', { name: /Save mail settings/ }));
+    expect(await screen.findByText('Mail settings saved')).toBeInTheDocument();
+    expect(saves[0]).toMatchObject({ host: 'smtp2.acme.io' });
+    expect(saves[0]).not.toHaveProperty('password');
+
+    // Typing one replaces it.
+    await user.type(screen.getByLabelText('Password'), 'n3w');
+    await user.click(screen.getByRole('button', { name: /Save mail settings/ }));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(saves[1]).toMatchObject({ password: 'n3w' });
+
+    // And the explicit checkbox clears it — the only way to reach a relay
+    // that wants no password at all.
+    await user.click(screen.getByLabelText('Remove the stored password'));
+    await user.click(screen.getByRole('button', { name: /Save mail settings/ }));
+    await waitFor(() => expect(saves).toHaveLength(3));
+    expect(saves[2]).toMatchObject({ password: '' });
   });
 
   it('sends a test e-mail and shows the mail server\'s answer when it fails', async () => {

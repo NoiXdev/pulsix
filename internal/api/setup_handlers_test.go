@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -378,4 +379,70 @@ func jsonHasKey(body, key string) bool {
 	}
 	_, ok := m[key]
 	return ok
+}
+
+// Saving one field must not wipe the password (backlog 1.24). The settings
+// form never shows the stored password — it cannot, the route refuses to
+// return it — so a PUT that changes the host carries no password, and
+// before this the save replaced the sealed secret with an empty string:
+// mail stopped working, with nothing on screen to explain why.
+func TestSMTPSettingsUpdateKeepsTheStoredPassword(t *testing.T) {
+	s := apitest.New(t)
+	// The wizard's admin is the instance admin these routes require.
+	wizard := postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/setup/complete", completeSetupBody("smtp-keep@example.test", "smtp-keep"))
+	if wizard.StatusCode != http.StatusCreated {
+		t.Fatalf("wizard complete: %d", wizard.StatusCode)
+	}
+	var out struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.NewDecoder(wizard.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	c := s.LoginAs(uuid.MustParse(out.UserID))
+	url := s.HTTP.URL + "/api/v1/admin/settings/smtp"
+	ctx := context.Background()
+
+	full := map[string]any{
+		"host": "smtp.example.test", "port": 587, "username": "u",
+		"password": "s3cret", "from": "pulsix@example.test", "start_tls": true,
+	}
+	if resp := requestJSON(t, c, http.MethodPut, url, full); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("initial save: %d", resp.StatusCode)
+	}
+	if got, err := s.Deps.Setup.LoadSMTP(ctx); err != nil || got.Password != "s3cret" {
+		t.Fatalf("stored password after the initial save = %q, %v", got.Password, err)
+	}
+
+	// The form saves a different host and sends no password field at all.
+	partial := map[string]any{
+		"host": "smtp2.example.test", "port": 587, "username": "u",
+		"from": "pulsix@example.test", "start_tls": true,
+	}
+	if resp := requestJSON(t, c, http.MethodPut, url, partial); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("partial save: %d", resp.StatusCode)
+	}
+	got, err := s.Deps.Setup.LoadSMTP(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Host != "smtp2.example.test" {
+		t.Errorf("host = %q, want the new one", got.Host)
+	}
+	if got.Password != "s3cret" {
+		t.Errorf("password = %q, want the stored one to survive an update that omits it", got.Password)
+	}
+
+	// An explicit empty password still clears it — that is how an operator
+	// moves to a relay that wants none, and the only way to say so.
+	cleared := map[string]any{
+		"host": "smtp2.example.test", "port": 587, "username": "u",
+		"password": "", "from": "pulsix@example.test", "start_tls": true,
+	}
+	if resp := requestJSON(t, c, http.MethodPut, url, cleared); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("clearing save: %d", resp.StatusCode)
+	}
+	if got, err := s.Deps.Setup.LoadSMTP(ctx); err != nil || got.Password != "" {
+		t.Fatalf("password after an explicit empty value = %q, %v — it must be cleared", got.Password, err)
+	}
 }

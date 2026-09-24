@@ -41,6 +41,11 @@ export const smtpSchema = z.object({
 });
 export type SmtpFormValues = z.infer<typeof smtpSchema>;
 
+/** What the settings form actually sends: the password is optional on the
+ * wire so an untouched field keeps the stored one (the form can never show
+ * it back). An empty string is the explicit "remove it". */
+export type SmtpSaveValues = Omit<SmtpFormValues, 'password'> & { password?: string };
+
 export const hostFormSchema = z.object({
   name: hostNameSchema,
   zone_id: z.string().min(1, 'select a zone'),

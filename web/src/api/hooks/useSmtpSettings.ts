@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
-import type { SmtpFormValues } from '../../lib/schemas.ts';
+import type { SmtpSaveValues } from '../../lib/schemas.ts';
 
 const smtpQueryKey = ['admin', 'smtp'] as const;
 
@@ -15,7 +15,7 @@ export function useSmtpSettings() {
 export function useSaveSmtpSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: SmtpFormValues) => unwrap(api.PUT('/api/v1/admin/settings/smtp', { body })),
+    mutationFn: (body: SmtpSaveValues) => unwrap(api.PUT('/api/v1/admin/settings/smtp', { body })),
     // gcTime: 0 — the variables carry the SMTP password; drop them from
     // the mutation cache as soon as nothing observes this mutation.
     gcTime: 0,

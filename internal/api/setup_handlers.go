@@ -107,6 +107,26 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("completeSetup", "setup"))
 }
 
+// keepStoredPassword resolves a body whose password is absent against the
+// stored settings, so saving any other field leaves the secret alone. A
+// first save has nothing to keep (mail.ErrNotConfigured): the empty
+// password stands, which is the same thing the wizard means.
+func keepStoredPassword(ctx context.Context, deps Deps, body smtpSettingsBody) (mail.SMTPSettings, error) {
+	out := body.toSettings()
+	if body.Password != nil {
+		return out, nil
+	}
+	stored, err := deps.Setup.LoadSMTP(ctx)
+	switch {
+	case errors.Is(err, mail.ErrNotConfigured):
+		return out, nil
+	case err != nil:
+		return mail.SMTPSettings{}, mapSetupErr(ctx, err)
+	}
+	out.Password = stored.Password
+	return out, nil
+}
+
 // smtpSettingsBody is the wire shape of SMTP settings shared by
 // setupCompleteInput's optional SMTP field and PUT /admin/settings/smtp's
 // request body.
@@ -114,13 +134,28 @@ type smtpSettingsBody struct {
 	Host     string `json:"host" minLength:"1"`
 	Port     int    `json:"port" minimum:"1" maximum:"65535"`
 	Username string `json:"username"`
-	Password string `json:"password"`
-	From     string `json:"from" format:"email" minLength:"3"`
-	StartTLS bool   `json:"start_tls"`
+	// Password is a pointer so the wire can distinguish three cases the
+	// settings form needs: absent keeps whatever is stored (the form
+	// cannot show the password — this route refuses to return it — so a
+	// save that only changes the host carries none), an empty string
+	// clears it deliberately, and a value replaces it. Before this it was
+	// a plain required string: the form had to send something, sent "",
+	// and silently wiped the stored secret.
+	Password *string `json:"password,omitempty" doc:"Omit to keep the stored password; send an empty string to clear it"`
+	From     string  `json:"from" format:"email" minLength:"3"`
+	StartTLS bool    `json:"start_tls"`
 }
 
+// toSettings maps the body onto the domain type; an absent password
+// becomes the empty one, which is what a first save (the wizard) means by
+// it. The update route resolves "absent" against what is stored — see
+// keepStoredPassword.
 func (b smtpSettingsBody) toSettings() mail.SMTPSettings {
-	return mail.SMTPSettings{Host: b.Host, Port: b.Port, Username: b.Username, Password: b.Password, From: b.From, StartTLS: b.StartTLS}
+	out := mail.SMTPSettings{Host: b.Host, Port: b.Port, Username: b.Username, From: b.From, StartTLS: b.StartTLS}
+	if b.Password != nil {
+		out.Password = *b.Password
+	}
+	return out
 }
 
 type smtpSettingsOutput struct {
@@ -190,7 +225,11 @@ func registerSMTPSettingsRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Setup.SaveSMTP(ctx, in.Body.toSettings()); err != nil {
+		settings, err := keepStoredPassword(ctx, deps, in.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Setup.SaveSMTP(ctx, settings); err != nil {
 			return nil, mapSetupErr(ctx, err)
 		}
 		// No requireOrg here — there is no organization to resolve one

@@ -13,7 +13,7 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
 import { useSaveSmtpSettings, useSmtpSettings, useTestSmtpSettings } from '../../api/hooks/useSmtpSettings.ts';
-import { smtpSchema, type SmtpFormValues } from '../../lib/schemas.ts';
+import { smtpSchema, type SmtpFormValues, type SmtpSaveValues } from '../../lib/schemas.ts';
 
 /**
  * SmtpSettingsPage is the instance's outgoing mail configuration, for
@@ -56,6 +56,7 @@ export function SmtpSettingsPage() {
         <Card>
           <SmtpForm
             key={current.configured ? `${current.host}:${current.port}:${current.username}:${current.from}` : 'empty'}
+            configured={current.configured}
             initial={{
               host: current.host ?? '',
               port: current.port ?? 587,
@@ -112,21 +113,33 @@ export function SmtpSettingsPage() {
 
 function SmtpForm({
   initial,
+  configured,
   saving,
   onSave,
 }: {
   initial: SmtpFormValues;
+  /** Whether a password is stored, which decides if there is anything to
+   * remove — the checkbox only makes sense then. */
+  configured: boolean;
   saving: boolean;
-  onSave: (values: SmtpFormValues) => Promise<void>;
+  onSave: (values: SmtpSaveValues) => Promise<void>;
 }) {
   const form = useForm<SmtpFormValues>({ resolver: zodResolver(smtpSchema), defaultValues: initial });
   const errors = form.formState.errors;
+  const [removeStored, setRemoveStored] = useState(false);
   return (
     <form
       className="flex flex-col gap-3 p-4"
       onSubmit={form.handleSubmit(async (values) => {
-        await onSave(values);
+        // An untouched password field means "leave the stored one alone":
+        // the page cannot show the password back, so an empty box is the
+        // normal state of every save that changes something else. Only a
+        // typed value replaces it, and only the explicit checkbox below
+        // clears it.
+        const { password, ...rest } = values;
+        await onSave(removeStored ? { ...rest, password: '' } : password ? values : rest);
         form.resetField('password', { defaultValue: '' });
+        setRemoveStored(false);
       })}
     >
       <h2 className="text-sm font-semibold">SMTP server</h2>
@@ -143,9 +156,19 @@ function SmtpForm({
         <Input id="smtp_password" type="password" autoComplete="new-password" {...form.register('password')} />
       </Field>
       <p className="text-[11px] text-muted-foreground">
-        The stored password is never shown. Saving replaces it with what is typed here — enter it again, or leave
-        it empty for a server that needs none.
+        The stored password is never shown. Leave this empty to keep it; type a new one to replace it.
       </p>
+      {configured && (
+        <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={removeStored}
+            onChange={(e) => setRemoveStored(e.target.checked)}
+            aria-label="Remove the stored password"
+          />
+          Remove the stored password (for a server that needs none)
+        </label>
+      )}
       <Field id="smtp_from" label="From address" error={errors.from?.message}>
         <Input id="smtp_from" type="email" {...form.register('from')} />
       </Field>

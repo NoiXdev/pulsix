@@ -3807,7 +3807,8 @@ export interface components {
             /** Format: email */
             from: string;
             host: string;
-            password: string;
+            /** @description Omit to keep the stored password; send an empty string to clear it */
+            password?: string;
             /** Format: int64 */
             port: number;
             start_tls: boolean;
