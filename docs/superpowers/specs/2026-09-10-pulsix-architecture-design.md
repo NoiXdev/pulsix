@@ -329,6 +329,24 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
 
 ## 8. Agent
 
+> **v0.3a delta (shipped 2026-09-24).** Two things in this section describe
+> where the design is going, not where it is. (1) **Topology:** agents dial
+> the *manager's* gRPC listener directly (`PULSIX_GRPC_LISTEN`, the same
+> endpoint workers use, distinguished by the certificate's identity kind —
+> an agent leaf carries the org SAN and no zone SAN). The agent→worker
+> relay this section describes belongs to v0.6, where zone workers become
+> the connection point for scale; until then there is no "address list in
+> the enrollment response" and no per-zone failover, because there is one
+> endpoint. (2) **Scope:** v0.3a ships Linux (systemd) only, the
+> first-start enrollment, the heartbeat, facts and their automatic tags.
+> Check definitions, the local `agent.yaml`, the probe and self-update are
+> v0.3b and later — nothing in the agent parses a check yet.
+>
+> Everything else below holds as written, including the certificate
+> lifetime and its 2/3 renewal, the enrollment token flow and the
+> install-script entry point (`GET /install.sh`, served templated by the
+> manager, which also serves the binaries at `GET /agents/bin/{os}/{arch}`).
+
 - Single static Go binary; Linux amd64/arm64 (systemd unit), Windows (service), macOS
   (launchd daemon). Same code, OS-specific collectors behind build tags.
 - Enrollment: operator creates an enrollment token in the GUI (bound to org, zone,
@@ -766,6 +784,16 @@ Layers
    backend). Scenarios that must pass before a milestone closes:
    - Enroll a containerized agent with a one-time token; assert certificate issued,
      facts received, default checks applied, first metrics within 60 s.
+     > **v0.3a delta.** This scenario is split by what exists. Its first
+     > half ships with the agent itself (`internal/e2e/agent_test.go`, plus
+     > the browser journey in `web/e2e/agent.spec.ts`): both token flows,
+     > the certificate, facts and their automatic tags, renewal and
+     > revocation — a real agent process against a real manager, not a
+     > container, because the manager under test is a process too and the
+     > token only exists once the operator has asked for it. "Default
+     > checks applied, first metrics within 60 s" waits for the check
+     > engine (v0.3b), and containerizing the agent waits for a reason to
+     > have one (v0.6's relay).
    - Monitoring pipeline: fill a disk in the agent container past a rule threshold;
      assert item state, alert opened after `for_duration`, notification sent to a mock
      channel, alert resolved and closed after cleanup; verify hysteresis and flapping

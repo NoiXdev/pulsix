@@ -5,7 +5,7 @@ One line per deliverable, grouped by milestone. Update the status column as work
 
 Status legend: `idea` · `mockup` · `spec` · `planned` · `in progress` · `done`
 
-Last updated: 2026-09-11
+Last updated: 2026-09-24
 
 ## Milestones
 
@@ -227,11 +227,11 @@ Decisions and limits recorded while planning v0.2d (2026-09-19).
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 3.1 | Agent binary: Linux amd64/arm64 (systemd) | planned | Go, single static binary |
+| 3.1 | Agent binary: Linux amd64/arm64 (systemd) | done | v0.3a: `cmd/agent` + `internal/agent` — first-start enrollment, one mTLS stream, heartbeat 30 s, facts at connect and every 6 h, 1 s→60 s reconnect backoff; `make agent-binaries` cross-compiles both arches into the manager's embedded dist |
 | 3.2 | Agent binary: Windows service | planned | |
 | 3.3 | Agent binary: macOS launchd | planned | |
-| 3.4 | Enrollment: one-time token, install script, mTLS cert issued by manager CA | planned | outbound-only |
-| 3.4a | E2E: agent enrollment, monitoring pipeline (threshold → alert → notify → resolve), remote checks | planned | milestone gate |
+| 3.4 | Enrollment: one-time token, install script, mTLS cert issued by manager CA | done | v0.3a: `pxa1` tokens (bound to a host or creating one, 1–100 uses, expiry), `GET /install.sh` templated with the manager's public URL + `GET /agents/bin/{os}/{arch}` with a sha256 beside it; the token carries the CA fingerprint the agent pins its first connection against; 90-day certificate renewed at 2/3 lifetime. Agents dial the MANAGER directly, not a zone worker — the relay is v0.6 (spec §8 delta) |
+| 3.4a | E2E: agent enrollment, monitoring pipeline (threshold → alert → notify → resolve), remote checks | in progress | milestone gate — enrollment half done in v0.3a (`internal/e2e/agent_test.go`: both token flows, facts + auto tags, renewal, revocation; `web/e2e/agent.spec.ts`: the operator journey). Monitoring pipeline and remote checks wait for the check engine (v0.3b) |
 | 3.5 | Agent local config `agent.yaml`: secrets by name, static local checks | planned | secrets never sent to manager |
 | 3.6 | Check definitions pushed from GUI to agent, secret references by name | planned | hybrid model |
 | 3.6a | Check engine: plugins in code with declared parameter schema | planned | cpu, memory, disk, service, process, smart, docker, db, web, http, tcp, icmp, tls, dns, snmp, script |
@@ -255,8 +255,17 @@ Decisions and limits recorded while planning v0.2d (2026-09-19).
 | 3.14 | Time series ingest (gRPC stream), TimescaleDB hypertables, downsampling | planned | |
 | 3.15 | Retention per org (30/90/365 d) | planned | |
 | 3.16 | Graphs per host and per check (uPlot), fleet overview | planned | |
-| 3.17 | Facts collection (OS, kernel, CPU, memory, IPs), auto tags | planned | |
+| 3.17 | Facts collection (OS, kernel, CPU, memory, IPs), auto tags | done | v0.3a: gopsutil v4 behind narrow provider interfaces, failure-tolerant (a probe that fails does not blind the rest); `os`/`arch`/`virt` upsert as `source='fact'` tags beneath manual ones — a manual tag of the same key always wins, and removing it lets the next push re-apply the fact |
 | 3.18 | Agent auto-update from manager | idea | |
+
+**v0.3a shipped (2026-09-24)** — the agent exists and reports: enrollment, identity,
+heartbeat, facts and their automatic tags, the Agents page and the host Agent card,
+with the three v0.1 release blockers (1.20–1.22) cleared on the way. What it
+deliberately does not do yet: **v0.3b** is the check engine and everything that needs
+it (3.5–3.13c, 3.14–3.16 — local config, pushed check definitions, discovery, the rule
+engine, time series and graphs), **v0.3c** the remaining platforms and the polish
+around them (3.2, 3.3, 3.9–3.12, 3.18). The agent binary parses no check today; the
+monitoring half of gate 3.4a activates with v0.3b.
 
 ## v0.4 · Alerting
 
