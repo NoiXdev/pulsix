@@ -243,13 +243,17 @@ func toCurrent(r gen.CheckCurrent) Current {
 // row, failing every other Observation in the batch along with it — the
 // opposite of "one unknown host must not fail the rest of its batch".
 func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error) {
-	hostSet := make(map[uuid.UUID]struct{}, len(obs))
+	// Grouped by host, in first-seen order: each host's own rows are
+	// written inside their own savepoint (recordHostObservations), so a
+	// foreign-key violation on one host's insert can never take another
+	// host's rows down with it.
+	byHost := make(map[uuid.UUID][]Observation, len(obs))
+	hostIDs := make([]uuid.UUID, 0, len(obs))
 	for _, o := range obs {
-		hostSet[o.HostID] = struct{}{}
-	}
-	hostIDs := make([]uuid.UUID, 0, len(hostSet))
-	for id := range hostSet {
-		hostIDs = append(hostIDs, id)
+		if _, seen := byHost[o.HostID]; !seen {
+			hostIDs = append(hostIDs, o.HostID)
+		}
+		byHost[o.HostID] = append(byHost[o.HostID], o)
 	}
 
 	err = s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
@@ -263,26 +267,21 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 			exists[id] = struct{}{}
 		}
 
-		for _, o := range obs {
-			if _, ok := exists[o.HostID]; !ok {
-				rejected++
+		for _, hostID := range hostIDs {
+			hostObs := byHost[hostID]
+			if _, ok := exists[hostID]; !ok {
+				rejected += len(hostObs)
 				continue
 			}
-			if o.Err == "" {
-				if err := q.InsertCheckSample(ctx, gen.InsertCheckSampleParams{
-					At: o.At, OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
-					Value: o.Value, Label: o.Label,
-				}); err != nil {
-					return fmt.Errorf("insert check sample: %w", err)
-				}
+			ok, err := recordHostObservations(ctx, tx, orgID, hostObs)
+			if err != nil {
+				return err
 			}
-			if err := q.UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
-				OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
-				Value: o.Value, Label: o.Label, At: o.At, Error: errPtr(o.Err),
-			}); err != nil {
-				return fmt.Errorf("upsert check current: %w", err)
+			if ok {
+				accepted += len(hostObs)
+			} else {
+				rejected += len(hostObs)
 			}
-			accepted++
 		}
 		return nil
 	})
@@ -290,6 +289,55 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 		return 0, 0, err
 	}
 	return accepted, rejected, nil
+}
+
+// recordHostObservations writes hostObs — all for the same host, already
+// confirmed to exist at the top of RecordObservations' own transaction —
+// inside a savepoint of tx (internal/db/scope.go: a pgx.Tx.Begin nested in
+// a bound transaction is a savepoint, not a fresh transaction). A
+// foreign-key violation here means the host was deleted in the narrow
+// window between that existence check and this insert — a real, if rare,
+// race, not merely a defensive belt-and-braces check — and is handled
+// exactly like "the host does not exist": ok=false, err=nil, the
+// savepoint rolled back so none of hostObs' rows persist, and the outer
+// transaction (and every other host's already-committed savepoint) left
+// untouched. Any other error is a genuine store failure and propagates,
+// aborting the whole batch — the same posture every other unexpected
+// store error already has.
+func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, hostObs []Observation) (ok bool, err error) {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin host savepoint: %w", err)
+	}
+	q := gen.New(sp)
+	for _, o := range hostObs {
+		if o.Err == "" {
+			if err := q.InsertCheckSample(ctx, gen.InsertCheckSampleParams{
+				At: o.At, OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
+				Value: o.Value, Label: o.Label,
+			}); err != nil {
+				_ = sp.Rollback(ctx)
+				if db.IsForeignKeyViolation(err) {
+					return false, nil
+				}
+				return false, fmt.Errorf("insert check sample: %w", err)
+			}
+		}
+		if err := q.UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
+			OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
+			Value: o.Value, Label: o.Label, At: o.At, Error: errPtr(o.Err),
+		}); err != nil {
+			_ = sp.Rollback(ctx)
+			if db.IsForeignKeyViolation(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("upsert check current: %w", err)
+		}
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit host savepoint: %w", err)
+	}
+	return true, nil
 }
 
 // CurrentForHost returns hostID's latest known value per (check_key,

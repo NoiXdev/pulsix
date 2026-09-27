@@ -9,6 +9,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 )
 
@@ -206,9 +207,13 @@ func TestRecordObservationsPlausibilityWindowBoundaries(t *testing.T) {
 
 // TestRecordObservationsMalformedShapeRejected pins the service's own
 // shape guard (samples.go's wellShaped): neither table's CHECK constraint
-// can represent an Observation with both Value and Label set, or with
-// neither and no Err — RecordObservations rejects (counts) these rather
-// than attempting an insert the database would refuse.
+// can represent an Observation with both Value and Label set, with
+// neither and no Err, or with Err set alongside a Value or a Label —
+// RecordObservations rejects (counts) all four rather than attempting an
+// insert the database would refuse (review finding 3 adds the two
+// error-alongside-value/label cases; TestCheckSamplesConstraintRejects*/
+// TestCheckCurrentConstraintRejects* below prove the database itself
+// would refuse them too, bypassing this very guard).
 func TestRecordObservationsMalformedShapeRejected(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "checks-samples-malformed")
@@ -220,13 +225,15 @@ func TestRecordObservationsMalformedShapeRejected(t *testing.T) {
 	obs := []checks.Observation{
 		{HostID: host, CheckKey: "cpu", Metric: "both", At: now, Value: f64(1), Label: str("x")},
 		{HostID: host, CheckKey: "cpu", Metric: "neither", At: now},
+		{HostID: host, CheckKey: "cpu", Metric: "err-and-value", At: now, Err: "boom", Value: f64(1)},
+		{HostID: host, CheckKey: "cpu", Metric: "err-and-label", At: now, Err: "boom", Label: str("x")},
 	}
 	accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 0 || rejected != 2 {
-		t.Fatalf("accepted=%d rejected=%d, want 0, 2", accepted, rejected)
+	if accepted != 0 || rejected != 4 {
+		t.Fatalf("accepted=%d rejected=%d, want 0, 4", accepted, rejected)
 	}
 }
 
@@ -473,5 +480,85 @@ func TestRetentionPolicyPresentInCatalog(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no policy_retention job found for check_samples — the migration's add_retention_policy call is missing or was not applied")
+	}
+}
+
+// TestCheckSamplesConstraintRejectsBothValueAndLabel and
+// TestCheckSamplesConstraintRejectsNeitherValueNorLabel exercise
+// check_samples' own CHECK constraint in isolation, through the raw
+// generated query (gen.Queries.InsertCheckSample on the bare pool — the
+// same seam seedHost already uses) rather than through
+// SQLStore.RecordObservations: RecordObservations always also upserts
+// check_current for the same shape, and check_current's own CHECK
+// happens to forbid the same "both set"/"neither set" shapes whenever
+// error is unset — going through RecordObservations would make these two
+// tests pass even if check_samples' own CHECK were missing entirely,
+// because check_current's CHECK would still catch the insert one
+// statement later. Calling InsertCheckSample directly reaches only
+// check_samples, so only its own constraint is under test.
+func TestCheckSamplesConstraintRejectsBothValueAndLabel(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-check-both")
+	host := seedHost(t, d, org, "check-both-host")
+	q := gen.New(d.Pool())
+
+	err := q.InsertCheckSample(context.Background(), gen.InsertCheckSampleParams{
+		At: time.Now(), OrgID: org, HostID: host, CheckKey: "cpu", Metric: "usage",
+		Value: f64(1), Label: str("x"),
+	})
+	if err == nil {
+		t.Fatal("check_samples must refuse a row with both value and label set")
+	}
+}
+
+func TestCheckSamplesConstraintRejectsNeitherValueNorLabel(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-check-neither")
+	host := seedHost(t, d, org, "check-neither-host")
+	q := gen.New(d.Pool())
+
+	err := q.InsertCheckSample(context.Background(), gen.InsertCheckSampleParams{
+		At: time.Now(), OrgID: org, HostID: host, CheckKey: "cpu", Metric: "usage",
+	})
+	if err == nil {
+		t.Fatal("check_samples must refuse a row with neither value nor label set")
+	}
+}
+
+// TestCheckCurrentConstraintRejectsErrorAlongsideValue and
+// TestCheckCurrentConstraintRejectsErrorAlongsideLabel exercise
+// check_current's own CHECK directly through SQLStore.RecordObservations:
+// an Err-set Observation makes recordHostObservations skip the
+// check_samples insert entirely (Observation's own doc comment), so
+// these two shapes only ever reach check_current — unlike the two tests
+// above, there is no risk of check_samples' constraint masking the
+// result here, since check_samples is never touched for either case.
+func TestCheckCurrentConstraintRejectsErrorAlongsideValue(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-current-check-value")
+	host := seedHost(t, d, org, "current-check-value-host")
+	st := checks.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	_, _, err := st.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: time.Now(), Err: "boom", Value: f64(1)},
+	})
+	if err == nil {
+		t.Fatal("check_current must refuse a row with both error and value set")
+	}
+}
+
+func TestCheckCurrentConstraintRejectsErrorAlongsideLabel(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-current-check-label")
+	host := seedHost(t, d, org, "current-check-label-host")
+	st := checks.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	_, _, err := st.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: time.Now(), Err: "boom", Label: str("x")},
+	})
+	if err == nil {
+		t.Fatal("check_current must refuse a row with both error and label set")
 	}
 }
