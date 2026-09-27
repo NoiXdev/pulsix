@@ -202,6 +202,25 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 				return fmt.Errorf("push facts: %w", err)
 			}
 		case err := <-recvErr:
+			if ctx.Err() != nil {
+				// A genuine race, not a stream fault: streamCtx is
+				// derived from ctx (so the receive goroutine's own
+				// Recv() unblocks the instant the OUTER ctx is
+				// cancelled, independently of this select noticing
+				// <-ctx.Done() itself), and Go's select picks
+				// pseudo-randomly among whichever cases are ready —
+				// this one can win instead of ctx.Done()'s own case on
+				// any shutdown. Both must reach the identical outcome
+				// (a clean end, the stream closed) regardless of which
+				// one fires, or a shutdown would non-deterministically
+				// sometimes skip CloseSend. No drainRecv here: the
+				// receive goroutine already returned (that is exactly
+				// how err reached this case), so there is nothing left
+				// to wait for.
+				cancel()
+				_ = stream.CloseSend()
+				return nil
+			}
 			// nil is a clean end (the manager closed its side): the
 			// caller reconnects without backoff; anything else is the
 			// failure it carries.
