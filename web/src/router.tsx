@@ -24,6 +24,8 @@ import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
 import { WorkersPage } from './features/workers/WorkersPage.tsx';
 import { AgentsPage } from './features/agents/AgentsPage.tsx';
+import { ChecksPage } from './features/checks/ChecksPage.tsx';
+import { MonitoringGroupsPage } from './features/checks/MonitoringGroupsPage.tsx';
 import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 
@@ -137,6 +139,24 @@ const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents
 const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
 
 /**
+ * checksRoute is the layout route for the monitoring check pipeline
+ * (v0.3b-1): the definitions themselves at its index and the monitoring
+ * groups they bind to underneath it. Nesting the groups under /checks
+ * rather than giving them a second top-level entry is the same decision
+ * settingsRoute encodes — one sidebar entry, a tab strip inside
+ * (features/checks/ChecksTabs.tsx) — and it is what lets the shell's
+ * Checks nav link mark itself active on both pages through the router's
+ * own activeProps.
+ */
+const checksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/checks' });
+const checksIndexRoute = createRoute({ getParentRoute: () => checksRoute, path: '/', component: ChecksPage });
+const monitoringGroupsRoute = createRoute({
+  getParentRoute: () => checksRoute,
+  path: '/monitoring-groups',
+  component: MonitoringGroupsPage,
+});
+
+/**
  * settingsRoute is the layout route for Members, Activity and API tokens —
  * finding "Important 6": the mockup (Members.dc.html, Activity.dc.html)
  * files all three under one "Settings" section (gear icon, single nav
@@ -190,6 +210,7 @@ const routeTree = rootRoute.addChildren([
     workersRoute,
     agentsRoute,
     maintenanceRoute,
+    checksRoute.addChildren([checksIndexRoute, monitoringGroupsRoute]),
     settingsRoute.addChildren([
       settingsIndexRoute,
       membersRoute,

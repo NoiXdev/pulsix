@@ -46,6 +46,8 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
   const routeTree = rootRoute.addChildren([
     leaf('/o/$org/hosts'),
     leaf('/o/$org/groups'),
+    leaf('/o/$org/checks'),
+    leaf('/o/$org/checks/monitoring-groups'),
     leaf('/o/$org/settings/members'),
     leaf('/o/$org/settings/activity'),
     leaf('/o/$org/settings/tokens'),
@@ -98,6 +100,18 @@ describe('AppShell', () => {
     const groupsLink = await screen.findByRole('link', { name: /Groups/ });
     expect(groupsLink).toHaveAttribute('data-nav-active', 'true');
     expect(screen.getByRole('link', { name: /Hosts/ })).not.toHaveAttribute('data-nav-active');
+  });
+
+  // Monitoring groups live under /checks rather than as a second sidebar
+  // entry (router.tsx's checksRoute), so the one Checks entry has to mark
+  // itself on both pages of the section.
+  it('marks Checks active on the definitions page and on the nested monitoring groups page', async () => {
+    for (const path of ['/o/acme/checks', '/o/acme/checks/monitoring-groups']) {
+      const { unmount } = renderShellAt(path);
+      expect(await screen.findByRole('link', { name: /Checks/ })).toHaveAttribute('data-nav-active', 'true');
+      expect(screen.getByRole('link', { name: /Hosts/ })).not.toHaveAttribute('data-nav-active');
+      unmount();
+    }
   });
 
   it('marks Settings active for every route nested under /settings (Members, Activity, Tokens)', async () => {

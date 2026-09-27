@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
+import { Activity, Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { may } from '../lib/roles.ts';
 
@@ -203,6 +203,24 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             <Play size={16} />
             <span className="flex-1">Runs</span>
           </Link>
+          {/* Checks (v0.3b-1) covers both the definitions and the
+              monitoring groups they bind to, which live under /checks as
+              a tab strip rather than as a second sidebar entry — see
+              router.tsx's checksRoute. checks.read is a viewer's right,
+              so this is gated only so that a session whose role has not
+              loaded yet is not offered a page it cannot open. */}
+          {may(org.role, 'checks.read') && (
+            <Link
+              to="/o/$org/checks"
+              params={{ org: org.slug }}
+              activeOptions={{ exact: false }}
+              activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
+              inactiveProps={{ className: INACTIVE_LINK }}
+            >
+              <Activity size={16} />
+              <span className="flex-1">Checks</span>
+            </Link>
+          )}
           {may(org.role, 'agents.read') && (
             <Link
               to="/o/$org/agents"

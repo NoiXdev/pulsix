@@ -22,6 +22,11 @@ describe('crumbLabels', () => {
     expect(crumbLabels('/o/acme/jump-hosts', 'acme')).toEqual(['Jump hosts']);
   });
 
+  it('labels the checks section and its nested monitoring groups page', () => {
+    expect(crumbLabels('/o/acme/checks', 'acme')).toEqual(['Checks']);
+    expect(crumbLabels('/o/acme/checks/monitoring-groups', 'acme')).toEqual(['Checks', 'Monitoring groups']);
+  });
+
   it('shortens a UUID-shaped host id segment it has no label for', () => {
     expect(crumbLabels('/o/acme/hosts/550e8400-e29b-41d4-a716-446655440000', 'acme')).toEqual([
       'Hosts',

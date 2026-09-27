@@ -65,3 +65,11 @@ export type MaintenanceWindowInput = components['schemas']['MaintenanceWindowBod
 
 export type CalendarEntry = components['schemas']['CalendarEntryDTO'];
 export type CalendarWindow = components['schemas']['CalendarWindowDTO'];
+
+export type CheckDefinition = components['schemas']['CheckDefinitionDTO'];
+export type CheckDefinitionInput = components['schemas']['CheckDefinitionBody'];
+export type CheckPlugin = CheckDefinition['plugin'];
+export type CheckBindingKind = CheckDefinition['binding_kind'];
+export type MonitoringGroup = components['schemas']['MonitoringGroupDTO'];
+export type MonitoringGroupInput = components['schemas']['MonitoringGroupBody'];
+export type MonitoringGroupPreviewHost = components['schemas']['PreviewHostDTO'];
