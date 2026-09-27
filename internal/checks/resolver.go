@@ -348,6 +348,13 @@ func (s *Service) ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (Res
 // rather than being dropped from the map — the caller asked about it, and
 // "nothing runs here" is a real answer), and the same Version. An id
 // listed twice produces one entry. An empty list reads nothing at all.
+//
+// The batch is atomic: a host whose set cannot be serialised into a
+// version fails the whole call rather than being skipped. That is
+// deliberate — every fault reachable here is a shared one (the roster or
+// the store), so a partial answer would report a per-host problem that
+// does not exist. Callers that collect per-host faults of their own are
+// therefore collecting against a case this layer never hands them.
 func (s *Service) ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]ResolvedSet, error) {
 	if len(hostIDs) == 0 {
 		return map[uuid.UUID]ResolvedSet{}, nil

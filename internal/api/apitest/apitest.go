@@ -628,7 +628,7 @@ type Push struct {
 }
 
 // PushRecorder stands in for api.Deps.AgentPush (*agentapi.Service in
-// production, whose PushHost only does anything for a host with a live
+// production, whose PushHosts only does anything for a host with a live
 // gRPC stream). It records what the routes asked for, and can be made to
 // fail, so a test can prove both that a write pushes the hosts it affects
 // and that a failed push never fails the write — the agent re-asserts its
@@ -725,7 +725,7 @@ func (r *PushRecorder) Reset() {
 	r.pushes = nil
 }
 
-// FailWith makes every later PushHost return err instead of recording,
+// FailWith makes every later PushHosts return err instead of recording,
 // for the "a push failure never fails the write" test. nil restores
 // recording.
 func (r *PushRecorder) FailWith(err error) {

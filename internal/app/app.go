@@ -376,7 +376,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// plus the write-path push hook — after a definition or monitoring
 		// group changes, the API asks the agent service to hand the
 		// affected hosts their freshly resolved set (api.CheckConfigPusher,
-		// satisfied by *agentapi.Service.PushHost).
+		// satisfied by *agentapi.Service.PushHosts).
 		Checks: checksSvc, AgentPush: agentSvc,
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
