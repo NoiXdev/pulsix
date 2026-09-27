@@ -12,8 +12,8 @@ import (
 func TestStreamRegistryTracksAndCuts(t *testing.T) {
 	r := NewStreamRegistry()
 	host := uuid.Must(uuid.NewV7())
-	a, releaseA := r.track("serial-1", host)
-	_, releaseB := r.track("serial-2", host)
+	a, releaseA := r.track("serial-1", host, nil) // nil: this test never calls send
+	_, releaseB := r.track("serial-2", host, nil)
 	releaseB()
 
 	var steps atomic.Int64
@@ -46,8 +46,8 @@ func TestStreamRegistryTracksAndCuts(t *testing.T) {
 func TestStreamRegistryCloseHostExcept(t *testing.T) {
 	r := NewStreamRegistry()
 	host := uuid.Must(uuid.NewV7())
-	stale, releaseStale := r.track("serial-old", host)
-	fresh, releaseFresh := r.track("serial-new", host)
+	stale, releaseStale := r.track("serial-old", host, nil) // nil: this test never calls send
+	fresh, releaseFresh := r.track("serial-new", host, nil)
 	defer releaseFresh()
 
 	if n := r.CloseHostExcept(host, "serial-new"); n != 1 {
@@ -80,7 +80,7 @@ func TestStreamRegistryCloseHostExcept(t *testing.T) {
 func TestStreamRegistryCloseHostWaitsForInFlightWork(t *testing.T) {
 	r := NewStreamRegistry()
 	host := uuid.Must(uuid.NewV7())
-	ts, release := r.track("serial-1", host)
+	ts, release := r.track("serial-1", host, nil) // nil: this test never calls send
 	defer release()
 
 	started := make(chan struct{})

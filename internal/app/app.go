@@ -191,11 +191,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now)
 	auditRec := audit.NewRecorder(audit.NewSQLStore(appDB), time.Now)
 	hostsSvc := hosts.NewService(hosts.NewSQLStore(appDB), time.Now)
-	// The monitoring check pipeline (v0.3b-1): only what organization
-	// creation needs is built here (SeedForOrg, wired into the hook right
-	// below). A HostMatcher-equipped instance for groups/definitions'
-	// resolver and API surface is a later task's wiring, not this one's.
-	checksSvc := checks.NewService(checks.NewSQLStore(appDB))
+	// The monitoring check pipeline (v0.3b-1): SeedForOrg is wired into the
+	// hook right below; WithMatcher/WithHostRoster (checks_ports.go) are
+	// what let ResolveHost/ResolveOrg run at all — a Service built without
+	// them refuses to resolve (checks.Service's own fail-closed posture),
+	// which is why both go in here rather than the later, API-surface task
+	// that reads from this same instance.
+	checksSvc := checks.NewService(checks.NewSQLStore(appDB),
+		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
+		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)))
 	// Every organization gets its "default" zone and its "Linux base" check
 	// definitions the moment it is created, through whichever of the two
 	// paths created it — POST /orgs (tenancy.Service.CreateOrg) or the
@@ -328,7 +332,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	agentsSvc.SetRevokeHook(agentStreams)
 	agentSvc, err := agentapi.New(agentapi.Deps{
 		CA: caInst, Agents: agentsSvc, Audit: systemAuditor{auditRec},
-		Streams: agentStreams, Facts: agentsSvc, Clock: time.Now, ClientIP: clientip.New(cfg.TrustedProxies),
+		Streams: agentStreams, Facts: agentsSvc, Checks: checksSvc,
+		Clock: time.Now, ClientIP: clientip.New(cfg.TrustedProxies),
 	})
 	if err != nil {
 		appDB.Close()

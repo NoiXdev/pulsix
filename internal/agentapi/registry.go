@@ -11,9 +11,12 @@
 package agentapi
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
 // StreamRegistry tracks open agent streams. It implements the agents
@@ -35,6 +38,39 @@ type trackedStream struct {
 
 	mu  sync.Mutex
 	cut bool
+
+	// sendMu serializes every access to stream: the receive loop's own ack
+	// (with an optional CheckConfig riding along) and an out-of-band
+	// PushToHost call must never race on the same gRPC stream — both the
+	// concurrent-Send gRPC forbids and the plain data race the field
+	// itself would otherwise be under (attach's write against send's
+	// read). track sets stream directly (no lock needed: the object is
+	// not yet reachable by any other goroutine at that point, since it is
+	// published into the registry's map under the very same r.mu), so in
+	// the ordinary AgentStream path stream is never nil by the time a
+	// PushToHost call can reach it at all; attach exists for the direct
+	// receive-loop unit tests, which build a trackedStream without going
+	// through track.
+	sendMu sync.Mutex
+	stream agentpb.AgentService_AgentStreamServer
+}
+
+// attach records the gRPC stream a tracked entry authenticates. track
+// already does this for every stream reachable through the registry;
+// attach is what the direct-construction unit tests
+// (receiveMessages called on a bare &trackedStream{}) use instead.
+func (t *trackedStream) attach(stream agentpb.AgentService_AgentStreamServer) {
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	t.stream = stream
+}
+
+// send writes msg to the underlying stream, serialized against every
+// other send on this same trackedStream.
+func (t *trackedStream) send(msg *agentpb.ManagerMessage) error {
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	return t.stream.Send(msg)
 }
 
 // store runs process unless the stream was cut; a cut stream drops the
@@ -67,13 +103,16 @@ func NewStreamRegistry() *StreamRegistry {
 	return &StreamRegistry{byHost: map[uuid.UUID]map[uint64]*trackedStream{}}
 }
 
-// track registers one open stream of hostID (authenticated with serial);
+// track registers one open stream of hostID (authenticated with serial),
+// with the gRPC stream a push can reach it through already attached —
+// atomically, since the entry is not inserted into r.byHost (and so not
+// visible to a concurrent PushToHost) until after ts.stream is set.
 // CloseHost cuts it when the agent is revoked, release unregisters it.
-func (r *StreamRegistry) track(serial string, hostID uuid.UUID) (*trackedStream, func()) {
+func (r *StreamRegistry) track(serial string, hostID uuid.UUID, stream agentpb.AgentService_AgentStreamServer) (*trackedStream, func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.next++
-	id, ts := r.next, &trackedStream{serial: serial, revoked: make(chan struct{})}
+	id, ts := r.next, &trackedStream{serial: serial, revoked: make(chan struct{}), stream: stream}
 	if r.byHost[hostID] == nil {
 		r.byHost[hostID] = map[uint64]*trackedStream{}
 	}
@@ -104,6 +143,36 @@ func (r *StreamRegistry) CloseHost(hostID uuid.UUID) int {
 		ts.shut()
 	}
 	return len(streams)
+}
+
+// PushToHost sends msg on every currently open, not-yet-cut stream of
+// hostID and reports how many it reached — zero for a host with no open
+// stream, which is exactly PushHost's own "not connected is a no-op"
+// contract; nothing here remembers a miss, since the agent's own
+// heartbeat re-assert heals it. A send failure on one stream is logged
+// and does not stop the others.
+func (r *StreamRegistry) PushToHost(hostID uuid.UUID, msg *agentpb.ManagerMessage) int {
+	r.mu.Lock()
+	streams := make([]*trackedStream, 0, len(r.byHost[hostID]))
+	for _, ts := range r.byHost[hostID] {
+		streams = append(streams, ts)
+	}
+	r.mu.Unlock()
+	sent := 0
+	for _, ts := range streams {
+		ts.mu.Lock()
+		cut := ts.cut
+		ts.mu.Unlock()
+		if cut {
+			continue
+		}
+		if err := ts.send(msg); err != nil {
+			slog.Warn("push message to agent stream", "host_id", hostID.String(), "err", err)
+			continue
+		}
+		sent++
+	}
+	return sent
 }
 
 // CloseHostExcept ends every open stream of hostID authenticated with a

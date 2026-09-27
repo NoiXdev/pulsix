@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/hosts/selector"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -29,4 +33,66 @@ func ChainOrgCreatedHooks(hooks ...tenancy.OrgCreatedHook) tenancy.OrgCreatedHoo
 		}
 		return nil
 	}
+}
+
+// checksHostMatcher adapts hosts.Service to checks.HostMatcher: a
+// monitoring group's selector text, parsed with the same grammar
+// hosts.Service.QueryHosts already consumes for the host list's own
+// selector queries, resolved to the ids of the hosts it matches.
+type checksHostMatcher struct{ hosts *hosts.Service }
+
+// NewChecksHostMatcher wires the adapter Build uses; exported so
+// internal/api/apitest can build the identical resolver wiring once its
+// own checks routes land (Task 3's handoff: "whichever task wires one
+// should almost certainly wire both in the same commit").
+func NewChecksHostMatcher(svc *hosts.Service) checks.HostMatcher {
+	return checksHostMatcher{hosts: svc}
+}
+
+// MatchingHosts implements checks.HostMatcher. An unparseable selector is
+// checks.ErrInvalidInput, the same sentinel Preview and the resolver
+// already treat a bad selector as — a monitoring group's own selector is
+// validated at write time (groups.go), so a parse failure reaching here
+// means a group was persisted before the grammar changed underneath it,
+// not a caller mistake in this call itself.
+func (m checksHostMatcher) MatchingHosts(ctx context.Context, orgID uuid.UUID, sel string) ([]uuid.UUID, error) {
+	parsed, err := selector.Parse(sel)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", checks.ErrInvalidInput, err)
+	}
+	rows, err := m.hosts.QueryHosts(ctx, orgID, parsed)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, h := range rows {
+		ids[i] = h.ID
+	}
+	return ids, nil
+}
+
+// checksHostRoster adapts hosts.Service to checks.HostRoster: every
+// monitored host in the organization — the resolver's "only monitored
+// hosts resolve to a non-empty set" gate.
+type checksHostRoster struct{ hosts *hosts.Service }
+
+// NewChecksHostRoster wires the adapter Build uses (see
+// NewChecksHostMatcher's own comment on why it is exported).
+func NewChecksHostRoster(svc *hosts.Service) checks.HostRoster {
+	return checksHostRoster{hosts: svc}
+}
+
+// MonitoredHosts implements checks.HostRoster.
+func (r checksHostRoster) MonitoredHosts(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	all, err := r.hosts.ListAllHosts(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, 0, len(all))
+	for _, h := range all {
+		if h.Monitored {
+			ids = append(ids, h.ID)
+		}
+	}
+	return ids, nil
 }

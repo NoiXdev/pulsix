@@ -1,20 +1,30 @@
 // AgentStream: the agent's persistent bidirectional connection. The agent
-// sends heartbeats (last_seen + version refresh) and facts (forwarded to
-// the FactsSink port); the manager acknowledges every processed message.
-// A revocation ends the stream with Unauthenticated (StreamRegistry) —
-// the same shape the worker RunEvents stream is cut by.
+// sends heartbeats (last_seen + version refresh), facts (forwarded to the
+// FactsSink port) and check results (forwarded to the ChecksPort); the
+// manager acknowledges every processed message and, on a heartbeat whose
+// reported configuration version disagrees with what the host resolves
+// to today, rides the current CheckConfig along with that same
+// acknowledgement. A revocation ends the stream with Unauthenticated
+// (StreamRegistry) — the same shape the worker RunEvents stream is cut
+// by.
 package agentapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
@@ -38,7 +48,11 @@ func (s *Service) AgentStream(stream agentpb.AgentService_AgentStreamServer) err
 	if err := s.deps.Agents.Touch(ctx, agent.Serial, agent.Version); err != nil {
 		slog.ErrorContext(ctx, "touch agent at stream open", "serial", agent.Serial, "err", err)
 	}
-	tracked, release := s.streams.track(agent.Serial, agent.HostID)
+	// track attaches stream atomically with registering the entry (see its
+	// own doc comment): PushHost can already reach this stream the instant
+	// it is tracked, with no window where the entry exists but has
+	// nothing to send on.
+	tracked, release := s.streams.track(agent.Serial, agent.HostID, stream)
 	defer release()
 	// Track happens before this second lookup, so either CloseHost sees
 	// the stream or the lookup sees the revocation. A registry fault here
@@ -68,8 +82,12 @@ func (s *Service) AgentStream(stream agentpb.AgentService_AgentStreamServer) err
 // receiveMessages processes every message until the agent closes the
 // stream. Messages read after the stream was cut are dropped without
 // acknowledgement (the trackedStream gate), and the loop then runs into
-// the ended RPC's Recv failure.
+// the ended RPC's Recv failure. tracked.attach(stream) is called here too
+// (not only by AgentStream) so a caller that builds a trackedStream
+// directly, without going through AgentStream's own attach, still gets a
+// working send — the fault-path unit tests do exactly that.
 func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentity, stream agentpb.AgentService_AgentStreamServer, tracked *trackedStream) error {
+	tracked.attach(stream)
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -78,43 +96,211 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		if err != nil {
 			return err // transport-level failure: pass the status through
 		}
-		done, err := tracked.store(func() error { return s.process(ctx, agent, msg) })
+		var cfg *agentpb.CheckConfig
+		done, err := tracked.store(func() error {
+			var procErr error
+			cfg, procErr = s.process(ctx, agent, msg)
+			return procErr
+		})
 		if err != nil {
-			if errors.Is(err, agents.ErrInvalidInput) {
-				// A facts push over the facts contract's bounds (too
-				// many keys, an over-long value) is the caller's fault,
-				// not the server's — the agent's own collector
-				// normalizes, so this refusal means the agent lied.
-				return status.Errorf(codes.InvalidArgument, "agent facts rejected: %v", err)
+			if errors.Is(err, agents.ErrInvalidInput) || errors.Is(err, checks.ErrInvalidInput) {
+				// A facts or check-results push over the respective
+				// contract's bounds is the caller's fault, not the
+				// server's — the agent's own collector normalizes, so
+				// this refusal means the agent lied.
+				return status.Errorf(codes.InvalidArgument, "agent message rejected: %v", err)
 			}
 			return status.Errorf(codes.Internal, "process agent message: %v", err)
 		}
 		if !done {
 			continue
 		}
-		if err := stream.Send(&agentpb.ManagerMessage{Ack: true}); err != nil {
+		// ack and cfg are independent fields on ManagerMessage (not a
+		// oneof): a heartbeat's response always acknowledges and may
+		// additionally carry a CheckConfig; nothing here ever needs to
+		// choose between the two.
+		if err := tracked.send(&agentpb.ManagerMessage{Ack: true, CheckConfig: cfg}); err != nil {
 			return err
 		}
 	}
 }
 
-// process applies one agent message: a heartbeat touches the registry by
-// serial, facts flow to the sink (a nil sink drops them with a server log
-// — Task 8 wires the facts service). An unknown body (the proto union is
-// deliberately open for future manager messages) is a no-op that is still
-// acknowledged.
-func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *agentpb.AgentMessage) error {
+// process applies one agent message: a heartbeat touches the registry and
+// answers a configuration mismatch (processHeartbeat); facts flow to the
+// FactsSink (a nil sink drops them with a server log — Task 8 wires the
+// facts service); check results flow to the ChecksPort (a nil port drops
+// them with a server log the same way, so this package can ship ahead of
+// or without it). An unknown body (the proto union is deliberately open
+// for future manager messages) is a no-op that is still acknowledged.
+func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *agentpb.AgentMessage) (*agentpb.CheckConfig, error) {
 	switch body := msg.GetBody().(type) {
 	case *agentpb.AgentMessage_Heartbeat:
-		return s.deps.Agents.Touch(ctx, agent.Serial, body.Heartbeat.GetVersion())
+		return s.processHeartbeat(ctx, agent, body.Heartbeat)
 	case *agentpb.AgentMessage_Facts:
 		if s.deps.Facts == nil {
 			slog.WarnContext(ctx, "agent facts received but no facts sink is wired; dropping",
 				"serial", agent.Serial, "host_id", agent.HostID)
-			return nil
+			return nil, nil
 		}
-		return s.deps.Facts.RecordFacts(ctx, agent.OrgID, agent.HostID, body.Facts.GetValues())
+		return nil, s.deps.Facts.RecordFacts(ctx, agent.OrgID, agent.HostID, body.Facts.GetValues())
+	case *agentpb.AgentMessage_CheckResults:
+		return nil, s.recordCheckResults(ctx, agent, body.CheckResults)
 	default:
+		return nil, nil
+	}
+}
+
+// processHeartbeat touches the registry with the agent's reported build
+// version, then — if a checks service is wired — resolves the host's
+// configuration and compares its version against what the agent reports
+// in the very same heartbeat (Heartbeat.config_version). A mismatch is
+// answered with the current set, always, regardless of why the versions
+// differ: a genuine change since the agent last converged, or a version
+// the manager does not recognise at all (the agent's own record of a
+// definition that has since been edited or deleted). Nothing here keeps a
+// record of what was pushed — the agent's own next reported version is
+// the only thing that ends the exchange, which is exactly what makes an
+// unrecognised or stale version self-correcting in one round trip rather
+// than a loop: whatever the manager sends becomes, by construction, what
+// ResolveHost computes, so the very next heartbeat already agrees.
+func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdentity, hb *agentpb.Heartbeat) (*agentpb.CheckConfig, error) {
+	if err := s.deps.Agents.Touch(ctx, agent.Serial, hb.GetVersion()); err != nil {
+		return nil, err
+	}
+	if s.deps.Checks == nil {
+		return nil, nil
+	}
+	resolved, err := s.deps.Checks.ResolveHost(ctx, agent.OrgID, agent.HostID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve host checks: %w", err)
+	}
+	if resolved.Version == hb.GetConfigVersion() {
+		return nil, nil
+	}
+	cfg, err := checkConfigFor(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("encode check configuration: %w", err)
+	}
+	return cfg, nil
+}
+
+// recordCheckResults maps one CheckResults batch into checks.Observation
+// and hands it to RecordObservations. Accepted and rejected counts are
+// logged, never turned into a stream error — RecordObservations' own
+// contract counts a bad item (an implausible timestamp, a malformed
+// shape, a host id it does not recognise) rather than failing the batch,
+// and this handler passes that contract through rather than second-
+// guessing it: one bad result must not cost the agent its connection or
+// the rest of the batch its data.
+func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIdentity, results *agentpb.CheckResults) error {
+	if s.deps.Checks == nil {
+		slog.WarnContext(ctx, "agent check results received but no checks service is wired; dropping",
+			"serial", agent.Serial, "host_id", agent.HostID)
 		return nil
 	}
+	items := results.GetResults()
+	obs := make([]checks.Observation, 0, len(items))
+	for _, r := range items {
+		o := checks.Observation{
+			HostID:   agent.HostID,
+			CheckKey: r.GetCheckKey(),
+			Item:     r.GetItem(),
+			Metric:   r.GetMetric(),
+			At:       r.GetAt().AsTime(),
+		}
+		switch v := r.GetObservation().(type) {
+		case *agentpb.CheckResult_Value:
+			val := v.Value
+			o.Value = &val
+		case *agentpb.CheckResult_Label:
+			lbl := v.Label
+			o.Label = &lbl
+		case *agentpb.CheckResult_Error:
+			o.Err = v.Error
+		}
+		obs = append(obs, o)
+	}
+	accepted, rejected, err := s.deps.Checks.RecordObservations(ctx, agent.OrgID, obs)
+	if err != nil {
+		return fmt.Errorf("record check observations: %w", err)
+	}
+	if rejected > 0 {
+		slog.WarnContext(ctx, "agent check results partially rejected",
+			"serial", agent.Serial, "host_id", agent.HostID, "accepted", accepted, "rejected", rejected)
+	} else {
+		slog.DebugContext(ctx, "agent check results recorded",
+			"serial", agent.Serial, "host_id", agent.HostID, "accepted", accepted)
+	}
+	return nil
+}
+
+// PushHost recomputes hostID's resolved check configuration and pushes it
+// to every currently open AgentStream of that host — the write-path hook
+// internal/api calls after a check definition, monitoring group, host tag
+// or monitored-flag change commits (v0.3b-checks design, "Configuration
+// delivery": "the manager recomputes the affected hosts and pushes to
+// those currently connected"). A host with no open stream, or a Checks
+// port left nil, is a no-op: nothing here remembers the miss, because the
+// agent's own heartbeat re-assert (at most PULSIX_CONFIG_INTERVAL later,
+// clamped 30-600s) repairs it through the ordinary convergence path in
+// processHeartbeat regardless. The pushed message carries no Ack — it
+// answers nothing the agent sent, unlike the heartbeat's own response.
+func (s *Service) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
+	if s.deps.Checks == nil {
+		return nil
+	}
+	resolved, err := s.deps.Checks.ResolveHost(ctx, orgID, hostID)
+	if err != nil {
+		return fmt.Errorf("resolve host checks for push: %w", err)
+	}
+	cfg, err := checkConfigFor(resolved)
+	if err != nil {
+		return fmt.Errorf("encode check configuration for push: %w", err)
+	}
+	s.streams.PushToHost(hostID, &agentpb.ManagerMessage{CheckConfig: cfg})
+	return nil
+}
+
+// checkConfigFor renders a resolved set into the wire CheckConfig: the
+// version an agent compares its own against, and each check's key,
+// plugin, canonical params JSON and interval.
+func checkConfigFor(resolved checks.ResolvedSet) (*agentpb.CheckConfig, error) {
+	specs := make([]*agentpb.CheckSpec, 0, len(resolved.Checks))
+	for _, c := range resolved.Checks {
+		paramsJSON, err := canonicalParamsJSON(c.Params)
+		if err != nil {
+			return nil, fmt.Errorf("encode params for key %q: %w", c.Key, err)
+		}
+		specs = append(specs, &agentpb.CheckSpec{
+			Key:             c.Key,
+			Plugin:          c.Plugin,
+			ParamsJson:      paramsJSON,
+			IntervalSeconds: int32(c.Interval / time.Second),
+		})
+	}
+	return &agentpb.CheckConfig{Version: resolved.Version, Checks: specs}, nil
+}
+
+// canonicalParamsJSON mirrors internal/checks's own unexported
+// canonicalParams byte-for-byte: "{}" for nil or empty (never the bare
+// "null" json.Marshal(map[string]any(nil)) would otherwise produce),
+// sorted-key JSON otherwise — encoding/json sorts map keys at every
+// nesting level, so marshalling map[string]any is already canonical. It
+// is duplicated rather than imported because canonicalParams is an
+// implementation detail of ResolvedSet.Version's hash, private to
+// internal/checks; this package needs the identical encoding for a
+// different reason — what actually rides the wire in CheckSpec.params_json,
+// which an agent may re-hash to verify the version it was just handed.
+// The two must never disagree about what "no parameters" or a given
+// params map encodes to, which is why both packages pin the same literal
+// encoding in their own tests.
+func canonicalParamsJSON(params map[string]any) (string, error) {
+	if len(params) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(params)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

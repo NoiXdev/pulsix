@@ -33,6 +33,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
@@ -64,6 +65,19 @@ type FactsSink interface {
 	RecordFacts(ctx context.Context, orgID, hostID uuid.UUID, facts map[string]string) error
 }
 
+// ChecksPort is the slice of the checks service the stream needs:
+// resolving a host's configuration (to compare against what the agent
+// reports and push on a mismatch) and recording the results an agent
+// sends back. *checks.Service is the production implementation. Nil, the
+// same posture as FactsSink, drops both halves with a server log: a
+// heartbeat is still acknowledged with no CheckConfig, and CheckResults
+// are still acknowledged without being stored — the checks domain can
+// wire in independently of this package shipping.
+type ChecksPort interface {
+	ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (checks.ResolvedSet, error)
+	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error)
+}
+
 // Deps wires the service's dependencies.
 type Deps struct {
 	// CA signs the agent's certificate requests and supplies the CA PEM
@@ -81,6 +95,9 @@ type Deps struct {
 	// Facts receives agent-reported facts; nil drops them (Task 8 wires
 	// the facts service here).
 	Facts FactsSink
+	// Checks resolves check configuration and records reported results;
+	// nil drops both (see ChecksPort's own doc comment).
+	Checks ChecksPort
 	// Clock drives the enrollment rate limit; nil uses time.Now.
 	Clock func() time.Time
 	// ClientIP resolves the Enroll caller's address for the rate limit;

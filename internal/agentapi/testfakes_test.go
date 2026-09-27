@@ -26,6 +26,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
@@ -388,6 +389,84 @@ func (f *fakeFacts) recorded() []factCall {
 	return append([]factCall(nil), f.calls...)
 }
 
+// fakeChecks is the in-memory ChecksPort: a preset ResolvedSet per host,
+// mutable between calls so a test can simulate a definition changing
+// mid-stream (checkConfigFor's version is whatever the test put there —
+// nothing here recomputes a real hash), and every RecordObservations
+// batch it was ever handed. knownHosts, if non-nil, is which host ids
+// RecordObservations accepts; any Observation for a host not in it is
+// counted rejected, exactly like the real store's own unknown-host rule
+// — a nil knownHosts accepts every host (the common case: most tests
+// only care about the shape of the accepted/rejected counts, not a
+// specific host list).
+type fakeChecks struct {
+	mu           sync.Mutex
+	resolved     map[uuid.UUID]checks.ResolvedSet
+	resolveErr   error
+	resolveCalls int
+	knownHosts   map[uuid.UUID]bool
+	recordedObs  []checks.Observation
+	recordErr    error
+}
+
+func newFakeChecks() *fakeChecks {
+	return &fakeChecks{resolved: map[uuid.UUID]checks.ResolvedSet{}}
+}
+
+// setResolved arms hostID's ResolveHost answer; a host never armed
+// resolves to an empty set with version "" (the same "nothing to run"
+// shape an unmonitored host produces in the real resolver).
+func (f *fakeChecks) setResolved(hostID uuid.UUID, rs checks.ResolvedSet) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolved[hostID] = rs
+}
+
+func (f *fakeChecks) ResolveHost(_ context.Context, _, hostID uuid.UUID) (checks.ResolvedSet, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolveCalls++
+	if f.resolveErr != nil {
+		return checks.ResolvedSet{}, f.resolveErr
+	}
+	return f.resolved[hostID], nil
+}
+
+func (f *fakeChecks) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.recordErr != nil {
+		return 0, 0, f.recordErr
+	}
+	for _, o := range obs {
+		f.recordedObs = append(f.recordedObs, o)
+		if f.knownHosts != nil && !f.knownHosts[o.HostID] {
+			rejected++
+			continue
+		}
+		accepted++
+	}
+	return accepted, rejected, nil
+}
+
+// resolveHostCalls reports how many times ResolveHost was called — the
+// convergence test's own witness that a converged heartbeat still
+// resolves (it must, since the comparison needs today's version) without
+// that turning into a second push.
+func (f *fakeChecks) resolveHostCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resolveCalls
+}
+
+// observations returns every Observation ever handed to RecordObservations,
+// across every call, in call order.
+func (f *fakeChecks) observations() []checks.Observation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]checks.Observation(nil), f.recordedObs...)
+}
+
 // fakeAuditor records the audit events; recordErr injects a fault.
 type fakeAuditor struct {
 	mu        sync.Mutex
@@ -479,6 +558,7 @@ type harness struct {
 	prov     *fakeProvisioner
 	sink     *fakeFacts
 	audit    *fakeAuditor
+	checks   *fakeChecks
 	agentSvc *agents.Service
 	svc      *Service
 	gs       *grpc.Server
@@ -501,12 +581,28 @@ func (h *harness) advance(d time.Duration) {
 }
 
 // newHarness wires the service with a facts sink; newHarnessWithoutFacts
-// leaves Deps.Facts nil (the documented drop path).
-func newHarness(t *testing.T) *harness { return newHarnessOpts(t, true) }
+// leaves Deps.Facts nil (the documented drop path); newHarnessWithChecks
+// additionally wires an in-memory ChecksPort (h.checks) for the
+// configuration-push and result-ingest tests.
+func newHarness(t *testing.T) *harness { return newHarnessOpts(t, true, nil) }
 
-func newHarnessWithoutFacts(t *testing.T) *harness { return newHarnessOpts(t, false) }
+func newHarnessWithoutFacts(t *testing.T) *harness { return newHarnessOpts(t, false, nil) }
 
-func newHarnessOpts(t *testing.T, withFacts bool) *harness {
+func newHarnessWithChecks(t *testing.T) *harness {
+	return newHarnessOpts(t, true, newFakeChecks())
+}
+
+// newHarnessOpts builds one harness. checksPort is a *fakeChecks, not the
+// ChecksPort interface: assigning a nil interface value straight into
+// Deps.Checks would be safe, but assigning a nil *fakeChecks WOULD NOT
+// be — a nil concrete pointer boxed into an interface is a non-nil
+// interface (the classic Go trap), and Deps.Checks == nil is exactly the
+// check process/PushHost use to decide "no checks service wired". The nil
+// check below happens on the concrete pointer, before it ever reaches the
+// interface field, which is what keeps every existing call (passing
+// literal nil) behaving as "no checks port" rather than panicking the
+// first time something calls a method on it.
+func newHarnessOpts(t *testing.T, withFacts bool, checksPort *fakeChecks) *harness {
 	t.Helper()
 	h := &harness{
 		t:     t,
@@ -534,6 +630,10 @@ func newHarnessOpts(t *testing.T, withFacts bool) *harness {
 	}
 	if withFacts {
 		deps.Facts = h.sink
+	}
+	if checksPort != nil {
+		h.checks = checksPort
+		deps.Checks = checksPort
 	}
 	h.svc, err = New(deps)
 	if err != nil {
