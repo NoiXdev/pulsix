@@ -14,12 +14,11 @@ import (
 // affectedFixture builds a service whose roster reports two monitored
 // hosts out of three, and whose matcher answers per selector.
 type affectedFixture struct {
-	svc                     *checks.Service
-	org                     uuid.UUID
-	web, dbHost, unmonitored uuid.UUID
-	store                   *fakeStore
-	matcher                 *fakeGroupMatcher
-	roster                  *fakeHostRoster
+	svc         *checks.Service
+	org         uuid.UUID
+	web, dbHost uuid.UUID
+	matcher     *fakeGroupMatcher
+	roster      *fakeHostRoster
 }
 
 func newAffectedFixture(t *testing.T) affectedFixture {
@@ -35,8 +34,8 @@ func newAffectedFixture(t *testing.T) affectedFixture {
 	roster := &fakeHostRoster{monitored: map[uuid.UUID]bool{web: true, dbHost: true, cold: false}}
 	return affectedFixture{
 		svc: checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster)),
-		org: org, web: web, dbHost: dbHost, unmonitored: cold,
-		store: store, matcher: matcher, roster: roster,
+		org: org, web: web, dbHost: dbHost,
+		matcher: matcher, roster: roster,
 	}
 }
 
@@ -78,13 +77,13 @@ func TestAffectedHostsPerBindingKind(t *testing.T) {
 		t.Fatalf("org binding = %+v, want WholeOrg with no host list", orgBound)
 	}
 	// The roster is not consulted for it: the whole point of WholeOrg is
-	// that the caller never materialises the list.
-	if f.roster.err = errors.New("roster must not be read"); true {
-		if _, err := f.svc.AffectedHosts(ctx, f.org, checks.Binding{Kind: checks.BindingOrg}); err != nil {
-			t.Fatalf("an org binding must not read the host roster: %v", err)
-		}
-		f.roster.err = nil
+	// that the caller never materialises the list. A roster that fails on
+	// contact is how that is proved rather than asserted.
+	f.roster.err = errors.New("roster must not be read")
+	if _, err := f.svc.AffectedHosts(ctx, f.org, checks.Binding{Kind: checks.BindingOrg}); err != nil {
+		t.Fatalf("an org binding must not read the host roster: %v", err)
 	}
+	f.roster.err = nil
 
 	hostBound, err := f.svc.AffectedHosts(ctx, f.org, checks.Binding{Kind: checks.BindingHost, HostID: &f.web})
 	if err != nil {
@@ -237,10 +236,19 @@ func TestBindingOfADefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Binding() != in.Binding() {
-		t.Fatalf("definition binding %+v != input binding %+v", d.Binding(), in.Binding())
+	// Compared by value, not by pointer identity: a Binding carries
+	// *uuid.UUID, and == on the struct would compare the addresses — which
+	// happen to match here only because the input's HostID travelled into
+	// the stored row by reference, and would stop matching the moment the
+	// store copied it (as the real SQL store does, reading the row back).
+	stored, input := d.Binding(), in.Binding()
+	if stored.Kind != checks.BindingHost || input.Kind != checks.BindingHost {
+		t.Fatalf("kinds = %q / %q, want host", stored.Kind, input.Kind)
 	}
-	if d.Binding().Kind != checks.BindingHost || d.Binding().HostID == nil || *d.Binding().HostID != hostID {
-		t.Fatalf("binding = %+v", d.Binding())
+	if stored.GroupID != nil || input.GroupID != nil {
+		t.Fatalf("a host binding must name no group: %+v / %+v", stored, input)
+	}
+	if stored.HostID == nil || input.HostID == nil || *stored.HostID != hostID || *input.HostID != hostID {
+		t.Fatalf("host ids = %+v / %+v, want both %s", stored.HostID, input.HostID, hostID)
 	}
 }
