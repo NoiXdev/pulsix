@@ -124,6 +124,18 @@ type Bastion struct {
 	SshHostPublicKey *string     `json:"ssh_host_public_key"`
 }
 
+type CheckCurrent struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
+	At       time.Time `json:"at"`
+	Error    *string   `json:"error"`
+}
+
 type CheckDefinition struct {
 	ID              uuid.UUID   `json:"id"`
 	OrgID           uuid.UUID   `json:"org_id"`
@@ -139,6 +151,17 @@ type CheckDefinition struct {
 	CreatedBy       pgtype.UUID `json:"created_by"`
 	CreatedAt       time.Time   `json:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at"`
+}
+
+type CheckSample struct {
+	At       time.Time `json:"at"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
 }
 
 type Credential struct {

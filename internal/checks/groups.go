@@ -132,6 +132,24 @@ type Store interface {
 	// DeleteDefinition removes the definition identified by (orgID, id);
 	// ErrNotFound if no such row exists.
 	DeleteDefinition(ctx context.Context, orgID, id uuid.UUID) error
+
+	// RecordObservations (Task 4, samples.go) writes obs — already
+	// validated by the service (plausibility window, well-shaped
+	// value/label/err) — in one transaction: check_samples rows inserted,
+	// check_current rows upserted, both committing together. It applies
+	// exactly one rejection rule of its own: an Observation whose HostID
+	// does not belong to orgID is skipped rather than inserted, and
+	// counted in rejected instead of failing the rest of the batch.
+	// accepted + rejected == len(obs) always.
+	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error)
+	// CurrentForHost returns hostID's latest known value per (check_key,
+	// item, metric). Rows are never deleted (Current's own doc comment),
+	// so an item that stopped being reported is still listed, however
+	// stale its At.
+	CurrentForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Current, error)
+	// SeriesForHost returns metric's samples for hostID's (checkKey, item)
+	// in [from, to), downsampled server-side into at most buckets points.
+	SeriesForHost(ctx context.Context, orgID, hostID uuid.UUID, checkKey, item, metric string, from, to time.Time, buckets int) (Series, error)
 }
 
 // Service manages monitoring groups. Later tasks (check definitions, the
@@ -146,6 +164,7 @@ type Service struct {
 	matcher    HostMatcher
 	hostRoster HostRoster
 	rand       io.Reader
+	now        func() time.Time
 }
 
 // Option configures a Service.
@@ -165,9 +184,14 @@ func WithHostRoster(r HostRoster) Option { return func(s *Service) { s.hostRoste
 // WithRand injects the entropy source for ids.
 func WithRand(r io.Reader) Option { return func(s *Service) { s.rand = r } }
 
+// WithClock injects the clock RecordObservations (samples.go) checks the
+// plausibility window against; time.Now is the default. Tests pin the
+// window's exact boundaries against a fixed clock.
+func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
+
 // NewService wires the store; Preview needs WithMatcher.
 func NewService(store Store, opts ...Option) *Service {
-	s := &Service{store: store, rand: rand.Reader}
+	s := &Service{store: store, rand: rand.Reader, now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}

@@ -14,15 +14,21 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
-// SQLStore implements Store with sqlc queries on *db.DB.
-type SQLStore struct{ q *gen.Queries }
+// SQLStore implements Store with sqlc queries on *db.DB. d itself is kept,
+// not only q, for the one multi-statement operation this package needs —
+// RecordObservations' single transaction — the same shape jobs.SQLStore
+// documents for CreateJobGroup.
+type SQLStore struct {
+	q *gen.Queries
+	d *db.DB
+}
 
 // NewSQLStore builds the store on d itself, never on its raw pool, so
 // every statement runs inside the organization bound to the request
 // context (db.WithOrgScope) — the same posture hosts.SQLStore and
 // maintenance.SQLStore document, and monitoring_groups' row-level security
 // relies on.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 
 func toGroup(r gen.MonitoringGroup) Group {
 	return Group{
@@ -197,4 +203,126 @@ func (s *SQLStore) DeleteDefinition(ctx context.Context, orgID, id uuid.UUID) er
 		return ErrNotFound
 	}
 	return nil
+}
+
+// errPtr converts Observation/Current's Err ("" means none) to the
+// pointer check_current's nullable error column takes.
+func errPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// errString reverses errPtr.
+func errString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func toCurrent(r gen.CheckCurrent) Current {
+	return Current{
+		CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
+		At: r.At, Value: r.Value, Label: r.Label, Err: errString(r.Error),
+	}
+}
+
+// RecordObservations writes obs (already validated by the service —
+// plausibility window, well-shaped value/label/err) in one transaction:
+// check_samples rows inserted, check_current rows upserted, both
+// committing together, so a batch that fails partway never leaves samples
+// without their matching current value or vice versa.
+//
+// Before writing anything it looks up which of obs' host ids actually
+// belong to orgID (HostsExisting) and skips the rest, counting them in
+// rejected. This is deliberately a lookup-and-skip, not reliance on the
+// (org_id, host_id) foreign key on check_samples/check_current: a
+// constraint violation would abort the whole transaction on the first bad
+// row, failing every other Observation in the batch along with it — the
+// opposite of "one unknown host must not fail the rest of its batch".
+func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error) {
+	hostSet := make(map[uuid.UUID]struct{}, len(obs))
+	for _, o := range obs {
+		hostSet[o.HostID] = struct{}{}
+	}
+	hostIDs := make([]uuid.UUID, 0, len(hostSet))
+	for id := range hostSet {
+		hostIDs = append(hostIDs, id)
+	}
+
+	err = s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		q := gen.New(tx)
+		existingRows, err := q.HostsExisting(ctx, gen.HostsExistingParams{OrgID: orgID, HostIds: hostIDs})
+		if err != nil {
+			return fmt.Errorf("check existing hosts: %w", err)
+		}
+		exists := make(map[uuid.UUID]struct{}, len(existingRows))
+		for _, id := range existingRows {
+			exists[id] = struct{}{}
+		}
+
+		for _, o := range obs {
+			if _, ok := exists[o.HostID]; !ok {
+				rejected++
+				continue
+			}
+			if o.Err == "" {
+				if err := q.InsertCheckSample(ctx, gen.InsertCheckSampleParams{
+					At: o.At, OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
+					Value: o.Value, Label: o.Label,
+				}); err != nil {
+					return fmt.Errorf("insert check sample: %w", err)
+				}
+			}
+			if err := q.UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
+				OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
+				Value: o.Value, Label: o.Label, At: o.At, Error: errPtr(o.Err),
+			}); err != nil {
+				return fmt.Errorf("upsert check current: %w", err)
+			}
+			accepted++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return accepted, rejected, nil
+}
+
+// CurrentForHost returns hostID's latest known value per (check_key,
+// item, metric), rows never deleted (Current's own doc comment).
+func (s *SQLStore) CurrentForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Current, error) {
+	rows, err := s.q.ListCheckCurrent(ctx, gen.ListCheckCurrentParams{OrgID: orgID, HostID: hostID})
+	if err != nil {
+		return nil, fmt.Errorf("list check current: %w", err)
+	}
+	out := make([]Current, len(rows))
+	for i, r := range rows {
+		out[i] = toCurrent(r)
+	}
+	return out, nil
+}
+
+// SeriesForHost downsamples check_samples server-side into at most
+// buckets points via time_bucket; bucket width is (to-from)/buckets,
+// computed here in floating-point seconds rather than a Go time.Duration
+// so it isn't rounded to the nearest nanosecond-representable duration
+// before reaching PostgreSQL.
+func (s *SQLStore) SeriesForHost(ctx context.Context, orgID, hostID uuid.UUID, checkKey, item, metric string, from, to time.Time, buckets int) (Series, error) {
+	widthSeconds := to.Sub(from).Seconds() / float64(buckets)
+	rows, err := s.q.SeriesForHost(ctx, gen.SeriesForHostParams{
+		BucketSeconds: widthSeconds, OrgID: orgID, HostID: hostID,
+		CheckKey: checkKey, Item: item, Metric: metric, FromAt: from, ToAt: to,
+	})
+	if err != nil {
+		return Series{}, fmt.Errorf("series for host: %w", err)
+	}
+	points := make([]Point, len(rows))
+	for i, r := range rows {
+		points[i] = Point{At: r.Bucket, Value: r.Value}
+	}
+	return Series{Metric: metric, Points: points}, nil
 }

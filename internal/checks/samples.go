@@ -1,0 +1,162 @@
+package checks
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Observation is one metric or discrete reading an agent reports for a
+// host, tagged with the check that produced it and stamped with the
+// agent's own clock — never arrival time, since replay after a
+// reconnect needs a timestamp comparable across the gap ("Sample
+// delivery").
+//
+// Observation is keyed by CheckKey (text), never by a check_definitions
+// row id: a definition can be edited or deleted without orphaning or
+// rewriting history, and the key is what an operator recognises on a
+// graph. RecordObservations therefore never looks check_key up against
+// check_definitions at all — an Observation for a key with no matching
+// definition (deleted, or never created) is stored exactly like any
+// other. Item is "" for a whole-host metric (cpu, memory); a per-item
+// metric (disk, service) names the mount or unit.
+//
+// Exactly one of Value, Label or Err is meaningful for a given
+// Observation: Err set means collection failed on the agent and no
+// check_samples row is written at all — only check_current's error
+// column changes, so the host page can show "collection failed" instead
+// of a stale number that looks fresh. Otherwise exactly one of Value
+// (numeric) or Label (discrete) is set, never both, never neither.
+// RecordObservations rejects (counts, never errors the batch for) an
+// Observation whose shape matches neither case, whose At falls outside
+// the plausibility window, or whose HostID does not belong to the
+// organization.
+type Observation struct {
+	HostID                 uuid.UUID
+	CheckKey, Item, Metric string
+	At                     time.Time
+	Value                  *float64
+	Label                  *string
+	Err                    string
+}
+
+// Current is the latest known value of one (check_key, item, metric)
+// tuple on a host — what the host page's monitoring section renders
+// without scanning the hypertable.
+//
+// A Current row is never deleted when the thing it measures disappears —
+// a disk unmounted, a service uninstalled: nothing observes a
+// "disappearance", the agent simply stops sending that tuple. This
+// mirrors how a fact tag survives its fact (internal/hosts/tags.go): the
+// row is left exactly as it was last reported, and its own At is what
+// makes it recognisable as stale. A later task renders any Current older
+// than three times the check's own interval as stale rather than
+// current; this package makes no attempt to guess an interval or delete
+// anything on its own. Do not "fix" RecordObservations to delete a
+// Current row for a key/item/metric a batch no longer mentions — that is
+// the one behaviour this type exists to prevent.
+type Current struct {
+	CheckKey, Item, Metric string
+	At                     time.Time
+	Value                  *float64
+	Label                  *string
+	Err                    string
+}
+
+// Point is one bucketed sample of a Series.
+type Point struct {
+	At    time.Time
+	Value float64
+}
+
+// Series is one metric's values over a time range, already bucketed
+// server-side.
+type Series struct {
+	Metric string
+	Points []Point
+}
+
+// Plausibility window ("Sample delivery"): a sample timestamped further in
+// the future than maxFuture, or older than maxPast, says more about the
+// agent's clock than about reality and is rejected rather than trusted.
+// maxPast is generous — the agent's own bounded replay ring holds 15
+// minutes, maxPast adds slack for a slow reconnect — so this window is a
+// sanity check on the agent's clock, not a tight replay-window mirror.
+const (
+	maxFuture = 2 * time.Minute
+	maxPast   = 1 * time.Hour
+)
+
+// plausible reports whether at, compared against now, falls inside the
+// plausibility window. Both boundaries are inclusive: exactly maxFuture
+// ahead or exactly maxPast behind is accepted, one second further either
+// way is not (pinned by TestRecordObservationsPlausibilityWindowBoundaries).
+func plausible(at, now time.Time) bool {
+	return !at.After(now.Add(maxFuture)) && !at.Before(now.Add(-maxPast))
+}
+
+// wellShaped reports whether o carries exactly one of the shapes
+// RecordObservations ever stores: a collection error with no value or
+// label, or a value/label sample with no error and exactly one of the
+// two set. Any other combination (both value and label, neither, or an
+// error alongside a value/label) cannot be represented by either table's
+// own CHECK constraint and is rejected rather than attempted.
+func wellShaped(o Observation) bool {
+	if o.Err != "" {
+		return o.Value == nil && o.Label == nil
+	}
+	return (o.Value != nil) != (o.Label != nil)
+}
+
+// RecordObservations validates and stores one ingest batch for orgID.
+// Every Observation is checked against the plausibility window and its
+// own shape; what survives is handed to the store, which applies the one
+// rejection rule that needs a database lookup — an unknown HostID. Both
+// kinds of rejection are counted, never turned into an error for the
+// batch: one skewed clock or one host that was deleted mid-flight must
+// never lose every other Observation in the same batch. accepted +
+// rejected == len(obs) always; err is non-nil only for a genuine store
+// failure (the batch's fate is then unknown, not "all rejected").
+func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error) {
+	if len(obs) == 0 {
+		return 0, 0, nil
+	}
+	now := s.now()
+	valid := make([]Observation, 0, len(obs))
+	for _, o := range obs {
+		if !plausible(o.At, now) || !wellShaped(o) {
+			rejected++
+			continue
+		}
+		valid = append(valid, o)
+	}
+	if len(valid) == 0 {
+		return 0, rejected, nil
+	}
+	a, r, err := s.store.RecordObservations(ctx, orgID, valid)
+	if err != nil {
+		return 0, 0, fmt.Errorf("record observations: %w", err)
+	}
+	return a, rejected + r, nil
+}
+
+// CurrentForHost returns hostID's latest known value per (check_key,
+// item, metric), an entry per tuple ever reported — including one whose
+// item has since disappeared (Current's own doc comment).
+func (s *Service) CurrentForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Current, error) {
+	return s.store.CurrentForHost(ctx, orgID, hostID)
+}
+
+// SeriesForHost returns metric's samples for hostID's (checkKey, item) in
+// [from, to), downsampled server-side into at most buckets points.
+func (s *Service) SeriesForHost(ctx context.Context, orgID, hostID uuid.UUID, checkKey, item, metric string, from, to time.Time, buckets int) (Series, error) {
+	if buckets < 1 {
+		return Series{}, fmt.Errorf("%w: buckets must be at least 1", ErrInvalidInput)
+	}
+	if !to.After(from) {
+		return Series{}, fmt.Errorf("%w: to must be after from", ErrInvalidInput)
+	}
+	return s.store.SeriesForHost(ctx, orgID, hostID, checkKey, item, metric, from, to, buckets)
+}

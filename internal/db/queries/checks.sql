@@ -50,3 +50,58 @@ RETURNING *;
 
 -- name: DeleteCheckDefinition :execrows
 DELETE FROM check_definitions WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+
+-- name: HostsExisting :many
+-- Which of ids actually belong to org_id, right now — the "unknown host"
+-- half of RecordObservations' rejection rule. Mirrors hosts.sql's
+-- ListHostZones (same ANY(...::uuid[]) shape): a host absent from the
+-- result is either deleted or never existed in this organization, and
+-- either way its observations are rejected, not inserted.
+SELECT id FROM hosts WHERE org_id = sqlc.arg(org_id) AND id = ANY(sqlc.arg(host_ids)::uuid[]);
+
+-- name: InsertCheckSample :exec
+-- One row of history. Never consults check_definitions — see
+-- check_samples' own migration comment (00044) for why an unknown
+-- check_key is still written.
+INSERT INTO check_samples (at, org_id, host_id, check_key, item, metric, value, label)
+VALUES (
+  sqlc.arg(at), sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(check_key), sqlc.arg(item), sqlc.arg(metric),
+  sqlc.arg(value), sqlc.arg(label)
+);
+
+-- name: UpsertCheckCurrent :exec
+-- Replaces the (host_id, check_key, item, metric) row wholesale: value,
+-- label, at and error together, never a partial update — an error
+-- observation must clear a previous value/label (and vice versa), which a
+-- SET list that only touched some columns could leave stale.
+INSERT INTO check_current (org_id, host_id, check_key, item, metric, value, label, at, error)
+VALUES (
+  sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(check_key), sqlc.arg(item), sqlc.arg(metric),
+  sqlc.arg(value), sqlc.arg(label), sqlc.arg(at), sqlc.arg(error)
+)
+ON CONFLICT (host_id, check_key, item, metric) DO UPDATE SET
+  value = EXCLUDED.value, label = EXCLUDED.label, at = EXCLUDED.at, error = EXCLUDED.error;
+
+-- name: ListCheckCurrent :many
+-- Every current row for one host, disappeared items included (they are
+-- never deleted — check_current's own doc comment) — ordering is only for
+-- deterministic output, the caller decides what "stale" means.
+SELECT * FROM check_current WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+ORDER BY check_key, item, metric;
+
+-- name: SeriesForHost :many
+-- One metric's samples for one host, downsampled server-side: bucket_seconds
+-- is the caller's own (to-from)/buckets, turned into an interval through
+-- make_interval rather than string-formatted into the query text, which
+-- keeps this a plain parameterized statement. avg() ignores NULL value
+-- rows on its own (a label-typed metric would never be queried this way —
+-- "graphs" are for numeric metrics only, per the design doc's GUI section),
+-- so no extra filter is needed.
+SELECT time_bucket(make_interval(secs => sqlc.arg(bucket_seconds)::double precision), at)::timestamptz AS bucket,
+       avg(value)::double precision AS value
+FROM check_samples
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
+  AND item = sqlc.arg(item) AND metric = sqlc.arg(metric)
+  AND at >= sqlc.arg(from_at) AND at < sqlc.arg(to_at)
+GROUP BY bucket
+ORDER BY bucket;

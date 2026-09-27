@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -171,6 +172,119 @@ func (q *Queries) GetCheckDefinition(ctx context.Context, arg GetCheckDefinition
 	return i, err
 }
 
+const hostsExisting = `-- name: HostsExisting :many
+SELECT id FROM hosts WHERE org_id = $1 AND id = ANY($2::uuid[])
+`
+
+type HostsExistingParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	HostIds []uuid.UUID `json:"host_ids"`
+}
+
+// Which of ids actually belong to org_id, right now — the "unknown host"
+// half of RecordObservations' rejection rule. Mirrors hosts.sql's
+// ListHostZones (same ANY(...::uuid[]) shape): a host absent from the
+// result is either deleted or never existed in this organization, and
+// either way its observations are rejected, not inserted.
+func (q *Queries) HostsExisting(ctx context.Context, arg HostsExistingParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, hostsExisting, arg.OrgID, arg.HostIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertCheckSample = `-- name: InsertCheckSample :exec
+INSERT INTO check_samples (at, org_id, host_id, check_key, item, metric, value, label)
+VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8
+)
+`
+
+type InsertCheckSampleParams struct {
+	At       time.Time `json:"at"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
+}
+
+// One row of history. Never consults check_definitions — see
+// check_samples' own migration comment (00044) for why an unknown
+// check_key is still written.
+func (q *Queries) InsertCheckSample(ctx context.Context, arg InsertCheckSampleParams) error {
+	_, err := q.db.Exec(ctx, insertCheckSample,
+		arg.At,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+		arg.Value,
+		arg.Label,
+	)
+	return err
+}
+
+const listCheckCurrent = `-- name: ListCheckCurrent :many
+SELECT org_id, host_id, check_key, item, metric, value, label, at, error FROM check_current WHERE org_id = $1 AND host_id = $2
+ORDER BY check_key, item, metric
+`
+
+type ListCheckCurrentParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Every current row for one host, disappeared items included (they are
+// never deleted — check_current's own doc comment) — ordering is only for
+// deterministic output, the caller decides what "stale" means.
+func (q *Queries) ListCheckCurrent(ctx context.Context, arg ListCheckCurrentParams) ([]CheckCurrent, error) {
+	rows, err := q.db.Query(ctx, listCheckCurrent, arg.OrgID, arg.HostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CheckCurrent
+	for rows.Next() {
+		var i CheckCurrent
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.HostID,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.Value,
+			&i.Label,
+			&i.At,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCheckDefinitions = `-- name: ListCheckDefinitions :many
 SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at FROM check_definitions WHERE org_id = $1 ORDER BY key
 `
@@ -232,6 +346,69 @@ func (q *Queries) ListMonitoringGroups(ctx context.Context, orgID uuid.UUID) ([]
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const seriesForHost = `-- name: SeriesForHost :many
+SELECT time_bucket(make_interval(secs => $1::double precision), at)::timestamptz AS bucket,
+       avg(value)::double precision AS value
+FROM check_samples
+WHERE org_id = $2 AND host_id = $3 AND check_key = $4
+  AND item = $5 AND metric = $6
+  AND at >= $7 AND at < $8
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type SeriesForHostParams struct {
+	BucketSeconds float64   `json:"bucket_seconds"`
+	OrgID         uuid.UUID `json:"org_id"`
+	HostID        uuid.UUID `json:"host_id"`
+	CheckKey      string    `json:"check_key"`
+	Item          string    `json:"item"`
+	Metric        string    `json:"metric"`
+	FromAt        time.Time `json:"from_at"`
+	ToAt          time.Time `json:"to_at"`
+}
+
+type SeriesForHostRow struct {
+	Bucket time.Time `json:"bucket"`
+	Value  float64   `json:"value"`
+}
+
+// One metric's samples for one host, downsampled server-side: bucket_seconds
+// is the caller's own (to-from)/buckets, turned into an interval through
+// make_interval rather than string-formatted into the query text, which
+// keeps this a plain parameterized statement. avg() ignores NULL value
+// rows on its own (a label-typed metric would never be queried this way —
+// "graphs" are for numeric metrics only, per the design doc's GUI section),
+// so no extra filter is needed.
+func (q *Queries) SeriesForHost(ctx context.Context, arg SeriesForHostParams) ([]SeriesForHostRow, error) {
+	rows, err := q.db.Query(ctx, seriesForHost,
+		arg.BucketSeconds,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+		arg.FromAt,
+		arg.ToAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeriesForHostRow
+	for rows.Next() {
+		var i SeriesForHostRow
+		if err := rows.Scan(&i.Bucket, &i.Value); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -340,4 +517,45 @@ func (q *Queries) UpdateMonitoringGroup(ctx context.Context, arg UpdateMonitorin
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertCheckCurrent = `-- name: UpsertCheckCurrent :exec
+INSERT INTO check_current (org_id, host_id, check_key, item, metric, value, label, at, error)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9
+)
+ON CONFLICT (host_id, check_key, item, metric) DO UPDATE SET
+  value = EXCLUDED.value, label = EXCLUDED.label, at = EXCLUDED.at, error = EXCLUDED.error
+`
+
+type UpsertCheckCurrentParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
+	At       time.Time `json:"at"`
+	Error    *string   `json:"error"`
+}
+
+// Replaces the (host_id, check_key, item, metric) row wholesale: value,
+// label, at and error together, never a partial update — an error
+// observation must clear a previous value/label (and vice versa), which a
+// SET list that only touched some columns could leave stale.
+func (q *Queries) UpsertCheckCurrent(ctx context.Context, arg UpsertCheckCurrentParams) error {
+	_, err := q.db.Exec(ctx, upsertCheckCurrent,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+		arg.Value,
+		arg.Label,
+		arg.At,
+		arg.Error,
+	)
+	return err
 }
