@@ -281,20 +281,41 @@ func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIden
 // clamped 30-600s) repairs it through the ordinary convergence path in
 // processHeartbeat regardless. The pushed message carries no Ack — it
 // answers nothing the agent sent, unlike the heartbeat's own response.
+//
+// It is the batch of one (PushHosts), not a second implementation, so
+// the single-host and many-host paths can never answer differently about
+// the same host.
 func (s *Service) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
-	if s.deps.Checks == nil {
+	return s.PushHosts(ctx, orgID, []uuid.UUID{hostID})
+}
+
+// PushHosts recomputes the resolved configuration of every host in
+// hostIDs in ONE resolver pass and pushes each host's to its own open
+// streams — what a write affecting a known set of hosts triggers: a
+// host- or group-bound definition change, or a monitoring group whose
+// selector now matches a different set.
+//
+// The single pass is the point. checks.ResolveHost loads the
+// organization's definitions, its monitoring groups and every group's
+// selector expansion to answer for one host, so pushing n hosts one at a
+// time costs n of those bundles — on a group covering a couple of hundred
+// hosts, thousands of serial queries inside one HTTP request. ResolveHosts
+// loads that bundle once and answers for the whole batch, by the same
+// merge and the same version computation (see its own doc comment), so the
+// two can never disagree.
+//
+// An empty batch resolves nothing at all: a write that turns out to affect
+// no host — a monitoring group nothing binds to, the common case — must
+// cost nothing. Otherwise the contract is PushHost's, per host.
+func (s *Service) PushHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) error {
+	if s.deps.Checks == nil || len(hostIDs) == 0 {
 		return nil
 	}
-	resolved, err := s.deps.Checks.ResolveHost(ctx, orgID, hostID)
+	sets, err := s.deps.Checks.ResolveHosts(ctx, orgID, hostIDs)
 	if err != nil {
-		return fmt.Errorf("resolve host checks for push: %w", err)
+		return fmt.Errorf("resolve hosts checks for push: %w", err)
 	}
-	cfg, err := checkConfigFor(resolved)
-	if err != nil {
-		return fmt.Errorf("encode check configuration for push: %w", err)
-	}
-	s.streams.PushToHost(orgID, hostID, &agentpb.ManagerMessage{CheckConfig: cfg})
-	return nil
+	return s.pushResolved(orgID, sets)
 }
 
 // PushOrg recomputes every monitored host's check configuration in orgID
@@ -302,11 +323,9 @@ func (s *Service) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
 // what an organization-bound definition change triggers, where the
 // affected set is "every monitored host".
 //
-// It exists because the per-host path does not scale to that set:
-// PushHost runs a full ResolveHost, which re-reads the organization's
-// definitions, its monitoring groups and every group's selector
-// expansion, so pushing n hosts one at a time costs n of those. ResolveOrg
-// loads that bundle once and resolves every host against it, which is the
+// It exists for the same reason PushHosts does, one step further: the
+// affected set is not even enumerated by the caller. ResolveOrg loads the
+// bundle once and resolves every monitored host against it, which is the
 // same answer by construction (both go through the same resolve /
 // toResolvedSet path — see checks.ResolveOrg's own doc comment) at a
 // fraction of the work.
@@ -322,14 +341,31 @@ func (s *Service) PushOrg(ctx context.Context, orgID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("resolve org checks for push: %w", err)
 	}
+	return s.pushResolved(orgID, sets)
+}
+
+// pushResolved queues each resolved set to its host's open streams.
+//
+// A host whose configuration cannot be encoded does not stop the others.
+// Map iteration order is random, so returning at the first fault would
+// hand the new configuration to a nondeterministic subset of the fleet and
+// silently leave the rest on the old one — from one definition with
+// unencodable parameters, reported as a single generic error. Every host
+// is attempted, and the faults are reported together afterwards; the
+// hosts that could not be encoded are exactly the ones the agents' own
+// re-assert will keep asking about, which is the best-effort contract
+// every push here already promises.
+func (s *Service) pushResolved(orgID uuid.UUID, sets map[uuid.UUID]checks.ResolvedSet) error {
+	var faults []error
 	for hostID, resolved := range sets {
 		cfg, err := checkConfigFor(resolved)
 		if err != nil {
-			return fmt.Errorf("encode check configuration for push: %w", err)
+			faults = append(faults, fmt.Errorf("encode check configuration for host %s: %w", hostID, err))
+			continue
 		}
 		s.streams.PushToHost(orgID, hostID, &agentpb.ManagerMessage{CheckConfig: cfg})
 	}
-	return nil
+	return errors.Join(faults...)
 }
 
 // checkConfigFor renders a resolved set into the wire CheckConfig: the

@@ -431,13 +431,11 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 			t.Fatalf("deleting an org-bound check made %d organization-wide pushes, want 1", n)
 		}
 
-		// Every push ran on a context the client cannot have cancelled:
-		// the write has already committed by then, so a browser that gave
-		// up (or a proxy that cut the response) must not leave some agents
-		// told and others not.
-		if errs := f.s.Push.ContextErrors(); len(errs) != 0 {
-			t.Fatalf("pushes ran on an already-cancelled context: %v", errs)
-		}
+		// That these pushes outlive a cancelled request is pinned where
+		// it is actually observable — against pushAffected directly, in
+		// check_push_internal_test.go. Inside a running handler the
+		// request context is not cancelled either way, so asserting on it
+		// here would prove nothing.
 	})
 
 	// The write has already committed when the push runs, and the agent

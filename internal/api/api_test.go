@@ -211,8 +211,8 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 // against.
 type noopPusher struct{}
 
-func (noopPusher) PushHost(context.Context, uuid.UUID, uuid.UUID) error { return nil }
-func (noopPusher) PushOrg(context.Context, uuid.UUID) error             { return nil }
+func (noopPusher) PushHosts(context.Context, uuid.UUID, []uuid.UUID) error { return nil }
+func (noopPusher) PushOrg(context.Context, uuid.UUID) error                { return nil }
 
 func TestHealthz(t *testing.T) {
 	body := healthzRequest(t, baseHealthzDeps(t))

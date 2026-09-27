@@ -749,3 +749,141 @@ func TestPushOrgResolveFaultPropagates(t *testing.T) {
 		t.Fatal("a resolve fault must propagate to PushOrg's own caller")
 	}
 }
+
+// TestPushHostsResolvesOnceForTheBatch: the many-hosts push — what a
+// monitoring group's selector change triggers, where the affected set is
+// every host the old and the new selector match — resolves the batch in
+// one pass, exactly like PushOrg does for a whole organization. A
+// per-host loop would re-read the definitions, the groups and every
+// group's expansion once per host, inside the request.
+func TestPushHostsResolvesOnceForTheBatch(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	resp, client := enrollAnAgent(t, h, "web-1")
+	hostID := uuid.MustParse(resp.GetHostId())
+	other := uuid.Must(uuid.NewV7())
+	h.checks.setResolved(hostID, checks.ResolvedSet{
+		HostID: hostID, Checks: []checks.Resolved{{Key: "cpu", Plugin: "cpu", Interval: 30 * time.Second}}, Version: "batch-pushed",
+	})
+	h.checks.setResolved(other, checks.ResolvedSet{HostID: other, Version: "batch-pushed-2"})
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for trackedStreams(h.svc.Streams(), hostID) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the stream never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := h.svc.PushHosts(t.Context(), testOrg, []uuid.UUID{hostID, other}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := msg.GetCheckConfig(); cfg == nil || cfg.GetVersion() != "batch-pushed" {
+		t.Fatalf("pushed config = %+v", cfg)
+	}
+	if calls := h.checks.resolveHostsCalls(); calls != 1 {
+		t.Fatalf("ResolveHosts calls = %d, want exactly 1 for the batch", calls)
+	}
+	if calls := h.checks.resolveHostCalls(); calls != 0 {
+		t.Fatalf("ResolveHost calls = %d, want 0: a batch push must not fan out per host", calls)
+	}
+}
+
+// TestPushHostIsOnePathWithPushHosts: the single-host push is the batch of
+// one, so there is one resolve path to keep correct, not two that could
+// answer differently for the same host.
+func TestPushHostIsOnePathWithPushHosts(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	hostID := uuid.Must(uuid.NewV7())
+	h.checks.setResolved(hostID, checks.ResolvedSet{HostID: hostID, Version: "v1"})
+	if err := h.svc.PushHost(t.Context(), testOrg, hostID); err != nil {
+		t.Fatal(err)
+	}
+	if calls := h.checks.resolveHostsCalls(); calls != 1 {
+		t.Fatalf("PushHost made %d ResolveHosts calls, want 1 (it is the batch of one)", calls)
+	}
+}
+
+// TestPushHostsEmptyBatchIsANoOp: nothing to push must not resolve
+// anything — a group write that affects no host at all is the common case
+// (a group nothing binds to), and it must cost nothing.
+func TestPushHostsEmptyBatchIsANoOp(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	if err := h.svc.PushHosts(t.Context(), testOrg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if calls := h.checks.resolveHostsCalls(); calls != 0 {
+		t.Fatalf("an empty batch resolved %d times, want 0", calls)
+	}
+}
+
+// TestPushKeepsGoingAfterAnEncodeFault: one definition with parameters
+// that cannot be encoded must not decide, by map iteration order, which
+// hosts get their new configuration and which are silently left behind.
+// Every host is attempted; the fault is reported afterwards.
+func TestPushKeepsGoingAfterAnEncodeFault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		push func(h *harness, ids []uuid.UUID) error
+	}{
+		{"org", func(h *harness, _ []uuid.UUID) error { return h.svc.PushOrg(t.Context(), testOrg) }},
+		{"batch", func(h *harness, ids []uuid.UUID) error { return h.svc.PushHosts(t.Context(), testOrg, ids) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessWithChecks(t)
+			var ids []uuid.UUID
+			var streams []agentpb.AgentService_AgentStreamClient
+			for _, name := range []string{"web-1", "web-2", "web-3"} {
+				resp, client := enrollAnAgent(t, h, name)
+				id := uuid.MustParse(resp.GetHostId())
+				ids = append(ids, id)
+				h.checks.setResolved(id, checks.ResolvedSet{HostID: id, Version: "v-" + name})
+				stream, err := (*client).AgentStream(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				streams = append(streams, stream)
+				deadline := time.Now().Add(5 * time.Second)
+				for trackedStreams(h.svc.Streams(), id) == 0 {
+					if time.Now().After(deadline) {
+						t.Fatal("the stream never registered")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			// The middle host carries parameters json.Marshal refuses (a
+			// channel is not encodable), whichever order the map is
+			// walked in.
+			h.checks.setResolved(ids[1], checks.ResolvedSet{
+				HostID: ids[1], Version: "broken",
+				Checks: []checks.Resolved{{Key: "cpu", Plugin: "cpu", Params: map[string]any{"bad": make(chan int)}}},
+			})
+			h.checks.setOrgResolved(testOrg, map[uuid.UUID]checks.ResolvedSet{
+				ids[0]: {HostID: ids[0], Version: "v-web-1"},
+				ids[1]: {HostID: ids[1], Version: "broken", Checks: []checks.Resolved{{Key: "cpu", Plugin: "cpu", Params: map[string]any{"bad": make(chan int)}}}},
+				ids[2]: {HostID: ids[2], Version: "v-web-3"},
+			})
+
+			if err := tc.push(h, ids); err == nil {
+				t.Fatal("an encode fault must be reported")
+			}
+			// Both healthy hosts were still pushed, whatever order the
+			// fault was met in.
+			for _, i := range []int{0, 2} {
+				msg, err := streams[i].Recv()
+				if err != nil {
+					t.Fatalf("host %d never received its configuration: %v", i, err)
+				}
+				if cfg := msg.GetCheckConfig(); cfg == nil {
+					t.Fatalf("host %d got %+v, want a CheckConfig", i, msg)
+				}
+			}
+		})
+	}
+}

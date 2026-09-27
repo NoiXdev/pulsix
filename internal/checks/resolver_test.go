@@ -773,3 +773,94 @@ func TestEffectiveHostPropagatesErrors(t *testing.T) {
 		t.Fatal("want the store's error propagated")
 	}
 }
+
+// TestResolveHostsSharesOneBundle: the batch resolve is what a write
+// affecting many hosts at once needs — a monitoring group's selector
+// change reaches everything the old and new text match. It must answer
+// exactly what ResolveHost answers per host (same precedence, same
+// version, same monitored gate) while loading the definitions, the groups
+// and each group's expansion once for the whole batch, not once per host.
+func TestResolveHostsSharesOneBundle(t *testing.T) {
+	web1, web2, cold := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	matcher := &fakeGroupMatcher{bySelector: map[string][]uuid.UUID{"role=web": {web1, web2}}}
+	roster := &fakeHostRoster{monitored: map[uuid.UUID]bool{web1: true, web2: true, cold: false}}
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+	org := uuid.Must(uuid.NewV7())
+
+	g, err := svc.CreateGroup(ctx, org, checks.GroupInput{Name: "web", Selector: "role=web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Key: checks.PluginCPU, Plugin: checks.PluginCPU, Interval: 15 * time.Second, Enabled: true,
+		BindingKind: checks.BindingGroup, GroupID: &g.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	matcher.calls = 0
+	sets, err := svc.ResolveHosts(ctx, org, []uuid.UUID{web1, web2, cold})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One group in the organization, so one expansion for the whole batch
+	// — not one per host, which is the entire reason this method exists.
+	if matcher.calls != 1 {
+		t.Fatalf("selector expanded %d times for a 3-host batch, want 1", matcher.calls)
+	}
+	if len(sets) != 3 {
+		t.Fatalf("sets = %+v, want an entry per requested host", sets)
+	}
+	if got := sets[web1]; len(got.Checks) != 1 || got.Checks[0].Interval != 15*time.Second {
+		t.Fatalf("web-1 = %+v, want the group's 15s override", got)
+	}
+	// An unmonitored host resolves to an empty set rather than being
+	// dropped: the caller asked about it, and "nothing runs here" is the
+	// answer its agent must be given if one is somehow still connected.
+	if got := sets[cold]; len(got.Checks) != 0 {
+		t.Fatalf("an unmonitored host = %+v, want an empty set", got)
+	}
+
+	// The per-host path must agree with the batch, host for host —
+	// including the version, which is what an agent compares against.
+	for _, id := range []uuid.UUID{web1, web2, cold} {
+		one, err := svc.ResolveHost(ctx, org, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if one.Version != sets[id].Version || len(one.Checks) != len(sets[id].Checks) {
+			t.Fatalf("host %s: ResolveHost = %+v, ResolveHosts = %+v", id, one, sets[id])
+		}
+	}
+}
+
+// TestResolveHostsEmptyAndFaults: nothing to resolve is not a reason to
+// touch the database, and a failing port is reported rather than answered
+// with a partial map.
+func TestResolveHostsEmptyAndFaults(t *testing.T) {
+	store := newFakeStore()
+	roster := &fakeHostRoster{monitored: map[uuid.UUID]bool{}}
+	svc := checks.NewService(store, checks.WithMatcher(&fakeGroupMatcher{}), checks.WithHostRoster(roster))
+	org := uuid.Must(uuid.NewV7())
+
+	sets, err := svc.ResolveHosts(ctx, org, nil)
+	if err != nil || len(sets) != 0 {
+		t.Fatalf("empty batch = %+v, %v, want an empty map and no error", sets, err)
+	}
+
+	roster.err = errors.New("hosts store down")
+	if _, err := svc.ResolveHosts(ctx, org, []uuid.UUID{uuid.Must(uuid.NewV7())}); err == nil {
+		t.Fatal("a failing roster must surface, not answer a partial map")
+	}
+
+	noRoster := checks.NewService(store)
+	if _, err := noRoster.ResolveHosts(ctx, org, []uuid.UUID{uuid.Must(uuid.NewV7())}); err == nil {
+		t.Fatal("a service built without WithHostRoster must refuse to resolve")
+	}
+}

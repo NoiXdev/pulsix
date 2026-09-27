@@ -637,15 +637,22 @@ type Push struct {
 // Safe for concurrent use: the httptest server may serve requests on more
 // than one goroutine.
 type PushRecorder struct {
-	mu      sync.Mutex
-	pushes  []Push
-	ctxErrs []error
-	err     error
+	mu     sync.Mutex
+	pushes []Push
+	err    error
 }
 
-// PushHost implements api.CheckConfigPusher.
-func (r *PushRecorder) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
-	return r.record(ctx, Push{OrgID: orgID, HostID: hostID})
+// PushHosts implements api.CheckConfigPusher. Each id is recorded as its
+// own Push, so a test can still assert "exactly these hosts" — the batch
+// is how the manager talks to the resolver, not a change in what a write
+// is supposed to reach.
+func (r *PushRecorder) PushHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) error {
+	for _, id := range hostIDs {
+		if err := r.record(ctx, Push{OrgID: orgID, HostID: id}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PushOrg implements api.CheckConfigPusher.
@@ -653,30 +660,22 @@ func (r *PushRecorder) PushOrg(ctx context.Context, orgID uuid.UUID) error {
 	return r.record(ctx, Push{OrgID: orgID, WholeOrg: true})
 }
 
-// record captures one push, and asserts the contract the routes promise
-// about the context they push on: it must not be already cancelled
-// because the client went away, since the write it follows has already
-// committed (api.pushAffected detaches it with context.WithoutCancel).
-func (r *PushRecorder) record(ctx context.Context, p Push) error {
+// record captures one push.
+//
+// It deliberately does NOT check ctx.Err(): inside a huma handler the
+// request context has not been cancelled yet whether or not the route
+// detached it, so such an assertion can never fail and would only look
+// like the detachment was covered. That contract is pinned where it is
+// observable, against pushAffected directly —
+// TestPushAffectedSurvivesACancelledRequest, internal/api/check_push_internal_test.go.
+func (r *PushRecorder) record(_ context.Context, p Push) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		r.ctxErrs = append(r.ctxErrs, err)
-	}
 	if r.err != nil {
 		return r.err
 	}
 	r.pushes = append(r.pushes, p)
 	return nil
-}
-
-// ContextErrors returns the cancellation state seen by each push whose
-// context was already done when it ran — empty is what a correctly
-// detached push path produces.
-func (r *PushRecorder) ContextErrors() []error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]error(nil), r.ctxErrs...)
 }
 
 // Pushes returns every push recorded so far, oldest first.
@@ -723,7 +722,7 @@ func (r *PushRecorder) PushedWholeOrg() int {
 func (r *PushRecorder) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.pushes, r.ctxErrs = nil, nil
+	r.pushes = nil
 }
 
 // FailWith makes every later PushHost return err instead of recording,

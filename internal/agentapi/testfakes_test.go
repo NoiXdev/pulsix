@@ -400,15 +400,16 @@ func (f *fakeFacts) recorded() []factCall {
 // only care about the shape of the accepted/rejected counts, not a
 // specific host list).
 type fakeChecks struct {
-	mu              sync.Mutex
-	resolved        map[uuid.UUID]checks.ResolvedSet
-	orgResolved     map[uuid.UUID]map[uuid.UUID]checks.ResolvedSet
-	resolveErr      error
-	resolveCalls    int
-	resolveOrgCount int
-	knownHosts      map[uuid.UUID]bool
-	recordedObs     []checks.Observation
-	recordErr       error
+	mu                sync.Mutex
+	resolved          map[uuid.UUID]checks.ResolvedSet
+	orgResolved       map[uuid.UUID]map[uuid.UUID]checks.ResolvedSet
+	resolveErr        error
+	resolveCalls      int
+	resolveOrgCount   int
+	resolveHostsCount int
+	knownHosts        map[uuid.UUID]bool
+	recordedObs       []checks.Observation
+	recordErr         error
 }
 
 func newFakeChecks() *fakeChecks {
@@ -426,6 +427,31 @@ func (f *fakeChecks) setOrgResolved(orgID uuid.UUID, sets map[uuid.UUID]checks.R
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.orgResolved[orgID] = sets
+}
+
+// ResolveHosts answers from the same per-host map setResolved arms, so a
+// batch push and a single-host push read the same fixture — and counts
+// its own calls, which is how a test proves the batch resolved once
+// rather than once per host.
+func (f *fakeChecks) ResolveHosts(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolveHostsCount++
+	if f.resolveErr != nil {
+		return nil, f.resolveErr
+	}
+	out := make(map[uuid.UUID]checks.ResolvedSet, len(hostIDs))
+	for _, id := range hostIDs {
+		out[id] = f.resolved[id]
+	}
+	return out, nil
+}
+
+// resolveHostsCalls reports how many times ResolveHosts was called.
+func (f *fakeChecks) resolveHostsCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resolveHostsCount
 }
 
 func (f *fakeChecks) ResolveOrg(_ context.Context, orgID uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error) {

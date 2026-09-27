@@ -43,7 +43,9 @@ func (in DefinitionInput) Binding() Binding {
 // exactly what ResolveOrg exists to do in one shared pass instead of one
 // pass per host. Reporting the shape, rather than a list, is what lets the
 // caller take that path — and keeps this package from materialising a
-// host list nobody needs.
+// host list nobody needs. It means exactly "every monitored host", not
+// "every host": see AffectedHosts on the one case where that is narrower
+// than the bindings asked about.
 type Affected struct {
 	// WholeOrg means every monitored host in the organization; Hosts is
 	// then empty.
@@ -101,7 +103,17 @@ func (s *Service) AffectedHosts(ctx context.Context, orgID uuid.UUID, bindings .
 		}
 	}
 	if out.WholeOrg {
-		// The per-host ids gathered alongside it are already in it.
+		// The per-host ids gathered alongside it are dropped. That is
+		// containment for every host that matters and a deliberate,
+		// bounded gap for one that does not: WholeOrg is realised by
+		// ResolveOrg, which covers exactly HostRoster.MonitoredHosts, so
+		// a host-bound side naming an UNMONITORED host is not in it.
+		// Such a host resolves to an empty set either way (ResolveHost's
+		// own gate), so nothing it should be running is withheld — and
+		// if one is somehow still connected, its own configuration
+		// re-assert tells it so within the interval. Widening this to
+		// "org plus those stragglers" would mean two pushes for a case
+		// whose answer is empty.
 		return Affected{WholeOrg: true}, nil
 	}
 	out.Hosts = make([]uuid.UUID, 0, len(seen))

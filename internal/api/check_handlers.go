@@ -33,15 +33,17 @@ import (
 // protobuf package — the HTTP layer knows only "tell these agents to catch
 // up".
 //
-// The two methods are not interchangeable. PushHost resolves one host,
-// which means re-reading the organization's definitions, its monitoring
-// groups and every group's selector expansion for that one host; PushOrg
-// resolves every monitored host against one shared load of all of it. An
-// organization-bound write affects every monitored host, so calling
-// PushHost in a loop for it would repeat that whole bundle once per host —
-// on a fleet of a few hundred, thousands of serial queries inside one
-// request. pushAffected below picks by what the domain reports
-// (checks.Affected.WholeOrg), never by counting ids.
+// Both methods take a whole affected set, never one host: resolving a
+// host's configuration means loading the organization's definitions, its
+// monitoring groups and every group's selector expansion, so a per-host
+// loop repeats that entire bundle once per host — on a group covering a
+// couple of hundred hosts, thousands of serial queries inside one HTTP
+// request. PushHosts shares one load across the named ids; PushOrg does
+// the same for every monitored host without the caller enumerating them.
+// pushAffected below picks between them by what the domain reports
+// (checks.Affected.WholeOrg), never by counting ids — including the one
+// case where the organization-wide path is narrower than the bindings
+// asked about, an unmonitored host, which checks.Affected documents.
 //
 // A push is best-effort by design, never part of the write it follows:
 // the agent re-asserts its configuration version every 60 seconds and the
@@ -51,7 +53,7 @@ import (
 // rather than turning a committed, successful write into a 500 the
 // operator would retry.
 type CheckConfigPusher interface {
-	PushHost(ctx context.Context, orgID, hostID uuid.UUID) error
+	PushHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) error
 	PushOrg(ctx context.Context, orgID uuid.UUID) error
 }
 
@@ -310,8 +312,8 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 //
 // Two things about how it runs, both deliberate:
 //
-//   - The organization-wide case is one call, not a loop. See
-//     CheckConfigPusher.
+//   - Whatever the affected set is, it is handed over in one call, never
+//     iterated here. See CheckConfigPusher.
 //   - It runs on a context detached from the request's
 //     (context.WithoutCancel) under its own deadline, the same pattern
 //     internal/schedules and internal/notify use for work that must
@@ -328,6 +330,12 @@ func pushAffected(ctx context.Context, deps Deps, orgID uuid.UUID, affected chec
 	if deps.AgentPush == nil {
 		return
 	}
+	if !affected.WholeOrg && len(affected.Hosts) == 0 {
+		// Nothing to tell anybody: a write that turns out to reach no
+		// host at all — a monitoring group nothing binds to, the common
+		// case — costs nothing downstream either.
+		return
+	}
 	pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pushTimeout)
 	defer cancel()
 
@@ -338,11 +346,9 @@ func pushAffected(ctx context.Context, deps Deps, orgID uuid.UUID, affected chec
 		}
 		return
 	}
-	for _, id := range affected.Hosts {
-		if err := deps.AgentPush.PushHost(pushCtx, orgID, id); err != nil {
-			slog.ErrorContext(pushCtx, "check configuration push failed; the agent's own re-assert will repair it",
-				"org_id", orgID, "host_id", id, "err", err)
-		}
+	if err := deps.AgentPush.PushHosts(pushCtx, orgID, affected.Hosts); err != nil {
+		slog.ErrorContext(pushCtx, "check configuration push failed; the agents' own re-assert will repair it",
+			"org_id", orgID, "hosts", len(affected.Hosts), "err", err)
 	}
 }
 

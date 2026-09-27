@@ -336,6 +336,57 @@ func (s *Service) ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (Res
 	return toResolvedSet(hostID, bundle.resolve(hostID))
 }
 
+// ResolveHosts computes the resolved set of each host in hostIDs, sharing
+// one loadResolveBundle across all of them — so a write that reaches many
+// hosts at once (a monitoring group's selector change reaching everything
+// the old and the new text match) expands each group's selector once for
+// the whole batch rather than once per host.
+//
+// It answers exactly what ResolveHost answers for each id, by the same
+// path: the same precedence merge, the same monitored gate (a host that
+// is not monitored, or does not exist in orgID at all, gets an empty set
+// rather than being dropped from the map — the caller asked about it, and
+// "nothing runs here" is a real answer), and the same Version. An id
+// listed twice produces one entry. An empty list reads nothing at all.
+func (s *Service) ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]ResolvedSet, error) {
+	if len(hostIDs) == 0 {
+		return map[uuid.UUID]ResolvedSet{}, nil
+	}
+	if s.hostRoster == nil {
+		return nil, fmt.Errorf("checks: resolve: service was built without WithHostRoster")
+	}
+	monitoredIDs, err := s.hostRoster.MonitoredHosts(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve: monitored hosts: %w", err)
+	}
+	monitored := make(map[uuid.UUID]struct{}, len(monitoredIDs))
+	for _, id := range monitoredIDs {
+		monitored[id] = struct{}{}
+	}
+
+	bundle, err := s.loadResolveBundle(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[uuid.UUID]ResolvedSet, len(hostIDs))
+	for _, id := range hostIDs {
+		if _, done := out[id]; done {
+			continue
+		}
+		var checks []Resolved
+		if _, ok := monitored[id]; ok {
+			checks = bundle.resolve(id)
+		}
+		rs, err := toResolvedSet(id, checks)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = rs
+	}
+	return out, nil
+}
+
 // ResolveOrg computes every monitored host's resolved set for orgID in one
 // pass, sharing one loadResolveBundle (so each group's selector is
 // expanded exactly once) across every host. The returned map has an entry
