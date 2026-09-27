@@ -212,6 +212,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 type noopPusher struct{}
 
 func (noopPusher) PushHost(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (noopPusher) PushOrg(context.Context, uuid.UUID) error             { return nil }
 
 func TestHealthz(t *testing.T) {
 	body := healthzRequest(t, baseHealthzDeps(t))
@@ -364,6 +365,21 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	noNotify.Notify = nil
 	if _, err := api.New(noNotify); err == nil || !strings.Contains(err.Error(), "Notify") {
 		t.Fatalf("api.New without Notify = %v, want an error naming Notify", err)
+	}
+	// The monitoring check pipeline (v0.3b-1). AgentPush especially: a nil
+	// pusher would not panic — pushAffected guards it — it would silently
+	// never tell an agent its configuration changed, leaving every edit to
+	// wait for the agent's own 60-second re-assert. That is exactly the
+	// kind of quiet half-working manager Deps.validate exists to refuse.
+	noChecks := testDeps(t)
+	noChecks.Checks = nil
+	if _, err := api.New(noChecks); err == nil || !strings.Contains(err.Error(), "Checks") {
+		t.Fatalf("api.New without Checks = %v, want an error naming Checks", err)
+	}
+	noPush := testDeps(t)
+	noPush.AgentPush = nil
+	if _, err := api.New(noPush); err == nil || !strings.Contains(err.Error(), "AgentPush") {
+		t.Fatalf("api.New without AgentPush = %v, want an error naming AgentPush", err)
 	}
 }
 

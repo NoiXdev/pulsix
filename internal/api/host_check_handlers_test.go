@@ -109,10 +109,17 @@ func TestHostCheckRoutes(t *testing.T) {
 		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now.Add(-40 * time.Minute), Value: floatPtr(10)},
 		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now.Add(-20 * time.Minute), Value: floatPtr(20)},
 		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now.Add(-10 * time.Second), Value: floatPtr(12.5)},
-		// A 300-second disk check last heard from half an hour ago: more
-		// than three intervals, so stale.
-		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/", Metric: "used_percent", At: now.Add(-30 * time.Minute), Value: floatPtr(61)},
-		checks.Observation{HostID: f.web, CheckKey: "memory", Metric: "used_percent", At: now.Add(-20 * time.Second), Err: "read /proc/meminfo: permission denied"},
+		// The staleness boundary, pinned from both sides against
+		// staleIntervals = 3 rather than "old" versus "recent":
+		//   - disk runs every 300 s and was last heard from 16 minutes
+		//     ago — 3.2 intervals, so stale, and it would NOT be stale at
+		//     a threshold of four;
+		//   - memory runs every 30 s and was last heard from 65 seconds
+		//     ago — 2.2 intervals, so still current, and it WOULD be
+		//     marked stale at a threshold of one or two.
+		// Together those bracket the constant exactly.
+		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/", Metric: "used_percent", At: now.Add(-16 * time.Minute), Value: floatPtr(61)},
+		checks.Observation{HostID: f.web, CheckKey: "memory", Metric: "used_percent", At: now.Add(-65 * time.Second), Err: "read /proc/meminfo: permission denied"},
 		checks.Observation{HostID: f.web, CheckKey: "service", Item: "sshd", Metric: "state", At: now, Label: strPtr("active")},
 	)
 
@@ -139,13 +146,16 @@ func TestHostCheckRoutes(t *testing.T) {
 		if len(memory.Values) != 1 || memory.Values[0].Error == "" || memory.Values[0].Value != nil {
 			t.Fatalf("memory values = %+v, want a collection error and no number", memory.Values)
 		}
+		if memory.IntervalSeconds != 30 || memory.Values[0].Stale {
+			t.Fatalf("memory = %+v: a reading 2.2 of its own intervals old is still current", memory)
+		}
 
 		disk := body.byKey(t, "disk")
 		if disk.Source != "org" || disk.SourceID != "" || disk.Origin != "seed" {
 			t.Fatalf("disk = %+v, want the organization's own seeded check", disk)
 		}
-		if len(disk.Values) != 1 || disk.Values[0].Item != "/" || !disk.Values[0].Stale {
-			t.Fatalf("disk values = %+v, want one stale value for /", disk.Values)
+		if disk.IntervalSeconds != 300 || len(disk.Values) != 1 || disk.Values[0].Item != "/" || !disk.Values[0].Stale {
+			t.Fatalf("disk = %+v: a reading 3.2 of its own intervals old is stale", disk)
 		}
 
 		service := body.byKey(t, "service")

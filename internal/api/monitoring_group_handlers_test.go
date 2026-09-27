@@ -191,6 +191,44 @@ func TestMonitoringGroupRoutes(t *testing.T) {
 		}
 	})
 
+	// A group of another organization is invisible, not merely refused:
+	// its id answers 404 inside an organization the caller does belong to,
+	// 403 inside the one it lives in, and it never appears in anyone
+	// else's list.
+	t.Run("cross-organization invisibility", func(t *testing.T) {
+		otherOwner := f.s.SeedUser("groups-other-owner@example.test", "correct horse battery")
+		f.s.SeedOrg("groups-other", otherOwner)
+		otherC := f.s.LoginAs(otherOwner)
+		otherURL := f.s.HTTP.URL + "/api/v1/orgs/groups-other/monitoring-groups"
+
+		body := map[string]any{"name": "other tier", "selector": "role=web", "priority": 3}
+		resp := postJSON(t, otherC, otherURL, body)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create in the other org = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var created struct {
+			Group groupDTO `json:"group"`
+		}
+		decodeInto(t, resp, &created)
+
+		for _, c := range []struct {
+			method string
+			body   map[string]any
+		}{{http.MethodGet, nil}, {http.MethodPut, body}, {http.MethodDelete, nil}} {
+			if resp := requestJSON(t, f.operatorC, c.method, f.groupsURL()+"/"+created.Group.ID, c.body); resp.StatusCode != http.StatusNotFound {
+				t.Errorf("%s of a foreign id in my own org = %d, want 404", c.method, resp.StatusCode)
+			}
+			if resp := requestJSON(t, f.operatorC, c.method, otherURL+"/"+created.Group.ID, c.body); resp.StatusCode != http.StatusForbidden {
+				t.Errorf("%s in an org I am not a member of = %d, want 403", c.method, resp.StatusCode)
+			}
+		}
+		for _, g := range f.listGroups(t, f.ownerC) {
+			if g.Name == "other tier" {
+				t.Fatalf("another organization's group is visible: %+v", g)
+			}
+		}
+	})
+
 	// A group carries no configuration of its own, so changing one matters
 	// exactly when some definition binds to it — and then it matters for
 	// every host its selector covers, old and new.
