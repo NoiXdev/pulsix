@@ -82,6 +82,29 @@ type HostMatcher interface {
 	MatchingHosts(ctx context.Context, orgID uuid.UUID, selector string) ([]uuid.UUID, error)
 }
 
+// HostRoster tells the resolver (resolver.go) which hosts in an
+// organization are currently monitored — the only hosts any binding ever
+// resolves to a non-empty set for ("Resolution": "Only hosts with
+// monitored = true resolve to a non-empty set"). internal/hosts
+// (hosts.Service.ListHosts filtered to Monitored = true) satisfies it.
+//
+// This is a second narrow port, deliberately not folded into HostMatcher
+// or Store: HostMatcher answers "which hosts does this selector match"
+// (a per-group question, used by Preview too); Store persists this
+// package's own rows and every method on it must be satisfiable by
+// SQLStore, which nothing here requires touching. Like HostMatcher, this
+// package keeps no Go-level dependency on the hosts service surface, and
+// production wiring is deferred to whichever task wires HostMatcher's own
+// adapter — a Service built without WithHostRoster refuses to resolve,
+// the same fail-closed posture Preview takes without WithMatcher.
+type HostRoster interface {
+	// MonitoredHosts returns the ids of every host in orgID with
+	// monitored = true. Order is not significant — the resolver treats
+	// the result as a set and sorts whatever it derives from it before
+	// that ordering matters (ResolvedSet.Checks, ResolveOrg's version).
+	MonitoredHosts(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error)
+}
+
 // Store persists monitoring groups (org-scoped).
 type Store interface {
 	Create(ctx context.Context, g Group) (Group, error)
@@ -119,17 +142,25 @@ type Store interface {
 // whatever the database actually wrote, the same way maintenance.Window
 // and agents.Token do.
 type Service struct {
-	store   Store
-	matcher HostMatcher
-	rand    io.Reader
+	store      Store
+	matcher    HostMatcher
+	hostRoster HostRoster
+	rand       io.Reader
 }
 
 // Option configures a Service.
 type Option func(*Service)
 
-// WithMatcher wires the host-selector port Preview needs; a Service built
-// without it refuses Preview rather than reaching into a nil interface.
+// WithMatcher wires the host-selector port Preview and the resolver
+// (resolver.go) need; a Service built without it refuses Preview or a
+// resolve that actually needs to expand a group rather than reaching into
+// a nil interface.
 func WithMatcher(m HostMatcher) Option { return func(s *Service) { s.matcher = m } }
+
+// WithHostRoster wires the monitored-hosts port the resolver needs; a
+// Service built without it refuses ResolveHost/ResolveOrg outright (see
+// HostRoster's own doc comment).
+func WithHostRoster(r HostRoster) Option { return func(s *Service) { s.hostRoster = r } }
 
 // WithRand injects the entropy source for ids.
 func WithRand(r io.Reader) Option { return func(s *Service) { s.rand = r } }
