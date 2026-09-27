@@ -23,14 +23,17 @@ var ctx = context.Background()
 // real SQLStore's DEFAULT now() columns do — the service itself sets
 // neither (see Service's own doc comment).
 type fakeStore struct {
-	mu   sync.Mutex
-	byID map[uuid.UUID]checks.Group
-	err  error
-	now  func() time.Time
+	mu       sync.Mutex
+	byID     map[uuid.UUID]checks.Group
+	defsByID map[uuid.UUID]checks.Definition
+	err      error
+	now      func() time.Time
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{byID: map[uuid.UUID]checks.Group{}, now: time.Now}
+	return &fakeStore{
+		byID: map[uuid.UUID]checks.Group{}, defsByID: map[uuid.UUID]checks.Definition{}, now: time.Now,
+	}
 }
 
 func (f *fakeStore) nameTaken(orgID, exceptID uuid.UUID, name string) bool {

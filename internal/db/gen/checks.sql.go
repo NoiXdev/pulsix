@@ -9,7 +9,67 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createCheckDefinition = `-- name: CreateCheckDefinition :one
+INSERT INTO check_definitions (
+  id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id
+) VALUES (
+  $1, $2, $3, $4, $5::jsonb,
+  $6, $7, $8, $9,
+  $10, $11
+)
+RETURNING id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at
+`
+
+type CreateCheckDefinitionParams struct {
+	ID              uuid.UUID   `json:"id"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	Key             string      `json:"key"`
+	Plugin          string      `json:"plugin"`
+	Params          []byte      `json:"params"`
+	IntervalSeconds int32       `json:"interval_seconds"`
+	Enabled         bool        `json:"enabled"`
+	Origin          string      `json:"origin"`
+	BindingKind     string      `json:"binding_kind"`
+	GroupID         pgtype.UUID `json:"group_id"`
+	HostID          pgtype.UUID `json:"host_id"`
+}
+
+func (q *Queries) CreateCheckDefinition(ctx context.Context, arg CreateCheckDefinitionParams) (CheckDefinition, error) {
+	row := q.db.QueryRow(ctx, createCheckDefinition,
+		arg.ID,
+		arg.OrgID,
+		arg.Key,
+		arg.Plugin,
+		arg.Params,
+		arg.IntervalSeconds,
+		arg.Enabled,
+		arg.Origin,
+		arg.BindingKind,
+		arg.GroupID,
+		arg.HostID,
+	)
+	var i CheckDefinition
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Key,
+		&i.Plugin,
+		&i.Params,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.Origin,
+		&i.BindingKind,
+		&i.GroupID,
+		&i.HostID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
 
 const createMonitoringGroup = `-- name: CreateMonitoringGroup :one
 INSERT INTO monitoring_groups (id, org_id, name, selector, priority)
@@ -46,6 +106,23 @@ func (q *Queries) CreateMonitoringGroup(ctx context.Context, arg CreateMonitorin
 	return i, err
 }
 
+const deleteCheckDefinition = `-- name: DeleteCheckDefinition :execrows
+DELETE FROM check_definitions WHERE org_id = $1 AND id = $2
+`
+
+type DeleteCheckDefinitionParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) DeleteCheckDefinition(ctx context.Context, arg DeleteCheckDefinitionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCheckDefinition, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteMonitoringGroup = `-- name: DeleteMonitoringGroup :execrows
 DELETE FROM monitoring_groups WHERE org_id = $1 AND id = $2
 `
@@ -61,6 +138,76 @@ func (q *Queries) DeleteMonitoringGroup(ctx context.Context, arg DeleteMonitorin
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getCheckDefinition = `-- name: GetCheckDefinition :one
+SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at FROM check_definitions WHERE org_id = $1 AND id = $2
+`
+
+type GetCheckDefinitionParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) GetCheckDefinition(ctx context.Context, arg GetCheckDefinitionParams) (CheckDefinition, error) {
+	row := q.db.QueryRow(ctx, getCheckDefinition, arg.OrgID, arg.ID)
+	var i CheckDefinition
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Key,
+		&i.Plugin,
+		&i.Params,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.Origin,
+		&i.BindingKind,
+		&i.GroupID,
+		&i.HostID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listCheckDefinitions = `-- name: ListCheckDefinitions :many
+SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at FROM check_definitions WHERE org_id = $1 ORDER BY key
+`
+
+func (q *Queries) ListCheckDefinitions(ctx context.Context, orgID uuid.UUID) ([]CheckDefinition, error) {
+	rows, err := q.db.Query(ctx, listCheckDefinitions, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CheckDefinition
+	for rows.Next() {
+		var i CheckDefinition
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Key,
+			&i.Plugin,
+			&i.Params,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.Origin,
+			&i.BindingKind,
+			&i.GroupID,
+			&i.HostID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listMonitoringGroups = `-- name: ListMonitoringGroups :many
@@ -93,6 +240,66 @@ func (q *Queries) ListMonitoringGroups(ctx context.Context, orgID uuid.UUID) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateCheckDefinition = `-- name: UpdateCheckDefinition :one
+UPDATE check_definitions
+SET key = $1, plugin = $2, params = $3::jsonb,
+    interval_seconds = $4, enabled = $5,
+    binding_kind = $6, group_id = $7, host_id = $8,
+    updated_at = now()
+WHERE org_id = $9 AND id = $10
+RETURNING id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at
+`
+
+type UpdateCheckDefinitionParams struct {
+	Key             string      `json:"key"`
+	Plugin          string      `json:"plugin"`
+	Params          []byte      `json:"params"`
+	IntervalSeconds int32       `json:"interval_seconds"`
+	Enabled         bool        `json:"enabled"`
+	BindingKind     string      `json:"binding_kind"`
+	GroupID         pgtype.UUID `json:"group_id"`
+	HostID          pgtype.UUID `json:"host_id"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	ID              uuid.UUID   `json:"id"`
+}
+
+// Full replace of every mutable column, exactly like UpdateMonitoringGroup;
+// origin is deliberately absent from the SET list — it never changes after
+// creation, so the service carries it through unchanged rather than this
+// query being able to touch it.
+func (q *Queries) UpdateCheckDefinition(ctx context.Context, arg UpdateCheckDefinitionParams) (CheckDefinition, error) {
+	row := q.db.QueryRow(ctx, updateCheckDefinition,
+		arg.Key,
+		arg.Plugin,
+		arg.Params,
+		arg.IntervalSeconds,
+		arg.Enabled,
+		arg.BindingKind,
+		arg.GroupID,
+		arg.HostID,
+		arg.OrgID,
+		arg.ID,
+	)
+	var i CheckDefinition
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Key,
+		&i.Plugin,
+		&i.Params,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.Origin,
+		&i.BindingKind,
+		&i.GroupID,
+		&i.HostID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateMonitoringGroup = `-- name: UpdateMonitoringGroup :one

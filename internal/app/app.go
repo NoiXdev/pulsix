@@ -27,6 +27,7 @@ import (
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -190,17 +191,24 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now)
 	auditRec := audit.NewRecorder(audit.NewSQLStore(appDB), time.Now)
 	hostsSvc := hosts.NewService(hosts.NewSQLStore(appDB), time.Now)
-	// Every organization gets its "default" zone the moment it is created,
-	// through whichever of the two paths created it — POST /orgs
-	// (tenancy.Service.CreateOrg) or the first-run wizard
-	// (setup.Service.Complete) — both bound to the same
-	// hostsSvc.EnsureDefaultZone here, so neither path can produce an
-	// organization the other would have given a zone. See
+	// The monitoring check pipeline (v0.3b-1): only what organization
+	// creation needs is built here (SeedForOrg, wired into the hook right
+	// below). A HostMatcher-equipped instance for groups/definitions'
+	// resolver and API surface is a later task's wiring, not this one's.
+	checksSvc := checks.NewService(checks.NewSQLStore(appDB))
+	// Every organization gets its "default" zone and its "Linux base" check
+	// definitions the moment it is created, through whichever of the two
+	// paths created it — POST /orgs (tenancy.Service.CreateOrg) or the
+	// first-run wizard (setup.Service.Complete) — both bound to the same
+	// two hooks, chained (ChainOrgCreatedHooks, checks_ports.go) since
+	// SetOrgCreatedHook only ever holds one, so neither path can produce an
+	// organization the other would have given a zone or a seed set. See
 	// tenancy.OrgCreatedHook's own doc comment for why this runs as a
 	// sequential step after each service's own writes commit, rather than
 	// inside either one's transaction.
-	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
-	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
+	orgCreated := ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, checksSvc.SeedForOrg)
+	tenancySvc.SetOrgCreatedHook(orgCreated)
+	setupSvc.SetOrgCreatedHook(orgCreated)
 
 	// The hook above closes most of the gap, but not all of it: it runs
 	// after the organization's own insert has already committed, so a

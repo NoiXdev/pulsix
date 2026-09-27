@@ -124,6 +124,23 @@ type Bastion struct {
 	SshHostPublicKey *string     `json:"ssh_host_public_key"`
 }
 
+type CheckDefinition struct {
+	ID              uuid.UUID   `json:"id"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	Key             string      `json:"key"`
+	Plugin          string      `json:"plugin"`
+	Params          []byte      `json:"params"`
+	IntervalSeconds int32       `json:"interval_seconds"`
+	Enabled         bool        `json:"enabled"`
+	Origin          string      `json:"origin"`
+	BindingKind     string      `json:"binding_kind"`
+	GroupID         pgtype.UUID `json:"group_id"`
+	HostID          pgtype.UUID `json:"host_id"`
+	CreatedBy       pgtype.UUID `json:"created_by"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
+}
+
 type Credential struct {
 	ID          uuid.UUID          `json:"id"`
 	OrgID       uuid.UUID          `json:"org_id"`

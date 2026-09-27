@@ -43,6 +43,11 @@ var (
 	// ErrNameTaken means a group name already exists within the
 	// organization (the unique (org_id, name) constraint).
 	ErrNameTaken = errors.New("name already in use")
+	// ErrKeyTaken means a check definition's key already exists at the
+	// same (org, binding_kind, group, host) scope — the unique
+	// (org_id, binding_kind, group_id, host_id, key) NULLS NOT DISTINCT
+	// constraint definitions.go's Store extension enforces.
+	ErrKeyTaken = errors.New("key already in use at this scope")
 )
 
 // maxGroupNameRunes bounds a group's name, the same shape maintenance
@@ -88,6 +93,22 @@ type Store interface {
 	// Delete removes the group identified by (orgID, id); ErrNotFound if
 	// no such row exists.
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
+
+	// Definitions (Task 2, definitions.go): check_definitions rows, the
+	// same (org, id) scoping discipline as the group methods above.
+	CreateDefinition(ctx context.Context, d Definition) (Definition, error)
+	// GetDefinition looks up the definition identified by (orgID, id);
+	// ErrNotFound if no such row exists. UpdateDefinition needs it to see
+	// a seeded row's current key and plugin before deciding whether the
+	// caller's input may replace them.
+	GetDefinition(ctx context.Context, orgID, id uuid.UUID) (Definition, error)
+	ListDefinitions(ctx context.Context, orgID uuid.UUID) ([]Definition, error)
+	// UpdateDefinition replaces every mutable column of the definition
+	// identified by (d.OrgID, d.ID); ErrNotFound if no such row exists.
+	UpdateDefinition(ctx context.Context, d Definition) (Definition, error)
+	// DeleteDefinition removes the definition identified by (orgID, id);
+	// ErrNotFound if no such row exists.
+	DeleteDefinition(ctx context.Context, orgID, id uuid.UUID) error
 }
 
 // Service manages monitoring groups. Later tasks (check definitions, the

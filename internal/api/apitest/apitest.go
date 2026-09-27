@@ -26,6 +26,7 @@ import (
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -133,6 +134,14 @@ type Server struct {
 	Queue *jobs.SQLQueue
 	Deps  api.Deps
 	HTTP  *httptest.Server
+	// Checks is the monitoring check pipeline's service (v0.3b-1). Not
+	// part of Deps yet — its own API routes are a later task's job — but
+	// exposed here, exactly like Queue, so SeedOrg can give a fixture org
+	// the same "Linux base" seed set organization creation gives a real
+	// one, and so tests that do exercise internal/checks directly (once
+	// its API routes exist) share the one instance the org-created hook
+	// itself writes through.
+	Checks *checks.Service
 	// PublicURL is the test server's own base URL, computed from its
 	// listener before Start() (so it is already known when an Option
 	// runs) — the same value production derives PULSIX_PUBLIC_URL from,
@@ -292,13 +301,20 @@ func New(t *testing.T, opts ...Option) *Server {
 	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
 	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
-	// Every organization gets its "default" zone through this hook,
-	// whichever of the two ways it was created — POST /orgs
-	// (tenancy.Service.CreateOrg) or the first-run wizard
+	// checks.Service is not part of Deps yet (its API routes are a later
+	// task's job), but every organization still needs its "Linux base"
+	// seed set the moment it is created, exactly like production —
+	// exposed on the Server itself (like Sessions, Mail, Queue below) so
+	// SeedOrg can give a fixture org the same invariant.
+	s.Checks = checks.NewService(checks.NewSQLStore(d))
+	// Every organization gets its "default" zone and its check definitions
+	// seed set through this hook, whichever of the two ways it was created
+	// — POST /orgs (tenancy.Service.CreateOrg) or the first-run wizard
 	// (setup.Service.Complete) — exactly like production wiring
-	// (internal/app/app.go) binds both to the same hostsSvc.EnsureDefaultZone.
-	tenancySvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
-	setupSvc.SetOrgCreatedHook(hostsSvc.EnsureDefaultZone)
+	// (internal/app/app.go) chains both hooks the same way.
+	orgCreated := app.ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg)
+	tenancySvc.SetOrgCreatedHook(orgCreated)
+	setupSvc.SetOrgCreatedHook(orgCreated)
 	credsSvc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox(testMasterKey), time.Now, rand.Reader)
 	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
 	invStore := inventory.NewSQLStore(d)
@@ -499,10 +515,12 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 
 // SeedOrg inserts an org with ownerID as owner, and — like every real org
 // creation path (tenancy.Service.CreateOrg, setup.Service.Complete) —
-// gives it its "default" zone: this bypasses tenancy.Service.CreateOrg
-// itself (so tests get a fixed, predictable slug instead of one it would
-// generate), but a seeded org should still carry the same invariant every
-// production org does, since host_handlers_test.go and others rely on it.
+// gives it its "default" zone and its check definitions seed set: this
+// bypasses tenancy.Service.CreateOrg itself (so tests get a fixed,
+// predictable slug instead of one it would generate), but a seeded org
+// should still carry the same invariants every production org does, since
+// host_handlers_test.go and others rely on the zone, and a future check
+// definitions test will rely on the seed set the same way.
 func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 	s.T.Helper()
 	ctx := context.Background()
@@ -514,6 +532,9 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	if err := s.Deps.Hosts.EnsureDefaultZone(ctx, id); err != nil {
+		s.T.Fatal(err)
+	}
+	if err := s.Checks.SeedForOrg(ctx, id); err != nil {
 		s.T.Fatal(err)
 	}
 	return id
