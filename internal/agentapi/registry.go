@@ -7,10 +7,13 @@
 // Streams are keyed by the agent's host id — the stable revocation handle
 // across certificate renewals (a renewal swaps the serial, never the host
 // binding) and exactly what agents.Service.Revoke carries. Each entry
-// remembers the serial it authenticated with for logs and tests.
+// remembers the serial it authenticated with for logs and tests, and the
+// org it authenticated as (checked by PushToHost, never trusted from a
+// caller-supplied argument alone).
 package agentapi
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -33,27 +36,40 @@ type StreamRegistry struct {
 // none starts.
 type trackedStream struct {
 	serial string
+	// orgID is the org the connection authenticated as (agent.OrgID at
+	// track time), immutable thereafter — the fact PushToHost checks
+	// before ever sending, so a caller-supplied orgID that does not match
+	// what this stream actually authenticated as can never reach it, no
+	// matter what ResolveHost was asked to compute for.
+	orgID uuid.UUID
 	// revoked is closed by shut: the handler ends the stream.
 	revoked chan struct{}
 
 	mu  sync.Mutex
 	cut bool
 
-	// sendMu serializes every access to stream: the receive loop's own ack
-	// (with an optional CheckConfig riding along) and an out-of-band
-	// PushToHost call must never race on the same gRPC stream — both the
-	// concurrent-Send gRPC forbids and the plain data race the field
-	// itself would otherwise be under (attach's write against send's
-	// read). track sets stream directly (no lock needed: the object is
-	// not yet reachable by any other goroutine at that point, since it is
-	// published into the registry's map under the very same r.mu), so in
-	// the ordinary AgentStream path stream is never nil by the time a
-	// PushToHost call can reach it at all; attach exists for the direct
-	// receive-loop unit tests, which build a trackedStream without going
-	// through track.
+	// sendMu guards both stream and closed, and is held for the entire
+	// duration of every actual Send call — not merely while reading the
+	// fields. That is what makes closed a real gate rather than a
+	// check-then-act race: a send that is already past the "not closed"
+	// check has sendMu held, so closeSend (called from shut and from
+	// track's release closure) cannot mark the stream closed until that
+	// send has returned, and a send that starts after closeSend has run
+	// always observes closed and never touches stream at all — including
+	// one dispatched asynchronously by PushToHost that only gets around
+	// to acquiring sendMu long after the handler that owns this stream
+	// has already returned (see PushToHost's own doc comment for why
+	// sends are dispatched, never awaited, from that path).
 	sendMu sync.Mutex
 	stream agentpb.AgentService_AgentStreamServer
+	closed bool
 }
+
+// errStreamClosed means the tracked stream was released or cut before (or
+// while) a send was attempted; PushToHost logs it at most, never treats
+// it as a fault — an agent that has already disconnected is exactly what
+// its own next reconnect and heartbeat re-assert exist to repair.
+var errStreamClosed = errors.New("stream closed")
 
 // attach records the gRPC stream a tracked entry authenticates. track
 // already does this for every stream reachable through the registry;
@@ -66,11 +82,28 @@ func (t *trackedStream) attach(stream agentpb.AgentService_AgentStreamServer) {
 }
 
 // send writes msg to the underlying stream, serialized against every
-// other send on this same trackedStream.
+// other send on this same trackedStream and refusing once the stream has
+// been released or cut (errStreamClosed) — see the sendMu field comment
+// for why this check and the Send call itself must share one lock.
 func (t *trackedStream) send(msg *agentpb.ManagerMessage) error {
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
+	if t.closed {
+		return errStreamClosed
+	}
 	return t.stream.Send(msg)
+}
+
+// closeSend marks the stream closed for sending. Idempotent; called once
+// by shut (a revocation) and once more by track's release closure (the
+// handler returning control of the stream to gRPC) — whichever comes
+// first. gRPC's own contract forbids calling Send after a stream's
+// handler function has returned, which is the hazard this specifically
+// closes off for an async PushToHost dispatch that resolves late.
+func (t *trackedStream) closeSend() {
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	t.closed = true
 }
 
 // store runs process unless the stream was cut; a cut stream drops the
@@ -90,12 +123,15 @@ func (t *trackedStream) store(process func() error) (done bool, err error) {
 // shut cuts the stream. It signals the handler first, so the RPC ends (and
 // its context cancels a processing step in flight) without waiting, then
 // takes the lock: once shut returns, no processing of the stream runs or
-// starts.
+// starts. closeSend also runs here (not only from release) so a
+// revoked-but-not-yet-returned stream stops accepting pushes immediately,
+// rather than waiting for the handler to unwind.
 func (t *trackedStream) shut() {
 	close(t.revoked)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.cut = true
+	t.closeSend()
 }
 
 // NewStreamRegistry builds an empty registry.
@@ -103,21 +139,27 @@ func NewStreamRegistry() *StreamRegistry {
 	return &StreamRegistry{byHost: map[uuid.UUID]map[uint64]*trackedStream{}}
 }
 
-// track registers one open stream of hostID (authenticated with serial),
-// with the gRPC stream a push can reach it through already attached —
-// atomically, since the entry is not inserted into r.byHost (and so not
-// visible to a concurrent PushToHost) until after ts.stream is set.
-// CloseHost cuts it when the agent is revoked, release unregisters it.
-func (r *StreamRegistry) track(serial string, hostID uuid.UUID, stream agentpb.AgentService_AgentStreamServer) (*trackedStream, func()) {
+// track registers one open stream of hostID (authenticated with serial, as
+// orgID), with the gRPC stream a push can reach it through already
+// attached — atomically, since the entry is not inserted into r.byHost
+// (and so not visible to a concurrent PushToHost) until after ts.stream is
+// set. The returned release closure marks the stream closed for sending
+// before unregistering it: by the time AgentStream's handler function
+// actually returns (release runs via defer, right before that), no send
+// dispatched earlier can still be in flight or start afterward — see
+// closeSend's own doc comment. CloseHost cuts the stream when the agent is
+// revoked.
+func (r *StreamRegistry) track(serial string, orgID, hostID uuid.UUID, stream agentpb.AgentService_AgentStreamServer) (*trackedStream, func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.next++
-	id, ts := r.next, &trackedStream{serial: serial, revoked: make(chan struct{}), stream: stream}
+	id, ts := r.next, &trackedStream{serial: serial, orgID: orgID, revoked: make(chan struct{}), stream: stream}
 	if r.byHost[hostID] == nil {
 		r.byHost[hostID] = map[uint64]*trackedStream{}
 	}
 	r.byHost[hostID][id] = ts
 	return ts, func() {
+		ts.closeSend()
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if streams, ok := r.byHost[hostID]; ok {
@@ -145,34 +187,49 @@ func (r *StreamRegistry) CloseHost(hostID uuid.UUID) int {
 	return len(streams)
 }
 
-// PushToHost sends msg on every currently open, not-yet-cut stream of
-// hostID and reports how many it reached — zero for a host with no open
-// stream, which is exactly PushHost's own "not connected is a no-op"
-// contract; nothing here remembers a miss, since the agent's own
-// heartbeat re-assert heals it. A send failure on one stream is logged
-// and does not stop the others.
-func (r *StreamRegistry) PushToHost(hostID uuid.UUID, msg *agentpb.ManagerMessage) int {
+// PushToHost dispatches msg to every currently open stream of hostID
+// authenticated as orgID, and reports how many it dispatched to — zero
+// for a host with no open stream (PushHost's own "not connected is a
+// no-op" contract) and zero for every stream that authenticated as a
+// different org (a caller-supplied orgID is never trusted merely because
+// ResolveHost happened to answer something for it — see trackedStream's
+// own orgID field comment: an org mismatch here would otherwise arm
+// another tenant's agent with an empty CheckConfig it never asked for).
+//
+// The actual Send calls run on their own goroutine per stream, never on
+// the calling goroutine: gRPC's SendMsg blocks on the stream's own flow
+// control until the client drains it or the connection ends, which can
+// be as long as the server's MaxConnectionAge (24h, no keepalive ping,
+// internal/grpcsrv) if the agent is black-holed rather than merely slow.
+// PushHost is called synchronously from an HTTP write path (Task 9); it
+// must never block that request on a single unreachable agent's stream,
+// so "dispatched to" is what this method's return value promises —
+// never "delivered", which nothing here can observe without blocking on
+// it anyway. A dispatch that never completes is exactly as harmless as a
+// missed push always was: the agent's own heartbeat re-assert converges
+// it regardless (see processHeartbeat), so nothing is lost by not
+// waiting, only a redundant push is possibly avoided by not knowing.
+func (r *StreamRegistry) PushToHost(orgID, hostID uuid.UUID, msg *agentpb.ManagerMessage) int {
 	r.mu.Lock()
 	streams := make([]*trackedStream, 0, len(r.byHost[hostID]))
 	for _, ts := range r.byHost[hostID] {
+		if ts.orgID != orgID {
+			slog.Warn("push host: org mismatch, refusing to push",
+				"host_id", hostID.String(), "want_org", orgID.String(), "stream_org", ts.orgID.String())
+			continue
+		}
 		streams = append(streams, ts)
 	}
 	r.mu.Unlock()
-	sent := 0
 	for _, ts := range streams {
-		ts.mu.Lock()
-		cut := ts.cut
-		ts.mu.Unlock()
-		if cut {
-			continue
-		}
-		if err := ts.send(msg); err != nil {
-			slog.Warn("push message to agent stream", "host_id", hostID.String(), "err", err)
-			continue
-		}
-		sent++
+		ts := ts
+		go func() {
+			if err := ts.send(msg); err != nil {
+				slog.Warn("push message to agent stream", "host_id", hostID.String(), "err", err)
+			}
+		}()
 	}
-	return sent
+	return len(streams)
 }
 
 // CloseHostExcept ends every open stream of hostID authenticated with a

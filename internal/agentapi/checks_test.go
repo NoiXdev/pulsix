@@ -5,7 +5,12 @@
 package agentapi
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -490,5 +495,184 @@ func TestPushHostResolveFaultPropagates(t *testing.T) {
 	h.checks.mu.Unlock()
 	if err := h.svc.PushHost(t.Context(), testOrg, hostID); err == nil {
 		t.Fatal("a resolve fault must propagate to PushHost's own caller")
+	}
+}
+
+// TestHeartbeatChecksInvalidInputStaysInternal: checks.ErrInvalidInput
+// surfacing from the heartbeat path (ResolveHost, e.g. via a persisted
+// monitoring group whose selector no longer parses under the current
+// grammar) must never become InvalidArgument — that mapping exists only
+// for the check-results path (errCheckResultsRejected), because an
+// InvalidArgument here would reject every heartbeat from every agent in
+// the organization over the manager's own bad data, not anything any one
+// agent did. This is the mirror image of the same rule
+// TestCheckResultsInvalidInputIsInvalidArgument pins for the path where
+// InvalidArgument is in fact correct.
+func TestHeartbeatChecksInvalidInputStaysInternal(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	_, client := enrollAnAgent(t, h, "web-1")
+	h.checks.mu.Lock()
+	h.checks.resolveErr = checks.ErrInvalidInput
+	h.checks.mu.Unlock()
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+		t.Fatalf("checks.ErrInvalidInput from the heartbeat path: %v, want Internal (never InvalidArgument)", err)
+	}
+}
+
+// TestPushHostOrgMismatchNeverReachesAnotherTenantsAgent: PushToHost keys
+// on the org a stream actually authenticated as (trackedStream.orgID, set
+// once at track time from the connecting agent's own certificate
+// identity — never trusted from a caller-supplied argument alone). A
+// caller confusing (orgA, hostB) must not arm hostB's real org's agent
+// with a CheckConfig it never asked for. The two messages carry distinct,
+// recognisable versions specifically so a wrongly-delivered mismatched
+// push cannot hide behind a correctly-delivered one that happens to carry
+// identical content.
+func TestPushHostOrgMismatchNeverReachesAnotherTenantsAgent(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	resp, client := enrollAnAgent(t, h, "web-1")
+	hostID := uuid.MustParse(resp.GetHostId())
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for trackedStreams(h.svc.Streams(), hostID) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the stream never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	wrongOrg := uuid.Must(uuid.NewV7())
+	reached := h.svc.Streams().PushToHost(wrongOrg, hostID,
+		&agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{Version: "should-never-arrive"}})
+	if reached != 0 {
+		t.Fatalf("PushToHost with a mismatched org reached %d streams, want 0", reached)
+	}
+
+	// The real org still reaches it — proving the 0 above is the org
+	// check working, not a registry that has forgotten the stream.
+	reached = h.svc.Streams().PushToHost(testOrg, hostID,
+		&agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{Version: "correct-org"}})
+	if reached != 1 {
+		t.Fatalf("PushToHost with the matching org reached %d streams, want 1", reached)
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := msg.GetCheckConfig(); cfg == nil || cfg.GetVersion() != "correct-org" {
+		t.Fatalf("received = %+v, want only the matching-org push ever delivered", cfg)
+	}
+}
+
+// recomputeVersion re-derives a version from a pushed CheckConfig's own
+// specs using internal/checks's documented, pinned canonical encoding
+// (resolver.go: each check as
+// "key\x00plugin\x00interval_seconds\x00canonical-json(params)\x00",
+// concatenated in key order, then SHA-256 hex — the exact format Task 3's
+// own TestVersionCanonicalEncodingIsPinned pins byte-for-byte). It is
+// implemented completely independently of checkConfigFor/canonicalParamsJSON
+// (no shared code, no shared constant, and ParamsJson is taken verbatim
+// from the wire spec rather than re-derived from a params map) — the same
+// discipline Task 3's own encoding test uses — so it cannot pass merely
+// because both sides called the same, possibly buggy, helper.
+func recomputeVersion(specs []*agentpb.CheckSpec) string {
+	sorted := append([]*agentpb.CheckSpec(nil), specs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].GetKey() < sorted[j].GetKey() })
+	var buf bytes.Buffer
+	for _, s := range sorted {
+		buf.WriteString(s.GetKey())
+		buf.WriteByte(0)
+		buf.WriteString(s.GetPlugin())
+		buf.WriteByte(0)
+		buf.WriteString(strconv.FormatInt(int64(s.GetIntervalSeconds()), 10))
+		buf.WriteByte(0)
+		buf.WriteString(s.GetParamsJson())
+		buf.WriteByte(0)
+	}
+	sum := sha256.Sum256(buf.Bytes())
+	return hex.EncodeToString(sum[:])
+}
+
+// TestPushedNestedParamsReproduceTheVersion is Review Focus 3's params
+// half: canonicalParamsJSON is a deliberate, documented duplicate of
+// internal/checks's own unexported canonicalParams, and the only params
+// assertion before this test was the trivial empty-params case ("{}") —
+// the json.Marshal branch (anything with actual parameters, especially
+// nested ones) was never exercised, so a divergence between the two
+// encoders — the exact failure that turns into a permanent push loop,
+// since an agent that re-hashes what it was handed would never converge
+// — could have shipped unnoticed.
+//
+// wantVersion is computed by hand here, over the *original* checks.Resolved
+// params map, using nothing but the documented canonical-JSON rule
+// (sorted map keys — encoding/json's own behaviour, not anything
+// canonicalParamsJSON does) and a hand-written expected JSON literal, so
+// it does not call canonicalParamsJSON either. The test then recomputes a
+// version from the *pushed* CheckSpec (via recomputeVersion, which reads
+// only the wire fields — never the original params map) and asserts it
+// equals wantVersion: the only way that can hold is if
+// checkConfigFor/canonicalParamsJSON rendered the nested params into
+// exactly the same canonical bytes the documented format promises.
+func TestPushedNestedParamsReproduceTheVersion(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	resp, client := enrollAnAgent(t, h, "web-1")
+	hostID := uuid.MustParse(resp.GetHostId())
+
+	params := map[string]any{
+		"mounts": []any{"/data", "/"},
+		"z":      1,
+	}
+	// Hand-written, not produced by calling json.Marshal in this test:
+	// "mounts" sorts before "z"; the slice's own order is preserved
+	// (only map keys are sorted, at every nesting level).
+	const wantParamsJSON = `{"mounts":["/data","/"],"z":1}`
+	wantEncoded := "disk\x00disk\x0090\x00" + wantParamsJSON + "\x00"
+	sum := sha256.Sum256([]byte(wantEncoded))
+	wantVersion := hex.EncodeToString(sum[:])
+
+	h.checks.setResolved(hostID, checks.ResolvedSet{
+		HostID: hostID,
+		Checks: []checks.Resolved{{Key: "disk", Plugin: "disk", Interval: 90 * time.Second, Params: params}},
+		// Version is deliberately the same hand-computed value a real
+		// checks.Service would have produced for this exact Resolved —
+		// not asserted directly (the fake passes it through verbatim
+		// regardless), but what makes the recompute-from-pushed check
+		// below meaningful rather than circular.
+		Version: wantVersion,
+	})
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := msg.GetCheckConfig()
+	if cfg == nil || len(cfg.GetChecks()) != 1 {
+		t.Fatalf("pushed config = %+v", cfg)
+	}
+	spec := cfg.GetChecks()[0]
+	if spec.GetParamsJson() != wantParamsJSON {
+		t.Fatalf("pushed params_json = %q, want %q", spec.GetParamsJson(), wantParamsJSON)
+	}
+	if cfg.GetVersion() != wantVersion {
+		t.Fatalf("pushed version = %q, want %q", cfg.GetVersion(), wantVersion)
+	}
+	if got := recomputeVersion(cfg.GetChecks()); got != wantVersion {
+		t.Fatalf("version recomputed from the pushed specs = %q, want %q (an agent re-hashing what it was handed would never converge)", got, wantVersion)
 	}
 }

@@ -52,7 +52,7 @@ func (s *Service) AgentStream(stream agentpb.AgentService_AgentStreamServer) err
 	// own doc comment): PushHost can already reach this stream the instant
 	// it is tracked, with no window where the entry exists but has
 	// nothing to send on.
-	tracked, release := s.streams.track(agent.Serial, agent.HostID, stream)
+	tracked, release := s.streams.track(agent.Serial, agent.OrgID, agent.HostID, stream)
 	defer release()
 	// Track happens before this second lookup, so either CloseHost sees
 	// the stream or the lookup sees the revocation. A registry fault here
@@ -103,11 +103,19 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 			return procErr
 		})
 		if err != nil {
-			if errors.Is(err, agents.ErrInvalidInput) || errors.Is(err, checks.ErrInvalidInput) {
+			if errors.Is(err, agents.ErrInvalidInput) || errors.Is(err, errCheckResultsRejected) {
 				// A facts or check-results push over the respective
 				// contract's bounds is the caller's fault, not the
 				// server's — the agent's own collector normalizes, so
-				// this refusal means the agent lied.
+				// this refusal means the agent lied. errCheckResultsRejected
+				// (not checks.ErrInvalidInput itself — see its own doc
+				// comment) is deliberately what is tested for here: a
+				// checks.ErrInvalidInput surfacing from processHeartbeat's
+				// own ResolveHost (a persisted monitoring group's selector
+				// that no longer parses) is the server's own data being
+				// wrong, not this agent's fault, and must fall through to
+				// Internal below rather than rejecting every heartbeat
+				// from every agent in the organization.
 				return status.Errorf(codes.InvalidArgument, "agent message rejected: %v", err)
 			}
 			return status.Errorf(codes.Internal, "process agent message: %v", err)
@@ -184,6 +192,25 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 	return cfg, nil
 }
 
+// errCheckResultsRejected marks a RecordObservations failure that is this
+// specific agent's own fault over the check-results contract — the one
+// and only sentinel receiveMessages tests for to answer InvalidArgument
+// instead of Internal. It is deliberately not checks.ErrInvalidInput
+// itself: that same sentinel can also surface from processHeartbeat's own
+// ResolveHost call (e.g. a persisted monitoring group whose selector no
+// longer parses under the current grammar — the app's HostMatcher wraps
+// exactly that in checks.ErrInvalidInput), which is the manager's own data
+// being wrong, not anything this agent did. Testing for checks.ErrInvalidInput
+// directly in receiveMessages would answer InvalidArgument to a heartbeat
+// too, which would reject every heartbeat from every agent in the
+// organization over one bad selector nobody at the other end of the wire
+// caused or could fix by reconnecting — a wide, silent blast radius for a
+// narrow, specific problem. Wrapping the error at the one call site that
+// legitimately means "the agent's own batch is malformed" keeps the two
+// occurrences of the identical underlying sentinel from ever being
+// confused for each other.
+var errCheckResultsRejected = errors.New("check results rejected")
+
 // recordCheckResults maps one CheckResults batch into checks.Observation
 // and hands it to RecordObservations. Accepted and rejected counts are
 // logged, never turned into a stream error — RecordObservations' own
@@ -222,6 +249,15 @@ func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIden
 	}
 	accepted, rejected, err := s.deps.Checks.RecordObservations(ctx, agent.OrgID, obs)
 	if err != nil {
+		if errors.Is(err, checks.ErrInvalidInput) {
+			// Marked with errCheckResultsRejected — never checks.ErrInvalidInput
+			// tested for directly by receiveMessages — so that a
+			// coincidentally identical sentinel from a wholly different
+			// call (processHeartbeat's own ResolveHost) can never be
+			// mistaken for this path's own caller-fault mapping. See
+			// errCheckResultsRejected's own doc comment.
+			return fmt.Errorf("%w: %v", errCheckResultsRejected, err)
+		}
 		return fmt.Errorf("record check observations: %w", err)
 	}
 	if rejected > 0 {
@@ -257,7 +293,7 @@ func (s *Service) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("encode check configuration for push: %w", err)
 	}
-	s.streams.PushToHost(hostID, &agentpb.ManagerMessage{CheckConfig: cfg})
+	s.streams.PushToHost(orgID, hostID, &agentpb.ManagerMessage{CheckConfig: cfg})
 	return nil
 }
 
