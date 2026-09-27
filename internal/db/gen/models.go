@@ -356,6 +356,16 @@ type MaintenanceWindow struct {
 	Revision        int64              `json:"revision"`
 }
 
+type MonitoringGroup struct {
+	ID        uuid.UUID `json:"id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	Name      string    `json:"name"`
+	Selector  string    `json:"selector"`
+	Priority  int32     `json:"priority"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type NotificationChannel struct {
 	ID        uuid.UUID   `json:"id"`
 	OrgID     uuid.UUID   `json:"org_id"`
