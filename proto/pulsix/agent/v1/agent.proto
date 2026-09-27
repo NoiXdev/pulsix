@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package pulsix.agent.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/noixdev/pulsix/internal/pb/agentpb";
 
 service AgentService {
@@ -41,17 +43,48 @@ message AgentMessage {
   oneof body {
     Heartbeat heartbeat = 1; // periodic liveness signal
     Facts facts = 2; // gathered host facts
+    CheckResults check_results = 3; // check measurement results
   }
 }
 
 message Heartbeat {
   string version = 1; // agent build version
+  string config_version = 2; // what the agent is currently running
 }
 
 message Facts {
   map<string, string> values = 1;
 }
 
+message CheckResults {
+  repeated CheckResult results = 1;
+}
+
+message CheckResult {
+  string check_key = 1;
+  string item = 2; // "" for whole-host metrics
+  string metric = 3;
+  google.protobuf.Timestamp at = 4;
+  oneof observation {
+    double value = 5;
+    string label = 6;
+    string error = 7; // collection failed; no sample is stored
+  }
+}
+
 message ManagerMessage {
   bool ack = 1;
+  optional CheckConfig check_config = 2;
+}
+
+message CheckConfig {
+  string version = 1;
+  repeated CheckSpec checks = 2;
+}
+
+message CheckSpec {
+  string key = 1;
+  string plugin = 2;
+  string params_json = 3; // canonical JSON, as the version hashes it
+  int32 interval_seconds = 4;
 }

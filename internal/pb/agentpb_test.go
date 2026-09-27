@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
@@ -148,6 +149,205 @@ func TestAgentEnrollMessagesRoundTrip(t *testing.T) {
 	}
 	if !proto.Equal(manager, &gotManager) {
 		t.Errorf("round-tripped manager message differs:\nwant %+v\ngot  %+v", manager, &gotManager)
+	}
+}
+
+// TestCheckResultsRoundTrip covers the CheckResults oneof arm in AgentMessage.
+func TestCheckResultsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	ts := &timestamppb.Timestamp{Seconds: 1695206400, Nanos: 123456789}
+	msg := &agentpb.AgentMessage{
+		Body: &agentpb.AgentMessage_CheckResults{
+			CheckResults: &agentpb.CheckResults{
+				Results: []*agentpb.CheckResult{
+					{
+						CheckKey: "disk.usage",
+						Item:     "/",
+						Metric:   "percent",
+						At:       ts,
+						Observation: &agentpb.CheckResult_Value{
+							Value: 75.5,
+						},
+					},
+					{
+						CheckKey: "http.status",
+						Item:     "",
+						Metric:   "status_code",
+						At:       ts,
+						Observation: &agentpb.CheckResult_Label{
+							Label: "ok",
+						},
+					},
+					{
+						CheckKey: "memory.check",
+						Item:     "",
+						Metric:   "available_mb",
+						At:       ts,
+						Observation: &agentpb.CheckResult_Error{
+							Error: "failed to collect",
+						},
+					},
+				},
+			},
+		},
+	}
+	b, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal agent message: %v", err)
+	}
+	var got agentpb.AgentMessage
+	if err := proto.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal agent message: %v", err)
+	}
+	if !proto.Equal(msg, &got) {
+		t.Errorf("round-tripped agent message differs:\nwant %+v\ngot  %+v", msg, &got)
+	}
+	results := got.GetCheckResults()
+	if results == nil {
+		t.Fatal("check results oneof arm lost in round trip")
+	}
+	if len(results.Results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results.Results))
+	}
+	// Verify first result (value observation)
+	if results.Results[0].CheckKey != "disk.usage" || results.Results[0].GetValue() != 75.5 {
+		t.Errorf("first result: got %+v", results.Results[0])
+	}
+	// Verify second result (label observation)
+	if results.Results[1].CheckKey != "http.status" || results.Results[1].GetLabel() != "ok" {
+		t.Errorf("second result: got %+v", results.Results[1])
+	}
+	// Verify third result (error observation)
+	if results.Results[2].CheckKey != "memory.check" || results.Results[2].GetError() != "failed to collect" {
+		t.Errorf("third result: got %+v", results.Results[2])
+	}
+}
+
+// TestCheckConfigRoundTrip covers the check configuration message.
+func TestCheckConfigRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	config := &agentpb.CheckConfig{
+		Version: "v1.2.3",
+		Checks: []*agentpb.CheckSpec{
+			{
+				Key:             "disk.usage",
+				Plugin:          "disk_check",
+				ParamsJson:      `{"paths":["/","/home"]}`,
+				IntervalSeconds: 300,
+			},
+			{
+				Key:             "http.endpoint",
+				Plugin:          "http_check",
+				ParamsJson:      `{"url":"https://example.com/health"}`,
+				IntervalSeconds: 60,
+			},
+		},
+	}
+	manager := &agentpb.ManagerMessage{
+		CheckConfig: config,
+	}
+	b, err := proto.Marshal(manager)
+	if err != nil {
+		t.Fatalf("marshal manager message: %v", err)
+	}
+	var got agentpb.ManagerMessage
+	if err := proto.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal manager message: %v", err)
+	}
+	if !proto.Equal(manager, &got) {
+		t.Errorf("round-tripped manager message differs:\nwant %+v\ngot  %+v", manager, &got)
+	}
+	gotConfig := got.CheckConfig
+	if gotConfig == nil {
+		t.Fatal("check config lost in round trip")
+	}
+	if gotConfig.Version != "v1.2.3" {
+		t.Errorf("config version: got %q, want v1.2.3", gotConfig.Version)
+	}
+	if len(gotConfig.Checks) != 2 {
+		t.Fatalf("got %d checks, want 2", len(gotConfig.Checks))
+	}
+	if gotConfig.Checks[0].Key != "disk.usage" || gotConfig.Checks[0].Plugin != "disk_check" {
+		t.Errorf("first check: got %+v", gotConfig.Checks[0])
+	}
+}
+
+// TestManagerMessageAckAndConfig covers that ack and check_config are both accessible.
+func TestManagerMessageAckAndConfig(t *testing.T) {
+	t.Parallel()
+
+	// Test ack field still works as before
+	ackMsg := &agentpb.ManagerMessage{Ack: true}
+	b, err := proto.Marshal(ackMsg)
+	if err != nil {
+		t.Fatalf("marshal ack message: %v", err)
+	}
+	var gotAck agentpb.ManagerMessage
+	if err := proto.Unmarshal(b, &gotAck); err != nil {
+		t.Fatalf("unmarshal ack message: %v", err)
+	}
+	if !gotAck.Ack {
+		t.Error("ack field lost in round trip")
+	}
+
+	// Test check_config field
+	config := &agentpb.CheckConfig{
+		Version: "test-v1",
+		Checks: []*agentpb.CheckSpec{
+			{
+				Key:    "test.check",
+				Plugin: "test_plugin",
+			},
+		},
+	}
+	configMsg := &agentpb.ManagerMessage{CheckConfig: config}
+	b, err = proto.Marshal(configMsg)
+	if err != nil {
+		t.Fatalf("marshal config message: %v", err)
+	}
+	var gotConfig agentpb.ManagerMessage
+	if err := proto.Unmarshal(b, &gotConfig); err != nil {
+		t.Fatalf("unmarshal config message: %v", err)
+	}
+	if gotConfig.CheckConfig == nil {
+		t.Fatal("check config field lost in round trip")
+	}
+	if gotConfig.CheckConfig.Version != "test-v1" {
+		t.Errorf("config version: got %q, want test-v1", gotConfig.CheckConfig.Version)
+	}
+}
+
+// TestHeartbeatWithConfigVersion covers the updated Heartbeat with config_version.
+func TestHeartbeatWithConfigVersion(t *testing.T) {
+	t.Parallel()
+
+	msg := &agentpb.AgentMessage{
+		Body: &agentpb.AgentMessage_Heartbeat{
+			Heartbeat: &agentpb.Heartbeat{
+				Version:       "v0.3b",
+				ConfigVersion: "cfg-v1.2.3",
+			},
+		},
+	}
+	b, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal agent message: %v", err)
+	}
+	var got agentpb.AgentMessage
+	if err := proto.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal agent message: %v", err)
+	}
+	if !proto.Equal(msg, &got) {
+		t.Errorf("round-tripped agent message differs:\nwant %+v\ngot  %+v", msg, &got)
+	}
+	hb := got.GetHeartbeat()
+	if hb == nil {
+		t.Fatal("heartbeat lost in round trip")
+	}
+	if hb.Version != "v0.3b" || hb.ConfigVersion != "cfg-v1.2.3" {
+		t.Errorf("heartbeat: got %+v", hb)
 	}
 }
 
