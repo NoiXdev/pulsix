@@ -431,6 +431,7 @@ func (h *integHarness) agentConfig(dir, token string) Config {
 		Version:           "v0.3a-integ",
 		HeartbeatInterval: 20 * time.Millisecond,
 		FactsInterval:     200 * time.Millisecond,
+		ConfigInterval:    30 * time.Second,
 		CertPath:          filepath.Join(dir, certFileName),
 		KeyPath:           filepath.Join(dir, keyFileName),
 		MetaPath:          filepath.Join(dir, metaFileName),

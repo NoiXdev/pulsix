@@ -148,6 +148,21 @@ func (s *fakeStream) CloseSend() error {
 	return nil
 }
 
+// pushManagerMessage delivers m to the loop's own Recv, exactly like an
+// out-of-band manager push (agentapi's PushHost) or a heartbeat's own
+// answer would arrive — used by tests that script a CheckConfig without
+// going through Send's own auto-ack.
+func (s *fakeStream) pushManagerMessage(m *agentpb.ManagerMessage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recvC != nil {
+		select {
+		case s.recvC <- m:
+		default:
+		}
+	}
+}
+
 func (s *fakeStream) closeRecv() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

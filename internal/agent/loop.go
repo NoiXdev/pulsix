@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
@@ -98,6 +100,11 @@ type Ticker interface {
 // tickerFactory builds one ticker per interval.
 type tickerFactory func(time.Duration) Ticker
 
+// bufferWindow is the disconnect buffer's size (checks.Buffer): 15
+// minutes of samples at the configured intervals, per the design's own
+// "Disconnected agent" decision.
+const bufferWindow = 15 * time.Minute
+
 // Loop is the agent's connection loop. NewLoop wires it; Run drives it
 // until its context is cancelled.
 type Loop struct {
@@ -108,6 +115,15 @@ type Loop struct {
 	now    func() time.Time
 	sleep  func(ctx context.Context, d time.Duration) error
 	ticker tickerFactory
+
+	scheduler *checks.Scheduler
+	buffer    *checks.Buffer
+
+	// routeMu guards sender: which stream session, if any, currently
+	// receives the scheduler's results. See handleResults, activateSender
+	// and deactivateSender in session.go.
+	routeMu sync.Mutex
+	sender  *streamSender
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -128,7 +144,10 @@ func WithLogger(logger *slog.Logger) LoopOption { return func(l *Loop) { l.log =
 // WithTicker replaces the ticker factory (heartbeat and facts cadence).
 func WithTicker(fn tickerFactory) LoopOption { return func(l *Loop) { l.ticker = fn } }
 
-// NewLoop wires the loop. No connection is opened here — Run dials.
+// NewLoop wires the loop. No connection is opened here — Run dials. The
+// scheduler and buffer are built AFTER options are applied, so they use
+// whatever clock and ticker factory the caller (or a test) installed via
+// WithNow/WithTicker rather than the defaults.
 func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop {
 	l := &Loop{
 		cfg:    cfg,
@@ -142,8 +161,16 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 	for _, o := range opts {
 		o(l)
 	}
+	l.scheduler = checks.NewScheduler(checks.Registry(), l.now, l.checksTicker)
+	l.buffer = checks.NewBuffer(bufferWindow, l.now)
 	return l
 }
+
+// checksTicker adapts the loop's own ticker factory to
+// internal/agent/checks's identically-shaped Ticker interface — a
+// signature conversion only: any value satisfying agent.Ticker already
+// satisfies checks.Ticker by having the same two methods.
+func (l *Loop) checksTicker(d time.Duration) checks.Ticker { return l.ticker(d) }
 
 // Run keeps the agent connected until ctx is cancelled. The state machine
 // per iteration: a valid identity renews when the renewal window is open
@@ -156,10 +183,37 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 	l.log.InfoContext(ctx, "pulsix agent starting", "manager", l.cfg.ManagerAddr,
 		"data_dir", l.cfg.DataDir, "agent_name", l.cfg.AgentName, "version", l.cfg.Version,
-		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval)
+		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval,
+		"config_interval", l.cfg.ConfigInterval)
 	if !id.Valid(l.now()) {
 		l.log.InfoContext(ctx, "no valid agent identity; enrollment path", "data_dir", l.cfg.DataDir)
 	}
+
+	// The scheduler runs for the whole process lifetime, independent of
+	// any single stream session: a disconnected agent keeps measuring
+	// into the buffer rather than stopping just because the connection
+	// did ("Disconnected agent" decision). handleResults (session.go)
+	// routes each batch to whichever session is currently connected, or
+	// to the buffer when none is.
+	//
+	// Its own context is derived from ctx but cancelled unconditionally
+	// when Run returns, on every path — not only "ctx was cancelled".
+	// Run can also exit early on its own (ErrNoEnrollment,
+	// ErrEnrollRefused, ...) while the CALLER's ctx stays alive; without
+	// this, the scheduler goroutine would run on indefinitely with
+	// nothing left to feed it. The two deferred closures below run in
+	// LIFO order, so schedCancel fires BEFORE the bounded wait — the
+	// wait almost never actually blocks.
+	schedCtx, schedCancel := context.WithCancel(ctx)
+	schedulerDone := make(chan error, 1)
+	go func() { schedulerDone <- l.scheduler.Run(schedCtx, l.handleResults) }()
+	defer func() {
+		select {
+		case <-schedulerDone:
+		case <-time.After(streamDrainWit):
+		}
+	}()
+	defer schedCancel()
 
 	backoffShift := 0
 	for {

@@ -82,9 +82,10 @@ func TestCPUCollectHappyPath(t *testing.T) {
 func TestCPUCollectToleratesProviderFaults(t *testing.T) {
 	boom := errors.New("boom")
 	cases := []struct {
-		name        string
-		plugin      cpuPlugin
-		wantMetrics []string
+		name             string
+		plugin           cpuPlugin
+		wantValueMetrics []string
+		wantErrMetrics   []string
 	}{
 		{
 			name: "load average fault still reports used_pct",
@@ -92,7 +93,8 @@ func TestCPUCollectToleratesProviderFaults(t *testing.T) {
 				Load:    fixtureLoad{err: boom},
 				Percent: fixturePercent{pct: []float64{10}},
 			},
-			wantMetrics: []string{"cpu.used_pct"},
+			wantValueMetrics: []string{"cpu.used_pct"},
+			wantErrMetrics:   []string{"cpu.load1", "cpu.load5", "cpu.load15"},
 		},
 		{
 			name: "percent fault still reports the load averages",
@@ -100,15 +102,17 @@ func TestCPUCollectToleratesProviderFaults(t *testing.T) {
 				Load:    fixtureLoad{avg: &load.AvgStat{Load1: 1, Load5: 2, Load15: 3}},
 				Percent: fixturePercent{err: boom},
 			},
-			wantMetrics: []string{"cpu.load1", "cpu.load5", "cpu.load15"},
+			wantValueMetrics: []string{"cpu.load1", "cpu.load5", "cpu.load15"},
+			wantErrMetrics:   []string{"cpu.used_pct"},
 		},
 		{
-			name: "both fault: no observations, both errors joined",
+			name: "both fault: every metric reports its own error, none a value",
 			plugin: cpuPlugin{
 				Load:    fixtureLoad{err: boom},
 				Percent: fixturePercent{err: boom},
 			},
-			wantMetrics: nil,
+			wantValueMetrics: nil,
+			wantErrMetrics:   []string{"cpu.load1", "cpu.load5", "cpu.load15", "cpu.used_pct"},
 		},
 	}
 	for _, tc := range cases {
@@ -120,11 +124,23 @@ func TestCPUCollectToleratesProviderFaults(t *testing.T) {
 			if !strings.Contains(err.Error(), "boom") {
 				t.Errorf("joined error %v must carry the piece fault", err)
 			}
-			if len(obs) != len(tc.wantMetrics) {
-				t.Fatalf("got %+v, want metrics %v", obs, tc.wantMetrics)
+			if want := len(tc.wantValueMetrics) + len(tc.wantErrMetrics); len(obs) != want {
+				t.Fatalf("got %+v, want %d observations (%d values + %d errors)", obs, want, len(tc.wantValueMetrics), len(tc.wantErrMetrics))
 			}
-			for _, m := range tc.wantMetrics {
-				findObs(t, obs, "", m)
+			for _, m := range tc.wantValueMetrics {
+				o := findObs(t, obs, "", m)
+				if o.Value == nil || o.Err != "" {
+					t.Errorf("%s = %+v, want a value observation with no error", m, o)
+				}
+			}
+			for _, m := range tc.wantErrMetrics {
+				o := findObs(t, obs, "", m)
+				if o.Err == "" || o.Value != nil || o.Label != nil {
+					t.Errorf("%s = %+v, want an error observation carrying no value or label", m, o)
+				}
+				if !strings.Contains(o.Err, "boom") {
+					t.Errorf("%s error = %q, want it to carry the underlying fault", m, o.Err)
+				}
 			}
 		})
 	}

@@ -56,7 +56,12 @@ func (p memoryPlugin) Collect(ctx context.Context, _ map[string]any) ([]Observat
 
 	if p.Memory != nil {
 		if vm, err := p.Memory.VirtualMemory(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("memory: virtual memory: %w", err))
+			wrapped := fmt.Errorf("memory: virtual memory: %w", err)
+			errs = append(errs, wrapped)
+			obs = append(obs,
+				errObservation("", "mem.used_pct", wrapped),
+				errObservation("", "mem.available_bytes", wrapped),
+			)
 		} else if vm != nil {
 			obs = append(obs,
 				valueObservation("", "mem.used_pct", vm.UsedPercent),
@@ -67,7 +72,9 @@ func (p memoryPlugin) Collect(ctx context.Context, _ map[string]any) ([]Observat
 
 	if p.Swap != nil {
 		if sw, err := p.Swap.SwapMemory(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("memory: swap: %w", err))
+			wrapped := fmt.Errorf("memory: swap: %w", err)
+			errs = append(errs, wrapped)
+			obs = append(obs, errObservation("", "swap.used_pct", wrapped))
 		} else if sw != nil {
 			obs = append(obs, valueObservation("", "swap.used_pct", sw.UsedPercent))
 		}

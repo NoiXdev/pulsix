@@ -32,6 +32,7 @@ const (
 	envServerName        = "PULSIX_MANAGER_SERVER_NAME"
 	envHeartbeatInterval = "PULSIX_HEARTBEAT_INTERVAL"
 	envFactsInterval     = "PULSIX_FACTS_INTERVAL"
+	envConfigInterval    = "PULSIX_CONFIG_INTERVAL"
 )
 
 // Defaults and clamps. PULSIX_DATA_DIR defaults to /etc/pulsix (the agent
@@ -48,6 +49,9 @@ const (
 
 	minFactsInterval = 30 * time.Minute
 	maxFactsInterval = 24 * time.Hour
+
+	minConfigInterval = 30 * time.Second
+	maxConfigInterval = 10 * time.Minute
 )
 
 // The identity file names, inside DataDir.
@@ -97,6 +101,13 @@ type Config struct {
 	// FactsInterval is how often facts are re-collected and pushed
 	// (PULSIX_FACTS_INTERVAL, default 6 h, clamped into [30 min, 24 h]).
 	FactsInterval time.Duration
+	// ConfigInterval is how often the agent re-asserts its check
+	// configuration version in a heartbeat (PULSIX_CONFIG_INTERVAL,
+	// default 60 s, clamped into [30 s, 10 min]) — a safety net alongside
+	// the ordinary heartbeat cadence, since HeartbeatInterval may be set
+	// longer than this and the version still needs to reach the manager
+	// promptly (v0.3b-checks design, "Configuration delivery").
+	ConfigInterval time.Duration
 	// Version is the agent's build version, set via ldflags after Load.
 	Version string
 }
@@ -150,6 +161,11 @@ func Load(env []string) (Config, error) {
 	}
 	cfg.FactsInterval, err = clampedInterval(envFactsInterval, vals[envFactsInterval],
 		6*time.Hour, minFactsInterval, maxFactsInterval)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.ConfigInterval, err = clampedInterval(envConfigInterval, vals[envConfigInterval],
+		60*time.Second, minConfigInterval, maxConfigInterval)
 	if err != nil {
 		return cfg, err
 	}

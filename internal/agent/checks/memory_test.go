@@ -60,9 +60,10 @@ func TestMemoryCollectHappyPath(t *testing.T) {
 func TestMemoryCollectToleratesProviderFaults(t *testing.T) {
 	boom := errors.New("boom")
 	cases := []struct {
-		name        string
-		plugin      memoryPlugin
-		wantMetrics []string
+		name             string
+		plugin           memoryPlugin
+		wantValueMetrics []string
+		wantErrMetrics   []string
 	}{
 		{
 			name: "virtual memory fault still reports swap",
@@ -70,7 +71,8 @@ func TestMemoryCollectToleratesProviderFaults(t *testing.T) {
 				Memory: fixtureVirtualMemory{err: boom},
 				Swap:   fixtureSwapMemory{stat: &mem.SwapMemoryStat{UsedPercent: 2}},
 			},
-			wantMetrics: []string{"swap.used_pct"},
+			wantValueMetrics: []string{"swap.used_pct"},
+			wantErrMetrics:   []string{"mem.used_pct", "mem.available_bytes"},
 		},
 		{
 			name: "swap fault still reports memory",
@@ -78,7 +80,8 @@ func TestMemoryCollectToleratesProviderFaults(t *testing.T) {
 				Memory: fixtureVirtualMemory{stat: &mem.VirtualMemoryStat{UsedPercent: 50, Available: 1}},
 				Swap:   fixtureSwapMemory{err: boom},
 			},
-			wantMetrics: []string{"mem.used_pct", "mem.available_bytes"},
+			wantValueMetrics: []string{"mem.used_pct", "mem.available_bytes"},
+			wantErrMetrics:   []string{"swap.used_pct"},
 		},
 	}
 	for _, tc := range cases {
@@ -90,11 +93,20 @@ func TestMemoryCollectToleratesProviderFaults(t *testing.T) {
 			if !strings.Contains(err.Error(), "boom") {
 				t.Errorf("joined error %v must carry the piece fault", err)
 			}
-			if len(obs) != len(tc.wantMetrics) {
-				t.Fatalf("got %+v, want metrics %v", obs, tc.wantMetrics)
+			if want := len(tc.wantValueMetrics) + len(tc.wantErrMetrics); len(obs) != want {
+				t.Fatalf("got %+v, want %d observations (%d values + %d errors)", obs, want, len(tc.wantValueMetrics), len(tc.wantErrMetrics))
 			}
-			for _, m := range tc.wantMetrics {
-				findObs(t, obs, "", m)
+			for _, m := range tc.wantValueMetrics {
+				o := findObs(t, obs, "", m)
+				if o.Value == nil || o.Err != "" {
+					t.Errorf("%s = %+v, want a value observation with no error", m, o)
+				}
+			}
+			for _, m := range tc.wantErrMetrics {
+				o := findObs(t, obs, "", m)
+				if o.Err == "" || o.Value != nil {
+					t.Errorf("%s = %+v, want an error observation carrying no value", m, o)
+				}
 			}
 		})
 	}

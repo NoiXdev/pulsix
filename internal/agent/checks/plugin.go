@@ -31,14 +31,31 @@ import (
 
 // Observation is the smallest unit a plugin reports: one item (the empty
 // string for a whole-host metric, a mount point or a unit name otherwise),
-// one metric name, and either a numeric Value or a Label — never both, and
-// never neither. The service plugin is the only one that reports a label
-// today (the unit's state); cpu, memory and disk are all numeric.
+// one metric name, and exactly one of a numeric Value, a Label or an Err
+// — never two of the three, never none. The service plugin is the only
+// one that reports a label today (the unit's state); cpu, memory and disk
+// are all numeric.
+//
+// Err is set when THIS specific item/metric could not be collected this
+// tick, even though the plugin call itself is advisory-tolerant overall
+// (Collect still returns whatever else it managed): a mount that failed
+// to stat, a load-average call that errored while the percent call still
+// answered. It carries the failure's own text, mirroring the wire
+// CheckResult's "error" oneof arm and internal/checks.Observation.Err on
+// the manager side one-for-one — the manager stores no sample for it and
+// shows the text on the current value instead, so the host page reads
+// "collection failed" rather than a stale number that looks fresh. A
+// plugin that cannot attribute a fault to a specific item/metric (a
+// probe that is genuinely one indivisible round trip for everything it
+// was asked, e.g. service's batched ListUnits) still reports one Err
+// observation per item/metric that call would have produced — not
+// nothing, and not one combined-but-unattributed error.
 type Observation struct {
 	Item   string
 	Metric string
 	Value  *float64
 	Label  *string
+	Err    string
 }
 
 // Plugin is one measurement source. Name identifies it for the registry
@@ -49,9 +66,10 @@ type Observation struct {
 // the shape, since a wire round trip can turn a []string into a []any.
 //
 // Collect's returned error is advisory, mirroring facts.Collect: whatever
-// observations it could gather are authoritative and must still be used,
-// even when the error is non-nil. Only a dead context fails outright with
-// no observations at all.
+// observations it could gather (including error observations for the
+// specific items/metrics that failed) are authoritative and must still be
+// used, even when the error is non-nil. Only a dead context fails
+// outright with no observations at all.
 type Plugin interface {
 	Name() string
 	Collect(ctx context.Context, params map[string]any) ([]Observation, error)
@@ -80,6 +98,13 @@ func valueObservation(item, metric string, v float64) Observation {
 // labelObservation builds a label Observation (service.state today).
 func labelObservation(item, metric, label string) Observation {
 	return Observation{Item: item, Metric: metric, Label: &label}
+}
+
+// errObservation builds an error Observation: collection failed for this
+// exact item/metric, so no sample should be stored and the manager's
+// current value shows the failure text instead of a stale reading.
+func errObservation(item, metric string, err error) Observation {
+	return Observation{Item: item, Metric: metric, Err: err.Error()}
 }
 
 // paramStrings reads params[key] as a list of strings. present is false

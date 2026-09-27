@@ -230,7 +230,7 @@ func TestStreamSendFailureReconnects(t *testing.T) {
 	// next heartbeat tick fails and the loop reconnects with backoff.
 	stream1.failSends(errors.New("transport dead"))
 	intervals, tickers := lt.ticks.recorded()
-	if len(intervals) != 2 {
+	if len(intervals) != 3 {
 		t.Fatalf("ticker intervals = %v, want 2", intervals)
 	}
 	tickers[0].c <- time.Now()

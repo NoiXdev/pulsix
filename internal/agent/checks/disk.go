@@ -62,8 +62,10 @@ func (diskPlugin) Name() string { return "disk" }
 // (bypassing the pseudo-filesystem filter, an explicit ask), otherwise
 // every distinct mount point disk.Partitions reports with the pseudo types
 // filtered out — then reads each mount's usage independently: one
-// unreadable mount becomes that mount's joined error, never the whole
-// plugin's.
+// unreadable mount becomes that mount's own three error observations
+// (disk.used_pct, disk.free_bytes, disk.inodes_used_pct) plus its share of
+// the joined error, never the whole plugin's — the other mounts are
+// unaffected either way.
 func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -104,7 +106,18 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	for _, mp := range candidates {
 		usage, err := p.Usage.Usage(ctx, mp)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("disk: mount %q: %w", mp, err))
+			wrapped := fmt.Errorf("disk: mount %q: %w", mp, err)
+			errs = append(errs, wrapped)
+			// This mount's own three metrics could not be read: report
+			// each as its own error observation, item-attributed, rather
+			// than only folding the fault into the aggregate error —
+			// otherwise the manager keeps showing this mount's last good
+			// numbers as though they were still current.
+			obs = append(obs,
+				errObservation(mp, "disk.used_pct", wrapped),
+				errObservation(mp, "disk.free_bytes", wrapped),
+				errObservation(mp, "disk.inodes_used_pct", wrapped),
+			)
 			continue
 		}
 		if usage == nil {

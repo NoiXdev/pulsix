@@ -60,6 +60,7 @@ func TestLoad(t *testing.T) {
 				DataDir:           "/etc/pulsix",
 				HeartbeatInterval: 30 * time.Second,
 				FactsInterval:     6 * time.Hour,
+				ConfigInterval:    60 * time.Second,
 				CertPath:          "/etc/pulsix/agent.crt",
 				KeyPath:           "/etc/pulsix/agent.key",
 				MetaPath:          "/etc/pulsix/agent.json",
@@ -74,6 +75,7 @@ func TestLoad(t *testing.T) {
 				"PULSIX_MANAGER_SERVER_NAME=pulsix-manager",
 				"PULSIX_HEARTBEAT_INTERVAL=1m",
 				"PULSIX_FACTS_INTERVAL=12h",
+				"PULSIX_CONFIG_INTERVAL=90s",
 				"PULSIX_ENROLL_TOKEN=  pxa1.abc.def.ghi  ",
 			},
 			want: Config{
@@ -83,6 +85,7 @@ func TestLoad(t *testing.T) {
 				DataDir:           "/var/lib/pulsix-agent",
 				HeartbeatInterval: time.Minute,
 				FactsInterval:     12 * time.Hour,
+				ConfigInterval:    90 * time.Second,
 				EnrollToken:       "pxa1.abc.def.ghi",
 				CertPath:          "/var/lib/pulsix-agent/agent.crt",
 				KeyPath:           "/var/lib/pulsix-agent/agent.key",
@@ -120,6 +123,30 @@ func TestLoad(t *testing.T) {
 				"PULSIX_FACTS_INTERVAL=48h",
 			},
 			want: Config{FactsInterval: 24 * time.Hour},
+		},
+		{
+			name: "config interval clamped low",
+			env: []string{
+				"PULSIX_MANAGER_ADDR=manager.example:8444",
+				"PULSIX_CONFIG_INTERVAL=1s",
+			},
+			want: Config{ConfigInterval: 30 * time.Second},
+		},
+		{
+			name: "config interval clamped high",
+			env: []string{
+				"PULSIX_MANAGER_ADDR=manager.example:8444",
+				"PULSIX_CONFIG_INTERVAL=1h",
+			},
+			want: Config{ConfigInterval: 10 * time.Minute},
+		},
+		{
+			name: "unparsable config interval",
+			env: []string{
+				"PULSIX_MANAGER_ADDR=manager.example:8444",
+				"PULSIX_CONFIG_INTERVAL=eventually",
+			},
+			wantErr: "PULSIX_CONFIG_INTERVAL",
 		},
 		{
 			name: "unparsable heartbeat",
@@ -182,6 +209,9 @@ func TestLoad(t *testing.T) {
 			}
 			if tt.want.FactsInterval != 0 && got.FactsInterval != tt.want.FactsInterval {
 				t.Errorf("FactsInterval = %v, want %v", got.FactsInterval, tt.want.FactsInterval)
+			}
+			if tt.want.ConfigInterval != 0 && got.ConfigInterval != tt.want.ConfigInterval {
+				t.Errorf("ConfigInterval = %v, want %v", got.ConfigInterval, tt.want.ConfigInterval)
 			}
 		})
 	}

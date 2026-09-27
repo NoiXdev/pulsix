@@ -5,6 +5,7 @@
 package checks
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -117,6 +118,9 @@ func TestValueObservation(t *testing.T) {
 	if o.Label != nil {
 		t.Errorf("a value observation must not carry a label")
 	}
+	if o.Err != "" {
+		t.Errorf("a value observation must not carry an error")
+	}
 }
 
 func TestLabelObservation(t *testing.T) {
@@ -129,6 +133,22 @@ func TestLabelObservation(t *testing.T) {
 	}
 	if o.Value != nil {
 		t.Errorf("a label observation must not carry a value")
+	}
+	if o.Err != "" {
+		t.Errorf("a label observation must not carry an error")
+	}
+}
+
+func TestErrObservation(t *testing.T) {
+	o := errObservation("/data", "disk.used_pct", fmt.Errorf("permission denied"))
+	if o.Item != "/data" || o.Metric != "disk.used_pct" {
+		t.Fatalf("observation = %+v", o)
+	}
+	if o.Err != "permission denied" {
+		t.Fatalf("err = %q, want %q", o.Err, "permission denied")
+	}
+	if o.Value != nil || o.Label != nil {
+		t.Errorf("an error observation must carry neither a value nor a label: %+v", o)
 	}
 }
 

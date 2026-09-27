@@ -65,6 +65,7 @@ func newLoopTest(t *testing.T) *loopTest {
 		Version:           "v0.3a-test",
 		HeartbeatInterval: time.Minute,
 		FactsInterval:     time.Hour,
+		ConfigInterval:    2 * time.Minute,
 		CertPath:          filepath.Join(dir, certFileName),
 		KeyPath:           filepath.Join(dir, keyFileName),
 		MetaPath:          filepath.Join(dir, metaFileName),
@@ -220,10 +221,11 @@ func TestLoopEnrollsAndStreams(t *testing.T) {
 	}
 
 	// Heartbeat cadence: the first ticker is the heartbeat's, the second
-	// the facts'.
+	// the facts', the third the config re-assert's.
 	intervals, tickers := lt.ticks.recorded()
-	if len(intervals) != 2 || intervals[0] != lt.cfg.HeartbeatInterval || intervals[1] != lt.cfg.FactsInterval {
-		t.Fatalf("ticker intervals = %v, want [%v %v]", intervals, lt.cfg.HeartbeatInterval, lt.cfg.FactsInterval)
+	if len(intervals) != 3 || intervals[0] != lt.cfg.HeartbeatInterval || intervals[1] != lt.cfg.FactsInterval ||
+		intervals[2] != lt.cfg.ConfigInterval {
+		t.Fatalf("ticker intervals = %v, want [%v %v %v]", intervals, lt.cfg.HeartbeatInterval, lt.cfg.FactsInterval, lt.cfg.ConfigInterval)
 	}
 	tickers[0].c <- time.Now()
 	waitFor(t, 2*time.Second, func() bool {
@@ -498,7 +500,7 @@ func TestLoopFactsPushErrorIsAdvisory(t *testing.T) {
 		t.Fatal("the initial push must be a facts message")
 	}
 	intervals, tickers := lt.ticks.recorded()
-	if len(intervals) != 2 {
+	if len(intervals) != 3 {
 		t.Fatalf("ticker intervals = %v, want 2", intervals)
 	}
 	tickers[1].c <- time.Now() // the facts interval tick
@@ -545,7 +547,7 @@ func TestLoopRenewalDueDuringStreamEndsSession(t *testing.T) {
 	// Time passes into the renewal window; the heartbeat tick fires.
 	lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
 	intervals, tickers := lt.ticks.recorded()
-	if len(intervals) != 2 {
+	if len(intervals) != 3 {
 		t.Fatalf("ticker intervals = %v, want 2", intervals)
 	}
 	tickers[0].c <- time.Now()

@@ -6,6 +6,7 @@ package checks
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -133,16 +134,28 @@ func TestServiceCollectUnrecognizedActiveStateReportsUnknown(t *testing.T) {
 // TestServiceCollectListerFaultFailsTheWholeBatch: ListUnits is one batched
 // D-Bus round trip for every requested unit — its fault (no systemd, the
 // non-Linux stub, a dead connection) fails every unit together, since
-// there is no per-unit call to isolate.
+// there is no per-unit call to isolate. Every requested unit still gets
+// its own service.state error observation rather than nothing at all, so
+// the manager shows "collection failed" for each instead of leaving every
+// one of them at its last-known state.
 func TestServiceCollectListerFaultFailsTheWholeBatch(t *testing.T) {
 	boom := errors.New("boom")
 	p := servicePlugin{Lister: &fixtureUnitLister{err: boom}}
-	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"sshd"}})
+	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"sshd", "nginx"}})
 	if err == nil {
 		t.Fatal("a lister fault must surface")
 	}
-	if obs != nil {
-		t.Fatalf("obs = %+v, want none", obs)
+	if len(obs) != 2 {
+		t.Fatalf("obs = %+v, want one error observation per requested unit", obs)
+	}
+	for _, u := range []string{"sshd", "nginx"} {
+		o := findObs(t, obs, u, "service.state")
+		if o.Err == "" || o.Value != nil || o.Label != nil {
+			t.Errorf("%s service.state = %+v, want an error observation carrying no value or label", u, o)
+		}
+		if !strings.Contains(o.Err, "boom") {
+			t.Errorf("%s error = %q, want it to carry the underlying fault", u, o.Err)
+		}
 	}
 }
 

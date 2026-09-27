@@ -43,7 +43,9 @@ func (servicePlugin) Name() string { return "service" }
 // just means nothing to check, not an error). Every requested unit is
 // looked up in one batched call — a fault there (no systemd, no D-Bus, the
 // non-Linux stub) fails every unit together, since it is genuinely one
-// round trip; a unit the call didn't return anything for reports "unknown"
+// round trip, and is reported as each requested unit's own service.state
+// error observation rather than nothing at all; a unit the call didn't
+// return anything for (the lister itself succeeded) reports "unknown"
 // rather than an error, since "unknown" is itself a valid state.
 func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Observation, error) {
 	if err := ctx.Err(); err != nil {
@@ -63,7 +65,19 @@ func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Ob
 
 	states, err := p.Lister.ListUnits(ctx, units)
 	if err != nil {
-		return nil, fmt.Errorf("service: %w", err)
+		wrapped := fmt.Errorf("service: %w", err)
+		// One D-Bus round trip covers every requested unit, so a fault
+		// here is genuinely indivisible — there is no per-unit call to
+		// isolate the way disk isolates per-mount faults. Still: every
+		// requested unit's own service.state is reported as its own error
+		// observation rather than nothing at all, so the manager shows
+		// "collection failed" for each instead of leaving every one of
+		// them at its last-known (possibly long stale) state.
+		obs := make([]Observation, 0, len(units))
+		for _, u := range units {
+			obs = append(obs, errObservation(u, "service.state", wrapped))
+		}
+		return obs, wrapped
 	}
 
 	byName := make(map[string]unitState, len(states))

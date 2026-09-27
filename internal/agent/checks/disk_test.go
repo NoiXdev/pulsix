@@ -103,7 +103,11 @@ func TestDiskCollectPartitionsFaultFailsTheWholePlugin(t *testing.T) {
 
 // TestDiskCollectOneUnreadableMountDoesNotLoseTheOthers is the
 // failure-tolerance case the brief calls out by name: a mount that errors
-// must not cost the mounts that succeeded.
+// must not cost the mounts that succeeded — and, since the review found
+// this task's first cut silently dropped it, must not vanish from the
+// wire either: the broken mount reports its own error observation for
+// each of its three metrics, so the manager shows "collection failed"
+// instead of quietly leaving its last good numbers looking current.
 func TestDiskCollectOneUnreadableMountDoesNotLoseTheOthers(t *testing.T) {
 	boom := errors.New("permission denied")
 	p := diskPlugin{
@@ -120,10 +124,27 @@ func TestDiskCollectOneUnreadableMountDoesNotLoseTheOthers(t *testing.T) {
 	if !strings.Contains(err.Error(), "/broken") {
 		t.Errorf("err = %v, must name the mount that failed", err)
 	}
-	got := metricItems(obs, "disk.used_pct")
-	want := []string{"/", "/var"}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("mounts observed = %v, want %v (the failed mount excluded, the others intact)", got, want)
+
+	// The two healthy mounts still report real values, untouched.
+	for _, mp := range []string{"/", "/var"} {
+		o := findObs(t, obs, mp, "disk.used_pct")
+		if o.Value == nil || o.Err != "" {
+			t.Errorf("%s disk.used_pct = %+v, want a value observation with no error", mp, o)
+		}
+	}
+	// The broken mount reports an error observation for each of its three
+	// metrics — not nothing.
+	for _, metric := range []string{"disk.used_pct", "disk.free_bytes", "disk.inodes_used_pct"} {
+		o := findObs(t, obs, "/broken", metric)
+		if o.Err == "" || o.Value != nil || o.Label != nil {
+			t.Errorf("/broken %s = %+v, want an error observation carrying no value or label", metric, o)
+		}
+		if !strings.Contains(o.Err, "permission denied") {
+			t.Errorf("/broken %s err = %q, want it to carry the underlying fault", metric, o.Err)
+		}
+	}
+	if want := 2*3 + 1*3; len(obs) != want {
+		t.Fatalf("total observations = %d, want %d (2 healthy mounts + 1 broken mount, 3 metrics each)", len(obs), want)
 	}
 }
 
