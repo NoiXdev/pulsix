@@ -174,16 +174,18 @@ func (g Group) beats(other Group) bool {
 	return bytes.Compare(g.ID[:], other.ID[:]) < 0
 }
 
-// resolve computes hostID's Resolved list (unsorted) from bundle b:
-// organization first, then every group whose expansion contains hostID
-// (the among-groups tie-break applied independently per key), then the
-// host's own — each later layer overriding on Key. A definition whose
-// final, winning layer has Enabled = false drops the key entirely, rather
-// than appearing disabled: that richer "still visible, disabled, with its
-// source" view is the effective-checks view a later task builds on top of
-// this, not this resolver's own output (see the resolver_test.go doc
-// comment for where that split is tested).
-func (b *resolveBundle) resolve(hostID uuid.UUID) []Resolved {
+// winningDefinitions is the merge alone, with no Enabled filter applied:
+// hostID's winning Definition per key after precedence — organization
+// first, then every group whose expansion contains hostID (the
+// among-groups tie-break applied independently per key), then the host's
+// own — each later layer overriding on Key. The result includes a key
+// whose winner is disabled; resolve (below) and Service.EffectiveHost
+// both build on this exact same reduction so there is exactly one
+// implementation of precedence to keep in sync with what an agent
+// actually runs — splitting the merge from the Enabled filter is what
+// lets EffectiveHost show a disabled key's source without re-deriving
+// precedence itself.
+func (b *resolveBundle) winningDefinitions(hostID uuid.UUID) map[string]Definition {
 	winners := make(map[string]Definition, len(b.orgDefs))
 	for k, d := range b.orgDefs {
 		winners[k] = d
@@ -208,7 +210,16 @@ func (b *resolveBundle) resolve(hostID uuid.UUID) []Resolved {
 	for k, d := range b.hostDefs[hostID] {
 		winners[k] = d
 	}
+	return winners
+}
 
+// resolve computes hostID's Resolved list (unsorted) from bundle b: the
+// same winningDefinitions merge, with a definition whose final, winning
+// layer has Enabled = false dropping the key entirely rather than
+// appearing disabled — that richer "still visible, disabled, with its
+// source" view is Service.EffectiveHost, built on the same merge.
+func (b *resolveBundle) resolve(hostID uuid.UUID) []Resolved {
+	winners := b.winningDefinitions(hostID)
 	out := make([]Resolved, 0, len(winners))
 	for k, d := range winners {
 		if !d.Enabled {
@@ -282,8 +293,16 @@ func version(checks []Resolved) (string, error) {
 
 // toResolvedSet sorts checks by Key (resolve already does this, but a
 // ResolvedSet is never handed out with unsorted Checks even if a future
-// caller of resolve forgets to) and computes Version.
+// caller of resolve forgets to) and computes Version. checks is normalised
+// to a non-nil, empty slice when there is nothing to report — an
+// unmonitored host and a monitored host with zero surviving checks must
+// serialise identically ("[]", never the bare "null" a nil slice would
+// produce once Task 6 puts this on the wire) even though they reach here
+// by different paths.
 func toResolvedSet(hostID uuid.UUID, checks []Resolved) (ResolvedSet, error) {
+	if checks == nil {
+		checks = []Resolved{}
+	}
 	sort.Slice(checks, func(i, j int) bool { return checks[i].Key < checks[j].Key })
 	v, err := version(checks)
 	if err != nil {
@@ -347,6 +366,40 @@ func (s *Service) ResolveOrg(ctx context.Context, orgID uuid.UUID) (map[uuid.UUI
 		}
 		out[id] = rs
 	}
+	return out, nil
+}
+
+// EffectiveHost returns hostID's winning Definition per key after
+// precedence — organization, then every matching group, then the host's
+// own — sorted by Key, exactly like ResolveHost's own merge except that a
+// key whose winner is disabled (Enabled = false) is included rather than
+// dropped: the effective-checks view ("Resolution": a disabled check "is
+// still reported by the effective view with its source, so the GUI can
+// show where it was turned off") needs the winning Definition itself —
+// BindingKind, GroupID/HostID, Enabled — to render that, which Resolved
+// cannot carry (it has no Enabled field, verbatim from this package's own
+// brief). Built on the exact same resolveBundle.winningDefinitions
+// ResolveHost uses, so the effective view can never name a different
+// winner than the one an agent actually runs — there is exactly one
+// implementation of precedence in this package, not two that could drift.
+//
+// EffectiveHost does not apply ResolveHost's "only a monitored host
+// resolves to a non-empty set" gate: an unmonitored host's bindings still
+// resolve to a definite winner per key, and a caller building a page for
+// a specific host already knows whether that host is monitored from
+// elsewhere. Requires WithMatcher if orgID has any monitoring groups,
+// exactly like ResolveHost.
+func (s *Service) EffectiveHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Definition, error) {
+	bundle, err := s.loadResolveBundle(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	winners := bundle.winningDefinitions(hostID)
+	out := make([]Definition, 0, len(winners))
+	for _, d := range winners {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -204,8 +205,21 @@ func TestResolveHostTwoGroupsEqualPriorityOlderWins(t *testing.T) {
 	store, matcher, roster, org := newResolverFixture()
 	host := uuid.Must(uuid.NewV7())
 	roster.monitored[host] = true
-	older := putGroup(store, checks.Group{OrgID: org, Name: "older", Selector: "a", Priority: 5, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1)})
-	newer := putGroup(store, checks.Group{OrgID: org, Name: "newer", Selector: "b", Priority: 5, CreatedAt: fixedTime(2), UpdatedAt: fixedTime(2)})
+	// Deliberately the opposite of what uuid.NewV7 (monotonic; an earlier
+	// CreatedAt would naturally get the smaller id too) would hand out:
+	// the older group gets the *larger* id, the newer group the *smaller*
+	// one. If beats ever stopped consulting CreatedAt, the id clause alone
+	// would then pick the wrong (newer) group, so this test only passes by
+	// actually consulting created_at, not by the id tie-break coincidentally
+	// agreeing with it.
+	older := putGroup(store, checks.Group{
+		ID:    uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+		OrgID: org, Name: "older", Selector: "a", Priority: 5, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1),
+	})
+	newer := putGroup(store, checks.Group{
+		ID:    uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		OrgID: org, Name: "newer", Selector: "b", Priority: 5, CreatedAt: fixedTime(2), UpdatedAt: fixedTime(2),
+	})
 	matcher.bySelector["a"] = []uuid.UUID{host}
 	matcher.bySelector["b"] = []uuid.UUID{host}
 	putDef(store, checks.Definition{OrgID: org, Key: "disk", Plugin: checks.PluginDisk, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingGroup, GroupID: &older.ID})
@@ -322,6 +336,9 @@ func TestResolveHostDisabledAtHostScopeRemovesOrgCheck(t *testing.T) {
 	if len(rs.Checks) != 0 {
 		t.Fatalf("checks = %+v, want none — the host scope disabled the organization's check", rs.Checks)
 	}
+	if rs.Checks == nil {
+		t.Fatal("Checks is nil, want a non-nil empty slice (see TestResolveHostChecksIsNeverNil)")
+	}
 }
 
 func TestResolveHostUnmonitoredResolvesToNothing(t *testing.T) {
@@ -338,11 +355,57 @@ func TestResolveHostUnmonitoredResolvesToNothing(t *testing.T) {
 	if len(rs.Checks) != 0 {
 		t.Fatalf("checks = %+v, want none for an unmonitored host", rs.Checks)
 	}
+	if rs.Checks == nil {
+		t.Fatal("Checks is nil, want a non-nil empty slice (see TestResolveHostChecksIsNeverNil)")
+	}
 	if rs.Version == "" {
 		t.Fatal("Version must still be set (the hash of an empty set), got empty string")
 	}
 	if matcher.calls != 0 {
 		t.Fatalf("matcher.calls = %d, want 0 — an unmonitored host must short-circuit before expanding any group", matcher.calls)
+	}
+}
+
+// TestResolveHostChecksIsNeverNil is finding 3: an unmonitored host (which
+// short-circuits before ever building a Resolved list) and a monitored
+// host whose only check is disabled (which builds an empty list the long
+// way, through resolveBundle.resolve) must produce byte-identical JSON —
+// "[]", never the bare "null" a nil slice would serialise as — even
+// though the two reach ResolveHost by entirely different code paths.
+func TestResolveHostChecksIsNeverNil(t *testing.T) {
+	unmonitoredStore, matcher1, roster1, org1 := newResolverFixture()
+	unmonitoredHost := uuid.Must(uuid.NewV7())
+	putDef(unmonitoredStore, checks.Definition{OrgID: org1, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	svc1 := checks.NewService(unmonitoredStore, checks.WithMatcher(matcher1), checks.WithHostRoster(roster1))
+	rsUnmonitored, err := svc1.ResolveHost(ctx, org1, unmonitoredHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	disabledStore, matcher2, roster2, org2 := newResolverFixture()
+	disabledHost := uuid.Must(uuid.NewV7())
+	roster2.monitored[disabledHost] = true
+	putDef(disabledStore, checks.Definition{OrgID: org2, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: false, BindingKind: checks.BindingOrg})
+	svc2 := checks.NewService(disabledStore, checks.WithMatcher(matcher2), checks.WithHostRoster(roster2))
+	rsDisabled, err := svc2.ResolveHost(ctx, org2, disabledHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, rs := range map[string]checks.ResolvedSet{
+		"unmonitored":                rsUnmonitored,
+		"monitored-but-all-disabled": rsDisabled,
+	} {
+		if rs.Checks == nil {
+			t.Fatalf("%s: Checks is nil, want a non-nil empty slice", name)
+		}
+		b, err := json.Marshal(rs.Checks)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if string(b) != "[]" {
+			t.Fatalf("%s: json.Marshal(Checks) = %s, want []", name, b)
+		}
 	}
 }
 
@@ -577,5 +640,136 @@ func TestResolveHostPropagatesListGroupsError(t *testing.T) {
 
 	if _, err := svc.ResolveHost(ctx, org, host); err == nil {
 		t.Fatal("want the store's List (groups) error propagated")
+	}
+}
+
+// TestEffectiveHostReportsADisabledWinnerWithItsSource is finding 1: the
+// half of the enabled rule ResolveHost cannot express (Resolved has no
+// Enabled field, verbatim from this package's brief) — a check disabled
+// at the winning scope must still be visible, with the scope that
+// disabled it, through EffectiveHost, even though ResolveHost's own
+// Checks correctly omits it (TestResolveHostDisabledAtHostScopeRemovesOrgCheck
+// already pins that half).
+func TestEffectiveHostReportsADisabledWinnerWithItsSource(t *testing.T) {
+	store, matcher, roster, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	roster.monitored[host] = true
+	putDef(store, checks.Definition{OrgID: org, Key: "disk", Plugin: checks.PluginDisk, Interval: 60 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	putDef(store, checks.Definition{OrgID: org, Key: "disk", Plugin: checks.PluginDisk, Interval: 60 * time.Second, Enabled: false, BindingKind: checks.BindingHost, HostID: &host})
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+
+	// ResolveHost's own set has already dropped this key entirely.
+	rs, err := svc.ResolveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Checks) != 0 {
+		t.Fatalf("ResolveHost checks = %+v, want none", rs.Checks)
+	}
+
+	defs, err := svc.EffectiveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("EffectiveHost = %+v, want exactly 1 (the disabled winner)", defs)
+	}
+	d := defs[0]
+	if d.Key != "disk" || d.Enabled || d.BindingKind != checks.BindingHost || d.HostID == nil || *d.HostID != host {
+		t.Fatalf("EffectiveHost[0] = %+v, want the disabled host-scope definition naming host %s as its source", d, host)
+	}
+}
+
+// TestEffectiveHostAgreesWithResolveHostForEnabledChecks proves the two
+// methods share one implementation of precedence rather than two that
+// could drift: for a key that survives (Enabled = true at its winning
+// scope), EffectiveHost's winning Definition and ResolveHost's Resolved
+// entry must describe the exact same winner.
+func TestEffectiveHostAgreesWithResolveHostForEnabledChecks(t *testing.T) {
+	store, matcher, roster, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	roster.monitored[host] = true
+	g := putGroup(store, checks.Group{OrgID: org, Name: "g", Selector: "role=db", Priority: 0, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1)})
+	matcher.bySelector["role=db"] = []uuid.UUID{host}
+	putDef(store, checks.Definition{OrgID: org, Key: "disk", Plugin: checks.PluginDisk, Interval: 60 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	putDef(store, checks.Definition{OrgID: org, Key: "disk", Plugin: checks.PluginDisk, Interval: 15 * time.Second, Enabled: true, BindingKind: checks.BindingGroup, GroupID: &g.ID})
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+
+	rs, err := svc.ResolveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := svc.EffectiveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Checks) != 1 || len(defs) != 1 {
+		t.Fatalf("ResolveHost = %+v, EffectiveHost = %+v, want exactly 1 each", rs.Checks, defs)
+	}
+	c, d := rs.Checks[0], defs[0]
+	if d.Key != c.Key || d.Plugin != c.Plugin || d.Interval != c.Interval || d.BindingKind != c.Source ||
+		d.GroupID == nil || c.SourceID == nil || *d.GroupID != *c.SourceID {
+		t.Fatalf("ResolveHost's winner %+v and EffectiveHost's winner %+v disagree", c, d)
+	}
+}
+
+// TestEffectiveHostSortedByKey pins EffectiveHost's own ordering
+// guarantee, independent of ResolvedSet.Checks's.
+func TestEffectiveHostSortedByKey(t *testing.T) {
+	store, matcher, roster, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	roster.monitored[host] = true
+	putDef(store, checks.Definition{OrgID: org, Key: "service", Plugin: checks.PluginService, Params: map[string]any{"units": []any{"sshd"}}, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	putDef(store, checks.Definition{OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	putDef(store, checks.Definition{OrgID: org, Key: "disk", Plugin: checks.PluginDisk, Interval: 30 * time.Second, Enabled: false, BindingKind: checks.BindingOrg})
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+
+	defs, err := svc.EffectiveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, d := range defs {
+		keys = append(keys, d.Key)
+	}
+	want := []string{"cpu", "disk", "service"}
+	if len(keys) != len(want) {
+		t.Fatalf("keys = %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Fatalf("keys = %v, want %v", keys, want)
+		}
+	}
+}
+
+// TestEffectiveHostIgnoresTheMonitoredGate proves EffectiveHost's
+// documented, deliberate difference from ResolveHost: an unmonitored host
+// still gets a definite per-key winner (a caller building a page for a
+// specific host already knows separately whether it is monitored).
+func TestEffectiveHostIgnoresTheMonitoredGate(t *testing.T) {
+	store, matcher, roster, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	// roster.monitored has no entry for host: not monitored.
+	putDef(store, checks.Definition{OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+
+	defs, err := svc.EffectiveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 1 || defs[0].Key != "cpu" {
+		t.Fatalf("EffectiveHost = %+v, want the organization's cpu definition even though host is unmonitored", defs)
+	}
+}
+
+func TestEffectiveHostPropagatesErrors(t *testing.T) {
+	store, matcher, _, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	store.err = errors.New("store down")
+	svc := checks.NewService(store, checks.WithMatcher(matcher))
+
+	if _, err := svc.EffectiveHost(ctx, org, host); err == nil {
+		t.Fatal("want the store's error propagated")
 	}
 }
