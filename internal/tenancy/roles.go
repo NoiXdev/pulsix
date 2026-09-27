@@ -54,6 +54,13 @@ const (
 	PermAgentsRead  Permission = "agents.read"
 	PermAgentsWrite Permission = "agents.write"
 
+	// Monitoring checks (v0.3b-1, spec docs/superpowers/specs/2026-09-27-
+	// v0.3b-checks-design.md, "API and permissions"): the check
+	// definitions, the monitoring groups that bind them to sets of hosts,
+	// and the per-host effective set, current values and graphs.
+	PermChecksRead  Permission = "checks.read"
+	PermChecksWrite Permission = "checks.write"
+
 	PermChannelsRead  Permission = "channels.read"
 	PermChannelsWrite Permission = "channels.write"
 
@@ -116,6 +123,13 @@ var matrix = map[Permission]Role{
 	// admin-only.
 	PermAgentsRead:  RoleViewer,
 	PermAgentsWrite: RoleOperator,
+	// Checks (v0.3b-1) mirror agents for the same reason: what is
+	// measured on a host, and the graphs that come out of it, are part of
+	// operating that host — a viewer reads them, an operator changes
+	// them. Nothing here reveals a credential or reaches outside the
+	// organization, so no higher bar than hosts.write applies.
+	PermChecksRead:  RoleViewer,
+	PermChecksWrite: RoleOperator,
 	// Notification channels (spec 2026-09-18 §5): operators see them —
 	// they pick channels for a schedule's rules and read the delivery log —
 	// and admins manage them, because a channel decides where the

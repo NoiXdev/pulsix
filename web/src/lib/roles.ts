@@ -23,6 +23,8 @@ export type UiPermission =
   | 'workers.write'
   | 'agents.read'
   | 'agents.write'
+  | 'checks.read'
+  | 'checks.write'
   | 'channels.read'
   | 'channels.write'
   | 'maintenance.write';
@@ -48,6 +50,11 @@ const MINIMUM_ROLE: Record<UiPermission, Role> = {
   // revokes them.
   'agents.read': 'viewer',
   'agents.write': 'operator',
+  // Monitoring checks (v0.3b-1) mirror agents: what is measured on a host
+  // is part of operating it, so a viewer reads the definitions, groups and
+  // graphs and an operator edits them.
+  'checks.read': 'viewer',
+  'checks.write': 'operator',
   'channels.read': 'operator',
   'channels.write': 'admin',
   'maintenance.write': 'operator',

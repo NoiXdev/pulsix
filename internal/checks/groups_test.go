@@ -351,3 +351,39 @@ func TestPreviewDelegatesToTheMatcher(t *testing.T) {
 		t.Fatalf("err = %v, want the matcher's failure to surface", err)
 	}
 }
+
+func TestGetGroupIsOrgScoped(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	orgA, orgB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	g, err := svc.CreateGroup(ctx, orgA, checks.GroupInput{Name: "web", Selector: "role=web", Priority: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetGroup(ctx, orgA, g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != g.ID || got.Name != "web" || got.Priority != 7 {
+		t.Fatalf("got = %+v, want the created group", got)
+	}
+	// Another organization's group reads exactly like one that never
+	// existed — invisible, not merely forbidden (ErrNotFound's own
+	// contract).
+	if _, err := svc.GetGroup(ctx, orgB, g.ID); !errors.Is(err, checks.ErrNotFound) {
+		t.Fatalf("cross-org get = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.GetGroup(ctx, orgA, uuid.Must(uuid.NewV7())); !errors.Is(err, checks.ErrNotFound) {
+		t.Fatalf("unknown id = %v, want ErrNotFound", err)
+	}
+}
+
+func TestGetGroupSurfacesAStoreFailure(t *testing.T) {
+	store := newFakeStore()
+	store.err = errors.New("groups store down")
+	svc := checks.NewService(store)
+	if _, err := svc.GetGroup(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())); err == nil ||
+		errors.Is(err, checks.ErrNotFound) {
+		t.Fatalf("err = %v, want the store's own failure, never ErrNotFound", err)
+	}
+}

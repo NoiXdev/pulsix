@@ -99,6 +99,13 @@ var auditAllowlist = map[string]string{
 	// audit event to attribute.
 	"POST /api/v1/orgs/{org}/hosts/query": "a read (lists hosts matching a selector) that uses POST only because the filter is a request body, not query params; persists nothing, so there is no object mutation to record",
 
+	// v0.3b-1: the monitoring group editor's live match count — the same
+	// selector resolution /hosts/query above performs, POST for the same
+	// reason (the selector is a request body), and saving nothing at all:
+	// the point of the route is to see what a selector means *before* a
+	// group is written.
+	"POST /api/v1/orgs/{org}/monitoring-groups/preview": "a read (resolves a selector to the hosts it matches) that uses POST only because the selector is a request body; persists nothing, so there is no object mutation to record",
+
 	// Task 7: computes the next occurrences of a cron/simple timetable an
 	// operator is still editing — like /hosts/query above, POST only
 	// because the shape is a request body — and persists nothing.

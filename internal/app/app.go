@@ -371,6 +371,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// The Agents page and the host Agent card read the same registry
 		// the gRPC enrollment surface writes (agentapi above).
 		Agents: agentsSvc,
+		// The check pipeline's own surface (v0.3b-1): the same
+		// checks.Service the resolver and the agent stream already run on,
+		// plus the write-path push hook — after a definition or monitoring
+		// group changes, the API asks the agent service to hand the
+		// affected hosts their freshly resolved set (api.CheckConfigPusher,
+		// satisfied by *agentapi.Service.PushHost).
+		Checks: checksSvc, AgentPush: agentSvc,
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
 		// out are the ones embedded at build time — nil in a build made

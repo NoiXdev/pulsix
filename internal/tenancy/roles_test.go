@@ -63,6 +63,16 @@ func TestRoleMatrix(t *testing.T) {
 		{tenancy.RoleViewer, tenancy.PermMaintenanceRead, true},
 		{tenancy.RoleViewer, tenancy.PermMaintenanceWrite, false},
 		{tenancy.RoleOperator, tenancy.PermMaintenanceWrite, true},
+		// Monitoring checks (v0.3b-1) mirror agents exactly: what is
+		// measured on a host is part of operating it, so a viewer reads
+		// the definitions, groups, effective sets and graphs, and an
+		// operator edits them.
+		{tenancy.RoleViewer, tenancy.PermChecksRead, true},
+		{tenancy.RoleViewer, tenancy.PermChecksWrite, false},
+		{tenancy.RoleOperator, tenancy.PermChecksRead, true},
+		{tenancy.RoleOperator, tenancy.PermChecksWrite, true},
+		{tenancy.RoleAdmin, tenancy.PermChecksWrite, true},
+		{tenancy.RoleOwner, tenancy.PermChecksWrite, true},
 	}
 	for _, c := range cases {
 		if got := tenancy.Allows(c.role, c.perm); got != c.want {

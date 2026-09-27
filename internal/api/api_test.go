@@ -9,11 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/crypto"
@@ -197,9 +200,18 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
+		Checks: &checks.Service{}, AgentPush: noopPusher{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
+
+// noopPusher satisfies api.Deps.AgentPush for the /healthz fixture, which
+// registers every route but drives none of them. The real pusher is
+// *agentapi.Service; apitest.PushRecorder is what the route tests assert
+// against.
+type noopPusher struct{}
+
+func (noopPusher) PushHost(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
 func TestHealthz(t *testing.T) {
 	body := healthzRequest(t, baseHealthzDeps(t))
@@ -368,6 +380,7 @@ func testDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
+		Checks: &checks.Service{}, AgentPush: noopPusher{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }

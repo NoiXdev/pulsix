@@ -556,6 +556,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org checks */
+        get: operations["get-api-v1-orgs-by-org-checks"];
+        put?: never;
+        /** Post API v1 orgs by org checks */
+        post: operations["createCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/checks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org checks by ID */
+        get: operations["get-api-v1-orgs-by-org-checks-by-id"];
+        /** Put API v1 orgs by org checks by ID */
+        put: operations["updateCheck"];
+        post?: never;
+        /** Delete API v1 orgs by org checks by ID */
+        delete: operations["deleteCheck"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/credentials": {
         parameters: {
             query?: never;
@@ -1204,6 +1241,60 @@ export interface paths {
         head?: never;
         /** Patch API v1 orgs by org members by user ID */
         patch: operations["changeMemberRole"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/monitoring-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org monitoring groups */
+        get: operations["get-api-v1-orgs-by-org-monitoring-groups"];
+        put?: never;
+        /** Post API v1 orgs by org monitoring groups */
+        post: operations["createMonitoringGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/monitoring-groups/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org monitoring groups preview */
+        post: operations["post-api-v1-orgs-by-org-monitoring-groups-preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/monitoring-groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org monitoring groups by ID */
+        get: operations["get-api-v1-orgs-by-org-monitoring-groups-by-id"];
+        /** Put API v1 orgs by org monitoring groups by ID */
+        put: operations["updateMonitoringGroup"];
+        post?: never;
+        /** Delete API v1 orgs by org monitoring groups by ID */
+        delete: operations["deleteMonitoringGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/orgs/{org}/notification-channels": {
@@ -2130,6 +2221,85 @@ export interface components {
             detail: string;
             name: string;
             ok: boolean;
+        };
+        CheckDefinitionBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckDefinitionBody.json
+             */
+            readonly $schema?: string;
+            /** @description One of org, group, host */
+            binding_kind: string;
+            /** @description Defaults to true; false keeps the row but stops the check at this scope */
+            enabled?: boolean;
+            /**
+             * Format: uuid
+             * @description Required for binding_kind=group, forbidden otherwise
+             */
+            group_id?: string;
+            /**
+             * Format: uuid
+             * @description Required for binding_kind=host, forbidden otherwise
+             */
+            host_id?: string;
+            /**
+             * Format: int64
+             * @description How often the check runs, between 10 and 86400 seconds
+             */
+            interval_seconds: number;
+            /** @description Lower-case identifier a narrower scope overrides on; defaults to the plugin name */
+            key?: string;
+            /** @description disk takes an optional mounts list, service a required units list; cpu and memory take none */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** @description One of cpu, memory, disk, service */
+            plugin: string;
+        };
+        CheckDefinitionDTO: {
+            /** @enum {string} */
+            binding_kind: "org" | "group" | "host";
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            group_id?: string;
+            host_id?: string;
+            id: string;
+            /** Format: int64 */
+            interval_seconds: number;
+            key: string;
+            /**
+             * @description seed rows ship with every organization; their key and plugin are fixed
+             * @enum {string}
+             */
+            origin: "seed" | "custom";
+            /** @description Plugin parameters; {} for a plugin that takes none */
+            params: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            plugin: "cpu" | "memory" | "disk" | "service";
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CheckListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckListOutputBody.json
+             */
+            readonly $schema?: string;
+            checks: components["schemas"]["CheckDefinitionDTO"][] | null;
+        };
+        CheckOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckOutputBody.json
+             */
+            readonly $schema?: string;
+            check: components["schemas"]["CheckDefinitionDTO"];
         };
         CodeInputBody: {
             /**
@@ -3090,6 +3260,72 @@ export interface components {
             /** @enum {string} */
             role: "owner" | "admin" | "operator" | "viewer";
         };
+        MonitoringGroupBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MonitoringGroupBody.json
+             */
+            readonly $schema?: string;
+            name: string;
+            /** Format: int64 */
+            priority?: number;
+            /** @description A host-tag selector expression, e.g. role=web,env!=dev */
+            selector: string;
+        };
+        MonitoringGroupDTO: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            name: string;
+            /**
+             * Format: int64
+             * @description Higher wins when two groups bind the same check key to one host; an older group breaks a tie
+             */
+            priority: number;
+            selector: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        MonitoringGroupListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MonitoringGroupListOutputBody.json
+             */
+            readonly $schema?: string;
+            groups: components["schemas"]["MonitoringGroupDTO"][] | null;
+        };
+        MonitoringGroupOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MonitoringGroupOutputBody.json
+             */
+            readonly $schema?: string;
+            group: components["schemas"]["MonitoringGroupDTO"];
+        };
+        MonitoringGroupPreviewInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MonitoringGroupPreviewInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The selector to resolve; nothing is saved */
+            selector: string;
+        };
+        MonitoringGroupPreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/MonitoringGroupPreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            count: number;
+            hosts: components["schemas"]["PreviewHostDTO"][] | null;
+        };
         NotifyChannelBody: {
             /**
              * Format: uri
@@ -3503,6 +3739,11 @@ export interface components {
             /** @description Editor playbooks: the replacement YAML document */
             inline: string;
             name?: string;
+        };
+        PreviewHostDTO: {
+            id: string;
+            monitored: boolean;
+            name: string;
         };
         PreviewOutputBody: {
             /**
@@ -5516,6 +5757,172 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckDefinitionBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-checks-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckDefinitionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-credentials": {
         parameters: {
             query?: never;
@@ -7471,6 +7878,207 @@ export interface operations {
                 "application/json": components["schemas"]["MemberRoleInputBody"];
             };
         };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-monitoring-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitoringGroupListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createMonitoringGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MonitoringGroupBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitoringGroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-orgs-by-org-monitoring-groups-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MonitoringGroupPreviewInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitoringGroupPreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-monitoring-groups-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitoringGroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateMonitoringGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MonitoringGroupBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitoringGroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteMonitoringGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {

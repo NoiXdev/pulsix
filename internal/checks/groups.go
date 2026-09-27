@@ -265,6 +265,30 @@ func (s *Service) ListGroups(ctx context.Context, orgID uuid.UUID) ([]Group, err
 	return s.store.List(ctx, orgID)
 }
 
+// GetGroup returns the single group identified by (orgID, id), or
+// ErrNotFound when the organization has no such group — including when it
+// belongs to another organization, which reads exactly the same (see
+// ErrNotFound's own doc comment).
+//
+// It is a filter over List rather than a Store method of its own: an
+// organization's monitoring groups are a short, already-org-scoped list
+// (they exist to be enumerated in a selector editor), the resolver loads
+// all of them for every single resolve anyway, and adding a
+// GetMonitoringGroup query would mean a second SQL path that could answer
+// differently from the one every other read here already goes through.
+func (s *Service) GetGroup(ctx context.Context, orgID, id uuid.UUID) (Group, error) {
+	groups, err := s.store.List(ctx, orgID)
+	if err != nil {
+		return Group{}, err
+	}
+	for _, g := range groups {
+		if g.ID == id {
+			return g, nil
+		}
+	}
+	return Group{}, ErrNotFound
+}
+
 // Preview resolves sel against orgID's current hosts without saving
 // anything: the group editor's live match count, and the same computation
 // the resolver later uses to expand a group into hosts, so the two

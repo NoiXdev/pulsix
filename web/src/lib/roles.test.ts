@@ -13,6 +13,13 @@ describe('may', () => {
     expect(may('owner', 'credentials.write')).toBe(true);
   });
 
+  it('gives checks the same bar as agents', () => {
+    expect(may('viewer', 'checks.read')).toBe(true);
+    expect(may('viewer', 'checks.write')).toBe(false);
+    expect(may('operator', 'checks.write')).toBe(true);
+    expect(may('admin', 'checks.write')).toBe(true);
+  });
+
   it('fails closed for an unknown role or permission', () => {
     expect(may('superuser', 'repos.write')).toBe(false);
     expect(may(undefined, 'repos.write')).toBe(false);

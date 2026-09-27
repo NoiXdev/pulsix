@@ -258,6 +258,14 @@ func (s *Service) DeleteDefinition(ctx context.Context, orgID, id uuid.UUID) err
 	return s.store.DeleteDefinition(ctx, orgID, id)
 }
 
+// GetDefinition returns the single definition identified by (orgID, id),
+// or ErrNotFound when the organization has no such row — a definition of
+// another organization reads exactly the same, never as a refusal that
+// would confirm the id exists somewhere.
+func (s *Service) GetDefinition(ctx context.Context, orgID, id uuid.UUID) (Definition, error) {
+	return s.store.GetDefinition(ctx, orgID, id)
+}
+
 // ListDefinitions returns orgID's check definitions, at every scope.
 func (s *Service) ListDefinitions(ctx context.Context, orgID uuid.UUID) ([]Definition, error) {
 	return s.store.ListDefinitions(ctx, orgID)

@@ -497,3 +497,25 @@ func TestSeedForOrgPropagatesAFailure(t *testing.T) {
 		t.Fatalf("err = %v, want it to name the offending key", err)
 	}
 }
+
+func TestGetDefinitionIsOrgScoped(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	orgA, orgB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	d, err := svc.CreateDefinition(ctx, orgA, checks.DefinitionInput{
+		Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetDefinition(ctx, orgA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != d.ID || got.Key != checks.PluginCPU {
+		t.Fatalf("got = %+v, want the created definition", got)
+	}
+	if _, err := svc.GetDefinition(ctx, orgB, d.ID); !errors.Is(err, checks.ErrNotFound) {
+		t.Fatalf("cross-org get = %v, want ErrNotFound", err)
+	}
+}

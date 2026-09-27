@@ -18,6 +18,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
@@ -91,6 +92,16 @@ type Deps struct {
 	// Agents is the host-agent registry (Agents page, host Agent card,
 	// enrollment tokens); v0.3a, spec §8.
 	Agents *agents.Service
+	// Checks is the monitoring check pipeline (v0.3b-1, spec
+	// docs/superpowers/specs/2026-09-27-v0.3b-checks-design.md): check
+	// definitions, monitoring groups, the per-host effective set and the
+	// stored samples behind the graphs. See registerCheckRoutes,
+	// registerMonitoringGroupRoutes and registerHostCheckRoutes.
+	Checks *checks.Service
+	// AgentPush delivers a host's freshly resolved check configuration to
+	// whatever agent is currently connected for it, after a check
+	// definition or monitoring group write commits. See CheckConfigPusher.
+	AgentPush CheckConfigPusher
 	// Notify manages notification channels, their delivery log, schedule
 	// notification rules and the weekly digest (spec 2026-09-18 §5, §7).
 	Notify *notify.Service
@@ -237,6 +248,12 @@ func (d Deps) validate() error {
 	}
 	if d.Agents == nil {
 		missing = append(missing, "Agents")
+	}
+	if d.Checks == nil {
+		missing = append(missing, "Checks")
+	}
+	if d.AgentPush == nil {
+		missing = append(missing, "AgentPush")
 	}
 	if d.Notify == nil {
 		missing = append(missing, "Notify")
@@ -443,6 +460,8 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerTriggerRoutes(orgScoped, deps)         // /orgs/{org}/triggers...
 	registerWorkerRoutes(orgScoped, deps)          // /orgs/{org}/workers..., /orgs/{org}/worker-enrollments...
 	registerAgentRoutes(orgScoped, deps)           // /orgs/{org}/agents..., /orgs/{org}/hosts/{id}/agent
+	registerCheckRoutes(orgScoped, deps)           // /orgs/{org}/checks...
+	registerMonitoringGroupRoutes(orgScoped, deps) // /orgs/{org}/monitoring-groups...
 	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...
 	registerScheduleNotifyRoutes(orgScoped, deps)  // /orgs/{org}/schedules/{id}/notifications

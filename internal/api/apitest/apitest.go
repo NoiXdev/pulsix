@@ -134,14 +134,18 @@ type Server struct {
 	Queue *jobs.SQLQueue
 	Deps  api.Deps
 	HTTP  *httptest.Server
-	// Checks is the monitoring check pipeline's service (v0.3b-1). Not
-	// part of Deps yet — its own API routes are a later task's job — but
-	// exposed here, exactly like Queue, so SeedOrg can give a fixture org
-	// the same "Linux base" seed set organization creation gives a real
-	// one, and so tests that do exercise internal/checks directly (once
-	// its API routes exist) share the one instance the org-created hook
-	// itself writes through.
+	// Checks is the monitoring check pipeline's service (v0.3b-1), the
+	// same instance Deps.Checks carries — exposed here, exactly like
+	// Queue, so SeedOrg can give a fixture org the "Linux base" seed set
+	// organization creation gives a real one, and so a test can seed
+	// samples or definitions directly through the service the routes
+	// under test read from.
 	Checks *checks.Service
+	// Push records every check-configuration push the check routes make
+	// after a write commits (api.Deps.AgentPush). Production wires
+	// *agentapi.Service here; a test has no agent stream to observe, so
+	// it asserts on what the API asked for instead.
+	Push *PushRecorder
 	// PublicURL is the test server's own base URL, computed from its
 	// listener before Start() (so it is already known when an Option
 	// runs) — the same value production derives PULSIX_PUBLIC_URL from,
@@ -301,12 +305,15 @@ func New(t *testing.T, opts ...Option) *Server {
 	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
 	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
-	// checks.Service is not part of Deps yet (its API routes are a later
-	// task's job), but every organization still needs its "Linux base"
-	// seed set the moment it is created, exactly like production —
-	// exposed on the Server itself (like Sessions, Mail, Queue below) so
-	// SeedOrg can give a fixture org the same invariant.
-	s.Checks = checks.NewService(checks.NewSQLStore(d))
+	// The monitoring check pipeline, wired exactly as app.Build wires it:
+	// the same store, and the same two host ports (WithMatcher /
+	// WithHostRoster) without which Preview and the resolver refuse to
+	// run — the check routes call both, so a fixture missing them would
+	// pass tests the real manager could not.
+	s.Checks = checks.NewService(checks.NewSQLStore(d),
+		checks.WithMatcher(app.NewChecksHostMatcher(hostsSvc)),
+		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
+	s.Push = &PushRecorder{}
 	// Every organization gets its "default" zone and its check definitions
 	// seed set through this hook, whichever of the two ways it was created
 	// — POST /orgs (tenancy.Service.CreateOrg) or the first-run wizard
@@ -425,7 +432,13 @@ func New(t *testing.T, opts ...Option) *Server {
 		// The agent registry, wired exactly as app.Build wires it (the
 		// same store and host provisioner), so the API tests exercise the
 		// real thing rather than a stand-in.
-		Agents:      agentsSvc,
+		Agents: agentsSvc,
+		// The check pipeline and the write-path push hook it fires after
+		// every mutating check route (api.CheckConfigPusher). The recorder
+		// stands in for *agentapi.Service, which needs a live gRPC stream
+		// to observe anything at all.
+		Checks:      s.Checks,
+		AgentPush:   s.Push,
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
@@ -601,4 +614,74 @@ func (s *Server) loginAsWithMFA(userID uuid.UUID, mfaComplete bool) *http.Client
 	u, _ := url.Parse(s.HTTP.URL)
 	c.Jar.SetCookies(u, []*http.Cookie{{Name: auth.CookieName, Value: cookie}})
 	return c
+}
+
+// Push is one recorded check-configuration push: the API asked the agent
+// side to hand this host its freshly resolved check set.
+type Push struct{ OrgID, HostID uuid.UUID }
+
+// PushRecorder stands in for api.Deps.AgentPush (*agentapi.Service in
+// production, whose PushHost only does anything for a host with a live
+// gRPC stream). It records what the routes asked for, and can be made to
+// fail, so a test can prove both that a write pushes the hosts it affects
+// and that a failed push never fails the write — the agent re-asserts its
+// configuration version every 60 seconds regardless.
+//
+// Safe for concurrent use: the httptest server may serve requests on more
+// than one goroutine.
+type PushRecorder struct {
+	mu     sync.Mutex
+	pushes []Push
+	err    error
+}
+
+// PushHost implements api.CheckConfigPusher.
+func (r *PushRecorder) PushHost(_ context.Context, orgID, hostID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.pushes = append(r.pushes, Push{OrgID: orgID, HostID: hostID})
+	return nil
+}
+
+// Pushes returns every push recorded so far, oldest first.
+func (r *PushRecorder) Pushes() []Push {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Push, len(r.pushes))
+	copy(out, r.pushes)
+	return out
+}
+
+// PushedHosts reports whether every id was pushed at least once.
+func (r *PushRecorder) PushedHosts(ids ...uuid.UUID) bool {
+	seen := map[uuid.UUID]struct{}{}
+	for _, p := range r.Pushes() {
+		seen[p.HostID] = struct{}{}
+	}
+	for _, id := range ids {
+		if _, ok := seen[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// Reset drops every recorded push, so one test can assert on the pushes of
+// one write without counting the fixture's own setup.
+func (r *PushRecorder) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pushes = nil
+}
+
+// FailWith makes every later PushHost return err instead of recording,
+// for the "a push failure never fails the write" test. nil restores
+// recording.
+func (r *PushRecorder) FailWith(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
 }
