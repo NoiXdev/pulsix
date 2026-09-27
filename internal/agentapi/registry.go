@@ -13,6 +13,7 @@
 package agentapi
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -99,12 +100,32 @@ func (t *trackedStream) attach(stream agentpb.AgentService_AgentStreamServer) {
 	t.stream = stream
 }
 
+// errStreamClosed is send's own refusal once the stream has been released
+// or cut. It narrows, rather than closes, the "no Send after the handler
+// returns" window: closeMailbox itself takes no lock at all (see its own
+// comment) precisely so teardown can never be blocked by a Send already
+// in flight — which means a Send that has already passed this check, or
+// that pushWriter's own equivalent check (see pushWriter), cannot be
+// stopped either. Closing the window entirely would mean teardown
+// waiting for a sender to notice and stop, which is exactly the round-1
+// deadlock this whole design exists to avoid. Do not "complete" this
+// into a hard guarantee by adding such a wait.
+var errStreamClosed = errors.New("stream closed")
+
 // send writes msg to the underlying stream directly, serialized against
 // pushWriter's own sends by sendMu. This is the receive loop's own path
 // (an ack, with an optional CheckConfig riding along) — synchronous on
 // purpose, so a failure here ends receiveMessages's loop immediately, the
-// same contract it has always had.
+// same contract it has always had. The non-blocking check on closed
+// costs nothing (no lock, no wait) and catches the ordinary case: the
+// handler already returned through the revoked case of its own select
+// while this call was still on its way from store to here.
 func (t *trackedStream) send(msg *agentpb.ManagerMessage) error {
+	select {
+	case <-t.closed:
+		return errStreamClosed
+	default:
+	}
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
 	return t.stream.Send(msg)
@@ -159,6 +180,17 @@ func (t *trackedStream) pushWriter() {
 				continue // coalesced away, or a stale wake from a push already taken
 			}
 			t.sendMu.Lock()
+			select {
+			case <-t.closed:
+				// Teardown won the race between this goroutine taking the
+				// mailbox and acquiring sendMu — refuse the send rather
+				// than let it start after the handler may already have
+				// returned. The next loop iteration's own <-t.closed case
+				// ends this goroutine.
+				t.sendMu.Unlock()
+				continue
+			default:
+			}
 			err := t.stream.Send(msg)
 			t.sendMu.Unlock()
 			if err != nil {

@@ -123,33 +123,6 @@ func TestStreamRegistryCloseHostWaitsForInFlightWork(t *testing.T) {
 	}
 }
 
-// blockingStream is a fake AgentStream server stream whose Send blocks
-// until unblock is closed — a direct simulation of a black-holed agent
-// whose flow-control window never opens. Unlike the real gRPC transport
-// (which eventually errors a stuck Send once the RPC's connection dies),
-// nothing here unblocks Send on its own; that is deliberate; the tests
-// using it exist to prove release()/shut() return promptly regardless,
-// never that the stuck Send itself resolves quickly.
-type blockingStream struct {
-	grpc.ServerStream
-	ctx     context.Context
-	unblock chan struct{}
-}
-
-func (s *blockingStream) Context() context.Context { return s.ctx }
-func (s *blockingStream) Send(*agentpb.ManagerMessage) error {
-	<-s.unblock
-	return nil
-}
-
-// Recv is never exercised by these tests (pushWriter never calls it; only
-// receiveMessages would) — it blocks on the stream's own context so a
-// stray call cannot return a bogus zero value.
-func (s *blockingStream) Recv() (*agentpb.AgentMessage, error) {
-	<-s.ctx.Done()
-	return nil, s.ctx.Err()
-}
-
 // TestReleaseDoesNotBlockOnAWedgedSend is the deadlock this fix round
 // exists for: before it, track's release closure called closeSend, which
 // took the same sendMu a wedged Send holds for as long as the agent
@@ -157,21 +130,28 @@ func (s *blockingStream) Recv() (*agentpb.AgentMessage, error) {
 // return, which meant AgentStream could never return to gRPC, which meant
 // the transport that would otherwise have errored the wedged Send out
 // never got torn down either. A circular deadlock, not merely a slow
-// path. This test queues a push, lets the writer goroutine actually enter
-// the wedged Send, then proves release() still returns well within a
-// generous deadline.
+// path.
+//
+// This test queues a push and waits on stream.entered — stepStream's own
+// witness that pushWriter has actually called Send and is now blocked on
+// gate — before ever starting the clock on release(). A sleep-based
+// "probably by now" wait would let this test pass even against the *old*,
+// deadlocking teardown whenever the writer goroutine simply had not been
+// scheduled in time: the old code also returns immediately if it never
+// has to contend for the lock a wedged Send would be holding. Verified by
+// reverting closeMailbox to the old sendMu-based closeSend and re-running:
+// both this test and TestCloseHostDoesNotBlockOnAWedgedSend then hang
+// past their deadline and fail, exactly as they should.
 func TestReleaseDoesNotBlockOnAWedgedSend(t *testing.T) {
 	r := NewStreamRegistry()
 	host := uuid.Must(uuid.NewV7())
-	blocked := &blockingStream{ctx: context.Background(), unblock: make(chan struct{})}
-	_, release := r.track("serial-1", uuid.Nil, host, blocked)
+	stream := &stepStream{ctx: context.Background(), entered: make(chan *agentpb.ManagerMessage, 1), gate: make(chan struct{})}
+	_, release := r.track("serial-1", uuid.Nil, host, stream)
 
 	if reached := r.PushToHost(uuid.Nil, host, &agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{Version: "wedge-me"}}); reached != 1 {
 		t.Fatalf("PushToHost reached %d, want 1", reached)
 	}
-	// Give the writer goroutine a real chance to have entered the wedged
-	// Send; the assertion below is the deadline, not this pause.
-	time.Sleep(50 * time.Millisecond)
+	<-stream.entered // deterministic: pushWriter is now blocked inside Send, on gate — the wedge itself, not a guess at timing
 
 	done := make(chan struct{})
 	go func() {
@@ -183,24 +163,27 @@ func TestReleaseDoesNotBlockOnAWedgedSend(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("release() hung on a wedged send — the teardown/send deadlock is back")
 	}
-	close(blocked.unblock) // let the stuck goroutine finish so it doesn't linger past the test
+	stream.gate <- struct{}{} // let the stuck goroutine finish so it doesn't linger past the test
 }
 
 // TestCloseHostDoesNotBlockOnAWedgedSend is the same deadlock from the
 // revocation side: CloseHost is what agents.Service.Revoke calls,
 // synchronously, from the HTTP revoke handler — before this fix, revoking
-// a wedged agent would have hung that unrelated request indefinitely.
+// a wedged agent would have hung that unrelated request indefinitely. See
+// TestReleaseDoesNotBlockOnAWedgedSend's own comment for why waiting on
+// stream.entered, not a sleep, is what makes this test able to fail at
+// all.
 func TestCloseHostDoesNotBlockOnAWedgedSend(t *testing.T) {
 	r := NewStreamRegistry()
 	host := uuid.Must(uuid.NewV7())
-	blocked := &blockingStream{ctx: context.Background(), unblock: make(chan struct{})}
-	_, release := r.track("serial-1", uuid.Nil, host, blocked)
+	stream := &stepStream{ctx: context.Background(), entered: make(chan *agentpb.ManagerMessage, 1), gate: make(chan struct{})}
+	_, release := r.track("serial-1", uuid.Nil, host, stream)
 	defer release()
 
 	if reached := r.PushToHost(uuid.Nil, host, &agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{Version: "wedge-me"}}); reached != 1 {
 		t.Fatalf("PushToHost reached %d, want 1", reached)
 	}
-	time.Sleep(50 * time.Millisecond)
+	<-stream.entered
 
 	done := make(chan struct{})
 	go func() {
@@ -212,7 +195,7 @@ func TestCloseHostDoesNotBlockOnAWedgedSend(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("CloseHost hung on a wedged send — the teardown/send deadlock is back")
 	}
-	close(blocked.unblock)
+	stream.gate <- struct{}{}
 }
 
 // stepStream is a fake AgentStream server stream whose Send reports every
