@@ -769,6 +769,23 @@ export interface paths {
         patch: operations["setHostCapabilities"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/hosts/{id}/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID checks */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-checks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts/{id}/connection-test": {
         parameters: {
             query?: never;
@@ -831,6 +848,23 @@ export interface paths {
         };
         /** Get API v1 orgs by org hosts by ID inventory preview */
         get: operations["get-api-v1-orgs-by-org-hosts-by-id-inventory-preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID metrics */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-metrics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2716,6 +2750,61 @@ export interface components {
             managed?: boolean;
             monitored?: boolean;
         };
+        HostCheckDTO: {
+            definition_id: string;
+            /** @description false means the winning scope turned this check off; it is listed so the GUI can show where */
+            enabled: boolean;
+            /** Format: int64 */
+            interval_seconds: number;
+            key: string;
+            /** @enum {string} */
+            origin: "seed" | "custom";
+            params: {
+                [key: string]: unknown;
+            };
+            plugin: string;
+            /**
+             * @description The scope the winning definition is bound at
+             * @enum {string}
+             */
+            source: "org" | "group" | "host";
+            /** @description The group or host it is bound to; absent for an organization-bound check */
+            source_id?: string;
+            source_name?: string;
+            values: components["schemas"]["HostCheckValueDTO"][] | null;
+        };
+        HostCheckValueDTO: {
+            /**
+             * Format: date-time
+             * @description The agent's own timestamp for this reading
+             */
+            at: string;
+            /** @description Set when collection failed; value and label are then the last known reading's, if any */
+            error?: string;
+            /** @description The mount or unit this value is for; empty for a whole-host metric */
+            item: string;
+            /** @description Set for a discrete metric, e.g. a service state */
+            label?: string;
+            metric: string;
+            /** @description No reading for more than three of the check's intervals */
+            stale: boolean;
+            /**
+             * Format: double
+             * @description Set for a numeric metric
+             */
+            value?: number;
+        };
+        HostChecksOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostChecksOutputBody.json
+             */
+            readonly $schema?: string;
+            checks: components["schemas"]["HostCheckDTO"][] | null;
+            host_id: string;
+            monitored: boolean;
+        };
         HostCreateOutputBody: {
             /**
              * Format: uri
@@ -2789,6 +2878,23 @@ export interface components {
             readonly $schema?: string;
             hosts: components["schemas"]["HostDTO"][] | null;
             next_cursor: string;
+        };
+        HostMetricsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostMetricsOutputBody.json
+             */
+            readonly $schema?: string;
+            check: string;
+            /** Format: date-time */
+            from: string;
+            item: string;
+            metric: string;
+            points: components["schemas"]["MetricPointDTO"][] | null;
+            range: string;
+            /** Format: date-time */
+            to: string;
         };
         HostPreviewOutputBody: {
             /**
@@ -3259,6 +3365,12 @@ export interface components {
             readonly $schema?: string;
             /** @enum {string} */
             role: "owner" | "admin" | "operator" | "viewer";
+        };
+        MetricPointDTO: {
+            /** Format: date-time */
+            at: string;
+            /** Format: double */
+            value: number;
         };
         MonitoringGroupBody: {
             /**
@@ -6468,6 +6580,38 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-hosts-by-id-checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostChecksOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-hosts-by-id-connection-test": {
         parameters: {
             query?: never;
@@ -6651,6 +6795,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostPreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-hosts-by-id-metrics": {
+        parameters: {
+            query?: {
+                /** @description The check key, as reported by GET /hosts/{id}/checks */
+                check?: string;
+                /** @description The mount or unit; omit for a whole-host metric */
+                item?: string;
+                metric?: string;
+                /** @description One of 1h, 24h, 7d */
+                range?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostMetricsOutputBody"];
                 };
             };
             /** @description Error */

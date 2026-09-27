@@ -204,6 +204,16 @@ func TestMonitoringGroupDeleteCascadesToItsChecks(t *testing.T) {
 		"plugin": "cpu", "key": "cpu", "interval_seconds": 15, "binding_kind": "group", "group_id": g.ID,
 	})
 
+	// While it exists, the group's cpu overrides the organization's.
+	effective := f.hostChecks(t, f.viewerC, f.web)
+	cpu := effective.byKey(t, "cpu")
+	if cpu.Source != "group" || cpu.SourceID != g.ID || cpu.IntervalSeconds != 15 {
+		t.Fatalf("effective cpu = %+v, want the group's 15s override", cpu)
+	}
+	if cpu.SourceName != "web tier" {
+		t.Fatalf("source_name = %q, want the group's name so the GUI can say where it came from", cpu.SourceName)
+	}
+
 	f.s.Push.Reset()
 	if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.groupsURL()+"/"+g.ID, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("delete group = %d %s", resp.StatusCode, mustReadBody(t, resp))
@@ -218,16 +228,10 @@ func TestMonitoringGroupDeleteCascadesToItsChecks(t *testing.T) {
 			t.Fatalf("the group-bound check survived its group: %+v", d)
 		}
 	}
-	// The organization's own cpu check is what is left, which is what the
-	// pushed host now resolves to.
-	orgCPU := false
-	for _, d := range f.listChecks(t, f.ownerC) {
-		if d.Key == "cpu" && d.BindingKind == "org" && d.IntervalSeconds == 60 {
-			orgCPU = true
-		}
-	}
-	if !orgCPU {
-		t.Fatal("the organization's own cpu check is gone too; the cascade took more than the group's own")
+	effective = f.hostChecks(t, f.viewerC, f.web)
+	cpu = effective.byKey(t, "cpu")
+	if cpu.Source != "org" || cpu.SourceID != "" || cpu.IntervalSeconds != 60 {
+		t.Fatalf("effective cpu after the cascade = %+v, want the organization's own 60s check", cpu)
 	}
 }
 
