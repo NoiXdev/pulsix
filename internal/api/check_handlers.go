@@ -76,6 +76,7 @@ type checkDefinitionDTO struct {
 	BindingKind     string         `json:"binding_kind" enum:"org,group,host"`
 	GroupID         string         `json:"group_id,omitempty"`
 	HostID          string         `json:"host_id,omitempty"`
+	HostName        string         `json:"host_name,omitempty" doc:"The bound host's name, for a host-bound definition; absent otherwise, and absent for a host this organization can no longer read"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
@@ -189,10 +190,14 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
+		names := checkHostNames(ctx, deps, scope.OrgID, list)
 		out := &checkListOutput{}
 		out.Body.Checks = make([]checkDefinitionDTO, len(list))
 		for i, d := range list {
 			out.Body.Checks[i] = toCheckDefinitionDTO(d)
+			if d.HostID != nil {
+				out.Body.Checks[i].HostName = names[*d.HostID]
+			}
 		}
 		return out, nil
 	})
@@ -212,6 +217,7 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &checkOutput{}
 		out.Body.Check = toCheckDefinitionDTO(d)
+		out.Body.Check.HostName = checkHostName(ctx, deps, scope.OrgID, d)
 		return out, nil
 	})
 
@@ -237,6 +243,7 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		pushAffected(ctx, deps, scope.OrgID, affected)
 		out := &checkOutput{}
 		out.Body.Check = toCheckDefinitionDTO(d)
+		out.Body.Check.HostName = checkHostName(ctx, deps, scope.OrgID, d)
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createCheck", "check_definition"))
 
@@ -275,6 +282,7 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		pushAffected(ctx, deps, scope.OrgID, affected)
 		out := &checkOutput{}
 		out.Body.Check = toCheckDefinitionDTO(d)
+		out.Body.Check.HostName = checkHostName(ctx, deps, scope.OrgID, d)
 		return out, nil
 	}, withAudit("updateCheck", "check_definition"))
 
@@ -303,6 +311,59 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		pushAffected(ctx, deps, scope.OrgID, affected)
 		return &okOutput{}, nil
 	}, withAudit("deleteCheck", "check_definition"))
+}
+
+// checkHostNames resolves, for a whole page of definitions, the names of
+// the hosts the host-bound ones name. It is ONE list read for the page,
+// never a lookup per definition: a host binding IS the per-host override,
+// so a fleet that uses them has roughly as many host-bound rows as hosts,
+// and GET /checks is unpaginated. Leaving the name out would not make the
+// work go away either — it would move the same N round trips into the
+// browser, once per definition and again on every navigation back.
+//
+// nil when nothing in the page is host-bound, so the common case (an
+// organization on the seed set alone) costs no host read at all.
+//
+// A failure to read the host list is logged and answered with no names:
+// host_name is a label on a binding the operator can still see by id, and
+// losing the label is a far smaller failure than a 500 on the whole page.
+func checkHostNames(ctx context.Context, deps Deps, orgID uuid.UUID, list []checks.Definition) map[uuid.UUID]string {
+	needed := false
+	for _, d := range list {
+		if d.HostID != nil {
+			needed = true
+			break
+		}
+	}
+	if !needed {
+		return nil
+	}
+	byID, err := hostsByID(ctx, deps, orgID)
+	if err != nil {
+		slog.ErrorContext(ctx, "resolve host names for check definitions", "org_id", orgID, "err", err)
+		return nil
+	}
+	names := make(map[uuid.UUID]string, len(byID))
+	for id, h := range byID {
+		names[id] = h.Name
+	}
+	return names
+}
+
+// checkHostName is checkHostNames for a route that answers with a single
+// definition: one lookup rather than a whole-fleet list read. An empty
+// string wherever the host cannot be read — a host deleted between the two
+// reads, say — which is exactly what the omitempty field means.
+func checkHostName(ctx context.Context, deps Deps, orgID uuid.UUID, d checks.Definition) string {
+	if d.HostID == nil {
+		return ""
+	}
+	h, err := deps.Hosts.GetHost(ctx, orgID, *d.HostID)
+	if err != nil {
+		slog.DebugContext(ctx, "resolve host name for a check definition", "org_id", orgID, "host_id", *d.HostID, "err", err)
+		return ""
+	}
+	return h.Name
 }
 
 // pushAffected asks the agents of the hosts a committed write reached to

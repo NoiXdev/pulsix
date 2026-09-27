@@ -87,6 +87,13 @@ describe('MonitoringGroupsPage', () => {
     // across the whole host table.
     expect(previews).toBe(1);
     expect(lastSelector).toBe('role=web');
+
+    // And clearing the field again asks nothing either — the guard has to
+    // hold on the debounced setter, not only on the first render's
+    // initialiser (review finding 4).
+    await user.clear(screen.getByLabelText('Selector'));
+    expect(await screen.findByText('Type a selector to see which hosts it matches.')).toBeInTheDocument();
+    expect(previews).toBe(1);
   });
 
   it('says so visibly when a selector matches no host', async () => {
@@ -168,6 +175,20 @@ describe('MonitoringGroupsPage', () => {
     // The operator is told what else goes with it.
     expect(confirmed.mock.calls[0][0]).toContain('check definitions bound to it are deleted');
     confirmed.mockRestore();
+  });
+
+  // Review finding 5: the guard used to replace the whole page, taking
+  // the only link back to the definitions with it.
+  it('keeps the section tabs when the groups list fails', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': () =>
+        new Response('{"detail":"boom"}', { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderPage();
+
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Checks' })).toBeInTheDocument();
   });
 
   it('creates a group with the name, selector and priority that were typed', async () => {

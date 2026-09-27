@@ -32,6 +32,7 @@ type checkDTO struct {
 	BindingKind     string         `json:"binding_kind"`
 	GroupID         string         `json:"group_id"`
 	HostID          string         `json:"host_id"`
+	HostName        string         `json:"host_name"`
 }
 
 // checksFixture is the seeded organization the check routes' tests share:
@@ -245,6 +246,12 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		if created.Origin != "custom" || created.HostID != f.web.String() || !created.Enabled {
 			t.Fatalf("created = %+v, want a custom, host-bound, enabled check", created)
 		}
+		// The binding's host is named in the response, not left as an id
+		// for the GUI to resolve with a round trip of its own (task-10
+		// review, finding 2).
+		if created.HostName != "web-1" {
+			t.Fatalf("created host_name = %q, want %q", created.HostName, "web-1")
+		}
 		if created.IntervalSeconds != 120 {
 			t.Fatalf("interval = %d, want 120", created.IntervalSeconds)
 		}
@@ -257,7 +264,7 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 			Check checkDTO `json:"check"`
 		}
 		decodeInto(t, resp, &single)
-		if single.Check.Key != "disk-var" {
+		if single.Check.Key != "disk-var" || single.Check.HostName != "web-1" {
 			t.Fatalf("get = %+v", single.Check)
 		}
 
@@ -272,6 +279,27 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		decodeInto(t, resp, &single)
 		if single.Check.IntervalSeconds != 600 || single.Check.Enabled {
 			t.Fatalf("updated = %+v, want a 600s disabled check", single.Check)
+		}
+		if single.Check.HostName != "web-1" {
+			t.Fatalf("updated host_name = %q, want %q", single.Check.HostName, "web-1")
+		}
+
+		// And on the list route, where the name comes from one read for
+		// the whole page rather than a lookup per row.
+		var listed *checkDTO
+		for _, d := range f.listChecks(t, f.viewerC) {
+			if d.ID == created.ID {
+				listed = &d
+			}
+		}
+		if listed == nil || listed.HostName != "web-1" {
+			t.Fatalf("listed = %+v, want host_name %q", listed, "web-1")
+		}
+		// A definition bound anywhere else carries no host name at all.
+		for _, d := range f.listChecks(t, f.viewerC) {
+			if d.BindingKind != "host" && d.HostName != "" {
+				t.Fatalf("%s-bound check %q has host_name %q", d.BindingKind, d.Key, d.HostName)
+			}
 		}
 
 		if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil); resp.StatusCode != http.StatusOK {

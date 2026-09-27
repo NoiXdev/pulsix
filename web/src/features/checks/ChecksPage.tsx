@@ -8,7 +8,6 @@ import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import { useHost } from '../../api/hooks/useHosts.ts';
 import { useChecks, useDeleteCheck, useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { may } from '../../lib/roles.ts';
 import type { CheckDefinition, MonitoringGroup } from '../../api/types.ts';
@@ -47,18 +46,35 @@ export function ChecksPage() {
   // dialog creates in the first case and updates in the second.
   const [editing, setEditing] = useState<{ check?: CheckDefinition; copy?: boolean } | null>(null);
 
-  const orgGuard = useQueryGuard(orgInfo);
-  const checksGuard = useQueryGuard(checks);
-  if (orgGuard) return orgGuard;
-  if (checksGuard) return checksGuard;
-  if (!orgInfo.data) return <QueryLoading />;
-
+  // The header is built before anything can return early, and every early
+  // return carries it: a failed list used to replace the whole page,
+  // taking ChecksTabs with it and leaving no link to the section's other
+  // page but the sidebar (review finding 5).
   const header = (
     <div className="flex flex-col gap-2">
       <h1 className="text-xl font-semibold">Checks</h1>
       <ChecksTabs org={org} />
     </div>
   );
+  const orgGuard = useQueryGuard(orgInfo);
+  const checksGuard = useQueryGuard(checks);
+  const guard = orgGuard ?? checksGuard;
+  if (guard) {
+    return (
+      <>
+        {header}
+        {guard}
+      </>
+    );
+  }
+  if (!orgInfo.data) {
+    return (
+      <>
+        {header}
+        <QueryLoading />
+      </>
+    );
+  }
   if (!canRead) {
     return (
       <>
@@ -67,7 +83,14 @@ export function ChecksPage() {
       </>
     );
   }
-  if (!checks.data) return <QueryLoading />;
+  if (!checks.data) {
+    return (
+      <>
+        {header}
+        <QueryLoading />
+      </>
+    );
+  }
   const list = checks.data.checks ?? [];
   const groupList = groups.data?.groups ?? [];
 
@@ -144,7 +167,21 @@ export function ChecksPage() {
  * id the API carries. */
 function Binding({ org, check, groups }: { org: string; check: CheckDefinition; groups: MonitoringGroup[] }) {
   if (check.binding_kind === 'host' && check.host_id) {
-    return <HostBinding org={org} hostId={check.host_id} />;
+    // host_name comes from the definition itself (internal/api's
+    // checkHostNames, one read for the whole page). This used to be a
+    // useHost call per row, which on an unpaginated GET /checks meant one
+    // request per host-bound definition on every mount — and host binding
+    // IS the per-host override, so that count tracks the fleet size
+    // (review finding 2).
+    return (
+      <Link
+        to="/o/$org/hosts/$id"
+        params={{ org, id: check.host_id }}
+        className="truncate font-mono text-[13px] text-foreground hover:text-primary"
+      >
+        {check.host_name ?? check.host_id.slice(0, 8)}
+      </Link>
+    );
   }
   if (check.binding_kind === 'group' && check.group_id) {
     const group = groups.find((g) => g.id === check.group_id);
@@ -155,28 +192,4 @@ function Binding({ org, check, groups }: { org: string; check: CheckDefinition; 
     );
   }
   return <span className="truncate text-[13px] text-muted-foreground">Organization</span>;
-}
-
-/**
- * HostBinding names the host a host-bound definition applies to.
- *
- * One request per distinct bound host, not per row: TanStack Query keys
- * these by ['host', org, id], so several definitions on the same host
- * share one fetch. Reading the paginated hosts list instead would only
- * answer for hosts that happen to be on the first page — a fleet larger
- * than one page would show bare ids, which is the thing this avoids.
- * Host-bound definitions are the narrow scope, the exception rather than
- * the bulk of the list.
- */
-function HostBinding({ org, hostId }: { org: string; hostId: string }) {
-  const host = useHost(org, hostId);
-  return (
-    <Link
-      to="/o/$org/hosts/$id"
-      params={{ org, id: hostId }}
-      className="truncate font-mono text-[13px] text-foreground hover:text-primary"
-    >
-      {host.data?.host.name ?? hostId.slice(0, 8)}
-    </Link>
-  );
 }

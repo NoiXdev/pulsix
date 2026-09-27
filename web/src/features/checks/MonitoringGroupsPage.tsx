@@ -48,18 +48,35 @@ export function MonitoringGroupsPage() {
   const remove = useDeleteMonitoringGroup(org);
   const [editing, setEditing] = useState<MonitoringGroup | 'new' | null>(null);
 
-  const orgGuard = useQueryGuard(orgInfo);
-  const groupsGuard = useQueryGuard(groups);
-  if (orgGuard) return orgGuard;
-  if (groupsGuard) return groupsGuard;
-  if (!orgInfo.data) return <QueryLoading />;
-
+  // Built before any early return, and carried by every one of them: a
+  // failed list used to replace the whole page, taking ChecksTabs with it
+  // and leaving no link back to the definitions but the sidebar (review
+  // finding 5).
   const header = (
     <div className="flex flex-col gap-2">
       <h1 className="text-xl font-semibold">Checks</h1>
       <ChecksTabs org={org} />
     </div>
   );
+  const orgGuard = useQueryGuard(orgInfo);
+  const groupsGuard = useQueryGuard(groups);
+  const guard = orgGuard ?? groupsGuard;
+  if (guard) {
+    return (
+      <>
+        {header}
+        {guard}
+      </>
+    );
+  }
+  if (!orgInfo.data) {
+    return (
+      <>
+        {header}
+        <QueryLoading />
+      </>
+    );
+  }
   if (!canRead) {
     return (
       <>
@@ -68,7 +85,14 @@ export function MonitoringGroupsPage() {
       </>
     );
   }
-  if (!groups.data) return <QueryLoading />;
+  if (!groups.data) {
+    return (
+      <>
+        {header}
+        <QueryLoading />
+      </>
+    );
+  }
   const list = groups.data.groups ?? [];
 
   async function onDelete(g: MonitoringGroup) {

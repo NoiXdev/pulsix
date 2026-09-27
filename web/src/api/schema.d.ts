@@ -2299,6 +2299,8 @@ export interface components {
             enabled: boolean;
             group_id?: string;
             host_id?: string;
+            /** @description The bound host's name, for a host-bound definition; absent otherwise, and absent for a host this organization can no longer read */
+            host_name?: string;
             id: string;
             /** Format: int64 */
             interval_seconds: number;

@@ -39,15 +39,17 @@ function renderPage() {
 
 describe('ChecksPage', () => {
   it('lists definitions with their binding, interval, state and origin', async () => {
-    mockApi({
+    const fetch = mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-1' } },
       'GET /api/v1/orgs/acme/checks': {
         checks: [
           check(),
           check({ id: 'c2', key: 'disk-data', plugin: 'disk', interval_seconds: 300, origin: 'custom', binding_kind: 'group', group_id: 'g1' }),
-          check({ id: 'c3', key: 'nginx', plugin: 'service', interval_seconds: 30, enabled: false, origin: 'custom', binding_kind: 'host', host_id: 'h1' }),
+          check({
+            id: 'c3', key: 'nginx', plugin: 'service', interval_seconds: 30, enabled: false,
+            origin: 'custom', binding_kind: 'host', host_id: 'h1', host_name: 'web-1',
+          }),
         ],
       },
     });
@@ -58,7 +60,11 @@ describe('ChecksPage', () => {
     // Every binding kind reads as what it binds to, never as a raw id.
     expect(screen.getByText('Organization')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Web tier' })).toBeInTheDocument();
-    expect(await screen.findByRole('link', { name: 'web-1' })).toBeInTheDocument();
+    // The bound host's name rides on the definition (host_name), so the
+    // page issues no per-row host request at all.
+    expect(screen.getByRole('link', { name: 'web-1' })).toBeInTheDocument();
+    const urls = fetch.mock.calls.map(([input]) => (input instanceof Request ? input.url : String(input)));
+    expect(urls.filter((u) => /\/hosts\//.test(u))).toEqual([]);
     // Origin is on the row, not hidden inside a dialog.
     expect(screen.getByText('seed')).toBeInTheDocument();
     expect(screen.getAllByText('custom')).toHaveLength(2);
@@ -191,6 +197,108 @@ describe('ChecksPage', () => {
     await waitFor(() => expect(deleted).toBe(1));
     expect(confirmed.mock.calls[0][0]).toContain('disk-data');
     confirmed.mockRestore();
+  });
+
+  // Review finding 1: a select whose value matches no option silently
+  // falls back to the empty placeholder, so the dialog claims the binding
+  // is unset and native constraint validation then swallows Save — no
+  // request, no message, a dead button. Both triggers are pinned here.
+  it('edits a host-bound definition whose host is past the first page of the picker', async () => {
+    const user = userEvent.setup();
+    let put: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      // The bound host, db-7, is not on the page the picker loads.
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h1', name: 'web-1' }], next_cursor: 'more' },
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [check({ id: 'c4', key: 'disk-data', plugin: 'disk', origin: 'custom', binding_kind: 'host', host_id: 'h9', host_name: 'db-7' })],
+      },
+      'PUT /api/v1/orgs/acme/checks/c4': (req: MockRequest) => {
+        put = req.body as Record<string, unknown>;
+        return { check: check({ id: 'c4' }) };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    const select = (await screen.findByLabelText('Host')) as HTMLSelectElement;
+    // The binding is stated as the binding, by name, and the form is valid.
+    expect(select.value).toBe('h9');
+    expect(screen.getByRole('option', { name: 'db-7 (current binding)' })).toBeInTheDocument();
+    expect(select.validity.valueMissing).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toMatchObject({ binding_kind: 'host', host_id: 'h9' }));
+  });
+
+  it('edits a group-bound definition even when the monitoring groups list fails', async () => {
+    const user = userEvent.setup();
+    let put: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': () => new Response('{"detail":"boom"}', { status: 500, headers: { 'Content-Type': 'application/json' } }),
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [check({ id: 'c5', key: 'disk-data', plugin: 'disk', origin: 'custom', binding_kind: 'group', group_id: 'g1' })],
+      },
+      'PUT /api/v1/orgs/acme/checks/c5': (req: MockRequest) => {
+        put = req.body as Record<string, unknown>;
+        return { check: check({ id: 'c5' }) };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    const select = (await screen.findByLabelText('Monitoring group')) as HTMLSelectElement;
+    expect(select.value).toBe('g1');
+    expect(select.validity.valueMissing).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toMatchObject({ binding_kind: 'group', group_id: 'g1' }));
+  });
+
+  // Review finding 3: a blank key on a PUT defaults to the plugin name
+  // server-side, so submitting one would rename disk-data to disk — the
+  // identifier the override precedence keys on.
+  it('refuses to save an existing definition whose key was cleared, rather than renaming it', async () => {
+    const user = userEvent.setup();
+    let puts = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': { checks: [check({ id: 'c6', key: 'disk-data', plugin: 'disk', origin: 'custom' })] },
+      'PUT /api/v1/orgs/acme/checks/c6': () => {
+        puts += 1;
+        return { check: check({ id: 'c6' }) };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await user.clear(screen.getByLabelText('Key'));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect((screen.getByLabelText('Key') as HTMLInputElement).validity.valueMissing).toBe(true);
+    expect(puts).toBe(0);
+
+    // Typing a key back makes it savable, and the key goes out with it.
+    await user.type(screen.getByLabelText('Key'), 'disk-srv');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(puts).toBe(1));
+  });
+
+  // Review finding 5: the guard used to replace the whole page, taking
+  // the only link to the section's other page with it.
+  it('keeps the section tabs when the definitions list fails', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': () => new Response('{"detail":"boom"}', { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderPage();
+
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Monitoring groups' })).toBeInTheDocument();
   });
 
   it('copies a seeded definition into a custom one whose key can change', async () => {

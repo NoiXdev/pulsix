@@ -83,10 +83,15 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   function body(): CheckDefinitionInput {
     return {
       plugin,
-      // The key is optional: the server defaults it to the plugin name,
-      // which is the right default for the common single-check-per-plugin
-      // case and not this form's business to guess at.
-      ...(key.trim() !== '' ? { key: key.trim() } : {}),
+      // On a create the key is optional: the server defaults it to the
+      // plugin name, which is the right default for the common
+      // single-check-per-plugin case and not this form's business to
+      // guess at. An edit always names one — the field is required below,
+      // because a blank key on a PUT would default the same way and
+      // silently RENAME an existing definition (disk-data becoming disk),
+      // changing the identifier the override precedence keys on (review
+      // finding 3).
+      ...(editing || key.trim() !== '' ? { key: key.trim() } : {}),
       params: params(),
       interval_seconds: Number(interval),
       enabled,
@@ -111,6 +116,10 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
     }
   }
 
+  // A group the list does not hold: either the list failed to load or the
+  // binding names a group this page has not been told about. Either way the
+  // definition's own binding stays selectable and savable.
+  const currentGroupMissing = groupId !== '' && !groups.some((g) => g.id === groupId);
   const title = editing ? `Edit ${check.key}` : copy && check ? `Copy ${check.key}` : 'New check';
   return (
     <Dialog open onClose={onClose} title={title} size="wide">
@@ -139,6 +148,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               className="font-mono"
               value={key}
               disabled={seeded}
+              required={editing}
               placeholder={plugin}
               maxLength={63}
               onChange={(e) => setKey(e.target.value)}
@@ -205,6 +215,13 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             <Label htmlFor="check-group">Monitoring group</Label>
             <select id="check-group" className={SELECT} required value={groupId} onChange={(e) => setGroupId(e.target.value)}>
               <option value="">Choose a monitoring group…</option>
+              {/* The binding this definition already has, whenever the
+                  list does not contain it — a failed GET
+                  /monitoring-groups is enough to empty that list, and
+                  without this option the select would show the empty
+                  placeholder, claim the binding was unset and then refuse
+                  to submit at all (review finding 1). */}
+              {currentGroupMissing && <option value={groupId}>{`group ${groupId} (current binding)`}</option>}
               {groups.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}
@@ -213,7 +230,14 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             </select>
           </div>
         )}
-        {bindingKind === 'host' && <HostPicker org={org} value={hostId} onChange={setHostId} />}
+        {bindingKind === 'host' && (
+          <HostPicker
+            org={org}
+            value={hostId}
+            currentName={check && check.host_id === hostId ? check.host_name : undefined}
+            onChange={setHostId}
+          />
+        )}
         <label className="flex items-center gap-2 text-xs">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           Enabled
@@ -245,11 +269,30 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
  *
  * It is rendered only while the binding is "host", so choosing any other
  * binding costs no request at all.
+ *
+ * Whatever that search answers, the host this definition is ALREADY bound
+ * to stays in the list as its own option: one page of results cannot be
+ * assumed to contain it (a fleet paginated past it, a host no longer
+ * monitored, a search the operator has since narrowed), and a select with
+ * no option matching its value silently falls back to the empty
+ * placeholder — the dialog would then state the binding was unset and
+ * refuse to submit, with no message anywhere (review finding 1). For the
+ * same reason typing in the search box no longer clears the selection.
  */
-function HostPicker({ org, value, onChange }: { org: string; value: string; onChange: (id: string) => void }) {
+function HostPicker({
+  org, value, currentName, onChange,
+}: {
+  org: string;
+  value: string;
+  /** The bound host's name as the definition itself reports it
+   * (host_name), when this is an edit of an existing host binding. */
+  currentName?: string;
+  onChange: (id: string) => void;
+}) {
   const [q, setQ] = useState('');
   const hosts = useHosts(org, { monitored: true, q });
   const listed = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
+  const currentMissing = value !== '' && !listed.some((h) => h.id === value);
 
   return (
     <div className="flex flex-col gap-1">
@@ -260,13 +303,11 @@ function HostPicker({ org, value, onChange }: { org: string; value: string; onCh
         placeholder="Search monitored hosts…"
         className={SELECT}
         value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
-          onChange('');
-        }}
+        onChange={(e) => setQ(e.target.value)}
       />
       <select id="check-host" className={SELECT} required value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Choose a monitored host…</option>
+        {currentMissing && <option value={value}>{`${currentName ?? value} (current binding)`}</option>}
         {listed.map((h) => (
           <option key={h.id} value={h.id}>
             {h.name}
