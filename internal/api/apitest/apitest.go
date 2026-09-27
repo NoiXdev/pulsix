@@ -617,8 +617,15 @@ func (s *Server) loginAsWithMFA(userID uuid.UUID, mfaComplete bool) *http.Client
 }
 
 // Push is one recorded check-configuration push: the API asked the agent
-// side to hand this host its freshly resolved check set.
-type Push struct{ OrgID, HostID uuid.UUID }
+// side to hand a host — or, for an organization-wide push, every
+// monitored host at once — its freshly resolved check set. HostID is
+// uuid.Nil exactly when the push was organization-wide (PushOrg), which
+// is the distinction the routes are asserted on: an organization-bound
+// write must take the one-pass path, never a per-host fan-out.
+type Push struct {
+	OrgID, HostID uuid.UUID
+	WholeOrg      bool
+}
 
 // PushRecorder stands in for api.Deps.AgentPush (*agentapi.Service in
 // production, whose PushHost only does anything for a host with a live
@@ -630,20 +637,46 @@ type Push struct{ OrgID, HostID uuid.UUID }
 // Safe for concurrent use: the httptest server may serve requests on more
 // than one goroutine.
 type PushRecorder struct {
-	mu     sync.Mutex
-	pushes []Push
-	err    error
+	mu      sync.Mutex
+	pushes  []Push
+	ctxErrs []error
+	err     error
 }
 
 // PushHost implements api.CheckConfigPusher.
-func (r *PushRecorder) PushHost(_ context.Context, orgID, hostID uuid.UUID) error {
+func (r *PushRecorder) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
+	return r.record(ctx, Push{OrgID: orgID, HostID: hostID})
+}
+
+// PushOrg implements api.CheckConfigPusher.
+func (r *PushRecorder) PushOrg(ctx context.Context, orgID uuid.UUID) error {
+	return r.record(ctx, Push{OrgID: orgID, WholeOrg: true})
+}
+
+// record captures one push, and asserts the contract the routes promise
+// about the context they push on: it must not be already cancelled
+// because the client went away, since the write it follows has already
+// committed (api.pushAffected detaches it with context.WithoutCancel).
+func (r *PushRecorder) record(ctx context.Context, p Push) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		r.ctxErrs = append(r.ctxErrs, err)
+	}
 	if r.err != nil {
 		return r.err
 	}
-	r.pushes = append(r.pushes, Push{OrgID: orgID, HostID: hostID})
+	r.pushes = append(r.pushes, p)
 	return nil
+}
+
+// ContextErrors returns the cancellation state seen by each push whose
+// context was already done when it ran — empty is what a correctly
+// detached push path produces.
+func (r *PushRecorder) ContextErrors() []error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]error(nil), r.ctxErrs...)
 }
 
 // Pushes returns every push recorded so far, oldest first.
@@ -655,11 +688,16 @@ func (r *PushRecorder) Pushes() []Push {
 	return out
 }
 
-// PushedHosts reports whether every id was pushed at least once.
+// PushedHosts reports whether every id was pushed at least once, by a
+// per-host push. An organization-wide push does not count: it reaches
+// those hosts, but through a different path, and a test asserting "these
+// hosts specifically" must not pass because everything was pushed.
 func (r *PushRecorder) PushedHosts(ids ...uuid.UUID) bool {
 	seen := map[uuid.UUID]struct{}{}
 	for _, p := range r.Pushes() {
-		seen[p.HostID] = struct{}{}
+		if !p.WholeOrg {
+			seen[p.HostID] = struct{}{}
+		}
 	}
 	for _, id := range ids {
 		if _, ok := seen[id]; !ok {
@@ -669,12 +707,23 @@ func (r *PushRecorder) PushedHosts(ids ...uuid.UUID) bool {
 	return true
 }
 
+// PushedWholeOrg reports how many organization-wide pushes were recorded.
+func (r *PushRecorder) PushedWholeOrg() int {
+	n := 0
+	for _, p := range r.Pushes() {
+		if p.WholeOrg {
+			n++
+		}
+	}
+	return n
+}
+
 // Reset drops every recorded push, so one test can assert on the pushes of
 // one write without counting the fixture's own setup.
 func (r *PushRecorder) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.pushes = nil
+	r.pushes, r.ctxErrs = nil, nil
 }
 
 // FailWith makes every later PushHost return err instead of recording,

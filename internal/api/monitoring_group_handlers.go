@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -145,8 +144,9 @@ func registerMonitoringGroupRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, g.ID.String(), fmt.Sprintf("created monitoring group %q (%s)", g.Name, g.Selector))
 		// No push: a group nothing is bound to yet cannot change any
 		// host's resolved set, whatever its selector matches. The write
-		// that binds a definition to it is what pushes (pushForGroup's own
-		// comment covers the same rule for update and delete).
+		// that binds a definition to it is what pushes — the same rule
+		// checks.Service.AffectedHostsForGroup applies for update and
+		// delete, stated there rather than here.
 		out := &monitoringGroupOutput{}
 		out.Body.Group = toMonitoringGroupDTO(g)
 		return out, nil
@@ -168,6 +168,12 @@ func registerMonitoringGroupRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
+		// Both selectors expanded before the write, like every other
+		// check write here: the old text is gone once the update lands,
+		// and the new one is already in the request body (the service
+		// only trims it). An unparseable new selector simply contributes
+		// no hosts — the write below is what refuses it.
+		affected := affectedByGroup(ctx, deps, scope.OrgID, id, before.Selector, in.Body.Selector)
 		g, err := deps.Checks.UpdateGroup(ctx, scope.OrgID, id, checks.GroupInput{
 			Name: in.Body.Name, Selector: in.Body.Selector, Priority: in.Body.Priority,
 		})
@@ -175,7 +181,7 @@ func registerMonitoringGroupRoutes(hapi huma.API, deps Deps) {
 			return nil, mapChecksErr(ctx, err)
 		}
 		setAuditObject(ctx, g.ID.String(), fmt.Sprintf("updated monitoring group %q (%s, priority %d)", g.Name, g.Selector, g.Priority))
-		pushForGroup(ctx, deps, scope.OrgID, before, g)
+		pushAffected(ctx, deps, scope.OrgID, affected)
 		out := &monitoringGroupOutput{}
 		out.Body.Group = toMonitoringGroupDTO(g)
 		return out, nil
@@ -199,12 +205,12 @@ func registerMonitoringGroupRoutes(hapi huma.API, deps Deps) {
 		// group cascades those definitions away (migration 00043's ON
 		// DELETE CASCADE), after which nothing names the hosts that just
 		// lost them.
-		affected := groupHosts(ctx, deps, scope.OrgID, before)
+		affected := affectedByGroup(ctx, deps, scope.OrgID, id, before.Selector)
 		if err := deps.Checks.DeleteGroup(ctx, scope.OrgID, id); err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), fmt.Sprintf("deleted monitoring group %q and the checks bound to it", before.Name))
-		pushHosts(ctx, deps, scope.OrgID, affected)
+		pushAffected(ctx, deps, scope.OrgID, affected)
 		return &okOutput{}, nil
 	}, withAudit("deleteMonitoringGroup", "monitoring_group"))
 
@@ -245,49 +251,6 @@ func registerMonitoringGroupRoutes(hapi huma.API, deps Deps) {
 	}) // no withAudit: this is a read (a POST only because the selector is
 	// a request body, not a query param) — see auditAllowlist's entry for
 	// this exact route (audit_coverage_test.go).
-}
-
-// pushForGroup re-pushes every host either version of a changed group
-// covers — the selector as it was and as it now is.
-func pushForGroup(ctx context.Context, deps Deps, orgID uuid.UUID, before, after checks.Group) {
-	affected := append(groupHosts(ctx, deps, orgID, before), groupHosts(ctx, deps, orgID, after)...)
-	pushHosts(ctx, deps, orgID, affected)
-}
-
-// groupHosts is the set of hosts a group change actually affects: none at
-// all unless some check definition binds to that group, since a group
-// carries no configuration of its own — neither its selector nor its
-// priority can change what any host resolves to while nothing is bound to
-// it. Where a definition is bound, it is every host the group's selector
-// matches.
-//
-// A failure to work that out is logged and answered with no hosts, never
-// propagated: every caller runs after its own write has already committed
-// (see CheckConfigPusher).
-func groupHosts(ctx context.Context, deps Deps, orgID uuid.UUID, g checks.Group) []uuid.UUID {
-	defs, err := deps.Checks.ListDefinitions(ctx, orgID)
-	if err != nil {
-		slog.ErrorContext(ctx, "check configuration push: list definitions for group",
-			"org_id", orgID, "group_id", g.ID, "err", err)
-		return nil
-	}
-	bound := false
-	for _, d := range defs {
-		if d.BindingKind == checks.BindingGroup && d.GroupID != nil && *d.GroupID == g.ID {
-			bound = true
-			break
-		}
-	}
-	if !bound {
-		return nil
-	}
-	ids, err := deps.Checks.Preview(ctx, orgID, g.Selector)
-	if err != nil {
-		slog.ErrorContext(ctx, "check configuration push: expand group selector",
-			"org_id", orgID, "group_id", g.ID, "err", err)
-		return nil
-	}
-	return ids
 }
 
 // hostsByID indexes the organization's hosts for the preview's own

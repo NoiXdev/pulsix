@@ -75,6 +75,12 @@ type FactsSink interface {
 // wire in independently of this package shipping.
 type ChecksPort interface {
 	ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (checks.ResolvedSet, error)
+	// ResolveOrg computes every monitored host's configuration in one
+	// pass, sharing a single load of the definitions, the groups and
+	// each group's expansion across all of them — what PushOrg needs so
+	// an organization-wide change costs one resolver pass rather than one
+	// per host.
+	ResolveOrg(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error)
 	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error)
 }
 

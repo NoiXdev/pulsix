@@ -297,6 +297,41 @@ func (s *Service) PushHost(ctx context.Context, orgID, hostID uuid.UUID) error {
 	return nil
 }
 
+// PushOrg recomputes every monitored host's check configuration in orgID
+// in one resolver pass and pushes each host's to its own open streams —
+// what an organization-bound definition change triggers, where the
+// affected set is "every monitored host".
+//
+// It exists because the per-host path does not scale to that set:
+// PushHost runs a full ResolveHost, which re-reads the organization's
+// definitions, its monitoring groups and every group's selector
+// expansion, so pushing n hosts one at a time costs n of those. ResolveOrg
+// loads that bundle once and resolves every host against it, which is the
+// same answer by construction (both go through the same resolve /
+// toResolvedSet path — see checks.ResolveOrg's own doc comment) at a
+// fraction of the work.
+//
+// Everything else matches PushHost: a host with no open stream is a
+// no-op, a nil Checks port is a no-op, queueing never blocks on a slow
+// agent, and the message carries no Ack.
+func (s *Service) PushOrg(ctx context.Context, orgID uuid.UUID) error {
+	if s.deps.Checks == nil {
+		return nil
+	}
+	sets, err := s.deps.Checks.ResolveOrg(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("resolve org checks for push: %w", err)
+	}
+	for hostID, resolved := range sets {
+		cfg, err := checkConfigFor(resolved)
+		if err != nil {
+			return fmt.Errorf("encode check configuration for push: %w", err)
+		}
+		s.streams.PushToHost(orgID, hostID, &agentpb.ManagerMessage{CheckConfig: cfg})
+	}
+	return nil
+}
+
 // checkConfigFor renders a resolved set into the wire CheckConfig: the
 // version an agent compares its own against, and each check's key,
 // plugin, canonical params JSON and interval.

@@ -26,23 +26,42 @@ import (
 // effective set and its graphs in host_check_handlers.go; all three share
 // mapChecksErr and the push helpers at the bottom of this file.
 
-// CheckConfigPusher hands one host's freshly resolved check configuration
-// to whatever agent is currently connected for it. *agentapi.Service
-// satisfies it (PushHost); the interface is declared here, with exactly
-// the one method this package calls, so internal/api never imports
-// internal/agentapi or the generated protobuf package — the HTTP layer
-// knows only "tell this host's agent to catch up".
+// CheckConfigPusher hands freshly resolved check configuration to whatever
+// agents are currently connected. *agentapi.Service satisfies it; the
+// interface is declared here, with exactly the two methods this package
+// calls, so internal/api never imports internal/agentapi or the generated
+// protobuf package — the HTTP layer knows only "tell these agents to catch
+// up".
+//
+// The two methods are not interchangeable. PushHost resolves one host,
+// which means re-reading the organization's definitions, its monitoring
+// groups and every group's selector expansion for that one host; PushOrg
+// resolves every monitored host against one shared load of all of it. An
+// organization-bound write affects every monitored host, so calling
+// PushHost in a loop for it would repeat that whole bundle once per host —
+// on a fleet of a few hundred, thousands of serial queries inside one
+// request. pushAffected below picks by what the domain reports
+// (checks.Affected.WholeOrg), never by counting ids.
 //
 // A push is best-effort by design, never part of the write it follows:
 // the agent re-asserts its configuration version every 60 seconds and the
 // manager answers that with the current set, so a push that never lands
 // self-heals within one interval (the spec's "Configuration delivery"
-// says exactly this). pushHosts below therefore logs a failure and
-// returns, rather than turning a committed, successful write into a 500
-// the operator would retry.
+// says exactly this). pushAffected therefore logs a failure and returns,
+// rather than turning a committed, successful write into a 500 the
+// operator would retry.
 type CheckConfigPusher interface {
 	PushHost(ctx context.Context, orgID, hostID uuid.UUID) error
+	PushOrg(ctx context.Context, orgID uuid.UUID) error
 }
+
+// pushTimeout bounds the post-write push. It is generous: the work behind
+// it is one resolver pass plus a mailbox queue per connected agent, never
+// a network round trip to an agent (see StreamRegistry.PushToHost), so
+// reaching this deadline means the database itself is in trouble — at
+// which point abandoning the push is right, since the agents' own
+// re-assert will repair what was missed.
+const pushTimeout = 30 * time.Second
 
 type checkDefinitionDTO struct {
 	ID              string         `json:"id"`
@@ -203,12 +222,17 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// The hosts the new binding reaches are fully determined by the
+		// request body, so they are worked out before the write for the
+		// same reason the update and delete paths do it: one rule, one
+		// moment, no expansion that could observe its own write.
+		affected := affectedByBindings(ctx, deps, scope.OrgID, input.Binding())
 		d, err := deps.Checks.CreateDefinition(ctx, scope.OrgID, input)
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
 		setAuditObject(ctx, d.ID.String(), fmt.Sprintf("created check %q (%s) at %s scope", d.Key, d.Plugin, d.BindingKind))
-		pushForDefinitions(ctx, deps, scope.OrgID, d)
+		pushAffected(ctx, deps, scope.OrgID, affected)
 		out := &checkOutput{}
 		out.Body.Check = toCheckDefinitionDTO(d)
 		return out, nil
@@ -229,18 +253,24 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		}
 		// Read the row as it stands first: an update may move the binding
 		// (a host-bound check rebound to a group, say), and the hosts that
-		// lose the check are as affected as the ones that gain it — both
-		// sets need the push, and the old one is unknowable afterwards.
+		// lose the check are as affected as the ones that gain it.
 		before, err := deps.Checks.GetDefinition(ctx, scope.OrgID, id)
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
+		// Both sides are expanded here, before the write: the binding
+		// being replaced names hosts only the pre-write state knows, and
+		// the replacing one is already in the request body. Nothing this
+		// write touches (a check_definitions row) is read by that
+		// expansion (monitoring groups, host tags) — and it is not left
+		// to stay that way by accident.
+		affected := affectedByBindings(ctx, deps, scope.OrgID, before.Binding(), input.Binding())
 		d, err := deps.Checks.UpdateDefinition(ctx, scope.OrgID, id, input)
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
 		setAuditObject(ctx, d.ID.String(), fmt.Sprintf("updated check %q (%s) at %s scope", d.Key, d.Plugin, d.BindingKind))
-		pushForDefinitions(ctx, deps, scope.OrgID, before, d)
+		pushAffected(ctx, deps, scope.OrgID, affected)
 		out := &checkOutput{}
 		out.Body.Check = toCheckDefinitionDTO(d)
 		return out, nil
@@ -263,97 +293,105 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
+		affected := affectedByBindings(ctx, deps, scope.OrgID, before.Binding())
 		if err := deps.Checks.DeleteDefinition(ctx, scope.OrgID, id); err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), fmt.Sprintf("deleted check %q (%s) at %s scope", before.Key, before.Plugin, before.BindingKind))
-		pushForDefinitions(ctx, deps, scope.OrgID, before)
+		pushAffected(ctx, deps, scope.OrgID, affected)
 		return &okOutput{}, nil
 	}, withAudit("deleteCheck", "check_definition"))
 }
 
-// pushForDefinitions re-pushes the check configuration of every host the
-// given definitions' bindings cover, after the write has already
-// committed. Several definitions may be passed (an update's before and
-// after state); the union is pushed once per host.
-func pushForDefinitions(ctx context.Context, deps Deps, orgID uuid.UUID, defs ...checks.Definition) {
-	var affected []uuid.UUID
-	for _, d := range defs {
-		ids, err := definitionHosts(ctx, deps, orgID, d)
-		if err != nil {
-			// The write itself succeeded; only working out who to notify
-			// failed. Logged, never propagated — see CheckConfigPusher.
-			slog.ErrorContext(ctx, "check configuration push: resolve affected hosts",
-				"org_id", orgID, "check_key", d.Key, "binding_kind", d.BindingKind, "err", err)
-			continue
-		}
-		affected = append(affected, ids...)
-	}
-	pushHosts(ctx, deps, orgID, affected)
-}
-
-// definitionHosts is the set of hosts a definition's binding currently
-// covers: the one host it names, every host its monitoring group's
-// selector matches, or — for an organization-bound definition — every
-// monitored host in the organization (the only ones that resolve to a
-// non-empty set at all, per the resolver's own gate).
-func definitionHosts(ctx context.Context, deps Deps, orgID uuid.UUID, d checks.Definition) ([]uuid.UUID, error) {
-	switch d.BindingKind {
-	case checks.BindingHost:
-		if d.HostID == nil {
-			return nil, nil
-		}
-		return []uuid.UUID{*d.HostID}, nil
-	case checks.BindingGroup:
-		if d.GroupID == nil {
-			return nil, nil
-		}
-		g, err := deps.Checks.GetGroup(ctx, orgID, *d.GroupID)
-		if err != nil {
-			return nil, fmt.Errorf("group of check %q: %w", d.Key, err)
-		}
-		return deps.Checks.Preview(ctx, orgID, g.Selector)
-	default:
-		return monitoredHostIDs(ctx, deps, orgID)
-	}
-}
-
-// monitoredHostIDs lists the organization's monitored hosts — the same set
-// the resolver's own HostRoster port reports, read here through the hosts
-// service this package already depends on rather than a second port into
-// internal/checks.
-func monitoredHostIDs(ctx context.Context, deps Deps, orgID uuid.UUID) ([]uuid.UUID, error) {
-	all, err := deps.Hosts.ListAllHosts(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list hosts: %w", err)
-	}
-	ids := make([]uuid.UUID, 0, len(all))
-	for _, h := range all {
-		if h.Monitored {
-			ids = append(ids, h.ID)
-		}
-	}
-	return ids, nil
-}
-
-// pushHosts asks each distinct host's connected agent to catch up. Failures
-// are logged and dropped: the write has already committed, and the agent's
-// own 60-second re-assert repairs a missed push (see CheckConfigPusher).
-func pushHosts(ctx context.Context, deps Deps, orgID uuid.UUID, hostIDs []uuid.UUID) {
+// pushAffected asks the agents of the hosts a committed write reached to
+// catch up. Which hosts those are is the checks service's own answer
+// (checks.Affected) — the scope rules belong with the resolver that
+// applies them, not to this package.
+//
+// Two things about how it runs, both deliberate:
+//
+//   - The organization-wide case is one call, not a loop. See
+//     CheckConfigPusher.
+//   - It runs on a context detached from the request's
+//     (context.WithoutCancel) under its own deadline, the same pattern
+//     internal/schedules and internal/notify use for work that must
+//     outlive the trigger. The write has already committed; a client that
+//     has given up, or a proxy that cut the response, must not also
+//     abandon the push halfway through — which would leave some agents
+//     told and others not, for as long as their next re-assert takes.
+//     Detaching cancellation, not moving the work to a goroutine, is the
+//     whole of it: the push stays inside the request so the tests (and an
+//     operator reading the log) see it happen before the response.
+//
+// Every failure here is logged and dropped, never propagated.
+func pushAffected(ctx context.Context, deps Deps, orgID uuid.UUID, affected checks.Affected) {
 	if deps.AgentPush == nil {
 		return
 	}
-	seen := make(map[uuid.UUID]struct{}, len(hostIDs))
-	for _, id := range hostIDs {
-		if _, done := seen[id]; done {
-			continue
+	pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pushTimeout)
+	defer cancel()
+
+	if affected.WholeOrg {
+		if err := deps.AgentPush.PushOrg(pushCtx, orgID); err != nil {
+			slog.ErrorContext(pushCtx, "check configuration push failed; the agents' own re-assert will repair it",
+				"org_id", orgID, "scope", "org", "err", err)
 		}
-		seen[id] = struct{}{}
-		if err := deps.AgentPush.PushHost(ctx, orgID, id); err != nil {
-			slog.ErrorContext(ctx, "check configuration push failed; the agent's own re-assert will repair it",
+		return
+	}
+	for _, id := range affected.Hosts {
+		if err := deps.AgentPush.PushHost(pushCtx, orgID, id); err != nil {
+			slog.ErrorContext(pushCtx, "check configuration push failed; the agent's own re-assert will repair it",
 				"org_id", orgID, "host_id", id, "err", err)
 		}
 	}
+}
+
+// affectedByBindings asks the checks service which hosts the given
+// bindings reach. Callers work this out BEFORE their write: a binding
+// being replaced names hosts only the pre-write state knows, and even the
+// replacing binding is fully determined by the request body, so there is
+// no reason for either side to observe state its own write produced.
+//
+// A failure is logged and answered with "nothing", never propagated: the
+// caller runs it around a write whose success must not depend on being
+// able to work out who to notify (see CheckConfigPusher).
+func affectedByBindings(ctx context.Context, deps Deps, orgID uuid.UUID, bindings ...checks.Binding) checks.Affected {
+	affected, err := deps.Checks.AffectedHosts(ctx, orgID, bindings...)
+	if err != nil {
+		logAffectedFailure(ctx, "check configuration push: resolve affected hosts", err, "org_id", orgID)
+		return checks.Affected{}
+	}
+	return affected
+}
+
+// affectedByGroup is affectedByBindings for a monitoring group write, over
+// the group's selector text on either side of it (see
+// checks.Service.AffectedHostsForGroup).
+func affectedByGroup(ctx context.Context, deps Deps, orgID, groupID uuid.UUID, selectors ...string) checks.Affected {
+	affected, err := deps.Checks.AffectedHostsForGroup(ctx, orgID, groupID, selectors...)
+	if err != nil {
+		logAffectedFailure(ctx, "check configuration push: resolve hosts affected by a group", err,
+			"org_id", orgID, "group_id", groupID)
+		return checks.Affected{}
+	}
+	return affected
+}
+
+// logAffectedFailure records a failure to work out who a write reaches, at
+// the level it deserves. Because the expansion now runs BEFORE the write,
+// it sees the caller's own input first: a binding naming a group that does
+// not exist, or a selector that does not parse, is about to be refused by
+// the write itself with a 4xx that names it. Logging that at error level
+// would turn every operator typo into a server fault in the log. Anything
+// else — a store that cannot answer — is a real failure nothing downstream
+// will report, since the write itself will succeed.
+func logAffectedFailure(ctx context.Context, msg string, err error, args ...any) {
+	args = append(args, "err", err)
+	if errors.Is(err, checks.ErrInvalidInput) || errors.Is(err, checks.ErrNotFound) {
+		slog.DebugContext(ctx, msg+" (the write itself will refuse this input)", args...)
+		return
+	}
+	slog.ErrorContext(ctx, msg, args...)
 }
 
 func mapChecksErr(ctx context.Context, err error) error {

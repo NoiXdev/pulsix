@@ -382,27 +382,25 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 	// exactly that host, and a rebind both the host that loses the check
 	// and the one that gains it.
 	t.Run("writes push the affected hosts", func(t *testing.T) {
+		// An organization-bound write reaches every monitored host, and
+		// takes the one-pass path for it: one PushOrg, never a PushHost
+		// per host. The per-host fan-out would re-resolve the whole
+		// organization — definitions, groups, every group's selector —
+		// once per host, inside the request.
 		f.s.Push.Reset()
 		orgBound := f.createCheck(t, f.operatorC, map[string]any{
 			"plugin": "cpu", "key": "cpu-push", "interval_seconds": 15, "binding_kind": "org",
 		})
-		if !f.s.Push.PushedHosts(f.web, f.dbHost) {
-			t.Fatalf("an org-bound write pushed %+v, want both monitored hosts", f.s.Push.Pushes())
-		}
-		for _, p := range f.s.Push.Pushes() {
-			if p.HostID == f.cold {
-				t.Fatalf("an unmonitored host was pushed: %+v", p)
-			}
-			if p.OrgID != f.orgID {
-				t.Fatalf("push carried org %s, want %s", p.OrgID, f.orgID)
-			}
+		pushes := f.s.Push.Pushes()
+		if len(pushes) != 1 || !pushes[0].WholeOrg || pushes[0].OrgID != f.orgID {
+			t.Fatalf("an org-bound write pushed %+v, want exactly one organization-wide push for %s", pushes, f.orgID)
 		}
 
 		f.s.Push.Reset()
 		hostBound := f.createCheck(t, f.operatorC, map[string]any{
 			"plugin": "memory", "key": "memory-push", "interval_seconds": 30, "binding_kind": "host", "host_id": f.web.String(),
 		})
-		if pushes := f.s.Push.Pushes(); len(pushes) != 1 || pushes[0].HostID != f.web {
+		if pushes := f.s.Push.Pushes(); len(pushes) != 1 || pushes[0].HostID != f.web || pushes[0].WholeOrg {
 			t.Fatalf("a host-bound write pushed %+v, want only web-1", pushes)
 		}
 
@@ -424,8 +422,21 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		if pushes := f.s.Push.Pushes(); len(pushes) != 1 || pushes[0].HostID != f.dbHost {
 			t.Fatalf("a delete pushed %+v, want only the host it was bound to", pushes)
 		}
+
+		f.s.Push.Reset()
 		if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+orgBound.ID, nil); resp.StatusCode != http.StatusOK {
 			t.Fatalf("cleanup delete = %d", resp.StatusCode)
+		}
+		if n := f.s.Push.PushedWholeOrg(); n != 1 {
+			t.Fatalf("deleting an org-bound check made %d organization-wide pushes, want 1", n)
+		}
+
+		// Every push ran on a context the client cannot have cancelled:
+		// the write has already committed by then, so a browser that gave
+		// up (or a proxy that cut the response) must not leave some agents
+		// told and others not.
+		if errs := f.s.Push.ContextErrors(); len(errs) != 0 {
+			t.Fatalf("pushes ran on an already-cancelled context: %v", errs)
 		}
 	})
 

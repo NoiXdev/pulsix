@@ -676,3 +676,76 @@ func TestPushedNestedParamsReproduceTheVersion(t *testing.T) {
 		t.Fatalf("version recomputed from the pushed specs = %q, want %q (an agent re-hashing what it was handed would never converge)", got, wantVersion)
 	}
 }
+
+// TestPushOrgResolvesOnceForEveryMonitoredHost: the organization-wide
+// push — what an organization-bound definition change triggers — computes
+// every monitored host's configuration in ONE resolver pass (ResolveOrg,
+// which expands each monitoring group's selector once for the whole
+// organization) rather than one full ResolveHost per host. On a fleet of
+// any size that difference is the whole point of the method: the per-host
+// path re-reads the definitions, the groups and every group's selector
+// from scratch for each host.
+func TestPushOrgResolvesOnceForEveryMonitoredHost(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	resp, client := enrollAnAgent(t, h, "web-1")
+	hostID := uuid.MustParse(resp.GetHostId())
+	other := uuid.Must(uuid.NewV7())
+	h.checks.setOrgResolved(testOrg, map[uuid.UUID]checks.ResolvedSet{
+		hostID: {HostID: hostID, Checks: []checks.Resolved{{Key: "cpu", Plugin: "cpu", Interval: 30 * time.Second}}, Version: "org-pushed"},
+		// A second monitored host with no open stream: pushed to nobody,
+		// and not an error (PushHost's own "not connected is a no-op").
+		other: {HostID: other, Version: "org-pushed-2"},
+	})
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for trackedStreams(h.svc.Streams(), hostID) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the stream never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := h.svc.PushOrg(t.Context(), testOrg); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.GetAck() {
+		t.Fatal("an out-of-band push must not carry Ack")
+	}
+	cfg := msg.GetCheckConfig()
+	if cfg == nil || cfg.GetVersion() != "org-pushed" || len(cfg.GetChecks()) != 1 {
+		t.Fatalf("pushed config = %+v", cfg)
+	}
+	if calls := h.checks.resolveOrgCalls(); calls != 1 {
+		t.Fatalf("ResolveOrg calls = %d, want exactly 1 for the whole organization", calls)
+	}
+	if calls := h.checks.resolveHostCalls(); calls != 0 {
+		t.Fatalf("ResolveHost calls = %d, want 0: an org push must not fan out per host", calls)
+	}
+}
+
+// TestPushOrgWithoutChecksPortIsNoOp mirrors PushHost's own nil-tolerance:
+// the checks domain can wire in independently of this package shipping.
+func TestPushOrgWithoutChecksPortIsNoOp(t *testing.T) {
+	h := newHarness(t)
+	if err := h.svc.PushOrg(t.Context(), testOrg); err != nil {
+		t.Fatalf("PushOrg without a checks port = %v, want nil", err)
+	}
+}
+
+// TestPushOrgResolveFaultPropagates: like PushHost, an org push reports a
+// resolver fault to its caller rather than silently pushing nothing — the
+// caller logs it, and the agents' own re-assert is what repairs the miss.
+func TestPushOrgResolveFaultPropagates(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	h.checks.resolveErr = errors.New("resolver down")
+	if err := h.svc.PushOrg(t.Context(), testOrg); err == nil {
+		t.Fatal("a resolve fault must propagate to PushOrg's own caller")
+	}
+}

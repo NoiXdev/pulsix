@@ -400,17 +400,50 @@ func (f *fakeFacts) recorded() []factCall {
 // only care about the shape of the accepted/rejected counts, not a
 // specific host list).
 type fakeChecks struct {
-	mu           sync.Mutex
-	resolved     map[uuid.UUID]checks.ResolvedSet
-	resolveErr   error
-	resolveCalls int
-	knownHosts   map[uuid.UUID]bool
-	recordedObs  []checks.Observation
-	recordErr    error
+	mu              sync.Mutex
+	resolved        map[uuid.UUID]checks.ResolvedSet
+	orgResolved     map[uuid.UUID]map[uuid.UUID]checks.ResolvedSet
+	resolveErr      error
+	resolveCalls    int
+	resolveOrgCount int
+	knownHosts      map[uuid.UUID]bool
+	recordedObs     []checks.Observation
+	recordErr       error
 }
 
 func newFakeChecks() *fakeChecks {
-	return &fakeChecks{resolved: map[uuid.UUID]checks.ResolvedSet{}}
+	return &fakeChecks{
+		resolved:    map[uuid.UUID]checks.ResolvedSet{},
+		orgResolved: map[uuid.UUID]map[uuid.UUID]checks.ResolvedSet{},
+	}
+}
+
+// setOrgResolved arms orgID's ResolveOrg answer: the whole map an
+// organization-wide push walks. It is deliberately independent of
+// setResolved's per-host answers, so a test can prove an org push never
+// took the per-host path.
+func (f *fakeChecks) setOrgResolved(orgID uuid.UUID, sets map[uuid.UUID]checks.ResolvedSet) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.orgResolved[orgID] = sets
+}
+
+func (f *fakeChecks) ResolveOrg(_ context.Context, orgID uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolveOrgCount++
+	if f.resolveErr != nil {
+		return nil, f.resolveErr
+	}
+	return f.orgResolved[orgID], nil
+}
+
+// resolveOrgCalls reports how many times ResolveOrg was called — the org
+// push's own witness that one call covered the whole fleet.
+func (f *fakeChecks) resolveOrgCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resolveOrgCount
 }
 
 // setResolved arms hostID's ResolveHost answer; a host never armed
