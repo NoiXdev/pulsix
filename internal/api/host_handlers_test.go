@@ -1,11 +1,13 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -76,6 +78,81 @@ func TestOrgCreationProvisionsDefaultZone(t *testing.T) {
 	}
 	if len(listed.Zones) != 1 || listed.Zones[0].Slug != "default" {
 		t.Fatalf("zones = %+v, want exactly one default zone", listed.Zones)
+	}
+}
+
+// TestOrgCreationSeedsCheckDefinitions proves the check definitions seed
+// hook (v0.3b-1, checks.Service.SeedForOrg) actually runs as part of
+// organization creation through the real route, not merely when called
+// directly: an organization created through POST /orgs (tenancy.Service.
+// CreateOrg, chained with the default-zone hook by
+// app.ChainOrgCreatedHooks — see internal/app/app.go and apitest.go's own
+// wiring) already has its four "Linux base" check definitions the moment
+// creation succeeds. There is no API surface to read check_definitions
+// back through yet (Task 9), so this reads the row set directly off
+// s.Checks (the same *checks.Service instance apitest.go's hook chain
+// writes through), scoped to the new organization the same way every
+// other org-scoped store call is.
+func TestOrgCreationSeedsCheckDefinitions(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("checkseed-owner@example.test", "correct horse battery")
+	c := s.LoginAs(owner)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs", map[string]any{"slug": "checkseed-org", "name": "Check Seed Org"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create org: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	org, err := s.Q.GetOrganizationBySlug(context.Background(), "checkseed-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := s.Checks.ListDefinitions(db.WithOrgScope(context.Background(), org.ID), org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 4 {
+		t.Fatalf("check definitions = %+v, want exactly the 4-plugin seed set", defs)
+	}
+	seen := map[string]bool{}
+	for _, d := range defs {
+		if d.Origin != "seed" {
+			t.Fatalf("definition %q origin = %q, want seed", d.Key, d.Origin)
+		}
+		seen[d.Key] = true
+	}
+	for _, want := range []string{"cpu", "memory", "disk", "service"} {
+		if !seen[want] {
+			t.Fatalf("seed set missing %q, got %+v", want, defs)
+		}
+	}
+}
+
+// TestFirstRunWizardSeedsCheckDefinitions is
+// TestOrgCreationSeedsCheckDefinitions for the other org-creation path:
+// the first-run wizard (setup.Service.Complete), which apitest.go binds to
+// the very same ChainOrgCreatedHooks result as POST /orgs. Task 13's
+// TestFirstRunWizardProvisionsDefaultZone below is this test's sibling for
+// the zone hook that runs beside this one.
+func TestFirstRunWizardSeedsCheckDefinitions(t *testing.T) {
+	s := apitest.New(t)
+	c := s.Client()
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/setup/complete", completeSetupBody("wizard-checkseed-admin@example.test", "wizard-checkseed-org"))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("complete setup: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	org, err := s.Q.GetOrganizationBySlug(context.Background(), "wizard-checkseed-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := s.Checks.ListDefinitions(db.WithOrgScope(context.Background(), org.ID), org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defs) != 4 {
+		t.Fatalf("check definitions = %+v, want exactly the 4-plugin seed set", defs)
 	}
 }
 

@@ -513,14 +513,21 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 	return id
 }
 
-// SeedOrg inserts an org with ownerID as owner, and — like every real org
-// creation path (tenancy.Service.CreateOrg, setup.Service.Complete) —
-// gives it its "default" zone and its check definitions seed set: this
-// bypasses tenancy.Service.CreateOrg itself (so tests get a fixed,
-// predictable slug instead of one it would generate), but a seeded org
-// should still carry the same invariants every production org does, since
-// host_handlers_test.go and others rely on the zone, and a future check
-// definitions test will rely on the seed set the same way.
+// SeedOrg inserts an org with ownerID as owner directly through s.Q
+// (gen.CreateOrganization) rather than tenancy.Service.CreateOrg, so tests
+// get a fixed, predictable slug instead of one CreateOrg would generate.
+// That bypass is exactly why the two calls below are not redundant with
+// ChainOrgCreatedHooks (New, above): the hook is registered on tenancySvc/
+// setupSvc, and only fires when creation goes through one of them — a
+// direct s.Q.CreateOrganization call, like this one, never reaches it. So
+// SeedOrg calls EnsureDefaultZone and SeedForOrg itself, explicitly, the
+// same two steps the hook would have run, so a seeded org still carries
+// the same invariants a real one does (host_handlers_test.go and others
+// rely on the zone; a future check-definitions test may rely on the seed
+// set the same way). TestOrgCreationSeedsCheckDefinitions and
+// TestFirstRunWizardSeedsCheckDefinitions (internal/api/host_handlers_test.go)
+// are what actually exercise the hook path end to end, through the real
+// routes, in place of this shortcut.
 func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 	s.T.Helper()
 	ctx := context.Background()
