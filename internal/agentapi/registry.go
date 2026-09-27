@@ -13,7 +13,6 @@
 package agentapi
 
 import (
-	"errors"
 	"log/slog"
 	"sync"
 
@@ -30,17 +29,19 @@ type StreamRegistry struct {
 	byHost map[uuid.UUID]map[uint64]*trackedStream
 }
 
-// trackedStream is one open stream. Its lock orders every message
+// trackedStream is one open stream. Its mu orders every message
 // processing against the cut: processing runs under it, and shut takes it,
 // so once shut has returned no processing of the stream is in flight and
-// none starts.
+// none starts. Everything below mu is the *outgoing* side, which is a
+// separate concern with its own, deliberately lock-light, teardown story
+// — see the mailbox fields' own comment for why.
 type trackedStream struct {
 	serial string
 	// orgID is the org the connection authenticated as (agent.OrgID at
 	// track time), immutable thereafter — the fact PushToHost checks
-	// before ever sending, so a caller-supplied orgID that does not match
-	// what this stream actually authenticated as can never reach it, no
-	// matter what ResolveHost was asked to compute for.
+	// before ever queueing a push, so a caller-supplied orgID that does
+	// not match what this stream actually authenticated as can never
+	// reach it, no matter what ResolveHost was asked to compute for.
 	orgID uuid.UUID
 	// revoked is closed by shut: the handler ends the stream.
 	revoked chan struct{}
@@ -48,62 +49,126 @@ type trackedStream struct {
 	mu  sync.Mutex
 	cut bool
 
-	// sendMu guards both stream and closed, and is held for the entire
-	// duration of every actual Send call — not merely while reading the
-	// fields. That is what makes closed a real gate rather than a
-	// check-then-act race: a send that is already past the "not closed"
-	// check has sendMu held, so closeSend (called from shut and from
-	// track's release closure) cannot mark the stream closed until that
-	// send has returned, and a send that starts after closeSend has run
-	// always observes closed and never touches stream at all — including
-	// one dispatched asynchronously by PushToHost that only gets around
-	// to acquiring sendMu long after the handler that owns this stream
-	// has already returned (see PushToHost's own doc comment for why
-	// sends are dispatched, never awaited, from that path).
-	sendMu sync.Mutex
 	stream agentpb.AgentService_AgentStreamServer
-	closed bool
-}
 
-// errStreamClosed means the tracked stream was released or cut before (or
-// while) a send was attempted; PushToHost logs it at most, never treats
-// it as a fault — an agent that has already disconnected is exactly what
-// its own next reconnect and heartbeat re-assert exist to repair.
-var errStreamClosed = errors.New("stream closed")
+	// sendMu serializes the two things that ever call Send on stream: the
+	// receive loop's own ack (send, below — a direct, synchronous call
+	// from receiveMessages, exactly as before this stream carried
+	// out-of-band pushes at all) and pushWriter's own sends, one at a
+	// time, as gRPC requires. It is held only for the duration of one
+	// Send call, and — this is the property the rest of this type exists
+	// to preserve — nothing that tears the stream down ever waits on it.
+	sendMu sync.Mutex
+
+	// The outgoing-push mailbox: a single slot for the latest configuration
+	// PushToHost wants delivered, not a queue. Only the newest push is
+	// ever worth delivering — an older one that has not gone out yet is
+	// already obsolete the moment a newer one arrives — so queuePush
+	// replaces whatever is queued rather than appending to it: the slot
+	// can never fill up, and there is nothing to block a caller on or
+	// reject. wake (buffered 1) tells pushWriter a value is waiting;
+	// closed, closed exactly once via closeOnce, tells it to stop once it
+	// has drained whatever is there. Closing a channel can never block
+	// regardless of what pushWriter is doing at that instant — including
+	// stuck inside a wedged Send — which is what makes release/shut safe
+	// to call unconditionally: before this design, closing the send side
+	// took sendMu itself, which a wedged Send could hold indefinitely,
+	// turning teardown (a revocation, or the handler's own return) into
+	// exactly the deadlock this comment is here to explain the absence
+	// of. writerDone is closed by pushWriter right before it returns —
+	// its own witness, for tests, that the goroutine actually goes away
+	// rather than leaking.
+	mailboxMu  sync.Mutex
+	mailbox    *agentpb.ManagerMessage
+	wake       chan struct{}
+	closed     chan struct{}
+	closeOnce  sync.Once
+	writerDone chan struct{}
+}
 
 // attach records the gRPC stream a tracked entry authenticates. track
 // already does this for every stream reachable through the registry;
 // attach is what the direct-construction unit tests
-// (receiveMessages called on a bare &trackedStream{}) use instead.
+// (receiveMessages called on a bare &trackedStream{}) use instead. Those
+// bare instances never go through track and so never get a pushWriter —
+// attach exists purely so their own (synchronous, ack-only) send has
+// something to call.
 func (t *trackedStream) attach(stream agentpb.AgentService_AgentStreamServer) {
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
 	t.stream = stream
 }
 
-// send writes msg to the underlying stream, serialized against every
-// other send on this same trackedStream and refusing once the stream has
-// been released or cut (errStreamClosed) — see the sendMu field comment
-// for why this check and the Send call itself must share one lock.
+// send writes msg to the underlying stream directly, serialized against
+// pushWriter's own sends by sendMu. This is the receive loop's own path
+// (an ack, with an optional CheckConfig riding along) — synchronous on
+// purpose, so a failure here ends receiveMessages's loop immediately, the
+// same contract it has always had.
 func (t *trackedStream) send(msg *agentpb.ManagerMessage) error {
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
-	if t.closed {
-		return errStreamClosed
-	}
 	return t.stream.Send(msg)
 }
 
-// closeSend marks the stream closed for sending. Idempotent; called once
-// by shut (a revocation) and once more by track's release closure (the
-// handler returning control of the stream to gRPC) — whichever comes
-// first. gRPC's own contract forbids calling Send after a stream's
-// handler function has returned, which is the hazard this specifically
-// closes off for an async PushToHost dispatch that resolves late.
-func (t *trackedStream) closeSend() {
-	t.sendMu.Lock()
-	defer t.sendMu.Unlock()
-	t.closed = true
+// queuePush replaces the mailbox's pending value (coalescing: only the
+// newest configuration is ever worth keeping) and wakes pushWriter if it
+// is not already awake. It never blocks: the mailbox is a single slot
+// under its own short-lived mutex, and waking is a non-blocking send on a
+// buffered-1 channel. A push queued after closed has already fired is
+// simply never collected — harmless, not a leak (the whole trackedStream
+// becomes garbage once it is unregistered).
+func (t *trackedStream) queuePush(msg *agentpb.ManagerMessage) {
+	select {
+	case <-t.closed:
+		return
+	default:
+	}
+	t.mailboxMu.Lock()
+	t.mailbox = msg
+	t.mailboxMu.Unlock()
+	select {
+	case t.wake <- struct{}{}:
+	default: // a wake is already pending; pushWriter will see the latest value regardless
+	}
+}
+
+// takeMailbox atomically empties the mailbox and returns whatever was
+// there (nil if nothing is, or nothing new since the last take).
+func (t *trackedStream) takeMailbox() *agentpb.ManagerMessage {
+	t.mailboxMu.Lock()
+	defer t.mailboxMu.Unlock()
+	msg := t.mailbox
+	t.mailbox = nil
+	return msg
+}
+
+// pushWriter is the one goroutine, for this stream's whole lifetime, that
+// ever sends a queued push — one per stream, never one per push. It
+// drains the mailbox as pushes arrive and stops once closed fires,
+// signalling writerDone either way. A Send failure ends it immediately
+// (the stream is broken; the receive loop's own Recv will independently
+// notice the same breakage and end the RPC — pushWriter does not need to
+// tell it to).
+func (t *trackedStream) pushWriter() {
+	defer close(t.writerDone)
+	for {
+		select {
+		case <-t.wake:
+			msg := t.takeMailbox()
+			if msg == nil {
+				continue // coalesced away, or a stale wake from a push already taken
+			}
+			t.sendMu.Lock()
+			err := t.stream.Send(msg)
+			t.sendMu.Unlock()
+			if err != nil {
+				slog.Warn("push message to agent stream", "serial", t.serial, "err", err)
+				return
+			}
+		case <-t.closed:
+			return
+		}
+	}
 }
 
 // store runs process unless the stream was cut; a cut stream drops the
@@ -123,15 +188,31 @@ func (t *trackedStream) store(process func() error) (done bool, err error) {
 // shut cuts the stream. It signals the handler first, so the RPC ends (and
 // its context cancels a processing step in flight) without waiting, then
 // takes the lock: once shut returns, no processing of the stream runs or
-// starts. closeSend also runs here (not only from release) so a
-// revoked-but-not-yet-returned stream stops accepting pushes immediately,
-// rather than waiting for the handler to unwind.
+// starts. closeMailbox (a plain, non-blocking channel close, never sendMu)
+// also runs here, not only from track's release closure, so a
+// revoked-but-not-yet-returned stream stops accepting new pushes
+// immediately rather than waiting for the handler to unwind.
 func (t *trackedStream) shut() {
 	close(t.revoked)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.cut = true
-	t.closeSend()
+	t.closeMailbox()
+}
+
+// closeMailbox stops pushWriter (idempotent — shut and track's release
+// closure can each call it). It is a plain close() and nothing else: no
+// lock is taken, so this can never be held up by a Send in flight,
+// wedged or otherwise — the property this whole design exists to give
+// teardown. A bare &trackedStream{} built directly by the fault-path unit
+// tests (never through track, so closed is nil and there is no pushWriter
+// to stop) is a no-op here rather than a nil-channel panic.
+func (t *trackedStream) closeMailbox() {
+	t.closeOnce.Do(func() {
+		if t.closed != nil {
+			close(t.closed)
+		}
+	})
 }
 
 // NewStreamRegistry builds an empty registry.
@@ -143,23 +224,27 @@ func NewStreamRegistry() *StreamRegistry {
 // orgID), with the gRPC stream a push can reach it through already
 // attached — atomically, since the entry is not inserted into r.byHost
 // (and so not visible to a concurrent PushToHost) until after ts.stream is
-// set. The returned release closure marks the stream closed for sending
-// before unregistering it: by the time AgentStream's handler function
-// actually returns (release runs via defer, right before that), no send
-// dispatched earlier can still be in flight or start afterward — see
-// closeSend's own doc comment. CloseHost cuts the stream when the agent is
-// revoked.
+// set — and its pushWriter goroutine already running. The returned release
+// closure closes the mailbox before unregistering the entry: a plain,
+// non-blocking channel close, so the handler's own defer release() can
+// never be the thing that hangs (see trackedStream's own mailbox comment).
+// CloseHost cuts the stream when the agent is revoked.
 func (r *StreamRegistry) track(serial string, orgID, hostID uuid.UUID, stream agentpb.AgentService_AgentStreamServer) (*trackedStream, func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.next++
-	id, ts := r.next, &trackedStream{serial: serial, orgID: orgID, revoked: make(chan struct{}), stream: stream}
+	id := r.next
+	ts := &trackedStream{
+		serial: serial, orgID: orgID, revoked: make(chan struct{}), stream: stream,
+		wake: make(chan struct{}, 1), closed: make(chan struct{}), writerDone: make(chan struct{}),
+	}
+	go ts.pushWriter()
 	if r.byHost[hostID] == nil {
 		r.byHost[hostID] = map[uint64]*trackedStream{}
 	}
 	r.byHost[hostID][id] = ts
 	return ts, func() {
-		ts.closeSend()
+		ts.closeMailbox()
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if streams, ok := r.byHost[hostID]; ok {
@@ -187,28 +272,27 @@ func (r *StreamRegistry) CloseHost(hostID uuid.UUID) int {
 	return len(streams)
 }
 
-// PushToHost dispatches msg to every currently open stream of hostID
-// authenticated as orgID, and reports how many it dispatched to — zero
-// for a host with no open stream (PushHost's own "not connected is a
+// PushToHost queues msg into the mailbox of every currently open stream of
+// hostID authenticated as orgID, and reports how many it queued into —
+// zero for a host with no open stream (PushHost's own "not connected is a
 // no-op" contract) and zero for every stream that authenticated as a
 // different org (a caller-supplied orgID is never trusted merely because
 // ResolveHost happened to answer something for it — see trackedStream's
 // own orgID field comment: an org mismatch here would otherwise arm
-// another tenant's agent with an empty CheckConfig it never asked for).
+// another tenant's agent with a CheckConfig it never asked for).
 //
-// The actual Send calls run on their own goroutine per stream, never on
-// the calling goroutine: gRPC's SendMsg blocks on the stream's own flow
-// control until the client drains it or the connection ends, which can
-// be as long as the server's MaxConnectionAge (24h, no keepalive ping,
-// internal/grpcsrv) if the agent is black-holed rather than merely slow.
-// PushHost is called synchronously from an HTTP write path (Task 9); it
-// must never block that request on a single unreachable agent's stream,
-// so "dispatched to" is what this method's return value promises —
-// never "delivered", which nothing here can observe without blocking on
-// it anyway. A dispatch that never completes is exactly as harmless as a
-// missed push always was: the agent's own heartbeat re-assert converges
-// it regardless (see processHeartbeat), so nothing is lost by not
-// waiting, only a redundant push is possibly avoided by not knowing.
+// Queueing is synchronous and effectively instant (a short-lived mutex
+// plus a non-blocking channel send — see queuePush); the actual Send runs
+// later, on that stream's own long-lived pushWriter goroutine, never on
+// this call's goroutine. That is what keeps PushHost — called
+// synchronously from an HTTP write path (Task 9) — from ever blocking on
+// a single unreachable agent's stream, which can otherwise wedge for as
+// long as the connection itself survives (internal/grpcsrv sets
+// MaxConnectionAge but no MaxConnectionAgeGrace and no keepalive ping;
+// GOAWAY does not touch an RPC already in flight, so a black-holed agent
+// is not a bounded wait at all). "Queued" is what this method's return
+// value promises — never "delivered", which nothing here can observe
+// without waiting on it, the exact thing this design avoids.
 func (r *StreamRegistry) PushToHost(orgID, hostID uuid.UUID, msg *agentpb.ManagerMessage) int {
 	r.mu.Lock()
 	streams := make([]*trackedStream, 0, len(r.byHost[hostID]))
@@ -222,12 +306,7 @@ func (r *StreamRegistry) PushToHost(orgID, hostID uuid.UUID, msg *agentpb.Manage
 	}
 	r.mu.Unlock()
 	for _, ts := range streams {
-		ts := ts
-		go func() {
-			if err := ts.send(msg); err != nil {
-				slog.Warn("push message to agent stream", "host_id", hostID.String(), "err", err)
-			}
-		}()
+		ts.queuePush(msg)
 	}
 	return len(streams)
 }
