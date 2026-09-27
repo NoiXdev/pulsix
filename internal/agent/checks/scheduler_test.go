@@ -2,6 +2,7 @@ package checks
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -169,7 +170,17 @@ func TestSchedulerApplyUnchangedConfigKeepsPhase(t *testing.T) {
 	ticks := &fakeTickers{}
 	sched := NewScheduler(reg, time.Now, ticks.factory())
 
-	cfg := Config{Version: "v1", Checks: []Spec{{Key: "cpu", Plugin: "cpu", Interval: 30 * time.Second}}}
+	// A second check carries params, rebuilt as a FRESH map instance on
+	// each Apply — exactly what a real re-push produces: every CheckConfig
+	// arrives as its own JSON unmarshal, so an unchanged check comes back
+	// as a different map instance with identical content, never the same
+	// map value reused. reflect.DeepEqual (specsEqual's own comparison)
+	// must treat that as unchanged; a naive == or pointer comparison would
+	// not, and this case is what would have caught it.
+	cfg := Config{Version: "v1", Checks: []Spec{
+		{Key: "cpu", Plugin: "cpu", Interval: 30 * time.Second},
+		{Key: "disk-params", Plugin: "cpu", Interval: time.Minute, Params: freshDiskParams()},
+	}}
 	sched.Apply(cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -179,28 +190,45 @@ func TestSchedulerApplyUnchangedConfigKeepsPhase(t *testing.T) {
 	go func() { done <- sched.Run(ctx, sink.collect) }()
 
 	_, tickers := ticks.recorded()
-	if len(tickers) != 1 {
-		t.Fatalf("tickers after first apply = %d, want 1", len(tickers))
+	if len(tickers) != 2 {
+		t.Fatalf("tickers after first apply = %d, want 2", len(tickers))
 	}
 
-	// Re-apply the identical configuration: no new ticker, the old one
-	// never stopped.
-	sched.Apply(cfg)
+	// Re-apply an equal-but-not-identical configuration: the plain check
+	// is the literal same Spec value again, but the params-carrying
+	// check's map is a brand new instance with the same content — no new
+	// ticker for either, neither old one stopped.
+	sched.Apply(Config{Version: "v1", Checks: []Spec{
+		{Key: "cpu", Plugin: "cpu", Interval: 30 * time.Second},
+		{Key: "disk-params", Plugin: "cpu", Interval: time.Minute, Params: freshDiskParams()},
+	}})
 	_, tickers2 := ticks.recorded()
-	if len(tickers2) != 1 {
-		t.Fatalf("tickers after re-applying an unchanged config = %d, want still 1", len(tickers2))
+	if len(tickers2) != 2 {
+		t.Fatalf("tickers after re-applying an unchanged config = %d, want still 2", len(tickers2))
 	}
-	if tickers2[0].wasStopped() {
-		t.Error("an unchanged check's ticker must not be stopped by Apply")
+	for i, tk := range tickers2 {
+		if tk.wasStopped() {
+			t.Errorf("ticker %d: an unchanged check's ticker must not be stopped by Apply, even when its params arrive as a new map instance", i)
+		}
 	}
 
-	// The original ticker still drives the check: proof the phase is the
-	// SAME timer, not a freshly-restarted one.
+	// The original tickers still drive their checks: proof the phase is
+	// the SAME timers, not freshly-restarted ones.
 	tickers2[0].c <- time.Now()
-	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
+	tickers2[1].c <- time.Now()
+	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 2 })
 
 	cancel()
 	<-done
+}
+
+// freshDiskParams returns a new map instance with the same content every
+// call — the shape a real CheckConfig's params_json produces after each
+// independent json.Unmarshal, as opposed to a test reusing one map value
+// across two Apply calls (which reflect.DeepEqual would trivially accept
+// without proving anything about content-equality).
+func freshDiskParams() map[string]any {
+	return map[string]any{"mounts": []any{"/", "/data"}}
 }
 
 func TestSchedulerApplyChangedIntervalRestartsTimer(t *testing.T) {
@@ -503,3 +531,66 @@ func findResult(t *testing.T, batch []Result, item, metric string) Result {
 }
 
 func floatPtr(v float64) *float64 { return &v }
+
+// TestSchedulerApplyDuringShutdownNeverRacesTheWaitGroup pins the review's
+// Important finding: a configuration can arrive (Apply -> startLocked ->
+// spawnLocked -> wg.Add) at the exact instant Run's own context is
+// cancelled — production's own shutdown can produce this timing directly
+// (a manager message still in flight when the outer context ends) — and
+// sync.WaitGroup forbids a positive Add racing a Wait once the counter
+// can reach zero: a genuine panic, not a race-detector-only complaint.
+//
+// This drives the two goroutines against each other many times (no fake
+// clock or ticker can stage a timing race — the whole point is the
+// runtime's own scheduling), catching a misuse panic in the Apply
+// goroutine's own recover rather than letting it crash the test binary
+// unrecoverably. A single run proves little on its own (the window is a
+// handful of nanoseconds); run repeatedly it either never panics (the
+// fix holds) or fails loudly and immediately (it doesn't) — this is the
+// same "many iterations, no sleep-based pacing" shape the reviewer asked
+// for, applied to a mutex race rather than a channel one, since a
+// WaitGroup misuse has no seam to force a deterministic interleaving the
+// way a parked-goroutine channel does.
+func TestSchedulerApplyDuringShutdownNeverRacesTheWaitGroup(t *testing.T) {
+	plugin := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}
+	reg := map[string]Plugin{"cpu": plugin}
+
+	const iterations = 500
+	for i := 0; i < iterations; i++ {
+		sched := NewScheduler(reg, time.Now, (&fakeTickers{}).factory())
+		ctx, cancel := context.WithCancel(context.Background())
+		runDone := make(chan error, 1)
+		go func() { runDone <- sched.Run(ctx, (&fakeSink{}).collect) }()
+
+		var applyDone sync.WaitGroup
+		applyDone.Add(1)
+		panicked := make(chan any, 1)
+		go func() {
+			defer applyDone.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panicked <- r
+				}
+			}()
+			// Racing Apply against Run's own shutdown: exactly the
+			// production timing the review named (a CheckConfig still
+			// arriving as the outer context is cancelled).
+			sched.Apply(Config{Version: fmt.Sprintf("v%d", i), Checks: []Spec{
+				{Key: fmt.Sprintf("cpu-%d", i), Plugin: "cpu", Interval: time.Millisecond},
+			}})
+		}()
+
+		cancel()
+		applyDone.Wait()
+		if err := <-runDone; err != nil {
+			t.Fatalf("iteration %d: Run = %v, want nil", i, err)
+		}
+
+		select {
+		case r := <-panicked:
+			t.Fatalf("iteration %d: Apply concurrent with shutdown panicked: %v "+
+				"(sync.WaitGroup misuse: Add raced Wait)", i, r)
+		default:
+		}
+	}
+}

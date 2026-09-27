@@ -236,6 +236,23 @@ func (s *Scheduler) runCheck(ctx context.Context, key string, plugin Plugin, sc 
 // still being in flight. sink receives one batch per completed Collect
 // call (never merged across checks): the session decides where a batch
 // goes (its own sender, or the disconnect buffer).
+//
+// running flips to false under s.mu BEFORE wg.Wait() is ever called —
+// deliberately, not merely for tidiness. A CheckConfig can arrive (and
+// reach Apply -> startLocked -> spawnLocked -> wg.Add) at the exact
+// instant the outer context is cancelled — production's own shutdown can
+// produce this, a manager message still in flight when ctx ends — and
+// sync.WaitGroup forbids a positive Add racing a Wait when the counter
+// can reach zero: that is a genuine panic, not a race-detector-only
+// complaint. Flipping running under the lock closes it rather than
+// narrowing it: startLocked's own "if s.running" check (spawnLocked's
+// only caller besides this method's own startup loop above) and this
+// flip share one mutex, so the two total orders the runtime can pick
+// between are both safe — either Apply's whole spawn-and-Add critical
+// section completes and is visible before this flip runs (Wait, called
+// only afterward, already accounts for it), or this flip completes first
+// and Apply's later check of running sees false and never calls Add at
+// all. There is no third, interleaved outcome a mutex can produce.
 func (s *Scheduler) Run(ctx context.Context, sink func([]Result)) error {
 	s.mu.Lock()
 	s.ctx = ctx
@@ -248,9 +265,12 @@ func (s *Scheduler) Run(ctx context.Context, sink func([]Result)) error {
 
 	<-ctx.Done()
 
-	s.wg.Wait() // every goroutine has returned and stopped its own ticker
 	s.mu.Lock()
 	s.running = false
+	s.mu.Unlock()
+
+	s.wg.Wait() // every goroutine has returned and stopped its own ticker
+	s.mu.Lock()
 	s.checks = make(map[string]*scheduledCheck) // Run is one-shot; a future Apply starts clean
 	s.mu.Unlock()
 	return nil
