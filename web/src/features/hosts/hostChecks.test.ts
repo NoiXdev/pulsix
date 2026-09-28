@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
+import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue } from '../../api/types.ts';
 
 const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
@@ -77,6 +77,21 @@ describe('isGraphable', () => {
     ],
   ])('%s', (_name, c, v, expected) => {
     expect(isGraphable(c, v)).toBe(expected);
+  });
+});
+
+describe('clockSkewLabel', () => {
+  it.each([
+    ['no measurement is not a claim of zero', undefined, null],
+    ['a punctual host says nothing', 0.4, null],
+    ['delivery timing is not a clock', 29, null],
+    ['the floor itself is named', 30, '30 s behind'],
+    ['seconds stay seconds up to a minute and a half', 89, '89 s behind'],
+    ['a four-minute lag is what makes every reading look stale', 243.7, '4 min behind'],
+    ['a clock running fast is named as such, never as a negative number', -240, '4 min ahead of'],
+    ['an hour ahead is still inside the plausibility window and still wrong', -3600, '60 min ahead of'],
+  ])('%s', (_name, offset, expected) => {
+    expect(clockSkewLabel(offset)).toBe(expected);
   });
 });
 

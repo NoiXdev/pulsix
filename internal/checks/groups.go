@@ -165,6 +165,9 @@ type Service struct {
 	hostRoster HostRoster
 	rand       io.Reader
 	now        func() time.Time
+	// offsets is what ingest learned about each host's clock, kept in
+	// this process for the host page to read back (skew.go).
+	offsets *clockOffsets
 }
 
 // Option configures a Service.
@@ -191,7 +194,7 @@ func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = 
 
 // NewService wires the store; Preview needs WithMatcher.
 func NewService(store Store, opts ...Option) *Service {
-	s := &Service{store: store, rand: rand.Reader, now: time.Now}
+	s := &Service{store: store, rand: rand.Reader, now: time.Now, offsets: newClockOffsets()}
 	for _, o := range opts {
 		o(s)
 	}

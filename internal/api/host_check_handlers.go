@@ -88,6 +88,25 @@ type hostChecksOutput struct {
 		// a host that is simply not being watched.
 		Monitored bool           `json:"monitored"`
 		Checks    []hostCheckDTO `json:"checks"`
+		// ClockOffsetSeconds is how far this host's clock ran behind the
+		// manager's when its last readings were ingested — positive means
+		// behind, so its readings look older than they are.
+		//
+		// It is here because `stale` alone cannot be acted on. A host
+		// four minutes behind has every reading accepted (ingest's
+		// plausibility window is an hour wide, for replay) and every
+		// reading badged stale (three of the check's intervals, 180 s for
+		// the seed checks), for ever, while the agent is connected and
+		// perfectly healthy. Without this an operator cannot tell that
+		// from a host that stopped reporting, and the remedies — NTP
+		// there, look at the agent here — have nothing in common.
+		//
+		// Absent when this manager process has no measurement: it is
+		// taken at ingest and kept in memory (internal/checks/skew.go),
+		// so an agent whose stream lives on another manager, or one that
+		// has not reported since this process started, reports nothing
+		// rather than a made-up zero.
+		ClockOffsetSeconds *float64 `json:"clock_offset_seconds,omitempty"`
 	}
 }
 
@@ -151,6 +170,10 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		out := &hostChecksOutput{}
 		out.Body.HostID = hostID.String()
 		out.Body.Monitored = host.Monitored
+		if offset, ok := deps.Checks.ClockOffset(hostID); ok {
+			seconds := offset.Offset.Seconds()
+			out.Body.ClockOffsetSeconds = &seconds
+		}
 		out.Body.Checks = make([]hostCheckDTO, 0, len(effective))
 		byKey := currentByKey(current)
 		now := time.Now()

@@ -66,6 +66,77 @@ func (f *fakeStore) SeriesForHost(_ context.Context, _, _ uuid.UUID, _, _, _ str
 	return checks.Series{}, nil
 }
 
+// TestClockOffsetMeasuredAtIngest: the manager holds an agent's own
+// timestamps next to its own clock exactly once — when a batch arrives —
+// and nothing persists that comparison. Without it the host page cannot
+// tell a host whose clock runs four minutes behind (every reading
+// accepted, stored, and permanently badged stale) from a host that
+// stopped reporting, and the two remedies have nothing in common.
+//
+// Runs against the fake store: the measurement is the service's own, made
+// before the store is reached at all.
+func TestClockOffsetMeasuredAtIngest(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	host := uuid.Must(uuid.NewV7())
+	svc := checks.NewService(newFakeStore(), fixedClock(now))
+	org := uuid.Must(uuid.NewV7())
+
+	if _, ok := svc.ClockOffset(host); ok {
+		t.Fatal("a host that has never reported must have no measurement, not a zero one")
+	}
+
+	// A host four minutes behind, sending two readings collected a minute
+	// apart. The NEWEST is what the offset is taken from: the older one is
+	// older for a reason that is not the clock.
+	if _, err := svc.RecordObservations(context.Background(), org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now.Add(-5 * time.Minute), Value: f64(1)},
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now.Add(-4 * time.Minute), Value: f64(2)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := svc.ClockOffset(host)
+	if !ok || m.Offset != 4*time.Minute {
+		t.Fatalf("offset = %v (present %v), want 4m behind — taken from the newest reading in the batch", m.Offset, ok)
+	}
+	if !m.At.Equal(now) {
+		t.Errorf("measured at %v, want the ingest moment %v", m.At, now)
+	}
+
+	// A punctual host on the same manager is not tarred with it.
+	other := uuid.Must(uuid.NewV7())
+	if _, err := svc.RecordObservations(context.Background(), org, []checks.Observation{
+		{HostID: other, CheckKey: "cpu", Metric: "cpu.used_pct", At: now, Value: f64(3)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := svc.ClockOffset(other); !ok || m.Offset != 0 {
+		t.Fatalf("second host offset = %v (present %v), want 0", m.Offset, ok)
+	}
+	if m, _ := svc.ClockOffset(host); m.Offset != 4*time.Minute {
+		t.Fatalf("first host offset = %v after another host reported, want it untouched", m.Offset)
+	}
+}
+
+// TestClockOffsetRejectedObservationsDoNotMeasureAnything: an observation
+// outside the plausibility window is not evidence about the clock in the
+// sense this measurement means — it was not stored, so no reading of it
+// is on the page to explain. Measuring from it would report an hour of
+// skew for a host whose real readings are punctual.
+func TestClockOffsetRejectedObservationsDoNotMeasureAnything(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	host := uuid.Must(uuid.NewV7())
+	svc := checks.NewService(newFakeStore(), fixedClock(now))
+
+	if _, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now.Add(-2 * time.Hour), Value: f64(1)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := svc.ClockOffset(host); ok {
+		t.Fatalf("offset = %v, want no measurement at all from a batch nothing survived", m)
+	}
+}
+
 // TestRecordObservationsRoundTrip stores one numeric and one discrete
 // Observation, then reads both back through CurrentForHost and the
 // numeric one through SeriesForHost — the two read paths samples.go

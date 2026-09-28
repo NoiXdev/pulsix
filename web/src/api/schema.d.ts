@@ -2805,6 +2805,8 @@ export interface components {
              */
             readonly $schema?: string;
             checks: components["schemas"]["HostCheckDTO"][] | null;
+            /** Format: double */
+            clock_offset_seconds?: number;
             host_id: string;
             monitored: boolean;
         };

@@ -8,7 +8,7 @@ import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
-import { formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
+import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts';
 
 /**
@@ -67,7 +67,10 @@ export interface HostChecksCardProps {
  *  - `stale` is the server's answer (three of the check's own intervals
  *    without a reading, `internal/api`'s `staleIntervals`). The card
  *    renders the flag and never recomputes the rule: a second
- *    implementation would drift the moment the threshold moved.
+ *    implementation would drift the moment the threshold moved. It does
+ *    name the one cause the flag cannot distinguish on its own — a host
+ *    clock that disagrees with the manager's, which marks every reading
+ *    stale for ever while the agent is healthy (see clockSkewLabel).
  */
 export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCardProps) {
   const query = useHostChecks(org, hostId, canRead);
@@ -77,6 +80,9 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
 
   const monitored = query.data?.monitored ?? false;
   const checks = query.data?.checks ?? [];
+  // Only while the host is monitored: with nothing being measured there
+  // are no readings on the card for a clock to have skewed.
+  const skew = monitored ? clockSkewLabel(query.data?.clock_offset_seconds) : null;
 
   return (
     <Card className="p-4">
@@ -103,6 +109,12 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
             <p className="mb-3 text-xs text-[var(--px-warn)]">
               This host is not being monitored. Nothing measures these checks until the Monitored capability is on — they are the set
               that would apply.
+            </p>
+          )}
+          {skew && (
+            <p className="mb-3 text-xs text-[var(--px-warn)]">
+              This host’s clock is about {skew} the manager’s. Readings carry the host’s own timestamps, so a stale badge below may be
+              the clock rather than a host that stopped reporting — check its time synchronisation.
             </p>
           )}
           {checks.length === 0 && <p className="text-xs text-muted-foreground">No checks resolve for this host yet.</p>}

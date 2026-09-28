@@ -277,6 +277,11 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 	if len(valid) == 0 {
 		return res, nil
 	}
+	// What the batch says about the agent's clock, measured before the
+	// store is reached: this is the only moment the manager ever holds an
+	// agent's own timestamps next to its own clock, and nothing persists
+	// the comparison (skew.go explains what is kept and why here).
+	s.offsets.note(valid, now)
 	accepted, unknownHost, err := s.store.RecordObservations(ctx, orgID, valid)
 	if err != nil {
 		return Ingest{}, fmt.Errorf("record observations: %w", err)

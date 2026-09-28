@@ -59,6 +59,40 @@ export function isGraphable(check: HostCheck, v: HostCheckValue): boolean {
   return NUMERIC_PLUGIN[check.plugin];
 }
 
+/**
+ * CLOCK_SKEW_FLOOR is where a difference between the host's clock and the
+ * manager's stops being explicable by anything else. Below half a minute
+ * it is collection and delivery timing; above it, it is a clock, and the
+ * operator has something to do about it.
+ */
+const CLOCK_SKEW_FLOOR = 30;
+
+/**
+ * clockSkewLabel renders the measured offset between a host's clock and
+ * the manager's, or null when there is nothing worth saying.
+ *
+ * This exists because "stale" on its own cannot be acted on. Ingest
+ * accepts a reading up to an hour old (a reconnecting agent replays a
+ * bounded ring, and those samples are real), while a reading is shown as
+ * stale after three of its check's own intervals — 180 s for the 60 s
+ * seed checks. A host whose clock is four minutes behind therefore
+ * reports punctually, has everything it sends accepted and stored, and is
+ * badged amber for ever. That looks exactly like a host that stopped
+ * reporting, and the two remedies have nothing in common.
+ *
+ * The server measures the offset at ingest and sends it with the
+ * envelope (`clock_offset_seconds`, positive meaning the host's clock is
+ * behind the manager's); it is absent when no manager process has a
+ * measurement, and absence is not zero.
+ */
+export function clockSkewLabel(offsetSeconds: number | undefined): string | null {
+  if (offsetSeconds === undefined) return null;
+  const seconds = Math.round(Math.abs(offsetSeconds));
+  if (seconds < CLOCK_SKEW_FLOOR) return null;
+  const magnitude = seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${seconds} s`;
+  return `${magnitude} ${offsetSeconds > 0 ? 'behind' : 'ahead of'}`;
+}
+
 /** sourceLabel renders the scope a check was inherited from as the thing
  * itself — the organization, the named monitoring group, this host — never
  * as the raw id the envelope carries beside it. */

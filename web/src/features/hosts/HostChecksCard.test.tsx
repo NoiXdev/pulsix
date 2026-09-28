@@ -217,6 +217,46 @@ describe('HostChecksCard', () => {
     expect(row('cpu', 'load1').queryByText('stale')).not.toBeInTheDocument();
   });
 
+  it('names a skewed host clock rather than leaving every reading amber without a cause', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        // Measured at ingest: this host's clock runs four minutes behind
+        // the manager's. Its readings are accepted (the window is an hour
+        // wide) and then marked stale for ever (three 60 s intervals),
+        // with the agent connected and perfectly healthy.
+        clock_offset_seconds: 243.7,
+        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true }] })],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText(/clock is about 4 min behind/)).toBeInTheDocument();
+    // The stale badge stays: the server's verdict is not overridden, only
+    // explained.
+    expect(row('cpu', 'usage_percent').getByText('stale')).toBeInTheDocument();
+  });
+
+  it('says nothing about a clock nobody measured, and nothing about a punctual one', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+    });
+    const { unmount } = renderCard();
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    // No measurement in the envelope at all — a manager that has ingested
+    // nothing from this host. Absence is not "this clock is fine".
+    expect(screen.queryByText(/clock is about/)).not.toBeInTheDocument();
+    unmount();
+
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': { ...THREE_SOURCES, clock_offset_seconds: 0.8 },
+    });
+    renderCard();
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    expect(screen.queryByText(/clock is about/)).not.toBeInTheDocument();
+  });
+
   it('distinguishes a host with nothing configured from one nobody is watching', async () => {
     // Three states share one card, and the empty list is the one that reads
     // like a bug when it is silent.

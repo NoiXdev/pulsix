@@ -43,9 +43,10 @@ type hostCheck struct {
 }
 
 type hostChecksBody struct {
-	HostID    string      `json:"host_id"`
-	Monitored bool        `json:"monitored"`
-	Checks    []hostCheck `json:"checks"`
+	HostID             string      `json:"host_id"`
+	Monitored          bool        `json:"monitored"`
+	Checks             []hostCheck `json:"checks"`
+	ClockOffsetSeconds *float64    `json:"clock_offset_seconds"`
 }
 
 func (b hostChecksBody) byKey(t *testing.T, key string) hostCheck {
@@ -85,6 +86,44 @@ func (f checksFixture) record(t *testing.T, obs ...checks.Observation) {
 
 func floatPtr(v float64) *float64 { return &v }
 func strPtr(v string) *string     { return &v }
+
+// TestHostChecksReportsTheAgentsClockOffset: staleness alone is not
+// actionable. Ingest accepts a reading up to an hour old (replay), the
+// page calls one stale after three of the check's own intervals, and a
+// host whose clock is four minutes behind therefore reports punctually
+// and is badged amber for ever. The envelope carries what the ingest path
+// measured so the GUI can name the cause — a clock that disagrees, not a
+// host that went quiet.
+func TestHostChecksReportsTheAgentsClockOffset(t *testing.T) {
+	f := newChecksFixture(t, "host-checks-clock")
+
+	// web-1 reports with a clock four minutes behind the manager's: well
+	// inside the plausibility window, so every reading is accepted and
+	// stored, and every one of them is three intervals old on arrival.
+	f.record(t, checks.Observation{
+		HostID: f.web, CheckKey: "cpu", Metric: "usage_percent",
+		At: time.Now().Add(-4 * time.Minute), Value: floatPtr(12.5),
+	})
+
+	body := f.hostChecks(t, f.viewerC, f.web)
+	if body.ClockOffsetSeconds == nil {
+		t.Fatal("no clock offset reported for a host that just ingested a batch")
+	}
+	if *body.ClockOffsetSeconds < 235 || *body.ClockOffsetSeconds > 245 {
+		t.Fatalf("clock offset = %v s, want about 240 (positive: the host's clock is behind)", *body.ClockOffsetSeconds)
+	}
+	// And the reading it measured that on is exactly the one the page
+	// would otherwise call stale with no explanation.
+	if cpu := body.byKey(t, "cpu"); len(cpu.Values) != 1 || !cpu.Values[0].Stale {
+		t.Fatalf("cpu = %+v, want the single reading marked stale", cpu)
+	}
+
+	// A host that has reported nothing to this manager gets no offset at
+	// all rather than a zero, which would read as "this clock is fine".
+	if other := f.hostChecks(t, f.viewerC, f.dbHost); other.ClockOffsetSeconds != nil {
+		t.Fatalf("db-1 clock offset = %v, want none: nothing has ever measured it", *other.ClockOffsetSeconds)
+	}
+}
 
 // TestHostCheckRoutes drives the host page's monitoring section on one
 // fixture. The subtests run in order; the last one deletes every
