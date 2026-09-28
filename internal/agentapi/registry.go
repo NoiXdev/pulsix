@@ -62,12 +62,28 @@ type trackedStream struct {
 	sendMu sync.Mutex
 
 	// The outgoing-push mailbox: a single slot for the latest configuration
-	// PushToHost wants delivered, not a queue. Only the newest push is
-	// ever worth delivering — an older one that has not gone out yet is
-	// already obsolete the moment a newer one arrives — so queuePush
-	// replaces whatever is queued rather than appending to it: the slot
-	// can never fill up, and there is nothing to block a caller on or
-	// reject. wake (buffered 1) tells pushWriter a value is waiting;
+	// PushToHost wants delivered, not a queue. Among pushes, only the
+	// newest is ever worth delivering — an older one that has not gone out
+	// yet is already obsolete the moment a newer one arrives — so
+	// queuePush replaces whatever is queued rather than appending to it:
+	// the slot can never fill up, and there is nothing to block a caller
+	// on or reject.
+	//
+	// Read that as the narrow claim it is: it is about the ORDER OF
+	// PUSHES AMONG THEMSELVES, and says nothing about a push against an
+	// acknowledgement. Those are two senders — pushWriter here, and the
+	// receive loop calling send directly — sharing only sendMu, which
+	// grants in no particular order. A heartbeat that resolved V1 just
+	// before a concurrent edit committed can therefore reach the agent
+	// AFTER the mailbox delivered V2, leaving the agent on V1. That is
+	// tolerable for exactly one reason, and it is the same reason every
+	// missed push is tolerable: the agent's next heartbeat reports V1, the
+	// manager resolves V2, and the mismatch is answered
+	// (processHeartbeat). Do not read this paragraph as a guarantee that
+	// the agent always ends up on the newest configuration the instant it
+	// is computed — convergence is what makes it true, not ordering.
+	//
+	// wake (buffered 1) tells pushWriter a value is waiting;
 	// closed, closed exactly once via closeOnce, tells it to stop once it
 	// has drained whatever is there. Closing a channel can never block
 	// regardless of what pushWriter is doing at that instant — including
