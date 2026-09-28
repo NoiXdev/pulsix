@@ -155,7 +155,9 @@ func plausible(at, now time.Time) bool {
 //     it either: the agent chunks both replayed and live results at
 //     maxResultsPerMessage (200, internal/agent/session.go), five times
 //     under this bound, so a well-behaved agent never approaches it no
-//     matter how long it was disconnected.
+//     matter how long it was disconnected — a relation the agent package's
+//     own TestMaxResultsPerMessageStaysUnderTheIngestBound holds against
+//     this constant directly, rather than leaving both comments to drift.
 const (
 	MaxObservationsPerBatch = 1000
 	MaxCheckKeyLen          = 64

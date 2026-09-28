@@ -37,7 +37,9 @@ import (
 // refused, the stream would drop, the agent would reconnect and send the
 // identical batch, for ever. 200 sits five times under that bound, which
 // is the headroom that makes the manager's limit unreachable for any
-// agent that behaves.
+// agent that behaves. The relation itself — not the factor, the direction
+// — is pinned by TestMaxResultsPerMessageStaysUnderTheIngestBound; before
+// that existed, raising this to 1001 left the whole package green.
 const maxResultsPerMessage = 200
 
 // streamSender serializes every outbound message on one AgentStream.

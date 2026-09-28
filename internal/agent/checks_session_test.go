@@ -18,6 +18,11 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
+
+	// The manager's own domain package, for its ingest bound alone. It is
+	// imported here and nowhere in the agent's non-test sources, so the
+	// agent binary never links it.
+	managerchecks "github.com/noixdev/pulsix/internal/checks"
 )
 
 func floatPtr(v float64) *float64 { return &v }
@@ -423,6 +428,15 @@ func TestHandleResultsChunksToTheIngestContract(t *testing.T) {
 		if len(b) > maxResultsPerMessage {
 			t.Errorf("message %d carries %d results, over the %d cap", i, len(b), maxResultsPerMessage)
 		}
+		// The cap is only worth anything relative to the bound it exists
+		// to stay under, and the line above cannot see that: it compares
+		// the chunker against its own constant, so it holds for ANY value
+		// of that constant, including one over the manager's limit.
+		if len(b) > managerchecks.MaxObservationsPerBatch {
+			t.Errorf("message %d carries %d results, over the manager's ingest bound of %d — "+
+				"it would be refused with InvalidArgument and the refusal ends the stream",
+				i, len(b), managerchecks.MaxObservationsPerBatch)
+		}
 		total += len(b)
 	}
 	if total != n {
@@ -656,5 +670,35 @@ func TestLoopUnknownPluginIsLoggedAndUnclaimed(t *testing.T) {
 	}
 	if !strings.Contains(lt.logOutput(), "quantum") {
 		t.Errorf("the unrunnable check's key must reach the log; log was: %s", lt.logOutput())
+	}
+}
+
+// TestMaxResultsPerMessageStaysUnderTheIngestBound is the only thing in
+// the repo that relates the agent's chunk size to the manager's ingest
+// bound, and both constants' comments rest their correctness argument on
+// that relation ("200 sits five times under that bound";
+// "the agent chunks both replayed and live results at
+// maxResultsPerMessage ... five times under this bound").
+//
+// Without it, raising maxResultsPerMessage to 1001 — one over
+// internal/checks.MaxObservationsPerBatch — left the whole internal/agent
+// suite green, because every other assertion about chunking compares the
+// chunker to its own constant and therefore holds for any value of it.
+// What that would buy is the permanent failure the bound exists to
+// prevent: the manager refuses the message with InvalidArgument,
+// receiveMessages returns the status, the RPC ends, the agent reconnects
+// and sends the identical batch, for ever.
+//
+// internal/checks is the manager's domain package and the agent binary
+// must not link it; this reference is in a test file, so it reaches the
+// test binary only.
+func TestMaxResultsPerMessageStaysUnderTheIngestBound(t *testing.T) {
+	if maxResultsPerMessage > managerchecks.MaxObservationsPerBatch {
+		t.Fatalf("maxResultsPerMessage = %d, over the manager's MaxObservationsPerBatch of %d: "+
+			"every full chunk would be refused and the refusal ends the stream",
+			maxResultsPerMessage, managerchecks.MaxObservationsPerBatch)
+	}
+	if maxResultsPerMessage < 1 {
+		t.Fatalf("maxResultsPerMessage = %d: a chunk has to carry something", maxResultsPerMessage)
 	}
 }
