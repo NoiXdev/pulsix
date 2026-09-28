@@ -162,6 +162,33 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Fatal("condition not met in time")
 }
 
+// waitForTickers blocks until the session has handed out at least n
+// tickers, and returns what it recorded.
+//
+// Waiting on a SENT MESSAGE is waiting for the wrong thing: a session
+// pushes facts and its first heartbeat BEFORE it builds any ticker, so
+// the first send says nothing about whether the tickers exist yet. On an
+// idle machine the gap is microseconds and the assertion that followed
+// happened to win the race; under the load of a full coverage-gate run it
+// does not, and the test fails with "ticker intervals = []" or panics
+// indexing the slice. Found in the gate, reproduced by delaying the
+// session at exactly that point (backlog 3.29).
+func (lt *loopTest) waitForTickers(n int) ([]time.Duration, []*fakeTicker) {
+	lt.t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		intervals, tickers := lt.ticks.recorded()
+		if len(tickers) >= n {
+			return intervals, tickers
+		}
+		if !time.Now().Before(deadline) {
+			lt.t.Fatalf("the session handed out %d tickers in 2s, want at least %d", len(tickers), n)
+			return nil, nil
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // testTokenID is a fixed enrollment token id the tests render tokens with.
 var testTokenID = uuid.Must(uuid.NewV7())
 
@@ -248,7 +275,7 @@ func TestLoopEnrollsAndStreams(t *testing.T) {
 
 	// Heartbeat cadence: the first ticker is the heartbeat's, the second
 	// the facts', the third the config re-assert's.
-	intervals, tickers := lt.ticks.recorded()
+	intervals, tickers := lt.waitForTickers(3)
 	if len(intervals) != 3 || intervals[0] != lt.cfg.HeartbeatInterval || intervals[1] != lt.cfg.FactsInterval ||
 		intervals[2] != lt.cfg.ConfigInterval {
 		t.Fatalf("ticker intervals = %v, want [%v %v %v]", intervals, lt.cfg.HeartbeatInterval, lt.cfg.FactsInterval, lt.cfg.ConfigInterval)
@@ -525,9 +552,9 @@ func TestLoopFactsPushErrorIsAdvisory(t *testing.T) {
 	if factsMsg.GetFacts() == nil {
 		t.Fatal("the initial push must be a facts message")
 	}
-	intervals, tickers := lt.ticks.recorded()
+	intervals, tickers := lt.waitForTickers(3)
 	if len(intervals) != 3 {
-		t.Fatalf("ticker intervals = %v, want 2", intervals)
+		t.Fatalf("ticker intervals = %v, want 3", intervals)
 	}
 	tickers[1].c <- time.Now() // the facts interval tick
 	waitFor(t, 2*time.Second, func() bool { return collector.collectCalls() == 2 })
@@ -572,9 +599,9 @@ func TestLoopRenewalDueDuringStreamEndsSession(t *testing.T) {
 
 	// Time passes into the renewal window; the heartbeat tick fires.
 	lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
-	intervals, tickers := lt.ticks.recorded()
+	intervals, tickers := lt.waitForTickers(3)
 	if len(intervals) != 3 {
-		t.Fatalf("ticker intervals = %v, want 2", intervals)
+		t.Fatalf("ticker intervals = %v, want 3", intervals)
 	}
 	tickers[0].c <- time.Now()
 	// The loop renews and reconnects with the renewed certificate.

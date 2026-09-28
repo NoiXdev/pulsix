@@ -83,7 +83,7 @@ func TestFactsTickSendFailureReconnects(t *testing.T) {
 	waitFor(t, 2*time.Second, func() bool { return len(stream1.sentMessages()) > 0 })
 	// The send side dies; the next FACTS tick fails.
 	stream1.failSends(errors.New("transport dead"))
-	_, tickers := lt.ticks.recorded()
+	_, tickers := lt.waitForTickers(2)
 	tickers[1].c <- time.Now()
 	waitFor(t, 2*time.Second, func() bool { return len(stream2.sentMessages()) > 0 })
 	cancel()

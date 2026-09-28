@@ -229,9 +229,9 @@ func TestStreamSendFailureReconnects(t *testing.T) {
 	// The send side dies (the manager's transport dropped mid-push): the
 	// next heartbeat tick fails and the loop reconnects with backoff.
 	stream1.failSends(errors.New("transport dead"))
-	intervals, tickers := lt.ticks.recorded()
+	intervals, tickers := lt.waitForTickers(3)
 	if len(intervals) != 3 {
-		t.Fatalf("ticker intervals = %v, want 2", intervals)
+		t.Fatalf("ticker intervals = %v, want 3", intervals)
 	}
 	tickers[0].c <- time.Now()
 	waitFor(t, 2*time.Second, func() bool { return len(stream2.sentMessages()) > 0 })

@@ -71,10 +71,7 @@ func TestLoopHeartbeatReportsSchedulerVersion(t *testing.T) {
 	}})
 	waitFor(t, 2*time.Second, func() bool { return l.scheduler.Version() == "cfg-v1" })
 
-	_, tickers := lt.ticks.recorded()
-	if len(tickers) < 1 {
-		t.Fatal("no heartbeat ticker recorded")
-	}
+	_, tickers := lt.waitForTickers(1)
 	before := len(heartbeats(stream))
 	tickers[0].c <- time.Now()
 	waitFor(t, 2*time.Second, func() bool { return len(heartbeats(stream)) > before })
@@ -102,7 +99,7 @@ func TestLoopConfigIntervalTickerResendsHeartbeat(t *testing.T) {
 	cancel, done := runLoop(t, l)
 	waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
 
-	intervals, tickers := lt.ticks.recorded()
+	intervals, tickers := lt.waitForTickers(3)
 	if len(intervals) != 3 {
 		t.Fatalf("tickers = %d, want 3 (heartbeat, facts, config)", len(intervals))
 	}
@@ -571,7 +568,7 @@ func TestLoopConfigTickerAbsentWhenTheHeartbeatIsAtLeastAsFrequent(t *testing.T)
 			cancel, done := runLoop(t, l)
 			waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
 
-			intervals, _ := lt.ticks.recorded()
+			intervals, _ := lt.waitForTickers(tc.wantTickers)
 			if len(intervals) != tc.wantTickers {
 				t.Fatalf("tickers = %v, want %d", intervals, tc.wantTickers)
 			}
