@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
 
@@ -17,13 +17,22 @@ function makeChild() {
   };
 }
 
-function silenceReact() {
+describe('ErrorBoundary', () => {
   // React logs every caught error itself; so does ErrorBoundary's own
   // componentDidCatch. Neither is a failure, and both would bury the run.
-  return vi.spyOn(console, 'error').mockImplementation(() => {});
-}
+  //
+  // Restored in afterEach rather than at the end of each test body: a test
+  // that fails before its last line would otherwise leave console.error
+  // stubbed for the rest of the file, and the next failure would go quiet.
+  // vitest.config.ts sets no restoreMocks, so nothing else undoes it.
+  let errors: MockInstance<typeof console.error>;
+  beforeEach(() => {
+    errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    errors.mockRestore();
+  });
 
-describe('ErrorBoundary', () => {
   it('renders its children while nothing throws', () => {
     const { Boom } = makeChild();
     render(
@@ -36,7 +45,6 @@ describe('ErrorBoundary', () => {
   });
 
   it('swaps in the fallback once a child throws', () => {
-    const errors = silenceReact();
     const { Boom } = makeChild();
     render(
       <ErrorBoundary fallback={<div>fallback</div>}>
@@ -44,11 +52,9 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     );
     expect(screen.getByText('fallback')).toBeInTheDocument();
-    errors.mockRestore();
   });
 
   it('holds the fallback across re-renders while the reset key is unchanged', () => {
-    const errors = silenceReact();
     const { Boom, renders } = makeChild();
     const { rerender } = render(
       <ErrorBoundary fallback={<div>fallback</div>} resetKey="cpu:1h">
@@ -71,11 +77,9 @@ describe('ErrorBoundary', () => {
 
     expect(renders).toHaveLength(attempts);
     expect(screen.getByText('fallback')).toBeInTheDocument();
-    errors.mockRestore();
   });
 
   it('tries again when the reset key changes', () => {
-    const errors = silenceReact();
     const { Boom } = makeChild();
     const { rerender } = render(
       <ErrorBoundary fallback={<div>fallback</div>} resetKey="cpu:1h">
@@ -92,6 +96,5 @@ describe('ErrorBoundary', () => {
 
     expect(screen.getByText('child')).toBeInTheDocument();
     expect(screen.queryByText('fallback')).not.toBeInTheDocument();
-    errors.mockRestore();
   });
 });
