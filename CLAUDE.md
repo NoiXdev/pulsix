@@ -34,7 +34,7 @@ backlog: `docs/BACKLOG.md`, brand: `brand/`.
 - Table-driven unit tests for logic; integration tests against the Postgres container;
   API tests through `internal/api/apitest`; SPA with Vitest; E2E with Playwright.
 - Coverage gates: Go ≥ 80 % (auth, tenancy, db ≥ 90 %), SPA ≥ 70 %.
-- Run the race suite as two package groups, never one whole-module invocation (it hits e2e SSH loopback timeouts under load, backlog 2.83), and always with `-timeout 1800s`: `internal/api` alone takes over 1 000 s under `-race`, so go test's 600 s per-package default panics the whole invocation. `go test -race -timeout 1800s $(go list ./... | grep -v /internal/e2e)` then `go test -race -timeout 1800s ./internal/e2e/...`. That and `golangci-lint run` must pass before every commit — note that the linter set enables no formatter, so `gofmt -l .` must be empty too (CI checks it separately, backlog 2.59 and 3.25).
+- Run the race suite as two package groups, never one whole-module invocation (it hits e2e SSH loopback timeouts under load, backlog 2.83), and always with `-timeout 1800s`: `internal/api` alone takes over 1 000 s under `-race`, so go test's 600 s per-package default panics the whole invocation. `go test -race -timeout 1800s $(go list ./... | grep -v /internal/e2e)` then `go test -race -timeout 1800s ./internal/e2e/...`. That and `golangci-lint run` must pass before every commit; since backlog 3.25 the linter set carries gofmt (simplifying, so `gofmt -s -l .` is the equivalent by hand), and CI keeps its own cheap `gofmt -s -l .` step ahead of it (backlog 2.59).
 
 ## Git
 

@@ -22,12 +22,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27" }
-      # Backlog 2.59: the enabled golangci-lint set does not include a
-      # formatter linter, so pre-existing deviations (five files from
-      # v0.2b) never failed CI. `gofmt -l` listing anything fails here.
+      # Backlog 2.59: pre-existing deviations (five files from v0.2b) never
+      # failed CI. `gofmt -l` listing anything fails here. This runs ahead of
+      # golangci-lint, which since backlog 3.25 also carries gofmt, so the
+      # cheap step names the file before the slow one starts; `-s` keeps the
+      # two agreeing (golangci-lint's gofmt simplifies, plain `gofmt -l` does
+      # not, and an empty `import ()` slipped through that gap).
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l .)
+          unformatted=$(gofmt -s -l .)
           if [ -n "$unformatted" ]; then
             echo "::error::files not gofmt-clean:"
             echo "$unformatted"

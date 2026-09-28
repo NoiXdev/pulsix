@@ -2,8 +2,6 @@
 // and retry actions. All over the real HTTP API.
 package e2e
 
-import ()
-
 // createEditorPlaybook stores an inline playbook.
 func (s *scenario) createEditorPlaybook(name, inline string) string {
 	s.t.Helper()

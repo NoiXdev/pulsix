@@ -2,3 +2,11 @@ version: "2"
 linters:
   default: standard
   enable: [errcheck, govet, staticcheck, unused, misspell, gocritic]
+# Backlog 3.25: golangci-lint v2 moved the formatters out of `linters`, so
+# with no `formatters` block a green `golangci-lint run` said nothing about
+# formatting and CI's separate gate (backlog 2.59) was the first thing to
+# notice. Listed here, gofmt runs as part of `run` and one local command
+# tells the whole truth. It simplifies (`gofmt -s`), which is stricter than
+# the plain `gofmt -l .` CI used to run — that gate now passes -s too.
+formatters:
+  enable: [gofmt]
