@@ -448,6 +448,21 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
 >   is the hybrid §8 describes, with one difference: the agent re-asserts a
 >   version rather than re-fetching a whole configuration. There is no
 >   configuration-version column in the GUI yet (backlog 3.13c).
+>
+>   **What convergence costs.** Every heartbeat whose reported version
+>   differs from the resolved one makes the manager resolve that host from
+>   scratch — the organization's monitored hosts, its definitions, its
+>   monitoring groups and every group's selector expansion — because
+>   nothing records what was pushed to whom. That statelessness is the
+>   property that makes an unrecognised or stale version self-correct in
+>   one round trip instead of looping, so it is a cost, not a defect: a
+>   converged fleet takes the cheap path (the agent reports the matching
+>   version and the manager answers nothing), and a churning 1 000-host
+>   organization is worst-case tens of full resolves a second. The named
+>   mitigation, when fleet scale is the subject in v0.6, is a **short-TTL
+>   per-organization bundle cache** in front of the resolve: it caches the
+>   inputs, not the push history, so the convergence property survives it.
+>   Backlog 3.19 carries this.
 > - **Sampling.** The agent holds one timer per check (10 s – 24 h),
 >   measures, and ships each reading with **its own timestamp**. A
 >   disconnected agent keeps measuring into a bounded 15-minute ring and
