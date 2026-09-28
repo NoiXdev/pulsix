@@ -41,9 +41,10 @@ jobs:
       # `latest`, so a new linter release cannot turn main red on its own.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with: { version: v2.13.2 }
-      # The gate runs the race+coverage suite as two package groups (backlog
-      # 2.83): everything except internal/e2e, then ./internal/e2e/... on
-      # its own, and prints a per-package table plus, when anything fails,
+      # The gate runs the race+coverage suite in the package groups
+      # scripts/test-groups.sh defines — internal/api, internal/e2e and
+      # everything else, each with its own timeout (backlog 2.83 and
+      # 3.21) — and prints a per-package table plus, when anything fails,
       # the failing packages' own go test output.
       - run: scripts/coverage-gate.sh
       # The agent binaries the manager embeds and serves are built by a

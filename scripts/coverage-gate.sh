@@ -88,32 +88,28 @@ test_output=$(mktemp)
 trap 'rm -f "$test_output"' EXIT
 test_rc=0
 
-# -timeout 1800s (Task 17): go test's per-package default is 600s, and
-# internal/api -race alone exceeds it on some machines (its ~190 handler
-# tests each build a full apitest.New app against the shared testcontainer
-# database) — a package hitting the default timeout panics the whole test
-# binary instead of failing cleanly, which would abort this gate and every
-# `go test -race ./...` invocation (Makefile's `test` target does the
-# same). Measured reality under -race -cover under load: internal/api ran
-# 1089s solo and 1441s inside the full group (task 8 fix round 1), so the
-# old 900s margin was itself below the measured slowest run — 1800s is
-# the measured reality with headroom, not a tuned minimum. The 2.83-style
-# two-group split already limits how much one slow package can stretch
-# the run: only its own group waits on it.
+# The race suite runs as package groups, never one whole-module
+# invocation. scripts/test-groups.sh owns which packages are in which
+# group and what timeout each gets, so this gate and the Makefile's `test`
+# target cannot drift apart; that file's own comment carries the
+# measurements behind the three numbers. In short: internal/e2e needs an
+# otherwise-idle invocation or its SSH loopback fixtures time out under
+# load (backlog 2.83), and internal/api needs a timeout the other 56
+# packages should not have to wait out (backlog 3.21) — go test's
+# -timeout applies to each package's own binary, so one number for the
+# whole module is sized for the slowest package and is then also what a
+# hung five-second package waits out.
 #
-# The race suite runs as TWO package groups, not one whole-module
-# invocation (backlog 2.83): on a loaded machine a single
-# `go test -race ./...` intermittently hits internal/e2e's SSH loopback
-# timeouts, because every other package's tests compete for CPU while the
-# e2e fixtures wait on loopback handshakes. Running the module minus e2e
-# first and ./internal/e2e/... on its own keeps the e2e fixtures on an
-# otherwise-idle invocation. The two groups are disjoint, so appending
-# both outputs still gives the coverage table one line per package.
+# The groups are disjoint (test-groups.sh checks that), so appending every
+# group's output still gives the coverage table one line per package.
 if [ -n "${COVERAGE_GATE_GO_TEST_OUTPUT:-}" ]; then
 	cp "$COVERAGE_GATE_GO_TEST_OUTPUT" "$test_output"
 else
-	go test -race -cover -timeout 1800s $(go list ./... | grep -v '/internal/e2e') >"$test_output" 2>&1 || test_rc=$?
-	go test -race -cover -timeout 1800s ./internal/e2e/... >>"$test_output" 2>&1 || test_rc=$?
+	while read -r group timeout pkgs; do
+		echo "==== $group group, -timeout $timeout" >>"$test_output"
+		# shellcheck disable=SC2086 # the package list is intentionally split
+		go test -race -cover -timeout "$timeout" $pkgs >>"$test_output" 2>&1 || test_rc=$?
+	done < <(scripts/test-groups.sh)
 fi
 
 gate_rc=0

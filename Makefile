@@ -1,10 +1,14 @@
 .PHONY: test lint build sqlc buf-lint buf-generate web-build agent-binaries
-# Two package groups, not one whole-module run (backlog 2.83): a single
-# `go test -race ./...` intermittently hits internal/e2e's SSH loopback
-# timeouts on a loaded machine; the e2e suite runs on its own invocation.
+# Package groups, not one whole-module run: the e2e suite needs an
+# otherwise-idle invocation (backlog 2.83) and internal/api needs a
+# timeout the other 56 packages should not have to wait out (backlog
+# 3.21). scripts/test-groups.sh owns the grouping and both timeouts, so
+# this target and scripts/coverage-gate.sh cannot drift apart.
 test:
-	go test -race -cover -timeout 1800s $$(go list ./... | grep -v /internal/e2e)
-	go test -race -cover -timeout 1800s ./internal/e2e/...
+	scripts/test-groups.sh | while read -r name timeout pkgs; do \
+		echo "==== $$name group, -timeout $$timeout"; \
+		go test -race -cover -timeout "$$timeout" $$pkgs || exit 1; \
+	done
 lint:
 	golangci-lint run ./...
 # build depends on web-build so the binary always embeds the real SPA, not
