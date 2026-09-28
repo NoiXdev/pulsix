@@ -13,6 +13,7 @@ import { parseTagChip } from './selectorInput.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { may } from '../../lib/roles.ts';
 import { HostAgentCard } from './HostAgentCard.tsx';
+import { HostChecksCard } from './HostChecksCard.tsx';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
 import { HostSshCard } from './HostSshCard.tsx';
 import { ConnectionTestCard } from './ConnectionTestCard.tsx';
@@ -20,18 +21,18 @@ import { BootstrapDialog } from './BootstrapDialog.tsx';
 
 /**
  * HostDetailPage follows design/mockups/build.mjs's HOST DETAIL artboard
- * for the header (status, name, zone) and facts panel; the metric cards,
- * check table and Ansible group panels in that mockup depend on
- * monitoring and inventory-group data no v0.1 backend route serves yet
- * (see task-15a-report.md), so this page covers only what Task 6–14's API
- * actually has: capabilities and tags.
+ * for the header (status, name, zone) and facts panel. The mockup's metric
+ * cards and check table arrived with v0.3b-1 and live in HostChecksCard;
+ * the Ansible group panel is HostInventoryCard. The header's status dot is
+ * still the one piece with no honest source — see its own comment.
  */
 export function HostDetailPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
   const navigate = useNavigate();
   const toast = useToast();
   const orgInfo = useOrg(org);
-  const canWrite = may(orgInfo.data?.org.role, 'inventory.write');
+  const role = orgInfo.data?.org.role;
+  const canWrite = may(role, 'inventory.write');
 
   const host = useHost(org, id);
   const tags = useHostTags(org, id);
@@ -182,7 +183,8 @@ export function HostDetailPage() {
         </Card>
       </div>
 
-      <HostAgentCard org={org} hostId={h.id} canWrite={may(orgInfo.data?.org.role, 'agents.write')} />
+      <HostAgentCard org={org} hostId={h.id} canWrite={may(role, 'agents.write')} />
+      <HostChecksCard org={org} hostId={h.id} canRead={may(role, 'checks.read')} canWrite={may(role, 'checks.write')} />
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
       <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} />
       {h.managed && <ConnectionTestCard org={org} hostId={h.id} canWrite={canWrite} />}

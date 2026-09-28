@@ -23,6 +23,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-hook-form": "7.87.0",
+    "uplot": "1.6.32",
     "zod": "4.6.2"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
-import type { CheckDefinitionInput, MonitoringGroupInput } from '../types.ts';
+import type { CheckDefinitionInput, MetricRange, MonitoringGroupInput } from '../types.ts';
 
 /**
  * The check pipeline's organization-level surface (v0.3b-1, spec
@@ -112,6 +112,69 @@ export function useMonitoringGroupPreview(org: string, selector: string | null) 
     queryFn: () =>
       unwrap(api.POST('/api/v1/orgs/{org}/monitoring-groups/preview', { params: { path: { org } }, body: { selector: selector! } })),
     enabled: !!org && selector !== null,
+    retry: false,
+  });
+}
+
+/**
+ * useHostChecks reads one host's effective check set — what actually runs
+ * there after the org/group/host precedence has been applied, with each
+ * entry's source and its current values.
+ *
+ * Refreshed every 30 s, the agent's own heartbeat cadence: the card's
+ * whole point is the current reading, and a value that only moves on a
+ * page reload is a screenshot. `monitored` rides on the envelope and is
+ * deliberately independent of the set — an unmonitored host still resolves
+ * to a definite list of checks, nothing runs them — so the card must read
+ * the flag rather than infer the state from an empty list.
+ */
+export function useHostChecks(org: string, hostId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['host-checks', org, hostId],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/hosts/{id}/checks', { params: { path: { org, id: hostId } } })),
+    enabled: !!org && !!hostId && enabled,
+    refetchInterval: 30_000,
+  });
+}
+
+/** The tuple that names one graphable series. `item` is empty for a
+ * whole-host metric (CPU, memory) and the mount or unit otherwise. */
+export interface MetricSelection {
+  check: string;
+  item: string;
+  metric: string;
+  range: MetricRange;
+}
+
+/**
+ * useHostMetric reads one numeric metric's series, bucketed server-side.
+ *
+ * `selection` is null while no graph is open, so nothing is requested
+ * until an operator asks for one — these are the only reads on this page
+ * that hit the sample hypertable, and a card listing a dozen metrics
+ * would otherwise fire a dozen range queries on mount for graphs nobody
+ * opened.
+ *
+ * retry: false, because the failures worth seeing here are final by
+ * construction: the route answers 404 for a tuple this host has never
+ * reported and 400 for a discrete metric or an unknown range. Retrying
+ * either only delays the message.
+ */
+export function useHostMetric(org: string, hostId: string, selection: MetricSelection | null) {
+  return useQuery({
+    queryKey: ['host-metric', org, hostId, selection],
+    queryFn: () => {
+      const { check, item, metric, range } = selection!;
+      return unwrap(
+        api.GET('/api/v1/orgs/{org}/hosts/{id}/metrics', {
+          // `item` is omitted, not sent empty, for a whole-host metric —
+          // the route documents it as "omit for a whole-host metric", and
+          // `item=` would be a second spelling of the same question.
+          params: { path: { org, id: hostId }, query: { check, metric, range, ...(item ? { item } : {}) } },
+        }),
+      );
+    },
+    enabled: !!org && !!hostId && selection !== null,
     retry: false,
   });
 }

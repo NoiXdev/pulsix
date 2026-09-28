@@ -73,3 +73,17 @@ export type CheckBindingKind = CheckDefinition['binding_kind'];
 export type MonitoringGroup = components['schemas']['MonitoringGroupDTO'];
 export type MonitoringGroupInput = components['schemas']['MonitoringGroupBody'];
 export type MonitoringGroupPreviewHost = components['schemas']['PreviewHostDTO'];
+export type HostChecks = components['schemas']['HostChecksOutputBody'];
+export type HostCheck = components['schemas']['HostCheckDTO'];
+export type HostCheckValue = components['schemas']['HostCheckValueDTO'];
+export type MetricPoint = components['schemas']['MetricPointDTO'];
+/**
+ * The windows GET /hosts/{id}/metrics accepts, and nothing else: the route
+ * refuses any other value with a 400 naming these three
+ * (internal/api/host_check_handlers.go). The generated schema types
+ * `range` as a bare string — huma validates it by hand there so the
+ * refusal carries a readable message — so the closed set is spelled out
+ * here rather than left to a free-text query parameter the GUI could
+ * silently get wrong.
+ */
+export type MetricRange = '1h' | '24h' | '7d';

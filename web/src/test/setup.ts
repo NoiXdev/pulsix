@@ -45,3 +45,82 @@ HTMLDialogElement.prototype.close = function () {
   this.removeAttribute('open');
   this.dispatchEvent(new Event('close'));
 };
+
+// ---------------------------------------------------------------------------
+// uPlot (ui/MetricChart.tsx) needs three browser APIs jsdom does not ship.
+// All three are stubbed here rather than per test file, because uPlot reads
+// the first of them at *module load* time — before any test body runs — and
+// because a chart that is only mounted indirectly (HostChecksCard) would
+// otherwise need the same block copied into every page test that reaches it.
+// ---------------------------------------------------------------------------
+
+// 1. matchMedia: uPlot's setPxRatio() subscribes to a
+//    "(min-resolution: Xdppx)" query at import time to follow
+//    devicePixelRatio changes. jsdom implements no media queries at all, so
+//    importing uplot throws "matchMedia is not a function" before the
+//    component under test is ever rendered. Nothing matches (dpr stays 1),
+//    which is what a test wants anyway.
+if (!window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
+// 2. A 2D canvas context. jsdom's getContext() returns null (and logs "Not
+//    implemented") unless the native `canvas` package is installed — a
+//    build-tools dependency Pulsix has no other use for. uPlot draws on the
+//    next microtask after construction, so the null context surfaces as an
+//    *unhandled* "Cannot read properties of null (reading 'clearRect')"
+//    that fails the run without failing a test. This proxy accepts every
+//    drawing call, remembers every property written to it (uPlot reads
+//    `ctx.font`, `ctx.strokeStyle` etc. back for its own caching) and
+//    answers the two getters it needs a real value from. It records
+//    nothing: the assertions in MetricChart.test.tsx are on the DOM uPlot
+//    builds (wrapper, axes, canvas), never on the pixels.
+function stubCanvasContext(canvas: HTMLCanvasElement) {
+  const written = new Map<string | symbol, unknown>();
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (prop === 'canvas') return canvas;
+        if (written.has(prop)) return written.get(prop);
+        if (prop === 'measureText') return () => ({ width: 0 });
+        if (prop === 'getLineDash') return () => [];
+        return () => undefined;
+      },
+      set(_target, prop, value) {
+        written.set(prop, value);
+        return true;
+      },
+    },
+  );
+}
+HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
+  return stubCanvasContext(this);
+} as unknown as HTMLCanvasElement['getContext'];
+
+// 3. Path2D: uPlot builds every series line as a Path2D before stroking it.
+//    jsdom does not define the constructor, so the first non-empty series
+//    would throw "Path2D is not defined" on that same drawing microtask.
+class StubPath2D {
+  addPath() {}
+  arc() {}
+  arcTo() {}
+  bezierCurveTo() {}
+  closePath() {}
+  ellipse() {}
+  lineTo() {}
+  moveTo() {}
+  quadraticCurveTo() {}
+  rect() {}
+  roundRect() {}
+}
+(globalThis as unknown as { Path2D: unknown }).Path2D = StubPath2D;

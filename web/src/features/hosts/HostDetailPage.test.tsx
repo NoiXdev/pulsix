@@ -161,6 +161,40 @@ describe('HostDetailPage', () => {
     window.confirm = originalConfirm;
   });
 
+  it('mounts the monitoring section for a member who may read checks', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
+      'GET /api/v1/orgs/acme/hosts/h1': HOST,
+      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          {
+            definition_id: 'd1', key: 'cpu', plugin: 'cpu', params: {}, interval_seconds: 60,
+            enabled: true, origin: 'seed', source: 'org',
+            values: [{ item: '', metric: 'usage_percent', value: 7.5, at: '2026-03-01T00:00:00Z', stale: false }],
+          },
+        ],
+      },
+    });
+
+    renderPage(qc);
+
+    // The section is wired to the host's own id and to the caller's
+    // checks.read — dropping either leaves the page with no monitoring at
+    // all, which is what this pins.
+    expect(await screen.findByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    expect(screen.getByText('7.5')).toBeInTheDocument();
+  });
+
   it('shows the not-found page for a 404 instead of hanging on "Loading…" (Important 7)', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({

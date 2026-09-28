@@ -12,18 +12,10 @@ import { useChecks, useDeleteCheck, useMonitoringGroups } from '../../api/hooks/
 import { may } from '../../lib/roles.ts';
 import type { CheckDefinition, MonitoringGroup } from '../../api/types.ts';
 import { CheckDialog } from './CheckDialog.tsx';
+import { intervalLabel } from './interval.ts';
 import { ChecksTabs } from './ChecksTabs.tsx';
 
 const COLUMNS = 'minmax(0, 1fr) 110px minmax(0, 1.1fr) 90px 110px 220px';
-
-/** intervalLabel writes a check's period the way an operator says it —
- * "1 min", "5 min", "1 h" — falling back to seconds for anything that is
- * not a whole number of them. */
-function intervalLabel(seconds: number): string {
-  if (seconds > 0 && seconds % 3600 === 0) return `${seconds / 3600} h`;
-  if (seconds > 0 && seconds % 60 === 0) return `${seconds / 60} min`;
-  return `${seconds} s`;
-}
 
 /**
  * ChecksPage is the organization's check definitions (v0.3b-1 spec, GUI):
