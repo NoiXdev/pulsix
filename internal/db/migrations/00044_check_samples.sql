@@ -89,11 +89,38 @@ CREATE TABLE check_current (
 CREATE INDEX check_current_org_idx ON check_current (org_id);
 
 -- The standard row-level security pair (see e.g. migration 00037) on both
--- tables — the design doc's "Data model" states every table here carries
--- it, hypertable or not; job_events (00018) is the one deliberate exception
--- in this schema, for a reason (an org-unscoped worker append path) that
--- does not apply to the check pipeline's own ingest, which always knows
--- its organization.
+-- tables. job_events (00018) is the one deliberate exception in this
+-- schema, for a reason (an org-unscoped worker append path) that does not
+-- apply to the check pipeline's own ingest, which always knows its
+-- organization.
+--
+-- Be precise about what the pair on check_samples buys, because a
+-- hypertable is not an ordinary table here. The policy protects queries
+-- that go THROUGH check_samples. It does not reach the chunks: those are
+-- separate relations TimescaleDB creates on demand in
+-- _timescaledb_internal, with relrowsecurity = false and this table's ACL
+-- copied onto them, and PostgreSQL applies a parent's policy only to a
+-- query on the parent. A session scoped to one organization that names a
+-- chunk directly can therefore read, update and delete every other
+-- organization's rows in it.
+--
+-- No mechanism closes that, and three were probed against
+-- timescale/timescaledb:2.30.0-pg18 before this note was written: the
+-- schema-level revoke that would hide chunks stops pulsix_app running any
+-- statement at all, a revoke on the chunk tables lasts until the next
+-- chunk inherits the ACL again, and per-chunk row-level security works
+-- perfectly but nothing applies it to a chunk that does not exist yet
+-- (TimescaleDB creates chunks without firing a ddl_command_end event
+-- trigger). internal/db's TestHypertableChunksDoNotInheritRowLevelSecurity
+-- records all of it and fails if the database's behaviour ever changes.
+--
+-- What bounds the exposure is already true of every table in this schema:
+-- the org_isolation_bypass policy means any session that can execute
+-- arbitrary SQL as pulsix_app reads every organization by clearing
+-- pulsix.org_id, through the parent, without going near a chunk. These
+-- policies guard against a missing scope in the application's own
+-- statements, not against arbitrary SQL — and no application code names
+-- a chunk.
 ALTER TABLE check_samples ENABLE ROW LEVEL SECURITY;
 ALTER TABLE check_samples FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON check_samples
