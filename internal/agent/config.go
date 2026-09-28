@@ -103,10 +103,13 @@ type Config struct {
 	FactsInterval time.Duration
 	// ConfigInterval is how often the agent re-asserts its check
 	// configuration version in a heartbeat (PULSIX_CONFIG_INTERVAL,
-	// default 60 s, clamped into [30 s, 10 min]) — a safety net alongside
-	// the ordinary heartbeat cadence, since HeartbeatInterval may be set
-	// longer than this and the version still needs to reach the manager
-	// promptly (v0.3b-checks design, "Configuration delivery").
+	// default 60 s, clamped into [30 s, 10 min]) — a safety net for the
+	// case where HeartbeatInterval is set LONGER than this and the
+	// version still needs to reach the manager promptly (v0.3b-checks
+	// design, "Configuration delivery"). At the defaults it is not that
+	// case: a 30 s heartbeat already carries the version more often than
+	// this, so the session opens no config ticker at all (see
+	// streamSession).
 	ConfigInterval time.Duration
 	// Version is the agent's build version, set via ldflags after Load.
 	Version string

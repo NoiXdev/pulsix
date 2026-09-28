@@ -82,10 +82,18 @@ func newLoopTest(t *testing.T) *loopTest {
 		Version:           "v0.3a-test",
 		HeartbeatInterval: time.Minute,
 		FactsInterval:     time.Hour,
-		ConfigInterval:    2 * time.Minute,
-		CertPath:          filepath.Join(dir, certFileName),
-		KeyPath:           filepath.Join(dir, keyFileName),
-		MetaPath:          filepath.Join(dir, metaFileName),
+		// SHORTER than the heartbeat interval on purpose: that is the
+		// only arrangement in which the session opens a config-interval
+		// ticker at all (see streamSession), and it is what every
+		// ticker-index assertion in these tests counts on. The
+		// production defaults are the other way round (30 s heartbeat,
+		// 60 s config), which is exactly the case
+		// TestLoopConfigTickerAbsentWhenTheHeartbeatIsAtLeastAsFrequent
+		// covers.
+		ConfigInterval: 30 * time.Second,
+		CertPath:       filepath.Join(dir, certFileName),
+		KeyPath:        filepath.Join(dir, keyFileName),
+		MetaPath:       filepath.Join(dir, metaFileName),
 	}
 	return &loopTest{
 		t: t, dir: dir, cfg: cfg, dialer: &fakeDialer{},

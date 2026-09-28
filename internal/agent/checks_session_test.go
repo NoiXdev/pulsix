@@ -83,6 +83,10 @@ func TestLoopHeartbeatReportsSchedulerVersion(t *testing.T) {
 	}
 }
 
+// TestLoopConfigIntervalTickerResendsHeartbeat covers the one arrangement
+// the config-interval ticker exists for: a configuration interval SHORTER
+// than the heartbeat interval, where the extra tick genuinely reaches the
+// manager sooner than the next heartbeat would.
 func TestLoopConfigIntervalTickerResendsHeartbeat(t *testing.T) {
 	lt := newLoopTest(t)
 	lt.withIdentity()
@@ -465,5 +469,52 @@ func TestActivateSenderReturnsOnlyTheUnreplayedRemainder(t *testing.T) {
 	}
 	if left[0].Item != "/m"+strconv.Itoa(2*maxResultsPerMessage) {
 		t.Fatalf("buffer starts at %q, want the first result after the replayed chunks", left[0].Item)
+	}
+}
+
+// TestLoopConfigTickerAbsentWhenTheHeartbeatIsAtLeastAsFrequent: at the
+// production defaults the configuration interval (60 s) is LONGER than
+// the heartbeat interval (30 s), so the heartbeat has already carried the
+// configuration version by the time this ticker fires. Firing it anyway
+// made one heartbeat in three pure duplicate — and, since the manager
+// resolves the whole organization's definitions, groups and selectors on
+// every heartbeat it receives, one organization resolve in three pure
+// waste. The session now opens the ticker only when it can actually beat
+// the heartbeat to it.
+func TestLoopConfigTickerAbsentWhenTheHeartbeatIsAtLeastAsFrequent(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		heartbeat, conf time.Duration
+		wantTickers     int
+	}{
+		{"production defaults: config longer", 30 * time.Second, 60 * time.Second, 2},
+		{"equal cadences: still redundant", 30 * time.Second, 30 * time.Second, 2},
+		{"config shorter: the one case it helps", 60 * time.Second, 30 * time.Second, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLoopTest(t)
+			lt.cfg.HeartbeatInterval = tc.heartbeat
+			lt.cfg.ConfigInterval = tc.conf
+			lt.withIdentity()
+			stream := newFakeStream()
+			lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
+
+			l := lt.newLoop()
+			cancel, done := runLoop(t, l)
+			waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
+
+			intervals, _ := lt.ticks.recorded()
+			if len(intervals) != tc.wantTickers {
+				t.Fatalf("tickers = %v, want %d", intervals, tc.wantTickers)
+			}
+			if tc.wantTickers == 3 && intervals[2] != tc.conf {
+				t.Fatalf("third ticker interval = %v, want ConfigInterval %v", intervals[2], tc.conf)
+			}
+
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("Run = %v, want nil", err)
+			}
+		})
 	}
 }

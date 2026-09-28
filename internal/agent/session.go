@@ -181,8 +181,24 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 	defer hb.Stop()
 	factsTick := l.ticker(l.cfg.FactsInterval)
 	defer factsTick.Stop()
-	configTick := l.ticker(l.cfg.ConfigInterval)
-	defer configTick.Stop()
+	// The config-interval re-assert exists for ONE arrangement: a
+	// configuration interval shorter than the heartbeat interval. The
+	// version rides every heartbeat, so when the heartbeat is already at
+	// least as frequent (the production defaults — 30 s heartbeat, 60 s
+	// config — and anything an operator sets that way), this ticker's
+	// heartbeat is pure duplicate. It is not free duplicate either: the
+	// manager resolves the whole organization's definitions, groups and
+	// per-group selector expansions on every heartbeat it receives, so
+	// one heartbeat in three used to buy one organization-wide resolve in
+	// three for nothing. A nil channel blocks for ever, which is exactly
+	// what the select below should do with a re-assert that cannot beat
+	// the heartbeat to the manager.
+	var configC <-chan time.Time
+	if l.cfg.ConfigInterval < l.cfg.HeartbeatInterval {
+		configTick := l.ticker(l.cfg.ConfigInterval)
+		defer configTick.Stop()
+		configC = configTick.C()
+	}
 
 	for {
 		select {
@@ -207,12 +223,11 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 				l.drainRecv(recvErr)
 				return fmt.Errorf("send heartbeat: %w", err)
 			}
-		case <-configTick.C():
-			// PULSIX_CONFIG_INTERVAL may be shorter than the heartbeat
-			// interval: the version rides every heartbeat, so an extra
-			// one goes out here purely to keep the manager's convergence
-			// check from waiting on a possibly much longer heartbeat
-			// cadence.
+		case <-configC:
+			// Only ever reached when PULSIX_CONFIG_INTERVAL is shorter
+			// than the heartbeat interval (see configC above): the extra
+			// heartbeat exists purely to keep the manager's convergence
+			// check from waiting out a much longer heartbeat cadence.
 			if id.NeedsRenewal(l.now()) {
 				_ = stream.CloseSend()
 				cancel()
