@@ -449,20 +449,30 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
 >   version rather than re-fetching a whole configuration. There is no
 >   configuration-version column in the GUI yet (backlog 3.13c).
 >
->   **What convergence costs.** Every heartbeat whose reported version
->   differs from the resolved one makes the manager resolve that host from
->   scratch — the organization's monitored hosts, its definitions, its
->   monitoring groups and every group's selector expansion — because
->   nothing records what was pushed to whom. That statelessness is the
->   property that makes an unrecognised or stale version self-correct in
->   one round trip instead of looping, so it is a cost, not a defect: a
->   converged fleet takes the cheap path (the agent reports the matching
->   version and the manager answers nothing), and a churning 1 000-host
->   organization is worst-case tens of full resolves a second. The named
->   mitigation, when fleet scale is the subject in v0.6, is a **short-TTL
->   per-organization bundle cache** in front of the resolve: it caches the
->   inputs, not the push history, so the convergence property survives it.
->   Backlog 3.19 carries this.
+>   **What convergence costs.** **Every** heartbeat makes the manager
+>   resolve that host from scratch — the organization's monitored hosts,
+>   its definitions, its monitoring groups and every group's selector
+>   expansion — because nothing records what was pushed to whom and the
+>   comparison needs a freshly computed version to compare against.
+>   Reporting the version saves the **push**, never the resolve:
+>   `processHeartbeat` resolves first and compares afterwards, and
+>   `internal/agentapi/checks_test.go`'s own convergence test asserts three
+>   resolves for three heartbeats, two of which reported the converged
+>   version. There is no cheap path; a converged fleet costs the same
+>   resolves as a churning one and only saves the encode and the send.
+>   At the defaults that is two heartbeats per agent per minute (a 30 s
+>   heartbeat; the configuration re-assert ticker does not run when the
+>   heartbeat is at least as frequent), so **33 resolves a second for a
+>   1 000-host organization, measured in the final branch review at 28.3 ms
+>   per resolve with five monitoring groups — about one core doing nothing
+>   else, continuously, for a fleet that is not changing.** That
+>   statelessness is the property that makes an unrecognised or stale
+>   version self-correct in one round trip instead of looping, so it is a
+>   cost, not a defect — but it is a cost paid per heartbeat, not per
+>   change. The named mitigation, when fleet scale is the subject in v0.6,
+>   is a **short-TTL per-organization bundle cache** in front of the
+>   resolve: it caches the inputs, not the push history, so the convergence
+>   property survives it. Backlog 3.19 carries this.
 > - **Sampling.** The agent holds one timer per check (10 s – 24 h),
 >   measures, and ships each reading with **its own timestamp**. A
 >   disconnected agent keeps measuring into a bounded 15-minute ring and

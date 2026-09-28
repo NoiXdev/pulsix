@@ -179,7 +179,9 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 		// the next heartbeat delivers whatever this one could not. The
 		// asymmetry mattered. This resolve reads the organization's
 		// hosts, its definitions, its groups and one selector query per
-		// group, several times a minute per agent, so a statement
+		// group, twice a minute per agent at the defaults (the version
+		// rides every heartbeat and the comparison happens after this
+		// resolve, never instead of it — backlog 3.19), so a statement
 		// timeout, pool exhaustion or a failover blip would otherwise
 		// end EVERY stream in the installation at once and send the
 		// whole fleet reconnecting into the database that is already
