@@ -363,7 +363,16 @@ func (l *Loop) consumeManagerMessages(stream Stream) error {
 			return err
 		}
 		if cc := m.GetCheckConfig(); cc != nil {
-			l.scheduler.Apply(l.decodeCheckConfig(cc))
+			if unrunnable := l.scheduler.Apply(l.decodeCheckConfig(cc)); len(unrunnable) > 0 {
+				// The scheduler has no logger of its own, and a check
+				// that silently does nothing for ever is exactly what an
+				// operator needs to be able to find. The version is not
+				// reported as converged either (Scheduler.Apply), so the
+				// manager keeps pushing until the set is runnable.
+				l.log.Warn("check configuration push named plugins this agent build does not have; "+
+					"those checks are not running and this configuration is not reported as converged",
+					"keys", unrunnable, "version", cc.GetVersion())
+			}
 		}
 	}
 }
@@ -373,16 +382,25 @@ func (l *Loop) consumeManagerMessages(stream Stream) error {
 // map[string]any. A check whose params fail to decode (never expected
 // from a well-behaved manager — checkConfigFor only ever emits what its
 // own canonicalParamsJSON produced) is skipped rather than losing the
-// whole push: the manager stamped the version over the FULL set it
-// intended, but a partially-applied set that still reports that version
-// is a smaller failure than applying nothing at all.
+// whole push: running most of the set beats running none of it.
+//
+// What such a push does NOT get is its version. The manager stamps one
+// over the FULL set it intends, so echoing it back while running less
+// would tell processHeartbeat this agent has converged, and it would
+// never push again — permanent divergence, not the self-healing
+// convergence the delivery design rests on. An empty version is what an
+// agent that has never converged reports, and it makes the manager answer
+// every heartbeat until the configuration is one this agent can decode.
 func (l *Loop) decodeCheckConfig(cc *agentpb.CheckConfig) checks.Config {
 	specs := make([]checks.Spec, 0, len(cc.GetChecks()))
+	complete := true
 	for _, cs := range cc.GetChecks() {
 		params, err := decodeParamsJSON(cs.GetParamsJson())
 		if err != nil {
-			l.log.Warn("check configuration push carried unparsable params; skipping this check",
-				"key", cs.GetKey(), "plugin", cs.GetPlugin(), "err", err)
+			l.log.Warn("check configuration push carried unparsable params; skipping this check, "+
+				"and this configuration is not reported as converged",
+				"key", cs.GetKey(), "plugin", cs.GetPlugin(), "version", cc.GetVersion(), "err", err)
+			complete = false
 			continue
 		}
 		specs = append(specs, checks.Spec{
@@ -391,6 +409,9 @@ func (l *Loop) decodeCheckConfig(cc *agentpb.CheckConfig) checks.Config {
 			Params:   params,
 			Interval: time.Duration(cs.GetIntervalSeconds()) * time.Second,
 		})
+	}
+	if !complete {
+		return checks.Config{Checks: specs}
 	}
 	return checks.Config{Version: cc.GetVersion(), Checks: specs}
 }

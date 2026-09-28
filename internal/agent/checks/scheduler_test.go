@@ -653,8 +653,12 @@ func TestSchedulerStopsEveryTickerItCreates(t *testing.T) {
 			t.Errorf("ticker %d was never stopped", i)
 		}
 	}
-	if got := sched.Version(); got != "v1" {
-		t.Errorf("Version after an Apply that ran nothing = %q, want %q", got, "v1")
+	// "" rather than "v1": the first configuration named a plugin this
+	// build does not have, so it was never fully applied either (see
+	// TestSchedulerPartialConfigNeverClaimsItsVersion). What this pins is
+	// that the post-shutdown Apply did not move it to "v2".
+	if got := sched.Version(); got != "" {
+		t.Errorf("Version after an Apply that ran nothing = %q, want %q", got, "")
 	}
 }
 
@@ -708,5 +712,69 @@ func TestSchedulerStopsTheTickerOfARetiredUnknownPlugin(t *testing.T) {
 		if !tk.wasStopped() {
 			t.Errorf("ticker %d was never stopped", i)
 		}
+	}
+}
+
+// TestSchedulerPartialConfigNeverClaimsItsVersion: the manager stamps a
+// version over the FULL set it intends. A check naming a plugin this
+// build does not have is skipped — correctly, there is nothing to run it
+// — but adopting the version anyway would make the heartbeat report
+// convergence on a set the agent is not running, and processHeartbeat
+// would then never push again. That is permanent divergence, not
+// self-healing. A partial apply reports no version at all, so the manager
+// keeps answering until the configuration is something this agent can
+// actually run.
+func TestSchedulerPartialConfigNeverClaimsItsVersion(t *testing.T) {
+	plugin := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}
+	sched := NewScheduler(map[string]Plugin{"cpu": plugin}, time.Now, (&fakeTickers{}).factory())
+
+	full := Spec{Key: "cpu", Plugin: "cpu", Interval: time.Minute}
+	if unrunnable := sched.Apply(Config{Version: "v1", Checks: []Spec{full}}); len(unrunnable) != 0 {
+		t.Fatalf("unrunnable = %v, want none", unrunnable)
+	}
+	if got := sched.Version(); got != "v1" {
+		t.Fatalf("Version after a fully runnable config = %q, want v1", got)
+	}
+
+	unrunnable := sched.Apply(Config{Version: "v2", Checks: []Spec{
+		full, {Key: "ghost", Plugin: "does-not-exist", Interval: time.Minute},
+	}})
+	if len(unrunnable) != 1 || unrunnable[0] != "ghost" {
+		t.Fatalf("unrunnable = %v, want [ghost] so the caller can say so in its log", unrunnable)
+	}
+	if got := sched.Version(); got != "" {
+		t.Fatalf("Version after a partial config = %q, want \"\" — reporting v2 would tell the manager "+
+			"the agent runs a set it does not, and nothing would ever push again", got)
+	}
+
+	// The runnable half is still installed, and a fully runnable config
+	// afterwards converges normally.
+	if unrunnable := sched.Apply(Config{Version: "v3", Checks: []Spec{full}}); len(unrunnable) != 0 {
+		t.Fatalf("unrunnable = %v, want none", unrunnable)
+	}
+	if got := sched.Version(); got != "v3" {
+		t.Fatalf("Version after the configuration was repaired = %q, want v3", got)
+	}
+}
+
+// TestSchedulerApplyAfterRunReturnedAdoptsNothing: the same rule for the
+// other way a configuration can fail to take effect — Run has already
+// returned, so nothing is running anything at all.
+func TestSchedulerApplyAfterRunReturnedAdoptsNothing(t *testing.T) {
+	plugin := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}
+	sched := NewScheduler(map[string]Plugin{"cpu": plugin}, time.Now, (&fakeTickers{}).factory())
+	sched.Apply(Config{Version: "v1", Checks: []Spec{{Key: "cpu", Plugin: "cpu", Interval: time.Minute}}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx, (&fakeSink{}).collect) }()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	sched.Apply(Config{Version: "v2", Checks: []Spec{{Key: "cpu", Plugin: "cpu", Interval: time.Minute}}})
+	if got := sched.Version(); got != "v1" {
+		t.Errorf("Version after an Apply that ran nothing = %q, want v1 unchanged", got)
 	}
 }

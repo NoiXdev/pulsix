@@ -233,7 +233,15 @@ func TestLoopHandleResultsBuffersWhenDisconnectedAndReplaysInOrder(t *testing.T)
 	}
 }
 
-func TestLoopDecodeCheckConfigSkipsUnparsableParamsButKeepsVersion(t *testing.T) {
+// TestLoopDecodeCheckConfigSkipsUnparsableParamsAndDropsTheVersion
+// replaces TestLoopDecodeCheckConfigSkipsUnparsableParamsButKeepsVersion,
+// which pinned the opposite and was wrong. Skipping the undecodable check
+// is right — most of the set beats none of it. Keeping the version was
+// not: it covers the FULL set, so reporting it back makes
+// processHeartbeat believe the agent converged and never push again,
+// which is permanent divergence. A fully decodable push still carries its
+// version through, so this is not "never report anything".
+func TestLoopDecodeCheckConfigSkipsUnparsableParamsAndDropsTheVersion(t *testing.T) {
 	lt := newLoopTest(t)
 	l := lt.newLoop()
 
@@ -244,14 +252,22 @@ func TestLoopDecodeCheckConfigSkipsUnparsableParamsButKeepsVersion(t *testing.T)
 			{Key: "bad", Plugin: "disk", ParamsJson: "not-json", IntervalSeconds: 60},
 		},
 	})
-	if cfg.Version != "cfg-v2" {
-		t.Errorf("Version = %q, want cfg-v2 (kept even though one check was skipped)", cfg.Version)
+	if cfg.Version != "" {
+		t.Errorf("Version = %q, want \"\" for a partly decodable push", cfg.Version)
 	}
 	if len(cfg.Checks) != 1 || cfg.Checks[0].Key != "good" {
 		t.Fatalf("Checks = %+v, want only the decodable one", cfg.Checks)
 	}
 	if !strings.Contains(lt.logOutput(), "unparsable params") {
 		t.Errorf("the skipped check must be logged:\n%s", lt.logOutput())
+	}
+
+	whole := l.decodeCheckConfig(&agentpb.CheckConfig{
+		Version: "cfg-v2",
+		Checks:  []*agentpb.CheckSpec{{Key: "good", Plugin: "cpu", ParamsJson: "{}", IntervalSeconds: 30}},
+	})
+	if whole.Version != "cfg-v2" {
+		t.Errorf("Version of a fully decodable push = %q, want cfg-v2", whole.Version)
 	}
 }
 
@@ -516,5 +532,91 @@ func TestLoopConfigTickerAbsentWhenTheHeartbeatIsAtLeastAsFrequent(t *testing.T)
 				t.Fatalf("Run = %v, want nil", err)
 			}
 		})
+	}
+}
+
+// TestLoopUndecodableSpecNeverClaimsTheFullVersion: a CheckSpec whose
+// params_json will not decode is skipped rather than losing the whole
+// push — but the version the manager stamped covers the FULL set, so
+// adopting it would have the next heartbeat report convergence on a set
+// the agent is not running, and processHeartbeat would never push again.
+// Permanent divergence, not self-healing. The partial set runs; the
+// version does not follow it.
+func TestLoopUndecodableSpecNeverClaimsTheFullVersion(t *testing.T) {
+	lt := newLoopTest(t)
+	lt.withIdentity()
+	stream := newFakeStream()
+	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
+
+	l := lt.newLoop()
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
+
+	stream.pushManagerMessage(&agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{
+		Version: "cfg-partial",
+		Checks: []*agentpb.CheckSpec{
+			{Key: "cpu", Plugin: "cpu", ParamsJson: "{}", IntervalSeconds: 30},
+			{Key: "broken", Plugin: "disk", ParamsJson: "{not json", IntervalSeconds: 60},
+		},
+	}})
+	// The runnable half is installed — a fourth ticker appears for it.
+	waitFor(t, 2*time.Second, func() bool { _, tk := lt.ticks.recorded(); return len(tk) == 4 })
+
+	if got := l.scheduler.Version(); got != "" {
+		t.Fatalf("version after a partly decodable push = %q, want \"\": reporting %q would tell the "+
+			"manager the agent runs a set it does not", got, "cfg-partial")
+	}
+
+	// A repaired push converges normally.
+	stream.pushManagerMessage(&agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{
+		Version: "cfg-whole",
+		Checks: []*agentpb.CheckSpec{
+			{Key: "cpu", Plugin: "cpu", ParamsJson: "{}", IntervalSeconds: 30},
+		},
+	}})
+	waitFor(t, 2*time.Second, func() bool { return l.scheduler.Version() == "cfg-whole" })
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if !strings.Contains(lt.logOutput(), "unparsable params") {
+		t.Errorf("the skipped check must be logged; log was: %s", lt.logOutput())
+	}
+}
+
+// TestLoopUnknownPluginIsLoggedAndUnclaimed: the scheduler skips a check
+// naming a plugin this build does not have, and used to do it silently —
+// nothing in the log, and the full version adopted anyway. The loop now
+// says which keys it cannot run, and the version does not follow.
+func TestLoopUnknownPluginIsLoggedAndUnclaimed(t *testing.T) {
+	lt := newLoopTest(t)
+	lt.withIdentity()
+	stream := newFakeStream()
+	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
+
+	l := lt.newLoop()
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
+
+	stream.pushManagerMessage(&agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{
+		Version: "cfg-future",
+		Checks: []*agentpb.CheckSpec{
+			{Key: "cpu", Plugin: "cpu", ParamsJson: "{}", IntervalSeconds: 30},
+			{Key: "quantum", Plugin: "quantum", ParamsJson: "{}", IntervalSeconds: 60},
+		},
+	}})
+	waitFor(t, 2*time.Second, func() bool { _, tk := lt.ticks.recorded(); return len(tk) == 5 })
+
+	if got := l.scheduler.Version(); got != "" {
+		t.Errorf("version after a push naming an unknown plugin = %q, want \"\"", got)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if !strings.Contains(lt.logOutput(), "quantum") {
+		t.Errorf("the unrunnable check's key must reach the log; log was: %s", lt.logOutput())
 	}
 }

@@ -135,7 +135,21 @@ func (s *Scheduler) Version() string {
 // matters: a configuration push that only edits one check's interval
 // must not resynchronise every other check's phase, or a fleet-wide push
 // turns into a fleet-wide load spike every time it repeats.
-func (s *Scheduler) Apply(cfg Config) {
+//
+// It returns the keys it cannot run: a check naming a plugin this build
+// does not have. The caller logs them — this package has no logger, and
+// a check silently doing nothing for ever is the kind of thing an
+// operator has to be able to find in a log.
+//
+// Such a configuration is only PARTLY applied, and then cfg.Version is
+// deliberately not adopted. The manager stamps its version over the full
+// set it intends; reporting that version back while running less than it
+// would tell processHeartbeat the agent has converged, and it would never
+// push again — permanent divergence dressed up as agreement. Reporting no
+// version instead keeps the manager answering every heartbeat until the
+// configuration is one this agent can actually run, which is the
+// self-healing behaviour the delivery design rests on.
+func (s *Scheduler) Apply(cfg Config) (unrunnable []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.finished {
@@ -143,14 +157,16 @@ func (s *Scheduler) Apply(cfg Config) {
 		// push still in flight when the process shut down. Nothing is
 		// left to drive a timer, so creating one would leak it, and
 		// nothing would be running this configuration, so claiming its
-		// version would be a lie the heartbeat then tells.
-		return
+		// version would be the same lie.
+		return nil
 	}
-	s.version = cfg.Version
 
 	seen := make(map[string]struct{}, len(cfg.Checks))
 	for _, spec := range cfg.Checks {
 		seen[spec.Key] = struct{}{}
+		if _, known := s.reg[spec.Plugin]; !known {
+			unrunnable = append(unrunnable, spec.Key)
+		}
 		if existing, ok := s.checks[spec.Key]; ok {
 			if specsEqual(existing.spec, spec) {
 				continue // unchanged: the running timer keeps its phase
@@ -164,6 +180,12 @@ func (s *Scheduler) Apply(cfg Config) {
 			s.stopLocked(key)
 		}
 	}
+	if len(unrunnable) > 0 {
+		s.version = ""
+		return unrunnable
+	}
+	s.version = cfg.Version
+	return nil
 }
 
 // specsEqual compares everything about a check that a fresh timer would
