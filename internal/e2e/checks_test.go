@@ -3,7 +3,7 @@
 // real agent binary loop, same operator driving everything through the
 // HTTP API the GUI uses).
 //
-// The three things this gate exists to prove, in one scenario:
+// The four things this gate exists to prove, in one scenario:
 //
 //  1. A fresh organization already measures: the seed set is there, the
 //     enrolled agent receives it, runs it, and its samples reach the
@@ -16,6 +16,13 @@
 //  3. A monitoring group beats the organization: for a host the group's
 //     selector matches, the group's definition is the one the host
 //     actually runs, and the manager says where it came from.
+//  4. A change nothing pushes still arrives. The group and its definition
+//     are created before the host is tagged, so the write reaches no host
+//     and the tag that makes it apply pushes nothing — no host or tag
+//     handler resolves affected hosts at all. The agent can only learn
+//     that definition by re-asserting its configuration version and being
+//     answered, which is the self-healing property the whole delivery
+//     design rests on.
 //
 // What this gate does NOT assert, deliberately:
 //
@@ -26,10 +33,15 @@
 //   - The configuration version string itself. It never leaves the agent
 //     stream (Heartbeat.config_version against the manager's resolved
 //     set) and is not part of any operator-facing API, so the gate
-//     asserts the effect the version exists to produce — the agent
-//     running the edited definition — rather than reaching behind the
-//     API for the string. internal/agentapi's own tests pin the
-//     comparison; this one pins that it changes what a real agent does.
+//     asserts the effects the version exists to produce — the agent
+//     running an edited definition, and an unpushed change arriving
+//     anyway — rather than reaching behind the API for the string.
+//     internal/agentapi's own tests pin the comparison; this one pins
+//     that it changes what a real agent does. Claim 4 is the half that
+//     genuinely needs the echo: break it (send an empty config_version
+//     forever) and the manager re-pushes on every heartbeat, which claim
+//     4 cannot tell apart from a working echo — but break the RESOLVE
+//     side, or the re-assert itself, and claim 4 is what fails.
 package e2e
 
 import (
@@ -154,11 +166,16 @@ func cpuReading(c hostCheckOut) (checkValueOut, bool) {
 }
 
 // waitForCPUSamples polls the host page until want distinct cpu readings
-// have been observed, and returns their timestamps in the order they
-// arrived. Polling is how the operator sees this too — the page has no
-// push channel — and at four polls per second no reading of a check
-// running on a ten-second interval can be missed.
-func waitForCPUSamples(t *testing.T, w agentWorld, hostID string, want int, within time.Duration) []time.Time {
+// taken after since have been observed, and returns their timestamps in
+// the order they arrived. Polling is how the operator sees this too — the
+// page has no push channel — and at four polls per second no reading of a
+// check running on a ten-second interval can be missed.
+//
+// since exists because the gate measures cadence twice, across a
+// configuration change: a reading the previous interval produced must not
+// be counted into the window that is supposed to show the new one. Pass
+// the zero time to take whatever is there.
+func waitForCPUSamples(t *testing.T, w agentWorld, hostID string, since time.Time, want int, within time.Duration) []time.Time {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	var stamps []time.Time
@@ -174,7 +191,8 @@ func waitForCPUSamples(t *testing.T, w agentWorld, hostID string, want int, with
 			if *v.Value < 0 || *v.Value > 100 {
 				t.Errorf("%s = %v, want a percentage", cpuMetric, *v.Value)
 			}
-			if len(stamps) == 0 || !v.At.Equal(stamps[len(stamps)-1]) {
+			fresh := v.At.After(since)
+			if fresh && (len(stamps) == 0 || !v.At.Equal(stamps[len(stamps)-1])) {
 				stamps = append(stamps, v.At)
 			}
 			if len(stamps) >= want {
@@ -183,7 +201,7 @@ func waitForCPUSamples(t *testing.T, w agentWorld, hostID string, want int, with
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %d distinct %s readings; got %v", want, cpuMetric, stamps)
+	t.Fatalf("timed out waiting for %d distinct %s readings after %s; got %v", want, cpuMetric, since, stamps)
 	return nil
 }
 
@@ -247,7 +265,7 @@ func TestCheckPipelineGate(t *testing.T) {
 	// agent enrolled with — one reading a minute — cannot produce them,
 	// whatever the machine's load: this is what "the agent adopted the
 	// edit" means in observable terms.
-	stamps := waitForCPUSamples(t, w, hostID, 2, 75*time.Second)
+	stamps := waitForCPUSamples(t, w, hostID, time.Time{}, 2, 75*time.Second)
 	if gap := stamps[1].Sub(stamps[0]); gap > 30*time.Second {
 		t.Errorf("consecutive %s readings are %v apart; the agent is still running the 60s definition", cpuMetric, gap)
 	}
@@ -278,21 +296,22 @@ func TestCheckPipelineGate(t *testing.T) {
 		}
 	}
 
-	// --- 5. A monitoring group beats the organization --------------------
-	w.api.do(http.MethodPut, "/api/v1/orgs/"+w.org+"/hosts/"+hostID+"/tags",
-		[]map[string]string{{"key": "role", "value": "e2e"}}, nil)
-	var preview struct {
-		Count int `json:"count"`
-		Hosts []struct {
-			ID string `json:"id"`
-		} `json:"hosts"`
-	}
-	w.api.do(http.MethodPost, "/api/v1/orgs/"+w.org+"/monitoring-groups/preview",
-		map[string]string{"selector": "role=e2e"}, &preview)
-	if preview.Count != 1 || len(preview.Hosts) != 1 || preview.Hosts[0].ID != hostID {
-		t.Fatalf("the selector role=e2e resolves to %+v, want the tagged host alone", preview)
-	}
-
+	// --- 5. A monitoring group beats the organization, and the agent
+	//        learns it without a push ---------------------------------
+	// Order matters here, and it is the whole point of this act. The group
+	// and its definition are written FIRST, while the selector matches
+	// nothing: a write whose bindings reach no host pushes to nobody (see
+	// checks.Affected and api.pushAffected). Only then is the host tagged
+	// — and no host or tag handler pushes anything at all, by construction:
+	// nothing in them calls AffectedHosts.
+	//
+	// So the definition that reaches the agent at the end of this act
+	// reaches it through the one path acts 3 and 5 would otherwise never
+	// touch: the agent's own heartbeat re-assert, answered by the manager
+	// because the version it resolves no longer matches the one the agent
+	// reports. That is the "a push that never landed heals itself"
+	// property the design rests on, and it is otherwise untested end to
+	// end.
 	var group struct {
 		Group struct {
 			ID   string `json:"id"`
@@ -306,6 +325,32 @@ func TestCheckPipelineGate(t *testing.T) {
 		"binding_kind": "group", "group_id": group.Group.ID,
 	}, nil)
 
+	// Nothing matches the group yet, so the host still runs the
+	// organization's definition. This is what makes the assertion after
+	// the tag mean something: the 20s cadence cannot already be running.
+	if got := hostCheck(t, w.hostChecks(t, hostID), "cpu"); got.Source != "org" || got.IntervalSeconds != 10 {
+		t.Fatalf("before the tag, cpu resolves to %s/%ds; want the organization's 10s — the group matches no host yet",
+			got.Source, got.IntervalSeconds)
+	}
+
+	taggedAt := time.Now()
+	w.api.do(http.MethodPut, "/api/v1/orgs/"+w.org+"/hosts/"+hostID+"/tags",
+		[]map[string]string{{"key": "role", "value": "e2e"}}, nil)
+
+	var preview struct {
+		Count int `json:"count"`
+		Hosts []struct {
+			ID string `json:"id"`
+		} `json:"hosts"`
+	}
+	w.api.do(http.MethodPost, "/api/v1/orgs/"+w.org+"/monitoring-groups/preview",
+		map[string]string{"selector": "role=e2e"}, &preview)
+	if preview.Count != 1 || len(preview.Hosts) != 1 || preview.Hosts[0].ID != hostID {
+		t.Fatalf("the selector role=e2e resolves to %+v, want the tagged host alone", preview)
+	}
+
+	// Manager side: the group's definition wins for this host, and the
+	// page names the scope it came from.
 	won := hostCheck(t, w.hostChecks(t, hostID), "cpu")
 	if won.Source != "group" || won.SourceID != group.Group.ID {
 		t.Fatalf("cpu resolves to source %q/%q, want the monitoring group %s", won.Source, won.SourceID, group.Group.ID)
@@ -316,6 +361,19 @@ func TestCheckPipelineGate(t *testing.T) {
 	if won.IntervalSeconds != 20 {
 		t.Errorf("the effective cpu interval is %ds, want the group's 20", won.IntervalSeconds)
 	}
+
+	// Agent side: the readings slow from one every ten seconds to one
+	// every twenty. Three timestamps, because the first of them can still
+	// be the old timer's last tick and the one straddling the change
+	// carries whatever was left of it — the gap between the last two is
+	// the settled cadence. Under the definition the agent was running a
+	// moment ago that gap would be ten seconds; under the group's it is
+	// twenty, and nothing pushed it there.
+	healed := waitForCPUSamples(t, w, hostID, taggedAt, 3, 120*time.Second)
+	if gap := healed[2].Sub(healed[1]); gap <= 15*time.Second || gap >= 30*time.Second {
+		t.Errorf("settled %s cadence after the tag is %v, want the group's 20s (readings %v)", cpuMetric, gap, healed)
+	}
+
 	// The organization's own row is untouched: it lost the key for this
 	// host, not its existence — a host the group's selector stops
 	// matching falls straight back to it.
