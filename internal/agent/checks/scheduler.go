@@ -70,6 +70,13 @@ type scheduledCheck struct {
 	spec   Spec
 	ticker Ticker
 	stop   chan struct{}
+	// spawned records whether a goroutine actually owns this check. Only
+	// a spawned check's ticker is stopped by that goroutine's own defer;
+	// anything else — a check tracked before Run started, or one whose
+	// plugin this build does not have (spawnLocked returns before
+	// starting anything) — has to have its ticker stopped explicitly, or
+	// nothing ever stops it.
+	spawned bool
 }
 
 // Scheduler holds one timer per check key. NewScheduler wires it;
@@ -84,9 +91,15 @@ type Scheduler struct {
 	version string
 	checks  map[string]*scheduledCheck
 	running bool // Run has started: Apply may start/stop goroutines directly
-	ctx     context.Context
-	sink    func([]Result)
-	wg      sync.WaitGroup
+	// finished records that Run has RETURNED. running is false both
+	// before Run starts and after it ends, and the two mean opposite
+	// things to Apply: before, a tracked check waits for Run's startup
+	// loop; after, nothing will ever drive or stop it, so starting one
+	// would only leak its ticker.
+	finished bool
+	ctx      context.Context
+	sink     func([]Result)
+	wg       sync.WaitGroup
 }
 
 // NewScheduler wires a Scheduler against reg (ordinarily checks.Registry(),
@@ -125,6 +138,14 @@ func (s *Scheduler) Version() string {
 func (s *Scheduler) Apply(cfg Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.finished {
+		// Run is one-shot and has already returned — a configuration
+		// push still in flight when the process shut down. Nothing is
+		// left to drive a timer, so creating one would leak it, and
+		// nothing would be running this configuration, so claiming its
+		// version would be a lie the heartbeat then tells.
+		return
+	}
 	s.version = cfg.Version
 
 	seen := make(map[string]struct{}, len(cfg.Checks))
@@ -174,23 +195,26 @@ func (s *Scheduler) startLocked(spec Spec) {
 func (s *Scheduler) spawnLocked(key string, sc *scheduledCheck) {
 	plugin, ok := s.reg[sc.spec.Plugin]
 	if !ok {
-		return
+		return // sc.spawned stays false: its ticker is nobody's but ours
 	}
+	sc.spawned = true
 	s.wg.Add(1)
 	go s.runCheck(s.ctx, key, plugin, sc, s.sink)
 }
 
-// stopLocked retires key's check: if it is currently running, its
-// goroutine is signalled to stop (which stops its own ticker); if it was
-// only ever tracked (Apply called before Run started), the ticker is
-// stopped directly here since no goroutine owns it yet. Called with s.mu
-// held.
+// stopLocked retires key's check: if a goroutine owns it, that goroutine
+// is signalled to stop and stops its own ticker on the way out; otherwise
+// the ticker is stopped directly here, because nothing else ever will.
+// The condition is sc.spawned, not s.running: a check whose plugin this
+// build does not have is tracked while Run is driving and still has no
+// goroutine, so signalling its stop channel would leave the ticker
+// running for ever. Called with s.mu held.
 func (s *Scheduler) stopLocked(key string) {
 	sc, ok := s.checks[key]
 	if !ok {
 		return
 	}
-	if s.running {
+	if sc.spawned {
 		close(sc.stop)
 	} else {
 		sc.ticker.Stop()
@@ -267,11 +291,25 @@ func (s *Scheduler) Run(ctx context.Context, sink func([]Result)) error {
 
 	s.mu.Lock()
 	s.running = false
+	// finished goes up in the SAME critical section, so there is no
+	// instant in which Apply sees "Run is not driving" and concludes
+	// "Run has not started yet" — the one reading under which it would
+	// create a ticker nothing can ever drive or stop.
+	s.finished = true
 	s.mu.Unlock()
 
-	s.wg.Wait() // every goroutine has returned and stopped its own ticker
+	s.wg.Wait() // every spawned goroutine has returned and stopped its own ticker
 	s.mu.Lock()
-	s.checks = make(map[string]*scheduledCheck) // Run is one-shot; a future Apply starts clean
+	// Whatever is left owns no goroutine (a check tracked before Run
+	// began and cancelled before it could spawn, or one whose plugin this
+	// build does not have), so its ticker is still running and nothing
+	// else will stop it.
+	for _, sc := range s.checks {
+		if !sc.spawned {
+			sc.ticker.Stop()
+		}
+	}
+	s.checks = make(map[string]*scheduledCheck) // Run is one-shot
 	s.mu.Unlock()
 	return nil
 }

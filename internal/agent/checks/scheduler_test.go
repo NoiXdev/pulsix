@@ -327,9 +327,26 @@ func TestSchedulerApplyRemovesCheckNotInConfig(t *testing.T) {
 	_, tickers := ticks.recorded()
 	oldTicker := tickers[0]
 
+	// One tick first, both to prove the check is genuinely collecting and
+	// because a delivered result is the only witness that Run's startup
+	// loop has finished — without it the retirement below could take the
+	// not-yet-running branch and prove nothing about a live check.
+	oldTicker.c <- time.Now()
+	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
+
 	// The check disappears from the next configuration entirely.
 	sched.Apply(Config{Version: "v2", Checks: nil})
 	waitForSchedulerTest(t, time.Second, oldTicker.wasStopped)
+
+	// Retired means its goroutine is gone, not merely that its ticker was
+	// stopped: a tick pushed onto the old (now orphaned) channel must
+	// collect nothing. A real ticker would never deliver after Stop, which
+	// is exactly why the fake has to be the one asking the question.
+	oldTicker.c <- time.Now()
+	time.Sleep(20 * time.Millisecond)
+	if n := len(sink.all()); n != 1 {
+		t.Fatalf("results after the check was retired = %d, want 1: its goroutine is still running", n)
+	}
 
 	// Re-adding the SAME key afterward must create a brand new timer —
 	// proof the check was fully retired, not merely paused.
@@ -591,6 +608,105 @@ func TestSchedulerApplyDuringShutdownNeverRacesTheWaitGroup(t *testing.T) {
 			t.Fatalf("iteration %d: Apply concurrent with shutdown panicked: %v "+
 				"(sync.WaitGroup misuse: Add raced Wait)", i, r)
 		default:
+		}
+	}
+}
+
+// TestSchedulerStopsEveryTickerItCreates: nothing the scheduler hands out
+// may outlive it. Two ways a ticker used to be orphaned, both here: one
+// created for a plugin the registry does not know (spawnLocked returns
+// before starting a goroutine, so nothing ever owns it and Run's final
+// map reset discarded it unstopped), and one created by an Apply arriving
+// after Run has already returned — a configuration push still in flight
+// at shutdown, which production really does produce.
+//
+// The post-shutdown Apply must also not claim its version: nothing is
+// running it.
+func TestSchedulerStopsEveryTickerItCreates(t *testing.T) {
+	plugin := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}
+	ticks := &fakeTickers{}
+	sched := NewScheduler(map[string]Plugin{"cpu": plugin}, time.Now, ticks.factory())
+	sched.Apply(Config{Version: "v1", Checks: []Spec{
+		{Key: "cpu", Plugin: "cpu", Interval: time.Minute},
+		{Key: "ghost", Plugin: "does-not-exist", Interval: time.Minute},
+	}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx, (&fakeSink{}).collect) }()
+	waitForSchedulerTest(t, time.Second, func() bool { _, tk := ticks.recorded(); return len(tk) == 2 })
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	sched.Apply(Config{Version: "v2", Checks: []Spec{{Key: "cpu", Plugin: "cpu", Interval: time.Minute}}})
+
+	_, tickers := ticks.recorded()
+	if len(tickers) != 2 {
+		t.Errorf("tickers created = %d, want 2: an Apply after Run returned must create none, "+
+			"since nothing is left to drive or stop one", len(tickers))
+	}
+	for i, tk := range tickers {
+		if !tk.wasStopped() {
+			t.Errorf("ticker %d was never stopped", i)
+		}
+	}
+	if got := sched.Version(); got != "v1" {
+		t.Errorf("Version after an Apply that ran nothing = %q, want %q", got, "v1")
+	}
+}
+
+// TestSchedulerStopsTheTickerOfARetiredUnknownPlugin: retiring a check
+// whose plugin the registry does not know cannot go through its stop
+// channel, because no goroutine is listening on it — the ticker has to be
+// stopped directly, exactly as it is for a check retired before Run
+// started.
+//
+// The ordering here is deliberate and not incidental: the ghost is added
+// only once a tick has actually produced a result, which is the only
+// witness that Run's startup loop has finished and `running` is true. Add
+// it any earlier and the test could take stopLocked's OTHER branch and
+// pass for the wrong reason.
+func TestSchedulerStopsTheTickerOfARetiredUnknownPlugin(t *testing.T) {
+	plugin := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}
+	ticks := &fakeTickers{}
+	sched := NewScheduler(map[string]Plugin{"cpu": plugin}, time.Now, ticks.factory())
+	cpu := Spec{Key: "cpu", Plugin: "cpu", Interval: time.Minute}
+	sched.Apply(Config{Version: "v1", Checks: []Spec{cpu}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := &fakeSink{}
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx, sink.collect) }()
+
+	_, tickers := ticks.recorded()
+	tickers[0].c <- time.Now()
+	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
+
+	// Run is now demonstrably driving. A definition for a plugin this
+	// build does not have arrives...
+	sched.Apply(Config{Version: "v2", Checks: []Spec{cpu, {Key: "ghost", Plugin: "does-not-exist", Interval: time.Minute}}})
+	_, tickers = ticks.recorded()
+	if len(tickers) != 2 {
+		t.Fatalf("tickers = %d, want 2 (the ticker is created even for an unknown plugin)", len(tickers))
+	}
+	// ...and is deleted again.
+	sched.Apply(Config{Version: "v3", Checks: []Spec{cpu}})
+	if !tickers[1].wasStopped() {
+		t.Error("the retired unknown plugin's ticker was never stopped: no goroutine listens on its stop channel")
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	_, all := ticks.recorded()
+	for i, tk := range all {
+		if !tk.wasStopped() {
+			t.Errorf("ticker %d was never stopped", i)
 		}
 	}
 }
