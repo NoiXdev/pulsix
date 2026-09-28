@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"sync"
 	"time"
@@ -47,6 +48,16 @@ var (
 const (
 	maxBackoff     = 60 * time.Second
 	streamDrainWit = 2 * time.Second
+	// backoffJitter is the fraction of each reconnect delay that is
+	// given up to chance. The ladder alone (1 s, 2 s, 4 s, ... capped at
+	// 60 s) is deterministic, so a fault that cuts every stream in an
+	// installation at the same instant — a manager restart, a database
+	// failover — has the whole fleet come back in lockstep, in one
+	// thundering herd per rung, into whatever is already struggling.
+	// Jitter is subtracted, never added, so a delay stays inside
+	// [d/2, d]: the cap remains a cap and the first retry still happens
+	// within a second.
+	backoffJitter = 0.5
 )
 
 // Collector gathers host facts for one push. The production
@@ -115,6 +126,9 @@ type Loop struct {
 	now    func() time.Time
 	sleep  func(ctx context.Context, d time.Duration) error
 	ticker tickerFactory
+	// rand returns a value in [0,1) and is the reconnect backoff's
+	// jitter source, injected so the cadence tests stay deterministic.
+	rand func() float64
 
 	scheduler *checks.Scheduler
 	buffer    *checks.Buffer
@@ -144,6 +158,10 @@ func WithLogger(logger *slog.Logger) LoopOption { return func(l *Loop) { l.log =
 // WithTicker replaces the ticker factory (heartbeat and facts cadence).
 func WithTicker(fn tickerFactory) LoopOption { return func(l *Loop) { l.ticker = fn } }
 
+// WithRand replaces the reconnect backoff's jitter source (tests pin it;
+// production uses math/rand/v2).
+func WithRand(fn func() float64) LoopOption { return func(l *Loop) { l.rand = fn } }
+
 // NewLoop wires the loop. No connection is opened here — Run dials. The
 // scheduler and buffer are built AFTER options are applied, so they use
 // whatever clock and ticker factory the caller (or a test) installed via
@@ -156,6 +174,7 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 		now:    time.Now,
 		sleep:  interruptibleSleep,
 		ticker: newWallTicker,
+		rand:   rand.Float64,
 		log:    slog.Default(),
 	}
 	for _, o := range opts {
@@ -227,7 +246,7 @@ func (l *Loop) Run(ctx context.Context) error {
 					if ctx.Err() != nil {
 						return nil // shutdown, not a renewal failure
 					}
-					d := backoff(backoffShift)
+					d := l.jitteredBackoff(backoffShift)
 					backoffShift = nextBackoffShift(backoffShift)
 					l.log.WarnContext(ctx, "certificate renewal failed; backing off", "backoff", d, "err", err)
 					if err := l.sleep(ctx, d); err != nil {
@@ -241,7 +260,7 @@ func (l *Loop) Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return nil
 				}
-				d := backoff(backoffShift)
+				d := l.jitteredBackoff(backoffShift)
 				backoffShift = nextBackoffShift(backoffShift)
 				l.logStreamError(ctx, err, d, id)
 				if err := l.sleep(ctx, d); err != nil {
@@ -281,7 +300,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			// Manager downtime or a network blip: transient, never an
 			// error exit — systemd owns crash recovery, the loop owns
 			// waiting out an unreachable manager.
-			d := backoff(backoffShift)
+			d := l.jitteredBackoff(backoffShift)
 			backoffShift = nextBackoffShift(backoffShift)
 			l.log.WarnContext(ctx, "could not reach the manager to enroll; backing off",
 				"backoff", d, "err", err)
@@ -311,7 +330,17 @@ func (l *Loop) logStreamError(ctx context.Context, err error, d time.Duration, i
 	l.log.WarnContext(ctx, "agent stream failed; backing off", "backoff", d, "err", err)
 }
 
-// backoff is the exponential delay for the given shift, capped.
+// jitteredBackoff is what the loop actually sleeps: the ladder's delay
+// for shift, minus a random slice of up to backoffJitter of it. See
+// backoffJitter's own comment for why the fleet must not come back in
+// lockstep.
+func (l *Loop) jitteredBackoff(shift int) time.Duration {
+	base := backoff(shift)
+	return base - time.Duration(float64(base)*backoffJitter*l.rand())
+}
+
+// backoff is the exponential delay for the given shift, capped — the
+// ladder before jitter.
 func backoff(shift int) time.Duration {
 	d := time.Second << uint(shift)
 	if d > maxBackoff || d <= 0 {

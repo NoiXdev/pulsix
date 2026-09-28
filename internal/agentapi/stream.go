@@ -107,15 +107,7 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 				// A facts or check-results push over the respective
 				// contract's bounds is the caller's fault, not the
 				// server's — the agent's own collector normalizes, so
-				// this refusal means the agent lied. errCheckResultsRejected
-				// (not checks.ErrInvalidInput itself — see its own doc
-				// comment) is deliberately what is tested for here: a
-				// checks.ErrInvalidInput surfacing from processHeartbeat's
-				// own ResolveHost (a persisted monitoring group's selector
-				// that no longer parses) is the server's own data being
-				// wrong, not this agent's fault, and must fall through to
-				// Internal below rather than rejecting every heartbeat
-				// from every agent in the organization.
+				// this refusal means the agent lied.
 				return status.Errorf(codes.InvalidArgument, "agent message rejected: %v", err)
 			}
 			return status.Errorf(codes.Internal, "process agent message: %v", err)
@@ -180,7 +172,23 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 	}
 	resolved, err := s.deps.Checks.ResolveHost(ctx, agent.OrgID, agent.HostID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve host checks: %w", err)
+		// Logged and dropped, never fatal to the stream — the same
+		// verdict the push path reaches for the identical failure
+		// (internal/api's pushAffected: "the agents' own re-assert will
+		// repair it"), and for the same reason: convergence heals, so
+		// the next heartbeat delivers whatever this one could not. The
+		// asymmetry mattered. This resolve reads the organization's
+		// hosts, its definitions, its groups and one selector query per
+		// group, several times a minute per agent, so a statement
+		// timeout, pool exhaustion or a failover blip would otherwise
+		// end EVERY stream in the installation at once and send the
+		// whole fleet reconnecting into the database that is already
+		// failing. The heartbeat's own Touch above still decides the
+		// stream's fate: that one is a single row, and failing it means
+		// the registry itself is gone.
+		slog.ErrorContext(ctx, "resolve host checks for heartbeat; the agent keeps its stream and the next heartbeat retries",
+			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID, "err", err)
+		return nil, nil
 	}
 	if resolved.Version == hb.GetConfigVersion() {
 		return nil, nil
@@ -193,22 +201,20 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 }
 
 // errCheckResultsRejected marks a RecordObservations failure that is this
-// specific agent's own fault over the check-results contract — the one
-// and only sentinel receiveMessages tests for to answer InvalidArgument
-// instead of Internal. It is deliberately not checks.ErrInvalidInput
-// itself: that same sentinel can also surface from processHeartbeat's own
-// ResolveHost call (e.g. a persisted monitoring group whose selector no
-// longer parses under the current grammar — the app's HostMatcher wraps
-// exactly that in checks.ErrInvalidInput), which is the manager's own data
-// being wrong, not anything this agent did. Testing for checks.ErrInvalidInput
-// directly in receiveMessages would answer InvalidArgument to a heartbeat
-// too, which would reject every heartbeat from every agent in the
-// organization over one bad selector nobody at the other end of the wire
-// caused or could fix by reconnecting — a wide, silent blast radius for a
-// narrow, specific problem. Wrapping the error at the one call site that
-// legitimately means "the agent's own batch is malformed" keeps the two
-// occurrences of the identical underlying sentinel from ever being
-// confused for each other.
+// specific agent's own fault over the check-results contract
+// (internal/checks' MaxObservationsPerBatch and the check_key/item/metric
+// length bounds) — the one sentinel receiveMessages tests for to answer
+// InvalidArgument instead of Internal.
+//
+// It is a marker rather than a direct test for checks.ErrInvalidInput so
+// that the mapping stays tied to the single call that can mean "this
+// agent's own batch is malformed". processHeartbeat can also produce that
+// sentinel, from a persisted monitoring group whose selector no longer
+// parses; that one is the manager's own data being wrong, and answering
+// the agent InvalidArgument for it would blame the wrong party. Today it
+// cannot reach here at all — a heartbeat's resolve failure is logged and
+// dropped (see processHeartbeat) — so this is defence against a future
+// path, not a live distinction.
 var errCheckResultsRejected = errors.New("check results rejected")
 
 // recordCheckResults maps one CheckResults batch into checks.Observation

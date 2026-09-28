@@ -228,12 +228,33 @@ func TestHeartbeatWithoutChecksPortNeverPushes(t *testing.T) {
 	}
 }
 
-// TestHeartbeatResolveFaultIsInternal: a checks-service fault while
-// resolving is a server fault, matching every other server-fault branch
-// on this stream.
-func TestHeartbeatResolveFaultIsInternal(t *testing.T) {
+// TestHeartbeatResolveFaultKeepsTheStreamAlive pins the contract that
+// replaced TestHeartbeatResolveFaultIsInternal.
+//
+// The heartbeat used to answer a ResolveHost fault with Internal, which
+// ends the RPC. Before the check pipeline the heartbeat touched one row;
+// it now reads the organization's hosts, definitions, groups and one
+// selector query per group, several times a minute per agent — so a
+// statement timeout, pool exhaustion or a failover blip cut EVERY stream
+// in the installation at the same instant, and the fleet then reconnected
+// into the database that was already failing.
+//
+// The push path has always logged and dropped the identical failure
+// ("the agents' own re-assert will repair it", internal/api's
+// pushAffected), precisely because convergence heals. This path now
+// agrees: the heartbeat is still acknowledged, no configuration rides
+// along, the stream survives — and the very next heartbeat, once the
+// fault clears, delivers the set. Nothing is lost that the next
+// heartbeat would not have delivered anyway.
+func TestHeartbeatResolveFaultKeepsTheStreamAlive(t *testing.T) {
 	h := newHarnessWithChecks(t)
-	_, client := enrollAnAgent(t, h, "web-1")
+	resp, client := enrollAnAgent(t, h, "web-1")
+	hostID := uuid.MustParse(resp.GetHostId())
+	h.checks.setResolved(hostID, checks.ResolvedSet{
+		HostID:  hostID,
+		Checks:  []checks.Resolved{{Key: "cpu", Plugin: "cpu", Interval: 30 * time.Second}},
+		Version: "v1",
+	})
 	h.checks.mu.Lock()
 	h.checks.resolveErr = errors.New("db down")
 	h.checks.mu.Unlock()
@@ -244,8 +265,30 @@ func TestHeartbeatResolveFaultIsInternal(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
-		t.Fatalf("resolve fault: %v, want Internal", err)
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("a resolve fault must not end the stream: %v", err)
+	}
+	if !msg.GetAck() {
+		t.Fatalf("heartbeat during a resolve fault = %+v, want an ack", msg)
+	}
+	if msg.GetCheckConfig() != nil {
+		t.Fatalf("nothing was resolved, so nothing may be pushed: %+v", msg.GetCheckConfig())
+	}
+
+	// The fault clears; the next heartbeat heals, on the same stream.
+	h.checks.mu.Lock()
+	h.checks.resolveErr = nil
+	h.checks.mu.Unlock()
+	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
+		t.Fatal(err)
+	}
+	healed, err := stream.Recv()
+	if err != nil || !healed.GetAck() {
+		t.Fatalf("heartbeat after the fault cleared = %+v, %v", healed, err)
+	}
+	if cfg := healed.GetCheckConfig(); cfg == nil || cfg.GetVersion() != "v1" {
+		t.Fatalf("the next heartbeat must deliver the set: %+v", cfg)
 	}
 }
 
@@ -500,17 +543,16 @@ func TestPushHostResolveFaultPropagates(t *testing.T) {
 	}
 }
 
-// TestHeartbeatChecksInvalidInputStaysInternal: checks.ErrInvalidInput
+// TestHeartbeatChecksInvalidInputNeverBlamesTheAgent: checks.ErrInvalidInput
 // surfacing from the heartbeat path (ResolveHost, e.g. via a persisted
 // monitoring group whose selector no longer parses under the current
-// grammar) must never become InvalidArgument — that mapping exists only
-// for the check-results path (errCheckResultsRejected), because an
-// InvalidArgument here would reject every heartbeat from every agent in
-// the organization over the manager's own bad data, not anything any one
-// agent did. This is the mirror image of the same rule
-// TestCheckResultsInvalidInputIsInvalidArgument pins for the path where
-// InvalidArgument is in fact correct.
-func TestHeartbeatChecksInvalidInputStaysInternal(t *testing.T) {
+// grammar) is the manager's own data being wrong, not anything this agent
+// did — so it must never be answered InvalidArgument, and since
+// TestHeartbeatResolveFaultKeepsTheStreamAlive it must not end the stream
+// either. Same sentinel, opposite verdict from the check-results path
+// TestCheckResultsInvalidInputIsInvalidArgument pins: there the agent
+// really is the one at fault.
+func TestHeartbeatChecksInvalidInputNeverBlamesTheAgent(t *testing.T) {
 	h := newHarnessWithChecks(t)
 	_, client := enrollAnAgent(t, h, "web-1")
 	h.checks.mu.Lock()
@@ -523,8 +565,13 @@ func TestHeartbeatChecksInvalidInputStaysInternal(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
-		t.Fatalf("checks.ErrInvalidInput from the heartbeat path: %v, want Internal (never InvalidArgument)", err)
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("checks.ErrInvalidInput from the heartbeat path ended the stream with %v (code %s); "+
+			"one unparseable stored selector must not disconnect the organization's whole fleet", err, status.Code(err))
+	}
+	if !msg.GetAck() || msg.GetCheckConfig() != nil {
+		t.Fatalf("heartbeat = %+v, want a bare ack", msg)
 	}
 }
 

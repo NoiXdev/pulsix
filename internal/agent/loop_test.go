@@ -53,6 +53,23 @@ type loopTest struct {
 	mu     sync.Mutex
 	sleeps []time.Duration
 	logs   strings.Builder
+	// randVal is what the injected jitter source answers. It defaults to
+	// 0, which subtracts no jitter at all, so every existing cadence
+	// assertion still names the ladder's own rung; setJitter dials it up
+	// for the test that pins the jitter itself.
+	randVal float64
+}
+
+func (lt *loopTest) setJitter(v float64) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	lt.randVal = v
+}
+
+func (lt *loopTest) jitter() float64 {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	return lt.randVal
 }
 
 func newLoopTest(t *testing.T) *loopTest {
@@ -96,6 +113,7 @@ func (lt *loopTest) options() []LoopOption {
 		WithSleep(lt.recordSleep),
 		WithLogger(slog.New(slog.NewTextHandler(&lt.logs, nil))),
 		WithTicker(lt.ticks.factory()),
+		WithRand(lt.jitter),
 	}
 }
 
@@ -605,5 +623,61 @@ func (lt *loopTest) withExpiredIdentity() {
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
 	if err := SaveEnrollment(lt.dir, key, certPEM, caPEM, "host-1"); err != nil {
 		lt.t.Fatal(err)
+	}
+}
+
+// TestJitteredBackoffSubtractsUpToHalfTheRung pins the jitter's shape at
+// both edges: with no jitter drawn the delay is exactly the ladder's own
+// rung, with the maximum drawn it is exactly half of it, and nothing in
+// between escapes [rung/2, rung]. Subtracting rather than adding is the
+// property that matters — the 60 s cap stays a cap, and the first retry
+// still happens within a second.
+func TestJitteredBackoffSubtractsUpToHalfTheRung(t *testing.T) {
+	for _, tt := range []struct {
+		shift int
+		draw  float64
+		want  time.Duration
+	}{
+		{0, 0, time.Second},
+		{0, 1, 500 * time.Millisecond},
+		{0, 0.5, 750 * time.Millisecond},
+		{3, 0, 8 * time.Second},
+		{3, 1, 4 * time.Second},
+		{6, 0, maxBackoff},
+		{6, 1, maxBackoff / 2},
+		{10, 0.25, maxBackoff - maxBackoff/8},
+	} {
+		l := &Loop{rand: func() float64 { return tt.draw }}
+		if got := l.jitteredBackoff(tt.shift); got != tt.want {
+			t.Errorf("jitteredBackoff(%d) with draw %v = %v, want %v", tt.shift, tt.draw, got, tt.want)
+		}
+	}
+}
+
+// TestLoopReconnectBackoffIsJittered proves the loop sleeps the JITTERED
+// delay, not the bare ladder. Without it a fault that cuts every stream
+// at once — a manager restart, a database failover — has the whole fleet
+// reconnect in lockstep, rung by rung, into whatever is already failing;
+// with it the same rung is spread across half its own width.
+func TestLoopReconnectBackoffIsJittered(t *testing.T) {
+	lt := newLoopTest(t)
+	lt.withIdentity()
+	lt.setJitter(1) // the maximum draw: exactly half of each rung
+	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{newFakeStream()}}
+	lt.dialer.agentDialErr = errors.New("manager unreachable")
+
+	l := lt.newLoop()
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool { return len(lt.recordedSleeps()) >= 3 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	sleeps := lt.recordedSleeps()
+	want := []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second}
+	for i, w := range want {
+		if sleeps[i] != w {
+			t.Fatalf("sleep %d = %v, want %v (the jittered rung, not the bare ladder) — all: %v", i, sleeps[i], w, sleeps[:len(want)])
+		}
 	}
 }
