@@ -54,7 +54,7 @@ func TestHeartbeatEmptyConfigVersionReceivesFullSet(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !msg.GetAck() {
 		t.Fatalf("heartbeat ack = %+v, %v", msg, err)
 	}
@@ -86,7 +86,7 @@ func TestHeartbeatSameVersionReceivesNothing(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "v1")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !msg.GetAck() {
 		t.Fatalf("heartbeat ack = %+v, %v", msg, err)
 	}
@@ -111,7 +111,7 @@ func TestHeartbeatChangedDefinitionPushesOnce(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "v1")); err != nil {
 		t.Fatal(err)
 	}
-	if msg, err := stream.Recv(); err != nil || msg.GetCheckConfig() != nil {
+	if msg, err := recvWithin(t, stream, recvTimeout); err != nil || msg.GetCheckConfig() != nil {
 		t.Fatalf("converged heartbeat = %+v, %v, want no push", msg, err)
 	}
 
@@ -124,7 +124,7 @@ func TestHeartbeatChangedDefinitionPushesOnce(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "v1")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestHeartbeatChangedDefinitionPushesOnce(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "v2")); err != nil {
 		t.Fatal(err)
 	}
-	if msg, err := stream.Recv(); err != nil || msg.GetCheckConfig() != nil {
+	if msg, err := recvWithin(t, stream, recvTimeout); err != nil || msg.GetCheckConfig() != nil {
 		t.Fatalf("heartbeat after converging on v2 = %+v, %v, want no further push", msg, err)
 	}
 }
@@ -173,7 +173,7 @@ func TestConvergenceUnrecognisedVersionPushesOnceThenConverges(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "invented-"+uuid.Must(uuid.NewV7()).String())); err != nil {
 		t.Fatal(err)
 	}
-	first, err := stream.Recv()
+	first, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !first.GetAck() {
 		t.Fatalf("first heartbeat ack = %+v, %v", first, err)
 	}
@@ -186,7 +186,7 @@ func TestConvergenceUnrecognisedVersionPushesOnceThenConverges(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", cfg.GetVersion())); err != nil {
 		t.Fatal(err)
 	}
-	second, err := stream.Recv()
+	second, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !second.GetAck() {
 		t.Fatalf("second heartbeat ack = %+v, %v", second, err)
 	}
@@ -199,7 +199,7 @@ func TestConvergenceUnrecognisedVersionPushesOnceThenConverges(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", cfg.GetVersion())); err != nil {
 		t.Fatal(err)
 	}
-	third, err := stream.Recv()
+	third, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !third.GetAck() || third.GetCheckConfig() != nil {
 		t.Fatalf("third (still converged) heartbeat = %+v, %v, want ack only", third, err)
 	}
@@ -221,7 +221,7 @@ func TestHeartbeatWithoutChecksPortNeverPushes(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "anything-at-all")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !msg.GetAck() {
 		t.Fatalf("heartbeat without a checks port = %+v, %v", msg, err)
 	}
@@ -267,7 +267,7 @@ func TestHeartbeatResolveFaultKeepsTheStreamAlive(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatalf("a resolve fault must not end the stream: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestHeartbeatResolveFaultKeepsTheStreamAlive(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	healed, err := stream.Recv()
+	healed, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !healed.GetAck() {
 		t.Fatalf("heartbeat after the fault cleared = %+v, %v", healed, err)
 	}
@@ -335,7 +335,7 @@ func TestCheckResultsRecorded(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !msg.GetAck() {
 		t.Fatalf("check results ack = %+v, %v", msg, err)
 	}
@@ -387,7 +387,7 @@ func TestCheckResultsUnknownHostRejectedCountsNotError(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil || !msg.GetAck() {
 		t.Fatalf("results for an unrecognised host = %+v, %v, want a plain ack, not a stream error", msg, err)
 	}
@@ -448,7 +448,7 @@ func TestCheckResultsRejectionLogNamesTheCause(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if msg, err := stream.Recv(); err != nil || !msg.GetAck() {
+	if msg, err := recvWithin(t, stream, recvTimeout); err != nil || !msg.GetAck() {
 		t.Fatalf("check results ack = %+v, %v", msg, err)
 	}
 
@@ -489,7 +489,7 @@ func TestCheckResultsStoreFaultIsInternal(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Internal {
 		t.Fatalf("store fault: %v, want Internal", err)
 	}
 }
@@ -512,7 +512,7 @@ func TestCheckResultsInvalidInputIsInvalidArgument(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.InvalidArgument {
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid input: %v, want InvalidArgument", err)
 	}
 }
@@ -532,7 +532,7 @@ func TestCheckResultsDroppedWithoutChecksPort(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if msg, err := stream.Recv(); err != nil || !msg.GetAck() {
+	if msg, err := recvWithin(t, stream, recvTimeout); err != nil || !msg.GetAck() {
 		t.Fatalf("dropped results must still be acknowledged: %+v, %v", msg, err)
 	}
 }
@@ -565,7 +565,7 @@ func TestPushHostDeliversToConnectedAgent(t *testing.T) {
 	if err := h.svc.PushHost(t.Context(), testOrg, hostID); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +642,7 @@ func TestHeartbeatChecksInvalidInputNeverBlamesTheAgent(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatalf("checks.ErrInvalidInput from the heartbeat path ended the stream with %v (code %s); "+
 			"one unparseable stored selector must not disconnect the organization's whole fleet", err, status.Code(err))
@@ -691,7 +691,7 @@ func TestPushHostOrgMismatchNeverReachesAnotherTenantsAgent(t *testing.T) {
 	if reached != 1 {
 		t.Fatalf("PushToHost with the matching org reached %d streams, want 1", reached)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -783,7 +783,7 @@ func TestPushedNestedParamsReproduceTheVersion(t *testing.T) {
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,7 +837,7 @@ func TestPushOrgResolvesOnceForEveryMonitoredHost(t *testing.T) {
 	if err := h.svc.PushOrg(t.Context(), testOrg); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -906,7 +906,7 @@ func TestPushHostsResolvesOnceForTheBatch(t *testing.T) {
 	if err := h.svc.PushHosts(t.Context(), testOrg, []uuid.UUID{hostID, other}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := stream.Recv()
+	msg, err := recvWithin(t, stream, recvTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1002,7 +1002,7 @@ func TestPushKeepsGoingAfterAnEncodeFault(t *testing.T) {
 			// Both healthy hosts were still pushed, whatever order the
 			// fault was met in.
 			for _, i := range []int{0, 2} {
-				msg, err := streams[i].Recv()
+				msg, err := recvWithin(t, streams[i], recvTimeout)
 				if err != nil {
 					t.Fatalf("host %d never received its configuration: %v", i, err)
 				}
@@ -1075,7 +1075,7 @@ func TestCheckResultsContractBoundsRefusedOnTheWire(t *testing.T) {
 			}}); err != nil {
 				t.Fatal(err)
 			}
-			msg, err := stream.Recv()
+			msg, err := recvWithin(t, stream, recvTimeout)
 			if !tc.wantErr {
 				if err != nil || !msg.GetAck() {
 					t.Fatalf("a batch at every bound must be accepted: %+v, %v", msg, err)
@@ -1132,7 +1132,7 @@ func TestCheckResultsRejectionLogAttributesEachCauseSeparately(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if msg, err := stream.Recv(); err != nil || !msg.GetAck() {
+	if msg, err := recvWithin(t, stream, recvTimeout); err != nil || !msg.GetAck() {
 		t.Fatalf("check results ack = %+v, %v", msg, err)
 	}
 

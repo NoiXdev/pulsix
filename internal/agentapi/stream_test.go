@@ -101,7 +101,7 @@ func TestHeartbeatUpdatesLastSeen(t *testing.T) {
 		if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: v}}}); err != nil {
 			t.Fatal(err)
 		}
-		ack, err := stream.Recv()
+		ack, err := recvWithin(t, stream, recvTimeout)
 		if err != nil || !ack.GetAck() {
 			t.Fatalf("heartbeat %q ack = %+v, %v", v, ack, err)
 		}
@@ -136,7 +136,7 @@ func TestFactsFlowToSink(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+	if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
 		t.Fatalf("facts ack = %+v, %v", ack, err)
 	}
 	calls := h.sink.recorded()
@@ -160,7 +160,7 @@ func TestFactsDroppedWithoutSink(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+	if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
 		t.Fatalf("dropped facts must still be acknowledged: %+v, %v", ack, err)
 	}
 	if calls := h.sink.recorded(); len(calls) != 0 {
@@ -186,7 +186,7 @@ func TestFactsSinkFaultEndsStream(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Internal {
 		t.Fatalf("sink fault: %v, want Internal", err)
 	}
 }
@@ -203,7 +203,7 @@ func TestUnknownBodyAcked(t *testing.T) {
 	if err := stream.Send(&agentpb.AgentMessage{}); err != nil {
 		t.Fatal(err)
 	}
-	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+	if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
 		t.Fatalf("empty-body ack = %+v, %v", ack, err)
 	}
 }
@@ -213,7 +213,7 @@ func TestStreamRequiresCertificate(t *testing.T) {
 	h := newHarness(t)
 	stream, err := h.client(nil, nil).AgentStream(t.Context())
 	if err == nil {
-		_, err = stream.Recv()
+		_, err = recvWithin(t, stream, recvTimeout)
 	}
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("anonymous stream: %v, want Unauthenticated", err)
@@ -268,7 +268,7 @@ func TestReenrollCutsTheReplacedStream(t *testing.T) {
 	}
 
 	// The replaced serial's stream is cut.
-	if _, err := oldStream.Recv(); status.Code(err) != codes.Unauthenticated {
+	if _, err := recvWithin(t, oldStream, recvTimeout); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("old stream after re-enroll: %v, want Unauthenticated", err)
 	}
 	// The fresh serial's stream works.
@@ -280,7 +280,7 @@ func TestReenrollCutsTheReplacedStream(t *testing.T) {
 	if err := stream2.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v2"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if ack, err := stream2.Recv(); err != nil || !ack.GetAck() {
+	if ack, err := recvWithin(t, stream2, recvTimeout); err != nil || !ack.GetAck() {
 		t.Fatalf("new stream heartbeat ack = %+v, %v", ack, err)
 	}
 }
@@ -297,7 +297,7 @@ func TestRenewalKeepsTheStream(t *testing.T) {
 	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v1"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+	if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
 		t.Fatalf("pre-renewal heartbeat = %+v, %v", ack, err)
 	}
 	_, csr := newKeyAndCSR(t)
@@ -307,7 +307,7 @@ func TestRenewalKeepsTheStream(t *testing.T) {
 	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v2"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if ack, err := stream.Recv(); err != nil || !ack.GetAck() {
+	if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
 		t.Fatalf("post-renewal heartbeat = %+v, %v — renewal must not cut the stream", ack, err)
 	}
 }
@@ -334,7 +334,7 @@ func TestRevocationEndsStreams(t *testing.T) {
 	if err := h.agentSvc.Revoke(context.Background(), testOrg, hostID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("stream after revoke: %v, want Unauthenticated", err)
 	}
 	if trackedStreams(h.svc.Streams(), hostID) != 0 {
@@ -353,7 +353,7 @@ func TestRevocationBetweenAuthAndTrackEndsTheStream(t *testing.T) {
 	h.store.armRevokeAfterLookup(serial)
 	stream, err := (*client).AgentStream(t.Context())
 	if err == nil {
-		_, err = stream.Recv()
+		_, err = recvWithin(t, stream, recvTimeout)
 	}
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("stream after the between-auth-and-track revoke: %v, want Unauthenticated", err)
@@ -376,7 +376,7 @@ func TestStreamOpenTouchFaultIsLogged(t *testing.T) {
 	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: "v"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Internal {
 		t.Fatalf("heartbeat with the touch fault armed: %v, want Internal", err)
 	}
 }
@@ -390,7 +390,7 @@ func TestStreamRecheckFaultIsInternal(t *testing.T) {
 	h.store.armLookupFaultAfterNext()
 	stream, err := (*client).AgentStream(t.Context())
 	if err == nil {
-		_, err = stream.Recv()
+		_, err = recvWithin(t, stream, recvTimeout)
 	}
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("re-check fault: %v, want Internal", err)
@@ -423,7 +423,7 @@ func TestStreamFactsBoundsRejected(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stream.Recv(); status.Code(err) != codes.InvalidArgument {
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("over-bounds facts: %v, want InvalidArgument", err)
 	}
 }
