@@ -93,15 +93,25 @@ ORDER BY check_key, item, metric;
 -- One metric's samples for one host, downsampled server-side: bucket_seconds
 -- is the caller's own (to-from)/buckets, turned into an interval through
 -- make_interval rather than string-formatted into the query text, which
--- keeps this a plain parameterized statement. avg() ignores NULL value
--- rows on its own (a label-typed metric would never be queried this way —
--- "graphs" are for numeric metrics only, per the design doc's GUI section),
--- so no extra filter is needed.
+-- keeps this a plain parameterized statement.
+--
+-- `value IS NOT NULL` is load-bearing, not tidiness. avg() does skip NULL
+-- rows, but a BUCKET that contains nothing but label rows still forms, and
+-- avg() over it is NULL, which the generated scan refuses ("cannot scan
+-- NULL into *float64") — a 500 on a shipped route, reachable from two
+-- ordinary ingests on the seeded service check (a state reading, then a
+-- collection failure; filed as backlog 3.29 and closed here, pinned by
+-- internal/api's TestHostMetricsAfterACollectionErrorIsAnEmptySeries).
+-- Filtering the rows out instead means such a bucket never forms at all,
+-- so the answer is an honest empty series. The caller refuses a metric it can SEE is discrete
+-- before reaching here; this is what covers the case it cannot see,
+-- where the only current row is an error carrying neither value nor label.
 SELECT time_bucket(make_interval(secs => sqlc.arg(bucket_seconds)::double precision), at)::timestamptz AS bucket,
        avg(value)::double precision AS value
 FROM check_samples
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
   AND item = sqlc.arg(item) AND metric = sqlc.arg(metric)
   AND at >= sqlc.arg(from_at) AND at < sqlc.arg(to_at)
+  AND value IS NOT NULL
 GROUP BY bucket
 ORDER BY bucket;

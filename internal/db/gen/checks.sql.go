@@ -363,6 +363,7 @@ FROM check_samples
 WHERE org_id = $2 AND host_id = $3 AND check_key = $4
   AND item = $5 AND metric = $6
   AND at >= $7 AND at < $8
+  AND value IS NOT NULL
 GROUP BY bucket
 ORDER BY bucket
 `
@@ -386,10 +387,19 @@ type SeriesForHostRow struct {
 // One metric's samples for one host, downsampled server-side: bucket_seconds
 // is the caller's own (to-from)/buckets, turned into an interval through
 // make_interval rather than string-formatted into the query text, which
-// keeps this a plain parameterized statement. avg() ignores NULL value
-// rows on its own (a label-typed metric would never be queried this way —
-// "graphs" are for numeric metrics only, per the design doc's GUI section),
-// so no extra filter is needed.
+// keeps this a plain parameterized statement.
+//
+// `value IS NOT NULL` is load-bearing, not tidiness. avg() does skip NULL
+// rows, but a BUCKET that contains nothing but label rows still forms, and
+// avg() over it is NULL, which the generated scan refuses ("cannot scan
+// NULL into *float64") — a 500 on a shipped route, reachable from two
+// ordinary ingests on the seeded service check (a state reading, then a
+// collection failure; filed as backlog 3.29 and closed here, pinned by
+// internal/api's TestHostMetricsAfterACollectionErrorIsAnEmptySeries).
+// Filtering the rows out instead means such a bucket never forms at all,
+// so the answer is an honest empty series. The caller refuses a metric it can SEE is discrete
+// before reaching here; this is what covers the case it cannot see,
+// where the only current row is an error carrying neither value nor label.
 func (q *Queries) SeriesForHost(ctx context.Context, arg SeriesForHostParams) ([]SeriesForHostRow, error) {
 	rows, err := q.db.Query(ctx, seriesForHost,
 		arg.BucketSeconds,

@@ -240,17 +240,38 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 // there is nothing to graph, and the caller most likely mistyped a key or
 // an item) and one it reports as a label (400, naming the label, since no
 // spelling of the request would make that metric a series).
+//
+// A current row has three shapes, not two, and the third is the one that
+// used to fall through here as "numeric, go ahead": a collection error
+// carries NEITHER value nor label, so testing only for a label let a
+// discrete metric reach the series query the moment its last reading
+// failed. Two ordinary ingests on the seeded service check — a state
+// reading, then a collection failure — were enough, and the request came
+// back 500 (filed as backlog 3.29, closed by this change). An error row
+// says nothing about the metric's type, so this cannot decide from it;
+// what it CAN do is say so explicitly rather than by omission, and let
+// the store answer. The store
+// filters NULL values out of the series (see the SeriesForHost query), so
+// the answer is an empty series for a discrete metric and the real
+// history for a numeric one whose latest reading happened to fail — which
+// is exactly the case the host page's graph affordance survives.
 func requireNumericMetric(current []checks.Current, checkKey, item, metric string) error {
 	for _, c := range current {
 		if c.CheckKey != checkKey || c.Item != item || c.Metric != metric {
 			continue
 		}
-		if c.Label != nil {
+		switch {
+		case c.Label != nil:
 			return huma.Error400BadRequest(fmt.Sprintf(
 				"metric %q of check %q is a discrete value (%q), not a number; only numeric metrics have a graph",
 				metric, checkKey, *c.Label))
+		case c.Value != nil:
+			return nil // numeric, and known to be
+		default:
+			// Neither: collection failed and the row records only that.
+			// Undecidable here, and deliberately not refused — see above.
+			return nil
 		}
-		return nil
 	}
 	return huma.Error404NotFound(fmt.Sprintf("host has no metric %q for check %q", metric, checkKey))
 }

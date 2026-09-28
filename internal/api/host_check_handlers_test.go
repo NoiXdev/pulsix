@@ -383,3 +383,93 @@ func TestHostCheckRoutes(t *testing.T) {
 		}
 	})
 }
+
+// TestHostMetricsAfterACollectionErrorIsAnEmptySeries is the backlog row
+// 3.29 that this change closes, reproduced rather than reasoned about: two ordinary ingests on the
+// SEEDED service check — one state reading, then one collection failure —
+// and an authenticated viewer asking for that metric's graph got
+//
+//	500 Internal Server Error
+//	err="series for host: can't scan into dest[1] (col: value):
+//	     cannot scan NULL into *float64"
+//
+// Two independent defects line up to produce it. check_current's row for
+// the tuple is now an ERROR row, carrying neither value nor label, and
+// requireNumericMetric only ever tested c.Label != nil — so a row that is
+// not a label fell through as "numeric, go ahead". The store's series
+// query then averaged value over sample rows that are all labels, and
+// avg() of nothing but NULLs is NULL, which the generated scan refuses.
+//
+// The route must answer an honest empty series. Nothing numeric was ever
+// recorded for this tuple, but it HAS reported, so 404 would be a lie and
+// 400 would contradict the graph affordance the host page keeps across a
+// collection failure (a numeric check whose latest reading is an error
+// still has history worth drawing).
+func TestHostMetricsAfterACollectionErrorIsAnEmptySeries(t *testing.T) {
+	f := newChecksFixture(t, "host-metrics-error-row")
+	now := time.Now()
+
+	// Exactly what a real agent sends when sshd cannot be read after
+	// having been readable: a label, then an error for the same tuple.
+	f.record(t, checks.Observation{
+		HostID: f.web, CheckKey: "service", Item: "sshd", Metric: "state",
+		At: now.Add(-2 * time.Minute), Label: strPtr("active"),
+	})
+	f.record(t, checks.Observation{
+		HostID: f.web, CheckKey: "service", Item: "sshd", Metric: "state",
+		At: now.Add(-time.Minute), Err: "dbus: connection refused",
+	})
+
+	// The current row really is the error shape this test exists for —
+	// otherwise the request below would be answered by the label branch
+	// and prove nothing.
+	values := f.hostChecks(t, f.viewerC, f.web).byKey(t, "service").Values
+	if len(values) != 1 || values[0].Error == "" || values[0].Label != "" || values[0].Value != nil {
+		t.Fatalf("service values = %+v, want exactly one error-only current row", values)
+	}
+
+	resp := requestJSON(t, f.viewerC, http.MethodGet,
+		f.hostURL(f.web)+"/metrics?check=service&item=sshd&metric=state&range=1h", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metrics over an error-only current row = %d %s, want 200 with no points",
+			resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Check  string `json:"check"`
+		Item   string `json:"item"`
+		Metric string `json:"metric"`
+		Points []struct {
+			At    time.Time `json:"at"`
+			Value float64   `json:"value"`
+		} `json:"points"`
+	}
+	decodeInto(t, resp, &out)
+	if out.Check != "service" || out.Item != "sshd" || out.Metric != "state" {
+		t.Fatalf("echo = %+v", out)
+	}
+	if len(out.Points) != 0 {
+		t.Fatalf("points = %+v, want none: every stored sample for this tuple is a label", out.Points)
+	}
+
+	// The same route on a numeric metric whose latest reading is an error
+	// keeps its history — the case the host page's graph affordance rests
+	// on, and the one an over-eager guard would break instead.
+	f.record(t, checks.Observation{
+		HostID: f.web, CheckKey: "cpu", Metric: "usage_percent",
+		At: now.Add(-3 * time.Minute), Value: floatPtr(41),
+	})
+	f.record(t, checks.Observation{
+		HostID: f.web, CheckKey: "cpu", Metric: "usage_percent",
+		At: now.Add(-time.Minute), Err: "gopsutil: /proc unreadable",
+	})
+	resp = requestJSON(t, f.viewerC, http.MethodGet,
+		f.hostURL(f.web)+"/metrics?check=cpu&metric=usage_percent&range=1h", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("numeric metric after a collection error = %d %s, want 200",
+			resp.StatusCode, mustReadBody(t, resp))
+	}
+	decodeInto(t, resp, &out)
+	if len(out.Points) != 1 || out.Points[0].Value != 41 {
+		t.Fatalf("points = %+v, want the one numeric sample recorded before the failure", out.Points)
+	}
+}
