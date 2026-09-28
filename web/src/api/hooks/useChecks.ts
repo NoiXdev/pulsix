@@ -160,9 +160,16 @@ export interface MetricSelection {
  * reported and 400 for a discrete metric or an unknown range. Retrying
  * either only delays the message.
  *
- * refetchInterval matches useHostChecks': an open graph that froze at the
- * instant it was opened, while the current values above it kept ticking,
- * would be the one stale thing on a page whose whole subject is staleness.
+ * refetchInterval matches useHostChecks' cadence while the query is
+ * healthy, and stops dead once it has failed. An open graph that froze at
+ * the instant it was opened, while the current values above it kept
+ * ticking, would be the one stale thing on a page whose whole subject is
+ * staleness — but a plain `30_000` would also re-fire the failures the
+ * paragraph above calls final: TanStack's interval timer calls the fetcher
+ * with no error-state check, so a graph opened on a tuple the host never
+ * reported would ask again twice a minute, forever, for an answer that
+ * cannot change. `retry: false` does not cover this; it governs one
+ * fetch's attempts, not whether the next one is scheduled.
  */
 export function useHostMetric(org: string, hostId: string, selection: MetricSelection | null) {
   return useQuery({
@@ -180,6 +187,6 @@ export function useHostMetric(org: string, hostId: string, selection: MetricSele
     },
     enabled: !!org && !!hostId && selection !== null,
     retry: false,
-    refetchInterval: 30_000,
+    refetchInterval: (query) => (query.state.error ? false : 30_000),
   });
 }
