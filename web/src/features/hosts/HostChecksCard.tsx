@@ -4,6 +4,7 @@ import { LineChart } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
+import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
@@ -28,6 +29,10 @@ const RANGES: [MetricRange, string][] = [
   ['7d', '7 d'],
 ];
 
+/** The chart's own height, shared with the Suspense fallback so a cold
+ * open does not shift the panel and everything under it by ~164 px while
+ * the chunk downloads. */
+const CHART_HEIGHT = 180;
 
 export interface HostChecksCardProps {
   org: string;
@@ -233,9 +238,27 @@ function GraphPanel({
       )}
       {!series.data && !series.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
       {series.data && (
-        <Suspense fallback={<p className="text-xs text-muted-foreground">Loading…</p>}>
-          <MetricChart points={series.data.points ?? []} range={selection.range} label={label} />
-        </Suspense>
+        // The boundary wraps the Suspense, not the other way round: a
+        // rejected chunk import is re-thrown during render, and without
+        // this the throw reaches the router and takes the whole host page
+        // with it. Scoped here it costs the graph and nothing else.
+        <ErrorBoundary
+          fallback={
+            <p role="alert" className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
+              The chart could not be loaded. Reload the page to try again.
+            </p>
+          }
+        >
+          <Suspense
+            fallback={
+              <p className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
+                Loading…
+              </p>
+            }
+          >
+            <MetricChart points={series.data.points ?? []} range={selection.range} label={label} height={CHART_HEIGHT} />
+          </Suspense>
+        </ErrorBoundary>
       )}
     </div>
   );
