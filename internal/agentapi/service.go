@@ -84,7 +84,7 @@ type ChecksPort interface {
 	// which is genuinely about one host.
 	ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error)
 	ResolveOrg(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error)
-	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error)
+	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (checks.Ingest, error)
 }
 
 // Deps wires the service's dependencies.

@@ -82,12 +82,12 @@ func TestRecordObservationsRoundTrip(t *testing.T) {
 		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(42.5)},
 		{HostID: host, CheckKey: "service", Item: "sshd", Metric: "state", At: now, Label: str("active")},
 	}
-	accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
+	res, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 2 || rejected != 0 {
-		t.Fatalf("accepted=%d rejected=%d, want 2, 0", accepted, rejected)
+	if res.Accepted != 2 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, want 2 accepted and nothing rejected", res)
 	}
 
 	current, err := svc.CurrentForHost(scoped, org, host)
@@ -135,12 +135,12 @@ func TestRecordObservationsUnknownCheckKeyStored(t *testing.T) {
 	obs := []checks.Observation{
 		{HostID: host, CheckKey: "no-such-definition", Metric: "widgets", At: time.Now(), Value: f64(7)},
 	}
-	accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
+	res, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 1 || rejected != 0 {
-		t.Fatalf("accepted=%d rejected=%d, want 1, 0 — an unknown check_key must still be stored", accepted, rejected)
+	if res.Accepted != 1 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, want 1 accepted — an unknown check_key must still be stored", res)
 	}
 	current, err := svc.CurrentForHost(scoped, org, host)
 	if err != nil || len(current) != 1 || current[0].CheckKey != "no-such-definition" {
@@ -165,12 +165,14 @@ func TestRecordObservationsUnknownHostRejected(t *testing.T) {
 		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)},
 		{HostID: unknownHost, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(2)},
 	}
-	accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
+	res, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 1 || rejected != 1 {
-		t.Fatalf("accepted=%d rejected=%d, want 1, 1", accepted, rejected)
+	// Attributed to the host rule, not merely counted: an operator told
+	// only "1 rejected" cannot tell this from a clock or a shape problem.
+	if res.Accepted != 1 || res.UnknownHost != 1 || res.Rejected() != 1 {
+		t.Fatalf("ingest = %+v, want 1 accepted and 1 rejected as an unknown host", res)
 	}
 	current, err := svc.CurrentForHost(scoped, org, host)
 	if err != nil || len(current) != 1 {
@@ -206,15 +208,18 @@ func TestRecordObservationsPlausibilityWindowBoundaries(t *testing.T) {
 			obs := []checks.Observation{
 				{HostID: host, CheckKey: "cpu", Item: uuid.Must(uuid.NewV7()).String(), Metric: "usage", At: tc.at, Value: f64(float64(i))},
 			}
-			accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
+			res, err := svc.RecordObservations(scoped, org, obs)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.accept && (accepted != 1 || rejected != 0) {
-				t.Fatalf("accepted=%d rejected=%d, want 1, 0", accepted, rejected)
+			if tc.accept && (res.Accepted != 1 || res.Rejected() != 0) {
+				t.Fatalf("ingest = %+v, want 1 accepted", res)
 			}
-			if !tc.accept && (accepted != 0 || rejected != 1) {
-				t.Fatalf("accepted=%d rejected=%d, want 0, 1", accepted, rejected)
+			// A window rejection is a statement about the agent's CLOCK
+			// and is counted as one — the remedy is NTP on that host, not
+			// a look at the agent build.
+			if !tc.accept && (res.Accepted != 0 || res.Implausible != 1 || res.Rejected() != 1) {
+				t.Fatalf("ingest = %+v, want 1 rejected for an implausible timestamp", res)
 			}
 		})
 	}
@@ -243,12 +248,14 @@ func TestRecordObservationsMalformedShapeRejected(t *testing.T) {
 		{HostID: host, CheckKey: "cpu", Metric: "err-and-value", At: now, Err: "boom", Value: f64(1)},
 		{HostID: host, CheckKey: "cpu", Metric: "err-and-label", At: now, Err: "boom", Label: str("x")},
 	}
-	accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
+	res, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 0 || rejected != 4 {
-		t.Fatalf("accepted=%d rejected=%d, want 0, 4", accepted, rejected)
+	// All four are the agent's own shape being wrong, which is a broken
+	// agent build — never the clock, whatever their timestamps say.
+	if res.Accepted != 0 || res.Malformed != 4 || res.Rejected() != 4 {
+		t.Fatalf("ingest = %+v, want 4 rejected as malformed", res)
 	}
 }
 
@@ -268,12 +275,12 @@ func TestRecordObservationsCollectionError(t *testing.T) {
 	obs := []checks.Observation{
 		{HostID: host, CheckKey: "disk", Item: "/data", Metric: "used_percent", At: now, Err: "permission denied"},
 	}
-	accepted, rejected, err := svc.RecordObservations(scoped, org, obs)
+	res, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 1 || rejected != 0 {
-		t.Fatalf("accepted=%d rejected=%d, want 1, 0", accepted, rejected)
+	if res.Accepted != 1 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, want 1 accepted", res)
 	}
 
 	current, err := svc.CurrentForHost(scoped, org, host)
@@ -311,8 +318,8 @@ func TestCurrentSurvivesDisappearedItem(t *testing.T) {
 		{HostID: host, CheckKey: "disk", Item: "/", Metric: "used_percent", At: firstAt, Value: f64(10)},
 		{HostID: host, CheckKey: "disk", Item: "/data", Metric: "used_percent", At: firstAt, Value: f64(55)},
 	}
-	if accepted, rejected, err := svc.RecordObservations(scoped, org, first); err != nil || accepted != 2 || rejected != 0 {
-		t.Fatalf("first batch: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	if res, err := svc.RecordObservations(scoped, org, first); err != nil || res.Accepted != 2 || res.Rejected() != 0 {
+		t.Fatalf("first batch: %+v, err %v", res, err)
 	}
 
 	// /data has since been unmounted: the second batch never mentions it
@@ -321,8 +328,8 @@ func TestCurrentSurvivesDisappearedItem(t *testing.T) {
 	second := []checks.Observation{
 		{HostID: host, CheckKey: "disk", Item: "/", Metric: "used_percent", At: secondAt, Value: f64(11)},
 	}
-	if accepted, rejected, err := svc.RecordObservations(scoped, org, second); err != nil || accepted != 1 || rejected != 0 {
-		t.Fatalf("second batch: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	if res, err := svc.RecordObservations(scoped, org, second); err != nil || res.Accepted != 1 || res.Rejected() != 0 {
+		t.Fatalf("second batch: %+v, err %v", res, err)
 	}
 
 	current, err := svc.CurrentForHost(scoped, org, host)
@@ -383,8 +390,8 @@ func TestSeriesForHostBucketed(t *testing.T) {
 		{HostID: host, CheckKey: "cpu", Metric: "usage", At: from.Add(31 * time.Minute), Value: f64(40)},
 		{HostID: host, CheckKey: "cpu", Metric: "usage", At: from.Add(32 * time.Minute), Value: f64(60)},
 	}
-	if accepted, rejected, err := svc.RecordObservations(scoped, org, obs); err != nil || accepted != 4 || rejected != 0 {
-		t.Fatalf("accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	if res, err := svc.RecordObservations(scoped, org, obs); err != nil || res.Accepted != 4 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, err %v", res, err)
 	}
 
 	series, err := svc.SeriesForHost(scoped, org, host, "cpu", "", "usage", from, to, 2)
@@ -435,10 +442,10 @@ func TestRecordObservationsOrgIsolation(t *testing.T) {
 	now := time.Now()
 	obsA := []checks.Observation{{HostID: hostA, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)}}
 	obsB := []checks.Observation{{HostID: hostB, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(2)}}
-	if _, _, err := svc.RecordObservations(db.WithOrgScope(context.Background(), orgA), orgA, obsA); err != nil {
+	if _, err := svc.RecordObservations(db.WithOrgScope(context.Background(), orgA), orgA, obsA); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.RecordObservations(db.WithOrgScope(context.Background(), orgB), orgB, obsB); err != nil {
+	if _, err := svc.RecordObservations(db.WithOrgScope(context.Background(), orgB), orgB, obsB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -605,12 +612,12 @@ func TestRecordObservationsBatchSizeBoundary(t *testing.T) {
 	t.Run("at the bound", func(t *testing.T) {
 		store := newFakeStore()
 		svc := checks.NewService(store, fixedClock(now))
-		accepted, rejected, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), build(checks.MaxObservationsPerBatch))
+		res, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), build(checks.MaxObservationsPerBatch))
 		if err != nil {
 			t.Fatalf("exactly %d observations must be accepted: %v", checks.MaxObservationsPerBatch, err)
 		}
-		if accepted != checks.MaxObservationsPerBatch || rejected != 0 {
-			t.Fatalf("accepted=%d rejected=%d, want %d, 0", accepted, rejected, checks.MaxObservationsPerBatch)
+		if res.Accepted != checks.MaxObservationsPerBatch || res.Rejected() != 0 {
+			t.Fatalf("ingest = %+v, want %d accepted", res, checks.MaxObservationsPerBatch)
 		}
 		if store.reachedStore() != 1 {
 			t.Fatalf("store calls = %d, want 1", store.reachedStore())
@@ -620,12 +627,12 @@ func TestRecordObservationsBatchSizeBoundary(t *testing.T) {
 	t.Run("one over the bound", func(t *testing.T) {
 		store := newFakeStore()
 		svc := checks.NewService(store, fixedClock(now))
-		accepted, rejected, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), build(checks.MaxObservationsPerBatch+1))
+		res, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), build(checks.MaxObservationsPerBatch+1))
 		if !errors.Is(err, checks.ErrInvalidInput) {
 			t.Fatalf("err = %v, want ErrInvalidInput", err)
 		}
-		if accepted != 0 || rejected != 0 {
-			t.Fatalf("accepted=%d rejected=%d, want 0, 0 for a refused batch", accepted, rejected)
+		if res.Accepted != 0 || res.Rejected() != 0 {
+			t.Fatalf("ingest = %+v, want nothing counted at all for a refused batch", res)
 		}
 		if store.reachedStore() != 0 {
 			t.Fatalf("store calls = %d, want 0: a refused batch must never reach the store", store.reachedStore())
@@ -657,7 +664,7 @@ func TestRecordObservationsFieldLengthBoundaries(t *testing.T) {
 			org := uuid.Must(uuid.NewV7())
 
 			atLimit := []checks.Observation{obsAt(host, now, "cpu", "", "m"), tc.build(strings.Repeat("x", tc.limit))}
-			if _, _, err := svc.RecordObservations(context.Background(), org, atLimit); err != nil {
+			if _, err := svc.RecordObservations(context.Background(), org, atLimit); err != nil {
 				t.Fatalf("%s at exactly %d bytes must be accepted: %v", tc.name, tc.limit, err)
 			}
 			if store.reachedStore() != 1 {
@@ -665,7 +672,7 @@ func TestRecordObservationsFieldLengthBoundaries(t *testing.T) {
 			}
 
 			over := []checks.Observation{obsAt(host, now, "cpu", "", "m"), tc.build(strings.Repeat("x", tc.limit+1))}
-			_, _, err := svc.RecordObservations(context.Background(), org, over)
+			_, err := svc.RecordObservations(context.Background(), org, over)
 			if !errors.Is(err, checks.ErrInvalidInput) {
 				t.Fatalf("%s at %d bytes: err = %v, want ErrInvalidInput", tc.name, tc.limit+1, err)
 			}
@@ -692,7 +699,7 @@ func TestRecordObservationsRejectsEmptyKeyOrMetric(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := newFakeStore()
 			svc := checks.NewService(store, fixedClock(now))
-			_, _, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()),
+			_, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()),
 				[]checks.Observation{obsAt(host, now, "cpu", "", "m"), bad})
 			if !errors.Is(err, checks.ErrInvalidInput) {
 				t.Fatalf("err = %v, want ErrInvalidInput", err)
@@ -706,7 +713,7 @@ func TestRecordObservationsRejectsEmptyKeyOrMetric(t *testing.T) {
 	t.Run("empty item accepted", func(t *testing.T) {
 		store := newFakeStore()
 		svc := checks.NewService(store, fixedClock(now))
-		if _, _, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()),
+		if _, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()),
 			[]checks.Observation{obsAt(host, now, "cpu", "", "cpu.used_pct")}); err != nil {
 			t.Fatalf("a whole-host metric (empty item) must stay legal: %v", err)
 		}
@@ -731,14 +738,14 @@ func TestRecordObservationsAtMaxFieldLengthsFitsTheLookupIndex(t *testing.T) {
 	key := incompressible(t, checks.MaxCheckKeyLen)
 	item := incompressible(t, checks.MaxItemLen)
 	metric := incompressible(t, checks.MaxMetricLen)
-	accepted, rejected, err := svc.RecordObservations(scoped, org, []checks.Observation{
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
 		{HostID: host, CheckKey: key, Item: item, Metric: metric, At: now, Value: f64(1)},
 	})
 	if err != nil {
 		t.Fatalf("a row at every length bound must fit the lookup index: %v", err)
 	}
-	if accepted != 1 || rejected != 0 {
-		t.Fatalf("accepted=%d rejected=%d, want 1, 0", accepted, rejected)
+	if res.Accepted != 1 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, want 1 accepted", res)
 	}
 
 	current, err := svc.CurrentForHost(scoped, org, host)

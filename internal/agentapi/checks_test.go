@@ -10,9 +10,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -392,6 +394,81 @@ func TestCheckResultsUnknownHostRejectedCountsNotError(t *testing.T) {
 	obs := h.checks.observations()
 	if len(obs) != 1 || obs[0].HostID != hostID {
 		t.Fatalf("the unrecognised-host observation must still reach RecordObservations to be counted: got %+v, want one for %s", obs, hostID)
+	}
+}
+
+// lockedBuffer is a slog sink a test can read while the server's own
+// goroutine is still writing to it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestCheckResultsRejectionLogNamesTheCause: the one thing that happens
+// to a rejected observation in this milestone is a log line — there is no
+// metrics endpoint anywhere in Pulsix yet (backlog 3.27) — so that line
+// has to carry what an operator would act on. A batch nothing survived is
+// not "partially" anything, and "rejected: 1" that could equally mean a
+// skewed clock, a broken agent build or a deleted host sends whoever
+// reads it looking in three places.
+func TestCheckResultsRejectionLogNamesTheCause(t *testing.T) {
+	h := newHarnessWithChecks(t)
+	_, client := enrollAnAgent(t, h, "web-1")
+	// Every observation in the batch is for a host the store does not
+	// recognise, so nothing is accepted at all.
+	h.checks.knownHosts = map[uuid.UUID]bool{}
+
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_CheckResults{CheckResults: &agentpb.CheckResults{
+		Results: []*agentpb.CheckResult{
+			checkResultValue("cpu", "", "used_percent", at, 1),
+			checkResultValue("cpu", "", "load1", at, 2),
+		},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := stream.Recv(); err != nil || !msg.GetAck() {
+		t.Fatalf("check results ack = %+v, %v", msg, err)
+	}
+
+	captured := logs.String()
+	if strings.Contains(captured, "partially") {
+		t.Errorf("nothing was accepted, so the batch was not PARTIALLY rejected:\n%s", captured)
+	}
+	for _, want := range []string{
+		"agent check results rejected in full",
+		"accepted=0",
+		"rejected=2",
+		"rejected_unknown_host=2",
+		// The other two causes are named as well, at zero: a line that
+		// omits them cannot be read as "not the clock, not the agent".
+		"rejected_implausible_at=0",
+		"rejected_malformed=0",
+	} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("log does not carry %q:\n%s", want, captured)
+		}
 	}
 }
 

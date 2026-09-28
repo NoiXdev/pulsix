@@ -488,6 +488,44 @@ func TestActivateSenderReturnsOnlyTheUnreplayedRemainder(t *testing.T) {
 	}
 }
 
+// TestActivateSenderLogsWhatTheFailedReplayDropped: the put-back after a
+// failed replay is itself an Add, and Add evicts. Drain takes the ring's
+// whole contents without evicting anything, so after an outage longer
+// than the window the results handed back are already past it and are
+// dropped on the way in. Nothing else in the product records that a
+// sample existed and is now gone, so the count Add returns must at least
+// reach the agent's log — it used to be discarded at the call site, which
+// left the one gap in a graph that has a knowable cause unexplained.
+func TestActivateSenderLogsWhatTheFailedReplayDropped(t *testing.T) {
+	lt := newLoopTest(t)
+	base := time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)
+	lt.now = func() time.Time { return base }
+	l := lt.newLoop()
+
+	n := 3 * maxResultsPerMessage
+	l.buffer.Add(manyResults(n, base))
+
+	// The reconnect comes long after the ring's own window: everything in
+	// it is older than bufferWindow by the time the replay is attempted.
+	lt.now = func() time.Time { return base.Add(bufferWindow + time.Minute) }
+
+	stream := &chunkingStream{failAfter: 1}
+	if err := l.activateSender(newStreamSender(stream)); err == nil {
+		t.Fatal("a replay that hits a dead stream must fail the activation")
+	}
+	if left := l.buffer.Drain(); len(left) != 0 {
+		t.Fatalf("buffer holds %d results, want none: everything put back had aged past the window", len(left))
+	}
+
+	logs := lt.logOutput()
+	if !strings.Contains(logs, "samples dropped") {
+		t.Fatalf("the failed replay dropped %d results and said nothing about it; log was:\n%s", n-maxResultsPerMessage, logs)
+	}
+	if !strings.Contains(logs, "dropped="+strconv.Itoa(n-maxResultsPerMessage)) {
+		t.Fatalf("log does not carry how many were dropped (want %d):\n%s", n-maxResultsPerMessage, logs)
+	}
+}
+
 // TestLoopConfigTickerAbsentWhenTheHeartbeatIsAtLeastAsFrequent: at the
 // production defaults the configuration interval (60 s) is LONGER than
 // the heartbeat interval (30 s), so the heartbeat has already carried the

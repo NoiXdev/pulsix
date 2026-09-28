@@ -77,9 +77,9 @@ func (f checksFixture) hostChecks(t *testing.T, c *http.Client, hostID uuid.UUID
 func (f checksFixture) record(t *testing.T, obs ...checks.Observation) {
 	t.Helper()
 	scoped := db.WithOrgScope(context.Background(), f.orgID)
-	accepted, rejected, err := f.s.Checks.RecordObservations(scoped, f.orgID, obs)
-	if err != nil || rejected != 0 || accepted != len(obs) {
-		t.Fatalf("record observations: accepted %d, rejected %d, err %v", accepted, rejected, err)
+	res, err := f.s.Checks.RecordObservations(scoped, f.orgID, obs)
+	if err != nil || res.Rejected() != 0 || res.Accepted != len(obs) {
+		t.Fatalf("record observations: %+v, err %v", res, err)
 	}
 }
 

@@ -298,7 +298,18 @@ func (l *Loop) activateSender(sender *streamSender) error {
 	if sent, err := sender.sendResultsChunked(pending); err != nil {
 		// Only what did NOT go out goes back: the chunks already
 		// delivered must not be replayed again on the next reconnect.
-		l.buffer.Add(pending[sent:])
+		//
+		// The put-back can itself drop: Drain evicts nothing, so a ring
+		// drained after a long outage carries results that have since
+		// aged past the window, and Add evicts them on the way back in.
+		// Those samples are gone for good, and a gap in a graph must have
+		// a cause somebody can read — the same reason handleResults logs
+		// its own overflow (both are readable only on the monitored
+		// host's journal today; backlog 3.27).
+		if dropped := l.buffer.Add(pending[sent:]); dropped > 0 {
+			l.log.Warn("check results aged out of the buffer while a reconnect replay failed; samples dropped",
+				"dropped", dropped, "replayed", sent, "err", err)
+		}
 		return fmt.Errorf("replay buffered check results: %w", err)
 	}
 	l.sender = sender

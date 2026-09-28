@@ -491,21 +491,25 @@ func (f *fakeChecks) ResolveHost(_ context.Context, _, hostID uuid.UUID) (checks
 	return f.resolved[hostID], nil
 }
 
-func (f *fakeChecks) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error) {
+func (f *fakeChecks) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.recordErr != nil {
-		return 0, 0, f.recordErr
+		return checks.Ingest{}, f.recordErr
 	}
+	var res checks.Ingest
 	for _, o := range obs {
 		f.recordedObs = append(f.recordedObs, o)
+		// The one rejection rule the real store applies, attributed the
+		// way the real service attributes it — the clock and shape rules
+		// live in checks.Service, which this fake stands in for whole.
 		if f.knownHosts != nil && !f.knownHosts[o.HostID] {
-			rejected++
+			res.UnknownHost++
 			continue
 		}
-		accepted++
+		res.Accepted++
 	}
-	return accepted, rejected, nil
+	return res, nil
 }
 
 // resolveHostCalls reports how many times ResolveHost was called — the

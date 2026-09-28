@@ -218,13 +218,21 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 var errCheckResultsRejected = errors.New("check results rejected")
 
 // recordCheckResults maps one CheckResults batch into checks.Observation
-// and hands it to RecordObservations. Accepted and rejected counts are
-// logged, never turned into a stream error — RecordObservations' own
-// contract counts a bad item (an implausible timestamp, a malformed
+// and hands it to RecordObservations. What was accepted and what was
+// rejected is logged, never turned into a stream error — RecordObservations'
+// own contract counts a bad item (an implausible timestamp, a malformed
 // shape, a host id it does not recognise) rather than failing the batch,
 // and this handler passes that contract through rather than second-
 // guessing it: one bad result must not cost the agent its connection or
 // the rest of the batch its data.
+//
+// The log line names WHICH rule rejected what, because the three have
+// nothing in common as remedies: an implausible timestamp is the host's
+// clock (NTP), a malformed shape is a broken agent build, an unknown host
+// is a stale enrolment. A single "rejected" count sends whoever reads it
+// looking in all three places. This is a log line and not a counter
+// because Pulsix has no metrics endpoint at all yet (backlog 3.27) —
+// naming the cause is what can be done here without inventing one.
 func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIdentity, results *agentpb.CheckResults) error {
 	if s.deps.Checks == nil {
 		slog.WarnContext(ctx, "agent check results received but no checks service is wired; dropping",
@@ -253,7 +261,7 @@ func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIden
 		}
 		obs = append(obs, o)
 	}
-	accepted, rejected, err := s.deps.Checks.RecordObservations(ctx, agent.OrgID, obs)
+	res, err := s.deps.Checks.RecordObservations(ctx, agent.OrgID, obs)
 	if err != nil {
 		if errors.Is(err, checks.ErrInvalidInput) {
 			// Marked with errCheckResultsRejected — never checks.ErrInvalidInput
@@ -266,12 +274,24 @@ func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIden
 		}
 		return fmt.Errorf("record check observations: %w", err)
 	}
-	if rejected > 0 {
-		slog.WarnContext(ctx, "agent check results partially rejected",
-			"serial", agent.Serial, "host_id", agent.HostID, "accepted", accepted, "rejected", rejected)
+	if res.Rejected() > 0 {
+		// "partially" is a claim about the batch, and it is false when
+		// nothing at all survived — the case an operator most needs to
+		// recognise, since a fully rejected batch is a host reporting
+		// into a void.
+		msg := "agent check results partially rejected"
+		if res.Accepted == 0 {
+			msg = "agent check results rejected in full"
+		}
+		slog.WarnContext(ctx, msg,
+			"serial", agent.Serial, "host_id", agent.HostID,
+			"accepted", res.Accepted, "rejected", res.Rejected(),
+			"rejected_implausible_at", res.Implausible,
+			"rejected_malformed", res.Malformed,
+			"rejected_unknown_host", res.UnknownHost)
 	} else {
 		slog.DebugContext(ctx, "agent check results recorded",
-			"serial", agent.Serial, "host_id", agent.HostID, "accepted", accepted)
+			"serial", agent.Serial, "host_id", agent.HostID, "accepted", res.Accepted)
 	}
 	return nil
 }

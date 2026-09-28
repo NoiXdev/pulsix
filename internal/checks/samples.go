@@ -198,15 +198,44 @@ func wellShaped(o Observation) bool {
 	return (o.Value != nil) != (o.Label != nil)
 }
 
+// Ingest is what one RecordObservations batch did, with every rejection
+// attributed to the rule that rejected it rather than summed into one
+// number. The three causes are three different things to do about them,
+// and an operator reading a log line is the only consumer this milestone
+// has (there is no metrics endpoint in Pulsix yet — backlog 3.27):
+//
+//   - Implausible: the observation's own timestamp falls outside the
+//     plausibility window. Nothing is wrong with the agent's checks; its
+//     CLOCK disagrees with the manager's. The remedy is NTP on that host.
+//   - Malformed: the observation is not a shape either table can store
+//     (a value and a label together, an error beside either, or neither).
+//     No correct agent build produces one, so this means a broken or
+//     lying agent.
+//   - UnknownHost: the store recognised neither the host nor its
+//     organization. Ordinary right after a host is deleted while its
+//     agent is still connected; persistent means a stale enrolment.
+//
+// Accepted + Rejected() == len(obs) always.
+type Ingest struct {
+	Accepted    int
+	Implausible int
+	Malformed   int
+	UnknownHost int
+}
+
+// Rejected is the total across all three causes — what a caller reports
+// when it only has room for one number.
+func (i Ingest) Rejected() int { return i.Implausible + i.Malformed + i.UnknownHost }
+
 // RecordObservations validates and stores one ingest batch for orgID.
-// Every Observation is checked against the plausibility window and its
-// own shape; what survives is handed to the store, which applies the one
-// rejection rule that needs a database lookup — an unknown HostID. Both
-// kinds of rejection are counted, never turned into an error for the
+// Every Observation is checked against its own shape and the plausibility
+// window; what survives is handed to the store, which applies the one
+// rejection rule that needs a database lookup — an unknown HostID. Every
+// kind of rejection is counted, never turned into an error for the
 // batch: one skewed clock or one host that was deleted mid-flight must
-// never lose every other Observation in the same batch. accepted +
-// rejected == len(obs) always; err is non-nil only for a genuine store
-// failure (the batch's fate is then unknown, not "all rejected").
+// never lose every other Observation in the same batch. err is non-nil
+// only for a genuine store failure (the batch's fate is then unknown, not
+// "all rejected").
 //
 // The contract's own bounds are the one exception to "counted, never an
 // error", and they are checked BEFORE the store is reached at all — see
@@ -215,36 +244,45 @@ func wellShaped(o Observation) bool {
 // not be allowed to cost a transaction on a shared pool connection in the
 // first place. ErrInvalidInput from here is what agentapi maps to
 // InvalidArgument.
-func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error) {
+func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (Ingest, error) {
+	var res Ingest
 	if len(obs) == 0 {
-		return 0, 0, nil
+		return res, nil
 	}
 	if len(obs) > MaxObservationsPerBatch {
-		return 0, 0, fmt.Errorf("%w: at most %d observations per batch, got %d",
+		return res, fmt.Errorf("%w: at most %d observations per batch, got %d",
 			ErrInvalidInput, MaxObservationsPerBatch, len(obs))
 	}
 	for _, o := range obs {
 		if err := withinContract(o); err != nil {
-			return 0, 0, err
+			return Ingest{}, err
 		}
 	}
 	now := s.now()
 	valid := make([]Observation, 0, len(obs))
 	for _, o := range obs {
-		if !plausible(o.At, now) || !wellShaped(o) {
-			rejected++
-			continue
+		// Shape first: an observation that carries both a value and a
+		// label says nothing worth checking a timestamp against, and
+		// counting it as a clock problem would send an operator to NTP
+		// for an agent bug.
+		switch {
+		case !wellShaped(o):
+			res.Malformed++
+		case !plausible(o.At, now):
+			res.Implausible++
+		default:
+			valid = append(valid, o)
 		}
-		valid = append(valid, o)
 	}
 	if len(valid) == 0 {
-		return 0, rejected, nil
+		return res, nil
 	}
-	a, r, err := s.store.RecordObservations(ctx, orgID, valid)
+	accepted, unknownHost, err := s.store.RecordObservations(ctx, orgID, valid)
 	if err != nil {
-		return 0, 0, fmt.Errorf("record observations: %w", err)
+		return Ingest{}, fmt.Errorf("record observations: %w", err)
 	}
-	return a, rejected + r, nil
+	res.Accepted, res.UnknownHost = accepted, unknownHost
+	return res, nil
 }
 
 // CurrentForHost returns hostID's latest known value per (check_key,
