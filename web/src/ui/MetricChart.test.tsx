@@ -35,6 +35,18 @@ describe('toAlignedData', () => {
   });
 });
 
+describe('the jsdom canvas stub MetricChart depends on', () => {
+  it('answers for 2d only, so feature detection is not lied to', () => {
+    const canvas = document.createElement('canvas');
+    expect(canvas.getContext('2d')).not.toBeNull();
+    // A 2D-shaped proxy returned for these would make any future
+    // `getContext('webgl') !== null` check take a branch under test that it
+    // would never take in a browser.
+    expect(canvas.getContext('webgl')).toBeNull();
+    expect(canvas.getContext('bitmaprenderer')).toBeNull();
+  });
+});
+
 describe('MetricChart', () => {
   it('renders a plot for the number of points it is given', () => {
     const { container } = render(<MetricChart points={series(42)} range="1h" label="cpu usage_percent" />);

@@ -54,8 +54,14 @@ const THREE_SOURCES = {
   ],
 };
 
-function renderCard(canRead = true, canWrite = true) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+/**
+ * `retry` is the QueryClient default the card's own hooks have to override
+ * to matter. Left at false — the value every other test here wants — a
+ * missing `retry: false` on useHostMetric would be invisible, because the
+ * client would already be doing it. One test raises it on purpose.
+ */
+function renderCard(canRead = true, canWrite = true, retry: number | boolean = false) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const checksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/checks', component: () => <div>CHECKS PAGE</div> });
@@ -151,19 +157,25 @@ describe('HostChecksCard', () => {
     expect(screen.queryByText('91.2')).not.toBeInTheDocument();
   });
 
-  it('marks a stale entry and leaves a fresh sibling alone', async () => {
+  it('marks exactly what the server calls stale, never what the timestamps suggest', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
         checks: [
           check({
+            // Deliberately the inverse of what any client-side rule would
+            // conclude. On a 60 s check, "older than three intervals"
+            // arithmetic over these two readings says load1 (an hour old)
+            // is stale and usage_percent (the newest) is not — the exact
+            // opposite of the flags below. Only code that renders the
+            // server's answer can pass both assertions; a recomputation
+            // fails them both, which the previous fixture (whose
+            // timestamps happened to agree with the arithmetic) could not
+            // detect.
             values: [
-              // `stale` is the server's answer (three of the check's own
-              // intervals without a reading). The card renders the flag; it
-              // does not recompute the rule.
-              { item: '', metric: 'usage_percent', value: 12.5, at: '2026-09-27T11:00:00Z', stale: true },
-              { item: '', metric: 'load1', value: 0.4, at: NOW, stale: false },
+              { item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true },
+              { item: '', metric: 'load1', value: 0.4, at: '2026-09-27T11:00:00Z', stale: false },
             ],
           }),
         ],
@@ -177,6 +189,62 @@ describe('HostChecksCard', () => {
     // screen — marked, not hidden.
     expect(row('cpu', 'usage_percent').getByText('12.5')).toBeInTheDocument();
     expect(row('cpu', 'load1').queryByText('stale')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a host with nothing configured from one nobody is watching', async () => {
+    // Three states share one card, and the empty list is the one that reads
+    // like a bug when it is silent.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [] },
+    });
+    const { unmount } = renderCard();
+
+    expect(await screen.findByText('No checks resolve for this host yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/not being monitored/)).not.toBeInTheDocument();
+    unmount();
+
+    // `checks` is typed `HostCheckDTO[] | null` by the generated schema —
+    // Go's nil slice reaches the SPA as JSON null, not [].
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: false, checks: null },
+    });
+    renderCard();
+
+    expect(await screen.findByText(/This host is not being monitored/)).toBeInTheDocument();
+    expect(screen.getByText('No checks resolve for this host yet.')).toBeInTheDocument();
+  });
+
+  it('lists a check the winning scope turned off, marked as off', async () => {
+    // "false means the winning scope turned this check off; it is listed so
+    // the GUI can show where" — dropping the row instead would hide the
+    // override that did it.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [check({ enabled: false, source: 'group', source_name: 'Web tier', values: [] })],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    expect(block('cpu').getByText('disabled')).toBeInTheDocument();
+    expect(block('cpu').getByText('Web tier')).toBeInTheDocument();
+    expect(block('cpu').getByText('No reading yet.')).toBeInTheDocument();
+  });
+
+  it('renders a load average at two decimals rather than the float it arrived as', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [check({ values: [{ item: '', metric: 'load1', value: 1 / 3, at: NOW, stale: false }] })],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText('0.33')).toBeInTheDocument();
+    expect(screen.queryByText('0.3333333333333333')).not.toBeInTheDocument();
   });
 
   it('says an unmonitored host is not being watched instead of listing values that look live', async () => {
@@ -258,18 +326,50 @@ describe('HostChecksCard', () => {
     expect(await screen.findByText('No samples in this range.')).toBeInTheDocument();
   });
 
-  it('shows the server’s own message when the series cannot be read', async () => {
+  it('shows the server’s own message once, without retrying a final answer', async () => {
     const user = userEvent.setup();
+    let attempts = 0;
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
-      'GET /api/v1/orgs/acme/hosts/h1/metrics': () =>
-        new Response(JSON.stringify({ detail: 'host has no metric "used_percent" for check "disk"' }), { status: 404 }),
+      'GET /api/v1/orgs/acme/hosts/h1/metrics': () => {
+        attempts += 1;
+        return new Response(JSON.stringify({ detail: 'host has no metric "used_percent" for check "disk"' }), { status: 404 });
+      },
     });
-    renderCard();
+    // A client that WOULD retry three times, so the hook's own retry: false
+    // is what decides the count. With the suite's usual retry: false client
+    // this assertion would hold no matter what the hook asked for.
+    renderCard(true, true, 3);
 
     await user.click(await screen.findByRole('button', { name: 'Graph disk /var used_percent' }));
 
     expect(await screen.findByText('host has no metric "used_percent" for check "disk"')).toBeInTheDocument();
+    // 404 for an unknown tuple, 400 for a discrete metric or a bad range:
+    // every failure this route produces is final, and asking again only
+    // delays the message.
+    expect(attempts).toBe(1);
+  });
+
+  it('shows which window is on screen', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
+    });
+    renderCard();
+
+    await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
+
+    // Without this the range switch is three identical buttons and an
+    // operator has no way to tell which window they are looking at.
+    expect(screen.getByRole('button', { name: '1 h', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '24 h', pressed: false })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '7 d', pressed: false })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '24 h' }));
+
+    expect(screen.getByRole('button', { name: '24 h', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '1 h', pressed: false })).toBeInTheDocument();
   });
 
   it('shows a viewer the list and an operator the way to change it', async () => {

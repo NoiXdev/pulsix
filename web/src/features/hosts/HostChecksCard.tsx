@@ -7,6 +7,7 @@ import { Pill, Tag } from '../../ui/badge.tsx';
 import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
+import { formatNumber, isNumeric, metricLabel, sourceLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts';
 
 /**
@@ -27,39 +28,6 @@ const RANGES: [MetricRange, string][] = [
   ['7d', '7 d'],
 ];
 
-/** metricLabel names a value the way the host reports it: the mount or
- * unit it belongs to, then the metric. A whole-host metric has no item and
- * is just the metric name. */
-function metricLabel(v: HostCheckValue): string {
-  return v.item ? `${v.item} ${v.metric}` : v.metric;
-}
-
-/** formatNumber keeps a reading readable without inventing precision the
- * agent did not report: at most two decimals, no trailing zeros, and no
- * locale-dependent grouping (these are percentages and load averages, not
- * currency). */
-function formatNumber(value: number): string {
-  return String(Math.round(value * 100) / 100);
-}
-
-/** isNumeric reports whether a value has a series behind it. A discrete
- * metric carries `label` instead of `value`, and GET /hosts/{id}/metrics
- * refuses it with a 400 — so this is also the test for whether a graph may
- * be offered at all. A numeric value whose latest collection failed still
- * qualifies: the history it would graph is real, only the newest reading
- * is missing. */
-function isNumeric(v: HostCheckValue): boolean {
-  return v.label === undefined && typeof v.value === 'number';
-}
-
-/** sourceLabel renders the scope a check was inherited from as the thing
- * itself — the organization, the named monitoring group, this host — never
- * as the raw id the envelope carries beside it. */
-function sourceLabel(c: HostCheck): string {
-  if (c.source === 'host') return 'This host';
-  if (c.source === 'group') return c.source_name ?? 'Monitoring group';
-  return 'Organization';
-}
 
 export interface HostChecksCardProps {
   org: string;
