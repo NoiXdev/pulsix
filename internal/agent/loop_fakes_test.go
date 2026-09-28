@@ -69,6 +69,11 @@ type fakeStream struct {
 	done    chan struct{} // closed on a manager-side death (failRecv)
 	recvErr error
 	sendErr error
+	// failSendsAfter's arming: sends beyond sendErrAfter fail with
+	// sendErrLater. Zero means unarmed, which is why the count is
+	// compared against len(sent) only when an error is set.
+	sendErrAfter int
+	sendErrLater error
 }
 
 func newFakeStream() *fakeStream {
@@ -79,6 +84,11 @@ func (s *fakeStream) Send(m *agentpb.AgentMessage) error {
 	s.mu.Lock()
 	if s.sendErr != nil {
 		err := s.sendErr
+		s.mu.Unlock()
+		return err
+	}
+	if s.sendErrLater != nil && len(s.sent) >= s.sendErrAfter {
+		err := s.sendErrLater
 		s.mu.Unlock()
 		return err
 	}
@@ -189,6 +199,16 @@ func (s *fakeStream) failSends(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sendErr = err
+}
+
+// failSendsAfter lets the first n sends through and fails every one after
+// them, so a test can pick which step of a session's fixed opening
+// sequence — facts, buffer replay, the first heartbeat — is the one that
+// meets a dead transport.
+func (s *fakeStream) failSendsAfter(n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sendErrAfter, s.sendErrLater = n, err
 }
 
 func (s *fakeStream) sentMessages() []*agentpb.AgentMessage {

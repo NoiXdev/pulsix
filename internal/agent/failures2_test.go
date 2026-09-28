@@ -150,3 +150,61 @@ func TestIdentityReplaceRejectsGarbageDER(t *testing.T) {
 		t.Error("a refused Replace must leave the identity unchanged")
 	}
 }
+
+// A session opens with a fixed sequence before it reaches its steady
+// state: facts, then the buffer replay, then the first heartbeat. Every
+// step of it can meet a transport that died between the stream opening
+// and the send — gRPC opens a stream lazily, so nothing before the first
+// send has touched the network — and each must end the session the same
+// way: cancel the receive goroutine, drain it, and hand the caller an
+// error it reconnects on. Neither step had a test, which is part of why
+// internal/agent's coverage sat close enough to its floor for an
+// unrelated timing race to push it under (backlog 3.29).
+func TestSessionOpeningSendFailuresReconnect(t *testing.T) {
+	tests := []struct {
+		name string
+		// arm makes the chosen step the failing one.
+		arm func(*fakeStream, error)
+		// wantSent is how many messages reached the manager before the
+		// failing send, on the stream that dies.
+		wantSent int
+	}{
+		{"the facts push at connect", func(s *fakeStream, err error) { s.failSends(err) }, 0},
+		{"the first heartbeat", func(s *fakeStream, err error) { s.failSendsAfter(1, err) }, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLoopTest(t)
+			lt.withIdentity()
+			dead, live := newFakeStream(), newFakeStream()
+			lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{dead, live}}
+			tc.arm(dead, errors.New("transport dead"))
+
+			l := lt.newLoop()
+			cancel, done := runLoop(t, l)
+			// The second stream getting anything at all is the proof the
+			// first session ended and the loop reconnected, rather than
+			// blocking somewhere in its opening sequence.
+			waitFor(t, 2*time.Second, func() bool { return len(live.sentMessages()) > 0 })
+
+			if got := len(dead.sentMessages()); got != tc.wantSent {
+				t.Fatalf("the dead stream carried %d messages, want %d — a different step failed than the test armed", got, tc.wantSent)
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("Run = %v, want nil", err)
+			}
+			// One reconnect, at the ladder's first rung: the session
+			// ended as a failure (backoff), not as a clean end (no
+			// backoff).
+			if sleeps := lt.recordedSleeps(); len(sleeps) != 1 || sleeps[0] != time.Second {
+				t.Fatalf("sleeps = %v, want exactly one 1s reconnect backoff", sleeps)
+			}
+			// And the replacement session really did start from the top:
+			// facts before anything else.
+			if first := live.sentMessages()[0]; first.GetFacts() == nil {
+				t.Fatalf("the new session's first message = %+v, want facts", first)
+			}
+		})
+	}
+}
