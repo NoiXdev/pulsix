@@ -146,12 +146,18 @@ type Server struct {
 	// *agentapi.Service here; a test has no agent stream to observe, so
 	// it asserts on what the API asked for instead.
 	Push *PushRecorder
-	// HostReads counts the reads the API makes through the hosts store,
-	// by store method. It exists so a test can pin how MANY queries a
-	// request costs, not only what came back: the check list labels every
-	// host-bound definition with its host's name, and a batched lookup and
-	// the N+1 loop it replaced are indistinguishable from the response
-	// body alone (task-10 review round 2, finding 2).
+	// HostReads counts the reads Deps.Hosts makes through its store, by
+	// store method — including under WithHostsStore, which composes its
+	// own wrapper on top of the counter rather than replacing it. It
+	// exists so a test can pin how MANY queries a request costs, not only
+	// what came back: the check list labels every host-bound definition
+	// with its host's name, and a batched lookup and the N+1 loop it
+	// replaced are indistinguishable from the response body alone
+	// (task-10 review round 2, finding 2).
+	//
+	// Services other than Deps.Hosts hold the same *hosts.Service
+	// instance and so are counted too; anything built on its own store is
+	// not. Reset() before the request under test.
 	HostReads *HostReadCounter
 	// PublicURL is the test server's own base URL, computed from its
 	// listener before Start() (so it is already known when an Option
@@ -161,7 +167,6 @@ type Server struct {
 	PublicURL string
 }
 
-// Option customizes a Server's Deps before its httptest.Server starts.
 // HostReadCounter counts hosts.Store reads by method name. Safe for
 // concurrent use: the API under test serves requests on its own goroutines.
 type HostReadCounter struct {
@@ -228,6 +233,7 @@ func (c countingHostStore) ListHostsByIDs(ctx context.Context, orgID uuid.UUID, 
 	return c.Store.ListHostsByIDs(ctx, orgID, ids)
 }
 
+// Option customizes a Server's Deps before its httptest.Server starts.
 type Option func(*Server)
 
 // WithSecureCookies sets Deps.Secure, so tests can exercise the Secure
@@ -300,9 +306,15 @@ func WithFailingAudit() Option {
 // context a real org-scoped handler hands its store, and so observe what
 // the database lets that request see. The org-created hooks keep pointing
 // at the unwrapped service; both write through the same database.
+//
+// wrap is applied ON TOP of the counting store, not instead of it, so
+// Server.HostReads keeps counting whatever reads wrap passes through. The
+// alternative — rebuilding on a bare SQL store — would leave a test that
+// used both options reading Total() == 0 forever, and every "want 0"
+// assertion in it would pass for the wrong reason.
 func WithHostsStore(wrap func(hosts.Store) hosts.Store) Option {
 	return func(s *Server) {
-		s.Deps.Hosts = hosts.NewService(wrap(hosts.NewSQLStore(s.DB)), time.Now)
+		s.Deps.Hosts = hosts.NewService(wrap(countingHostStore{Store: hosts.NewSQLStore(s.DB), counter: s.HostReads}), time.Now)
 	}
 }
 

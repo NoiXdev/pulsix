@@ -92,7 +92,9 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
       // moving the identifier the override precedence keys on. That rule
       // lives there, not here: `required` below is satisfied by a single
       // space, so no form attribute could ever be the guard.
-      ...(key.trim() !== '' ? { key: key.trim() } : {}),
+      // key is already trimmed in state (the input trims as it is typed),
+      // so this only decides create-time omission.
+      ...(key !== '' ? { key } : {}),
       params: params(),
       interval_seconds: Number(interval),
       enabled,
@@ -158,7 +160,12 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               title="Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen"
               placeholder={plugin}
               maxLength={63}
-              onChange={(e) => setKey(e.target.value)}
+              // Trimmed as it is typed, so `pattern` judges exactly the
+              // string body() sends. No valid key contains whitespace at
+              // all, and leaving the two out of step made the browser
+              // refuse " disk-a" that the server accepts and stores as
+              // "disk-a" (review round 3, nit 4).
+              onChange={(e) => setKey(e.target.value.trim())}
             />
           </div>
         </div>

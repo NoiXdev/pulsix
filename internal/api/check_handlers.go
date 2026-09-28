@@ -89,7 +89,7 @@ type checkDefinitionDTO struct {
 // with huma's generic wording on one field and 400 with the service's
 // specific message on the next. One validator, one message.
 type checkDefinitionBody struct {
-	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on; defaults to the plugin name"`
+	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition"`
 	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service"`
 	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, service a required units list; cpu and memory take none"`
 	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`

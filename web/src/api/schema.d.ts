@@ -2282,7 +2282,7 @@ export interface components {
              * @description How often the check runs, between 10 and 86400 seconds
              */
             interval_seconds: number;
-            /** @description Lower-case identifier a narrower scope overrides on; defaults to the plugin name */
+            /** @description Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition */
             key?: string;
             /** @description disk takes an optional mounts list, service a required units list; cpu and memory take none */
             params?: {

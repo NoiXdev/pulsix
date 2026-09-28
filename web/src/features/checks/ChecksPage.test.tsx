@@ -265,12 +265,14 @@ describe('ChecksPage', () => {
   it('refuses to save an existing definition whose key was cleared or blanked, rather than renaming it', async () => {
     const user = userEvent.setup();
     let puts = 0;
+    let sent: Record<string, unknown> | undefined;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
       'GET /api/v1/orgs/acme/checks': { checks: [check({ id: 'c6', key: 'disk-data', plugin: 'disk', origin: 'custom' })] },
-      'PUT /api/v1/orgs/acme/checks/c6': () => {
+      'PUT /api/v1/orgs/acme/checks/c6': (req: MockRequest) => {
         puts += 1;
+        sent = req.body as Record<string, unknown>;
         return { check: check({ id: 'c6' }) };
       },
     });
@@ -283,50 +285,55 @@ describe('ChecksPage', () => {
     expect((screen.getByLabelText('Key') as HTMLInputElement).validity.valueMissing).toBe(true);
     expect(puts).toBe(0);
 
-    // `required` is satisfied by a single space, which is why the browser
-    // was never the guard. The field carries keyPattern
-    // (internal/checks/definitions.go) so a real browser refuses it before
-    // the round trip — asserted as an attribute, not as behaviour, because
-    // jsdom does not evaluate `pattern` at all (it reports
-    // patternMismatch false for " " and submits).
+    // `required` alone is satisfied by a single space, which is why the
+    // browser was never the guard. The field trims as it is typed, so
+    // whitespace cannot even be entered — and what `pattern` judges is
+    // therefore exactly the string the body carries.
+    await user.type(screen.getByLabelText('Key'), '   ');
+    expect(screen.getByLabelText('Key')).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(puts).toBe(0);
+
+    // keyPattern, internal/checks/definitions.go — asserted as an
+    // attribute, not as behaviour, because jsdom does not evaluate
+    // `pattern` at all (probed: patternMismatch is false for " " and the
+    // form submits).
     expect(screen.getByLabelText('Key')).toHaveAttribute('pattern', '[a-z0-9][a-z0-9-]{0,62}');
 
-    // Typing a key back makes it savable, and the key goes out with it.
-    await user.type(screen.getByLabelText('Key'), 'disk-srv');
+    // Surrounding whitespace is trimmed rather than refused, so the value
+    // the pattern accepts and the value sent are the same string.
+    await user.type(screen.getByLabelText('Key'), '  disk-srv  ');
+    expect(screen.getByLabelText('Key')).toHaveValue('disk-srv');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(puts).toBe(1));
+    expect(sent).toMatchObject({ key: 'disk-srv' });
   });
 
-  // The rule that actually protects the definition lives on the server, so
-  // what this pins is that its refusal reaches the operator: the dialog
-  // stays open with the server's own message rather than closing on a
-  // rename that did not happen.
-  it("shows the server's refusal of a whitespace key and keeps the dialog open", async () => {
+  // Whatever the form lets through, the server is the authority on a key —
+  // so its refusal has to reach the operator rather than the dialog closing
+  // on a change that did not happen.
+  it("shows the server's refusal of a key and keeps the dialog open", async () => {
     const user = userEvent.setup();
-    let sent: Record<string, unknown> | undefined;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
       'GET /api/v1/orgs/acme/checks': { checks: [check({ id: 'c7', key: 'disk-data', plugin: 'disk', origin: 'custom' })] },
-      'PUT /api/v1/orgs/acme/checks/c7': (req: MockRequest) => {
-        sent = req.body as Record<string, unknown>;
-        return new Response(
-          JSON.stringify({ detail: "invalid input: an update must name the definition's key; omitting it would rename the check to its plugin name" }),
-          { status: 400, headers: { 'Content-Type': 'application/problem+json' } },
-        );
-      },
+      'PUT /api/v1/orgs/acme/checks/c7': () =>
+        new Response(JSON.stringify({ detail: 'a check with this key already exists at this scope' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/problem+json' },
+        }),
     });
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
     await user.clear(screen.getByLabelText('Key'));
-    await user.type(screen.getByLabelText('Key'), '  ');
+    await user.type(screen.getByLabelText('Key'), 'disk');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('an update must name the definition\u2019s key'.replace('\u2019', "'"));
+    expect(await screen.findByRole('alert')).toHaveTextContent('a check with this key already exists at this scope');
     // Still open on the row it was editing — nothing was renamed.
     expect(screen.getByRole('dialog', { name: 'Edit disk-data' })).toBeInTheDocument();
-    expect(sent).toBeDefined();
   });
 
   // Review finding 5: the guard used to replace the whole page, taking

@@ -356,6 +356,73 @@ func TestSQLStoreListAllHostsSortedAndScoped(t *testing.T) {
 	}
 }
 
+// TestSQLStoreListHostsByIDsScopedAndFiltered proves the two things
+// ListHostsByIDs' SQL is responsible for and nothing above it can check
+// (task-10 review round 3, finding 1): it returns only the ids asked for,
+// and only within the organization asked about.
+//
+// Both halves are load-bearing. A store that ignored ids and read the whole
+// table would still satisfy every caller's labelling assertion while
+// quietly reinstating the whole-fleet read the batched query exists to
+// avoid; a query missing `org_id = $1` would hand one organization another
+// organization's host names, which on a multi-tenant product is the worst
+// failure in this file. Neither is visible from the service or the route,
+// whose fakes and callers see only what came back.
+func TestSQLStoreListHostsByIDsScopedAndFiltered(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hosts-by-ids-org")
+	other := seedOrg(t, q, "hosts-by-ids-org-2")
+	zone := seedZone(t, store, org, "fra")
+	otherZone := seedZone(t, store, other, "fra")
+
+	// Created out of name order, so the ORDER BY is doing real work.
+	ids := map[string]uuid.UUID{}
+	for _, name := range []string{"c-host", "a-host", "b-host"} {
+		id := uuid.Must(uuid.NewV7())
+		if err := store.CreateHost(ctx, hosts.Host{ID: id, OrgID: org, ZoneID: zone.ID, Name: name}); err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = id
+	}
+	foreign := uuid.Must(uuid.NewV7())
+	if err := store.CreateHost(ctx, hosts.Host{ID: foreign, OrgID: other, ZoneID: otherZone.ID, Name: "z-host"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two of org's three hosts, plus another organization's host, plus an
+	// id that names nothing at all.
+	got, err := store.ListHostsByIDs(ctx, org, []uuid.UUID{ids["b-host"], ids["a-host"], foreign, uuid.Must(uuid.NewV7())})
+	if err != nil {
+		t.Fatalf("ListHostsByIDs: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "a-host" || got[1].Name != "b-host" {
+		t.Fatalf("ListHostsByIDs = %+v, want exactly [a-host b-host]", got)
+	}
+	for _, h := range got {
+		if h.OrgID != org {
+			t.Fatalf("host %q belongs to org %s, not %s — the org filter is gone", h.Name, h.OrgID, org)
+		}
+	}
+
+	// Asking the OTHER organization for org's id must answer nothing: the
+	// scope is the filter, not merely a column that happens to agree.
+	crossed, err := store.ListHostsByIDs(ctx, other, []uuid.UUID{ids["a-host"]})
+	if err != nil {
+		t.Fatalf("ListHostsByIDs (cross-org): %v", err)
+	}
+	if len(crossed) != 0 {
+		t.Fatalf("another organization's id returned %+v, want nothing", crossed)
+	}
+
+	// An empty id list is a legitimate call at the SQL layer (the service
+	// short-circuits before it, but the store must not error on it).
+	if none, err := store.ListHostsByIDs(ctx, org, nil); err != nil || len(none) != 0 {
+		t.Fatalf("ListHostsByIDs(nil) = %+v, %v; want no rows and no error", none, err)
+	}
+}
+
 // TestSQLStorePatchCapabilitiesLeavesUnmentionedFlagAlone proves
 // PatchCapabilities' nil-means-unchanged contract against the real
 // database: setting only monitored must not disturb managed, sequentially
