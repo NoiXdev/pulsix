@@ -473,3 +473,106 @@ func TestHostMetricsAfterACollectionErrorIsAnEmptySeries(t *testing.T) {
 		t.Fatalf("points = %+v, want the one numeric sample recorded before the failure", out.Points)
 	}
 }
+
+// TestHostChecksDropsItemsTheDefinitionStoppedAsking: narrowing a disk
+// check's mounts must not leave the dropped mount on the host page for
+// ever, eventually badged stale — that reads as "the agent stopped
+// reporting this" when the truth is "you stopped asking for it". Nothing
+// deletes a check_current row (no event says a mount is gone), so the
+// filter is on the read side, and the samples behind the dropped item
+// stay readable (backlog 3.28).
+func TestHostChecksDropsItemsTheDefinitionStoppedAsking(t *testing.T) {
+	f := newChecksFixture(t, "host-checks-dropped-item")
+	now := time.Now()
+
+	f.record(t,
+		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/", Metric: "used_percent", At: now, Value: floatPtr(41)},
+		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/var", Metric: "used_percent", At: now, Value: floatPtr(88)},
+	)
+
+	// The seeded disk check carries no mounts list, which means every
+	// filesystem the host reports — so both are current values, and the
+	// assertion below is not passing for want of data.
+	if got := itemsOf(f.hostChecks(t, f.viewerC, f.web).byKey(t, "disk")); !equalStrings(got, []string{"/", "/var"}) {
+		t.Fatalf("items before the edit = %v, want both mounts", got)
+	}
+
+	var seeded checkDTO
+	for _, d := range f.listChecks(t, f.ownerC) {
+		if d.Key == "disk" {
+			seeded = d
+		}
+	}
+	resp := requestJSON(t, f.operatorC, http.MethodPut, f.checksURL()+"/"+seeded.ID, map[string]any{
+		"plugin": "disk", "key": "disk", "interval_seconds": 300, "binding_kind": "org",
+		"params": map[string]any{"mounts": []string{"/"}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("narrowing the mounts = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	if got := itemsOf(f.hostChecks(t, f.viewerC, f.web).byKey(t, "disk")); !equalStrings(got, []string{"/"}) {
+		t.Fatalf("items after the edit = %v, want only the mount still asked for", got)
+	}
+
+	// History is not a current value, but it is still history: a graph of
+	// a mount dropped last week is a real graph.
+	series := requestJSON(t, f.viewerC, http.MethodGet,
+		f.hostURL(f.web)+"/metrics?check=disk&item=/var&metric=used_percent&range=1h", nil)
+	if series.StatusCode != http.StatusOK {
+		t.Fatalf("series for the dropped mount = %d %s, want 200", series.StatusCode, mustReadBody(t, series))
+	}
+	var out struct {
+		Points []struct {
+			Value float64 `json:"value"`
+		} `json:"points"`
+	}
+	decodeInto(t, series, &out)
+	if len(out.Points) == 0 {
+		t.Fatal("the dropped mount's samples are gone; only the current value was supposed to go")
+	}
+}
+
+// TestHostChecksKeepsEveryItemWhenTheDefinitionBoundsNone: the other half
+// of the rule. A disk check with no mounts list asks for every filesystem
+// the host finds, so it bounds nothing and a mount that vanished from the
+// host is the agent's silence — which the stale badge already says.
+func TestHostChecksKeepsEveryItemWhenTheDefinitionBoundsNone(t *testing.T) {
+	f := newChecksFixture(t, "host-checks-unbounded-items")
+	now := time.Now()
+
+	f.record(t,
+		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/", Metric: "used_percent", At: now, Value: floatPtr(41)},
+		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/srv", Metric: "used_percent", At: now, Value: floatPtr(3)},
+		// cpu has no item at all and takes no parameters: nothing to bound.
+		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now, Value: floatPtr(12)},
+	)
+
+	body := f.hostChecks(t, f.viewerC, f.web)
+	if got := itemsOf(body.byKey(t, "disk")); !equalStrings(got, []string{"/", "/srv"}) {
+		t.Fatalf("disk items = %v, want every mount reported", got)
+	}
+	if got := itemsOf(body.byKey(t, "cpu")); !equalStrings(got, []string{""}) {
+		t.Fatalf("cpu items = %v, want its one whole-host value", got)
+	}
+}
+
+func itemsOf(c hostCheck) []string {
+	out := make([]string, 0, len(c.Values))
+	for _, v := range c.Values {
+		out = append(out, v.Item)
+	}
+	return out
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}

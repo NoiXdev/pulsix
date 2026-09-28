@@ -178,7 +178,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		byKey := currentByKey(current)
 		now := time.Now()
 		for _, d := range effective {
-			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, byKey[d.Key], groupNames, host.Name, now))
+			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now))
 		}
 		return out, nil
 	})
@@ -282,6 +282,9 @@ func requireNumericMetric(current []checks.Current, checkKey, item, metric strin
 // deleted or rebound since it last reported — are simply never looked up:
 // this view answers "what runs on this host and what is it saying", not
 // "everything this host has ever reported".
+//
+// The same question one level down is stillAsked's: a key can still be
+// effective while one of its items no longer is.
 func currentByKey(current []checks.Current) map[string][]checks.Current {
 	byKey := map[string][]checks.Current{}
 	for _, c := range current {
@@ -296,6 +299,29 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 		})
 	}
 	return byKey
+}
+
+// stillAsked drops the current values whose item d no longer asks the host
+// for — a mount taken off a disk check's list, a unit taken off a service
+// check's (backlog 3.28). Nothing deletes a check_current row, deliberately
+// (checks.Current's doc comment and migration 00044 both say why), so
+// without this the dropped item sits on the host page for ever and is
+// eventually badged stale — which reads as "the agent stopped reporting
+// this" when the truth is "you stopped asking for it".
+//
+// A definition that bounds no items keeps every value: checks.AsksForItem
+// carries that rule, including the disk check with no mounts list, which
+// means every filesystem the host finds. Only the current view is
+// filtered; GET /hosts/{id}/metrics still serves the dropped item's
+// samples, because a graph of a mount dropped last week is a real graph.
+func stillAsked(d checks.Definition, values []checks.Current) []checks.Current {
+	kept := values[:0:0]
+	for _, v := range values {
+		if d.AsksForItem(v.Item) {
+			kept = append(kept, v)
+		}
+	}
+	return kept
 }
 
 func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time) hostCheckDTO {
