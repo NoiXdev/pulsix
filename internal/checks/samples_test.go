@@ -872,3 +872,83 @@ func TestLookupIndexRejectsWhatTheContractBoundsForbid(t *testing.T) {
 		t.Fatalf("err = %v, want the btree index-row size failure", err)
 	}
 }
+
+// TestRecordObservationsShapeIsJudgedBeforeTheClock pins the order of the
+// two rules, which is argued for in RecordObservations itself ("counting
+// it as a clock problem would send an operator to NTP for an agent bug")
+// and was held by nothing: an observation is normally either malformed or
+// implausible, so swapping the switch arms passed every test. The input
+// that separates them is one that is BOTH — a broken shape carrying a
+// timestamp outside the window — and until now no test sent one.
+func TestRecordObservationsShapeIsJudgedBeforeTheClock(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	host := uuid.Must(uuid.NewV7())
+	svc := checks.NewService(newFakeStore(), fixedClock(now))
+
+	// Value AND label set (impossible for either table's CHECK), and two
+	// hours old (maxPast is one). Both rules would fire; only one gets to
+	// name the cause, and the name decides where an operator looks.
+	res, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now.Add(-2 * time.Hour),
+			Value: f64(1), Label: str("active")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Malformed != 1 || res.Implausible != 0 {
+		t.Fatalf("malformed=%d implausible=%d, want 1 and 0: a broken shape is an agent bug, "+
+			"and calling it a clock problem sends the operator to NTP for it", res.Malformed, res.Implausible)
+	}
+	if res.Accepted != 0 || res.Rejected() != 1 {
+		t.Fatalf("accepted=%d rejected=%d, want 0 and 1", res.Accepted, res.Rejected())
+	}
+
+	// The control: the same timestamp on a WELL-shaped observation is the
+	// clock, so the ordering is not simply "always blame the shape".
+	res, err = svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now.Add(-2 * time.Hour), Value: f64(1)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Implausible != 1 || res.Malformed != 0 {
+		t.Fatalf("implausible=%d malformed=%d, want 1 and 0", res.Implausible, res.Malformed)
+	}
+}
+
+// TestClockOffsetMeasuresOnlyWhatSurvivedTheBatch: the offset is taken
+// from the newest observation the batch actually STORED, not the newest it
+// arrived with. TestClockOffsetRejectedObservationsDoNotMeasureAnything
+// looks like it covers this and does not — its batch is rejected whole, so
+// it returns at the "nothing survived" guard before the measurement is
+// reached at all, and measuring from the raw batch instead passed it.
+//
+// The distinguishing input is a MIXED batch: one punctual reading that is
+// stored, alongside one far-future reading that is not. Measuring from the
+// raw batch would report a healthy host as minutes ahead of the manager,
+// which is the host page's most visible claim about a host.
+func TestClockOffsetMeasuresOnlyWhatSurvivedTheBatch(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	host := uuid.Must(uuid.NewV7())
+	svc := checks.NewService(newFakeStore(), fixedClock(now))
+
+	res, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now, Value: f64(1)},
+		// A day ahead: far outside maxFuture, so it is counted and dropped.
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.load1", At: now.Add(24 * time.Hour), Value: f64(2)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 1 || res.Implausible != 1 {
+		t.Fatalf("accepted=%d implausible=%d, want 1 and 1", res.Accepted, res.Implausible)
+	}
+	m, ok := svc.ClockOffset(host)
+	if !ok {
+		t.Fatal("a batch with a stored reading must produce a measurement")
+	}
+	if m.Offset != 0 {
+		t.Fatalf("offset = %v, want 0: the only reading that was stored was punctual, and the "+
+			"one that was not is exactly the evidence this measurement may not use", m.Offset)
+	}
+}

@@ -1088,3 +1088,65 @@ func TestCheckResultsContractBoundsRefusedOnTheWire(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckResultsRejectionLogAttributesEachCauseSeparately runs the REAL
+// checks.Service behind the stream so the clock and shape rules — which
+// live in that service, not in a port fake — actually fire, and pins that
+// each count reaches the log field that names its own cause.
+//
+// TestCheckResultsRejectionLogNamesTheCause above exercises only the
+// unknown-host cause and asserts the other two at zero, so swapping
+// res.Implausible and res.Malformed in the warning passed it. Attribution
+// is the whole point of that log line ("rejected_implausible_at" sends an
+// operator to the host's NTP, "rejected_malformed" to its agent build),
+// and two thirds of it could be mislabelled silently.
+//
+// The counts are deliberately DIFFERENT — one malformed against two
+// implausible — because a swap between two equal numbers is invisible.
+func TestCheckResultsRejectionLogAttributesEachCauseSeparately(t *testing.T) {
+	h := newHarnessPort(t, true, nil, checks.NewService(acceptingCheckStore{}))
+	_, client := enrollAnAgent(t, h, "web-1")
+
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	stale := now.Add(-2 * time.Hour) // maxPast is one hour
+	// No observation arm set at all: neither a value, nor a label, nor an
+	// error — a shape neither table can represent, which is what a broken
+	// agent build produces and a skewed clock never does.
+	malformed := &agentpb.CheckResult{CheckKey: "cpu", Metric: "cpu.used_pct", At: timestamppb.New(now)}
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_CheckResults{CheckResults: &agentpb.CheckResults{
+		Results: []*agentpb.CheckResult{
+			checkResultValue("cpu", "", "cpu.used_pct", now, 1), // accepted
+			malformed,
+			checkResultValue("cpu", "", "cpu.load1", stale, 2),
+			checkResultValue("cpu", "", "cpu.load5", stale, 3),
+		},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := stream.Recv(); err != nil || !msg.GetAck() {
+		t.Fatalf("check results ack = %+v, %v", msg, err)
+	}
+
+	captured := logs.String()
+	for _, want := range []string{
+		"agent check results partially rejected",
+		"accepted=1",
+		"rejected=3",
+		"rejected_malformed=1",
+		"rejected_implausible_at=2",
+		"rejected_unknown_host=0",
+	} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("log does not carry %q:\n%s", want, captured)
+		}
+	}
+}

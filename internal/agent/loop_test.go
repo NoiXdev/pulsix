@@ -662,6 +662,80 @@ func TestJitteredBackoffSubtractsUpToHalfTheRung(t *testing.T) {
 	}
 }
 
+// TestEveryBackoffPathIsJittered covers all three places the loop backs
+// off, because TestLoopReconnectBackoffIsJittered below covers only one of
+// them: replacing l.jitteredBackoff with the bare ladder at the
+// certificate-renewal site alone, leaving the other two jittered, passed
+// the whole package. All three share one backoffShift and all three sit on
+// the same fleet-wide-fault path — a manager restart fails renewals,
+// streams and enrolments at the same instant — so a fix that reaches two
+// of them is not the fix.
+func TestEveryBackoffPathIsJittered(t *testing.T) {
+	// The maximum draw: exactly half of the first rung, 500ms, wherever
+	// the jitter is actually applied.
+	const wantFirst = 500 * time.Millisecond
+
+	t.Run("certificate renewal", func(t *testing.T) {
+		lt := newLoopTest(t)
+		id := lt.withIdentity()
+		leaf := id.Leaf()
+		lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
+		lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
+		lt.setJitter(1)
+		lt.dialer.agentConn = &fakeAgentConn{renewErr: status.Error(codes.Unavailable, "manager restarting")}
+
+		l := lt.newLoop()
+		cancel, done := runLoop(t, l)
+		waitFor(t, 2*time.Second, func() bool { return len(lt.recordedSleeps()) >= 1 })
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
+		if got := lt.recordedSleeps()[0]; got != wantFirst {
+			t.Fatalf("first renewal backoff = %v, want %v (the jittered rung, not the bare ladder)", got, wantFirst)
+		}
+	})
+
+	t.Run("stream reconnect", func(t *testing.T) {
+		lt := newLoopTest(t)
+		lt.withIdentity()
+		lt.setJitter(1)
+		lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{newFakeStream()}}
+		lt.dialer.agentDialErr = errors.New("manager unreachable")
+
+		l := lt.newLoop()
+		cancel, done := runLoop(t, l)
+		waitFor(t, 2*time.Second, func() bool { return len(lt.recordedSleeps()) >= 1 })
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
+		if got := lt.recordedSleeps()[0]; got != wantFirst {
+			t.Fatalf("first reconnect backoff = %v, want %v", got, wantFirst)
+		}
+	})
+
+	t.Run("unreachable enrollment", func(t *testing.T) {
+		lt := newLoopTest(t)
+		caInst := newTestCA(t)
+		lt.withToken(caInst)
+		lt.setJitter(1)
+		lt.dialer.enrollConn = &fakeEnrollConn{respond: enrollResponder(caInst, nil, nil)}
+		lt.dialer.enrollDialErr = errors.New("connection refused")
+
+		l := lt.newLoop()
+		cancel, done := runLoop(t, l)
+		waitFor(t, 2*time.Second, func() bool { return len(lt.recordedSleeps()) >= 1 })
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
+		if got := lt.recordedSleeps()[0]; got != wantFirst {
+			t.Fatalf("first enrollment backoff = %v, want %v", got, wantFirst)
+		}
+	})
+}
+
 // TestLoopReconnectBackoffIsJittered proves the loop sleeps the JITTERED
 // delay, not the bare ladder. Without it a fault that cuts every stream
 // at once — a manager restart, a database failover — has the whole fleet
