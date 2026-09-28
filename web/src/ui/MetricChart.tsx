@@ -77,13 +77,25 @@ export function MetricChart({ points, range, label, height = 180 }: MetricChartP
   // into a display:none panel would get.
   const [width, setWidth] = useState(0);
 
+  // A ResizeObserver on the container, not a window resize listener: the
+  // container changes width for reasons the window never hears about — a
+  // sidebar collapsing, a panel opening beside it — and a chart that only
+  // listened to the window sat at its old width until someone happened to
+  // resize the browser (backlog 3.26). The observer covers the window case
+  // too, because a window resize resizes the container.
+  //
+  // Re-measuring to the width it already has sets the same state value,
+  // which React drops without a re-render — so the observer's extra
+  // notifications (it fires for height changes as well) cost nothing and
+  // cannot tear the plot down under a hovering cursor.
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
     const measure = () => setWidth(el.clientWidth);
     measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   // The freshest points, readable by the construction effect below without

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import type uPlot from 'uplot';
 import { MetricChart } from './MetricChart.tsx';
 import { toAlignedData } from './metricSeries.ts';
 import type { MetricPoint } from '../api/types.ts';
+import { resizeTo } from '../test/resizeObserver.ts';
 
 /**
  * The real uPlot, wrapped so the test can see how many instances a render
@@ -148,6 +149,39 @@ describe('MetricChart', () => {
 
     expect(spy.built).toHaveLength(2);
     expect(container.querySelector('canvas')).not.toBe(canvas);
+  });
+
+  it('re-measures when its container resizes and no window event fires', () => {
+    const { container } = render(<MetricChart points={series(3)} range="1h" label="cpu usage_percent" />);
+    const host = container.querySelector('[role="img"]') as HTMLElement;
+    expect(spy.built).toHaveLength(1);
+
+    // A sidebar collapsing or a panel opening beside the chart changes its
+    // container's width with no window resize behind it — the only event a
+    // resize listener would ever hear (backlog 3.26).
+    act(() => resizeTo(host, 420));
+
+    // The width is baked into the uPlot options at construction, so
+    // noticing the new one means a new instance at that width. A chart
+    // that missed it would sit at its old size until the next window
+    // resize, which may never come.
+    expect(spy.built).toHaveLength(2);
+    expect(spy.built[1].width).toBe(420);
+  });
+
+  it('does not rebuild when a resize reports the width it already has', () => {
+    const { container } = render(<MetricChart points={series(3)} range="1h" label="cpu usage_percent" />);
+    const host = container.querySelector('[role="img"]') as HTMLElement;
+
+    act(() => resizeTo(host, 420));
+    expect(spy.built).toHaveLength(2);
+
+    // A ResizeObserver fires for height changes too, and uPlot's own
+    // canvas sizing can provoke one. Rebuilding on every notification
+    // would tear the plot down under a hovering cursor for nothing.
+    act(() => resizeTo(host, 420));
+
+    expect(spy.built).toHaveLength(2);
   });
 
   it('names the window it is drawing in its accessible label', () => {

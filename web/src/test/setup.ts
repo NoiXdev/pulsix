@@ -1,5 +1,12 @@
 import '@testing-library/jest-dom/vitest';
 import { fetchMock } from './fetchMock.ts';
+// A fourth browser API jsdom does not ship, alongside the three at the
+// bottom of this file: ResizeObserver, which ui/MetricChart.tsx uses to
+// follow its container's width (backlog 3.26). Without a constructor the
+// component throws on mount in every test that reaches it, including the
+// page tests that render it only indirectly. The stub installs itself on
+// import; the `resizeTo` helper tests drive it with lives beside it.
+import './resizeObserver.ts';
 
 // Installed before any test file's own imports run, so src/api/client.ts's
 // createClient() — which reads globalThis.fetch exactly once, at module

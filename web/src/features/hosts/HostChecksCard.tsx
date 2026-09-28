@@ -21,7 +21,8 @@ import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts'
  * the only dynamic import in the SPA so far; if a second one lands, the
  * pattern is worth naming somewhere shared.
  */
-const MetricChart = lazy(() => import('../../ui/MetricChart.tsx').then((m) => ({ default: m.MetricChart })));
+const importMetricChart = () => import('../../ui/MetricChart.tsx');
+const MetricChart = lazy(() => importMetricChart().then((m) => ({ default: m.MetricChart })));
 
 const RANGES: [MetricRange, string][] = [
   ['1h', '1 h'],
@@ -205,7 +206,18 @@ function ValueRow({
             className="ml-auto"
             aria-label={`Graph ${check.key} ${name}`}
             aria-expanded={isOpen}
-            onClick={() => onOpen(isOpen ? null : { check: check.key, item: value.item, metric: value.metric, range: '1h' })}
+            onClick={() => {
+              // The chunk and the series are two independent round trips.
+              // Starting the import here rather than leaving it to the
+              // first render of <MetricChart> — which waits for the series
+              // — makes a cold open cost max(chunk, request) instead of
+              // their sum (backlog 3.26). A dynamic import is cached by
+              // the module registry, so reopening costs nothing, and the
+              // `void` says the result is deliberately dropped: React.lazy
+              // awaits the same promise when it renders.
+              if (!isOpen) void importMetricChart();
+              onOpen(isOpen ? null : { check: check.key, item: value.item, metric: value.metric, range: '1h' });
+            }}
           >
             <LineChart size={14} /> Graph
           </Button>
