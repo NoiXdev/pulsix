@@ -44,9 +44,19 @@ export function HostDetailPage() {
   const [tagError, setTagError] = useState<string | null>(null);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
 
+  // The org query carries the role, and the role decides what several
+  // cards below may ask for at all. `may(undefined, …)` is false by
+  // design, so a page rendered before that response lands cannot tell
+  // "not loaded yet" from "not permitted" — HostChecksCard would inform
+  // an owner that monitoring is visible to members of this organization.
+  // Ordered the way ChecksPage and MonitoringGroupsPage order it: the org
+  // query's own failure and loading states first, the permission question
+  // only once there is a role to ask about.
+  const orgGuard = useQueryGuard(orgInfo);
   const hostGuard = useQueryGuard(host);
+  if (orgGuard) return orgGuard;
   if (hostGuard) return hostGuard;
-  if (!host.data) return <QueryLoading />;
+  if (!orgInfo.data || !host.data) return <QueryLoading />;
   const h = host.data.host;
 
   async function addTag(e: FormEvent) {

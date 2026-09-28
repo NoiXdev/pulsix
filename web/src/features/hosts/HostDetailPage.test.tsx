@@ -20,6 +20,13 @@ const HOST = {
   },
 };
 
+/** The org response carries the role every permission on this page is
+ * derived from. Every test mocks it: a page that renders before it lands
+ * is the state this file's last two cases are about. */
+const ORG = { org: { id: 'o1', name: 'Acme', slug: 'acme', role: 'admin', created_at: '2026-01-01T00:00:00Z' } };
+
+const NO_CHECKS = { host_id: 'h1', monitored: false, checks: [] };
+
 function renderPage(qc: QueryClient) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -43,6 +50,8 @@ describe('HostDetailPage', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let patched: unknown;
     mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
@@ -70,6 +79,8 @@ describe('HostDetailPage', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let putTags: unknown;
     mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
@@ -95,6 +106,8 @@ describe('HostDetailPage', () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
@@ -118,6 +131,8 @@ describe('HostDetailPage', () => {
     const originalConfirm = window.confirm;
     window.confirm = () => true;
     mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
@@ -142,6 +157,8 @@ describe('HostDetailPage', () => {
     const originalConfirm = window.confirm;
     window.confirm = () => true;
     mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
@@ -195,9 +212,86 @@ describe('HostDetailPage', () => {
     expect(screen.getByText('7.5')).toBeInTheDocument();
   });
 
+  it('never claims a member is not one while the role is still in flight', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // The host is already cached — an operator who came from the list, or
+    // a second visit — so the only answer still outstanding on the first
+    // paint is the org's, and the role with it. That is the state the page
+    // used to render fully in, telling an admin that "monitoring is
+    // visible to members of this organization" because may(undefined, …)
+    // is false.
+    qc.setQueryData(['host', 'acme', 'h1'], HOST);
+    const fetch = mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1': HOST,
+      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
+    });
+
+    // The org answer is held back until this test releases it; every
+    // other route answers normally, so the page has everything it needs
+    // EXCEPT the role.
+    const base = fetch.getMockImplementation()!;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (new URL(request.url, 'http://localhost').pathname === '/api/v1/orgs/acme') {
+        await held;
+        return new Response(JSON.stringify(ORG), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return base(input, init);
+    });
+
+    renderPage(qc);
+
+    // The whole page waits for the role rather than deciding without one:
+    // exactly one "Loading…" (the page's), no host header rendered from
+    // the cached host, and above all no verdict about membership.
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText('web-04.fra')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Monitoring is visible to members/)).not.toBeInTheDocument();
+
+    // And once the role lands the section is rendered for real.
+    release();
+    expect(await screen.findByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
+    expect(screen.queryByText(/Monitoring is visible to members/)).not.toBeInTheDocument();
+  });
+
+  it('reports a failed org read instead of rendering the page without a role', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme': () => new Response(JSON.stringify({ detail: 'org store unavailable' }), { status: 500 }),
+      'GET /api/v1/orgs/acme/hosts/h1': HOST,
+      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
+    });
+
+    renderPage(qc);
+
+    // A 500 on the org read has no role in it, so there is nothing to
+    // derive a permission from — and no retry, no loading state and no
+    // error was the one outcome that must not survive it.
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.queryByText(/Monitoring is visible to members/)).not.toBeInTheDocument();
+  });
+
   it('shows the not-found page for a 404 instead of hanging on "Loading…" (Important 7)', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'not found' }), { status: 404 }),
     });
 
