@@ -86,6 +86,23 @@ export function MetricChart({ points, range, label, height = 180 }: MetricChartP
     return () => window.removeEventListener('resize', measure);
   }, []);
 
+  // The freshest points, readable by the construction effect below without
+  // being one of its dependencies. Rebuilding the plot every time a poll
+  // returns one new sample would destroy and recreate the canvas twice a
+  // minute — losing the cursor crosshair under whoever was hovering it —
+  // when uPlot's own setData does the job in place.
+  //
+  // The ref is written in an effect of its own rather than during render
+  // (`react-hooks/refs`), and declared first so it has already run by the
+  // time the construction effect below reads it in the same commit —
+  // effects fire in declaration order.
+  const pointsRef = useRef(points);
+  const plotRef = useRef<uPlot | null>(null);
+
+  useEffect(() => {
+    pointsRef.current = points;
+  });
+
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
@@ -104,13 +121,29 @@ export function MetricChart({ points, range, label, height = 180 }: MetricChartP
           { stroke: tickColor, grid: { stroke: axisColor, width: 1 }, ticks: { stroke: axisColor }, values: TICK_FORMAT[range] },
           { stroke: tickColor, grid: { stroke: axisColor, width: 1 }, ticks: { stroke: axisColor }, size: 48 },
         ],
-        series: [{}, { label, stroke: lineColor, width: 1.5, points: { show: points.length < 40 } }],
+        // A function, not a boolean: it is re-evaluated at draw time, so it
+        // follows whatever setData last put in — a chart that filled up
+        // past the threshold while open stops drawing dots as it should.
+        series: [{}, { label, stroke: lineColor, width: 1.5, points: { show: (u) => u.data[0].length < 40 } }],
       },
-      toAlignedData(points),
+      toAlignedData(pointsRef.current),
       el,
     );
-    return () => plot.destroy();
-  }, [points, range, label, height, width]);
+    plotRef.current = plot;
+    return () => {
+      plotRef.current = null;
+      plot.destroy();
+    };
+    // Everything here is baked into the uPlot options at construction and
+    // cannot be changed on a live instance: the axis tick format follows
+    // `range`, the series name follows `label`, and both sizes are fixed.
+    // A data change is NOT in this list — that is what the effect below is
+    // for.
+  }, [range, label, height, width]);
+
+  useEffect(() => {
+    plotRef.current?.setData(toAlignedData(points));
+  }, [points]);
 
   return (
     <div className="relative">

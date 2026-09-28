@@ -1,8 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import type uPlot from 'uplot';
 import { MetricChart } from './MetricChart.tsx';
 import { toAlignedData } from './metricSeries.ts';
 import type { MetricPoint } from '../api/types.ts';
+
+/**
+ * The real uPlot, wrapped so the test can see how many instances a render
+ * sequence built and what data each ended up holding. Nothing is faked —
+ * every assertion elsewhere in this file still runs against the genuine
+ * library and the DOM it produces — but "did this rebuild the plot or feed
+ * the existing one?" is otherwise unobservable: both paths leave a canvas
+ * on screen and an identical accessible name.
+ */
+const spy = vi.hoisted(() => ({ built: [] as uPlot[] }));
+vi.mock('uplot', async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof uPlot }>();
+  const Wrapped = function (this: unknown, ...args: ConstructorParameters<typeof uPlot>) {
+    const instance = new actual.default(...args);
+    spy.built.push(instance);
+    return instance;
+  };
+  return { ...actual, default: Wrapped };
+});
+
+beforeEach(() => {
+  spy.built = [];
+});
 
 /** series builds `count` fixture points, one a minute apart, starting at a
  * fixed instant so nothing here depends on the wall clock. */
@@ -70,6 +94,38 @@ describe('MetricChart', () => {
     // rather than skipped, which is the case that used to throw.
     expect(container.querySelector('.uplot')).not.toBeNull();
     expect(screen.getByRole('img', { name: 'disk /var used_percent over the last 7 days, 0 samples' })).toBeInTheDocument();
+  });
+
+  it('feeds new points to the existing plot instead of rebuilding it', () => {
+    const { container, rerender } = render(<MetricChart points={series(3)} range="1h" label="cpu usage_percent" />);
+    const canvas = container.querySelector('canvas');
+    expect(spy.built).toHaveLength(1);
+
+    // A poll returning one more sample is a new array identity every 30 s.
+    // Tearing the plot down for that resets the cursor crosshair under
+    // whoever is hovering it.
+    rerender(<MetricChart points={series(4)} range="1h" label="cpu usage_percent" />);
+
+    expect(spy.built).toHaveLength(1);
+    expect(container.querySelector('canvas')).toBe(canvas);
+    // …and the existing instance really received the new series, which the
+    // unchanged canvas alone would not prove.
+    expect(spy.built[0].data[0]).toHaveLength(4);
+    expect(spy.built[0].data[1]).toEqual([0, 1.5, 3, 4.5]);
+    expect(screen.getByRole('img', { name: /4 samples/ })).toBeInTheDocument();
+  });
+
+  it('rebuilds the plot for a change setData cannot carry', () => {
+    const { container, rerender } = render(<MetricChart points={series(3)} range="1h" label="cpu usage_percent" />);
+    const canvas = container.querySelector('canvas');
+
+    // The x-axis tick format is baked into the options at construction, so
+    // a range switch is one of the few changes that genuinely needs a new
+    // instance.
+    rerender(<MetricChart points={series(3)} range="7d" label="cpu usage_percent" />);
+
+    expect(spy.built).toHaveLength(2);
+    expect(container.querySelector('canvas')).not.toBe(canvas);
   });
 
   it('names the window it is drawing in its accessible label', () => {
