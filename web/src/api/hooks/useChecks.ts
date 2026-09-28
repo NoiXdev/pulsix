@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import { errorStatus } from '../../lib/apiError.ts';
 import type { CheckDefinitionInput, MetricRange, MonitoringGroupInput } from '../types.ts';
 
 /**
@@ -161,15 +162,25 @@ export interface MetricSelection {
  * either only delays the message.
  *
  * refetchInterval matches useHostChecks' cadence while the query is
- * healthy, and stops dead once it has failed. An open graph that froze at
- * the instant it was opened, while the current values above it kept
- * ticking, would be the one stale thing on a page whose whole subject is
- * staleness — but a plain `30_000` would also re-fire the failures the
- * paragraph above calls final: TanStack's interval timer calls the fetcher
- * with no error-state check, so a graph opened on a tuple the host never
- * reported would ask again twice a minute, forever, for an answer that
- * cannot change. `retry: false` does not cover this; it governs one
- * fetch's attempts, not whether the next one is scheduled.
+ * healthy. An open graph that froze at the instant it was opened, while
+ * the current values above it kept ticking, would be the one stale thing
+ * on a page whose whole subject is staleness.
+ *
+ * It stops on a **4xx**, and only a 4xx. TanStack's interval timer calls
+ * the fetcher with no error-state check, so a plain `30_000` would re-fire
+ * exactly the failures the paragraph above calls final — a graph opened on
+ * a tuple the host never reported would ask again twice a minute, forever,
+ * for an answer that cannot change. (`retry: false` does not cover this;
+ * it governs one fetch's attempts, not whether the next one is scheduled.)
+ *
+ * But stopping on *any* error is the opposite mistake: with `retry: false`
+ * here and `refetchOnWindowFocus: false` app-wide (main.tsx), one 502 from
+ * a reverse proxy during a manager restart would end the graph for good,
+ * while the sibling useHostChecks healed on its next tick — the same card,
+ * the same blip, the numbers resuming and the graph under them dead until
+ * the operator closed and reopened the panel. A 5xx or a network failure
+ * (errorStatus null) is a hiccup and keeps polling; a 4xx is the server
+ * telling us the question is wrong.
  */
 export function useHostMetric(org: string, hostId: string, selection: MetricSelection | null) {
   return useQuery({
@@ -187,6 +198,9 @@ export function useHostMetric(org: string, hostId: string, selection: MetricSele
     },
     enabled: !!org && !!hostId && selection !== null,
     retry: false,
-    refetchInterval: (query) => (query.state.error ? false : 30_000),
+    refetchInterval: (query) => {
+      const status = errorStatus(query.state.error);
+      return status !== null && status >= 400 && status < 500 ? false : 30_000;
+    },
   });
 }

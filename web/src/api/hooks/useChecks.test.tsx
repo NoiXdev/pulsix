@@ -59,6 +59,33 @@ describe('useHostMetric polling', () => {
     expect(served).toBe(2);
   });
 
+  it('keeps polling through a transient failure', async () => {
+    // With retry: false here and refetchOnWindowFocus: false app-wide, an
+    // interval that stopped on ANY error would end the graph for good on
+    // one 502 from a reverse proxy during a manager restart — while the
+    // sibling useHostChecks healed on its next tick. Same card, same blip,
+    // the numbers resuming and the graph under them dead.
+    let asked = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/metrics': () => {
+        asked += 1;
+        if (asked === 1) return new Response(JSON.stringify({ detail: 'upstream unavailable' }), { status: 502 });
+        return { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] };
+      },
+    });
+    const { result } = renderHook(() => useHostMetric('acme', 'h1', SELECTION), { wrapper: wrapper() });
+
+    await settle();
+    expect(result.current.isError).toBe(true);
+    expect(asked).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000);
+    });
+    expect(asked).toBe(2);
+    expect(result.current.data).toBeDefined();
+  });
+
   it('stops asking once the answer is final', async () => {
     let asked = 0;
     mockApi({
