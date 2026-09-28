@@ -1,14 +1,25 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { LineChart } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
-import { MetricChart } from '../../ui/MetricChart.tsx';
 import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
 import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts';
+
+/**
+ * The chart — and with it uPlot and its stylesheet, ~25 kB gzipped — is
+ * loaded only once an operator opens a graph.
+ *
+ * A static import would put it in the app's single entry chunk, which
+ * every visitor downloads before the login form renders, for a component
+ * that appears behind an on-demand click on one card of one page. This is
+ * the only dynamic import in the SPA so far; if a second one lands, the
+ * pattern is worth naming somewhere shared.
+ */
+const MetricChart = lazy(() => import('../../ui/MetricChart.tsx').then((m) => ({ default: m.MetricChart })));
 
 const RANGES: [MetricRange, string][] = [
   ['1h', '1 h'],
@@ -253,7 +264,11 @@ function GraphPanel({
         </p>
       )}
       {!series.data && !series.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
-      {series.data && <MetricChart points={series.data.points ?? []} range={selection.range} label={label} />}
+      {series.data && (
+        <Suspense fallback={<p className="text-xs text-muted-foreground">Loading…</p>}>
+          <MetricChart points={series.data.points ?? []} range={selection.range} label={label} />
+        </Suspense>
+      )}
     </div>
   );
 }
