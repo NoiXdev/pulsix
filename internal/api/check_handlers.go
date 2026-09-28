@@ -314,38 +314,45 @@ func registerCheckRoutes(hapi huma.API, deps Deps) {
 }
 
 // checkHostNames resolves, for a whole page of definitions, the names of
-// the hosts the host-bound ones name. It is ONE list read for the page,
-// never a lookup per definition: a host binding IS the per-host override,
-// so a fleet that uses them has roughly as many host-bound rows as hosts,
-// and GET /checks is unpaginated. Leaving the name out would not make the
-// work go away either — it would move the same N round trips into the
-// browser, once per definition and again on every navigation back.
+// the hosts the host-bound ones name. It is ONE store read for the page,
+// whatever the page holds — hosts.Service.ListHostsByIDs, which
+// deduplicates the ids and reads nothing when there are none.
 //
-// nil when nothing in the page is host-bound, so the common case (an
-// organization on the seed set alone) costs no host read at all.
+// Two shapes it has to be right for, which is why it is neither a loop nor
+// a whole-fleet read:
 //
-// A failure to read the host list is logged and answered with no names:
-// host_name is a label on a binding the operator can still see by id, and
-// losing the label is a far smaller failure than a 500 on the whole page.
+//   - Dense: a host binding IS the per-host override, so a fleet that uses
+//     them has roughly as many host-bound rows as it has hosts, and
+//     GET /checks is unpaginated. One lookup per definition would be
+//     hundreds of queries in one request — and leaving the name out
+//     would not make that work go away, only move it into the browser,
+//     once per definition and again on every navigation back.
+//   - Sparse: a single host-bound check in a 10 000-host organization must
+//     not cost a read of the entire hosts table (which is what
+//     ListAllHosts, the inventory renderer's query, would do here). The
+//     work is proportional to the page, not to the fleet.
+//
+// A failure to read is logged and answered with no names: host_name is a
+// label on a binding the operator can still see by id, and losing the
+// label is a far smaller failure than a 500 on the whole page.
 func checkHostNames(ctx context.Context, deps Deps, orgID uuid.UUID, list []checks.Definition) map[uuid.UUID]string {
-	needed := false
+	ids := make([]uuid.UUID, 0, len(list))
 	for _, d := range list {
 		if d.HostID != nil {
-			needed = true
-			break
+			ids = append(ids, *d.HostID)
 		}
 	}
-	if !needed {
+	if len(ids) == 0 {
 		return nil
 	}
-	byID, err := hostsByID(ctx, deps, orgID)
+	found, err := deps.Hosts.ListHostsByIDs(ctx, orgID, ids)
 	if err != nil {
 		slog.ErrorContext(ctx, "resolve host names for check definitions", "org_id", orgID, "err", err)
 		return nil
 	}
-	names := make(map[uuid.UUID]string, len(byID))
-	for id, h := range byID {
-		names[id] = h.Name
+	names := make(map[uuid.UUID]string, len(found))
+	for _, h := range found {
+		names[h.ID] = h.Name
 	}
 	return names
 }

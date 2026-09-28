@@ -146,6 +146,13 @@ type Server struct {
 	// *agentapi.Service here; a test has no agent stream to observe, so
 	// it asserts on what the API asked for instead.
 	Push *PushRecorder
+	// HostReads counts the reads the API makes through the hosts store,
+	// by store method. It exists so a test can pin how MANY queries a
+	// request costs, not only what came back: the check list labels every
+	// host-bound definition with its host's name, and a batched lookup and
+	// the N+1 loop it replaced are indistinguishable from the response
+	// body alone (task-10 review round 2, finding 2).
+	HostReads *HostReadCounter
 	// PublicURL is the test server's own base URL, computed from its
 	// listener before Start() (so it is already known when an Option
 	// runs) — the same value production derives PULSIX_PUBLIC_URL from,
@@ -155,6 +162,72 @@ type Server struct {
 }
 
 // Option customizes a Server's Deps before its httptest.Server starts.
+// HostReadCounter counts hosts.Store reads by method name. Safe for
+// concurrent use: the API under test serves requests on its own goroutines.
+type HostReadCounter struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func (c *HostReadCounter) add(method string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n == nil {
+		c.n = map[string]int{}
+	}
+	c.n[method]++
+}
+
+// Reset forgets every count so far, so a test can measure one request
+// rather than everything its fixture did first.
+func (c *HostReadCounter) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n = map[string]int{}
+}
+
+// Count reports how many times the named store method was called.
+func (c *HostReadCounter) Count(method string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n[method]
+}
+
+// Total reports every counted read, whichever method it went through.
+func (c *HostReadCounter) Total() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	total := 0
+	for _, n := range c.n {
+		total += n
+	}
+	return total
+}
+
+// countingHostStore is the real SQL store with its read paths counted. It
+// embeds the interface rather than listing all ~25 methods, so a method
+// added to hosts.Store needs no change here — only the reads a test cares
+// about are intercepted, and everything else passes straight through.
+type countingHostStore struct {
+	hosts.Store
+	counter *HostReadCounter
+}
+
+func (c countingHostStore) GetHost(ctx context.Context, orgID, hostID uuid.UUID) (hosts.Host, error) {
+	c.counter.add("GetHost")
+	return c.Store.GetHost(ctx, orgID, hostID)
+}
+
+func (c countingHostStore) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
+	c.counter.add("ListAllHosts")
+	return c.Store.ListAllHosts(ctx, orgID)
+}
+
+func (c countingHostStore) ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error) {
+	c.counter.add("ListHostsByIDs")
+	return c.Store.ListHostsByIDs(ctx, orgID, ids)
+}
+
 type Option func(*Server)
 
 // WithSecureCookies sets Deps.Secure, so tests can exercise the Secure
@@ -304,7 +377,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	// session (Finding 2, fix round 1).
 	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
-	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	s.HostReads = &HostReadCounter{}
+	hostsSvc := hosts.NewService(countingHostStore{Store: hosts.NewSQLStore(d), counter: s.HostReads}, time.Now)
 	// The monitoring check pipeline, wired exactly as app.Build wires it:
 	// the same store, and the same two host ports (WithMatcher /
 	// WithHostRoster) without which Preview and the resolver refuse to

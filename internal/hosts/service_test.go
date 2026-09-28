@@ -61,16 +61,22 @@ type fakeHostStore struct {
 	bastionPins     map[uuid.UUID]hosts.HostKeyPin
 	changedBastions map[uuid.UUID]bool
 	bastionObs      map[uuid.UUID]hosts.BastionHopObservation
+	// calls counts store method invocations, so a test can pin how MANY
+	// reads a service call makes and not only what it returned — the
+	// difference between a batched lookup and the N+1 it replaced.
+	calls map[string]int
 }
 
 func newFakeHostStore() *fakeHostStore {
 	return &fakeHostStore{
 		zones: map[uuid.UUID]hosts.Zone{}, list: map[uuid.UUID]hosts.Host{},
 		tags: map[uuid.UUID][]hosts.Tag{}, failNext: map[string]error{},
+		calls: map[string]int{},
 	}
 }
 
 func (f *fakeHostStore) take(method string) error {
+	f.calls[method]++
 	if err, ok := f.failNext[method]; ok {
 		delete(f.failNext, method)
 		return err
@@ -265,6 +271,20 @@ func (f *fakeHostStore) ListHosts(_ context.Context, orgID uuid.UUID, filt hosts
 // ListAllHosts returns every host of orgID sorted by name, unpaginated —
 // the fake's counterpart to the real store's ORDER BY name query, used by
 // TestListAllHostsSortedAndScoped and by the renderer's own tests.
+func (f *fakeHostStore) ListHostsByIDs(_ context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error) {
+	if err := f.take("ListHostsByIDs"); err != nil {
+		return nil, err
+	}
+	var out []hosts.Host
+	for _, id := range ids {
+		if h, ok := f.list[id]; ok && h.OrgID == orgID {
+			out = append(out, h)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 func (f *fakeHostStore) ListAllHosts(_ context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
 	if err := f.take("ListAllHosts"); err != nil {
 		return nil, err
@@ -676,5 +696,55 @@ func TestListAllHostsSortedAndScoped(t *testing.T) {
 	}
 	if len(got) != 3 || got[0].Name != "a" || got[1].Name != "b" || got[2].Name != "c" {
 		t.Fatalf("ListAllHosts = %+v, want [a b c]", got)
+	}
+}
+
+// TestListHostsByIDsIsOneScopedBatchedRead pins the three properties the
+// check list depends on (task-10 review round 2, finding 2): one store read
+// however many ids are asked for, ids deduplicated before the read, and no
+// read at all when nothing is asked. The count is the point — the call this
+// replaced was one GetHost per host-bound check definition, and an
+// assertion on the returned names alone cannot tell the two apart.
+func TestListHostsByIDsIsOneScopedBatchedRead(t *testing.T) {
+	st := newFakeHostStore()
+	svc := hosts.NewService(st, time.Now)
+	org, other := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	zone, _ := svc.CreateZone(ctx, org, "fra", "F")
+	otherZone, _ := svc.CreateZone(ctx, other, "fra", "F")
+	a, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "a", ZoneID: zone.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "b", ZoneID: zone.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := svc.CreateHost(ctx, other, hosts.HostInput{Name: "foreign", ZoneID: otherZone.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.calls = map[string]int{}
+
+	// Six ids: two duplicated, one another organization's, one naming nothing.
+	got, err := svc.ListHostsByIDs(ctx, org, []uuid.UUID{b.ID, a.ID, a.ID, b.ID, foreign.ID, uuid.Must(uuid.NewV7())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
+		t.Fatalf("ListHostsByIDs = %+v, want [a b] — another org's host must be invisible", got)
+	}
+	if n := st.calls["ListHostsByIDs"]; n != 1 {
+		t.Fatalf("store reads = %d, want exactly 1 for the whole batch", n)
+	}
+	if n := st.calls["GetHost"] + st.calls["ListAllHosts"]; n != 0 {
+		t.Fatalf("per-id and whole-fleet reads = %d, want 0", n)
+	}
+
+	// Nothing asked for is nothing read.
+	if got, err := svc.ListHostsByIDs(ctx, org, nil); err != nil || got != nil {
+		t.Fatalf("empty ids = %+v, %v", got, err)
+	}
+	if n := st.calls["ListHostsByIDs"]; n != 1 {
+		t.Fatalf("store reads after an empty batch = %d, want still 1", n)
 	}
 }

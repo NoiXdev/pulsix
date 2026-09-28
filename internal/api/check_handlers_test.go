@@ -204,6 +204,64 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		}
 	})
 
+	// How MANY host reads the list costs, not only what it says. The
+	// response body cannot tell a batched lookup from the one-GetHost-per-
+	// definition loop it replaced, so nothing stopped that regression from
+	// coming back silently (task-10 review round 2, finding 2). Placed
+	// early, while the organization still holds only its org-bound seed
+	// set, so the "no host-bound rows, no host read at all" half is true
+	// by construction.
+	t.Run("host names cost one batched read for the whole page", func(t *testing.T) {
+		f.s.HostReads.Reset()
+		f.listChecks(t, f.viewerC)
+		if n := f.s.HostReads.Total(); n != 0 {
+			t.Fatalf("host reads for a page with no host binding = %d, want 0", n)
+		}
+
+		// Three host-bound definitions over two distinct hosts: the batch
+		// must also deduplicate rather than ask for web-1 twice.
+		var ids []string
+		for _, spec := range []struct {
+			key  string
+			host uuid.UUID
+		}{
+			{"batch-a", f.web}, {"batch-b", f.web}, {"batch-c", f.dbHost},
+		} {
+			created := f.createCheck(t, f.operatorC, map[string]any{
+				"key": spec.key, "plugin": "cpu", "interval_seconds": 60,
+				"binding_kind": "host", "host_id": spec.host.String(),
+			})
+			ids = append(ids, created.ID)
+		}
+		t.Cleanup(func() {
+			for _, id := range ids {
+				requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+id, nil)
+			}
+		})
+
+		f.s.HostReads.Reset()
+		byKey := map[string]checkDTO{}
+		for _, d := range f.listChecks(t, f.viewerC) {
+			byKey[d.Key] = d
+		}
+		if n := f.s.HostReads.Count("ListHostsByIDs"); n != 1 {
+			t.Errorf("batched host reads = %d, want exactly 1 for the whole page", n)
+		}
+		if n := f.s.HostReads.Count("GetHost"); n != 0 {
+			t.Errorf("per-definition host reads = %d, want 0 — that is the N+1 this replaced", n)
+		}
+		// And not by reading the whole table either: a single host-bound
+		// check in a 10 000-host organization must not cost a fleet read.
+		if n := f.s.HostReads.Count("ListAllHosts"); n != 0 {
+			t.Errorf("whole-fleet host reads = %d, want 0", n)
+		}
+		for key, want := range map[string]string{"batch-a": "web-1", "batch-b": "web-1", "batch-c": "db-1"} {
+			if got := byKey[key].HostName; got != want {
+				t.Errorf("%s host_name = %q, want %q", key, got, want)
+			}
+		}
+	})
+
 	// Who may do what: a viewer reads, an operator writes (checks.read /
 	// checks.write, mirroring agents.*), and somebody who is not a member
 	// of the organization at all sees nothing.
@@ -310,6 +368,51 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		}
 		if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil); resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("delete twice = %d, want 404", resp.StatusCode)
+		}
+	})
+
+	// A PUT is a full replace, and a blank key on one used to be a silent
+	// rename: internal/checks defaulted it to the plugin name, so a custom
+	// "disk-data" check came back as "disk". Driven straight at the route,
+	// with no browser involved — the HTML `required` attribute a form can
+	// set is satisfied by a single space, so it was never the guard (task-10
+	// review round 2, finding 1).
+	t.Run("a blank key on an update is refused, not defaulted", func(t *testing.T) {
+		created := f.createCheck(t, f.operatorC, map[string]any{
+			"key": "disk-rename", "plugin": "disk", "interval_seconds": 120,
+			"binding_kind": "host", "host_id": f.web.String(),
+		})
+		t.Cleanup(func() {
+			requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		})
+		for name, body := range map[string]map[string]any{
+			"empty string": {"key": "", "plugin": "disk", "interval_seconds": 120, "binding_kind": "host", "host_id": f.web.String()},
+			"whitespace":   {"key": "  ", "plugin": "disk", "interval_seconds": 120, "binding_kind": "host", "host_id": f.web.String()},
+			"absent":       {"plugin": "disk", "interval_seconds": 120, "binding_kind": "host", "host_id": f.web.String()},
+		} {
+			resp := requestJSON(t, f.operatorC, http.MethodPut, f.checksURL()+"/"+created.ID, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("%s: PUT = %d, want 400 %s", name, resp.StatusCode, mustReadBody(t, resp))
+			}
+		}
+		resp := requestJSON(t, f.viewerC, http.MethodGet, f.checksURL()+"/"+created.ID, nil)
+		var single struct {
+			Check checkDTO `json:"check"`
+		}
+		decodeInto(t, resp, &single)
+		if single.Check.Key != "disk-rename" {
+			t.Fatalf("key = %q, want it untouched at %q", single.Check.Key, "disk-rename")
+		}
+		// A create still defaults an omitted key to the plugin name; only
+		// the rename-by-omission on a replace is refused.
+		def := f.createCheck(t, f.operatorC, map[string]any{
+			"plugin": "memory", "interval_seconds": 120, "binding_kind": "host", "host_id": f.dbHost.String(),
+		})
+		t.Cleanup(func() {
+			requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+def.ID, nil)
+		})
+		if def.Key != "memory" {
+			t.Fatalf("create with no key = %q, want %q", def.Key, "memory")
 		}
 	})
 

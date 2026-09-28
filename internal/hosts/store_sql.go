@@ -215,6 +215,25 @@ func (s *SQLStore) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, e
 	return out, nil
 }
 
+// ListHostsByIDs returns those of ids that name a host of orgID, ordered by
+// name, in one statement (see ListHostsByIDs,
+// internal/db/queries/hosts.sql).
+func (s *SQLStore) ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]Host, error) {
+	rows, err := s.q.ListHostsByIDs(ctx, gen.ListHostsByIDsParams{OrgID: orgID, Ids: ids})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Host, len(rows))
+	for i, r := range rows {
+		h, err := fromHostRow(r)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = h
+	}
+	return out, nil
+}
+
 func fromHostRow(r gen.Host) (Host, error) {
 	var facts map[string]any
 	if len(r.Facts) > 0 {

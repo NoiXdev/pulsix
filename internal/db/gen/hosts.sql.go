@@ -362,6 +362,53 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 	return items, nil
 }
 
+const listHostsByIDs = `-- name: ListHostsByIDs :many
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name
+`
+
+type ListHostsByIDsParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Ids   []uuid.UUID `json:"ids"`
+}
+
+// The named hosts of one organization, ordered by name. For a caller that
+// already knows exactly which ids it needs — the check list's host_name
+// labels — where the work must be proportional to the page, not to the
+// fleet: ListAllHosts above is right for the inventory renderer, which
+// genuinely wants every host, but reading 10 000 rows to label one
+// host-bound check would be worse than the per-id round trips it replaced.
+func (q *Queries) ListHostsByIDs(ctx context.Context, arg ListHostsByIDsParams) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listHostsByIDs, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Host
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Name,
+			&i.Address,
+			&i.Managed,
+			&i.Monitored,
+			&i.Facts,
+			&i.LastSeenAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listZonesForOrg = `-- name: ListZonesForOrg :many
 SELECT id, org_id, slug, name, created_at, bastion_id FROM zones WHERE org_id = $1 ORDER BY slug
 `

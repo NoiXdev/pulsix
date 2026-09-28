@@ -152,6 +152,11 @@ type Store interface {
 	// DeleteHost removes the host identified by (orgID, hostID), scoped to
 	// the organization, and returns ErrNotFound if no such host existed.
 	DeleteHost(ctx context.Context, orgID, hostID uuid.UUID) error
+	// ListHostsByIDs returns those of ids that name a host in orgID,
+	// ordered by name, in ONE statement. Ids naming nothing, or naming a
+	// host of another organization, are simply absent from the result —
+	// the same invisible-rather-than-forbidden contract GetHost gives.
+	ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]Host, error)
 	// OrgsWithoutDefaultZone returns the id of every organization that has
 	// no zone named DefaultZoneSlug — used only by
 	// Service.ReconcileDefaultZones, the startup pass that heals an
@@ -437,6 +442,33 @@ func (s *Service) DeleteHost(ctx context.Context, orgID, id uuid.UUID) error {
 // ListAllHosts returns every host of orgID ordered by name.
 func (s *Service) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
 	return s.store.ListAllHosts(ctx, orgID)
+}
+
+// ListHostsByIDs returns those of ids that name a host in orgID, in one
+// statement — for a caller that already knows which hosts it needs and
+// must not pay for the whole fleet to get them (internal/api's check list
+// labels every host-bound definition with its host's name).
+//
+// Ids are deduplicated first, so a page binding several definitions to the
+// same host asks for it once; an empty or all-duplicate list is answered
+// without touching the store at all. A host that does not exist, or
+// belongs to another organization, is simply missing from the result
+// rather than an error: the caller is labelling rows, not resolving a
+// reference it may rely on.
+func (s *Service) ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]Host, error) {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	unique := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+	return s.store.ListHostsByIDs(ctx, orgID, unique)
 }
 
 // EncodeCursor and DecodeCursor are the one keyset-cursor format both Store

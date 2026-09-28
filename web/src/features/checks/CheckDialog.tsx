@@ -83,15 +83,16 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   function body(): CheckDefinitionInput {
     return {
       plugin,
-      // On a create the key is optional: the server defaults it to the
-      // plugin name, which is the right default for the common
-      // single-check-per-plugin case and not this form's business to
-      // guess at. An edit always names one — the field is required below,
-      // because a blank key on a PUT would default the same way and
-      // silently RENAME an existing definition (disk-data becoming disk),
-      // changing the identifier the override precedence keys on (review
-      // finding 3).
-      ...(editing || key.trim() !== '' ? { key: key.trim() } : {}),
+      // Omitted only on a create, where the server defaults it to the
+      // plugin name — the right default for the common
+      // single-check-per-plugin case and not this form's business to guess
+      // at. On an update the server refuses a blank or absent key outright
+      // (internal/checks UpdateDefinition) rather than defaulting it,
+      // because there the default is a RENAME of an existing definition,
+      // moving the identifier the override precedence keys on. That rule
+      // lives there, not here: `required` below is satisfied by a single
+      // space, so no form attribute could ever be the guard.
+      ...(key.trim() !== '' ? { key: key.trim() } : {}),
       params: params(),
       interval_seconds: Number(interval),
       enabled,
@@ -149,6 +150,12 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               value={key}
               disabled={seeded}
               required={editing}
+              // keyPattern, internal/checks/definitions.go — so the
+              // refusal arrives before the round trip, and so whitespace
+              // (which satisfies `required` on its own) is caught here
+              // too. The server rule is still the guard, not this.
+              pattern="[a-z0-9][a-z0-9-]{0,62}"
+              title="Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen"
               placeholder={plugin}
               maxLength={63}
               onChange={(e) => setKey(e.target.value)}

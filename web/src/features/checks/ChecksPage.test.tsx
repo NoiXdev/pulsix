@@ -257,10 +257,12 @@ describe('ChecksPage', () => {
     await waitFor(() => expect(put).toMatchObject({ binding_kind: 'group', group_id: 'g1' }));
   });
 
-  // Review finding 3: a blank key on a PUT defaults to the plugin name
-  // server-side, so submitting one would rename disk-data to disk — the
-  // identifier the override precedence keys on.
-  it('refuses to save an existing definition whose key was cleared, rather than renaming it', async () => {
+  // Review finding 3: an update with a blank key used to be answered 200
+  // with the definition renamed to its plugin name. The server refuses it
+  // now (internal/checks UpdateDefinition); the field's required+pattern
+  // only saves the round trip — and pattern is what covers whitespace,
+  // which satisfies required on its own.
+  it('refuses to save an existing definition whose key was cleared or blanked, rather than renaming it', async () => {
     const user = userEvent.setup();
     let puts = 0;
     mockApi({
@@ -281,10 +283,50 @@ describe('ChecksPage', () => {
     expect((screen.getByLabelText('Key') as HTMLInputElement).validity.valueMissing).toBe(true);
     expect(puts).toBe(0);
 
+    // `required` is satisfied by a single space, which is why the browser
+    // was never the guard. The field carries keyPattern
+    // (internal/checks/definitions.go) so a real browser refuses it before
+    // the round trip — asserted as an attribute, not as behaviour, because
+    // jsdom does not evaluate `pattern` at all (it reports
+    // patternMismatch false for " " and submits).
+    expect(screen.getByLabelText('Key')).toHaveAttribute('pattern', '[a-z0-9][a-z0-9-]{0,62}');
+
     // Typing a key back makes it savable, and the key goes out with it.
     await user.type(screen.getByLabelText('Key'), 'disk-srv');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(puts).toBe(1));
+  });
+
+  // The rule that actually protects the definition lives on the server, so
+  // what this pins is that its refusal reaches the operator: the dialog
+  // stays open with the server's own message rather than closing on a
+  // rename that did not happen.
+  it("shows the server's refusal of a whitespace key and keeps the dialog open", async () => {
+    const user = userEvent.setup();
+    let sent: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': { checks: [check({ id: 'c7', key: 'disk-data', plugin: 'disk', origin: 'custom' })] },
+      'PUT /api/v1/orgs/acme/checks/c7': (req: MockRequest) => {
+        sent = req.body as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({ detail: "invalid input: an update must name the definition's key; omitting it would rename the check to its plugin name" }),
+          { status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+        );
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await user.clear(screen.getByLabelText('Key'));
+    await user.type(screen.getByLabelText('Key'), '  ');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('an update must name the definition\u2019s key'.replace('\u2019', "'"));
+    // Still open on the row it was editing — nothing was renamed.
+    expect(screen.getByRole('dialog', { name: 'Edit disk-data' })).toBeInTheDocument();
+    expect(sent).toBeDefined();
   });
 
   // Review finding 5: the guard used to replace the whole page, taking

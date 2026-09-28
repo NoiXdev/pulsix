@@ -96,6 +96,15 @@ LIMIT sqlc.arg(row_limit);
 -- 10 000 hosts).
 SELECT * FROM hosts WHERE org_id = $1 ORDER BY name;
 
+-- name: ListHostsByIDs :many
+-- The named hosts of one organization, ordered by name. For a caller that
+-- already knows exactly which ids it needs — the check list's host_name
+-- labels — where the work must be proportional to the page, not to the
+-- fleet: ListAllHosts above is right for the inventory renderer, which
+-- genuinely wants every host, but reading 10 000 rows to label one
+-- host-bound check would be worse than the per-id round trips it replaced.
+SELECT * FROM hosts WHERE org_id = $1 AND id = ANY(sqlc.arg(ids)::uuid[]) ORDER BY name;
+
 -- name: OrgsWithoutDefaultZone :many
 -- Used only by the startup reconciliation pass (internal/app.Build, via
 -- hosts.Service.ReconcileDefaultZones): every organization that has no

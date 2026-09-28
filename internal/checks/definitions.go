@@ -234,6 +234,19 @@ func (s *Service) CreateDefinition(ctx context.Context, orgID uuid.UUID, in Defi
 // Its interval, parameters, enabled flag and binding are all ordinary
 // mutable columns even on a seeded row.
 func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in DefinitionInput) (Definition, error) {
+	// An update must NAME the key. normalizeDefinition defaults a blank one
+	// to the plugin name, which is right for a create — "key defaults to the
+	// plugin name" is the spec's own rule and the only key most definitions
+	// ever need. On a full-replace PUT it means renaming by omission: a
+	// custom "disk-data" check submitted with an empty or absent key comes
+	// back as "disk", quietly moving the identifier the override precedence
+	// keys on (and, where that name is taken at the same scope, tripping
+	// migration 00043's unique index as an opaque conflict instead). Neither
+	// is something a caller asked for, so it is refused here rather than
+	// guessed at (task-10 review round 2, finding 1).
+	if strings.TrimSpace(in.Key) == "" {
+		return Definition{}, fmt.Errorf("%w: an update must name the definition's key; omitting it would rename the check to its plugin name", ErrInvalidInput)
+	}
 	d, err := normalizeDefinition(in)
 	if err != nil {
 		return Definition{}, err

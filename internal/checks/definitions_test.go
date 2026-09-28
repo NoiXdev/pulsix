@@ -335,10 +335,55 @@ func TestUpdateDefinitionUnknownID(t *testing.T) {
 	svc := checks.NewService(newFakeStore())
 	org := uuid.Must(uuid.NewV7())
 	_, err := svc.UpdateDefinition(ctx, org, uuid.Must(uuid.NewV7()), checks.DefinitionInput{
-		Plugin: checks.PluginCPU, Interval: time.Minute, BindingKind: checks.BindingOrg,
+		Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute, BindingKind: checks.BindingOrg,
 	})
 	if !errors.Is(err, checks.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestUpdateDefinitionRefusesABlankKey pins the difference between a create
+// and a full-replace update: a create may omit the key and take the plugin
+// name, an update may not, because there the default is a RENAME of an
+// existing definition — and the key is the identifier the resolver's
+// override precedence keys on (task-10 review round 2, finding 1).
+//
+// Whitespace counts as blank: an HTML `required` attribute is satisfied by a
+// single space, so the browser is no guard at all and this is the only place
+// the rule can actually live.
+func TestUpdateDefinitionRefusesABlankKey(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	org := uuid.Must(uuid.NewV7())
+	d, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Key: "disk-data", Plugin: checks.PluginDisk, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]string{"omitted": "", "whitespace": "   ", "tab": "\t"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.UpdateDefinition(ctx, org, d.ID, checks.DefinitionInput{
+				Key: key, Plugin: checks.PluginDisk, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+			})
+			if !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			got, err := svc.GetDefinition(ctx, org, d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Key != "disk-data" {
+				t.Fatalf("key = %q, want it untouched at %q", got.Key, "disk-data")
+			}
+		})
+	}
+	// A create in the same organization still defaults to the plugin name.
+	created, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Plugin: checks.PluginMemory, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	})
+	if err != nil || created.Key != checks.PluginMemory {
+		t.Fatalf("create with no key = %+v, %v; want key %q", created, err, checks.PluginMemory)
 	}
 }
 
