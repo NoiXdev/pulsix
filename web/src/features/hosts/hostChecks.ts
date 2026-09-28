@@ -26,14 +26,37 @@ export function formatNumber(value: number): string {
   return String(Math.round(value * 100) / 100);
 }
 
-/** isNumeric reports whether a value has a series behind it. A discrete
- * metric carries `label` instead of `value`, and GET /hosts/{id}/metrics
- * refuses it with a 400 — so this is also the test for whether a graph may
- * be offered at all. A numeric value whose latest collection failed still
- * qualifies: the history it would graph is real, only the newest reading
- * is missing. */
-export function isNumeric(v: HostCheckValue): boolean {
-  return v.label === undefined && typeof v.value === 'number';
+/**
+ * NUMERIC_PLUGIN says which plugins measure numbers. Only the service
+ * plugin reports a label (the unit's state) — cpu, memory and disk report
+ * numbers, and every one of them reports an error the same way
+ * (internal/agent/checks: labelObservation is called from service.go
+ * alone). It is a total map over the generated plugin union rather than a
+ * list of exceptions, so a fifth plugin fails to compile here until
+ * somebody decides which side of the line it is on.
+ */
+const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = { cpu: true, memory: true, disk: true, service: false };
+
+/**
+ * isGraphable reports whether a graph may be offered for one of a check's
+ * values, and it asks the CHECK, not the reading.
+ *
+ * A reading cannot answer it. When collection fails, check_current stores
+ * an error row with neither value nor label (migration 00044's CHECK, and
+ * internal/checks.Observation's own shape rule), so a rule of the form
+ * "has a number" loses the graph button at exactly the moment an operator
+ * wants it — the history GET /hosts/{id}/metrics would draw is still
+ * there, and that route answers it during the incident too.
+ *
+ * So: a value that carries a `label` is discrete and has no series (the
+ * metrics route refuses it with a 400, naming the label), and a check
+ * whose plugin only ever produces labels has none either, however its
+ * latest reading happens to have failed. Everything else is a number over
+ * time.
+ */
+export function isGraphable(check: HostCheck, v: HostCheckValue): boolean {
+  if (v.label !== undefined) return false;
+  return NUMERIC_PLUGIN[check.plugin];
 }
 
 /** sourceLabel renders the scope a check was inherited from as the thing

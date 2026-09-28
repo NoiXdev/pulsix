@@ -8,7 +8,7 @@ import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
-import { formatNumber, isNumeric, metricLabel, sourceLabel } from './hostChecks.ts';
+import { formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts';
 
 /**
@@ -58,10 +58,12 @@ export interface HostChecksCardProps {
  *    card says the host is not being watched. A list of checks with values
  *    beside them would read as live monitoring of a host nobody is
  *    watching.
- *  - A collection error is not a stale number. The value DTO still carries
- *    the last known reading beside `error`; rendering that number is
- *    exactly the lie the spec rules out, so the failure is rendered
- *    instead.
+ *  - A collection error is not a stale number. An error row carries no
+ *    reading at all — check_current's own CHECK stores the error with
+ *    neither value nor label — so the failure is what there is to render.
+ *    What the error must not cost is the graph: the samples behind a
+ *    numeric check are still there, and an incident is when they are
+ *    worth looking at (see isGraphable).
  *  - `stale` is the server's answer (three of the check's own intervals
  *    without a reading, `internal/api`'s `staleIntervals`). The card
  *    renders the flag and never recomputes the rule: a second
@@ -157,7 +159,7 @@ function ValueRow({
   onOpen: (selection: MetricSelection | null) => void;
 }) {
   const name = metricLabel(value);
-  const graphable = isNumeric(value);
+  const graphable = isGraphable(check, value);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
 
   return (
@@ -166,8 +168,9 @@ function ValueRow({
         <span className="min-w-40 text-muted-foreground">{name}</span>
         {value.error !== undefined ? (
           <>
-            {/* Ruling: the failure, not the last reading dressed up as
-                current. `value`/`label` are deliberately not rendered here. */}
+            {/* Ruling: the failure, not a number dressed up as current.
+                An error row has no number to render in the first place —
+                the graph button beside it is how the history is reached. */}
             <Pill tone="crit">collection failed</Pill>
             <span className="truncate text-destructive">{value.error}</span>
           </>

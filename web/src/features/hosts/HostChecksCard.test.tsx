@@ -126,7 +126,7 @@ describe('HostChecksCard', () => {
     expect(screen.queryByRole('button', { name: /Graph nginx/ })).not.toBeInTheDocument();
   });
 
-  it('renders a collection error as a failure, not as a stale-looking number', async () => {
+  it('renders a collection error as the failure, and keeps the graph to the history behind it', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
@@ -134,17 +134,14 @@ describe('HostChecksCard', () => {
         checks: [
           check({
             values: [
-              {
-                item: '',
-                metric: 'usage_percent',
-                // The envelope still carries the last known reading beside
-                // the error. Showing 91.2 here would read as a current
-                // measurement of a host nobody is successfully measuring.
-                value: 91.2,
-                error: 'read /proc/stat: permission denied',
-                at: NOW,
-                stale: true,
-              },
+              // The shape the server can actually produce: an error row
+              // carries neither value nor label (migration 00044's CHECK
+              // on check_current, and UpsertCheckCurrent writing
+              // EXCLUDED.value wholesale). The previous fixture put 91.2
+              // beside the error and asserted it was not rendered — an
+              // assertion that could never fail, about a row the database
+              // forbids.
+              { item: '', metric: 'usage_percent', error: 'read /proc/stat: permission denied', at: NOW, stale: true },
             ],
           }),
         ],
@@ -154,7 +151,36 @@ describe('HostChecksCard', () => {
 
     expect(await screen.findByText('collection failed')).toBeInTheDocument();
     expect(row('cpu', 'usage_percent').getByText('read /proc/stat: permission denied')).toBeInTheDocument();
-    expect(screen.queryByText('91.2')).not.toBeInTheDocument();
+    // Nothing numeric is invented in place of the missing reading.
+    expect(row('cpu', 'usage_percent').queryByText('—')).not.toBeInTheDocument();
+    // And the button that reaches the samples survives the incident: GET
+    // /hosts/{id}/metrics answers this tuple with its points while the
+    // latest collection is failing, which is precisely when an operator
+    // wants to see the line into the failure.
+    expect(screen.getByRole('button', { name: 'Graph cpu usage_percent' })).toBeInTheDocument();
+  });
+
+  it('offers no graph for a discrete check whose collection is failing either', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({
+            key: 'nginx',
+            plugin: 'service',
+            values: [{ item: 'nginx.service', metric: 'state', error: 'dbus: connection refused', at: NOW, stale: true }],
+          }),
+        ],
+      },
+    });
+    renderCard();
+
+    // An error row looks the same whatever produced it, so the plugin is
+    // what decides: a service check has labels behind it, never a series,
+    // and a graph opened on one has nothing to draw.
+    expect(await screen.findByText('collection failed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Graph/ })).not.toBeInTheDocument();
   });
 
   it('marks exactly what the server calls stale, never what the timestamps suggest', async () => {

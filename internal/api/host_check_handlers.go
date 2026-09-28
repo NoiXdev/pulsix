@@ -49,15 +49,23 @@ type hostCheckValueDTO struct {
 	Metric string    `json:"metric"`
 	Value  *float64  `json:"value,omitempty" doc:"Set for a numeric metric"`
 	Label  string    `json:"label,omitempty" doc:"Set for a discrete metric, e.g. a service state"`
-	Error  string    `json:"error,omitempty" doc:"Set when collection failed; value and label are then the last known reading's, if any"`
+	Error  string    `json:"error,omitempty" doc:"Set when collection failed; value and label are then both absent — check_current stores an error row with neither"`
 	At     time.Time `json:"at" doc:"The agent's own timestamp for this reading"`
 	Stale  bool      `json:"stale" doc:"No reading for more than three of the check's intervals"`
 }
 
 type hostCheckDTO struct {
-	DefinitionID    string              `json:"definition_id"`
-	Key             string              `json:"key"`
-	Plugin          string              `json:"plugin"`
+	DefinitionID string `json:"definition_id"`
+	Key          string `json:"key"`
+	// Plugin is a closed set here, unlike checkDefinitionBody's own
+	// write-side field (which internal/checks validates and answers for,
+	// so huma must not answer first with different wording). On this read
+	// path nothing is validated and the enum is what the GUI needs: it
+	// decides from the plugin whether a metric of this check has a series
+	// behind it at all, which the latest value cannot answer while
+	// collection is failing — an error row carries neither value nor
+	// label (migration 00044's CHECK).
+	Plugin          string              `json:"plugin" enum:"cpu,memory,disk,service"`
 	Params          map[string]any      `json:"params"`
 	IntervalSeconds int                 `json:"interval_seconds"`
 	Enabled         bool                `json:"enabled" doc:"false means the winning scope turned this check off; it is listed so the GUI can show where"`

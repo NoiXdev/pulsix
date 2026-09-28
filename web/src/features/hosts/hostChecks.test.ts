@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatNumber, isNumeric, metricLabel, sourceLabel } from './hostChecks.ts';
+import { formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue } from '../../api/types.ts';
 
 const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
@@ -53,15 +53,30 @@ describe('formatNumber', () => {
   });
 });
 
-describe('isNumeric', () => {
+describe('isGraphable', () => {
+  // The shapes below are the ones check_current's own CHECK allows
+  // (migration 00044): an error row carries NEITHER value nor label, so
+  // "a number beside an error" is not a state to assert about. That is
+  // exactly why the decision cannot be read off the latest value alone —
+  // a failing numeric check must keep the graph its history supports.
   it.each([
-    ['a numeric reading has a series', value({ value: 12.5 }), true],
-    ['a discrete reading does not — the metrics route 400s on it', value({ label: 'active' }), false],
-    ['a discrete reading is discrete even with a number beside it', value({ label: 'active', value: 1 }), false],
-    ['a numeric reading whose collection failed still has history', value({ value: 91.2, error: 'boom' }), true],
-    ['no reading at all is not graphable', value({}), false],
-  ])('%s', (_name, v, expected) => {
-    expect(isNumeric(v)).toBe(expected);
+    ['a numeric reading has a series', check(), value({ value: 12.5 }), true],
+    ['a discrete reading does not — the metrics route 400s on it', check(), value({ label: 'active' }), false],
+    ['a discrete reading is discrete even with a number beside it', check(), value({ label: 'active', value: 1 }), false],
+    [
+      'a numeric check keeps its graph while collection is failing — the series is exactly what the incident is about',
+      check({ plugin: 'disk' }),
+      value({ item: '/var', metric: 'used_percent', error: 'stat /var: permission denied' }),
+      true,
+    ],
+    [
+      'a discrete check offers none while it is failing either: nothing behind it is a number',
+      check({ plugin: 'service' }),
+      value({ item: 'nginx.service', metric: 'state', error: 'dbus: connection refused' }),
+      false,
+    ],
+  ])('%s', (_name, c, v, expected) => {
+    expect(isGraphable(c, v)).toBe(expected);
   });
 });
 

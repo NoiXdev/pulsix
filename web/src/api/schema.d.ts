@@ -2764,7 +2764,8 @@ export interface components {
             params: {
                 [key: string]: unknown;
             };
-            plugin: string;
+            /** @enum {string} */
+            plugin: "cpu" | "memory" | "disk" | "service";
             /**
              * @description The scope the winning definition is bound at
              * @enum {string}
@@ -2781,7 +2782,7 @@ export interface components {
              * @description The agent's own timestamp for this reading
              */
             at: string;
-            /** @description Set when collection failed; value and label are then the last known reading's, if any */
+            /** @description Set when collection failed; value and label are then both absent — check_current stores an error row with neither */
             error?: string;
             /** @description The mount or unit this value is for; empty for a whole-host metric */
             item: string;
