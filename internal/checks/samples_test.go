@@ -2,6 +2,10 @@ package checks_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,10 +35,21 @@ func fixedClock(t time.Time) checks.Option {
 // groups_test.go, definitions_test.go and resolver_test.go — keeps
 // satisfying checks.Store; no test exercises them.
 func (f *fakeStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error) {
+	f.mu.Lock()
+	f.recordCalls++
+	f.mu.Unlock()
 	if f.err != nil {
 		return 0, 0, f.err
 	}
 	return len(obs), 0, nil
+}
+
+// reachedStore reports how many batches actually got past the service's
+// own validation.
+func (f *fakeStore) reachedStore() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.recordCalls
 }
 
 func (f *fakeStore) CurrentForHost(_ context.Context, _, _ uuid.UUID) ([]checks.Current, error) {
@@ -560,5 +575,222 @@ func TestCheckCurrentConstraintRejectsErrorAlongsideLabel(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("check_current must refuse a row with both error and label set")
+	}
+}
+
+// obsAt builds one well-shaped numeric Observation for the contract-bound
+// tests below: only the field under test ever varies.
+func obsAt(host uuid.UUID, now time.Time, key, item, metric string) checks.Observation {
+	return checks.Observation{HostID: host, CheckKey: key, Item: item, Metric: metric, At: now, Value: f64(1)}
+}
+
+// TestRecordObservationsBatchSizeBoundary: the count bound is a REFUSAL of
+// the whole batch (ErrInvalidInput, the shape agents.RecordFacts already
+// uses for its own contract's bounds), never a silent truncation, and the
+// store is not reached at all — a batch over the bound must not cost a
+// pool connection or a transaction, which is the entire point of bounding
+// it. Exactly at the bound is accepted: an off-by-one here would refuse a
+// legitimate host.
+func TestRecordObservationsBatchSizeBoundary(t *testing.T) {
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	build := func(n int) []checks.Observation {
+		obs := make([]checks.Observation, n)
+		for i := range obs {
+			obs[i] = obsAt(host, now, "cpu", "", "cpu.used_pct")
+		}
+		return obs
+	}
+
+	t.Run("at the bound", func(t *testing.T) {
+		store := newFakeStore()
+		svc := checks.NewService(store, fixedClock(now))
+		accepted, rejected, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), build(checks.MaxObservationsPerBatch))
+		if err != nil {
+			t.Fatalf("exactly %d observations must be accepted: %v", checks.MaxObservationsPerBatch, err)
+		}
+		if accepted != checks.MaxObservationsPerBatch || rejected != 0 {
+			t.Fatalf("accepted=%d rejected=%d, want %d, 0", accepted, rejected, checks.MaxObservationsPerBatch)
+		}
+		if store.reachedStore() != 1 {
+			t.Fatalf("store calls = %d, want 1", store.reachedStore())
+		}
+	})
+
+	t.Run("one over the bound", func(t *testing.T) {
+		store := newFakeStore()
+		svc := checks.NewService(store, fixedClock(now))
+		accepted, rejected, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), build(checks.MaxObservationsPerBatch+1))
+		if !errors.Is(err, checks.ErrInvalidInput) {
+			t.Fatalf("err = %v, want ErrInvalidInput", err)
+		}
+		if accepted != 0 || rejected != 0 {
+			t.Fatalf("accepted=%d rejected=%d, want 0, 0 for a refused batch", accepted, rejected)
+		}
+		if store.reachedStore() != 0 {
+			t.Fatalf("store calls = %d, want 0: a refused batch must never reach the store", store.reachedStore())
+		}
+	})
+}
+
+// TestRecordObservationsFieldLengthBoundaries: check_key, item and metric
+// each carry their own byte bound, each refusing the whole batch with
+// ErrInvalidInput one byte over and accepting it exactly at the bound.
+// Every case puts the oversized observation SECOND, so a fix that only
+// looked at obs[0] would not pass.
+func TestRecordObservationsFieldLengthBoundaries(t *testing.T) {
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	cases := []struct {
+		name  string
+		limit int
+		build func(s string) checks.Observation
+	}{
+		{"check_key", checks.MaxCheckKeyLen, func(s string) checks.Observation { return obsAt(host, now, s, "", "m") }},
+		{"item", checks.MaxItemLen, func(s string) checks.Observation { return obsAt(host, now, "cpu", s, "m") }},
+		{"metric", checks.MaxMetricLen, func(s string) checks.Observation { return obsAt(host, now, "cpu", "", s) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := checks.NewService(store, fixedClock(now))
+			org := uuid.Must(uuid.NewV7())
+
+			atLimit := []checks.Observation{obsAt(host, now, "cpu", "", "m"), tc.build(strings.Repeat("x", tc.limit))}
+			if _, _, err := svc.RecordObservations(context.Background(), org, atLimit); err != nil {
+				t.Fatalf("%s at exactly %d bytes must be accepted: %v", tc.name, tc.limit, err)
+			}
+			if store.reachedStore() != 1 {
+				t.Fatalf("store calls = %d, want 1", store.reachedStore())
+			}
+
+			over := []checks.Observation{obsAt(host, now, "cpu", "", "m"), tc.build(strings.Repeat("x", tc.limit+1))}
+			_, _, err := svc.RecordObservations(context.Background(), org, over)
+			if !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("%s at %d bytes: err = %v, want ErrInvalidInput", tc.name, tc.limit+1, err)
+			}
+			if store.reachedStore() != 1 {
+				t.Fatalf("store calls = %d, want no further call after the refusal", store.reachedStore())
+			}
+		})
+	}
+}
+
+// TestRecordObservationsRejectsEmptyKeyOrMetric: an observation with no
+// check_key or no metric names nothing an operator could ever read back,
+// and would still occupy a permanent check_current row — refused for the
+// same reason agents.RecordFacts refuses an empty fact key. An empty item
+// stays legal: that is what a whole-host metric reports.
+func TestRecordObservationsRejectsEmptyKeyOrMetric(t *testing.T) {
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	cases := map[string]checks.Observation{
+		"empty check_key": obsAt(host, now, "", "", "cpu.used_pct"),
+		"empty metric":    obsAt(host, now, "cpu", "", ""),
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := checks.NewService(store, fixedClock(now))
+			_, _, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()),
+				[]checks.Observation{obsAt(host, now, "cpu", "", "m"), bad})
+			if !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			if store.reachedStore() != 0 {
+				t.Fatalf("store calls = %d, want 0", store.reachedStore())
+			}
+		})
+	}
+
+	t.Run("empty item accepted", func(t *testing.T) {
+		store := newFakeStore()
+		svc := checks.NewService(store, fixedClock(now))
+		if _, _, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()),
+			[]checks.Observation{obsAt(host, now, "cpu", "", "cpu.used_pct")}); err != nil {
+			t.Fatalf("a whole-host metric (empty item) must stay legal: %v", err)
+		}
+	})
+}
+
+// TestRecordObservationsAtMaxFieldLengthsFitsTheLookupIndex is the reason
+// the length bounds exist in the numbers they do: check_samples_lookup_idx
+// is a btree over (org_id, host_id, check_key, item, metric, at), and a
+// btree index row may not exceed 8191 bytes. A batch at EVERY bound at
+// once — the largest row the contract can now produce — must still insert
+// against the real database, or the bounds would merely have moved the
+// "index row requires N bytes" failure rather than removed it.
+func TestRecordObservationsAtMaxFieldLengthsFitsTheLookupIndex(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-maxlen")
+	host := seedHost(t, d, org, "maxlen-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	key := incompressible(t, checks.MaxCheckKeyLen)
+	item := incompressible(t, checks.MaxItemLen)
+	metric := incompressible(t, checks.MaxMetricLen)
+	accepted, rejected, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: key, Item: item, Metric: metric, At: now, Value: f64(1)},
+	})
+	if err != nil {
+		t.Fatalf("a row at every length bound must fit the lookup index: %v", err)
+	}
+	if accepted != 1 || rejected != 0 {
+		t.Fatalf("accepted=%d rejected=%d, want 1, 0", accepted, rejected)
+	}
+
+	current, err := svc.CurrentForHost(scoped, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 1 || current[0].CheckKey != key || current[0].Item != item || current[0].Metric != metric {
+		t.Fatalf("current = %+v, want the maximal-length tuple stored verbatim", current)
+	}
+}
+
+// incompressible returns n bytes of random base64 — deliberately NOT a
+// repeated character. PostgreSQL compresses a btree index entry's varlena
+// values, so strings.Repeat("x", n) fits an index row at sizes real data
+// never would: probed against the container, 3×3000 repeated bytes insert
+// happily while 3×3000 random ones fail with "index row requires 9064
+// bytes, maximum size is 8191". A length bound is only honestly tested
+// against data that cannot compress away.
+func incompressible(t *testing.T, n int) string {
+	t.Helper()
+	raw := make([]byte, n)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)[:n]
+}
+
+// TestLookupIndexRejectsWhatTheContractBoundsForbid is the other half of
+// TestRecordObservationsAtMaxFieldLengthsFitsTheLookupIndex: it goes
+// straight to the store, bypassing the service's bounds, and shows that
+// the strings they forbid really are the ones check_samples_lookup_idx
+// cannot hold. Without the bounds this is what the ingest path did with
+// an agent-chosen key — a store error, not a counted rejection, so the
+// whole batch rolled back and the stream died with Internal. If
+// PostgreSQL ever raised its 8191-byte index-row limit this test would
+// start failing, which is the right moment to revisit the numbers rather
+// than to discover them by accident.
+func TestLookupIndexRejectsWhatTheContractBoundsForbid(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-index-limit")
+	host := seedHost(t, d, org, "index-limit-host")
+	store := checks.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	big := incompressible(t, 3000)
+	_, _, err := store.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: big, Item: big, Metric: big, At: time.Now(), Value: f64(1)},
+	})
+	if err == nil {
+		t.Fatal("a 3x3000-byte key/item/metric must not fit the lookup index; the contract bounds exist to keep it off this path")
+	}
+	if !strings.Contains(err.Error(), "index row requires") {
+		t.Fatalf("err = %v, want the btree index-row size failure", err)
 	}
 }

@@ -97,6 +97,90 @@ func plausible(at, now time.Time) bool {
 	return !at.After(now.Add(maxFuture)) && !at.Before(now.Add(-maxPast))
 }
 
+// The check-results contract's bounds — the ingest path's mirror of the
+// facts contract's own MaxFactsKeys/MaxFactsValueLen
+// (internal/agents/facts.go), and enforced the same way: a batch over any
+// of them is REFUSED with ErrInvalidInput, never clipped and never
+// partially stored. The distinction from the plausibility window and the
+// shape check (which COUNT a bad observation and keep the rest of the
+// batch) is deliberate and is about who is at fault. A skewed clock or a
+// host deleted mid-flight is something a correct agent can produce; a
+// check_key longer than any key the manager will ever push, or fifty
+// thousand observations in one message, is not — every field here
+// originates either in the manager's own CheckConfig (check_key) or in a
+// compile-time constant in the agent's plugins (metric), so a violation
+// means the agent is broken or lying, and lying input gets a refusal.
+//
+// The numbers, and where each comes from:
+//
+//   - MaxCheckKeyLen: a check_key is the key the manager itself pushed in
+//     CheckConfig, and normalizeDefinition's keyPattern caps that at 63
+//     bytes. 64 is that bound with a byte of slack.
+//
+//   - MaxItemLen: an item is a disk mount point or a systemd unit name.
+//     Unit names are capped at 256 bytes by systemd and a path component
+//     at 255 by the kernel; 512 covers the deep bind-mount paths a
+//     container host really does carry, and is the same figure
+//     MaxFactsValueLen already uses for the same kind of "verbatim, but
+//     bounded" string.
+//
+//   - MaxMetricLen: metric names are literals in the agent's plugins —
+//     the longest today is "disk.inodes_used_pct" at 20 bytes. 64 leaves
+//     room for whatever a later plugin names its metrics.
+//
+// Together those three cap one row's contribution to
+// check_samples_lookup_idx — a btree over (org_id, host_id, check_key,
+// item, metric, at) whose index rows may not exceed 8191 bytes — at
+// 16+16+64+512+64+8 = 680 bytes plus per-row overhead, an order of
+// magnitude clear of the limit. Before these bounds existed a single
+// ~2.7 KB key/item/metric produced "index row requires 12448 bytes,
+// maximum size is 8191" from inside RecordObservations' transaction,
+// which is a store error, not a count: the whole batch rolled back and
+// the stream died with Internal.
+//
+//   - MaxObservationsPerBatch: the cost side. RecordObservations issues
+//     two statements per observation, serially, inside one transaction on
+//     one pool connection; 10 000 observations measured 11.98 s of that,
+//     which is a denial of service against every other tenant sharing the
+//     pool. The bound has to clear the largest batch a legitimate host can
+//     produce, and one message carries exactly one Collect's output
+//     ("Sample delivery": one message per batch): the seed set's cpu (4
+//     observations), memory (2) and service (one per unit) are small, and
+//     only disk fans out — three metrics per mount, so 1000 still covers a
+//     host with 333 filesystems. The 15-minute replay ring cannot exceed
+//     it either: the agent chunks both replayed and live results at
+//     maxResultsPerMessage (200, internal/agent/session.go), five times
+//     under this bound, so a well-behaved agent never approaches it no
+//     matter how long it was disconnected.
+const (
+	MaxObservationsPerBatch = 1000
+	MaxCheckKeyLen          = 64
+	MaxItemLen              = 512
+	MaxMetricLen            = 64
+)
+
+// withinContract reports whether o's identifying strings are inside the
+// check-results contract's bounds. An empty item is legal — that is what
+// a whole-host metric reports — but an empty check_key or metric names
+// nothing that could ever be read back while still occupying a permanent
+// check_current row, so both are refused, exactly as RecordFacts refuses
+// an empty fact key.
+func withinContract(o Observation) error {
+	switch {
+	case o.CheckKey == "":
+		return fmt.Errorf("%w: empty check_key", ErrInvalidInput)
+	case o.Metric == "":
+		return fmt.Errorf("%w: empty metric for check_key %q", ErrInvalidInput, o.CheckKey)
+	case len(o.CheckKey) > MaxCheckKeyLen:
+		return fmt.Errorf("%w: check_key exceeds %d bytes", ErrInvalidInput, MaxCheckKeyLen)
+	case len(o.Item) > MaxItemLen:
+		return fmt.Errorf("%w: item for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxItemLen)
+	case len(o.Metric) > MaxMetricLen:
+		return fmt.Errorf("%w: metric for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxMetricLen)
+	}
+	return nil
+}
+
 // wellShaped reports whether o carries exactly one of the shapes
 // RecordObservations ever stores: a collection error with no value or
 // label, or a value/label sample with no error and exactly one of the
@@ -119,9 +203,26 @@ func wellShaped(o Observation) bool {
 // never lose every other Observation in the same batch. accepted +
 // rejected == len(obs) always; err is non-nil only for a genuine store
 // failure (the batch's fate is then unknown, not "all rejected").
+//
+// The contract's own bounds are the one exception to "counted, never an
+// error", and they are checked BEFORE the store is reached at all — see
+// MaxObservationsPerBatch's comment for why a violation of them is the
+// agent's fault rather than the world's, and why a batch over them must
+// not be allowed to cost a transaction on a shared pool connection in the
+// first place. ErrInvalidInput from here is what agentapi maps to
+// InvalidArgument.
 func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error) {
 	if len(obs) == 0 {
 		return 0, 0, nil
+	}
+	if len(obs) > MaxObservationsPerBatch {
+		return 0, 0, fmt.Errorf("%w: at most %d observations per batch, got %d",
+			ErrInvalidInput, MaxObservationsPerBatch, len(obs))
+	}
+	for _, o := range obs {
+		if err := withinContract(o); err != nil {
+			return 0, 0, err
+		}
 	}
 	now := s.now()
 	valid := make([]Observation, 0, len(obs))

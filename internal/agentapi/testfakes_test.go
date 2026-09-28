@@ -662,6 +662,16 @@ func newHarnessWithChecks(t *testing.T) *harness {
 // literal nil) behaving as "no checks port" rather than panicking the
 // first time something calls a method on it.
 func newHarnessOpts(t *testing.T, withFacts bool, checksPort *fakeChecks) *harness {
+	return newHarnessPort(t, withFacts, checksPort, nil)
+}
+
+// newHarnessPort is newHarnessOpts with one more knob: a ChecksPort that
+// is NOT the in-memory fake. The contract-bound tests wire the REAL
+// checks.Service there, because what they have to prove is that the
+// domain service's own bounds are what the wire answers InvalidArgument
+// for — a fake port returning a canned error would prove only the
+// mapping, which is a different (and already pinned) claim.
+func newHarnessPort(t *testing.T, withFacts bool, checksPort *fakeChecks, realPort ChecksPort) *harness {
 	t.Helper()
 	h := &harness{
 		t:     t,
@@ -693,6 +703,9 @@ func newHarnessOpts(t *testing.T, withFacts bool, checksPort *fakeChecks) *harne
 	if checksPort != nil {
 		h.checks = checksPort
 		deps.Checks = checksPort
+	}
+	if realPort != nil {
+		deps.Checks = realPort
 	}
 	h.svc, err = New(deps)
 	if err != nil {

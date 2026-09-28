@@ -23,12 +23,21 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
-// maxResultsPerMessage caps how many buffered results one CheckResults
-// message replays at once when a reconnect drains the disconnect buffer
-// (internal/agent/checks.Buffer) — a defensive chunking bound, not a
-// correctness requirement (gRPC's default message size has ample room
-// for a 15-minute backlog either way), reusing the design's own "Sample
-// delivery" count threshold rather than inventing a different number.
+// maxResultsPerMessage caps how many results one CheckResults message
+// carries — both a reconnect's replay of the disconnect buffer
+// (internal/agent/checks.Buffer) and a single Collect's live output.
+// The number is the design's own "Sample delivery" count threshold
+// rather than a new one.
+//
+// It is a correctness bound on both paths, not merely a tidiness one.
+// The manager refuses a CheckResults message over
+// internal/checks.MaxObservationsPerBatch (1000) with InvalidArgument,
+// and that refusal ends the RPC — so an unsplit batch from a host the
+// disk plugin fans out far enough on (three metrics per mount) would be
+// refused, the stream would drop, the agent would reconnect and send the
+// identical batch, for ever. 200 sits five times under that bound, which
+// is the headroom that makes the manager's limit unreachable for any
+// agent that behaves.
 const maxResultsPerMessage = 200
 
 // streamSender serializes every outbound message on one AgentStream.
@@ -59,6 +68,26 @@ func (s *streamSender) sendResults(results []checks.Result) error {
 	return s.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_CheckResults{
 		CheckResults: &agentpb.CheckResults{Results: toCheckResultProtos(results)},
 	}})
+}
+
+// sendResultsChunked sends results as one or more CheckResults messages
+// of at most maxResultsPerMessage each, and reports how many results
+// actually went out: all of them on success, everything before the
+// failing chunk otherwise. Both senders — the reconnect replay and the
+// live scheduler sink — go through it, so neither can produce a message
+// the manager's ingest contract would refuse.
+func (s *streamSender) sendResultsChunked(results []checks.Result) (sent int, err error) {
+	for sent < len(results) {
+		n := len(results) - sent
+		if n > maxResultsPerMessage {
+			n = maxResultsPerMessage
+		}
+		if err := s.sendResults(results[sent : sent+n]); err != nil {
+			return sent, err
+		}
+		sent += n
+	}
+	return sent, nil
 }
 
 func toCheckResultProtos(results []checks.Result) []*agentpb.CheckResult {
@@ -251,18 +280,11 @@ func (l *Loop) activateSender(sender *streamSender) error {
 	l.routeMu.Lock()
 	defer l.routeMu.Unlock()
 	pending := l.buffer.Drain()
-	for len(pending) > 0 {
-		n := len(pending)
-		if n > maxResultsPerMessage {
-			n = maxResultsPerMessage
-		}
-		if err := sender.sendResults(pending[:n]); err != nil {
-			// Nothing in pending was confirmed delivered: put it all
-			// back so the next reconnect attempt replays it again.
-			l.buffer.Add(pending)
-			return fmt.Errorf("replay buffered check results: %w", err)
-		}
-		pending = pending[n:]
+	if sent, err := sender.sendResultsChunked(pending); err != nil {
+		// Only what did NOT go out goes back: the chunks already
+		// delivered must not be replayed again on the next reconnect.
+		l.buffer.Add(pending[sent:])
+		return fmt.Errorf("replay buffered check results: %w", err)
 	}
 	l.sender = sender
 	return nil
@@ -293,12 +315,15 @@ func (l *Loop) handleResults(results []checks.Result) {
 	sender := l.sender
 	l.routeMu.Unlock()
 	if sender != nil {
-		if err := sender.sendResults(results); err == nil {
+		sent, err := sender.sendResultsChunked(results)
+		if err == nil {
 			return
 		}
-		// The send failed — the session's own recv/send paths will
-		// notice the dead stream independently and reconnect; this
-		// batch falls back to the buffer rather than being lost.
+		// The send failed partway — the session's own recv/send paths
+		// will notice the dead stream independently and reconnect. Only
+		// the results that did NOT go out fall back to the buffer:
+		// re-buffering a delivered chunk would write those samples twice.
+		results = results[sent:]
 	}
 	if dropped := l.buffer.Add(results); dropped > 0 {
 		l.log.Warn("check result buffer overflowed while disconnected; oldest samples dropped",

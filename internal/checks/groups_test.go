@@ -28,6 +28,10 @@ type fakeStore struct {
 	defsByID map[uuid.UUID]checks.Definition
 	err      error
 	now      func() time.Time
+	// recordCalls counts RecordObservations calls that actually reached
+	// the store — what samples_test.go's contract-bound tests assert did
+	// NOT happen for a batch the service refused up front.
+	recordCalls int
 }
 
 func newFakeStore() *fakeStore {

@@ -8,7 +8,11 @@
 package agent
 
 import (
+	"context"
+	"errors"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -324,5 +328,142 @@ func TestStreamSenderEncodesErrorResultsOnTheWireErrorArm(t *testing.T) {
 	}
 	if bad.GetError() != "permission denied" || bad.GetValue() != 0 {
 		t.Errorf("broken result = value %v error %q, want no value and the error text", bad.GetValue(), bad.GetError())
+	}
+}
+
+// chunkingStream is a Stream that records what it was sent and starts
+// refusing after failAfter successful sends — enough to drive
+// handleResults' chunking without a whole session around it.
+type chunkingStream struct {
+	mu        sync.Mutex
+	sent      []*agentpb.AgentMessage
+	failAfter int // 0 means never fail
+}
+
+func (s *chunkingStream) Send(m *agentpb.AgentMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failAfter > 0 && len(s.sent) >= s.failAfter {
+		return errors.New("stream is dead")
+	}
+	s.sent = append(s.sent, m)
+	return nil
+}
+
+func (s *chunkingStream) Recv() (*agentpb.ManagerMessage, error) { select {} }
+func (s *chunkingStream) CloseSend() error                       { return nil }
+func (s *chunkingStream) Context() context.Context               { return context.Background() }
+
+func (s *chunkingStream) batches() [][]*agentpb.CheckResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out [][]*agentpb.CheckResult
+	for _, m := range s.sent {
+		if cr := m.GetCheckResults(); cr != nil {
+			out = append(out, cr.GetResults())
+		}
+	}
+	return out
+}
+
+// manyResults builds n distinct results, numbered through Value so a test
+// can tell exactly which ones were delivered and which were buffered.
+func manyResults(n int, at time.Time) []checks.Result {
+	out := make([]checks.Result, n)
+	for i := range out {
+		out[i] = checks.Result{CheckKey: "disk", Item: "/m" + strconv.Itoa(i), Metric: "disk.used_pct",
+			Value: floatPtr(float64(i)), At: at}
+	}
+	return out
+}
+
+// TestHandleResultsChunksToTheIngestContract: a single Collect batch
+// larger than maxResultsPerMessage is split into messages of at most that
+// size. The manager refuses a CheckResults message over
+// checks.MaxObservationsPerBatch outright (internal/checks), so an
+// unsplit batch from a host with a few hundred filesystems would not be
+// merely large — it would be refused, and the refusal ends the stream, so
+// the agent would reconnect and send the identical batch for ever. The
+// replay path already chunked; the live path must too.
+func TestHandleResultsChunksToTheIngestContract(t *testing.T) {
+	lt := newLoopTest(t)
+	l := lt.newLoop()
+	stream := &chunkingStream{}
+	l.sender = newStreamSender(stream)
+
+	n := 2*maxResultsPerMessage + 1
+	l.handleResults(manyResults(n, lt.now()))
+
+	batches := stream.batches()
+	if len(batches) != 3 {
+		t.Fatalf("messages = %d, want 3 for %d results at %d per message", len(batches), n, maxResultsPerMessage)
+	}
+	total := 0
+	for i, b := range batches {
+		if len(b) > maxResultsPerMessage {
+			t.Errorf("message %d carries %d results, over the %d cap", i, len(b), maxResultsPerMessage)
+		}
+		total += len(b)
+	}
+	if total != n {
+		t.Fatalf("delivered %d of %d results", total, n)
+	}
+	if got := len(l.buffer.Drain()); got != 0 {
+		t.Fatalf("buffered %d results after a fully successful send, want 0", got)
+	}
+}
+
+// TestHandleResultsBuffersOnlyTheUndeliveredRemainder: when the stream
+// dies partway through a chunked batch, the chunks already delivered must
+// not also land in the buffer — replaying them on reconnect would write
+// the same samples twice.
+func TestHandleResultsBuffersOnlyTheUndeliveredRemainder(t *testing.T) {
+	lt := newLoopTest(t)
+	l := lt.newLoop()
+	stream := &chunkingStream{failAfter: 1}
+	l.sender = newStreamSender(stream)
+
+	n := 3 * maxResultsPerMessage
+	l.handleResults(manyResults(n, lt.now()))
+
+	if got := len(stream.batches()); got != 1 {
+		t.Fatalf("delivered messages = %d, want 1 before the stream died", got)
+	}
+	buffered := l.buffer.Drain()
+	if len(buffered) != n-maxResultsPerMessage {
+		t.Fatalf("buffered %d results, want the %d undelivered ones only", len(buffered), n-maxResultsPerMessage)
+	}
+	if buffered[0].Item != "/m"+strconv.Itoa(maxResultsPerMessage) {
+		t.Fatalf("buffer starts at %q, want the first result after the delivered chunk", buffered[0].Item)
+	}
+}
+
+// TestActivateSenderReturnsOnlyTheUnreplayedRemainder: the reconnect
+// replay chunks too, and a stream that dies partway through it must put
+// back only what it did not manage to deliver — the same no-duplicate
+// rule handleResults follows, on the path that actually drains the
+// 15-minute ring.
+func TestActivateSenderReturnsOnlyTheUnreplayedRemainder(t *testing.T) {
+	lt := newLoopTest(t)
+	l := lt.newLoop()
+	n := 3 * maxResultsPerMessage
+	l.buffer.Add(manyResults(n, lt.now()))
+
+	stream := &chunkingStream{failAfter: 2}
+	if err := l.activateSender(newStreamSender(stream)); err == nil {
+		t.Fatal("a replay that hits a dead stream must fail the activation")
+	}
+	if l.sender != nil {
+		t.Fatal("a failed activation must not install the sender")
+	}
+	if got := len(stream.batches()); got != 2 {
+		t.Fatalf("replayed messages = %d, want 2 before the stream died", got)
+	}
+	left := l.buffer.Drain()
+	if len(left) != n-2*maxResultsPerMessage {
+		t.Fatalf("buffer holds %d results, want the %d unreplayed ones only", len(left), n-2*maxResultsPerMessage)
+	}
+	if left[0].Item != "/m"+strconv.Itoa(2*maxResultsPerMessage) {
+		t.Fatalf("buffer starts at %q, want the first result after the replayed chunks", left[0].Item)
 	}
 }

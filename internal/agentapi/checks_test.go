@@ -6,11 +6,13 @@ package agentapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -883,6 +885,81 @@ func TestPushKeepsGoingAfterAnEncodeFault(t *testing.T) {
 				if cfg := msg.GetCheckConfig(); cfg == nil {
 					t.Fatalf("host %d got %+v, want a CheckConfig", i, msg)
 				}
+			}
+		})
+	}
+}
+
+// acceptingCheckStore is a checks.Store that accepts every batch and is
+// asked nothing else. It exists so a test can run the REAL
+// checks.Service as the stream's ChecksPort: the claim under test is that
+// the domain service's own contract bounds are what the wire refuses, not
+// merely that a canned ErrInvalidInput would be mapped. Every other Store
+// method comes from the embedded nil interface — calling one panics,
+// which is exactly right, since nothing here may reach them.
+type acceptingCheckStore struct{ checks.Store }
+
+func (acceptingCheckStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (int, int, error) {
+	return len(obs), 0, nil
+}
+
+// resultBatch builds n well-shaped numeric results, all for the same key.
+func resultBatch(n int, key, item, metric string, at time.Time) []*agentpb.CheckResult {
+	out := make([]*agentpb.CheckResult, n)
+	for i := range out {
+		out[i] = checkResultValue(key, item, metric, at, float64(i))
+	}
+	return out
+}
+
+// TestCheckResultsContractBoundsRefusedOnTheWire runs the real
+// checks.Service behind the stream and proves the ingest contract's
+// bounds are reachable from the wire: a batch one over
+// MaxObservationsPerBatch, and a single result whose check_key, item or
+// metric is one byte over its own bound, are each answered
+// InvalidArgument — which is also what makes errCheckResultsRejected
+// reachable in production at all. The control case (a batch exactly at
+// the count bound, with every string exactly at its length bound) is
+// acknowledged, so the bounds cannot be satisfied by refusing everything.
+func TestCheckResultsContractBoundsRefusedOnTheWire(t *testing.T) {
+	at := time.Now()
+	maxKey := strings.Repeat("k", checks.MaxCheckKeyLen)
+	maxItem := strings.Repeat("i", checks.MaxItemLen)
+	maxMetric := strings.Repeat("m", checks.MaxMetricLen)
+
+	cases := []struct {
+		name    string
+		results []*agentpb.CheckResult
+		wantErr bool
+	}{
+		{"at every bound", resultBatch(checks.MaxObservationsPerBatch, maxKey, maxItem, maxMetric, at), false},
+		{"one result too many", resultBatch(checks.MaxObservationsPerBatch+1, "cpu", "", "cpu.used_pct", at), true},
+		{"check_key one byte too long", resultBatch(1, maxKey+"x", "", "cpu.used_pct", at), true},
+		{"item one byte too long", resultBatch(1, "cpu", maxItem+"x", "cpu.used_pct", at), true},
+		{"metric one byte too long", resultBatch(1, "cpu", "", maxMetric+"x", at), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessPort(t, true, nil, checks.NewService(acceptingCheckStore{}))
+			_, client := enrollAnAgent(t, h, "web-1")
+			stream, err := (*client).AgentStream(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_CheckResults{
+				CheckResults: &agentpb.CheckResults{Results: tc.results},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			msg, err := stream.Recv()
+			if !tc.wantErr {
+				if err != nil || !msg.GetAck() {
+					t.Fatalf("a batch at every bound must be accepted: %+v, %v", msg, err)
+				}
+				return
+			}
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("over the contract: %+v, %v, want InvalidArgument", msg, err)
 			}
 		})
 	}
