@@ -159,6 +159,10 @@ export interface MetricSelection {
  * construction: the route answers 404 for a tuple this host has never
  * reported and 400 for a discrete metric or an unknown range. Retrying
  * either only delays the message.
+ *
+ * refetchInterval matches useHostChecks': an open graph that froze at the
+ * instant it was opened, while the current values above it kept ticking,
+ * would be the one stale thing on a page whose whole subject is staleness.
  */
 export function useHostMetric(org: string, hostId: string, selection: MetricSelection | null) {
   return useQuery({
@@ -176,5 +180,6 @@ export function useHostMetric(org: string, hostId: string, selection: MetricSele
     },
     enabled: !!org && !!hostId && selection !== null,
     retry: false,
+    refetchInterval: 30_000,
   });
 }

@@ -103,8 +103,13 @@ function stubCanvasContext(canvas: HTMLCanvasElement) {
     },
   );
 }
-HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
-  return stubCanvasContext(this);
+//    It answers **only** for '2d'. Returning this 2D-shaped proxy for
+//    'webgl' or 'bitmaprenderer' too would make every feature detection in
+//    the app (`canvas.getContext('webgl') !== null`) take the wrong branch
+//    under test while taking the right one in a browser — a stub that lies
+//    about what the platform supports is worse than the missing one.
+HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, contextType: string) {
+  return contextType === '2d' ? stubCanvasContext(this) : null;
 } as unknown as HTMLCanvasElement['getContext'];
 
 // 3. Path2D: uPlot builds every series line as a Path2D before stroking it.
