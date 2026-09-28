@@ -132,11 +132,15 @@ func plausible(at, now time.Time) bool {
 // check_samples_lookup_idx — a btree over (org_id, host_id, check_key,
 // item, metric, at) whose index rows may not exceed 8191 bytes — at
 // 16+16+64+512+64+8 = 680 bytes plus per-row overhead, an order of
-// magnitude clear of the limit. Before these bounds existed a single
-// ~2.7 KB key/item/metric produced "index row requires 12448 bytes,
-// maximum size is 8191" from inside RecordObservations' transaction,
-// which is a store error, not a count: the whole batch rolled back and
-// the stream died with Internal.
+// magnitude clear of the limit. Before these bounds existed, an
+// agent-chosen key of a few kilobytes produced "index row requires N
+// bytes, maximum size is 8191" from inside RecordObservations'
+// transaction — 9064 bytes for 3x3000 incompressible ones, measured
+// against the container by TestLookupIndexRejectsWhatTheContractBoundsForbid.
+// That is a store error, not a count: the whole batch rolled back and the
+// stream died with Internal. Measure it with incompressible strings or
+// not at all — PostgreSQL compresses a btree index entry's varlena
+// values, so 3x3000 REPEATED bytes insert quite happily.
 //
 //   - MaxObservationsPerBatch: the cost side. RecordObservations issues
 //     two statements per observation, serially, inside one transaction on
