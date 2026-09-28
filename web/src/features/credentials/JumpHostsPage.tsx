@@ -3,7 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { Lock, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';

@@ -4,7 +4,7 @@ import { User } from 'lucide-react';
 import { useOrgActivity } from '../../api/hooks/useActivity.ts';
 import { useMembers } from '../../api/hooks/useMembers.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 
 const OBJECT_TYPES = [

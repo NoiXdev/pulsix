@@ -6,7 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { acceptInvite } from '../../api/hooks/useMembers.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
-import { useResetSession } from '../../api/session.ts';
+import { useResetSession } from '../../lib/session.ts';
 
 function InviteAcceptShell({ children }: { children: ReactNode }) {
   return (
@@ -91,7 +91,7 @@ export function InviteAcceptPage() {
           }
           try {
             // A new account's session: start from an empty cache
-            // (api/session.ts) and continue to second-factor enrolment,
+            // (lib/session.ts) and continue to second-factor enrolment,
             // the only thing it may do until it has one.
             resetSession();
             await refetchMe();

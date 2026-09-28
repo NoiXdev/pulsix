@@ -4,7 +4,7 @@ import { KeyRound } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';

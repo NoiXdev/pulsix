@@ -5,7 +5,7 @@ import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';

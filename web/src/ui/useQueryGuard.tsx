@@ -46,7 +46,7 @@ const FINAL_STATUSES = new Set([401, 403, 404]);
  *   → also return the `QueryError` element: those answers are final, not
  *   a hiccup, so the stale data is dropped from the page. For a 401,
  *   QueryError itself redirects to /login and clears the query cache
- *   (api/session.ts) — one place, not one per page.
+ *   (lib/session.ts) — one place, not one per page.
  * - Data already present and any other failure (a 500, a network error)
  *   → return `null` (the caller keeps rendering its data) and instead
  *   raise a toast, once per failed fetch (`errorUpdatedAt` dedupes — a

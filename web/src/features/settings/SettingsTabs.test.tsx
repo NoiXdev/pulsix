@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { mockApi } from '../test/mockApi.ts';
+import { mockApi } from '../../test/mockApi.ts';
 import { SettingsTabs } from './SettingsTabs.tsx';
 
 function renderTabs() {

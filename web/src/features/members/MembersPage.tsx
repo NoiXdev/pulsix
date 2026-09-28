@@ -11,7 +11,7 @@ import { Label } from '../../ui/label.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { inviteFormSchema, type InviteFormValues } from '../../lib/schemas.ts';
 

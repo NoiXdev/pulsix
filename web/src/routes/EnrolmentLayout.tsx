@@ -7,7 +7,7 @@ import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useMe, useRefetchMe } from '../api/hooks/useMe.ts';
 import { logout } from '../api/hooks/useAuth.ts';
-import { useResetSession } from '../api/session.ts';
+import { useResetSession } from '../lib/session.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 
 /**

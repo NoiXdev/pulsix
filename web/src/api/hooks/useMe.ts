@@ -8,7 +8,7 @@ const meQueryFn = () => unwrap(api.GET('/api/v1/auth/me'));
  * decide whether a session still needs its second factor). Disabled
  * callers should pass `enabled: false` rather than relying on a 401.
  * Sign-in and sign-out do not invalidate this query on its own: they
- * reset the whole cache (api/session.ts), and sign-in then re-fetches it
+ * reset the whole cache (lib/session.ts), and sign-in then re-fetches it
  * with refetchMe below. */
 export function useMe(opts: { enabled?: boolean } = {}) {
   return useQuery({ queryKey: meQueryKey, queryFn: meQueryFn, retry: false, enabled: opts.enabled });

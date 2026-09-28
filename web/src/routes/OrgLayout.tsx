@@ -6,7 +6,7 @@ import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { logout } from '../api/hooks/useAuth.ts';
-import { useResetSession } from '../api/session.ts';
+import { useResetSession } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 
@@ -76,7 +76,7 @@ export function OrgLayout() {
       onLogout={async () => {
         await logout();
         // Navigate first, then drop every cached query and mutation
-        // (api/session.ts): whoever signs in next on this tab must not
+        // (lib/session.ts): whoever signs in next on this tab must not
         // be served this user's data, and resetting while this layout
         // is still mounted would only make it re-fetch everything with
         // the now-dead session.

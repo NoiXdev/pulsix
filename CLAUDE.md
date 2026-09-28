@@ -26,7 +26,9 @@ backlog: `docs/BACKLOG.md`, brand: `brand/`.
 - Errors: wrap with context (`fmt.Errorf("claim job: %w", err)`); services return
   sentinel errors (`ErrNotFound`, `ErrForbidden`) that handlers map to HTTP.
 - SPA mirrors this: `web/src/api` (generated client + hooks) → `web/src/features/<domain>`
-  (components + logic) → `web/src/ui` (presentational, no data fetching).
+  (components + logic) → `web/src/ui` (presentational, no data fetching). ESLint enforces
+  the last edge: a value import from `src/api` inside `src/ui` fails lint (type-only
+  imports of the generated schema types are fine).
 
 ## Testing
 

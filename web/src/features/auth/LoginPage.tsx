@@ -8,7 +8,7 @@ import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { login, verifyTotp } from '../../api/hooks/useAuth.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
-import { useResetSession } from '../../api/session.ts';
+import { useResetSession } from '../../lib/session.ts';
 import { beginLogin, submitPassword, submitTotp, type LoginState } from './loginMachine.ts';
 import { loginWithPasskey, passkeysSupported } from './passkeys.ts';
 
@@ -57,7 +57,7 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   async function afterAuthenticated() {
-    // A new session starts from an empty cache (api/session.ts): nothing
+    // A new session starts from an empty cache (lib/session.ts): nothing
     // a previous principal loaded on this tab — their hosts, their
     // activity, their /auth/me — may be served to this one, not even
     // from a Back navigation. Reset before the /auth/me refetch so that

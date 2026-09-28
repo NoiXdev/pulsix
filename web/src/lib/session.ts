@@ -2,6 +2,12 @@ import { useCallback } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 /**
+ * This lives in src/lib, beside sessionState.ts, and not in src/api: it
+ * fetches nothing, declares no query key and calls no endpoint — it clears
+ * a cache. Filed under src/api it was the one thing pulling ui/QueryState
+ * across the layer boundary CLAUDE.md draws (backlog 3.23), for a
+ * dependency that was never data fetching in the first place.
+ *
  * resetSessionCache drops everything the SPA has cached on behalf of the
  * signed-in principal. Query keys are not scoped by user (['hosts', org],
  * ['me'], ...), so without this a second person signing in on the same

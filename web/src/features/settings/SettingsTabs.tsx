@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
-import { useMe } from '../api/hooks/useMe.ts';
-import { useOrg } from '../api/hooks/useOrgs.ts';
-import { may } from '../lib/roles.ts';
+import { useMe } from '../../api/hooks/useMe.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { may } from '../../lib/roles.ts';
 
 const ACTIVE = 'border-b-2 border-primary py-2.5 text-[13px] font-semibold text-foreground';
 const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium text-muted-foreground';
@@ -15,6 +15,11 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  * Activity moved under one Settings section (task-15a-report.md fix
  * round 1), and this is how a page in that section gets back to its
  * siblings.
+ *
+ * It lives under features, not in src/ui, because deciding which tabs a
+ * role may see means asking who is signed in — src/ui is presentational
+ * and fetches nothing (CLAUDE.md, backlog 3.23). features/checks/ChecksTabs
+ * is the same strip for the Checks section, without the gating.
  *
  * "Outgoing mail" is instance-wide and shown only to instance
  * administrators — the only callers GET /admin/settings/smtp admits.

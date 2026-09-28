@@ -10,7 +10,7 @@ import { Label } from '../../ui/label.tsx';
 import { emailSchema, passwordSchema, setupOrgSlugSchema, smtpSchema, type SmtpFormValues } from '../../lib/schemas.ts';
 import { completeSetup, refetchSetupStatus, useSetupStatus } from '../../api/hooks/useSetupStatus.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
-import { useResetSession } from '../../api/session.ts';
+import { useResetSession } from '../../lib/session.ts';
 import { useQueryClient } from '@tanstack/react-query';
 
 type StepKey = 'admin' | 'org' | 'smtp' | 'mfa';
@@ -85,7 +85,7 @@ export function SetupWizardPage() {
         smtp: smtpEnabled && smtp ? smtp : undefined,
       });
       // The response set a session cookie for a new principal: start from
-      // an empty cache (api/session.ts), then refetch and await both
+      // an empty cache (lib/session.ts), then refetch and await both
       // ['me'] and ['setup-status'] before navigating away, so neither is
       // left stale for RootRedirect to bounce off of later (Important 3,
       // task-15a-report.md fix round 1). The new administrator has no

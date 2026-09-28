@@ -12,7 +12,7 @@ import { Label } from '../../ui/label.tsx';
 import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
 
 const tokenFormSchema = z.object({

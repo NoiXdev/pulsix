@@ -5,7 +5,7 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
 
 /**
  * ChecksTabs is the strip both pages of the Checks section carry, the same
- * shape ui/SettingsTabs.tsx gives the Settings section: real router links,
+ * shape features/settings/SettingsTabs.tsx gives the Settings section: real router links,
  * so the URL, the breadcrumbs and the back button stay in sync with which
  * page is open.
  *

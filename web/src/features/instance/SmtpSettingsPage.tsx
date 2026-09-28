@@ -11,7 +11,7 @@ import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../../ui/SettingsTabs.tsx';
+import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useSaveSmtpSettings, useSmtpSettings, useTestSmtpSettings } from '../../api/hooks/useSmtpSettings.ts';
 import { smtpSchema, type SmtpFormValues, type SmtpSaveValues } from '../../lib/schemas.ts';
 
