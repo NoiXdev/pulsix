@@ -243,6 +243,10 @@ function GraphPanel({
         // this the throw reaches the router and takes the whole host page
         // with it. Scoped here it costs the graph and nothing else.
         <ErrorBoundary
+          // Stable by value, and it changes exactly when the operator asks
+          // for a different series or window — so a chart that throws on
+          // one input does not wedge the panel for the next.
+          resetKey={`${selection.check}:${selection.item}:${selection.metric}:${selection.range}`}
           fallback={
             <p role="alert" className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
               The chart could not be loaded. Reload the page to try again.
