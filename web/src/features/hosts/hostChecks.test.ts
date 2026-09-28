@@ -87,6 +87,11 @@ describe('clockSkewLabel', () => {
     ['delivery timing is not a clock', 29, null],
     ['the floor itself is named', 30, '30 s behind'],
     ['seconds stay seconds up to a minute and a half', 89, '89 s behind'],
+    // 90 is the boundary itself, and it was the one value not covered:
+    // with only 89 tested, `>= 90` and `> 90` are indistinguishable and
+    // the rule could quietly start reading "90 s" where it means "2 min".
+    ['the boundary itself is already minutes', 90, '2 min behind'],
+    ['and reads as minutes just above it too', 91, '2 min behind'],
     ['a four-minute lag is what makes every reading look stale', 243.7, '4 min behind'],
     ['a clock running fast is named as such, never as a negative number', -240, '4 min ahead of'],
     ['an hour ahead is still inside the plausibility window and still wrong', -3600, '60 min ahead of'],

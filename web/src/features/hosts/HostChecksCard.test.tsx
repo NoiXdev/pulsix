@@ -238,6 +238,26 @@ describe('HostChecksCard', () => {
     expect(row('cpu', 'usage_percent').getByText('stale')).toBeInTheDocument();
   });
 
+  it('says nothing about a clock on a host nobody is monitoring', async () => {
+    // With nothing being measured there are no readings on the card for a
+    // clock to have skewed, so the note is gated on `monitored` — and the
+    // gate was held by nothing: deleting it passed every test here,
+    // because every other envelope in this file is monitored. The offset
+    // is the same four minutes the monitored case renders.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: false,
+        clock_offset_seconds: 243.7,
+        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true }] })],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText(/not being monitored/)).toBeInTheDocument();
+    expect(screen.queryByText(/clock is about/)).not.toBeInTheDocument();
+  });
+
   it('says nothing about a clock nobody measured, and nothing about a punctual one', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
