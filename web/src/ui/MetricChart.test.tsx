@@ -115,6 +115,28 @@ describe('MetricChart', () => {
     expect(screen.getByRole('img', { name: /4 samples/ })).toBeInTheDocument();
   });
 
+  it('stops drawing point markers as a long-open chart fills up', () => {
+    const { rerender } = render(<MetricChart points={series(39)} range="1h" label="cpu usage_percent" />);
+    const plot = spy.built[0];
+    // uPlot evaluates points.show at draw time, so this asks it the same
+    // question the renderer does, against the instance's live data.
+    const markers = () => {
+      const show = plot.series[1].points?.show;
+      return typeof show === 'function' ? show(plot, 1, 0, Math.max(plot.data[0].length - 1, 0)) : show;
+    };
+
+    expect(markers()).toBe(true);
+
+    // `points` is no longer a construction dependency, so a boolean fixed
+    // at construction would freeze at "39 < 40" and keep drawing dots for
+    // as long as the graph stays open.
+    rerender(<MetricChart points={series(41)} range="1h" label="cpu usage_percent" />);
+
+    expect(spy.built).toHaveLength(1);
+    expect(plot.data[0]).toHaveLength(41);
+    expect(markers()).toBe(false);
+  });
+
   it('rebuilds the plot for a change setData cannot carry', () => {
     const { container, rerender } = render(<MetricChart points={series(3)} range="1h" label="cpu usage_percent" />);
     const canvas = container.querySelector('canvas');

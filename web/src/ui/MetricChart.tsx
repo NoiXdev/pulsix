@@ -92,10 +92,14 @@ export function MetricChart({ points, range, label, height = 180 }: MetricChartP
   // minute — losing the cursor crosshair under whoever was hovering it —
   // when uPlot's own setData does the job in place.
   //
-  // The ref is written in an effect of its own rather than during render
-  // (`react-hooks/refs`), and declared first so it has already run by the
-  // time the construction effect below reads it in the same commit —
-  // effects fire in declaration order.
+  // The ref is written in an effect of its own rather than during render,
+  // which is what `react-hooks/refs` forbids. Declaring it first buys one
+  // frame and no more: when `points` and a construction dependency change
+  // in the same commit, effects fire in declaration order, so the rebuilt
+  // plot is constructed with the current series rather than the previous
+  // one. Reordering it is not a correctness bug — the setData effect below
+  // corrects the plot on the same commit's next effect — it only avoids
+  // building a plot with data that is already one render stale.
   const pointsRef = useRef(points);
   const plotRef = useRef<uPlot | null>(null);
 
