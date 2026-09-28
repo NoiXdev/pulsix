@@ -72,6 +72,24 @@ describe('AppShell', () => {
     expect(screen.queryByRole('link', { name: 'Workers' }) !== null).toBe(shown);
   });
 
+  // The Checks entry is gated on checks.read, which every named role has
+  // — so the row that does any work is the last one: an unrecognised role
+  // (a session whose org response has not landed, or a role this build
+  // does not know) must not be offered a page it cannot open. Without
+  // that row the gate could be deleted outright and this file would stay
+  // green, which is what it did.
+  it.each([
+    ['owner', true],
+    ['admin', true],
+    ['operator', true],
+    ['viewer', true],
+    ['', false],
+  ])('shows the Checks entry to a %s: %s', async (role, shown) => {
+    renderShellAt('/o/acme/hosts', { role });
+    await screen.findByText('page content');
+    expect(screen.queryByRole('link', { name: 'Checks' }) !== null).toBe(shown);
+  });
+
   it('shows the org switcher with the current org selected', async () => {
     renderShellAt('/o/acme/hosts');
     const select = (await screen.findByRole('combobox', { name: 'Organization' })) as HTMLSelectElement;

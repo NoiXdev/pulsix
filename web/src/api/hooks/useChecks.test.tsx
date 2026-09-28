@@ -1,10 +1,18 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi } from '../../test/mockApi.ts';
 import { errorStatus } from '../../lib/apiError.ts';
-import { useHostMetric, type MetricSelection } from './useChecks.ts';
+import {
+  useChecks,
+  useDeleteCheck,
+  useHostChecks,
+  useHostMetric,
+  useMonitoringGroupPreview,
+  useMonitoringGroups,
+  type MetricSelection,
+} from './useChecks.ts';
 
 const NOW = '2026-09-27T12:00:00Z';
 const SELECTION: MetricSelection = { check: 'cpu', item: '', metric: 'usage_percent', range: '1h' };
@@ -142,5 +150,159 @@ describe('useHostMetric polling', () => {
       await vi.advanceTimersByTimeAsync(31_000);
     });
     expect(asked).toBe(2);
+  });
+});
+
+/**
+ * The host card's own cadence. Like the series above it, this is invisible
+ * to any rendered test: a card test finishes in a second and would pass
+ * against a hook that never refetches at all — which is exactly what a
+ * monitoring card must not be, since its whole subject is the current
+ * reading.
+ */
+describe('useHostChecks polling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('re-reads the effective set on the agent’s own 30 s heartbeat cadence', async () => {
+    let served = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': () => {
+        served += 1;
+        return { host_id: 'h1', monitored: true, checks: [] };
+      },
+    });
+    const { result } = renderHook(() => useHostChecks('acme', 'h1'), { wrapper: wrapper() });
+
+    await settle();
+    expect(result.current.data).toBeDefined();
+    expect(served).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000);
+    });
+    expect(served).toBe(2);
+
+    // And it keeps going: a value that moves once and then stops is a
+    // screenshot with extra steps.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000);
+    });
+    expect(served).toBe(3);
+  });
+
+  it('asks for nothing at all when the caller may not read checks', async () => {
+    let served = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': () => {
+        served += 1;
+        return { host_id: 'h1', monitored: true, checks: [] };
+      },
+    });
+    renderHook(() => useHostChecks('acme', 'h1', false), { wrapper: wrapper() });
+
+    await settle();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000);
+    });
+    expect(served).toBe(0);
+  });
+});
+
+/**
+ * Definitions and monitoring groups are one subject with two lists, and a
+ * write to either moves both: deleting a group cascades away the
+ * definitions bound to it (migration 00043's ON DELETE CASCADE), and
+ * editing a group's selector changes which hosts a definition bound to it
+ * reaches. Refreshing only the list that was written leaves the other page
+ * showing rows the server no longer has — and nothing else in the suite
+ * notices, because each page renders one list.
+ */
+describe('check writes refresh both lists', () => {
+  it('invalidates the monitoring groups after a definition is deleted', async () => {
+    let checksServed = 0;
+    let groupsServed = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/checks': () => {
+        checksServed += 1;
+        return { checks: [] };
+      },
+      'GET /api/v1/orgs/acme/monitoring-groups': () => {
+        groupsServed += 1;
+        return { groups: [] };
+      },
+      'DELETE /api/v1/orgs/acme/checks/c1': {},
+    });
+    const { result } = renderHook(
+      () => ({ checks: useChecks('acme'), groups: useMonitoringGroups('acme'), remove: useDeleteCheck('acme') }),
+      { wrapper: wrapper() },
+    );
+
+    await waitFor(() => expect(result.current.checks.data).toBeDefined());
+    await waitFor(() => expect(result.current.groups.data).toBeDefined());
+    expect(checksServed).toBe(1);
+    expect(groupsServed).toBe(1);
+
+    await act(async () => {
+      await result.current.remove.mutateAsync('c1');
+    });
+
+    await waitFor(() => expect(checksServed).toBe(2));
+    await waitFor(() => expect(groupsServed).toBe(2));
+  });
+});
+
+/**
+ * The selector preview's failure is the parser's own message about where
+ * the expression went wrong, and it is final: asking again three times
+ * only delays showing the operator what is wrong. The page test cannot see
+ * this — its QueryClient already disables retry, so the hook's own
+ * `retry: false` decides nothing there.
+ */
+describe('useMonitoringGroupPreview', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the parser’s refusal once, against a client that would retry', async () => {
+    let asked = 0;
+    mockApi({
+      'POST /api/v1/orgs/acme/monitoring-groups/preview': () => {
+        asked += 1;
+        return new Response(JSON.stringify({ detail: 'selector: unexpected token at position 7' }), { status: 400 });
+      },
+    });
+    const { result } = renderHook(() => useMonitoringGroupPreview('acme', 'role=web and'), { wrapper: wrapper() });
+
+    await settle();
+    expect(result.current.isError).toBe(true);
+    expect(asked).toBe(1);
+
+    // Past every backoff the client's retry: 3 would have used.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(asked).toBe(1);
+  });
+
+  it('asks nothing for an empty selector', async () => {
+    let asked = 0;
+    mockApi({
+      'POST /api/v1/orgs/acme/monitoring-groups/preview': () => {
+        asked += 1;
+        return { hosts: [] };
+      },
+    });
+    renderHook(() => useMonitoringGroupPreview('acme', null), { wrapper: wrapper() });
+
+    await settle();
+    expect(asked).toBe(0);
   });
 });
