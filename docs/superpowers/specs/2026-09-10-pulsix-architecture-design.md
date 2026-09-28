@@ -389,6 +389,88 @@ the worker's disk (ansible-runner reads them from memory via an inventory script
 
 ## 9. Check engine
 
+> **v0.3b-1 delta (shipped 2026-09-28).** This section describes the whole
+> engine. v0.3b delivers it in **three cuts**, each with its own spec, plan
+> and milestone, and only the first has shipped:
+>
+> 1. **The check pipeline** (`docs/superpowers/specs/2026-09-27-v0.3b-checks-design.md`) —
+>    definitions as data, four agent plugins, samples in a hypertable,
+>    current values and graphs. **Shipped.**
+> 2. **Rules and states** — points 6 and 7 below: form and expression mode
+>    over one AST, precedence with the effective-rules view, hysteresis and
+>    flapping, `unknown` on missing data, host and group roll-up. Not
+>    started.
+> 3. **Discovery and item overrides** — point 5 below: items as rows,
+>    ignoring them, per-item rules. Not started.
+>
+> Synthetic checks with probes and assertions (points 3 and 4) come after
+> all three, with the zone workers that host the vantage points.
+>
+> **Read this before anything else in the section: v0.3b-1 contains no
+> evaluation of any kind.** No rules, no thresholds, no states, no
+> severity, no `for_duration`, no hysteresis, no flapping, no alerts, and
+> nothing that could become one — a check today produces a *reading*, and
+> nothing in the product looks at that reading and decides it is bad. The
+> `service` plugin reports `active` or `failed` as an observation, not as a
+> state; `ok`/`warn`/`crit`/`unknown` (point 7) do not exist as data
+> anywhere. An operator sees numbers and a graph, and is the only judge of
+> them.
+>
+> What cut 1 actually built:
+>
+> - **Plugins (point 1), partially.** Four, all agent-side and all in code:
+>   `cpu` (load 1/5/15, used percent), `memory`, `disk` (per mount, with an
+>   optional mount list) and `service` (per systemd unit, reporting the
+>   unit's own state as a discrete observation; the non-Linux build answers
+>   every requested unit with an explicit "not supported on this platform"
+>   collection error rather than guessing a state). Parameters are
+>   validated per plugin in the manager; there is no declared schema object
+>   a plugin publishes, and no `location: worker` plugin exists.
+> - **Check definitions (point 2), fully, for these four.** `key + plugin +
+>   params + interval + enabled + binding`, bound to the organization, a
+>   **monitoring group** or a single host. A monitoring group is a named,
+>   saved host-tag selector with a priority — the existing
+>   `internal/hosts/selector` expression, nothing new to resolve.
+>   Resolution is per key: the narrowest binding wins (host > group > org),
+>   between groups the higher priority wins and an older group breaks a
+>   tie, and the host page names the scope each winning check came from.
+>   The seed set is the four rows of **Linux base**, written for every new
+>   organization and backfilled for existing ones (`origin = seed`); the
+>   other seed sets this section lists do not exist yet.
+> - **Delivery.** The resolved set carries a **version** (a hash over its
+>   own canonical encoding). Writing a definition or a monitoring group
+>   pushes the freshly resolved set to every affected host's open stream,
+>   best-effort and outside the write's own success. Everything else that
+>   can change a host's set — a tag edit moving it in or out of a group, a
+>   host becoming monitored, a push that never landed — heals on the
+>   agent's own re-assert: every heartbeat carries the version the agent is
+>   running, and the manager answers a mismatch with the current set. This
+>   is the hybrid §8 describes, with one difference: the agent re-asserts a
+>   version rather than re-fetching a whole configuration. There is no
+>   configuration-version column in the GUI yet (backlog 3.13c).
+> - **Sampling.** The agent holds one timer per check (10 s – 24 h),
+>   measures, and ships each reading with **its own timestamp**. A
+>   disconnected agent keeps measuring into a bounded 15-minute ring and
+>   replays it on reconnect; a timestamp outside a plausibility window is
+>   dropped rather than trusted. Editing one check's interval re-times that
+>   check alone — every other check keeps its phase, so an
+>   organization-wide edit is not an organization-wide load spike.
+> - **Storage (§10, partially).** `check_samples` is a TimescaleDB
+>   hypertable on one-day chunks with an instance-wide 90-day retention
+>   policy, plus a `check_current` row per (host, check, item, metric) for
+>   the current-value view. Downsampling is `time_bucket` at query time
+>   into a fixed bucket count per range. **No** compression, **no**
+>   continuous aggregates and **no** per-organization retention — §10's
+>   raw/5 m/1 h tiers and its ingest targets are still ahead.
+> - **Surface.** Two permissions (`checks.read` for viewers, `checks.write`
+>   at the operator bar), CRUD for definitions and groups with a selector
+>   preview, the effective set per host, and a downsampled series per
+>   metric over 1 h / 24 h / 7 d. In the GUI: a Checks page, a Monitoring
+>   groups page, and a monitoring card on the host page with current values
+>   and a graph per numeric metric.
+>
+> The end-to-end gate is `internal/e2e/checks_test.go`.
+
 Layered like Checkmk rulesets and Zabbix templates.
 
 1. **Plugins (code).** Implemented in the agent (local) or worker (remote). Each plugin
