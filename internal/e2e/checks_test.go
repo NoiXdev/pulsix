@@ -30,6 +30,7 @@
 //     the container this suite runs in does not provide; the check is
 //     resolved and pushed like any other, but every assertion about
 //     collected values here is about `cpu`, which every platform reports.
+//
 //   - The configuration version string itself. It never leaves the agent
 //     stream (Heartbeat.config_version against the manager's resolved
 //     set) and is not part of any operator-facing API, so the gate
@@ -37,11 +38,18 @@
 //     running an edited definition, and an unpushed change arriving
 //     anyway — rather than reaching behind the API for the string.
 //     internal/agentapi's own tests pin the comparison; this one pins
-//     that it changes what a real agent does. Claim 4 is the half that
-//     genuinely needs the echo: break it (send an empty config_version
-//     forever) and the manager re-pushes on every heartbeat, which claim
-//     4 cannot tell apart from a working echo — but break the RESOLVE
-//     side, or the re-assert itself, and claim 4 is what fails.
+//     that it changes what a real agent does.
+//
+//     Be precise about what claim 4 polices, because it is easy to
+//     overclaim: the per-heartbeat resolve-and-compare, and the agent
+//     re-asserting at all. NOT the echo. An agent that reported an empty
+//     config_version for ever would make the manager re-push on every
+//     single heartbeat, which delivers the definition just as surely —
+//     both this file's author and its reviewer verified that mutation
+//     passes. What fails claim 4 is a manager that stops answering a
+//     stale version (verified: an early return in processHeartbeat leaves
+//     claims 1-3 green and fails this one), or an agent that stops
+//     re-asserting.
 package e2e
 
 import (

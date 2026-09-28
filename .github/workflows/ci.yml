@@ -188,7 +188,20 @@ jobs:
     # ansible-runner (PULSIX_E2E_REAL_ANSIBLE=1) against the same
     # fixtures, which is why the worker image's Ansible runtime is installed
     # first.
-    timeout-minutes: 15
+    #
+    # 45 minutes, raised from 15 with the v0.3b-1 check gate. Two things
+    # set it. The honest runtime: three passes whose local -race times are
+    # ~146 s (fake runner), the same scenario again with real ansible, and
+    # a small worker/runner subset — call it 3x on a hosted runner, plus
+    # the race-instrumented build of the whole dependency tree, the apt
+    # and pip installs and the checkout: ~25 minutes of real work, already
+    # past the old cap. The failure case: each pass now carries
+    # -timeout 1800s, and a cap below "one pass panics at 30 minutes plus
+    # what the other steps already spent" would kill the job before that
+    # panic prints its goroutine dump — which is the whole reason the
+    # per-package timeout exists. A cap only ever costs minutes on a
+    # failure, so it is set to let the diagnostic out.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -213,15 +226,25 @@ jobs:
           python -m pip install --no-cache-dir "ansible-core==2.21.4" "ansible-runner==2.4.3"
           ansible-runner --version
           ansible-playbook --version
+      # -timeout 1800s on every pass, for the same reason the Makefile,
+      # scripts/coverage-gate.sh and CLAUDE.md carry it: go test's default
+      # is 600 s PER PACKAGE, and internal/e2e is one package whose
+      # -race runtime grew to 146 s locally with the v0.3b-1 check gate
+      # (from 79 s) — on a hosted runner with a quarter of the cores and a
+      # containerised database, a pass in the 300-450 s range is ordinary
+      # and 600 s is not a comfortable ceiling. Hitting it panics the
+      # package instead of failing a test, which reads as a crash rather
+      # than a slow machine.
+      #
       # Fast, deterministic pass (fake runner): the gate itself.
-      - run: go test -race -count=1 ./internal/e2e/...
+      - run: go test -race -count=1 -timeout 1800s ./internal/e2e/...
       # The real end-to-end with actual ansible: the same scenario driven
       # by the real ansible-runner binary; the harness skips this pass on
       # machines without ansible-runner (e.g. local dev), never fails it.
-      - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 ./internal/e2e/...
+      - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 -timeout 1800s ./internal/e2e/...
       # The unsafe-marker checks against the real ansible-playbook: with
       # the variable set they fail instead of skipping when it is missing.
-      - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 -run 'UnsafeMarker|RealAnsible' ./internal/worker/runner/...
+      - run: PULSIX_E2E_REAL_ANSIBLE=1 go test -race -count=1 -timeout 1800s -run 'UnsafeMarker|RealAnsible' ./internal/worker/runner/...
 
   # The compose + Playwright half of the Ansible E2E (web/e2e/ansible.spec.ts,
   # project `ansible` in playwright.config.ts) STILL CANNOT run: Task 17
