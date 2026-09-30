@@ -53,6 +53,12 @@ export default defineConfig({
     // — global-setup builds the binary and the manager exposes its gRPC
     // surface — so unlike `ansible` below it runs for real from the start.
     { name: 'agent', testMatch: /agent\.spec\.ts/, dependencies: ['inventory'] },
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['agent'] },
+    // The rule pipeline's GUI half (v0.3b-2, backlog 3.4a): rules.spec
+    // needs only the organization setup.spec already created; fleet.spec
+    // needs the agent binary agent.spec's project already built, so it
+    // sits after both.
+    { name: 'rules', testMatch: /rules\.spec\.ts/, dependencies: ['agent'] },
+    { name: 'fleet', testMatch: /fleet\.spec\.ts/, dependencies: ['rules'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['fleet'] },
   ],
 });
