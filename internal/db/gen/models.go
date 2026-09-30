@@ -153,6 +153,28 @@ type CheckDefinition struct {
 	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
+type CheckRule struct {
+	ID          uuid.UUID       `json:"id"`
+	OrgID       uuid.UUID       `json:"org_id"`
+	Name        string          `json:"name"`
+	Enabled     bool            `json:"enabled"`
+	Origin      string          `json:"origin"`
+	Scope       string          `json:"scope"`
+	GroupID     pgtype.UUID     `json:"group_id"`
+	HostID      pgtype.UUID     `json:"host_id"`
+	Item        string          `json:"item"`
+	CheckKey    string          `json:"check_key"`
+	Metric      string          `json:"metric"`
+	Severity    string          `json:"severity"`
+	Mode        string          `json:"mode"`
+	Ast         []byte          `json:"ast"`
+	ClearAst    []byte          `json:"clear_ast"`
+	Source      string          `json:"source"`
+	ForDuration pgtype.Interval `json:"for_duration"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
 type CheckSample struct {
 	At       time.Time `json:"at"`
 	OrgID    uuid.UUID `json:"org_id"`
