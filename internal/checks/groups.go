@@ -292,6 +292,30 @@ func (s *Service) GetGroup(ctx context.Context, orgID, id uuid.UUID) (Group, err
 	return Group{}, ErrNotFound
 }
 
+// GroupsForHost returns the monitoring groups in orgID whose selector
+// currently matches hostID, built from the exact same
+// loadResolveBundle/groupHosts membership the resolver (resolver.go) uses
+// to expand a group into the hosts its own definitions reach — never a
+// second selector evaluation written beside it, so a host can never
+// receive a group's rules (internal/rules' precedence resolver, wired
+// through this method) without also receiving that group's checks.
+// Requires WithMatcher if orgID has any monitoring groups, exactly like
+// ResolveHost; an organization with none needs no matcher, also like
+// ResolveHost. Order is not significant — same contract as ListGroups.
+func (s *Service) GroupsForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Group, error) {
+	bundle, err := s.loadResolveBundle(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	var out []Group
+	for _, g := range bundle.groups {
+		if _, matched := bundle.groupHosts[g.ID][hostID]; matched {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
 // Preview resolves sel against orgID's current hosts without saving
 // anything: the group editor's live match count, and the same computation
 // the resolver later uses to expand a group into hosts, so the two

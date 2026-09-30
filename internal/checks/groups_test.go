@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"math"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -389,5 +391,107 @@ func TestGetGroupSurfacesAStoreFailure(t *testing.T) {
 	if _, err := svc.GetGroup(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())); err == nil ||
 		errors.Is(err, checks.ErrNotFound) {
 		t.Fatalf("err = %v, want the store's own failure, never ErrNotFound", err)
+	}
+}
+
+// groupNames sorts g by name so a test can compare GroupsForHost's result
+// without depending on the order loadResolveBundle happens to build it in.
+func groupNames(gs []checks.Group) []string {
+	names := make([]string, len(gs))
+	for i, g := range gs {
+		names[i] = g.Name
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestGroupsForHostReturnsEveryGroupMatchingTheHost is GroupsForHost's own
+// test, case 1: a host in two of three groups. It is built from the exact
+// same loadResolveBundle/groupHosts membership the resolver's
+// winningDefinitions already uses (resolver_test.go's fakeGroupMatcher),
+// not a second selector evaluation — the two must never disagree about
+// which hosts a group matches.
+func TestGroupsForHostReturnsEveryGroupMatchingTheHost(t *testing.T) {
+	store, matcher, _, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	a := putGroup(store, checks.Group{OrgID: org, Name: "a", Selector: "role=web", Priority: 1, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1)})
+	b := putGroup(store, checks.Group{OrgID: org, Name: "b", Selector: "env=prod", Priority: 2, CreatedAt: fixedTime(2), UpdatedAt: fixedTime(2)})
+	putGroup(store, checks.Group{OrgID: org, Name: "c", Selector: "role=db", Priority: 3, CreatedAt: fixedTime(3), UpdatedAt: fixedTime(3)})
+	matcher.bySelector["role=web"] = []uuid.UUID{host}
+	matcher.bySelector["env=prod"] = []uuid.UUID{host}
+	matcher.bySelector["role=db"] = []uuid.UUID{uuid.Must(uuid.NewV7())} // a different host
+	svc := checks.NewService(store, checks.WithMatcher(matcher))
+
+	got, err := svc.GroupsForHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{a.Name, b.Name}
+	sort.Strings(want)
+	if names := groupNames(got); !reflect.DeepEqual(names, want) {
+		t.Fatalf("groups = %v, want exactly %v", names, want)
+	}
+}
+
+// TestGroupsForHostReturnsNoneWhenNoGroupMatches is GroupsForHost's own
+// test, case 2: a host in none of the organization's groups gets an empty,
+// non-error result rather than being treated as a fault.
+func TestGroupsForHostReturnsNoneWhenNoGroupMatches(t *testing.T) {
+	store, matcher, _, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	putGroup(store, checks.Group{OrgID: org, Name: "a", Selector: "role=web", Priority: 1, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1)})
+	matcher.bySelector["role=web"] = []uuid.UUID{uuid.Must(uuid.NewV7())} // never host
+	svc := checks.NewService(store, checks.WithMatcher(matcher))
+
+	got, err := svc.GroupsForHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("groups = %+v, want none", got)
+	}
+}
+
+// TestGroupsForHostIsOrgScoped is GroupsForHost's own test, case 3: a
+// group belonging to a different organization must never be reported for
+// this one, even when the (org-unaware) matcher would say its selector
+// matches the host — loadResolveBundle only ever loads orgID's own groups,
+// so a foreign group is never even a candidate.
+func TestGroupsForHostIsOrgScoped(t *testing.T) {
+	store, matcher, _, orgA := newResolverFixture()
+	orgB := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	putGroup(store, checks.Group{OrgID: orgA, Name: "a-own", Selector: "role=web", Priority: 1, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1)})
+	putGroup(store, checks.Group{OrgID: orgB, Name: "b-foreign", Selector: "role=web", Priority: 1, CreatedAt: fixedTime(1), UpdatedAt: fixedTime(1)})
+	matcher.bySelector["role=web"] = []uuid.UUID{host}
+	svc := checks.NewService(store, checks.WithMatcher(matcher))
+
+	got, err := svc.GroupsForHost(ctx, orgA, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := groupNames(got); !reflect.DeepEqual(names, []string{"a-own"}) {
+		t.Fatalf("groups = %v, want only orgA's own group", names)
+	}
+}
+
+func TestGroupsForHostWithoutGroupsNeedsNoMatcher(t *testing.T) {
+	store, _, _, org := newResolverFixture()
+	svc := checks.NewService(store)
+	got, err := svc.GroupsForHost(ctx, org, uuid.Must(uuid.NewV7()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("groups = %+v, want none for an organization with no groups", got)
+	}
+}
+
+func TestGroupsForHostPropagatesLoadFailures(t *testing.T) {
+	store, _, _, org := newResolverFixture()
+	store.err = errors.New("groups store down")
+	svc := checks.NewService(store)
+	if _, err := svc.GroupsForHost(ctx, org, uuid.Must(uuid.NewV7())); err == nil {
+		t.Fatal("want the store's failure to propagate, not be swallowed")
 	}
 }
