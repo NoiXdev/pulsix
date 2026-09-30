@@ -63,6 +63,16 @@ export type NotifyDelivery = components['schemas']['NotifyDeliveryDTO'];
 export type MaintenanceWindow = components['schemas']['MaintenanceWindowDTO'];
 export type MaintenanceWindowInput = components['schemas']['MaintenanceWindowBody'];
 
+export type Rule = components['schemas']['RuleDTO'];
+export type RuleInput = components['schemas']['RuleBody'];
+// Named RuleFormValue, not RuleForm: features/checks/RuleForm.tsx already
+// owns that name for the form-mode editor component.
+export type RuleFormValue = components['schemas']['RuleFormDTO'];
+export type RuleChecked = components['schemas']['RuleCheckedDTO'];
+export type RuleMetric = components['schemas']['RuleMetricDTO'];
+export type RuleScope = Rule['scope'];
+export type RuleMode = Rule['mode'];
+
 export type CalendarEntry = components['schemas']['CalendarEntryDTO'];
 export type CalendarWindow = components['schemas']['CalendarWindowDTO'];
 

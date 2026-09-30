@@ -26,6 +26,7 @@ import { WorkersPage } from './features/workers/WorkersPage.tsx';
 import { AgentsPage } from './features/agents/AgentsPage.tsx';
 import { ChecksPage } from './features/checks/ChecksPage.tsx';
 import { MonitoringGroupsPage } from './features/checks/MonitoringGroupsPage.tsx';
+import { RulesPage } from './features/checks/RulesPage.tsx';
 import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 
@@ -140,13 +141,14 @@ const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/m
 
 /**
  * checksRoute is the layout route for the monitoring check pipeline
- * (v0.3b-1): the definitions themselves at its index and the monitoring
- * groups they bind to underneath it. Nesting the groups under /checks
- * rather than giving them a second top-level entry is the same decision
- * settingsRoute encodes — one sidebar entry, a tab strip inside
- * (features/checks/ChecksTabs.tsx) — and it is what lets the shell's
- * Checks nav link mark itself active on both pages through the router's
- * own activeProps.
+ * (v0.3b-1, joined by v0.3b-2's rules): the definitions themselves at its
+ * index, the monitoring groups they bind to, and the rules that turn a
+ * measured value into a warning or critical state, all as sibling pages
+ * underneath it. Nesting them under /checks rather than giving each a
+ * second top-level entry is the same decision settingsRoute encodes — one
+ * sidebar entry, a tab strip inside (features/checks/ChecksTabs.tsx) — and
+ * it is what lets the shell's Checks nav link mark itself active on every
+ * one of them through the router's own activeProps.
  */
 const checksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/checks' });
 const checksIndexRoute = createRoute({ getParentRoute: () => checksRoute, path: '/', component: ChecksPage });
@@ -155,6 +157,7 @@ const monitoringGroupsRoute = createRoute({
   path: '/monitoring-groups',
   component: MonitoringGroupsPage,
 });
+const rulesRoute = createRoute({ getParentRoute: () => checksRoute, path: '/rules', component: RulesPage });
 
 /**
  * settingsRoute is the layout route for Members, Activity and API tokens —
@@ -210,7 +213,7 @@ const routeTree = rootRoute.addChildren([
     workersRoute,
     agentsRoute,
     maintenanceRoute,
-    checksRoute.addChildren([checksIndexRoute, monitoringGroupsRoute]),
+    checksRoute.addChildren([checksIndexRoute, monitoringGroupsRoute, rulesRoute]),
     settingsRoute.addChildren([
       settingsIndexRoute,
       membersRoute,
