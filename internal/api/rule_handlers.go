@@ -450,7 +450,16 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("deleteRule", "rule"))
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/rules/validate", func(ctx context.Context, in *ruleValidateInput) (*ruleCheckedOutput, error) {
-		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermChecksWrite)
+		// checks.read, not checks.write: validate exposes nothing a reader
+		// cannot already reach — it answers a question about text the
+		// caller just submitted, the same bar the metric catalogue route
+		// above already clears, and exactly the permission
+		// /monitoring-groups/preview and /schedules/preview use for the
+		// same read-shaped-POST reason (monitoring_group_handlers.go,
+		// schedule_handlers.go). Gating it behind the write permission
+		// would leave three different treatments of the same route shape
+		// in one API.
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermChecksRead)
 		if err != nil {
 			return nil, err
 		}

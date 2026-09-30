@@ -144,15 +144,37 @@ func (f rulesFixture) activityURL() string {
 
 func (f rulesFixture) listRules(t *testing.T, c *http.Client) []ruleDTO {
 	t.Helper()
-	resp := requestJSON(t, c, http.MethodGet, f.rulesURL(), nil)
+	return f.listRulesQuery(t, c, "")
+}
+
+// listRulesQuery is listRules with a raw query string (e.g. "scope=host",
+// "check=memory", "host="+id.String()) appended to GET /rules, for the
+// filter tests.
+func (f rulesFixture) listRulesQuery(t *testing.T, c *http.Client, query string) []ruleDTO {
+	t.Helper()
+	url := f.rulesURL()
+	if query != "" {
+		url += "?" + query
+	}
+	resp := requestJSON(t, c, http.MethodGet, url, nil)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("list rules = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		t.Fatalf("list rules (%s) = %d %s", query, resp.StatusCode, mustReadBody(t, resp))
 	}
 	var out struct {
 		Rules []ruleDTO `json:"rules"`
 	}
 	decodeInto(t, resp, &out)
 	return out.Rules
+}
+
+// hasRuleID reports whether list contains a rule with the given id.
+func hasRuleID(list []ruleDTO, id string) bool {
+	for _, r := range list {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // createRule posts body and expects 201, returning the created row.
@@ -273,7 +295,7 @@ func TestRuleRoutes(t *testing.T) {
 			{"create", http.MethodPost, f.rulesURL(), body, http.StatusForbidden, http.StatusForbidden},
 			{"update", http.MethodPut, f.rulesURL() + "/" + existing.ID, body, http.StatusForbidden, http.StatusForbidden},
 			{"delete", http.MethodDelete, f.rulesURL() + "/" + existing.ID, nil, http.StatusForbidden, http.StatusForbidden},
-			{"validate", http.MethodPost, f.rulesURL() + "/validate", body, http.StatusForbidden, http.StatusForbidden},
+			{"validate", http.MethodPost, f.rulesURL() + "/validate", body, http.StatusOK, http.StatusForbidden},
 			{"effective", http.MethodGet, f.hostURL(f.host) + "/effective-rules", nil, http.StatusOK, http.StatusForbidden},
 		} {
 			if resp := requestJSON(t, f.viewerC, c.method, c.url, c.body); resp.StatusCode != c.viewer {
@@ -343,6 +365,52 @@ func TestRuleRoutes(t *testing.T) {
 		}
 		if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.rulesURL()+"/"+created.ID, nil); resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("delete twice = %d, want 404", resp.StatusCode)
+		}
+	})
+
+	// GET /rules?scope=&check=&host= — each of the three filters is
+	// exercised against a fixture with one rule that must be included and
+	// (at least) one that must be excluded, so a wrong parameter name or a
+	// mis-wired field in toRuleFilter fails loudly rather than passing
+	// because the excluded rule was simply never checked for.
+	t.Run("list filters by scope, check and host", func(t *testing.T) {
+		// org-scoped, check_key cpu (cpu.load1) — must be excluded by
+		// scope=host and by check=memory and by host=<f.host>.
+		orgRule := f.createRule(t, f.operatorC, orgFormRuleBody("filter org rule", ">", 5))
+		t.Cleanup(func() { requestJSON(t, f.operatorC, http.MethodDelete, f.rulesURL()+"/"+orgRule.ID, nil) })
+
+		// host-scoped, bound to f.host, check_key memory (mem.used_pct) —
+		// must be included by scope=host, by check=memory and by
+		// host=<f.host>.
+		hostRule := f.createRule(t, f.operatorC, map[string]any{
+			"name": "filter host rule", "scope": "host", "host_id": f.host.String(),
+			"metric": "mem.used_pct", "severity": "warn", "mode": "form",
+			"form": map[string]any{"metric": "mem.used_pct", "op": ">", "value": 90},
+		})
+		t.Cleanup(func() { requestJSON(t, f.operatorC, http.MethodDelete, f.rulesURL()+"/"+hostRule.ID, nil) })
+
+		byScope := f.listRulesQuery(t, f.viewerC, "scope=host")
+		if !hasRuleID(byScope, hostRule.ID) {
+			t.Fatalf("scope=host = %+v, want it to include the host-scoped rule", byScope)
+		}
+		if hasRuleID(byScope, orgRule.ID) {
+			t.Fatalf("scope=host = %+v, want it to exclude the org-scoped rule", byScope)
+		}
+
+		byCheck := f.listRulesQuery(t, f.viewerC, "check=memory")
+		if !hasRuleID(byCheck, hostRule.ID) {
+			t.Fatalf("check=memory = %+v, want it to include the memory rule", byCheck)
+		}
+		if hasRuleID(byCheck, orgRule.ID) {
+			t.Fatalf("check=memory = %+v, want it to exclude the cpu rule", byCheck)
+		}
+
+		byHost := f.listRulesQuery(t, f.viewerC, "host="+f.host.String())
+		if !hasRuleID(byHost, hostRule.ID) {
+			t.Fatalf("host=%s = %+v, want it to include the rule bound to that host", f.host, byHost)
+		}
+		if hasRuleID(byHost, orgRule.ID) {
+			t.Fatalf("host=%s = %+v, want it to exclude the org-scoped rule (no host_id)", f.host, byHost)
 		}
 	})
 
@@ -624,9 +692,33 @@ func TestRuleRoutes(t *testing.T) {
 			t.Fatalf("found = %+v, want Observed true: the host just reported this tuple", found)
 		}
 
-		// Cross-organization invisibility holds for the effective view too.
+		// Cross-organization invisibility holds for the effective view too,
+		// on both its shapes: an org the caller is not a member of at all
+		// answers 403 (the org itself is invisible)...
 		if resp := requestJSON(t, f.operatorC, http.MethodGet, f.s.HTTP.URL+"/api/v1/orgs/rules-other/hosts/"+f.host.String()+"/effective-rules", nil); resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("effective-rules in a foreign org = %d, want 403", resp.StatusCode)
+		}
+
+		// ...while a host id belonging to a *different* organization,
+		// requested from an org the caller *is* a member of, answers the
+		// uniform 404 (mapChecksErr via deps.Hosts.GetHost) — the same
+		// "invisible, not merely refused" contract every other rule route
+		// proves for a foreign rule id.
+		otherHostOwner := f.s.SeedUser("rules-otherhost-owner@example.test", "correct horse battery")
+		otherHostOrg := f.s.SeedOrg("rules-otherhost", otherHostOwner)
+		otherHostScoped := db.WithOrgScope(context.Background(), otherHostOrg)
+		otherHostZones, err := f.s.Deps.Hosts.ListZones(otherHostScoped, otherHostOrg)
+		if err != nil || len(otherHostZones) == 0 {
+			t.Fatalf("zones for the foreign-host org: %v", err)
+		}
+		otherHost, err := f.s.Deps.Hosts.CreateHost(otherHostScoped, otherHostOrg, hosts.HostInput{
+			Name: "foreign-host", Address: "10.0.9.99", ZoneID: otherHostZones[0].ID, Managed: true, Monitored: true,
+		})
+		if err != nil {
+			t.Fatalf("create foreign host: %v", err)
+		}
+		if resp := requestJSON(t, f.operatorC, http.MethodGet, f.hostURL(otherHost.ID)+"/effective-rules", nil); resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("effective-rules for a foreign host id in my own org = %d, want 404 %s", resp.StatusCode, mustReadBody(t, resp))
 		}
 	})
 }
