@@ -105,18 +105,53 @@ func cursorRow(t *testing.T, d *db.DB, host uuid.UUID) (dirtyAt, evaluatedAt, ne
 
 // setCursor forces a cursor into a known position — a fixture for "this
 // host is overdue" or "this host is neither dirty nor due" that does not
-// depend on having ingested anything.
-func setCursor(t *testing.T, d *db.DB, org, host uuid.UUID, dirtyAt, evaluatedAt, nextDueAt time.Time) {
+// depend on having ingested anything. The three moments are given as
+// offsets from NOW, and the offsets are applied by the database, not here.
+//
+// That is not a stylistic preference, it is the only correct way to write
+// this fixture. dirty_at and evaluated_at are compared against each other
+// by the claim, and in production both are written by the database's own
+// now() (MarkHostDirty and AdvanceEvalCursor; backlog 2.80). A fixture
+// that bound a Go time into either column would be comparing two machines'
+// clocks — and the two are not in step: measured against this test's own
+// container, the database read up to 0.7 ms BEHIND the Go process. Any
+// offset smaller than that skew inverts. That is exactly how
+// TestMarkHostDirtyMakesAHostDue came to fail under the full package load
+// and pass in isolation: it set evaluated_at from Go's clock and then
+// marked the host dirty from the database's, and when the gap between the
+// two statements was under the skew the "fresh mark" landed BEFORE the
+// evaluation it was supposed to invalidate.
+//
+// Give a negative offset for the past and a positive one for the future;
+// zero means "right now" as the database reckons it.
+func setCursor(t *testing.T, d *db.DB, org, host uuid.UUID, dirtyAt, evaluatedAt, nextDueAt time.Duration) {
 	t.Helper()
 	_, err := d.Pool().Exec(context.Background(), `
 		INSERT INTO check_eval_cursor (org_id, host_id, dirty_at, evaluated_at, next_due_at)
-		VALUES ($1,$2,$3,$4,$5)
+		VALUES ($1, $2, now() + $3::interval, now() + $4::interval, now() + $5::interval)
 		ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at,
 			evaluated_at = excluded.evaluated_at, next_due_at = excluded.next_due_at`,
 		org, host, dirtyAt, evaluatedAt, nextDueAt)
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// stillDue asks the database the claim's own question about one host:
+// is it dirty, or is it due? Tests that assert "this host must stay due"
+// ask this rather than comparing a timestamp they read back against their
+// own clock — the predicate is the property, and evaluating it in the
+// database keeps every moment in it on one clock (see setCursor).
+func stillDue(t *testing.T, d *db.DB, host uuid.UUID) bool {
+	t.Helper()
+	var due bool
+	err := d.Pool().QueryRow(context.Background(),
+		`SELECT dirty_at > evaluated_at OR next_due_at <= now() FROM check_eval_cursor WHERE host_id = $1`, host).
+		Scan(&due)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return due
 }
 
 // countRows is the "exactly one set of changes" assertion's workhorse.
@@ -130,7 +165,10 @@ func countRows(t *testing.T, d *db.DB, query string, args ...any) int {
 }
 
 // claimAll runs one ProcessDue pass collecting the hosts it claimed,
-// without evaluating anything.
+// without evaluating anything. The time it passes is the ticker's own
+// clock reading, which the claim deliberately does not use — every
+// comparison in that statement is against the database's now() — so any
+// value does here.
 func claimAll(t *testing.T, store *rules.EvalSQLStore, limit int) []rules.Due {
 	t.Helper()
 	var got []rules.Due
@@ -257,8 +295,10 @@ func TestMarkHostDirtyMakesAHostDue(t *testing.T) {
 
 	// A second mark on an already-evaluated cursor makes it dirty again:
 	// the claim compares dirty_at against evaluated_at, not against a flag
-	// somebody has to remember to clear.
-	setCursor(t, d, org, host, time.Now().Add(-time.Hour), time.Now(), time.Now().Add(time.Hour))
+	// somebody has to remember to clear. Both moments come from the
+	// database's clock — the one MarkHostDirty is about to write from too
+	// (see setCursor for what binding a Go time here cost).
+	setCursor(t, d, org, host, -time.Hour, 0, time.Hour)
 	if got := claimAll(t, store, 10); len(got) != 0 {
 		t.Fatalf("an evaluated, not-yet-due host was claimed: %+v", got)
 	}
@@ -277,8 +317,9 @@ func TestClaimTakesAHostWhoseNextDueHasPassed(t *testing.T) {
 	host := seedHost(t, d, org, "h")
 	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
 
-	clean := time.Now().Add(-time.Hour)
-	setCursor(t, d, org, host, clean, clean, time.Now().Add(-time.Minute))
+	// Evaluated exactly as recently as it was marked, so the host is not
+	// dirty; only next_due_at, a minute in the past, can claim it.
+	setCursor(t, d, org, host, -time.Hour, -time.Hour, -time.Minute)
 	got := claimAll(t, store, 10)
 	if len(got) != 1 || got[0].HostID != host {
 		t.Fatalf("claimed %+v, want the overdue host", got)
@@ -293,13 +334,13 @@ func TestClaimBoundsItsBatch(t *testing.T) {
 	org := seedOrg(t, d, "batch")
 	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
 
-	past := time.Now().Add(-time.Hour)
 	oldest := seedHost(t, d, org, "oldest")
 	middle := seedHost(t, d, org, "middle")
 	newest := seedHost(t, d, org, "newest")
-	setCursor(t, d, org, newest, past, past, time.Now().Add(-1*time.Minute))
-	setCursor(t, d, org, middle, past, past, time.Now().Add(-2*time.Minute))
-	setCursor(t, d, org, oldest, past, past, time.Now().Add(-3*time.Minute))
+	const past = -time.Hour // evaluated as recently as marked: overdue, not dirty
+	setCursor(t, d, org, newest, past, past, -1*time.Minute)
+	setCursor(t, d, org, middle, past, past, -2*time.Minute)
+	setCursor(t, d, org, oldest, past, past, -3*time.Minute)
 
 	got := claimAll(t, store, 2)
 	if len(got) != 2 {
@@ -344,6 +385,12 @@ func TestLoadGathersEveryInputTheSnapshotNeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	insertCheckState(t, d, org, host, stateRow{tuple: cpu, state: rules.StateWarn, since: now.Add(-time.Hour), evaluatedAt: now.Add(-time.Minute)})
+	// These two `at` values are Go times measured against a 30-minute
+	// window the database computes from its own now(), so this is a
+	// cross-clock comparison — a legitimate one, unlike setCursor's:
+	// 10 and 20 minutes clear of the boundary, against a skew measured in
+	// hundreds of microseconds. Keep the margins large and it stays
+	// legitimate; do not tighten them to a second.
 	insertStateChange(t, d, org, host, now.Add(-10*time.Minute), cpu, rules.StateOK, rules.StateWarn)
 	insertStateChange(t, d, org, host, now.Add(-40*time.Minute), cpu, rules.StateWarn, rules.StateOK)
 	insertHostState(t, d, org, host, rules.StateWarn, 0, 1, 0, now.Add(-time.Hour), now.Add(-time.Minute))
@@ -451,6 +498,11 @@ func TestApplyWritesEverythingInTheClaimsTransaction(t *testing.T) {
 		}},
 		Changes: []rules.Change{{At: now, Tuple: cpu, From: rules.StateOK, To: rules.StateCrit, Value: ptr(95.0)}},
 		Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: now, EvaluatedAt: now},
+		// next_due_at genuinely is written from the manager's clock in
+		// production (Result.NextDue) and compared against the database's
+		// now() by the claim, so a Go time is right here. 90 seconds is
+		// far enough clear of the two clocks' skew for "not due any more"
+		// to mean what it says.
 		NextDue: now.Add(90 * time.Second),
 	}
 
@@ -492,6 +544,9 @@ func TestApplyWritesEverythingInTheClaimsTransaction(t *testing.T) {
 	if !nextDue.Equal(res.NextDue) {
 		t.Fatalf("next_due_at = %v, want the evaluation's own %v", nextDue, res.NextDue)
 	}
+	// evaluated_at is written by the database; `now` is this process's
+	// clock. A minute of slack is what makes comparing them across the two
+	// meaningful — the assertion is "recent", not "equal".
 	if evaluatedAt.Before(now.Add(-time.Minute)) {
 		t.Fatalf("evaluated_at = %v, want the database's own clock at the claim", evaluatedAt)
 	}
@@ -558,8 +613,8 @@ func TestAFailedHostLeavesNothingBehind(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// The bad host is claimed first (older next_due_at), so the good host's
 	// own savepoint commits after the failure rather than before it.
-	setCursor(t, d, org, bad, now, now.Add(-time.Hour), now.Add(-2*time.Minute))
-	setCursor(t, d, org, good, now, now.Add(-time.Hour), now.Add(-1*time.Minute))
+	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
 
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
 	res := rules.Result{
@@ -593,8 +648,8 @@ func TestAFailedHostLeavesNothingBehind(t *testing.T) {
 	if n := countRows(t, d, `SELECT count(*) FROM check_host_states WHERE host_id = $1`, bad); n != 0 {
 		t.Fatalf("the failed host left %d check_host_states rows behind", n)
 	}
-	if _, _, nextDue := cursorRow(t, d, bad); !nextDue.Before(now) {
-		t.Fatalf("the failed host's next_due_at advanced to %v; it must stay due", nextDue)
+	if !stillDue(t, d, bad) {
+		t.Fatal("the failed host's cursor advanced; it must stay due for the next tick")
 	}
 	// The host that succeeded committed regardless.
 	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, good); n != 1 {
@@ -723,6 +778,8 @@ func TestTwoTickersEvaluateOneDueHostExactlyOnce(t *testing.T) {
 	if states[0].State != rules.StateCrit || states[0].RuleID == nil || *states[0].RuleID != rule.ID {
 		t.Fatalf("state = %+v, want crit decided by the seeded rule", states[0])
 	}
+	// Both sides are this process's clock: next_due_at is what Evaluate
+	// derived from the tick's injected now, read back unchanged.
 	if _, _, nextDue := cursorRow(t, d, host); !nextDue.After(now) {
 		t.Fatalf("next_due_at = %v, want a moment after the tick's own now", nextDue)
 	}
@@ -803,8 +860,8 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	good := seedHost(t, d, org, "good")
 	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	setCursor(t, d, org, bad, now, now.Add(-time.Hour), now.Add(-2*time.Minute))
-	setCursor(t, d, org, good, now, now.Add(-time.Hour), now.Add(-1*time.Minute))
+	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
 
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
 	res := rules.Result{
@@ -833,8 +890,8 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, good); n != 1 {
 		t.Fatalf("the healthy host wrote %d check_states rows, want 1", n)
 	}
-	if _, _, nextDue := cursorRow(t, d, bad); !nextDue.Before(now) {
-		t.Fatalf("the panicking host's next_due_at advanced to %v; it must stay due", nextDue)
+	if !stillDue(t, d, bad) {
+		t.Fatal("the panicking host's cursor advanced; it must stay due for the next tick")
 	}
 }
 
@@ -853,9 +910,9 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 	first := seedHost(t, d, org, "first")
 	second := seedHost(t, d, org, "second")
 	third := seedHost(t, d, org, "third")
-	setCursor(t, d, org, first, now, now.Add(-time.Hour), now.Add(-3*time.Minute))
-	setCursor(t, d, org, second, now, now.Add(-time.Hour), now.Add(-2*time.Minute))
-	setCursor(t, d, org, third, now, now.Add(-time.Hour), now.Add(-1*time.Minute))
+	setCursor(t, d, org, first, 0, -time.Hour, -3*time.Minute)
+	setCursor(t, d, org, second, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, org, third, 0, -time.Hour, -1*time.Minute)
 
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
 	res := rules.Result{
@@ -890,8 +947,8 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 		if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, host); n != 0 {
 			t.Fatalf("the %s host wrote %d rows, want none", name, n)
 		}
-		if _, _, nextDue := cursorRow(t, d, host); !nextDue.Before(now) {
-			t.Fatalf("the %s host's next_due_at advanced to %v; it must stay due", name, nextDue)
+		if !stillDue(t, d, host) {
+			t.Fatalf("the %s host's cursor advanced; it must stay due", name)
 		}
 	}
 }
