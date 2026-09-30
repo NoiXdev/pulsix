@@ -24,6 +24,13 @@ import (
 // existed, and SeedForOrg after it. Exported (like NewGroupHosts in
 // maintenance_ports.go) so apitest.go's fixture wiring can bind the same
 // composition production does, without duplicating it.
+//
+// One deliberate exception to "wire both in the same commit": v0.3b-2 Task
+// 5 added rules.Service.SeedForOrg to Build's chain but not to apitest.go's
+// — apitest's Deps has no Rules service yet for a seeded rules hook to be
+// useful to any test, so there is nothing there to hang the call off until
+// the rules API surface (Task 10) adds one. That task should add
+// rulesSvc.SeedForOrg to apitest.go's chain and SeedOrg alongside it.
 func ChainOrgCreatedHooks(hooks ...tenancy.OrgCreatedHook) tenancy.OrgCreatedHook {
 	return func(ctx context.Context, orgID uuid.UUID) error {
 		for _, hook := range hooks {

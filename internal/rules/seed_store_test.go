@@ -2,7 +2,11 @@ package rules_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/db"
@@ -10,22 +14,76 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
+// backfillBeginMarker and backfillEndMarker bound the exact backfill INSERT
+// statement inside migration 00045_check_rules.sql (internal/db/migrations),
+// so loadBackfillSQL can extract it verbatim rather than a hand-copied
+// second draft of it living in this test file. Moving, renaming or
+// deleting either marker without updating this constant — or vice versa —
+// makes loadBackfillSQL fail loudly (see its own doc comment), which is the
+// whole point: a copy that can silently drift is worse than no copy.
+const (
+	backfillBeginMarker = "-- rules-seed-backfill:begin"
+	backfillEndMarker   = "-- rules-seed-backfill:end"
+)
+
+// loadBackfillSQL reads the real migration file off disk and returns
+// exactly the statement between backfillBeginMarker and backfillEndMarker,
+// so TestRulesBackfillMatchesSeedRules exercises the actual SQL a database
+// runs when this migration applies — not a second, hand-maintained copy of
+// it that could drift out of sync with the file the moment someone edits
+// the migration without touching this test (the finding this test was
+// rewritten to close). It fails the test outright, rather than returning
+// an empty string that would let the caller silently insert zero rows, if
+// the migration file cannot be read or either marker is missing.
+func loadBackfillSQL(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("loadBackfillSQL: runtime.Caller could not resolve this test file's own path")
+	}
+	migrationPath := filepath.Join(filepath.Dir(thisFile), "..", "db", "migrations", "00045_check_rules.sql")
+	contents, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("loadBackfillSQL: read %s: %v", migrationPath, err)
+	}
+
+	text := string(contents)
+	beginIdx := strings.Index(text, backfillBeginMarker)
+	if beginIdx == -1 {
+		t.Fatalf("loadBackfillSQL: marker %q not found in %s — has it been renamed or removed?", backfillBeginMarker, migrationPath)
+	}
+	afterBegin := beginIdx + len(backfillBeginMarker)
+	endIdx := strings.Index(text[afterBegin:], backfillEndMarker)
+	if endIdx == -1 {
+		t.Fatalf("loadBackfillSQL: marker %q not found after %q in %s — has it been renamed or removed?", backfillEndMarker, backfillBeginMarker, migrationPath)
+	}
+
+	stmt := strings.TrimSpace(text[afterBegin : afterBegin+endIdx])
+	if stmt == "" {
+		t.Fatalf("loadBackfillSQL: statement between the markers in %s is empty", migrationPath)
+	}
+	return stmt
+}
+
 // TestRulesBackfillMatchesSeedRules proves migration 00045's backfill
 // INSERT: an organization that already has no check_rules rows (as every
 // organization created before this migration's Task 5 addendum did) gets
 // the same five-row starter set a newly created one gets from
-// rules.Service.SeedForOrg. This statement is copied from the migration's
-// own Up section (they must stay in sync by hand — a migration cannot call
-// Go code, and there is no way to re-run "only the backfill part" of an
+// rules.Service.SeedForOrg. The statement under test is read straight out
+// of the migration file (loadBackfillSQL) and executed against a real
+// database — there is no way to re-run "only the backfill part" of an
 // already-applied migration through goose, which is why this test
-// re-executes the SQL directly rather than re-running the migration).
+// re-executes the SQL directly rather than re-running the migration — so
+// the only hand-kept-in-sync pair left is the migration's SQL and
+// SeedRules() itself, exactly the 2-way sync the migration's own comment
+// promises, never a 3-way one against a second copy living in this file.
 //
 // Unlike checks' own TestBackfillSeedsExistingOrganizations (which only
 // checks keys and counts), this test decodes each backfilled row's ast/
 // clear_ast back into a rules.Node tree and compares it, field for field,
 // against what rules.SeedRules()'s own Form.Compile() produces for the
-// same entry — proving the SQL literal and the Go function truly encode
-// the same rule, not merely the same name and count.
+// same entry — proving the SQL and the Go function truly encode the same
+// rule, not merely the same name and count.
 func TestRulesBackfillMatchesSeedRules(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "rules-backfill")
@@ -40,50 +98,15 @@ func TestRulesBackfillMatchesSeedRules(t *testing.T) {
 		t.Fatalf("before = %+v, want none", before)
 	}
 
-	const backfillSQL = `
-INSERT INTO check_rules (
-  id, org_id, name, enabled, origin, scope, check_key, metric, severity,
-  mode, ast, clear_ast, source, for_duration
-)
-SELECT gen_random_uuid(), o.id, v.name, true, 'seed', 'org', v.check_key, v.metric, v.severity,
-  'form', v.ast::jsonb, v.clear_ast::jsonb, v.source, v.for_duration::interval
-FROM organizations o
-CROSS JOIN (VALUES
-  (
-    'Disk usage warning', 'disk', 'disk.used_pct', 'warn',
-    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":85}]}',
-    '{"kind":"compare","op":"<","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":80}]}',
-    'disk.used_pct >= 85', '0'
-  ),
-  (
-    'Disk usage critical', 'disk', 'disk.used_pct', 'crit',
-    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":95}]}',
-    '{"kind":"compare","op":"<","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":90}]}',
-    'disk.used_pct >= 95', '0'
-  ),
-  (
-    'Memory usage warning', 'memory', 'mem.used_pct', 'warn',
-    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"mem.used_pct"},{"kind":"number","num":90}]}',
-    NULL,
-    'mem.used_pct >= 90', '10 minutes'
-  ),
-  (
-    'Memory usage critical', 'memory', 'mem.used_pct', 'crit',
-    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"mem.used_pct"},{"kind":"number","num":97}]}',
-    NULL,
-    'mem.used_pct >= 97', '5 minutes'
-  ),
-  (
-    'CPU usage warning', 'cpu', 'cpu.used_pct', 'warn',
-    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"cpu.used_pct"},{"kind":"number","num":90}]}',
-    NULL,
-    'cpu.used_pct >= 90', '15 minutes'
-  )
-) AS v(name, check_key, metric, severity, ast, clear_ast, source, for_duration)
-WHERE o.id = $1
-`
-	if _, err := d.Pool().Exec(context.Background(), backfillSQL, org); err != nil {
-		t.Fatal(err)
+	backfillSQL := loadBackfillSQL(t)
+	// The migration's own statement backfills every organization in the
+	// table (it runs once, for every pre-existing org, when the migration
+	// applies) — no WHERE clause to scope it to just this test's org. That
+	// is fine here: testdb.Open truncates every table after each test
+	// (testdb.go's own t.Cleanup), so org is the only row in organizations
+	// when this statement runs.
+	if _, err := d.Pool().Exec(context.Background(), backfillSQL); err != nil {
+		t.Fatalf("execute the migration's backfill statement: %v", err)
 	}
 
 	after, err := st.List(scoped, org, rules.Filter{})

@@ -119,6 +119,17 @@ CREATE POLICY org_isolation_bypass ON check_rules
 -- sync with SeedRules() (internal/rules/seed.go) by hand: a migration
 -- cannot call Go code. service.state deliberately has no row here either —
 -- see SeedRules()'s own doc comment for why.
+--
+-- The pair of marker comments immediately below (rules-seed-backfill:
+-- begin/end) is not decorative: internal/rules's own
+-- TestRulesBackfillMatchesSeedRules reads this file at test time, extracts
+-- the statement between them verbatim, executes it against a real
+-- database, and compares the result against SeedRules() — so this
+-- INSERT and SeedRules() are still only a 2-way hand-sync (Go and SQL),
+-- not a 3-way one with a second, driftable copy of the SQL living in the
+-- test. Moving, renaming or removing either marker fails that test loudly
+-- rather than letting it silently stop checking anything.
+-- rules-seed-backfill:begin
 INSERT INTO check_rules (
   id, org_id, name, enabled, origin, scope, check_key, metric, severity,
   mode, ast, clear_ast, source, for_duration
@@ -158,6 +169,7 @@ CROSS JOIN (VALUES
     'cpu.used_pct >= 90', '15 minutes'
   )
 ) AS v(name, check_key, metric, severity, ast, clear_ast, source, for_duration);
+-- rules-seed-backfill:end
 
 -- +goose Down
 DROP TABLE check_rules;
