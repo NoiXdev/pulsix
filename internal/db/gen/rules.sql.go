@@ -26,13 +26,28 @@ type AdvanceEvalCursorParams struct {
 }
 
 // Task 9: the claim's own write-back, in the transaction that holds the
-// row lock. evaluated_at is now() — the transaction's start time, so it is
-// never later than the data the evaluation actually read, which means a
-// batch that committed between the claim and this statement leaves the
-// host dirty rather than silently clean. next_due_at is the evaluation's
-// own conclusion (internal/rules.Result.NextDue): the earliest of a
-// ripening candidate's deadline and a value's staleness deadline, or the
-// heartbeat when the host has nothing pending.
+// row lock. next_due_at is the evaluation's own conclusion
+// (internal/rules.Result.NextDue): the earliest of a ripening candidate's
+// deadline and a value's staleness deadline, or a 15-second heartbeat when
+// the host has nothing pending at all.
+//
+// evaluated_at is now(), which inside a transaction is the transaction's
+// START time — earlier than every read the evaluation made. That is the
+// conservative direction: an ingest batch that commits after the claim
+// began carries a dirty_at at or after this evaluated_at, so it leaves the
+// host dirty rather than silently clean.
+//
+// One narrow case remains, and it delays an evaluation rather than losing
+// one: an ingest transaction that BEGAN before the claim and commits after
+// the claimed host was read stamped its dirty_at before this evaluated_at,
+// while its rows were invisible to the read. That host is therefore not
+// marked dirty by those samples. What brings it back is whichever comes
+// first of its own next_due_at and the next batch of samples for it — so
+// the bound is "the earliest pending deadline, or the host's next sample",
+// NOT the 15-second heartbeat: the heartbeat only applies to a host with
+// nothing pending at all, and a host with a ripening candidate can have a
+// next_due_at hours out. In practice a host being ingested for is a host
+// ingesting again shortly, which is the short half of that minimum.
 func (q *Queries) AdvanceEvalCursor(ctx context.Context, arg AdvanceEvalCursorParams) error {
 	_, err := q.db.Exec(ctx, advanceEvalCursor, arg.NextDueAt, arg.OrgID, arg.HostID)
 	return err
@@ -51,9 +66,24 @@ type ClaimDueEvalCursorsRow struct {
 	HostID uuid.UUID `json:"host_id"`
 }
 
-// Task 9, the ticker's claim (v0.3b-2 spec, "Trigger"), verbatim. Both
-// comparisons are against stored moments or the database's own now(),
-// never a manager's clock (backlog 2.80).
+// Task 9, the ticker's claim (v0.3b-2 spec, "Trigger"), verbatim. The
+// reading side of both comparisons is the database's own clock: dirty_at
+// and evaluated_at are both stamped by now() in this file, and now() here
+// is this statement's own (backlog 2.80).
+//
+// next_due_at is the one value that crosses clocks, and it does so by
+// design: it is Result.NextDue, which the pure evaluator computes from the
+// ticker's injected wall clock (Snapshot.Now) and which this statement
+// compares against the database's now(). The consequence is worth naming
+// because it is silent: a manager whose clock runs X ahead writes every
+// next_due_at X too late, so every host it evaluates is looked at X late
+// (by any manager, not only that one); a clock X behind writes them X
+// early, so those hosts come back due on every tick until real time
+// catches up, which costs evaluations, never correctness. Keeping it on
+// the database clock would mean either a second round trip per host to
+// read now() or a duration-from-now instead of an instant, and neither is
+// worth it while the manager's own clock is already what decides staleness
+// inside the evaluation itself.
 //
 // FOR UPDATE SKIP LOCKED is the entire distribution mechanism between
 // managers: a row another manager is already evaluating is skipped rather

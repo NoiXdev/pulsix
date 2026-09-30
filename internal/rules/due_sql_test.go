@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -834,5 +835,86 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	}
 	if _, _, nextDue := cursorRow(t, d, bad); !nextDue.Before(now) {
 		t.Fatalf("the panicking host's next_due_at advanced to %v; it must stay due", nextDue)
+	}
+}
+
+// TestABatchCutShortKeepsWhatItCommitted is what the batch deadline
+// relies on (see rules.batchDeadlineFactor): when the batch's context ends
+// mid-pass, the hosts whose savepoints already committed are kept — the
+// claim's transaction commits on a detached context — the host that was in
+// flight is rolled back, and the hosts never reached are left untouched
+// and still due for whichever manager gets there first.
+func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "batch-cut-short")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	first := seedHost(t, d, org, "first")
+	second := seedHost(t, d, org, "second")
+	third := seedHost(t, d, org, "third")
+	setCursor(t, d, org, first, now, now.Add(-time.Hour), now.Add(-3*time.Minute))
+	setCursor(t, d, org, second, now, now.Add(-time.Hour), now.Add(-2*time.Minute))
+	setCursor(t, d, org, third, now, now.Add(-time.Hour), now.Add(-1*time.Minute))
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	res := rules.Result{
+		States:  []rules.TupleState{{Tuple: cpu, State: rules.StateOK, Since: now, EvaluatedAt: now}},
+		Host:    rules.HostState{State: rules.StateOK, Since: now, EvaluatedAt: now},
+		NextDue: now.Add(time.Hour),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n, err := store.ProcessDue(ctx, now, 10, func(hostCtx context.Context, due rules.Due) error {
+		if due.HostID == second {
+			// The deadline fires while this host is being loaded: its own
+			// work fails on the dead context, and nothing after it starts.
+			cancel()
+			return hostCtx.Err()
+		}
+		return store.Apply(hostCtx, due, res)
+	})
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue reported %d evaluated, want 1 — the first host's savepoint had already committed", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, first); n != 1 {
+		t.Fatalf("the host that finished before the cut wrote %d rows, want 1", n)
+	}
+	if _, _, nextDue := cursorRow(t, d, first); !nextDue.Equal(res.NextDue) {
+		t.Fatalf("the finished host's next_due_at = %v, want %v", nextDue, res.NextDue)
+	}
+	for name, host := range map[string]uuid.UUID{"in flight": second, "never reached": third} {
+		if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, host); n != 0 {
+			t.Fatalf("the %s host wrote %d rows, want none", name, n)
+		}
+		if _, _, nextDue := cursorRow(t, d, host); !nextDue.Before(now) {
+			t.Fatalf("the %s host's next_due_at advanced to %v; it must stay due", name, nextDue)
+		}
+	}
+}
+
+// TestWindowsRefusesAnUnknownAggregate: the statement's CASE would return
+// NULL for one, which the filter drops — indistinguishable from a window
+// holding no sample, and so a silent non-match. An unknown aggregate is an
+// error instead; only a hand-built request can produce one, since
+// TypeCheck refuses the same set at save time.
+func TestWindowsRefusesAnUnknownAggregate(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "unknown-agg")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	reqs := []rules.WindowRequest{
+		{Key: rules.ItemKey{CheckKey: "cpu"}, Metric: "cpu.used_pct", Agg: "avg", Seconds: 600},
+		{Key: rules.ItemKey{CheckKey: "cpu"}, Metric: "cpu.used_pct", Agg: "median", Seconds: 600},
+	}
+	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, reqs, time.Now())
+	if err == nil {
+		t.Fatalf("Windows accepted an unknown aggregate and returned %+v", got)
+	}
+	if !strings.Contains(err.Error(), "median") {
+		t.Fatalf("error = %v, want it to name the aggregate it refused", err)
 	}
 }

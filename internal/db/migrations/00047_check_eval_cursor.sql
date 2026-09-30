@@ -29,8 +29,20 @@
 --                mid-evaluation are lost); two timestamps cannot.
 --   next_due_at  when this host must be looked at again even if nothing
 --                arrives: a ripening candidate's own deadline, the moment
---                a value goes stale, or the 15-second heartbeat otherwise
---                (internal/rules.nextDue computes it).
+--                a value goes stale, or a 15-second heartbeat when the
+--                host has nothing pending at all (internal/rules.nextDue
+--                computes it).
+--
+-- dirty_at and evaluated_at are both written by now() (MarkHostDirty,
+-- AdvanceEvalCursor), so the comparison between them never crosses two
+-- machines' clocks. next_due_at is the exception, deliberately: it is the
+-- pure evaluator's conclusion, computed from the ticker's own injected
+-- clock, and the claim compares it against the database's now(). A manager
+-- whose clock runs ahead therefore delays every host it evaluates by that
+-- much; one whose clock runs behind makes them due again on every tick
+-- until real time catches up. Both cost evaluations, neither costs
+-- correctness — see ClaimDueEvalCursors' own comment for why that trade
+-- was taken.
 --
 -- Both default to 'epoch' so that a row created by ingest — which sets
 -- only dirty_at — is immediately both dirty and due, and gets evaluated on

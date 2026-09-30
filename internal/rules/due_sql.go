@@ -12,6 +12,7 @@ package rules
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -48,16 +49,37 @@ func NewEvalSQLStore(d *db.DB, checks HostChecks, log *slog.Logger) *EvalSQLStor
 // org-bound transaction cannot express.
 type evalTxKey struct{}
 
-// conn is the connection a statement runs on: the claimed host's
-// transaction when there is one, and the pool otherwise (a direct call to
-// Load or Windows from outside ProcessDue, which the tests and any future
-// read-only caller make).
+// claimTx reports the claimed host's transaction bound to ctx, if any.
+func claimTx(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(evalTxKey{}).(pgx.Tx)
+	return tx, ok
+}
+
+// conn is the connection a READ runs on: the claimed host's transaction
+// when there is one, and the pool otherwise — a direct call to Load or
+// Windows from outside ProcessDue, which the tests and any future
+// read-only caller make, is a legitimate thing to do and reads the same
+// rows either way.
+//
+// Apply deliberately does not use this fallback (see errNoClaimTx): a
+// write outside the claim would be exactly the silent failure this file's
+// atomicity is built to prevent.
 func (s *EvalSQLStore) conn(ctx context.Context) gen.DBTX {
-	if tx, ok := ctx.Value(evalTxKey{}).(pgx.Tx); ok {
+	if tx, ok := claimTx(ctx); ok {
 		return tx
 	}
 	return s.d.Pool()
 }
+
+// errNoClaimTx is what Apply returns when its context carries no claimed
+// host's transaction. Falling back to the pool the way the reads do would
+// write the states, the changes, the roll-up and the cursor advance on
+// four separate autocommitted statements, with no row lock on the cursor
+// and no way to undo the first three if the fourth failed — the whole
+// atomicity this store exists for, lost to a caller that simply forgot to
+// pass the context ProcessDue handed it. Refusing is the only behaviour
+// that cannot be got wrong quietly.
+var errNoClaimTx = errors.New("rules: apply evaluation outside a claimed host's transaction")
 
 // ProcessDue implements EvalStore. It follows internal/schedules'
 // DueSQLStore exactly rather than inventing a second claim protocol: one
@@ -118,6 +140,16 @@ func (s *EvalSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 // savepoint that will not begin or commit — leaves the host untouched and
 // still due; a panic is recovered here so that one host's bug costs that
 // host and not the batch, the belt to Ticker.tickSafely's suspenders.
+//
+// The savepoint commits on ctx itself, deliberately unlike
+// internal/schedules' processRow, which detaches its write-back onto a
+// fresh context. The reason that one has to is that its write-back records
+// a job it has ALREADY enqueued, so losing the record re-fires the job.
+// Nothing here has an outside effect: every statement Apply issues is an
+// upsert or an append that was rolled back with it, so a host whose
+// savepoint is cut off by the batch deadline is simply evaluated again on
+// the next tick, writing the same state and the same single change. The
+// simpler lifetime is worth keeping while that stays true.
 func (s *EvalSQLStore) evaluateOne(ctx context.Context, tx pgx.Tx, d Due, fn func(ctx context.Context, d Due) error) (committed bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -155,7 +187,11 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, tx pgx.Tx, d Due, fn fun
 // advance, all on the connection ProcessDue bound to ctx — so either the
 // whole evaluation lands or none of it does.
 func (s *EvalSQLStore) Apply(ctx context.Context, d Due, res Result) error {
-	q := gen.New(s.conn(ctx))
+	tx, ok := claimTx(ctx)
+	if !ok {
+		return errNoClaimTx
+	}
+	q := gen.New(tx)
 
 	for _, st := range res.States {
 		// candidate_state and candidate_since are set together or not at

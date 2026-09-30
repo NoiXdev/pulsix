@@ -169,9 +169,7 @@ func checkNumber(n Node) error {
 		if entry.Kind != MetricNumeric {
 			return typeErr(n.Pos, "window: %q is not numeric", n.Name)
 		}
-		switch n.Agg {
-		case "avg", "min", "max", "rate":
-		default:
+		if !knownAgg(n.Agg) {
 			return typeErr(n.Pos, "window: unknown aggregate %q", n.Agg)
 		}
 		d := time.Duration(n.Seconds) * time.Second

@@ -36,6 +36,39 @@ const (
 	DefaultEvalBatch    = 200
 )
 
+// batchDeadlineFactor and minBatchDeadline bound one batch, exactly as
+// internal/schedules' own ticker bounds its claim — the same protocol
+// deserves the same bound, and this ticker is the more exposed of the two
+// to what it protects against.
+//
+// The shape: ProcessDue opens a transaction, claims up to `batch` cursor
+// rows with FOR UPDATE, and then — for every one of them — Load calls into
+// the check pipeline, which acquires ITS OWN pool connection
+// (checks.Service.ResolveHost goes through MonitoredHosts and
+// loadResolveBundle, each on a connection of its own) while this batch is
+// already holding one. Under a pool saturated by HTTP traffic that second
+// acquisition can block indefinitely, and it blocks while holding the
+// first connection and up to `batch` row locks. Nothing would end it: Run
+// does not re-enter while Tick is running, so this manager would stop
+// evaluating altogether; every other manager's claim would SKIP LOCKED
+// past those rows and leave them to it; there is deliberately no lease to
+// expire and no reaper, because the design assumes a dead manager drops
+// its connection — and a hung one does not. The open transaction would
+// also pin Postgres' xmin horizon against vacuum for as long as it lasted.
+//
+// So the batch gets a deadline: pgx fails the blocked acquisition, the
+// claim's transaction rolls back or commits what it has, the row locks are
+// released, and every host it did not reach is still due for whichever
+// manager gets there first. minBatchDeadline is the floor, for the same
+// reason internal/schedules has one: with a short interval (a test's, a dev
+// instance's) the multiple alone would be well under a second, and an
+// ordinarily slow batch would then be cut off instead of merely finishing
+// late.
+const (
+	batchDeadlineFactor = 4
+	minBatchDeadline    = 10 * time.Second
+)
+
 // Due is one host the ticker has claimed: which organization's row-level
 // scope its statements belong to, and which host to evaluate.
 type Due struct {
@@ -101,7 +134,12 @@ type Ticker struct {
 	interval time.Duration
 	batch    int
 	log      *slog.Logger
-	overruns atomic.Int64
+	// deadlineFloor is minBatchDeadline. It is a field rather than a
+	// constant read directly only so that ticker_internal_test.go can
+	// shorten it: proving that a stuck batch really is cut loose would
+	// otherwise mean waiting ten seconds for every run of that test.
+	deadlineFloor time.Duration
+	overruns      atomic.Int64
 }
 
 // TickerOption configures a Ticker at construction.
@@ -151,11 +189,12 @@ func WithTickerLogger(l *slog.Logger) TickerOption {
 // NewTicker builds the ticker on store, with every option defaulted.
 func NewTicker(store EvalStore, opts ...TickerOption) *Ticker {
 	t := &Ticker{
-		store:    store,
-		now:      time.Now,
-		interval: DefaultEvalInterval,
-		batch:    DefaultEvalBatch,
-		log:      slog.Default(),
+		store:         store,
+		now:           time.Now,
+		interval:      DefaultEvalInterval,
+		batch:         DefaultEvalBatch,
+		log:           slog.Default(),
+		deadlineFloor: minBatchDeadline,
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -182,9 +221,15 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 	// against the same present, so two hosts evaluated in one tick can
 	// never disagree about what "now" was.
 	now := t.now()
-	n, err := t.store.ProcessDue(ctx, now, t.batch, func(ctx context.Context, d Due) error {
+	// The batch's own deadline — see batchDeadlineFactor for the failure it
+	// exists to end. It is not timidity about slow batches: it is the only
+	// thing that ever ends a batch blocked acquiring a second pool
+	// connection while holding the first and the batch's row locks.
+	batchCtx, cancel := context.WithTimeout(ctx, t.batchDeadline())
+	n, err := t.store.ProcessDue(batchCtx, now, t.batch, func(ctx context.Context, d Due) error {
 		return t.evaluate(ctx, d, now)
 	})
+	cancel()
 	if elapsed := t.now().Sub(now); elapsed > t.interval {
 		t.overruns.Add(1)
 		// Once per occurrence, with both numbers that say what to do about
@@ -194,6 +239,12 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 			"hosts", n, "batch", t.batch, "elapsed", elapsed, "interval", t.interval)
 	}
 	return n, err
+}
+
+// batchDeadline bounds one batch: batchDeadlineFactor x the interval,
+// never less than the floor.
+func (t *Ticker) batchDeadline() time.Duration {
+	return max(batchDeadlineFactor*t.interval, t.deadlineFloor)
 }
 
 // evaluate is one host: load, fetch the windows its rules ask for,

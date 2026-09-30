@@ -23,6 +23,20 @@ const (
 	KindNot     Kind = "not"
 )
 
+// knownAgg reports whether agg is one of the four window aggregates the
+// language has. It is the single source of truth for that set: TypeCheck
+// refuses a tree naming anything else at save time, and the window fetch
+// (window_sql.go) refuses to ask the database for one at evaluation time —
+// two guards over one list, so they cannot drift apart.
+func knownAgg(agg string) bool {
+	switch agg {
+	case "avg", "min", "max", "rate":
+		return true
+	default:
+		return false
+	}
+}
+
 // Node is one node of a rule tree. One struct rather than an interface per
 // kind: the tree is stored as jsonb and read back by a switch, and a single
 // shape keeps encoding, decoding and equality trivial. Not every field

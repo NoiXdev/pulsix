@@ -46,14 +46,19 @@ type fakeEvalStore struct {
 	windows  map[rules.WindowRequest]float64
 	claimErr error
 	loadErr  map[uuid.UUID]error
-	applyErr map[uuid.UUID]error
+	// recordLoadDeadline makes Load count the calls whose context carried
+	// a deadline — the batch's own, threaded down to the per-host work.
+	recordLoadDeadline bool
+	loadDeadlines      int
+	applyErr           map[uuid.UUID]error
 
-	limits   []int
-	nows     []time.Time
-	loaded   []uuid.UUID
-	reqs     map[uuid.UUID][]rules.WindowRequest
-	windowAt map[uuid.UUID]time.Time
-	applied  map[uuid.UUID]rules.Result
+	limits    []int
+	nows      []time.Time
+	deadlines []time.Time
+	loaded    []uuid.UUID
+	reqs      map[uuid.UUID][]rules.WindowRequest
+	windowAt  map[uuid.UUID]time.Time
+	applied   map[uuid.UUID]rules.Result
 }
 
 func newFakeEvalStore(load rules.HostLoad, dues ...rules.Due) *fakeEvalStore {
@@ -69,6 +74,9 @@ func (f *fakeEvalStore) ProcessDue(ctx context.Context, now time.Time, limit int
 	f.mu.Lock()
 	f.limits = append(f.limits, limit)
 	f.nows = append(f.nows, now)
+	if deadline, ok := ctx.Deadline(); ok {
+		f.deadlines = append(f.deadlines, deadline)
+	}
 	claimErr, dues := f.claimErr, f.due
 	f.mu.Unlock()
 	if claimErr != nil {
@@ -87,10 +95,13 @@ func (f *fakeEvalStore) ProcessDue(ctx context.Context, now time.Time, limit int
 	return n, nil
 }
 
-func (f *fakeEvalStore) Load(_ context.Context, d rules.Due) (rules.HostLoad, error) {
+func (f *fakeEvalStore) Load(ctx context.Context, d rules.Due) (rules.HostLoad, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.loaded = append(f.loaded, d.HostID)
+	if _, ok := ctx.Deadline(); ok && f.recordLoadDeadline {
+		f.loadDeadlines++
+	}
 	if err := f.loadErr[d.HostID]; err != nil {
 		return rules.HostLoad{}, err
 	}
@@ -464,5 +475,64 @@ func TestRunSurvivesAPanickingTick(t *testing.T) {
 	<-errC
 	if !strings.Contains(buf.String(), "evaluation tick panicked") {
 		t.Fatalf("the panic was not logged; log was %q", buf.String())
+	}
+}
+
+// TestTickBoundsItsBatchWithADeadline is the bound that makes this claim
+// protocol survivable (see batchDeadlineFactor): every batch runs under
+// batchDeadlineFactor x the interval, never under less than the floor. A
+// batch without one, blocked acquiring a second pool connection while
+// holding the first and the batch's row locks, would never end on its own
+// — this manager would stop evaluating, and every other manager would
+// SKIP LOCKED past the rows it holds.
+func TestTickBoundsItsBatchWithADeadline(t *testing.T) {
+	cases := []struct {
+		name     string
+		interval time.Duration
+		want     time.Duration
+	}{
+		{name: "four times the interval", interval: time.Hour, want: 4 * time.Hour},
+		{name: "never under the floor", interval: time.Millisecond, want: 10 * time.Second},
+		// The shipped default: 4 x 15 s, comfortably over the floor.
+		{name: "the default interval", interval: 0, want: 60 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeEvalStore(cpuLoad(), due(hostA))
+			opts := []rules.TickerOption{rules.WithTickerClock(func() time.Time { return tickEpoch })}
+			if tc.interval > 0 {
+				opts = append(opts, rules.WithInterval(tc.interval))
+			}
+			tk := rules.NewTicker(store, opts...)
+
+			before := time.Now()
+			if _, err := tk.Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if len(store.deadlines) != 1 {
+				t.Fatalf("ProcessDue ran with %d deadlines, want exactly 1 — an unbounded batch can hang for ever", len(store.deadlines))
+			}
+			got := store.deadlines[0].Sub(before)
+			if got < tc.want-5*time.Second || got > tc.want+5*time.Second {
+				t.Fatalf("batch deadline = %v from the call, want about %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTickPassesTheBatchDeadlineDownToEveryHost: the deadline has to reach
+// the per-host work, since that is where the blocking happens (Load calls
+// into the check pipeline, which acquires a pool connection of its own).
+func TestTickPassesTheBatchDeadlineDownToEveryHost(t *testing.T) {
+	store := newFakeEvalStore(cpuLoad(), due(hostA))
+	store.recordLoadDeadline = true
+	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	if _, err := tk.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.loadDeadlines != 1 {
+		t.Fatalf("Load ran with a deadline %d times, want 1", store.loadDeadlines)
 	}
 }

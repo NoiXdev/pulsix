@@ -30,6 +30,16 @@ import (
 // path's own plausibility window already refuses anything more than two
 // minutes ahead of the manager's clock.
 //
+// For avg/min/max a future-stamped sample the ingest layer accepted is
+// simply one more reading, which is right. For rate it is slightly more
+// than that: the sample becomes last(), so the numerator spans more than
+// `seconds` while the denominator stays `seconds`, and the rate reads low
+// by at most the ratio of the skew to the window. It is bounded by the
+// ingest ceiling (two minutes), it corrects itself as soon as the host's
+// clock does or the window moves past the sample, and clamping `at` to
+// "now" would silently drop the newest reading of a host whose clock is a
+// second fast — which is the worse failure. Named rather than fixed.
+//
 // avg/min/max are the ordinary aggregates. rate is (last − first) /
 // seconds, computed from TimescaleDB's own first()/last() aggregates —
 // which take the value and the time column and so need neither a sort nor
@@ -38,6 +48,12 @@ import (
 // division by zero: seconds is the rule's own window length and is never
 // the number of samples. NULLIF guards the one way seconds could still be
 // zero — a request built by hand rather than by a validated rule.
+//
+// The CASE has no ELSE, so an aggregate outside the four would produce
+// NULL and be filtered out below — indistinguishable from "this window
+// held no sample". Windows refuses an unknown aggregate in Go before it
+// ever builds these arrays (knownAgg), precisely so that the silence the
+// next paragraph gives meaning to can never be borrowed by a typo.
 //
 // `samples > 0` is what makes an empty window return no row at all: an
 // aggregate over no rows yields one row of NULLs, and the outer filter
@@ -86,6 +102,18 @@ WHERE value IS NOT NULL`
 func (s *EvalSQLStore) Windows(ctx context.Context, d Due, reqs []WindowRequest, now time.Time) (map[WindowRequest]float64, error) {
 	if len(reqs) == 0 {
 		return nil, nil
+	}
+	for _, req := range reqs {
+		// An unknown aggregate is refused here rather than left to the
+		// statement's own CASE, which would return NULL for it and so look
+		// exactly like a window holding no sample — a non-match, silently.
+		// Nothing a validated rule produces can reach this (TypeCheck
+		// refuses the same set at save time, over the same knownAgg), so
+		// this is a guard against a caller building a WindowRequest by
+		// hand, not against the rule language.
+		if !knownAgg(req.Agg) {
+			return nil, fmt.Errorf("window aggregate %q is not one of avg, min, max, rate", req.Agg)
+		}
 	}
 	checkKeys := make([]string, len(reqs))
 	items := make([]string, len(reqs))
