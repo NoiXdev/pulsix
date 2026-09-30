@@ -647,6 +647,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/fleet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org fleet */
+        get: operations["get-api-v1-orgs-by-org-fleet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts": {
         parameters: {
             query?: never;
@@ -2694,6 +2711,54 @@ export interface components {
             scope?: string;
             type: string;
         };
+        FleetHostDTO: {
+            /** Format: int64 */
+            crit: number;
+            /**
+             * Format: date-time
+             * @description absent when state is null
+             */
+            evaluated_at?: string;
+            host_id: string;
+            name: string;
+            /**
+             * Format: date-time
+             * @description When the current state began; absent when state is null
+             */
+            since?: string;
+            /**
+             * @description null when this host has no roll-up row at all ("no data")
+             * @enum {string|null}
+             */
+            state: "ok" | "warn" | "crit" | "unknown" | null;
+            /** Format: int64 */
+            unknown: number;
+            /** Format: int64 */
+            warn: number;
+            zone_id: string;
+        };
+        FleetOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/FleetOutputBody.json
+             */
+            readonly $schema?: string;
+            hosts: components["schemas"]["FleetHostDTO"][] | null;
+            totals: components["schemas"]["FleetTotalsDTO"];
+        };
+        FleetTotalsDTO: {
+            /** Format: int64 */
+            crit: number;
+            /** Format: int64 */
+            no_data: number;
+            /** Format: int64 */
+            ok: number;
+            /** Format: int64 */
+            unknown: number;
+            /** Format: int64 */
+            warn: number;
+        };
         GroupCreateInputBody: {
             /**
              * Format: uri
@@ -2892,13 +2957,25 @@ export interface components {
             at: string;
             /** @description Set when collection failed; value and label are then both absent — check_current stores an error row with neither */
             error?: string;
+            /** @description This tuple changed state five or more times in the last 30 minutes */
+            flapping: boolean;
             /** @description The mount or unit this value is for; empty for a whole-host metric */
             item: string;
             /** @description Set for a discrete metric, e.g. a service state */
             label?: string;
             metric: string;
+            /**
+             * Format: date-time
+             * @description When the current state began; absent when state is null
+             */
+            since?: string;
             /** @description No reading for more than three of the check's intervals */
             stale: boolean;
+            /**
+             * @description null when this tuple has never been evaluated, or its check no longer resolves an interval
+             * @enum {string|null}
+             */
+            state: "ok" | "warn" | "crit" | "unknown" | null;
             /**
              * Format: double
              * @description Set for a numeric metric
@@ -6475,6 +6552,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RotationStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-fleet": {
+        parameters: {
+            query?: {
+                /** @description A zone id */
+                zone?: string;
+                /** @description A monitoring group id — hosts its selector currently matches */
+                group?: string;
+                /** @description A single "key" or "key=value" token (equality or existence only); != , in(...) and boolean composition are refused */
+                tag?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetOutputBody"];
                 };
             };
             /** @description Error */

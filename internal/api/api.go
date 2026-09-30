@@ -104,6 +104,15 @@ type Deps struct {
 	// and — together with Checks (for a host's group membership and
 	// current values) — the per-host effective view. See registerRuleRoutes.
 	Rules *rules.Service
+	// RuleStates is the rule engine's read-only side (v0.3b-2 Task 11): the
+	// evaluator's own store (rules.EvalSQLStore) is the only writer to
+	// check_states and check_host_states, so the API depends on the
+	// narrower rules.StateStore instead of the write-capable one — the
+	// same split Rules/RuleStates draws that rules.StateStore's own doc
+	// comment describes. Backs the state/since/flapping fields of
+	// GET /hosts/{id}/checks (registerHostCheckRoutes) and the whole of
+	// GET /fleet (registerFleetRoutes).
+	RuleStates rules.StateStore
 	// AgentPush delivers a host's freshly resolved check configuration to
 	// whatever agent is currently connected for it, after a check
 	// definition or monitoring group write commits. See CheckConfigPusher.
@@ -260,6 +269,9 @@ func (d Deps) validate() error {
 	}
 	if d.Rules == nil {
 		missing = append(missing, "Rules")
+	}
+	if d.RuleStates == nil {
+		missing = append(missing, "RuleStates")
 	}
 	if d.AgentPush == nil {
 		missing = append(missing, "AgentPush")
@@ -473,6 +485,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerMonitoringGroupRoutes(orgScoped, deps) // /orgs/{org}/monitoring-groups...
 	registerHostCheckRoutes(orgScoped, deps)       // GET /orgs/{org}/hosts/{id}/checks, .../metrics
 	registerRuleRoutes(orgScoped, deps)            // /orgs/{org}/rules..., GET /orgs/{org}/hosts/{id}/effective-rules
+	registerFleetRoutes(orgScoped, deps)           // GET /orgs/{org}/fleet
 	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...
 	registerScheduleNotifyRoutes(orgScoped, deps)  // /orgs/{org}/schedules/{id}/notifications

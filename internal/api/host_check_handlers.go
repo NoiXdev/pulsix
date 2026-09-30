@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -52,6 +53,26 @@ type hostCheckValueDTO struct {
 	Error  string    `json:"error,omitempty" doc:"Set when collection failed; value and label are then both absent — check_current stores an error row with neither"`
 	At     time.Time `json:"at" doc:"The agent's own timestamp for this reading"`
 	Stale  bool      `json:"stale" doc:"No reading for more than three of the check's intervals"`
+	// State, Since and Flapping are the rule engine's own verdict on this
+	// tuple (v0.3b-2 Task 11), additive to the v0.3b-1 fields above: every
+	// one of them keeps reporting exactly what it always did.
+	//
+	// State is deliberately nullable rather than defaulting to "ok": a
+	// state is a statement about something observed (the design's own
+	// principle, v0.3b-2 spec), so a tuple check_states carries no row for
+	// — never evaluated, or its check no longer resolves an interval, a
+	// deleted or disabled check whose row Task 8's evaluator leaves
+	// untouched rather than deletes — reports null, not a fabricated
+	// health nobody established. No omitempty: the field is always
+	// present, explicitly null rather than silently missing, so the SPA
+	// can render "not yet evaluated" without guessing whether the server
+	// simply left the key out.
+	State *string `json:"state" enum:"ok,warn,crit,unknown" doc:"null when this tuple has never been evaluated, or its check no longer resolves an interval"`
+	// Since is absent exactly when State is null.
+	Since *time.Time `json:"since,omitempty" doc:"When the current state began; absent when state is null"`
+	// Flapping is always present, false (never true) exactly when State is
+	// null — there is nothing to flap on a tuple with no state.
+	Flapping bool `json:"flapping" doc:"This tuple changed state five or more times in the last 30 minutes"`
 }
 
 type hostCheckDTO struct {
@@ -166,6 +187,10 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
+		statesByTuple, err := currentTupleStates(ctx, deps, scope.OrgID, hostID)
+		if err != nil {
+			return nil, mapChecksErr(ctx, err)
+		}
 
 		out := &hostChecksOutput{}
 		out.Body.HostID = hostID.String()
@@ -178,7 +203,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		byKey := currentByKey(current)
 		now := time.Now()
 		for _, d := range effective {
-			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now))
+			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now, statesByTuple))
 		}
 		return out, nil
 	})
@@ -324,7 +349,7 @@ func stillAsked(d checks.Definition, values []checks.Current) []checks.Current {
 	return kept
 }
 
-func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time) hostCheckDTO {
+func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState) hostCheckDTO {
 	params := d.Params
 	if params == nil {
 		params = map[string]any{}
@@ -358,9 +383,56 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 		// five-minute disk check is not called stale a minute after its
 		// last reading while a ten-second CPU check is.
 		v.Stale = now.Sub(c.At) > time.Duration(staleIntervals)*d.Interval
+		if st, ok := states[rules.Tuple{CheckKey: d.Key, Item: c.Item, Metric: c.Metric}]; ok {
+			state := string(st.State)
+			since := st.Since
+			v.State, v.Since, v.Flapping = &state, &since, st.Flapping
+		}
 		dto.Values[i] = v
 	}
 	return dto
+}
+
+// currentTupleStates loads hostID's stored tuple states and keeps only the
+// ones whose check currently resolves an interval — the read-side half of
+// Task 8's own evaluator contract (states.go): a tuple whose check was
+// deleted or disabled is excluded from evaluation from that point on, and
+// its check_states row is deliberately left exactly as the evaluator last
+// wrote it (states_store.go's own doc comment says why: it is not this
+// package's write to make). Left unfiltered, a check that used to be crit
+// and got disabled — or deleted outright — would show that stale verdict
+// on the host page for ever, indistinguishable from a live one.
+//
+// deps.Checks.ResolveHost is the exact same input rules.ContextForHost
+// feeds the evaluator (see internal/app/rules_ports.go's own adapter): a
+// disabled definition, or a key nothing binds any more, is absent from its
+// Checks list, so "present here" and "the evaluator would still evaluate
+// this tuple" are the same question asked of the same data. A deleted
+// check's tuple never reaches this filter at all — its key is not in the
+// caller's own `effective` list either, so toHostCheckDTO never looks it
+// up — this only ever matters for the disabled case, where the check
+// still appears (Enabled: false) but must not carry a live-looking state.
+func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[rules.Tuple]rules.TupleState, error) {
+	resolved, err := deps.Checks.ResolveHost(ctx, orgID, hostID)
+	if err != nil {
+		return nil, err
+	}
+	resolvedKeys := make(map[string]bool, len(resolved.Checks))
+	for _, c := range resolved.Checks {
+		resolvedKeys[c.Key] = true
+	}
+	states, err := deps.RuleStates.StatesForHost(ctx, orgID, hostID)
+	if err != nil {
+		return nil, fmt.Errorf("states for host: %w", err)
+	}
+	byTuple := make(map[rules.Tuple]rules.TupleState, len(states))
+	for _, st := range states {
+		if !resolvedKeys[st.Tuple.CheckKey] {
+			continue
+		}
+		byTuple[st.Tuple] = st
+	}
+	return byTuple, nil
 }
 
 // monitoringGroupNames maps group id to name, for naming the scope a

@@ -411,6 +411,11 @@ func New(t *testing.T, opts ...Option) *Server {
 	// (internal/app/app.go) — rulesSvc needs no host ports of its own,
 	// since SeedForOrg only ever writes org-scoped rows.
 	s.Rules = rules.NewService(rules.NewSQLStore(d))
+	// The API's read-only side onto the evaluator's own tables (v0.3b-2
+	// Task 11), wired exactly like production (internal/app.Build): a
+	// second, separately built *rules.SQLStore, since rules.StateStore is
+	// deliberately narrower than the Store s.Rules already holds.
+	ruleStates := rules.NewSQLStore(d)
 	s.Push = &PushRecorder{}
 	// Every organization gets its "default" zone, its check definitions
 	// seed set and its rule starter set through this hook, whichever of the
@@ -539,6 +544,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		// to observe anything at all.
 		Checks:      s.Checks,
 		Rules:       s.Rules,
+		RuleStates:  ruleStates,
 		AgentPush:   s.Push,
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,

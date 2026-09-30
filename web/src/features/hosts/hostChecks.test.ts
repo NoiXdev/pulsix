@@ -7,6 +7,11 @@ const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
   metric: 'usage_percent',
   at: '2026-09-27T12:00:00Z',
   stale: false,
+  // state/flapping (v0.3b-2 Task 11) default to "never evaluated" — none
+  // of the tests in this file exercise the rule engine's verdict, only the
+  // v0.3b-1 fields above it.
+  state: null,
+  flapping: false,
   ...over,
 });
 

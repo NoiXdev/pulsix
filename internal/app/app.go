@@ -214,6 +214,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// exactly the shape a later task (the API surface) will build its own,
 	// separately wired instance from.
 	rulesSvc := rules.NewService(rules.NewSQLStore(appDB))
+	// The API's own read side onto the evaluator's tables (v0.3b-2 Task
+	// 11): a second, separately wired *rules.SQLStore, exactly as the
+	// comment above anticipated — cheap to build (it holds nothing but the
+	// two query handles), and kept apart from rulesSvc's because
+	// rules.StateStore is deliberately the narrower, read-only interface
+	// (see its own doc comment).
+	ruleStates := rules.NewSQLStore(appDB)
 	// Every organization gets its "default" zone, its "Linux base" check
 	// definitions and its five-row starter rule set the moment it is
 	// created, through whichever of the two paths created it — POST /orgs
@@ -401,6 +408,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// checksSvc for the effective view's group membership and current
 		// values (registerRuleRoutes).
 		Rules: rulesSvc,
+		// The fleet overview and the host page's tuple states (v0.3b-2 Task
+		// 11): the separately wired read-only store above.
+		RuleStates: ruleStates,
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
 		// out are the ones embedded at build time — nil in a build made

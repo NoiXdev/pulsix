@@ -15,8 +15,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
 type hostCheckValue struct {
@@ -27,6 +29,11 @@ type hostCheckValue struct {
 	Error  string    `json:"error"`
 	At     time.Time `json:"at"`
 	Stale  bool      `json:"stale"`
+	// State, Since and Flapping are the rule engine's verdict on this tuple
+	// (v0.3b-2 Task 11) — additive to the v0.3b-1 fields above.
+	State    *string    `json:"state"`
+	Since    *time.Time `json:"since"`
+	Flapping bool       `json:"flapping"`
 }
 
 type hostCheck struct {
@@ -575,4 +582,123 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// seedTupleState writes one check_states row directly through the
+// generated query the evaluator itself upserts through (gen.UpsertCheckState),
+// exactly like internal/rules' own due_sql_test.go seeds check_current and
+// check_samples rows for the store tests below rather than running an
+// agent or a ticker: this file's job is the READ side (does the route
+// surface a stored row correctly, and hide one it should not), not
+// re-proving the evaluator wrote it correctly, which Task 8's and Task 9's
+// own tests already do.
+func seedTupleState(t *testing.T, s *apitest.Server, orgID, hostID uuid.UUID, checkKey, item, metric, state string, since, evaluatedAt time.Time, flapping bool) {
+	t.Helper()
+	if err := s.Q.UpsertCheckState(context.Background(), gen.UpsertCheckStateParams{
+		OrgID: orgID, HostID: hostID, CheckKey: checkKey, Item: item, Metric: metric,
+		State: state, Since: since, EvaluatedAt: evaluatedAt, Flapping: flapping,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHostChecksReportsTupleState is Task 11's own addition to the
+// v0.3b-1 route: state, since and flapping per tuple, additive only. Three
+// things are pinned here that the design's controller ruled on explicitly
+// (task-11-brief.md's pre-flight scan, against the plan's own text):
+//
+//   - a tuple check_states never evaluated reports state: null, not a
+//     fabricated "ok" — a state is a statement about something observed;
+//   - a stored row survives exactly as Task 8's evaluator left it once its
+//     check stops resolving an interval (disabled, or deleted), but the
+//     READ side must not show it as current — a stale crit from a check
+//     that no longer runs must not read as a live one;
+//   - and every v0.3b-1 field keeps reporting exactly what it always did.
+func TestHostChecksReportsTupleState(t *testing.T) {
+	f := newChecksFixture(t, "host-checks-state")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	since := now.Add(-10 * time.Minute)
+
+	// cpu, memory and service are all part of the organization's "Linux
+	// base" seed set (checksFixture's own doc comment) — no check needs to
+	// be created for this test.
+	f.record(t,
+		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now, Value: floatPtr(91)},
+		checks.Observation{HostID: f.web, CheckKey: "memory", Metric: "used_percent", At: now, Value: floatPtr(40)},
+		checks.Observation{HostID: f.web, CheckKey: "service", Item: "sshd", Metric: "state", At: now, Label: strPtr("active")},
+	)
+	seedTupleState(t, f.s, f.orgID, f.web, "cpu", "", "usage_percent", "crit", since, now, true)
+	seedTupleState(t, f.s, f.orgID, f.web, "service", "sshd", "state", "warn", since, now, false)
+
+	t.Run("a stored state reports state, since and flapping, and the v0.3b-1 fields did not move", func(t *testing.T) {
+		cpu := f.hostChecks(t, f.viewerC, f.web).byKey(t, "cpu")
+		if len(cpu.Values) != 1 {
+			t.Fatalf("cpu values = %+v, want exactly one", cpu.Values)
+		}
+		v := cpu.Values[0]
+		if v.Value == nil || *v.Value != 91 || v.Item != "" || v.Metric != "usage_percent" || v.Error != "" || v.Label != "" {
+			t.Fatalf("cpu value = %+v, the v0.3b-1 fields must report exactly what they always did", v)
+		}
+		if v.State == nil || *v.State != "crit" {
+			t.Fatalf("cpu state = %v, want crit", v.State)
+		}
+		if !v.Flapping {
+			t.Fatal("cpu flapping = false, want true")
+		}
+		if v.Since == nil || !v.Since.Equal(since) {
+			t.Fatalf("cpu since = %v, want %v", v.Since, since)
+		}
+	})
+
+	t.Run("a tuple with no state row reports null, never a fabricated ok", func(t *testing.T) {
+		memory := f.hostChecks(t, f.viewerC, f.web).byKey(t, "memory")
+		if len(memory.Values) != 1 {
+			t.Fatalf("memory values = %+v, want exactly one", memory.Values)
+		}
+		if memory.Values[0].State != nil {
+			t.Fatalf("memory state = %v, want null: this tuple has never been evaluated", *memory.Values[0].State)
+		}
+		if memory.Values[0].Since != nil {
+			t.Fatalf("memory since = %v, want none", *memory.Values[0].Since)
+		}
+		if memory.Values[0].Flapping {
+			t.Fatal("memory flapping = true, want false: never evaluated")
+		}
+	})
+
+	t.Run("a state row survives its check being disabled, but the read side hides it", func(t *testing.T) {
+		var serviceDef checkDTO
+		for _, d := range f.listChecks(t, f.ownerC) {
+			if d.Key == "service" {
+				serviceDef = d
+			}
+		}
+		if serviceDef.ID == "" {
+			t.Fatal("no seeded \"service\" check found")
+		}
+		// Disabling it at the host narrows nothing about check_states — the
+		// row seeded above (severity warn) is left exactly as it was, which
+		// is the whole point: Task 8's evaluator contract is a write-side
+		// concern this test does not re-prove; only the read side is new
+		// here.
+		resp := requestJSON(t, f.operatorC, http.MethodPut, f.checksURL()+"/"+serviceDef.ID, map[string]any{
+			"plugin": "service", "key": "service", "interval_seconds": 60,
+			"binding_kind": "host", "host_id": f.web.String(),
+			"params": map[string]any{"units": []string{"sshd"}}, "enabled": false,
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("disable service at the host = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+
+		service := f.hostChecks(t, f.viewerC, f.web).byKey(t, "service")
+		if service.Enabled {
+			t.Fatal("service = enabled, want the host's override to have turned it off")
+		}
+		if len(service.Values) != 1 {
+			t.Fatalf("service values = %+v, want the current reading still listed", service.Values)
+		}
+		if service.Values[0].State != nil {
+			t.Fatalf("service state = %v, want null: its check no longer resolves an interval", *service.Values[0].State)
+		}
+	})
 }

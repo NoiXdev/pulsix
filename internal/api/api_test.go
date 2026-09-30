@@ -201,7 +201,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
-		Checks: &checks.Service{}, Rules: &rules.Service{}, AgentPush: noopPusher{},
+		Checks: &checks.Service{}, Rules: &rules.Service{}, RuleStates: rules.NewSQLStore(nil), AgentPush: noopPusher{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
@@ -388,6 +388,13 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	if _, err := api.New(noRules); err == nil || !strings.Contains(err.Error(), "Rules") {
 		t.Fatalf("api.New without Rules = %v, want an error naming Rules", err)
 	}
+	// The rule engine's read-only side, backing the host page's tuple
+	// states and the fleet overview (v0.3b-2 Task 11).
+	noRuleStates := testDeps(t)
+	noRuleStates.RuleStates = nil
+	if _, err := api.New(noRuleStates); err == nil || !strings.Contains(err.Error(), "RuleStates") {
+		t.Fatalf("api.New without RuleStates = %v, want an error naming RuleStates", err)
+	}
 }
 
 // testDeps returns a fully-wired (if inert) Deps, exactly like
@@ -403,7 +410,7 @@ func testDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
-		Checks: &checks.Service{}, Rules: &rules.Service{}, AgentPush: noopPusher{},
+		Checks: &checks.Service{}, Rules: &rules.Service{}, RuleStates: rules.NewSQLStore(nil), AgentPush: noopPusher{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
