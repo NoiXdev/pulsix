@@ -215,19 +215,27 @@ func (s *Service) buildRule(in RuleInput) (Rule, int, error) {
 	}, 0, nil
 }
 
-// Create validates in and stores a new, operator-created rule (origin =
-// "user" — only a seeding path, Task 5, ever stores "seed").
-func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in RuleInput) (Rule, error) {
+// createRule is Create and SeedForOrg's shared body; only the origin they
+// stamp differs — the same split checks.Service uses between
+// CreateDefinition and its own SeedForOrg (internal/checks/definitions.go's
+// createDefinition).
+func (s *Service) createRule(ctx context.Context, orgID uuid.UUID, in RuleInput, origin string) (Rule, error) {
 	r, _, err := s.buildRule(in)
 	if err != nil {
 		return Rule{}, err
 	}
-	r.ID, r.OrgID, r.Origin = s.newID(), orgID, originUser
+	r.ID, r.OrgID, r.Origin = s.newID(), orgID, origin
 	r.CreatedAt, r.UpdatedAt = s.now(), s.now()
 	if err := s.store.Create(ctx, r); err != nil {
 		return Rule{}, err
 	}
 	return r, nil
+}
+
+// Create validates in and stores a new, operator-created rule (origin =
+// "user" — only a seeding path, Task 5, ever stores "seed").
+func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in RuleInput) (Rule, error) {
+	return s.createRule(ctx, orgID, in, originUser)
 }
 
 // Update validates in and replaces the rule identified by (orgID, id) — a

@@ -44,6 +44,7 @@ import (
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedule"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
@@ -200,17 +201,27 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	checksSvc := checks.NewService(checks.NewSQLStore(appDB),
 		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
 		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)))
-	// Every organization gets its "default" zone and its "Linux base" check
-	// definitions the moment it is created, through whichever of the two
-	// paths created it — POST /orgs (tenancy.Service.CreateOrg) or the
-	// first-run wizard (setup.Service.Complete) — both bound to the same
-	// two hooks, chained (ChainOrgCreatedHooks, checks_ports.go) since
+	// The rule engine's starter set (v0.3b-2, Task 5): rulesSvc needs no
+	// host ports of its own — SeedForOrg only ever writes org-scoped rows —
+	// so it is built here for the sole purpose of the hook right below,
+	// exactly the shape a later task (the API surface) will build its own,
+	// separately wired instance from.
+	rulesSvc := rules.NewService(rules.NewSQLStore(appDB))
+	// Every organization gets its "default" zone, its "Linux base" check
+	// definitions and its five-row starter rule set the moment it is
+	// created, through whichever of the two paths created it — POST /orgs
+	// (tenancy.Service.CreateOrg) or the first-run wizard
+	// (setup.Service.Complete) — both bound to the same three hooks,
+	// chained (ChainOrgCreatedHooks, checks_ports.go) since
 	// SetOrgCreatedHook only ever holds one, so neither path can produce an
-	// organization the other would have given a zone or a seed set. See
+	// organization the other would have given a zone, a check seed set or a
+	// rule seed set. rulesSvc.SeedForOrg runs after checksSvc.SeedForOrg so
+	// that its rules can always assume the checks their metrics belong to
+	// already exist. See
 	// tenancy.OrgCreatedHook's own doc comment for why this runs as a
 	// sequential step after each service's own writes commit, rather than
 	// inside either one's transaction.
-	orgCreated := ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, checksSvc.SeedForOrg)
+	orgCreated := ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, checksSvc.SeedForOrg, rulesSvc.SeedForOrg)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)
 

@@ -97,6 +97,91 @@ func TestBuildReconcilesZonelessOrganizations(t *testing.T) {
 	}
 }
 
+// TestBuildSeedsRuleSetOnOrgCreation is Task 5's own coverage of
+// ChainOrgCreatedHooks' production composition (app.go): completing the
+// first-run wizard must leave the new organization with exactly the
+// five-row starter rule set rules.Service.SeedForOrg writes, each stamped
+// origin "seed" and scope "org" — and with its check_definitions seed set
+// still in place, proving rulesSvc.SeedForOrg was appended to the same
+// chained hook rather than replacing checksSvc.SeedForOrg. A failing rule
+// seed would fail this same request (setup.Service.Complete propagates the
+// hook's error like CreateOrg does — OrgCreatedHook's own doc comment), so
+// there is no separate negative test for propagation: it is the same code
+// path this positive test already exercises.
+func TestBuildSeedsRuleSetOnOrgCreation(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+	a, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	body := `{"admin_email":"ruleseed-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"ruleseed-org","org_name":"Rule Seed Org"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	a.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("complete setup: status %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	// A plain admin connection, exactly like TestBuildReconcilesZonelessOrganizations
+	// above: it bypasses row-level security, so it can read the new org's
+	// rows without needing an authenticated session or org scope.
+	admin, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	q := gen.New(admin.Pool())
+	org, err := q.GetOrganizationBySlug(ctx, "ruleseed-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var defCount int
+	if err := admin.Pool().QueryRow(ctx, `SELECT count(*) FROM check_definitions WHERE org_id = $1`, org.ID).Scan(&defCount); err != nil {
+		t.Fatal(err)
+	}
+	if defCount != 4 {
+		t.Fatalf("check_definitions for the new org = %d, want the 4-plugin seed set (checksSvc.SeedForOrg must still run)", defCount)
+	}
+
+	rows, err := admin.Pool().Query(ctx, `SELECT origin, scope, metric, severity FROM check_rules WHERE org_id = $1`, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type ruleRow struct{ origin, scope, metric, severity string }
+	var got []ruleRow
+	for rows.Next() {
+		var r ruleRow
+		if err := rows.Scan(&r.origin, &r.scope, &r.metric, &r.severity); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("check_rules for the new org = %+v, want exactly 5 rows", got)
+	}
+	seen := map[string]bool{}
+	for _, r := range got {
+		if r.origin != "seed" || r.scope != "org" {
+			t.Fatalf("rule row %+v, want origin=seed scope=org", r)
+		}
+		seen[r.metric+"/"+r.severity] = true
+	}
+	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn"} {
+		if !seen[want] {
+			t.Fatalf("seed set missing %q, got %+v", want, got)
+		}
+	}
+}
+
 // TestBuildSetsSecureCookieForHTTPSPublicURL checks the one piece of Build
 // that would otherwise be silently wrong in production and invisible in
 // every other test here (which all use an http:// PublicURL, matching

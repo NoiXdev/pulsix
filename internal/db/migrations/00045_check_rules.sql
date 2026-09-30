@@ -56,10 +56,14 @@
 -- check_rules (org_id, id), so a state can never reference a rule
 -- belonging to another organization.
 --
--- No seed data in this migration. Task 5 appends its own backfill INSERT
--- to this same file, after the RLS pair below and before the goose Down
--- marker — the same place check_definitions' backfill (00043) sits in its
--- migration.
+-- Task 5's own backfill INSERT sits below, after the RLS pair and before
+-- the goose Down marker — the same place check_definitions' backfill
+-- (00043) sits in its migration: it seeds the same five-row starter set
+-- SeedForOrg gives a newly created organization (internal/rules/seed.go)
+-- into every organization that already existed when this migration ran.
+-- Seeded rows carry origin = 'seed'; internal/rules refuses to change a
+-- seeded row's metric, scope or severity (copy it instead), but its
+-- thresholds, for_duration and enabled flag are ordinary mutable columns.
 CREATE TABLE check_rules (
   id           uuid PRIMARY KEY,
   org_id       uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -106,6 +110,54 @@ CREATE POLICY org_isolation ON check_rules
   USING (org_id = NULLIF(current_setting('pulsix.org_id', true), '')::uuid);
 CREATE POLICY org_isolation_bypass ON check_rules
   USING (current_setting('pulsix.org_id', true) IS NULL OR current_setting('pulsix.org_id', true) = '');
+
+-- Backfill: every organization that existed before this migration gets the
+-- same five-row starter set a newly created one gets from
+-- internal/rules.Service.SeedForOrg. The values below — including the ast/
+-- clear_ast jsonb, which must decode to exactly the Node tree
+-- Form.Compile() builds for the same operator/value pair — must stay in
+-- sync with SeedRules() (internal/rules/seed.go) by hand: a migration
+-- cannot call Go code. service.state deliberately has no row here either —
+-- see SeedRules()'s own doc comment for why.
+INSERT INTO check_rules (
+  id, org_id, name, enabled, origin, scope, check_key, metric, severity,
+  mode, ast, clear_ast, source, for_duration
+)
+SELECT gen_random_uuid(), o.id, v.name, true, 'seed', 'org', v.check_key, v.metric, v.severity,
+  'form', v.ast::jsonb, v.clear_ast::jsonb, v.source, v.for_duration::interval
+FROM organizations o
+CROSS JOIN (VALUES
+  (
+    'Disk usage warning', 'disk', 'disk.used_pct', 'warn',
+    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":85}]}',
+    '{"kind":"compare","op":"<","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":80}]}',
+    'disk.used_pct >= 85', '0'
+  ),
+  (
+    'Disk usage critical', 'disk', 'disk.used_pct', 'crit',
+    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":95}]}',
+    '{"kind":"compare","op":"<","args":[{"kind":"metric","name":"disk.used_pct"},{"kind":"number","num":90}]}',
+    'disk.used_pct >= 95', '0'
+  ),
+  (
+    'Memory usage warning', 'memory', 'mem.used_pct', 'warn',
+    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"mem.used_pct"},{"kind":"number","num":90}]}',
+    NULL,
+    'mem.used_pct >= 90', '10 minutes'
+  ),
+  (
+    'Memory usage critical', 'memory', 'mem.used_pct', 'crit',
+    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"mem.used_pct"},{"kind":"number","num":97}]}',
+    NULL,
+    'mem.used_pct >= 97', '5 minutes'
+  ),
+  (
+    'CPU usage warning', 'cpu', 'cpu.used_pct', 'warn',
+    '{"kind":"compare","op":">=","args":[{"kind":"metric","name":"cpu.used_pct"},{"kind":"number","num":90}]}',
+    NULL,
+    'cpu.used_pct >= 90', '15 minutes'
+  )
+) AS v(name, check_key, metric, severity, ast, clear_ast, source, for_duration);
 
 -- +goose Down
 DROP TABLE check_rules;
