@@ -111,6 +111,18 @@ var auditAllowlist = map[string]string{
 	// because the shape is a request body — and persists nothing.
 	"POST /api/v1/orgs/{org}/schedules/preview": "read-only computation of the next occurrences; mutates nothing",
 
+	// v0.3b-2 Task 10: the rule editor's validate-only route — the same
+	// shape as /monitoring-groups/preview and /schedules/preview above: a
+	// read (parses and type-checks a prospective rule, answering its byte
+	// position and whether it fits the form subset) that uses POST only
+	// because the rule is a request body, and persists nothing (a create
+	// attempt right after a validate call still sees an empty list, pinned
+	// by TestRuleRoutes/validate_never_persists). The editor calls this on
+	// a debounce while an operator is still typing, so auditing it would
+	// bury the three real rule mutations (create, update, delete — all
+	// audited) under keystroke noise.
+	"POST /api/v1/orgs/{org}/rules/validate": "a read (parses and type-checks a prospective rule) that uses POST only because the rule is a request body; persists nothing, and the editor calls it on a debounce, so auditing it would bury the real rule mutations under keystroke noise",
+
 	// Task 10: the two public webhook receivers. Neither carries a session
 	// or bearer principal (there is none — the trigger's own secret is the
 	// credential, spec §3), so withAudit's actor resolution has nothing to

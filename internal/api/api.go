@@ -29,6 +29,7 @@ import (
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -98,6 +99,11 @@ type Deps struct {
 	// stored samples behind the graphs. See registerCheckRoutes,
 	// registerMonitoringGroupRoutes and registerHostCheckRoutes.
 	Checks *checks.Service
+	// Rules is the rule engine's own surface (v0.3b-2 spec, "API and
+	// permissions"): rule CRUD, the validate-only route the editor drives,
+	// and — together with Checks (for a host's group membership and
+	// current values) — the per-host effective view. See registerRuleRoutes.
+	Rules *rules.Service
 	// AgentPush delivers a host's freshly resolved check configuration to
 	// whatever agent is currently connected for it, after a check
 	// definition or monitoring group write commits. See CheckConfigPusher.
@@ -251,6 +257,9 @@ func (d Deps) validate() error {
 	}
 	if d.Checks == nil {
 		missing = append(missing, "Checks")
+	}
+	if d.Rules == nil {
+		missing = append(missing, "Rules")
 	}
 	if d.AgentPush == nil {
 		missing = append(missing, "AgentPush")
@@ -463,6 +472,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerCheckRoutes(orgScoped, deps)           // /orgs/{org}/checks...
 	registerMonitoringGroupRoutes(orgScoped, deps) // /orgs/{org}/monitoring-groups...
 	registerHostCheckRoutes(orgScoped, deps)       // GET /orgs/{org}/hosts/{id}/checks, .../metrics
+	registerRuleRoutes(orgScoped, deps)            // /orgs/{org}/rules..., GET /orgs/{org}/hosts/{id}/effective-rules
 	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...
 	registerScheduleNotifyRoutes(orgScoped, deps)  // /orgs/{org}/schedules/{id}/notifications

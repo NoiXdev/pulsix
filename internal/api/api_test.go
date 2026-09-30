@@ -28,6 +28,7 @@ import (
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -200,7 +201,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
-		Checks: &checks.Service{}, AgentPush: noopPusher{},
+		Checks: &checks.Service{}, Rules: &rules.Service{}, AgentPush: noopPusher{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
@@ -381,6 +382,12 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	if _, err := api.New(noPush); err == nil || !strings.Contains(err.Error(), "AgentPush") {
 		t.Fatalf("api.New without AgentPush = %v, want an error naming AgentPush", err)
 	}
+	// The rule engine's own surface (v0.3b-2 Task 10).
+	noRules := testDeps(t)
+	noRules.Rules = nil
+	if _, err := api.New(noRules); err == nil || !strings.Contains(err.Error(), "Rules") {
+		t.Fatalf("api.New without Rules = %v, want an error naming Rules", err)
+	}
 }
 
 // testDeps returns a fully-wired (if inert) Deps, exactly like
@@ -396,7 +403,7 @@ func testDeps(t *testing.T) api.Deps {
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
-		Checks: &checks.Service{}, AgentPush: noopPusher{},
+		Checks: &checks.Service{}, Rules: &rules.Service{}, AgentPush: noopPusher{},
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }

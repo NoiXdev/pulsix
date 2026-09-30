@@ -804,6 +804,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/hosts/{id}/effective-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID effective rules */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-effective-rules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts/{id}/host-key": {
         parameters: {
             query?: never;
@@ -1523,6 +1540,77 @@ export interface paths {
         /** Post API v1 orgs by org repos by ID sync */
         post: operations["syncRepo"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org rules */
+        get: operations["get-api-v1-orgs-by-org-rules"];
+        put?: never;
+        /** Post API v1 orgs by org rules */
+        post: operations["createRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/rules/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org rules metrics */
+        get: operations["get-api-v1-orgs-by-org-rules-metrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/rules/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org rules validate */
+        post: operations["post-api-v1-orgs-by-org-rules-validate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org rules by ID */
+        get: operations["get-api-v1-orgs-by-org-rules-by-id"];
+        /** Put API v1 orgs by org rules by ID */
+        put: operations["updateRule"];
+        post?: never;
+        /** Delete API v1 orgs by org rules by ID */
+        delete: operations["deleteRule"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2471,6 +2559,26 @@ export interface components {
             bastions: number;
             /** Format: int64 */
             hosts: number;
+        };
+        EffectiveRuleDTO: {
+            check_key: string;
+            item?: string;
+            metric: string;
+            /** @description False when an item-scoped rule names an item the host no longer reports */
+            observed: boolean;
+            /** @enum {string} */
+            severity: "warn" | "crit";
+            shadowed: components["schemas"]["RuleDTO"][] | null;
+            winner: components["schemas"]["RuleDTO"];
+        };
+        EffectiveRulesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/EffectiveRulesOutputBody.json
+             */
+            readonly $schema?: string;
+            effective: components["schemas"]["EffectiveRuleDTO"][] | null;
         };
         EnrollmentCreateInputBody: {
             /**
@@ -3977,6 +4085,148 @@ export interface components {
             /** Format: int64 */
             job_count: number;
             job_id: string;
+        };
+        RuleBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RuleBody.json
+             */
+            readonly $schema?: string;
+            /** @description Defaults to true */
+            enabled?: boolean;
+            /** @description Required for mode=expression, forbidden otherwise */
+            expression?: string;
+            /**
+             * Format: int64
+             * @description How long a deterioration must hold before it counts, 0-86400 seconds
+             */
+            for_seconds?: number;
+            /** @description Required for mode=form, forbidden otherwise */
+            form?: components["schemas"]["RuleFormDTO"];
+            /**
+             * Format: uuid
+             * @description Required for scope=group, forbidden otherwise
+             */
+            group_id?: string;
+            /**
+             * Format: uuid
+             * @description Required for scope=host or scope=item, forbidden otherwise
+             */
+            host_id?: string;
+            /** @description Required for scope=item, forbidden otherwise */
+            item?: string;
+            /** @description One of the metrics GET /rules/metrics lists */
+            metric: string;
+            /** @description form or expression */
+            mode: string;
+            name: string;
+            /** @description One of org, group, host, item */
+            scope: string;
+            /** @description warn or crit */
+            severity: string;
+        };
+        RuleCheckedDTO: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RuleCheckedDTO.json
+             */
+            readonly $schema?: string;
+            /** @description Whether the compiled tree still fits the form editor's subset */
+            form_ready: boolean;
+            message?: string;
+            ok: boolean;
+            /**
+             * Format: int64
+             * @description Byte offset of a parse or type-check failure, for the editor's caret
+             */
+            pos?: number;
+            /** @description What Create/Update would store: a rendered summary in form mode, the caller's own text in expression mode */
+            source?: string;
+        };
+        RuleDTO: {
+            /** @description Derived from metric; the check this rule's metric belongs to */
+            check_key: string;
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            /** @description Set when mode is expression */
+            expression?: string;
+            /**
+             * Format: int64
+             * @description How long a deterioration must hold before it counts
+             */
+            for_seconds: number;
+            /** @description Set when mode is form */
+            form?: components["schemas"]["RuleFormDTO"];
+            group_id?: string;
+            host_id?: string;
+            id: string;
+            item?: string;
+            metric: string;
+            /** @enum {string} */
+            mode: "form" | "expression";
+            name: string;
+            /** @enum {string} */
+            origin: "seed" | "user";
+            /** @enum {string} */
+            scope: "org" | "group" | "host" | "item";
+            /** @enum {string} */
+            severity: "warn" | "crit";
+            /** @description A rendered summary in form mode, the caller's own text in expression mode */
+            source: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RuleFormDTO: {
+            /** @description Empty when the rule has no clear condition */
+            clear_op?: string;
+            /** Format: double */
+            clear_value?: number;
+            /** @description Discrete metrics */
+            labels?: string[] | null;
+            metric: string;
+            /** @description Numeric: > >= < <= == !=; discrete: == != in */
+            op: string;
+            /**
+             * Format: double
+             * @description Numeric metrics
+             */
+            value?: number;
+        };
+        RuleListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RuleListOutputBody.json
+             */
+            readonly $schema?: string;
+            rules: components["schemas"]["RuleDTO"][] | null;
+        };
+        RuleMetricDTO: {
+            check_key: string;
+            /** @enum {string} */
+            kind: "numeric" | "discrete";
+            name: string;
+        };
+        RuleMetricsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RuleMetricsOutputBody.json
+             */
+            readonly $schema?: string;
+            metrics: components["schemas"]["RuleMetricDTO"][] | null;
+        };
+        RuleOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RuleOutputBody.json
+             */
+            readonly $schema?: string;
+            rule: components["schemas"]["RuleDTO"];
         };
         ScheduleBody: {
             /**
@@ -6681,6 +6931,38 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-hosts-by-id-effective-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectiveRulesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     setHostKey: {
         parameters: {
             query?: never;
@@ -8976,6 +9258,245 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepoSyncOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-rules": {
+        parameters: {
+            query?: {
+                /** @description Filter by scope: org, group, host or item */
+                scope?: string;
+                /** @description Filter by check key */
+                check?: string;
+                /** @description Filter by host id */
+                host?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-rules-metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleMetricsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-orgs-by-org-rules-validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleCheckedDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-rules-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuleBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */

@@ -43,6 +43,7 @@ import (
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -141,6 +142,12 @@ type Server struct {
 	// samples or definitions directly through the service the routes
 	// under test read from.
 	Checks *checks.Service
+	// Rules is the rule engine's service (v0.3b-2), the same instance
+	// Deps.Rules carries — exposed here, exactly like Checks, so SeedOrg
+	// can give a fixture org the five-row starter rule set a real
+	// organization gets, and so a test can seed rules directly through the
+	// service the routes under test read from.
+	Rules *rules.Service
 	// Push records every check-configuration push the check routes make
 	// after a write commits (api.Deps.AgentPush). Production wires
 	// *agentapi.Service here; a test has no agent stream to observe, so
@@ -399,13 +406,20 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Checks = checks.NewService(checks.NewSQLStore(d),
 		checks.WithMatcher(app.NewChecksHostMatcher(hostsSvc)),
 		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
+	// The rule engine (v0.3b-2): SeedForOrg is wired into the hook right
+	// below, alongside checksSvc's own, exactly like production wiring
+	// (internal/app/app.go) — rulesSvc needs no host ports of its own,
+	// since SeedForOrg only ever writes org-scoped rows.
+	s.Rules = rules.NewService(rules.NewSQLStore(d))
 	s.Push = &PushRecorder{}
-	// Every organization gets its "default" zone and its check definitions
-	// seed set through this hook, whichever of the two ways it was created
-	// — POST /orgs (tenancy.Service.CreateOrg) or the first-run wizard
-	// (setup.Service.Complete) — exactly like production wiring
-	// (internal/app/app.go) chains both hooks the same way.
-	orgCreated := app.ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg)
+	// Every organization gets its "default" zone, its check definitions
+	// seed set and its rule starter set through this hook, whichever of the
+	// two ways it was created — POST /orgs (tenancy.Service.CreateOrg) or
+	// the first-run wizard (setup.Service.Complete) — exactly like
+	// production wiring (internal/app/app.go) chains all three hooks the
+	// same way, rules after checks so its rules can always assume the
+	// checks their metrics belong to already exist.
+	orgCreated := app.ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)
 	credsSvc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox(testMasterKey), time.Now, rand.Reader)
@@ -524,6 +538,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		// stands in for *agentapi.Service, which needs a live gRPC stream
 		// to observe anything at all.
 		Checks:      s.Checks,
+		Rules:       s.Rules,
 		AgentPush:   s.Push,
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
@@ -615,15 +630,16 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 // SeedOrg inserts an org with ownerID as owner directly through s.Q
 // (gen.CreateOrganization) rather than tenancy.Service.CreateOrg, so tests
 // get a fixed, predictable slug instead of one CreateOrg would generate.
-// That bypass is exactly why the two calls below are not redundant with
+// That bypass is exactly why the calls below are not redundant with
 // ChainOrgCreatedHooks (New, above): the hook is registered on tenancySvc/
 // setupSvc, and only fires when creation goes through one of them — a
 // direct s.Q.CreateOrganization call, like this one, never reaches it. So
-// SeedOrg calls EnsureDefaultZone and SeedForOrg itself, explicitly, the
-// same two steps the hook would have run, so a seeded org still carries
-// the same invariants a real one does (host_handlers_test.go and others
-// rely on the zone; a future check-definitions test may rely on the seed
-// set the same way). TestOrgCreationSeedsCheckDefinitions and
+// SeedOrg calls EnsureDefaultZone, checks' SeedForOrg and rules' SeedForOrg
+// itself, explicitly, the same three steps the hook would have run, so a
+// seeded org still carries the same invariants a real one does
+// (host_handlers_test.go relies on the zone; check_handlers_test.go and
+// rule_handlers_test.go rely on their own seed sets the same way).
+// TestOrgCreationSeedsCheckDefinitions and
 // TestFirstRunWizardSeedsCheckDefinitions (internal/api/host_handlers_test.go)
 // are what actually exercise the hook path end to end, through the real
 // routes, in place of this shortcut.
@@ -641,6 +657,9 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	if err := s.Checks.SeedForOrg(ctx, id); err != nil {
+		s.T.Fatal(err)
+	}
+	if err := s.Rules.SeedForOrg(ctx, id); err != nil {
 		s.T.Fatal(err)
 	}
 	return id
