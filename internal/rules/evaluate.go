@@ -104,11 +104,18 @@ type Snapshot struct {
 // the history, the host roll-up, and when the host should be looked at
 // again.
 //
-// Host is the zero HostState when the snapshot carries no tuples at all —
-// a host with no tuples gets no roll-up row and renders as "no data" (the
-// spec's step 7), so a caller writes the roll-up only when Host.State is
-// non-empty. Host.HostID is left zero: the snapshot does not name the
-// host, and the caller that loaded it already knows which one it is.
+// Host is the zero HostState when the evaluation judged no tuple at all —
+// either because the snapshot carried none, or because every one it
+// carried was left out for want of a resolved interval (see the skip in
+// Evaluate). A host with no tuples gets no roll-up row and renders as "no
+// data" (the spec's step 7), so a zero Host is an instruction to the
+// caller: write no row, and delete any check_host_states row the host
+// still has. A roll-up is derived state — the history it was derived from
+// lives in check_state_changes and is untouched — so leaving a stale one
+// behind would hold the host at whatever colour it last was for ever,
+// which is the very failure the interval exclusion exists to avoid.
+// Host.HostID is left zero: the snapshot does not name the host, and the
+// caller that loaded it already knows which one it is.
 type Result struct {
 	States  []TupleState
 	Changes []Change
@@ -324,10 +331,11 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	if prev.Candidate == target && prev.CandidateSince != nil {
 		since = *prev.CandidateSince
 	}
-	ripensAt := since
-	if decided {
-		ripensAt = since.Add(decider.For)
-	}
+	// decided is guaranteed here rather than checked: this point is only
+	// reached on a strict deterioration, and an undecided target is
+	// StateOK, which outranks nothing. So there is always a rule whose
+	// duration to ripen against.
+	ripensAt := since.Add(decider.For)
 	if !s.Now.Before(ripensAt) {
 		next.State = target
 		next.RuleID = ruleIDOf(decider, decided)
@@ -455,8 +463,11 @@ func nextDue(pending []time.Time, now time.Time) time.Time {
 }
 
 // rollUp is step 7: the host's worst tuple state with a count per severity.
-// A host with no tuples at all yields the zero HostState, which is how
-// Evaluate says "write no row" (see Result's own doc comment).
+// No judged tuples yields the zero HostState, which is how Evaluate says
+// "write no row, and delete the one that is there" — see Result's own doc
+// comment for why deleting rather than leaving it is the right reading. A
+// supplied previous roll-up does not change that: there is nothing to
+// carry a Since onto.
 //
 // Since carries over from previous while the host state is unchanged, and
 // is now when it changed. When previous is nil — a caller that does not

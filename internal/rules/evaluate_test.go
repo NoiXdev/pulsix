@@ -33,7 +33,7 @@ func at(m int) time.Time { return evalEpoch.Add(time.Duration(m) * time.Minute) 
 // per-item window cases rely on.
 var (
 	cpuT          = rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
-	cpuLoadT      = rules.Tuple{CheckKey: "cpu", Metric: "cpu.load_avg1"}
+	cpuLoadT      = rules.Tuple{CheckKey: "cpu", Metric: "cpu.load1"}
 	memT          = rules.Tuple{CheckKey: "memory", Metric: "memory.used_pct"}
 	diskRootT     = rules.Tuple{CheckKey: "disk", Item: "/", Metric: "disk.used_pct"}
 	diskVarT      = rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
@@ -943,6 +943,53 @@ func evaluateCases() []evalCase {
 			},
 		},
 		{
+			// Facts are the fourth thing an Input carries, and the only
+			// one no other row reaches: a rule scaled by a host fact —
+			// "load above 0.8 per core" — is only evaluable because
+			// Snapshot.Facts is threaded into every Input. Without it the
+			// fact node yields no number, the rule silently does not match
+			// by the milestone's binding invariant, and a host that should
+			// be red never is. 3.5 crosses 4 x 0.8 and nothing else.
+			name: "a rule scaled by a host fact is evaluated against that fact",
+			snap: rules.Snapshot{
+				Now:    at(20),
+				Tuples: []rules.TupleSnapshot{snap(cpuLoadT, 3.5, at(20), tenMin)},
+				Effective: []rules.Effective{eff(
+					evalRule(critID, cpuLoadT, rules.SeverityCrit,
+						compare(">", metric("cpu.load1"), arith("*", fact("cpu_count"), number(0.8)))),
+					cpuLoadT,
+				)},
+				Facts:    map[string]string{"cpu_count": "4"},
+				Previous: prev(was(cpuLoadT, rules.StateOK, at(0))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuLoadT, State: rules.StateCrit, Since: at(20),
+					RuleID: &critID, LastValue: ptr(3.5), EvaluatedAt: at(20),
+				}},
+				Changes: []rules.Change{{
+					At: at(20), Tuple: cpuLoadT, From: rules.StateOK, To: rules.StateCrit,
+					RuleID: &critID, Value: ptr(3.5),
+				}},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(20), EvaluatedAt: at(20)},
+				NextDue: at(50),
+			},
+		},
+		{
+			// A previous roll-up is something to carry a Since onto, never
+			// something to resurrect a roll-up from: a host that judges no
+			// tuple this tick writes no row, whatever colour it was.
+			name: "a previous roll-up does not resurrect a host with no judged tuples",
+			snap: rules.Snapshot{
+				Now:          at(20),
+				Tuples:       []rules.TupleSnapshot{snap(cpuT, 95, at(0), 0)},
+				Effective:    []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous:     prev(wasBy(cpuT, rules.StateCrit, at(5), critID)),
+				PreviousHost: &rules.HostState{State: rules.StateCrit, Since: at(0)},
+			},
+			want: rules.Result{NextDue: at(20).Add(15 * time.Second)},
+		},
+		{
 			// The exclusion reaches the siblings too: the rule on
 			// disk.used_pct would be crit if it could read
 			// disk.free_bytes, but that metric's check has no resolved
@@ -1366,21 +1413,42 @@ func TestWindowRequestsWithoutWindows(t *testing.T) {
 	}
 }
 
-// TestEvaluateDoesNotMutateItsInput pins Evaluate's purity on the one
-// surface a caller could be surprised by: the maps the Snapshot carries.
-func TestEvaluateDoesNotMutateItsInput(t *testing.T) {
-	s := rules.Snapshot{
-		Now:       at(20),
-		Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(20), tenMin)},
-		Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
-		Facts:     map[string]string{"cpu_count": "8"},
-		Previous:  prev(was(cpuT, rules.StateOK, at(0))),
-		Changes30: map[rules.Tuple]int{cpuT: 1},
+// puritySnapshot builds the snapshot TestEvaluateDoesNotMutateItsInput
+// compares against itself. It populates every field Evaluate takes by
+// reference — the four maps, the value and candidate pointers, and
+// PreviousHost — since those are the only ways a supposedly pure function
+// could reach back into its caller.
+func puritySnapshot() rules.Snapshot {
+	return rules.Snapshot{
+		Now: at(20),
+		Tuples: []rules.TupleSnapshot{
+			snap(diskRootT, 95, at(20), tenMin),
+			{Tuple: svcT, Label: ptr("failed"), At: at(20), Interval: tenMin},
+		},
+		Effective: []rules.Effective{eff(withFor(diskWindowRule(), tenMin), diskRootT)},
+		Windows: map[rules.WindowRequest]float64{
+			{Key: rules.ItemKey{CheckKey: "disk", Item: "/"}, Metric: "disk.used_pct", Agg: "avg", Seconds: 300}: 95,
+		},
+		Facts: map[string]string{"cpu_count": "8"},
+		Previous: prev(
+			wasRipening(diskRootT, rules.StateOK, at(0), rules.StateCrit, at(15)),
+			was(svcT, rules.StateOK, at(0)),
+		),
+		Changes30:    map[rules.Tuple]int{diskRootT: 1},
+		PreviousHost: &rules.HostState{State: rules.StateOK, Since: at(0)},
 	}
-	before := fmt.Sprintf("%+v", s)
+}
+
+// TestEvaluateDoesNotMutateItsInput pins Evaluate's purity. The comparison
+// is against a second, independently built snapshot rather than against a
+// rendering of the first, so reflect.DeepEqual follows every pointer and a
+// mutation made *through* one is caught rather than hidden behind an
+// address that did not change.
+func TestEvaluateDoesNotMutateItsInput(t *testing.T) {
+	s := puritySnapshot()
 	rules.Evaluate(s)
-	if after := fmt.Sprintf("%+v", s); after != before {
-		t.Fatalf("Evaluate mutated its snapshot:\nbefore %s\nafter  %s", before, after)
+	if want := puritySnapshot(); !reflect.DeepEqual(s, want) {
+		t.Fatalf("Evaluate mutated its snapshot:\n got %+v\nwant %+v", s, want)
 	}
 }
 
