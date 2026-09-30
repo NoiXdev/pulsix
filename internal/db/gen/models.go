@@ -153,6 +153,17 @@ type CheckDefinition struct {
 	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
+type CheckHostState struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	HostID       uuid.UUID `json:"host_id"`
+	State        string    `json:"state"`
+	CritCount    int32     `json:"crit_count"`
+	WarnCount    int32     `json:"warn_count"`
+	UnknownCount int32     `json:"unknown_count"`
+	Since        time.Time `json:"since"`
+	EvaluatedAt  time.Time `json:"evaluated_at"`
+}
+
 type CheckRule struct {
 	ID          uuid.UUID       `json:"id"`
 	OrgID       uuid.UUID       `json:"org_id"`
@@ -184,6 +195,37 @@ type CheckSample struct {
 	Metric   string    `json:"metric"`
 	Value    *float64  `json:"value"`
 	Label    *string   `json:"label"`
+}
+
+type CheckState struct {
+	OrgID          uuid.UUID          `json:"org_id"`
+	HostID         uuid.UUID          `json:"host_id"`
+	CheckKey       string             `json:"check_key"`
+	Item           string             `json:"item"`
+	Metric         string             `json:"metric"`
+	State          string             `json:"state"`
+	Since          time.Time          `json:"since"`
+	RuleID         pgtype.UUID        `json:"rule_id"`
+	LastValue      *float64           `json:"last_value"`
+	LastLabel      *string            `json:"last_label"`
+	CandidateState *string            `json:"candidate_state"`
+	CandidateSince pgtype.Timestamptz `json:"candidate_since"`
+	Flapping       bool               `json:"flapping"`
+	EvaluatedAt    time.Time          `json:"evaluated_at"`
+}
+
+type CheckStateChange struct {
+	At        time.Time   `json:"at"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	HostID    uuid.UUID   `json:"host_id"`
+	CheckKey  string      `json:"check_key"`
+	Item      string      `json:"item"`
+	Metric    string      `json:"metric"`
+	FromState string      `json:"from_state"`
+	ToState   string      `json:"to_state"`
+	RuleID    pgtype.UUID `json:"rule_id"`
+	Value     *float64    `json:"value"`
+	Label     *string     `json:"label"`
 }
 
 type Credential struct {

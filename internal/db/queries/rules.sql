@@ -47,3 +47,27 @@ WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(check_key)::text IS NULL OR check_key = sqlc.narg(check_key)::text)
   AND (sqlc.narg(host_id)::uuid IS NULL OR host_id = sqlc.narg(host_id)::uuid)
 ORDER BY created_at, id;
+
+-- name: ListCheckStates :many
+-- Task 7 (Store.StatesForHost): every tuple's current state for one host,
+-- read straight off check_states' own primary key prefix (host_id) with
+-- org_id re-asserted in the WHERE clause the same way every other store in
+-- this codebase double-checks org scope alongside row-level security (see
+-- e.g. GetRule above). Ordered by (check_key, item, metric) so two calls
+-- against the same, unchanged data always agree on order.
+SELECT * FROM check_states
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+ORDER BY check_key, item, metric;
+
+-- name: CountStateChangesSince :many
+-- Task 7 (Store.ChangeCounts): the flapping count, one row per tuple that
+-- changed at least once since `since`. This is check_state_changes_lookup_
+-- idx's one named query (00046's own comment): org_id and host_id pin the
+-- index's leading columns, `at >= since` is the range condition the index's
+-- trailing `at DESC` column serves, and the GROUP BY reduces to exactly
+-- the map ChangeCounts hands back — a tuple absent from the result changed
+-- zero times, not an error.
+SELECT check_key, item, metric, count(*)::bigint AS change_count
+FROM check_state_changes
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND at >= sqlc.arg(since)
+GROUP BY check_key, item, metric;

@@ -15,17 +15,26 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
-// SQLStore implements Store with sqlc queries on *db.DB, run through
-// whatever organization scope the caller's context already carries
+// SQLStore implements Store and StateStore with sqlc queries on *db.DB, run
+// through whatever organization scope the caller's context already carries
 // (db.WithOrgScope) — the posture migration 00045's row-level security
 // pair relies on, the same as every other domain store in this codebase.
+//
+// db is used directly only by HostStates (states_store.go): every other
+// method goes through q, the ordinary sqlc-generated path, but HostStates'
+// WHERE clause is built at runtime from FleetFilter's tag and group
+// conditions, which sqlc's static-query generation has no way to express —
+// the same reason hosts.SQLStore.QueryHosts bypasses q for its own
+// selector-built query.
 type SQLStore struct {
-	q *gen.Queries
+	q  *gen.Queries
+	db *db.DB
 }
 
 // NewSQLStore builds the store on d itself, never its raw pool, so every
-// statement runs inside the request's bound organization.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+// statement — sqlc-generated or hand-written — runs inside the request's
+// bound organization.
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), db: d} }
 
 // marshalNode encodes a trigger tree, always present, so never nil.
 func marshalNode(n Node) ([]byte, error) { return json.Marshal(n) }

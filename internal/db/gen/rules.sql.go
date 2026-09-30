@@ -13,6 +13,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countStateChangesSince = `-- name: CountStateChangesSince :many
+SELECT check_key, item, metric, count(*)::bigint AS change_count
+FROM check_state_changes
+WHERE org_id = $1 AND host_id = $2 AND at >= $3
+GROUP BY check_key, item, metric
+`
+
+type CountStateChangesSinceParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+	Since  time.Time `json:"since"`
+}
+
+type CountStateChangesSinceRow struct {
+	CheckKey    string `json:"check_key"`
+	Item        string `json:"item"`
+	Metric      string `json:"metric"`
+	ChangeCount int64  `json:"change_count"`
+}
+
+// Task 7 (Store.ChangeCounts): the flapping count, one row per tuple that
+// changed at least once since `since`. This is check_state_changes_lookup_
+// idx's one named query (00046's own comment): org_id and host_id pin the
+// index's leading columns, `at >= since` is the range condition the index's
+// trailing `at DESC` column serves, and the GROUP BY reduces to exactly
+// the map ChangeCounts hands back — a tuple absent from the result changed
+// zero times, not an error.
+func (q *Queries) CountStateChangesSince(ctx context.Context, arg CountStateChangesSinceParams) ([]CountStateChangesSinceRow, error) {
+	rows, err := q.db.Query(ctx, countStateChangesSince, arg.OrgID, arg.HostID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountStateChangesSinceRow
+	for rows.Next() {
+		var i CountStateChangesSinceRow
+		if err := rows.Scan(
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.ChangeCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createRule = `-- name: CreateRule :exec
 INSERT INTO check_rules (
   id, org_id, name, enabled, origin, scope, group_id, host_id, item,
@@ -130,6 +182,58 @@ func (q *Queries) GetRule(ctx context.Context, arg GetRuleParams) (CheckRule, er
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listCheckStates = `-- name: ListCheckStates :many
+SELECT org_id, host_id, check_key, item, metric, state, since, rule_id, last_value, last_label, candidate_state, candidate_since, flapping, evaluated_at FROM check_states
+WHERE org_id = $1 AND host_id = $2
+ORDER BY check_key, item, metric
+`
+
+type ListCheckStatesParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Task 7 (Store.StatesForHost): every tuple's current state for one host,
+// read straight off check_states' own primary key prefix (host_id) with
+// org_id re-asserted in the WHERE clause the same way every other store in
+// this codebase double-checks org scope alongside row-level security (see
+// e.g. GetRule above). Ordered by (check_key, item, metric) so two calls
+// against the same, unchanged data always agree on order.
+func (q *Queries) ListCheckStates(ctx context.Context, arg ListCheckStatesParams) ([]CheckState, error) {
+	rows, err := q.db.Query(ctx, listCheckStates, arg.OrgID, arg.HostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CheckState
+	for rows.Next() {
+		var i CheckState
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.HostID,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.State,
+			&i.Since,
+			&i.RuleID,
+			&i.LastValue,
+			&i.LastLabel,
+			&i.CandidateState,
+			&i.CandidateSince,
+			&i.Flapping,
+			&i.EvaluatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRules = `-- name: ListRules :many
