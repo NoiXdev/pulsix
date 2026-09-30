@@ -72,8 +72,10 @@ type WindowRequest struct {
 //
 // Previous is the state of every tuple as the last evaluation left it; a
 // tuple absent from it has never been evaluated. Changes30 is how often
-// each tuple changed inside the flapping window, counted before this
-// evaluation — a change made by this tick is counted by the next one.
+// each tuple changed inside the flapping window as the caller loaded it —
+// the changes this evaluation is about to write are added on top of it
+// here, so a tuple whose fifth change is the one happening right now is
+// flagged on this tick rather than the next one.
 type Snapshot struct {
 	Now       time.Time
 	Tuples    []TupleSnapshot
@@ -82,6 +84,19 @@ type Snapshot struct {
 	Facts     map[string]string
 	Previous  map[Tuple]TupleState
 	Changes30 map[Tuple]int
+	// PreviousHost is the roll-up the last evaluation wrote, and the only
+	// thing Host.Since can be carried from — the tuple states alone cannot
+	// say when the roll-up last changed value, only when each tuple did.
+	//
+	// It is a pointer, and nil is a supported input, not an oversight: a
+	// caller that does not supply it gets the derivation rollUp applies
+	// instead (see that function), which is accurate except when one
+	// alerting tuple recovers while another keeps the host at the same
+	// state — then Since drifts forward to the surviving tuple. Degrading
+	// to that is deliberate. The alternative, treating a missing roll-up
+	// as "the state changed", would reset Since on every single tick,
+	// which is a far worse failure than a bounded drift.
+	PreviousHost *HostState
 }
 
 // Result is what one evaluation concluded: the new state of every tuple in
@@ -107,13 +122,15 @@ type Result struct {
 //
 // It reads only Tuples and Effective, so the ticker calls it on a Snapshot
 // whose Windows field is still nil and fills that field from the result.
-// Only rules judging a tuple the host actually reports contribute:
-// Evaluate decides a state per reported tuple, so a window for anything
-// else would be fetched and never read.
+// Only rules judging a tuple Evaluate will actually judge contribute — one
+// the host reports and whose check still has a resolved interval — since a
+// window for anything else would be fetched and never read.
 func WindowRequests(s Snapshot) []WindowRequest {
 	reported := make(map[Tuple]bool, len(s.Tuples))
 	for _, ts := range s.Tuples {
-		reported[ts.Tuple] = true
+		if measured(ts) {
+			reported[ts.Tuple] = true
+		}
 	}
 
 	seen := make(map[WindowRequest]bool)
@@ -158,6 +175,24 @@ func Evaluate(s Snapshot) Result {
 	)
 
 	for _, ts := range s.Tuples {
+		if !measured(ts) {
+			// A tuple whose check has no resolved interval is one nothing
+			// asks anyone to measure any more: its definition is gone, and
+			// the value on hand is frozen at whatever it was when it went.
+			// It gets no state and no part in the roll-up — exactly as if
+			// it were not in Tuples at all. Neither alternative survives
+			// contact with an operator: sweeping it to unknown would leave
+			// a deleted check holding the host grey on the fleet page for
+			// ever with nothing anyone could do to clear it, and judging
+			// the frozen value would keep a disk that was 96 % full when
+			// its check was deleted at crit on data nobody refreshes. This
+			// is v0.3b-1's own ruling for a check_current row that outlives
+			// the thing it measured (backlog 3.28) one layer up: the stored
+			// row stays exactly as it is — nothing here deletes it — and
+			// the read side is what leaves it out.
+			continue
+		}
+
 		prev, seen := s.Previous[ts.Tuple]
 		if !seen {
 			// A tuple evaluated for the first time is judged against ok:
@@ -168,38 +203,47 @@ func Evaluate(s Snapshot) Result {
 
 		next, ripensAt := decide(s, ts, inputs[itemKeyOf(ts.Tuple)], byTuple[ts.Tuple], prev)
 
+		// Since marks when the current state started, so it moves only when
+		// the state does: a re-confirmed state keeps the moment it began.
+		changed := next.State != prev.State
+		if changed {
+			next.Since = s.Now
+		} else {
+			next.Since = prev.Since
+		}
+		if changed && seen {
+			// A tuple's first evaluation is an insert, not a transition:
+			// there is no earlier state to record a move away from, and
+			// check_state_changes holds transitions only (its own
+			// CHECK (from_state <> to_state)).
+			changes = append(changes, Change{
+				At:     s.Now,
+				Tuple:  ts.Tuple,
+				From:   prev.State,
+				To:     next.State,
+				RuleID: next.RuleID,
+				Value:  ts.Value,
+				Label:  ts.Label,
+			})
+		}
+
 		// Step 6: flapping, with its own hysteresis so that the flag does
-		// not itself flap.
-		switch n := s.Changes30[ts.Tuple]; {
-		case n >= flappingSet:
+		// not itself flap. The count is the loaded window plus the change
+		// this evaluation is about to write, so a tuple whose fifth change
+		// is the one happening right now is flagged now — the flag is for
+		// an operator watching a tuple move, and it should not lag a tick
+		// behind the move that earned it.
+		count := s.Changes30[ts.Tuple]
+		if changed && seen {
+			count++
+		}
+		switch {
+		case count >= flappingSet:
 			next.Flapping = true
-		case n < flappingClear:
+		case count < flappingClear:
 			next.Flapping = false
 		default:
 			next.Flapping = prev.Flapping
-		}
-
-		// Since marks when the current state started, so it moves only when
-		// the state does: a re-confirmed state keeps the moment it began.
-		if next.State == prev.State {
-			next.Since = prev.Since
-		} else {
-			next.Since = s.Now
-			if seen {
-				// A tuple's first evaluation is an insert, not a
-				// transition: there is no earlier state to record a move
-				// away from, and check_state_changes holds transitions only
-				// (its own CHECK (from_state <> to_state)).
-				changes = append(changes, Change{
-					At:     s.Now,
-					Tuple:  ts.Tuple,
-					From:   prev.State,
-					To:     next.State,
-					RuleID: next.RuleID,
-					Value:  ts.Value,
-					Label:  ts.Label,
-				})
-			}
 		}
 
 		states = append(states, next)
@@ -209,7 +253,7 @@ func Evaluate(s Snapshot) Result {
 		// A staleness deadline already behind us is not pending — the tuple
 		// is unknown already and rescheduling into the past would spin the
 		// ticker on this host every time it looked at it.
-		if deadline, ok := staleAt(ts); ok && deadline.After(s.Now) {
+		if deadline := staleAt(ts); deadline.After(s.Now) {
 			pending = append(pending, deadline)
 		}
 	}
@@ -217,7 +261,7 @@ func Evaluate(s Snapshot) Result {
 	return Result{
 		States:  states,
 		Changes: changes,
-		Host:    rollUp(states, s.Now),
+		Host:    rollUp(states, s.Now, s.PreviousHost),
 		NextDue: nextDue(pending, s.Now),
 	}
 }
@@ -238,7 +282,7 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	// about data that is not there, so this outranks every threshold, no
 	// clear condition holds a state against it, and a ripening candidate is
 	// discarded rather than left to ripen in the dark (review focus 3).
-	if unknownNow(s.Now, ts) {
+	if ts.Err != "" || s.Now.After(staleAt(ts)) {
 		next.State = StateUnknown
 		return next, nil
 	}
@@ -311,7 +355,9 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 // A value is exposed whether or not its own tuple is stale or errored: the
 // metrics of one item are collected together, so a sibling that is stale
 // makes the tuple reading it stale too, and step 1 has that covered before
-// any rule is evaluated.
+// any rule is evaluated. A tuple left out of the evaluation is left out
+// here too — "as if it were not in Tuples" includes not being readable by
+// its siblings.
 func buildInputs(s Snapshot) map[ItemKey]Input {
 	inputs := make(map[ItemKey]Input)
 	inputFor := func(key ItemKey) Input {
@@ -328,6 +374,9 @@ func buildInputs(s Snapshot) map[ItemKey]Input {
 		return in
 	}
 	for _, ts := range s.Tuples {
+		if !measured(ts) {
+			continue // left out of the evaluation entirely; see Evaluate
+		}
 		in := inputFor(itemKeyOf(ts.Tuple))
 		if ts.Value != nil {
 			in.Metrics[ts.Tuple.Metric] = *ts.Value
@@ -374,25 +423,17 @@ func firstMatch(bySeverity map[Severity]Rule, in Input) (State, Rule, bool) {
 	return StateOK, Rule{}, false
 }
 
-// unknownNow is step 1's condition: the agent reported a collection error,
-// or the last value is older than stalenessFactor intervals.
-func unknownNow(now time.Time, ts TupleSnapshot) bool {
-	if ts.Err != "" {
-		return true
-	}
-	deadline, ok := staleAt(ts)
-	return ok && now.After(deadline)
-}
+// measured reports whether ts belongs to a check the manager still resolves
+// an interval for. A tuple that fails this is left out of the evaluation
+// entirely — see the skip in Evaluate for why, and note that both staleAt
+// and step 1 are only meaningful once it holds.
+func measured(ts TupleSnapshot) bool { return ts.Interval > 0 }
 
-// staleAt is the moment ts stops being evidence of anything. ok is false
-// when the check has no resolved interval: "older than three intervals" has
-// no meaning without one, and defaulting it to zero would sweep every tuple
-// of an unresolved check into unknown on the next tick.
-func staleAt(ts TupleSnapshot) (time.Time, bool) {
-	if ts.Interval <= 0 {
-		return time.Time{}, false
-	}
-	return ts.At.Add(stalenessFactor * ts.Interval), true
+// staleAt is the moment ts stops being evidence of anything: three of its
+// check's intervals after it was measured. Only meaningful for a tuple
+// measured reports true for.
+func staleAt(ts TupleSnapshot) time.Time {
+	return ts.At.Add(stalenessFactor * ts.Interval)
 }
 
 // nextDue is step 5: the earliest moment this host has a reason to be
@@ -417,14 +458,16 @@ func nextDue(pending []time.Time, now time.Time) time.Time {
 // A host with no tuples at all yields the zero HostState, which is how
 // Evaluate says "write no row" (see Result's own doc comment).
 //
-// Since is derived from the tuple states rather than carried from a
-// previous roll-up, because the snapshot holds no previous roll-up to carry
-// from. For an alerting host it is the earliest moment a tuple still at
-// that state entered it — the host has demonstrably stood there ever since.
-// For a healthy host it is the latest of every tuple's Since, because a
-// host is only healthy from the moment its last unhealthy tuple recovered,
-// not from the oldest tuple that happened to be ok all along.
-func rollUp(states []TupleState, now time.Time) HostState {
+// Since carries over from previous while the host state is unchanged, and
+// is now when it changed. When previous is nil — a caller that does not
+// supply the last roll-up, which Snapshot.PreviousHost documents as a
+// supported input — it is derived from the tuple states instead: for an
+// alerting host the earliest moment a tuple still at that state entered it,
+// since the host has demonstrably stood there ever since; for a healthy
+// host the latest of every tuple's Since, since a host is only healthy from
+// the moment its last unhealthy tuple recovered, not from the oldest tuple
+// that happened to be ok all along.
+func rollUp(states []TupleState, now time.Time, previous *HostState) HostState {
 	if len(states) == 0 {
 		return HostState{}
 	}
@@ -440,6 +483,14 @@ func rollUp(states []TupleState, now time.Time) HostState {
 			host.Unknown++
 		case StateOK:
 		}
+	}
+	if previous != nil {
+		if previous.State == host.State {
+			host.Since = previous.Since
+		} else {
+			host.Since = now
+		}
+		return host
 	}
 	first := true
 	for _, st := range states {

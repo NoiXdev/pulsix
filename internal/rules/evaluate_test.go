@@ -39,6 +39,7 @@ var (
 	diskVarT      = rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
 	diskFreeRootT = rules.Tuple{CheckKey: "disk", Item: "/", Metric: "disk.free_bytes"}
 	diskFreeVarT  = rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.free_bytes"}
+	diskTmpT      = rules.Tuple{CheckKey: "disk", Item: "/tmp", Metric: "disk.used_pct"}
 	svcT          = rules.Tuple{CheckKey: "service", Item: "nginx", Metric: "service.state"}
 )
 
@@ -912,15 +913,140 @@ func evaluateCases() []evalCase {
 			},
 		},
 		{
-			// Staleness is "older than three intervals"; with no interval
-			// there is no such multiple, so the tuple is judged normally
-			// rather than swept into unknown by an unresolved check.
-			name: "a tuple with no resolved interval is never judged stale",
+			// A check with no resolved interval is one nothing asks anyone
+			// to measure any more. Its tuple is left out entirely: no
+			// state, no change, no part in the roll-up, and — because it is
+			// out of Tuples as far as this evaluation is concerned — no
+			// value its siblings could read either. The value on hand would
+			// cross the crit threshold, and the stored state row still says
+			// crit; neither gets a say, and neither is rewritten.
+			name: "a tuple whose check has no resolved interval is left out entirely",
+			snap: rules.Snapshot{
+				Now: at(20),
+				Tuples: []rules.TupleSnapshot{
+					snap(cpuT, 95, at(0), 0),
+					snap(memT, 50, at(20), tenMin),
+				},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous: prev(
+					wasBy(cpuT, rules.StateCrit, at(5), critID),
+					was(memT, rules.StateOK, at(0)),
+				),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: memT, State: rules.StateOK, Since: at(0),
+					LastValue: ptr(50.0), EvaluatedAt: at(20),
+				}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(20)},
+				NextDue: at(50),
+			},
+		},
+		{
+			// The exclusion reaches the siblings too: the rule on
+			// disk.used_pct would be crit if it could read
+			// disk.free_bytes, but that metric's check has no resolved
+			// interval, so it is not in this item's Input at all. A rule
+			// that cannot be evaluated does not match — the milestone's
+			// binding invariant, reached here through the exclusion.
+			name: "a tuple left out is not readable by its siblings either",
+			snap: rules.Snapshot{
+				Now: at(20),
+				Tuples: []rules.TupleSnapshot{
+					snap(diskRootT, 95, at(20), tenMin),
+					snap(diskFreeRootT, 100, at(0), 0),
+				},
+				Effective: []rules.Effective{eff(diskSiblingRule(), diskRootT)},
+				Previous: prev(
+					was(diskRootT, rules.StateOK, at(0)),
+					was(diskFreeRootT, rules.StateOK, at(0)),
+				),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: diskRootT, State: rules.StateOK, Since: at(0),
+					LastValue: ptr(95.0), EvaluatedAt: at(20),
+				}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(20)},
+				NextDue: at(50),
+			},
+		},
+		{
+			// Staleness is "older than three intervals", so the deadline
+			// itself is still fresh: the tuple is judged normally, and the
+			// deadline is not a pending moment either, since it is not
+			// ahead of now.
+			name: "a value exactly three intervals old is not yet unknown",
+			snap: rules.Snapshot{
+				Now:       at(23),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(20), oneMin)},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous:  prev(was(cpuT, rules.StateOK, at(0))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateCrit, Since: at(23),
+					RuleID: &critID, LastValue: ptr(95.0), EvaluatedAt: at(23),
+				}},
+				Changes: []rules.Change{{
+					At: at(23), Tuple: cpuT, From: rules.StateOK, To: rules.StateCrit,
+					RuleID: &critID, Value: ptr(95.0),
+				}},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(23), EvaluatedAt: at(23)},
+				NextDue: at(23).Add(15 * time.Second),
+			},
+		},
+		{
+			// … and when that is the only tuple there is, the host has no
+			// tuples at all, so it writes no roll-up row rather than
+			// holding the fleet page grey for ever.
+			name: "a host whose only tuple has no resolved interval writes no host state",
 			snap: rules.Snapshot{
 				Now:       at(20),
 				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(0), 0)},
 				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
-				Previous:  prev(was(cpuT, rules.StateOK, at(0))),
+				Previous:  prev(wasBy(cpuT, rules.StateCrit, at(5), critID)),
+			},
+			want: rules.Result{NextDue: at(20).Add(15 * time.Second)},
+		},
+		{
+			// The roll-up carries its Since from the previous roll-up, not
+			// from the tuples: the host has stood at crit since minute 0,
+			// even though neither tuple holding it there is that old.
+			name: "the host roll-up carries its since from the previous roll-up",
+			snap: rules.Snapshot{
+				Now: at(20),
+				Tuples: []rules.TupleSnapshot{
+					snap(cpuT, 95, at(20), tenMin),
+					snap(memT, 95, at(20), tenMin),
+				},
+				Effective: []rules.Effective{
+					eff(cpuCrit(), cpuT),
+					eff(memCrit(), memT),
+				},
+				Previous: prev(
+					wasBy(cpuT, rules.StateCrit, at(8), critID),
+					wasBy(memT, rules.StateCrit, at(5), memCritID),
+				),
+				PreviousHost: &rules.HostState{State: rules.StateCrit, Since: at(0)},
+			},
+			want: rules.Result{
+				States: []rules.TupleState{
+					{Tuple: cpuT, State: rules.StateCrit, Since: at(8), RuleID: &critID, LastValue: ptr(95.0), EvaluatedAt: at(20)},
+					{Tuple: memT, State: rules.StateCrit, Since: at(5), RuleID: &memCritID, LastValue: ptr(95.0), EvaluatedAt: at(20)},
+				},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 2, Since: at(0), EvaluatedAt: at(20)},
+				NextDue: at(50),
+			},
+		},
+		{
+			name: "the host roll-up restarts its since when the host state changes",
+			snap: rules.Snapshot{
+				Now:          at(20),
+				Tuples:       []rules.TupleSnapshot{snap(cpuT, 95, at(20), tenMin)},
+				Effective:    []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous:     prev(was(cpuT, rules.StateOK, at(0))),
+				PreviousHost: &rules.HostState{State: rules.StateOK, Since: at(0)},
 			},
 			want: rules.Result{
 				States: []rules.TupleState{{
@@ -932,7 +1058,52 @@ func evaluateCases() []evalCase {
 					RuleID: &critID, Value: ptr(95.0),
 				}},
 				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(20), EvaluatedAt: at(20)},
-				NextDue: at(20).Add(15 * time.Second),
+				NextDue: at(50),
+			},
+		},
+		{
+			// The flag counts the change this evaluation is about to write:
+			// four in the loaded window plus this one is five, so the tuple
+			// is flagged on the tick that earned it, not the next one.
+			name: "a change made by this evaluation counts towards flapping",
+			snap: rules.Snapshot{
+				Now:       at(20),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(20), tenMin)},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous:  prev(was(cpuT, rules.StateOK, at(0))),
+				Changes30: map[rules.Tuple]int{cpuT: 4},
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateCrit, Since: at(20),
+					RuleID: &critID, LastValue: ptr(95.0), Flapping: true, EvaluatedAt: at(20),
+				}},
+				Changes: []rules.Change{{
+					At: at(20), Tuple: cpuT, From: rules.StateOK, To: rules.StateCrit,
+					RuleID: &critID, Value: ptr(95.0),
+				}},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(20), EvaluatedAt: at(20)},
+				NextDue: at(50),
+			},
+		},
+		{
+			// A tuple seen for the first time is an insert, not a
+			// transition, so it writes no change — and contributes none to
+			// the flapping count either.
+			name: "a first evaluation does not count towards flapping",
+			snap: rules.Snapshot{
+				Now:       at(20),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(20), tenMin)},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
+				Changes30: map[rules.Tuple]int{cpuT: 4},
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateCrit, Since: at(20),
+					RuleID: &critID, LastValue: ptr(95.0), EvaluatedAt: at(20),
+				}},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(20), EvaluatedAt: at(20)},
+				NextDue: at(50),
 			},
 		},
 		{
@@ -990,7 +1161,7 @@ func evaluateCases() []evalCase {
 				},
 				Effective: []rules.Effective{
 					eff(cpuCrit(), cpuT),
-					eff(evalRule(memCritID, memT, rules.SeverityCrit, compare(">", metric("memory.used_pct"), number(90))), memT),
+					eff(memCrit(), memT),
 				},
 				Previous: prev(
 					wasBy(cpuT, rules.StateCrit, at(8), critID),
@@ -1019,7 +1190,7 @@ func evaluateCases() []evalCase {
 				},
 				Effective: []rules.Effective{
 					eff(cpuCrit(), cpuT),
-					eff(evalRule(memCritID, memT, rules.SeverityCrit, compare(">", metric("memory.used_pct"), number(90))), memT),
+					eff(memCrit(), memT),
 				},
 				Previous: prev(
 					was(cpuT, rules.StateOK, at(0)),
@@ -1113,6 +1284,12 @@ func evaluateCases() []evalCase {
 	}
 }
 
+// memCrit is the crit rule on the second metric the roll-up cases need.
+func memCrit() rules.Rule {
+	return evalRule(memCritID, memT, rules.SeverityCrit,
+		compare(">", metric("memory.used_pct"), number(90)))
+}
+
 // diskWindowRule is the per-item window rule the window case judges with.
 func diskWindowRule() rules.Rule {
 	return evalRule(critID, diskRootT, rules.SeverityCrit,
@@ -1131,7 +1308,8 @@ func diskSiblingRule() rules.Rule {
 // TestWindowRequests pins what the store must fetch before Evaluate can
 // run: one request per (item, window) a winning rule's trigger or clear
 // condition names, deduplicated, and nothing at all for a rule whose tuple
-// the host does not report.
+// Evaluate will not judge — one the host does not report, or one whose
+// check has no resolved interval and is therefore left out entirely.
 func TestWindowRequests(t *testing.T) {
 	trigger := evalRule(critID, diskRootT, rules.SeverityCrit,
 		compare(">", window("disk.used_pct", "avg", 300), number(90)))
@@ -1148,11 +1326,13 @@ func TestWindowRequests(t *testing.T) {
 		Tuples: []rules.TupleSnapshot{
 			snap(diskRootT, 95, at(20), tenMin),
 			snap(diskVarT, 10, at(20), tenMin),
+			snap(diskTmpT, 10, at(20), 0), // reported, but no resolved interval
 		},
 		Effective: []rules.Effective{
 			eff(clearing, diskRootT),
 			eff(sameWindow, diskRootT),
 			eff(clearing, diskVarT),
+			eff(clearing, diskTmpT),
 			eff(unreported, memT),
 		},
 	}
