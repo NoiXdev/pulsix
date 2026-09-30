@@ -299,9 +299,22 @@ function ValueRow({
                   // — makes a cold open cost max(chunk, request) instead of
                   // their sum (backlog 3.26). A dynamic import is cached by
                   // the module registry, so reopening costs nothing, and the
-                  // `void` says the result is deliberately dropped: React.lazy
-                  // awaits the same promise when it renders.
-                  if (!isOpen) void importMetricChart();
+                  // result is deliberately dropped: React.lazy awaits the
+                  // same promise when it renders, and THAT await is what
+                  // surfaces a failed chunk to the error boundary below.
+                  //
+                  // `.catch(() => {})`, not a bare `void`, is what makes this
+                  // drop actually safe: this call and React.lazy's own each
+                  // race to be the first to call the loader, so a failing
+                  // fetch here is a second, independent rejection nobody
+                  // else was ever going to await — a real unhandled
+                  // rejection (a console error for a real visitor, an
+                  // "Unhandled Rejection" that fails `npm run test` even
+                  // though every assertion passed, for this file's own
+                  // chunk.test.tsx) rather than a hypothetical one. The
+                  // fallback UI still appears: it comes from React.lazy's
+                  // own await two lines below, untouched by this one.
+                  if (!isOpen) importMetricChart().catch(() => {});
                   onOpen(isOpen ? null : { check: check.key, item: value.item, metric: value.metric, range: '1h' });
                 }}
               >
