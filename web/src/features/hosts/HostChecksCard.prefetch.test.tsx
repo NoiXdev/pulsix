@@ -34,7 +34,7 @@ const CHECKS = {
     {
       definition_id: 'd1', key: 'cpu', plugin: 'cpu', params: {}, interval_seconds: 60,
       enabled: true, origin: 'seed', source: 'org',
-      values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false }],
+      values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: null, flapping: false }],
     },
   ],
 };
@@ -64,7 +64,11 @@ function renderCard() {
 
 describe('HostChecksCard chart chunk', () => {
   it('is not fetched before anyone asks for a graph', async () => {
-    mockApi({ 'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
     renderCard();
 
     // The whole point of the lazy import: a host page nobody graphs on
@@ -76,6 +80,8 @@ describe('HostChecksCard chart chunk', () => {
   it('starts loading on the click, not on the series that never arrives', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       // A series that fails is the sharpest form of "the data is not
       // here": `<MetricChart>` is never rendered on this path at all, so
       // an import that happened anyway can only have come from the click.
@@ -97,6 +103,8 @@ describe('HostChecksCard chart chunk', () => {
   it('is fetched once, however often the graph is reopened', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': {
         check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW,
         points: [{ at: NOW, value: 12.5 }],

@@ -34,7 +34,7 @@ const CHECKS = {
     {
       definition_id: 'd1', key: 'cpu', plugin: 'cpu', params: {}, interval_seconds: 60,
       enabled: true, origin: 'seed', source: 'org',
-      values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false }],
+      values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: null, flapping: false }],
     },
   ],
 };
@@ -75,6 +75,8 @@ describe('HostChecksCard when a mounted chart throws', () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
     });
     renderCard();
@@ -102,6 +104,8 @@ describe('HostChecksCard when a mounted chart throws', () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
     });
     renderCard();

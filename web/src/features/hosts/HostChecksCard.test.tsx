@@ -29,7 +29,7 @@ const THREE_SOURCES = {
   host_id: 'h1',
   monitored: true,
   checks: [
-    check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false }] }),
+    check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: null, flapping: false }] }),
     check({
       definition_id: 'd2',
       key: 'disk',
@@ -38,7 +38,7 @@ const THREE_SOURCES = {
       source: 'group',
       source_id: 'g1',
       source_name: 'Web tier',
-      values: [{ item: '/var', metric: 'used_percent', value: 81.25, at: NOW, stale: false }],
+      values: [{ item: '/var', metric: 'used_percent', value: 81.25, at: NOW, stale: false, state: null, flapping: false }],
     }),
     check({
       definition_id: 'd3',
@@ -49,7 +49,7 @@ const THREE_SOURCES = {
       source: 'host',
       source_id: 'h1',
       source_name: 'web-1',
-      values: [{ item: 'nginx.service', metric: 'state', label: 'active', at: NOW, stale: false }],
+      values: [{ item: 'nginx.service', metric: 'state', label: 'active', at: NOW, stale: false, state: null, flapping: false }],
     }),
   ],
 };
@@ -92,7 +92,11 @@ const row = (key: string, metric: string) => within(block(key).getByText(metric)
 
 describe('HostChecksCard', () => {
   it('renders each check with the scope it is inherited from and its current values', async () => {
-    mockApi({ 'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
     renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
@@ -115,7 +119,11 @@ describe('HostChecksCard', () => {
   });
 
   it('offers a graph for numeric metrics only', async () => {
-    mockApi({ 'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
     renderCard();
 
     expect(await screen.findByRole('button', { name: 'Graph cpu usage_percent' })).toBeInTheDocument();
@@ -128,6 +136,8 @@ describe('HostChecksCard', () => {
 
   it('renders a collection error as the failure, and keeps the graph to the history behind it', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -141,7 +151,7 @@ describe('HostChecksCard', () => {
               // beside the error and asserted it was not rendered — an
               // assertion that could never fail, about a row the database
               // forbids.
-              { item: '', metric: 'usage_percent', error: 'read /proc/stat: permission denied', at: NOW, stale: true },
+              { item: '', metric: 'usage_percent', error: 'read /proc/stat: permission denied', at: NOW, stale: true, state: null, flapping: false },
             ],
           }),
         ],
@@ -162,6 +172,8 @@ describe('HostChecksCard', () => {
 
   it('offers no graph for a discrete check whose collection is failing either', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -169,7 +181,7 @@ describe('HostChecksCard', () => {
           check({
             key: 'nginx',
             plugin: 'service',
-            values: [{ item: 'nginx.service', metric: 'state', error: 'dbus: connection refused', at: NOW, stale: true }],
+            values: [{ item: 'nginx.service', metric: 'state', error: 'dbus: connection refused', at: NOW, stale: true, state: null, flapping: false }],
           }),
         ],
       },
@@ -185,6 +197,8 @@ describe('HostChecksCard', () => {
 
   it('marks exactly what the server calls stale, never what the timestamps suggest', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -200,8 +214,8 @@ describe('HostChecksCard', () => {
             // timestamps happened to agree with the arithmetic) could not
             // detect.
             values: [
-              { item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true },
-              { item: '', metric: 'load1', value: 0.4, at: '2026-09-27T11:00:00Z', stale: false },
+              { item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true, state: null, flapping: false },
+              { item: '', metric: 'load1', value: 0.4, at: '2026-09-27T11:00:00Z', stale: false, state: null, flapping: false },
             ],
           }),
         ],
@@ -222,6 +236,8 @@ describe('HostChecksCard', () => {
     // screenshot) must be able to tell apart from text alone — colour is
     // never the only carrier (v0.3b-2 spec).
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -253,6 +269,8 @@ describe('HostChecksCard', () => {
 
   it('flags a flapping tuple beside its state, not instead of it', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -273,6 +291,8 @@ describe('HostChecksCard', () => {
 
   it('says nothing about flapping for a stable tuple', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -289,8 +309,98 @@ describe('HostChecksCard', () => {
     expect(screen.queryByText('flapping')).not.toBeInTheDocument();
   });
 
+  it('opens the deciding rule for the value on screen from that value’s own row', async () => {
+    // The explainability question an operator asks — "which rule decided
+    // THIS number" — about the value already in front of them, not from a
+    // second list they have to scan (review round 1, "the effective-rules
+    // panel's shape").
+    mockApi({
+      'GET /api/v1/orgs/acme/monitoring-groups': {
+        groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 10, created_at: '', updated_at: '' }],
+      },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'cpu',
+            item: '',
+            metric: 'usage_percent',
+            severity: 'warn',
+            observed: true,
+            winner: {
+              id: 'r1', name: 'Host override', enabled: true, origin: 'user', scope: 'host', host_id: 'h1',
+              check_key: 'cpu', metric: 'usage_percent', severity: 'warn', mode: 'form',
+              form: { metric: 'usage_percent', op: '>=', value: 90 }, source: 'usage_percent >= 90',
+              for_seconds: 0, created_at: '', updated_at: '',
+            },
+            shadowed: [
+              {
+                id: 'r2', name: 'Web tier warning', enabled: true, origin: 'user', scope: 'group', group_id: 'g1',
+                check_key: 'cpu', metric: 'usage_percent', severity: 'warn', mode: 'form',
+                form: { metric: 'usage_percent', op: '>=', value: 80 }, source: 'usage_percent >= 80',
+                for_seconds: 0, created_at: '', updated_at: '',
+              },
+            ],
+          },
+        ],
+      },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+    });
+    renderCard();
+
+    const toggle = await screen.findByRole('button', { name: 'Rules for cpu usage_percent' });
+    expect(screen.queryByText('Host override')).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+
+    expect(await screen.findByText('Host override')).toBeInTheDocument();
+    expect(screen.getByText('Host')).toBeInTheDocument();
+    expect(screen.getByText(/1 shadowed/)).toBeInTheDocument();
+    // A metric with nothing behind it (disk, nginx in THREE_SOURCES) offers
+    // no such control at all — nothing to explain.
+    expect(screen.queryByRole('button', { name: /Rules for disk/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Rules for nginx/ })).not.toBeInTheDocument();
+  });
+
+  it('closes the rule disclosure on a second click, and keeps the value’s own state and graph controls untouched', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'cpu',
+            item: '',
+            metric: 'usage_percent',
+            severity: 'warn',
+            observed: true,
+            winner: {
+              id: 'r1', name: 'Host override', enabled: true, origin: 'user', scope: 'host', host_id: 'h1',
+              check_key: 'cpu', metric: 'usage_percent', severity: 'warn', mode: 'form',
+              form: { metric: 'usage_percent', op: '>=', value: 90 }, source: 'usage_percent >= 90',
+              for_seconds: 0, created_at: '', updated_at: '',
+            },
+            shadowed: [],
+          },
+        ],
+      },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+    });
+    renderCard();
+
+    const toggle = await screen.findByRole('button', { name: 'Rules for cpu usage_percent' });
+    await userEvent.click(toggle);
+    expect(await screen.findByText('Host override')).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(screen.queryByText('Host override')).not.toBeInTheDocument();
+    // The rest of the row is unaffected by opening or closing this panel.
+    expect(screen.getByText('12.5')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Graph cpu usage_percent' })).toBeInTheDocument();
+  });
+
   it('names a skewed host clock rather than leaving every reading amber without a cause', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -299,7 +409,7 @@ describe('HostChecksCard', () => {
         // wide) and then marked stale for ever (three 60 s intervals),
         // with the agent connected and perfectly healthy.
         clock_offset_seconds: 243.7,
-        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true }] })],
+        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true, state: null, flapping: false }] })],
       },
     });
     renderCard();
@@ -317,11 +427,13 @@ describe('HostChecksCard', () => {
     // because every other envelope in this file is monitored. The offset
     // is the same four minutes the monitored case renders.
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: false,
         clock_offset_seconds: 243.7,
-        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true }] })],
+        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true, state: null, flapping: false }] })],
       },
     });
     renderCard();
@@ -332,6 +444,8 @@ describe('HostChecksCard', () => {
 
   it('says nothing about a clock nobody measured, and nothing about a punctual one', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
     });
     const { unmount } = renderCard();
@@ -342,6 +456,8 @@ describe('HostChecksCard', () => {
     unmount();
 
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { ...THREE_SOURCES, clock_offset_seconds: 0.8 },
     });
     renderCard();
@@ -353,6 +469,8 @@ describe('HostChecksCard', () => {
     // Three states share one card, and the empty list is the one that reads
     // like a bug when it is silent.
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [] },
     });
     const { unmount } = renderCard();
@@ -364,6 +482,8 @@ describe('HostChecksCard', () => {
     // `checks` is typed `HostCheckDTO[] | null` by the generated schema —
     // Go's nil slice reaches the SPA as JSON null, not [].
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: false, checks: null },
     });
     renderCard();
@@ -377,6 +497,8 @@ describe('HostChecksCard', () => {
     // the GUI can show where" — dropping the row instead would hide the
     // override that did it.
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
@@ -393,10 +515,12 @@ describe('HostChecksCard', () => {
 
   it('renders a load average at two decimals rather than the float it arrived as', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
-        checks: [check({ values: [{ item: '', metric: 'load1', value: 1 / 3, at: NOW, stale: false }] })],
+        checks: [check({ values: [{ item: '', metric: 'load1', value: 1 / 3, at: NOW, stale: false, state: null, flapping: false }] })],
       },
     });
     renderCard();
@@ -407,12 +531,14 @@ describe('HostChecksCard', () => {
 
   it('says an unmonitored host is not being watched instead of listing values that look live', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         // The effective set does not depend on the flag: these checks WOULD
         // apply, but nothing runs them.
         monitored: false,
-        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false }] })],
+        checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: null, flapping: false }] })],
       },
     });
     renderCard();
@@ -429,6 +555,8 @@ describe('HostChecksCard', () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
       'GET /api/v1/orgs/acme/hosts/h1/metrics': (req: MockRequest) => {
         const q = Object.fromEntries(req.search.entries());
@@ -467,6 +595,8 @@ describe('HostChecksCard', () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
       'GET /api/v1/orgs/acme/hosts/h1/metrics': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
@@ -488,6 +618,8 @@ describe('HostChecksCard', () => {
     const user = userEvent.setup();
     let attempts = 0;
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
       'GET /api/v1/orgs/acme/hosts/h1/metrics': () => {
         attempts += 1;
@@ -511,6 +643,8 @@ describe('HostChecksCard', () => {
   it('shows which window is on screen', async () => {
     const user = userEvent.setup();
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
     });
@@ -531,7 +665,11 @@ describe('HostChecksCard', () => {
   });
 
   it('shows a viewer the list and an operator the way to change it', async () => {
-    mockApi({ 'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
     const { unmount } = renderCard(true, false);
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Manage checks' })).not.toBeInTheDocument();
@@ -542,7 +680,11 @@ describe('HostChecksCard', () => {
   });
 
   it('asks for nothing at all without checks.read', async () => {
-    const fetch = mockApi({ 'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES });
+    const fetch = mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
     renderCard(false);
 
     expect(await screen.findByText(/Monitoring is visible to members/)).toBeInTheDocument();
@@ -551,6 +693,8 @@ describe('HostChecksCard', () => {
 
   it('reports a failed read in the card instead of an empty monitoring section', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': () => new Response(JSON.stringify({ detail: 'checks unavailable' }), { status: 500 }),
     });
     renderCard();

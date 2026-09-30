@@ -1,15 +1,25 @@
 import { lazy, Suspense, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { LineChart } from 'lucide-react';
+import { LineChart, SlidersHorizontal } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
 import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
-import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
+import { useHostChecks, useHostEffectiveRules, useHostMetric, useMonitoringGroups, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
 import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel } from './hostChecks.ts';
-import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts';
+import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
+import type { EffectiveRule, HostCheck, HostCheckValue, MetricRange, MonitoringGroup } from '../../api/types.ts';
+
+/** The tuple a "Rules" disclosure is open for — the same three fields that
+ * name a tuple everywhere else on this card, without `range`: there is no
+ * window to pick for a rule, unlike a graph selection. */
+interface TupleKey {
+  check: string;
+  item: string;
+  metric: string;
+}
 
 /**
  * The chart — and with it uPlot and its stylesheet, ~25 kB gzipped — is
@@ -51,6 +61,15 @@ export interface HostChecksCardProps {
  * after org → group → host precedence, where each came from, what it last
  * measured, and a graph for the numeric ones.
  *
+ * v0.3b-2 adds the rule engine's own verdict per tuple (`stateLabel`) and,
+ * beside the Graph button, a "Rules" disclosure that answers "which rule
+ * decided THIS value" from the value itself — review round 1's own
+ * ruling, after the first version put every tuple's rules in a separate,
+ * unfiltered list an operator had to scan instead. Only the one case that
+ * disclosure cannot reach — an item-scoped rule whose item this host no
+ * longer reports, which therefore has no row here to attach to — lives in
+ * EffectiveRulesPanel instead.
+ *
  * Three states the server distinguishes and this card must not flatten:
  *
  *  - `monitored: false` is its own state. The effective set does not
@@ -78,6 +97,21 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
   // One graph open at a time: these are the only reads on this page that
   // touch the sample hypertable.
   const [open, setOpen] = useState<MetricSelection | null>(null);
+  // One rule disclosure open at a time, independent of the graph above —
+  // an operator may want both open on different values, but the panel
+  // itself grows tall enough per tuple that more than one at once per
+  // value would read as a second scrolling problem this feature exists to
+  // avoid.
+  const [openRules, setOpenRules] = useState<TupleKey | null>(null);
+
+  // Read alongside the checks themselves, gated on the same checks.read:
+  // this is what makes each value's own "Rules" disclosure possible
+  // without a second permission check per row. Not polled — see
+  // useHostEffectiveRules' own doc comment.
+  const effectiveRules = useHostEffectiveRules(org, hostId, canRead);
+  const groups = useMonitoringGroups(org, canRead);
+  const effective = effectiveRules.data?.effective ?? [];
+  const groupList = groups.data?.groups ?? [];
 
   const monitored = query.data?.monitored ?? false;
   const checks = query.data?.checks ?? [];
@@ -140,6 +174,10 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                         value={v}
                         open={open}
                         onOpen={setOpen}
+                        effective={effective}
+                        groups={groupList}
+                        openRules={openRules}
+                        onOpenRules={setOpenRules}
                       />
                     ))}
                     {(c.values ?? []).length === 0 && (
@@ -163,6 +201,10 @@ function ValueRow({
   value,
   open,
   onOpen,
+  effective,
+  groups,
+  openRules,
+  onOpenRules,
 }: {
   org: string;
   hostId: string;
@@ -170,12 +212,27 @@ function ValueRow({
   value: HostCheckValue;
   open: MetricSelection | null;
   onOpen: (selection: MetricSelection | null) => void;
+  effective: EffectiveRule[];
+  groups: MonitoringGroup[];
+  openRules: TupleKey | null;
+  onOpenRules: (key: TupleKey | null) => void;
 }) {
   const name = metricLabel(value);
   const graphable = isGraphable(check, value);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
 
   const st = stateLabel(value.state);
+
+  // The entries GET /hosts/{id}/effective-rules returns for exactly this
+  // tuple — up to two (warn and crit are resolved independently). Every
+  // match here is necessarily `observed: true`: internal/rules.Resolve
+  // only ever produces an `observed: false` entry for a tuple that is NOT
+  // in host.Tuples, and this ValueRow exists precisely because its tuple
+  // IS one of them. EffectiveRulesPanel is where the `observed: false`
+  // remainder — the one case with no row to attach to — lives instead.
+  const rulesForTuple = effective.filter((e) => e.check_key === check.key && (e.item ?? '') === value.item && e.metric === value.metric);
+  const isRulesOpen =
+    openRules !== null && openRules.check === check.key && openRules.item === value.item && openRules.metric === value.metric;
 
   return (
     <li className="flex flex-col gap-1.5">
@@ -216,30 +273,49 @@ function ValueRow({
             )}
           </>
         )}
-        {graphable && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="ml-auto"
-            aria-label={`Graph ${check.key} ${name}`}
-            aria-expanded={isOpen}
-            onClick={() => {
-              // The chunk and the series are two independent round trips.
-              // Starting the import here rather than leaving it to the
-              // first render of <MetricChart> — which waits for the series
-              // — makes a cold open cost max(chunk, request) instead of
-              // their sum (backlog 3.26). A dynamic import is cached by
-              // the module registry, so reopening costs nothing, and the
-              // `void` says the result is deliberately dropped: React.lazy
-              // awaits the same promise when it renders.
-              if (!isOpen) void importMetricChart();
-              onOpen(isOpen ? null : { check: check.key, item: value.item, metric: value.metric, range: '1h' });
-            }}
-          >
-            <LineChart size={14} /> Graph
-          </Button>
+        {(rulesForTuple.length > 0 || graphable) && (
+          <span className="ml-auto flex items-center gap-1">
+            {rulesForTuple.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label={`Rules for ${check.key} ${name}`}
+                aria-expanded={isRulesOpen}
+                onClick={() => onOpenRules(isRulesOpen ? null : { check: check.key, item: value.item, metric: value.metric })}
+              >
+                <SlidersHorizontal size={14} /> Rules
+              </Button>
+            )}
+            {graphable && (
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label={`Graph ${check.key} ${name}`}
+                aria-expanded={isOpen}
+                onClick={() => {
+                  // The chunk and the series are two independent round trips.
+                  // Starting the import here rather than leaving it to the
+                  // first render of <MetricChart> — which waits for the series
+                  // — makes a cold open cost max(chunk, request) instead of
+                  // their sum (backlog 3.26). A dynamic import is cached by
+                  // the module registry, so reopening costs nothing, and the
+                  // `void` says the result is deliberately dropped: React.lazy
+                  // awaits the same promise when it renders.
+                  if (!isOpen) void importMetricChart();
+                  onOpen(isOpen ? null : { check: check.key, item: value.item, metric: value.metric, range: '1h' });
+                }}
+              >
+                <LineChart size={14} /> Graph
+              </Button>
+            )}
+          </span>
         )}
       </div>
+      {isRulesOpen && (
+        <div className="rounded-md border border-border p-2">
+          <EffectiveRuleEntries entries={rulesForTuple} groups={groups} showTuple={false} />
+        </div>
+      )}
       {isOpen && <GraphPanel org={org} hostId={hostId} label={`${check.key} ${name}`} selection={open} onRange={onOpen} />}
     </li>
   );

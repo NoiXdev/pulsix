@@ -208,7 +208,7 @@ describe('HostDetailPage', () => {
           {
             definition_id: 'd1', key: 'cpu', plugin: 'cpu', params: {}, interval_seconds: 60,
             enabled: true, origin: 'seed', source: 'org',
-            values: [{ item: '', metric: 'usage_percent', value: 7.5, at: '2026-03-01T00:00:00Z', stale: false }],
+            values: [{ item: '', metric: 'usage_percent', value: 7.5, at: '2026-03-01T00:00:00Z', stale: false, state: null, flapping: false }],
           },
         ],
       },

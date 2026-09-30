@@ -110,9 +110,15 @@ export function clockSkewLabel(offsetSeconds: number | undefined): string | null
  * own ruling is that null must never read as "ok", and conflating it with
  * "unknown" would still be reading it as a verdict rather than as no
  * verdict at all.
+ *
+ * `state` is typed exactly as the DTO declares it — no `| undefined` —
+ * because the field is never omitted on the wire (no `omitempty` on
+ * HostCheckValueDTO.State; it is always present, explicitly `null` rather
+ * than silently missing). A caller passing an actually-missing value is a
+ * fixture bug, not a shape this function should quietly paper over.
  */
-export function stateLabel(state: HostCheckValue['state'] | undefined): { label: string; tone: Tone } {
-  if (state === null || state === undefined) return { label: 'not yet evaluated', tone: 'unknown' };
+export function stateLabel(state: HostCheckValue['state']): { label: string; tone: Tone } {
+  if (state === null) return { label: 'not yet evaluated', tone: 'unknown' };
   switch (state) {
     case 'ok':
       return { label: 'ok', tone: 'ok' };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
@@ -23,7 +23,15 @@ const rule = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const GROUPS = { groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 10, created_at: '', updated_at: '' }] };
+const OBSERVED_ENTRY = {
+  check_key: 'cpu',
+  item: '',
+  metric: 'cpu.used_pct',
+  severity: 'warn',
+  observed: true,
+  winner: rule({ id: 'r1', name: 'Host override', scope: 'host', host_id: 'h1' }),
+  shadowed: [rule({ id: 'r2', name: 'Org default warning', scope: 'org' })],
+};
 
 function renderPanel(canRead = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -36,47 +44,15 @@ function renderPanel(canRead = true) {
   );
 }
 
-/** The tuple's own section, anchored on its heading so a rule name that
- * repeats across tuples cannot be matched in the wrong block. */
-const block = (heading: string) => within(screen.getByRole('heading', { name: heading }).closest('li') as HTMLElement);
-
+/**
+ * EffectiveRulesPanel's scope narrowed after review: an observed tuple —
+ * one HostChecksCard still lists a value for — is explained by a per-row
+ * disclosure on that card (HostChecksCard.test.tsx covers it), not
+ * repeated here. This panel is now the small remainder no `ValueRow` can
+ * ever reach: an item-scoped rule whose item the host stopped reporting
+ * (internal/rules.Resolve's own `Observed: false`).
+ */
 describe('EffectiveRulesPanel', () => {
-  it('shows the winning rule with its origin, and folds the rules it shadowed underneath', async () => {
-    mockApi({
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
-        effective: [
-          {
-            check_key: 'cpu',
-            item: '',
-            metric: 'cpu.used_pct',
-            severity: 'warn',
-            observed: true,
-            winner: rule({ id: 'r1', name: 'Host override', scope: 'host', host_id: 'h1' }),
-            shadowed: [
-              rule({ id: 'r2', name: 'Web tier warning', scope: 'group', group_id: 'g1' }),
-              rule({ id: 'r3', name: 'Org default warning', scope: 'org' }),
-            ],
-          },
-        ],
-      },
-    });
-    renderPanel();
-
-    await screen.findByRole('heading', { name: 'cpu.used_pct' });
-    const section = block('cpu.used_pct');
-    expect(section.getByText('Host override')).toBeInTheDocument();
-    expect(section.getByText('Host')).toBeInTheDocument();
-    // Both shadowed rules are there, each with its own origin — "folded
-    // underneath" is a disclosure, not a silent drop.
-    expect(section.getByText('Web tier warning')).toBeInTheDocument();
-    expect(section.getByText('Group Web tier')).toBeInTheDocument();
-    expect(section.getByText('Org default warning')).toBeInTheDocument();
-    expect(section.getByText(/2 shadowed/)).toBeInTheDocument();
-    // An observed tuple carries no "no longer observed" label.
-    expect(section.queryByText('no longer observed')).not.toBeInTheDocument();
-  });
-
   it('labels an item-scoped rule whose item the host no longer reports', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
@@ -104,14 +80,69 @@ describe('EffectiveRulesPanel', () => {
     expect(screen.getByText('Item')).toBeInTheDocument();
   });
 
-  it('says so when nothing decides anything on this host yet', async () => {
+  it('still folds the shadowed rules of an unobserved entry underneath it', async () => {
     mockApi({
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 10, created_at: '', updated_at: '' }] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'disk',
+            item: '/old-mount',
+            metric: 'disk.used_pct',
+            severity: 'crit',
+            observed: false,
+            winner: rule({ id: 'r4', name: 'Old mount critical', scope: 'item', host_id: 'h1', item: '/old-mount', check_key: 'disk', metric: 'disk.used_pct', severity: 'crit' }),
+            shadowed: [rule({ id: 'r5', name: 'Web tier disk warning', scope: 'group', group_id: 'g1', check_key: 'disk', metric: 'disk.used_pct' })],
+          },
+        ],
+      },
     });
     renderPanel();
 
-    expect(await screen.findByText(/No rule decides/)).toBeInTheDocument();
+    await screen.findByText('Old mount critical');
+    expect(screen.getByText(/1 shadowed/)).toBeInTheDocument();
+    expect(screen.getByText('Web tier disk warning')).toBeInTheDocument();
+    expect(screen.getByText('Group Web tier')).toBeInTheDocument();
+  });
+
+  it('does not repeat an observed tuple — that is the per-row disclosure on the checks card', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          OBSERVED_ENTRY,
+          {
+            check_key: 'disk',
+            item: '/old-mount',
+            metric: 'disk.used_pct',
+            severity: 'crit',
+            observed: false,
+            winner: rule({ id: 'r4', name: 'Old mount critical', scope: 'item', host_id: 'h1', item: '/old-mount', check_key: 'disk', metric: 'disk.used_pct', severity: 'crit' }),
+            shadowed: [],
+          },
+        ],
+      },
+    });
+    renderPanel();
+
+    // The unobserved entry is here...
+    expect(await screen.findByText('Old mount critical')).toBeInTheDocument();
+    // ...the observed one is not — an operator explains it from the value
+    // it decided, not from a second copy sitting in this list.
+    expect(screen.queryByText('Host override')).not.toBeInTheDocument();
+  });
+
+  it('says nothing extra when every rule on this host still targets something it reports', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      // Only observed entries: the remainder this panel exists for is
+      // empty, and it says so rather than showing a blank card.
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [OBSERVED_ENTRY] },
+    });
+    renderPanel();
+
+    expect(await screen.findByText(/no longer reports/)).toBeInTheDocument();
+    expect(screen.queryByText('Host override')).not.toBeInTheDocument();
   });
 
   it('asks for nothing without checks.read', async () => {

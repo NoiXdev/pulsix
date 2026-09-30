@@ -75,7 +75,11 @@ describe('FleetPage', () => {
     // colour it happened to hold before its last check was removed.
     expect(screen.getByText('no data')).toBeInTheDocument();
 
-    const critRow = within(screen.getByText('db-1').closest('[class*="grid"]') as HTMLElement);
+    // Scoped by DOM structure, not by a CSS class name: FleetRow renders
+    // the Link as GridRow's direct child, so its own parent element is the
+    // row itself — a class-substring selector here would break silently
+    // on an unrelated styling rename.
+    const critRow = within(screen.getByRole('link', { name: 'db-1' }).parentElement as HTMLElement);
     expect(critRow.getByText('2')).toBeInTheDocument();
   });
 
