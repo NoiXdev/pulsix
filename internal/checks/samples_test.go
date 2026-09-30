@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
@@ -950,5 +951,122 @@ func TestClockOffsetMeasuresOnlyWhatSurvivedTheBatch(t *testing.T) {
 	if m.Offset != 0 {
 		t.Fatalf("offset = %v, want 0: the only reading that was stored was punctual, and the "+
 			"one that was not is exactly the evidence this measurement may not use", m.Offset)
+	}
+}
+
+// cursorDirtyAt reads one host's evaluation cursor. internal/checks owns
+// no reader for check_eval_cursor — the table belongs to the rule engine,
+// and this package only marks it — so the test reads it directly.
+func cursorDirtyAt(t *testing.T, d *db.DB, host uuid.UUID) (time.Time, bool) {
+	t.Helper()
+	var dirtyAt time.Time
+	err := d.Pool().QueryRow(context.Background(),
+		`SELECT dirty_at FROM check_eval_cursor WHERE host_id = $1`, host).Scan(&dirtyAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dirtyAt, true
+}
+
+// TestRecordObservationsMarksTheHostDirty is the ingest side of the
+// v0.3b-2 evaluation trigger: every batch that stores anything for a host
+// marks that host's evaluation cursor, inside the very same transaction,
+// so the rule engine's ticker picks it up on its next pass. One upsert per
+// host per batch — never one per observation.
+func TestRecordObservationsMarksTheHostDirty(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-dirty")
+	host := seedHost(t, d, org, "dirty-host")
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(time.Now()))
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	if _, marked := cursorDirtyAt(t, d, host); marked {
+		t.Fatal("a host that has never ingested already has a cursor")
+	}
+
+	now := time.Now().UTC()
+	obs := []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)},
+		{HostID: host, CheckKey: "cpu", Metric: "load1", At: now, Value: f64(2)},
+	}
+	if _, err := svc.RecordObservations(scoped, org, obs); err != nil {
+		t.Fatal(err)
+	}
+	first, marked := cursorDirtyAt(t, d, host)
+	if !marked {
+		t.Fatal("the ingest batch stored samples but left the host's evaluation cursor unmarked")
+	}
+
+	// A second batch moves dirty_at forward on the same single row.
+	if _, err := svc.RecordObservations(scoped, org, obs); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := cursorDirtyAt(t, d, host)
+	if !second.After(first) {
+		t.Fatalf("dirty_at = %v after a second batch, want a moment after the first batch's %v", second, first)
+	}
+	var rows int
+	if err := d.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM check_eval_cursor WHERE host_id = $1`, host).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("check_eval_cursor rows = %d, want exactly 1 per host", rows)
+	}
+}
+
+// TestRecordObservationsMarksOnlyTheHostsItStored: a batch carrying an
+// unknown host marks the host it could store and nobody else — the mark
+// lives inside the same per-host savepoint the samples do, so a host whose
+// rows were rolled back leaves no cursor behind to make the ticker
+// evaluate a host with nothing new.
+func TestRecordObservationsMarksOnlyTheHostsItStored(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-dirty-partial")
+	host := seedHost(t, d, org, "known-dirty-host")
+	unknown := uuid.Must(uuid.NewV7())
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(time.Now()))
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	now := time.Now().UTC()
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)},
+		{HostID: unknown, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(2)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 1 || res.UnknownHost != 1 {
+		t.Fatalf("ingest = %+v, want 1 accepted and 1 unknown host", res)
+	}
+	if _, marked := cursorDirtyAt(t, d, host); !marked {
+		t.Fatal("the stored host was not marked dirty")
+	}
+	if _, marked := cursorDirtyAt(t, d, unknown); marked {
+		t.Fatal("a host whose observations were rejected was marked dirty")
+	}
+}
+
+// TestRecordObservationsMarksTheHostOfACollectionError: a batch that
+// carries only collection errors writes no check_samples row at all, but
+// it still changes check_current — and that change is exactly what moves a
+// tuple into `unknown`, so it has to mark the host too.
+func TestRecordObservationsMarksTheHostOfACollectionError(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-dirty-error")
+	host := seedHost(t, d, org, "erroring-host")
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(time.Now()))
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	if _, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "disk", Item: "/", Metric: "used_pct", At: time.Now().UTC(), Err: "statfs: permission denied"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, marked := cursorDirtyAt(t, d, host); !marked {
+		t.Fatal("a batch of collection errors left the host's evaluation cursor unmarked")
 	}
 }

@@ -153,6 +153,14 @@ type CheckDefinition struct {
 	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
+type CheckEvalCursor struct {
+	OrgID       uuid.UUID `json:"org_id"`
+	HostID      uuid.UUID `json:"host_id"`
+	DirtyAt     time.Time `json:"dirty_at"`
+	EvaluatedAt time.Time `json:"evaluated_at"`
+	NextDueAt   time.Time `json:"next_due_at"`
+}
+
 type CheckHostState struct {
 	OrgID        uuid.UUID `json:"org_id"`
 	HostID       uuid.UUID `json:"host_id"`

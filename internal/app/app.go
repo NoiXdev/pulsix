@@ -83,6 +83,10 @@ type App struct {
 	stopDispatch func()
 	// stopDigest stops the weekly digest ticker.
 	stopDigest func()
+	// stopEval stops the rule evaluation ticker (v0.3b-2), waiting for a
+	// batch in flight — so Close never closes the pool under an
+	// evaluation that is still writing states.
+	stopEval func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
@@ -110,6 +114,9 @@ func (a *App) Close() {
 	}
 	if a.stopDigest != nil {
 		a.stopDigest()
+	}
+	if a.stopEval != nil {
+		a.stopEval()
 	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
@@ -448,6 +455,18 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// like the schedule ticker; schedulesSvc builds the week's summary.
 	digestStop := startLoop(notify.NewDigestTicker(notify.NewDigestSQLStore(appDB, slog.Default()), schedulesSvc, outbox, notify.DefaultDigestTick, time.Now, nil, slog.Default()).Run)
 
+	// The rule evaluation ticker (v0.3b-2 spec, "Trigger"): one per
+	// manager, every 15 s, claiming dirty-or-due hosts with FOR UPDATE SKIP
+	// LOCKED exactly like the schedule ticker above — which is what makes
+	// several managers safe without a claim protocol of its own. It runs
+	// unscoped, across every organization; its store reads a host's checks
+	// and group membership back through checksSvc (rules_ports.go), the
+	// same resolver the agent's own configuration push uses. Stopped in
+	// Close and on every early return below; stopping waits for a batch
+	// still in flight (startLoop).
+	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), slog.Default()))
+	evalStop := startLoop(func(ctx context.Context) { _ = evalTicker.Run(ctx) })
+
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
@@ -464,6 +483,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			tickerStop()
 			dispatchStop()
 			digestStop()
+			evalStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -485,6 +505,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				tickerStop()
 				dispatchStop()
 				digestStop()
+				evalStop()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -495,7 +516,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopEmbedded: stopEmbedded,
 	}, nil
 }
 

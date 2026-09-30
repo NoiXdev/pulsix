@@ -239,6 +239,16 @@ func (i Ingest) Rejected() int { return i.Implausible + i.Malformed + i.UnknownH
 // only for a genuine store failure (the batch's fate is then unknown, not
 // "all rejected").
 //
+// One statement in that store transaction belongs to somebody else: every
+// host a batch actually stores anything for is also marked dirty in
+// check_eval_cursor (MarkHostDirty), which is how the rule engine's
+// ticker — internal/rules, never called from here — learns that the host
+// has samples nothing has judged yet. It lives inside the ingest
+// transaction rather than after it because a mark written afterwards could
+// be lost, leaving a batch stored and never evaluated; it is one upsert
+// per host per batch, so the ~7 000 samples/s hot path pays a single
+// primary-key probe for it.
+//
 // The contract's own bounds are the one exception to "counted, never an
 // error", and they are checked BEFORE the store is reached at all — see
 // MaxObservationsPerBatch's comment for why a violation of them is the

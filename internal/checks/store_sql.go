@@ -273,7 +273,7 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 				rejected += len(hostObs)
 				continue
 			}
-			ok, err := recordHostObservations(ctx, tx, orgID, hostObs)
+			ok, err := recordHostObservations(ctx, tx, orgID, hostID, hostObs)
 			if err != nil {
 				return err
 			}
@@ -291,7 +291,7 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 	return accepted, rejected, nil
 }
 
-// recordHostObservations writes hostObs — all for the same host, already
+// recordHostObservations writes hostObs — all for hostID, already
 // confirmed to exist at the top of RecordObservations' own transaction —
 // inside a savepoint of tx (internal/db/scope.go: a pgx.Tx.Begin nested in
 // a bound transaction is a savepoint, not a fresh transaction). A
@@ -304,7 +304,7 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 // untouched. Any other error is a genuine store failure and propagates,
 // aborting the whole batch — the same posture every other unexpected
 // store error already has.
-func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, hostObs []Observation) (ok bool, err error) {
+func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, hostObs []Observation) (ok bool, err error) {
 	sp, err := tx.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin host savepoint: %w", err)
@@ -333,6 +333,25 @@ func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, hos
 			}
 			return false, fmt.Errorf("upsert check current: %w", err)
 		}
+	}
+	// The evaluation mark (v0.3b-2 spec, "Trigger"): one single-row upsert
+	// per host per batch, telling the rule engine's ticker that this host
+	// has samples it has not judged yet. It belongs inside this savepoint
+	// and not after the transaction for two reasons: a mark written after
+	// the commit could be lost (the batch would be stored and never
+	// evaluated), and a host whose rows roll back here — one deleted in the
+	// window between the existence check and these inserts — must not leave
+	// a cursor behind claiming it has new data. It is one statement per
+	// host, never one per observation, because the ticker only needs to
+	// know THAT the host changed. check_eval_cursor belongs to
+	// internal/rules; this is a call to a generated query, not a dependency
+	// on that package (see samples.go's own note).
+	if err := q.MarkHostDirty(ctx, gen.MarkHostDirtyParams{OrgID: orgID, HostID: hostID}); err != nil {
+		_ = sp.Rollback(ctx)
+		if db.IsForeignKeyViolation(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("mark host dirty: %w", err)
 	}
 	if err := sp.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit host savepoint: %w", err)

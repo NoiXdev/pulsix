@@ -1,0 +1,838 @@
+package rules_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"math"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/rules"
+)
+
+// These tests exercise EvalSQLStore against the real database, because
+// every claim it makes is about SQL: that the claim is exclusive between
+// two managers, that a window over a hypertable returns the four
+// aggregates (and nothing at all when it holds no row), and that one
+// host's write-back is atomic. None of that can be observed against a
+// fake.
+
+// discard is the logger every store in this file is built with: these
+// tests deliberately provoke failures the store logs, and a test's output
+// should stay pristine.
+func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// fixedChecks is the check pipeline's side of the port, pinned to a fixed
+// answer: internal/rules never imports internal/checks (internal/app
+// adapts the two), so the store's tests supply the intervals and groups
+// directly.
+type fixedChecks struct {
+	intervals map[string]time.Duration
+	groups    []rules.GroupRank
+	err       error
+}
+
+func (f fixedChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rules.CheckContext, error) {
+	if f.err != nil {
+		return rules.CheckContext{}, f.err
+	}
+	return rules.CheckContext{Intervals: f.intervals, Groups: f.groups}, nil
+}
+
+// cpuMinute is the ordinary case: one check, "cpu", resolved at a
+// one-minute interval.
+func cpuMinute() fixedChecks {
+	return fixedChecks{intervals: map[string]time.Duration{"cpu": time.Minute}}
+}
+
+// insertCurrent writes one check_current row — the ingest path's own
+// output, which is what Load reads a host's tuples from.
+func insertCurrent(t *testing.T, d *db.DB, org, host uuid.UUID, tuple rules.Tuple, value *float64, label *string, at time.Time, errText string) {
+	t.Helper()
+	var errPtr *string
+	if errText != "" {
+		errPtr = &errText
+	}
+	if err := gen.New(d.Pool()).UpsertCheckCurrent(context.Background(), gen.UpsertCheckCurrentParams{
+		OrgID: org, HostID: host, CheckKey: tuple.CheckKey, Item: tuple.Item, Metric: tuple.Metric,
+		Value: value, Label: label, At: at, Error: errPtr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// insertSample writes one check_samples row, the hypertable the window
+// statement aggregates over.
+func insertSample(t *testing.T, d *db.DB, org, host uuid.UUID, tuple rules.Tuple, at time.Time, value *float64, label *string) {
+	t.Helper()
+	if err := gen.New(d.Pool()).InsertCheckSample(context.Background(), gen.InsertCheckSampleParams{
+		At: at, OrgID: org, HostID: host, CheckKey: tuple.CheckKey, Item: tuple.Item, Metric: tuple.Metric,
+		Value: value, Label: label,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// markDirty is the ingest path's one statement, called directly: this is
+// exactly what internal/checks' RecordObservations runs inside its own
+// transaction (see that package's own store test for the wiring).
+func markDirty(t *testing.T, d *db.DB, org, host uuid.UUID) {
+	t.Helper()
+	if err := gen.New(d.Pool()).MarkHostDirty(context.Background(), gen.MarkHostDirtyParams{OrgID: org, HostID: host}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// cursorRow reads one host's cursor straight from the table.
+func cursorRow(t *testing.T, d *db.DB, host uuid.UUID) (dirtyAt, evaluatedAt, nextDueAt time.Time) {
+	t.Helper()
+	err := d.Pool().QueryRow(context.Background(),
+		`SELECT dirty_at, evaluated_at, next_due_at FROM check_eval_cursor WHERE host_id = $1`, host).
+		Scan(&dirtyAt, &evaluatedAt, &nextDueAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dirtyAt, evaluatedAt, nextDueAt
+}
+
+// setCursor forces a cursor into a known position — a fixture for "this
+// host is overdue" or "this host is neither dirty nor due" that does not
+// depend on having ingested anything.
+func setCursor(t *testing.T, d *db.DB, org, host uuid.UUID, dirtyAt, evaluatedAt, nextDueAt time.Time) {
+	t.Helper()
+	_, err := d.Pool().Exec(context.Background(), `
+		INSERT INTO check_eval_cursor (org_id, host_id, dirty_at, evaluated_at, next_due_at)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at,
+			evaluated_at = excluded.evaluated_at, next_due_at = excluded.next_due_at`,
+		org, host, dirtyAt, evaluatedAt, nextDueAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// countRows is the "exactly one set of changes" assertion's workhorse.
+func countRows(t *testing.T, d *db.DB, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(context.Background(), query, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// claimAll runs one ProcessDue pass collecting the hosts it claimed,
+// without evaluating anything.
+func claimAll(t *testing.T, store *rules.EvalSQLStore, limit int) []rules.Due {
+	t.Helper()
+	var got []rules.Due
+	n, err := store.ProcessDue(context.Background(), time.Now(), limit, func(_ context.Context, d rules.Due) error {
+		got = append(got, d)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(got) {
+		t.Fatalf("ProcessDue reported %d evaluated but ran fn %d times", n, len(got))
+	}
+	return got
+}
+
+// TestWindowStatementOverASeededHypertable is review focus 2: every
+// aggregate over a real hypertable, plus the two windows whose answer is
+// the interesting one — a window holding no row at all (no entry, which
+// is what makes the rule a non-match rather than a threshold breach) and a
+// window holding exactly one row, where rate is zero rather than a
+// division by zero or a missing value.
+func TestWindowStatementOverASeededHypertable(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "windows")
+	host := seedHost(t, d, org, "win-host")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertSample(t, d, org, host, cpu, now.Add(-9*time.Minute), ptr(10.0), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-5*time.Minute), ptr(20.0), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-1*time.Minute), ptr(60.0), nil)
+	// A discrete metric of the same check: its samples carry a label and no
+	// value, and must never contribute to a numeric aggregate.
+	svc := rules.Tuple{CheckKey: "service", Item: "nginx", Metric: "service.state"}
+	insertSample(t, d, org, host, svc, now.Add(-2*time.Minute), nil, ptr("active"))
+	// Another host's samples, to prove the statement is scoped.
+	other := seedHost(t, d, org, "other-host")
+	insertSample(t, d, org, other, cpu, now.Add(-1*time.Minute), ptr(999.0), nil)
+
+	cpuKey := rules.ItemKey{CheckKey: "cpu"}
+	var (
+		avg10    = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "avg", Seconds: 600}
+		min10    = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "min", Seconds: 600}
+		max10    = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "max", Seconds: 600}
+		rate10   = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "rate", Seconds: 600}
+		avg2     = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "avg", Seconds: 120}
+		rate2    = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "rate", Seconds: 120}
+		empty    = rules.WindowRequest{Key: cpuKey, Metric: "cpu.used_pct", Agg: "avg", Seconds: 30}
+		noMetric = rules.WindowRequest{Key: cpuKey, Metric: "cpu.load1", Agg: "avg", Seconds: 600}
+		discrete = rules.WindowRequest{
+			Key: rules.ItemKey{CheckKey: "service", Item: "nginx"}, Metric: "service.state", Agg: "avg", Seconds: 600,
+		}
+	)
+	reqs := []rules.WindowRequest{avg10, min10, max10, rate10, avg2, rate2, empty, noMetric, discrete}
+
+	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, reqs, now)
+	if err != nil {
+		t.Fatalf("Windows: %v", err)
+	}
+
+	want := map[rules.WindowRequest]float64{
+		avg10:  30,
+		min10:  10,
+		max10:  60,
+		rate10: 50.0 / 600.0, // (last - first) / seconds
+		avg2:   60,           // exactly one row in the window
+		rate2:  0,            // one row: last == first, and never a division by zero
+	}
+	for req, wantValue := range want {
+		value, ok := got[req]
+		if !ok {
+			t.Fatalf("%s(%s, %ds) is missing from the result", req.Agg, req.Metric, req.Seconds)
+		}
+		if math.Abs(value-wantValue) > 1e-9 {
+			t.Fatalf("%s(%s, %ds) = %v, want %v", req.Agg, req.Metric, req.Seconds, value, wantValue)
+		}
+	}
+	for _, req := range []rules.WindowRequest{empty, noMetric, discrete} {
+		if value, ok := got[req]; ok {
+			t.Fatalf("%s(%s, %ds) returned %v; a window holding no numeric sample must return no entry at all",
+				req.Agg, req.Metric, req.Seconds, value)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Windows returned %d entries, want %d", len(got), len(want))
+	}
+}
+
+// TestWindowsWithNoRequestsCostsNoStatement: the empty request list is a
+// legitimate call (a host whose rules name no window) and must not build
+// SQL with an empty VALUES list.
+func TestWindowsWithNoRequestsCostsNoStatement(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "no-windows")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, nil, time.Now())
+	if err != nil {
+		t.Fatalf("Windows: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Windows returned %+v, want nothing", got)
+	}
+}
+
+// TestMarkHostDirtyMakesAHostDue is the ingest path's contribution: one
+// upsert marks the host, and the very next claim takes it.
+func TestMarkHostDirtyMakesAHostDue(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "dirty")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+
+	if got := claimAll(t, store, 10); len(got) != 0 {
+		t.Fatalf("a host that never ingested was claimed: %+v", got)
+	}
+	markDirty(t, d, org, host)
+	got := claimAll(t, store, 10)
+	if len(got) != 1 || got[0].HostID != host || got[0].OrgID != org {
+		t.Fatalf("claimed %+v, want exactly the dirty host", got)
+	}
+
+	// A second mark on an already-evaluated cursor makes it dirty again:
+	// the claim compares dirty_at against evaluated_at, not against a flag
+	// somebody has to remember to clear.
+	setCursor(t, d, org, host, time.Now().Add(-time.Hour), time.Now(), time.Now().Add(time.Hour))
+	if got := claimAll(t, store, 10); len(got) != 0 {
+		t.Fatalf("an evaluated, not-yet-due host was claimed: %+v", got)
+	}
+	markDirty(t, d, org, host)
+	if got := claimAll(t, store, 10); len(got) != 1 {
+		t.Fatalf("claimed %+v after a fresh mark, want the host", got)
+	}
+}
+
+// TestClaimTakesAHostWhoseNextDueHasPassed: no new samples at all, no
+// dirty mark — only an expired next_due_at. This is the path that brings a
+// silent agent's tuples to unknown, so it has to work on its own.
+func TestClaimTakesAHostWhoseNextDueHasPassed(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "overdue")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+
+	clean := time.Now().Add(-time.Hour)
+	setCursor(t, d, org, host, clean, clean, time.Now().Add(-time.Minute))
+	got := claimAll(t, store, 10)
+	if len(got) != 1 || got[0].HostID != host {
+		t.Fatalf("claimed %+v, want the overdue host", got)
+	}
+}
+
+// TestClaimBoundsItsBatch: the limit is the batch, and the oldest
+// next_due_at goes first so a backlog drains in order rather than
+// starving its oldest rows.
+func TestClaimBoundsItsBatch(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "batch")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+
+	past := time.Now().Add(-time.Hour)
+	oldest := seedHost(t, d, org, "oldest")
+	middle := seedHost(t, d, org, "middle")
+	newest := seedHost(t, d, org, "newest")
+	setCursor(t, d, org, newest, past, past, time.Now().Add(-1*time.Minute))
+	setCursor(t, d, org, middle, past, past, time.Now().Add(-2*time.Minute))
+	setCursor(t, d, org, oldest, past, past, time.Now().Add(-3*time.Minute))
+
+	got := claimAll(t, store, 2)
+	if len(got) != 2 {
+		t.Fatalf("claimed %d hosts with a limit of 2", len(got))
+	}
+	if got[0].HostID != oldest || got[1].HostID != middle {
+		t.Fatalf("claimed %+v, want the two oldest next_due_at first", got)
+	}
+}
+
+// TestLoadGathersEveryInputTheSnapshotNeeds walks one host's whole load:
+// its tuples with the resolved interval that defines staleness, the
+// effective rules resolved for it, its facts, its previous states, the
+// flapping counts inside the 30-minute window and — the field Task 8
+// documents a quiet degradation for — the previous roll-up.
+func TestLoadGathersEveryInputTheSnapshotNeeds(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "load")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	gone := rules.Tuple{CheckKey: "removed", Metric: "removed.metric"}
+	insertCurrent(t, d, org, host, cpu, ptr(95.0), nil, now.Add(-30*time.Second), "")
+	insertCurrent(t, d, org, host, gone, ptr(1.0), nil, now.Add(-30*time.Second), "")
+
+	rule := hostRule(org, host)
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	// A disabled rule takes part in nothing; it must not reach Effective.
+	disabled := hostRule(org, host)
+	disabled.ID = uuid.Must(uuid.NewV7())
+	disabled.Enabled = false
+	disabled.Severity = rules.SeverityCrit
+	if err := rules.NewSQLStore(d).Create(context.Background(), disabled); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.Pool().Exec(context.Background(),
+		`UPDATE hosts SET facts = '{"cpu_count":"8","kernel":"6.1"}'::jsonb WHERE id = $1`, host); err != nil {
+		t.Fatal(err)
+	}
+	insertCheckState(t, d, org, host, stateRow{tuple: cpu, state: rules.StateWarn, since: now.Add(-time.Hour), evaluatedAt: now.Add(-time.Minute)})
+	insertStateChange(t, d, org, host, now.Add(-10*time.Minute), cpu, rules.StateOK, rules.StateWarn)
+	insertStateChange(t, d, org, host, now.Add(-40*time.Minute), cpu, rules.StateWarn, rules.StateOK)
+	insertHostState(t, d, org, host, rules.StateWarn, 0, 1, 0, now.Add(-time.Hour), now.Add(-time.Minute))
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(load.Tuples) != 2 {
+		t.Fatalf("tuples = %+v, want both current rows", load.Tuples)
+	}
+	byTuple := map[rules.Tuple]rules.TupleSnapshot{}
+	for _, ts := range load.Tuples {
+		byTuple[ts.Tuple] = ts
+	}
+	if got := byTuple[cpu]; got.Interval != time.Minute || got.Value == nil || *got.Value != 95 {
+		t.Fatalf("cpu tuple = %+v, want the resolved one-minute interval and its value", got)
+	}
+	if got := byTuple[gone]; got.Interval != 0 {
+		t.Fatalf("a tuple whose check no longer resolves carries interval %v, want 0 so the evaluator leaves it out", got.Interval)
+	}
+	if len(load.Effective) != 1 || load.Effective[0].Winner.ID != rule.ID {
+		t.Fatalf("effective = %+v, want only the enabled rule", load.Effective)
+	}
+	if load.Facts["cpu_count"] != "8" || load.Facts["kernel"] != "6.1" {
+		t.Fatalf("facts = %+v, want the host's own", load.Facts)
+	}
+	if prev, ok := load.Previous[cpu]; !ok || prev.State != rules.StateWarn {
+		t.Fatalf("previous = %+v, want the stored warn", load.Previous)
+	}
+	if got := load.Changes30[cpu]; got != 1 {
+		t.Fatalf("Changes30 = %d, want 1 — only the change inside the 30-minute window counts", got)
+	}
+	if load.PreviousHost == nil || load.PreviousHost.State != rules.StateWarn {
+		t.Fatalf("PreviousHost = %+v, want the stored roll-up", load.PreviousHost)
+	}
+}
+
+// TestLoadOfANeverEvaluatedHostCarriesNoPreviousRollUp: nil is what "this
+// host has never been evaluated" looks like, and Evaluate's own fallback
+// is written for exactly that.
+func TestLoadOfANeverEvaluatedHostCarriesNoPreviousRollUp(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "fresh")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if load.PreviousHost != nil {
+		t.Fatalf("PreviousHost = %+v, want nil", load.PreviousHost)
+	}
+}
+
+// TestLoadIgnoresAnotherOrganizationsRows: the ticker runs unscoped (it
+// claims across every organization), so each statement's own org_id is
+// the only thing keeping one tenant's rules off another tenant's host.
+func TestLoadIgnoresAnotherOrganizationsRows(t *testing.T) {
+	d := testdb.Open(t)
+	orgA := seedOrg(t, d, "tenant-a")
+	orgB := seedOrg(t, d, "tenant-b")
+	hostA := seedHost(t, d, orgA, "a-host")
+	hostB := seedHost(t, d, orgB, "b-host")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertCurrent(t, d, orgA, hostA, cpu, ptr(95.0), nil, now, "")
+	insertCurrent(t, d, orgB, hostB, cpu, ptr(1.0), nil, now, "")
+	if err := rules.NewSQLStore(d).Create(context.Background(), hostRule(orgB, hostB)); err != nil {
+		t.Fatal(err)
+	}
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: orgA, HostID: hostA})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(load.Tuples) != 1 || load.Tuples[0].Value == nil || *load.Tuples[0].Value != 95 {
+		t.Fatalf("tuples = %+v, want only this organization's host", load.Tuples)
+	}
+	if len(load.Effective) != 0 {
+		t.Fatalf("effective = %+v, want none — the only rule belongs to another organization", load.Effective)
+	}
+}
+
+// TestApplyWritesEverythingInTheClaimsTransaction is review focus 5's
+// write half: states, changes, roll-up and the cursor's own advance all
+// land, and they land inside the transaction ProcessDue opened.
+func TestApplyWritesEverythingInTheClaimsTransaction(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "apply")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	markDirty(t, d, org, host)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	res := rules.Result{
+		States: []rules.TupleState{{
+			Tuple: cpu, State: rules.StateCrit, Since: now, LastValue: ptr(95.0),
+			Candidate: rules.StateWarn, CandidateSince: &now, Flapping: true, EvaluatedAt: now,
+		}},
+		Changes: []rules.Change{{At: now, Tuple: cpu, From: rules.StateOK, To: rules.StateCrit, Value: ptr(95.0)}},
+		Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: now, EvaluatedAt: now},
+		NextDue: now.Add(90 * time.Second),
+	}
+
+	n, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		return store.Apply(ctx, due, res)
+	})
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue evaluated %d hosts, want 1", n)
+	}
+
+	states, err := rules.NewSQLStore(d).StatesForHost(context.Background(), org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("check_states rows = %d, want 1", len(states))
+	}
+	got := states[0]
+	if got.State != rules.StateCrit || got.Candidate != rules.StateWarn || got.CandidateSince == nil || !got.Flapping {
+		t.Fatalf("state = %+v, want the crit with its candidate and flapping flag", got)
+	}
+	if got.LastValue == nil || *got.LastValue != 95 {
+		t.Fatalf("last_value = %v, want 95", got.LastValue)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_state_changes WHERE host_id = $1`, host); n != 1 {
+		t.Fatalf("check_state_changes rows = %d, want 1", n)
+	}
+	hostStates, err := rules.NewSQLStore(d).HostStates(context.Background(), org, rules.FleetFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hostStates) != 1 || hostStates[0].State != rules.StateCrit || hostStates[0].Crit != 1 {
+		t.Fatalf("roll-up = %+v, want one crit host", hostStates)
+	}
+	_, evaluatedAt, nextDue := cursorRow(t, d, host)
+	if !nextDue.Equal(res.NextDue) {
+		t.Fatalf("next_due_at = %v, want the evaluation's own %v", nextDue, res.NextDue)
+	}
+	if evaluatedAt.Before(now.Add(-time.Minute)) {
+		t.Fatalf("evaluated_at = %v, want the database's own clock at the claim", evaluatedAt)
+	}
+	// The cursor is no longer dirty and no longer due, so a second pass
+	// takes nothing.
+	if got := claimAll(t, store, 10); len(got) != 0 {
+		t.Fatalf("the evaluated host was claimed again: %+v", got)
+	}
+
+	// A second evaluation upserts in place rather than accumulating rows.
+	res.States[0].State = rules.StateWarn
+	res.Changes = nil
+	res.Host.State = rules.StateWarn
+	markDirty(t, d, org, host)
+	if _, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		return store.Apply(ctx, due, res)
+	}); err != nil {
+		t.Fatalf("second ProcessDue: %v", err)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, host); n != 1 {
+		t.Fatalf("check_states rows after a second evaluation = %d, want 1", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_host_states WHERE host_id = $1`, host); n != 1 {
+		t.Fatalf("check_host_states rows after a second evaluation = %d, want 1", n)
+	}
+}
+
+// TestApplyDeletesTheRollUpWhenNothingIsJudged: a host every one of whose
+// checks lost its resolved interval must not keep showing the colour it
+// had when its last check was deleted. The roll-up is derived state; the
+// history it came from stays in check_state_changes.
+func TestApplyDeletesTheRollUpWhenNothingIsJudged(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "rollup-gone")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	markDirty(t, d, org, host)
+	insertHostState(t, d, org, host, rules.StateCrit, 1, 0, 0, now.Add(-time.Hour), now.Add(-time.Minute))
+	insertStateChange(t, d, org, host, now.Add(-time.Hour), rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}, rules.StateOK, rules.StateCrit)
+
+	if _, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		return store.Apply(ctx, due, rules.Result{NextDue: now.Add(time.Minute)})
+	}); err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_host_states WHERE host_id = $1`, host); n != 0 {
+		t.Fatalf("check_host_states rows = %d, want the stale roll-up deleted", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_state_changes WHERE host_id = $1`, host); n != 1 {
+		t.Fatalf("check_state_changes rows = %d, want the history untouched", n)
+	}
+}
+
+// TestAFailedHostLeavesNothingBehind: fn's error rolls that host's whole
+// transaction back — the writes Apply already made, and the cursor — so
+// the host is still exactly as due as it was.
+func TestAFailedHostLeavesNothingBehind(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "rollback")
+	good := seedHost(t, d, org, "good")
+	bad := seedHost(t, d, org, "bad")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	// The bad host is claimed first (older next_due_at), so the good host's
+	// own savepoint commits after the failure rather than before it.
+	setCursor(t, d, org, bad, now, now.Add(-time.Hour), now.Add(-2*time.Minute))
+	setCursor(t, d, org, good, now, now.Add(-time.Hour), now.Add(-1*time.Minute))
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	res := rules.Result{
+		States:  []rules.TupleState{{Tuple: cpu, State: rules.StateCrit, Since: now, EvaluatedAt: now}},
+		Changes: []rules.Change{{At: now, Tuple: cpu, From: rules.StateOK, To: rules.StateCrit}},
+		Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: now, EvaluatedAt: now},
+		NextDue: now.Add(time.Hour),
+	}
+	boom := errors.New("evaluation failed")
+	n, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		if err := store.Apply(ctx, due, res); err != nil {
+			return err
+		}
+		if due.HostID == bad {
+			return boom
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue reported %d evaluated, want 1 (the other failed)", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, bad); n != 0 {
+		t.Fatalf("the failed host left %d check_states rows behind", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_state_changes WHERE host_id = $1`, bad); n != 0 {
+		t.Fatalf("the failed host left %d check_state_changes rows behind", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_host_states WHERE host_id = $1`, bad); n != 0 {
+		t.Fatalf("the failed host left %d check_host_states rows behind", n)
+	}
+	if _, _, nextDue := cursorRow(t, d, bad); !nextDue.Before(now) {
+		t.Fatalf("the failed host's next_due_at advanced to %v; it must stay due", nextDue)
+	}
+	// The host that succeeded committed regardless.
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, good); n != 1 {
+		t.Fatalf("the healthy host wrote %d check_states rows, want 1", n)
+	}
+	if _, _, nextDue := cursorRow(t, d, good); !nextDue.Equal(res.NextDue) {
+		t.Fatalf("the healthy host's next_due_at = %v, want %v", nextDue, res.NextDue)
+	}
+}
+
+// TestLoadFailureLeavesTheHostDue: the port into the check pipeline is
+// allowed to fail (a resolver error), and when it does the host is left
+// exactly as it was.
+func TestLoadFailureLeavesTheHostDue(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "load-fail")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, fixedChecks{err: errors.New("resolver down")}, discard())
+	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err == nil {
+		t.Fatal("Load returned no error although the check pipeline failed")
+	}
+}
+
+// gateStore wraps an EvalStore and pauses inside Load, which is the point
+// at which its host's cursor row is already locked. It is how the test
+// below holds one ticker inside its claim while the other one runs.
+type gateStore struct {
+	rules.EvalStore
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gateStore) Load(ctx context.Context, d rules.Due) (rules.HostLoad, error) {
+	close(g.entered)
+	<-g.release
+	return g.EvalStore.Load(ctx, d)
+}
+
+// TestTwoTickersEvaluateOneDueHostExactlyOnce is review focus 5. The two
+// tickers genuinely overlap: the first is held inside its own claim — its
+// cursor row locked, its transaction open — for the whole time the second
+// one runs. That is what makes this a test of FOR UPDATE SKIP LOCKED
+// rather than of two sequential ticks: without SKIP LOCKED the second
+// ticker would block on the first one's row lock until the deadline below
+// fires, and with no exclusion at all the host would be evaluated twice
+// and write two sets of changes.
+func TestTwoTickersEvaluateOneDueHostExactlyOnce(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "two-tickers")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertCurrent(t, d, org, host, cpu, ptr(95.0), nil, now.Add(-10*time.Second), "")
+	insertCheckState(t, d, org, host, stateRow{tuple: cpu, state: rules.StateOK, since: now.Add(-time.Hour), evaluatedAt: now.Add(-time.Minute)})
+	rule := hostRule(org, host)
+	rule.Severity = rules.SeverityCrit
+	rule.For = 0
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	markDirty(t, d, org, host)
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	gate := &gateStore{EvalStore: store, entered: make(chan struct{}), release: make(chan struct{})}
+	opts := []rules.TickerOption{
+		rules.WithTickerClock(func() time.Time { return now }),
+		rules.WithTickerLogger(discard()),
+	}
+	first := rules.NewTicker(gate, opts...)
+	second := rules.NewTicker(store, opts...)
+
+	type tick struct {
+		n   int
+		err error
+	}
+	firstDone := make(chan tick, 1)
+	go func() {
+		n, err := first.Tick(context.Background())
+		firstDone <- tick{n, err}
+	}()
+
+	select {
+	case <-gate.entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the first ticker never reached its claimed host")
+	}
+
+	secondDone := make(chan tick, 1)
+	go func() {
+		n, err := second.Tick(context.Background())
+		secondDone <- tick{n, err}
+	}()
+	var secondTick tick
+	select {
+	case secondTick = <-secondDone:
+	case <-time.After(30 * time.Second):
+		close(gate.release)
+		t.Fatal("the second ticker blocked on the first one's claim; FOR UPDATE SKIP LOCKED is what must keep it from waiting")
+	}
+	close(gate.release)
+	firstTick := <-firstDone
+
+	if firstTick.err != nil {
+		t.Fatalf("first ticker: %v", firstTick.err)
+	}
+	if secondTick.err != nil {
+		t.Fatalf("second ticker: %v", secondTick.err)
+	}
+	if firstTick.n != 1 {
+		t.Fatalf("the first ticker evaluated %d hosts, want 1", firstTick.n)
+	}
+	if secondTick.n != 0 {
+		t.Fatalf("the second ticker evaluated %d hosts, want 0 — the only due host was already claimed", secondTick.n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_state_changes WHERE host_id = $1`, host); n != 1 {
+		t.Fatalf("check_state_changes rows = %d, want exactly one set of changes", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, host); n != 1 {
+		t.Fatalf("check_states rows = %d, want 1", n)
+	}
+	states, err := rules.NewSQLStore(d).StatesForHost(context.Background(), org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states[0].State != rules.StateCrit || states[0].RuleID == nil || *states[0].RuleID != rule.ID {
+		t.Fatalf("state = %+v, want crit decided by the seeded rule", states[0])
+	}
+	if _, _, nextDue := cursorRow(t, d, host); !nextDue.After(now) {
+		t.Fatalf("next_due_at = %v, want a moment after the tick's own now", nextDue)
+	}
+}
+
+// TestTickerEvaluatesThroughTheRealStore is the whole path end to end: a
+// dirty host with a value, a rule and a window, evaluated by the ticker
+// against the real database. It is the one test that would catch a
+// Snapshot field the loader forgot to fill.
+func TestTickerEvaluatesThroughTheRealStore(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "end-to-end")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertCurrent(t, d, org, host, cpu, ptr(95.0), nil, now.Add(-10*time.Second), "")
+	insertSample(t, d, org, host, cpu, now.Add(-5*time.Minute), ptr(90.0), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-1*time.Minute), ptr(100.0), nil)
+	if _, err := d.Pool().Exec(context.Background(),
+		`UPDATE hosts SET facts = '{"cpu_count":"8"}'::jsonb WHERE id = $1`, host); err != nil {
+		t.Fatal(err)
+	}
+
+	// avg(cpu.used_pct, 10m) > fact("cpu_count") * 10 — one rule that needs
+	// the window fetch and the facts to be right, so neither can be
+	// forgotten without this failing.
+	rule := hostRule(org, host)
+	rule.Severity = rules.SeverityCrit
+	rule.For = 0
+	rule.Mode = "expression"
+	rule.Trigger = compare(">", window("cpu.used_pct", "avg", 600),
+		rules.Node{Kind: rules.KindArith, Op: "*", Args: []rules.Node{fact("cpu_count"), number(10)}})
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	markDirty(t, d, org, host)
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	tk := rules.NewTicker(store,
+		rules.WithTickerClock(func() time.Time { return now }),
+		rules.WithTickerLogger(discard()))
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("Tick evaluated %d hosts, want 1", n)
+	}
+	states, err := rules.NewSQLStore(d).StatesForHost(context.Background(), org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states[0].State != rules.StateCrit {
+		t.Fatalf("states = %+v, want one crit (avg 95 > 8 * 10)", states)
+	}
+	hostStates, err := rules.NewSQLStore(d).HostStates(context.Background(), org, rules.FleetFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hostStates) != 1 || hostStates[0].State != rules.StateCrit {
+		t.Fatalf("roll-up = %+v, want one crit host", hostStates)
+	}
+	if _, _, nextDue := cursorRow(t, d, host); !nextDue.After(now) {
+		t.Fatalf("next_due_at = %v, want a moment after now", nextDue)
+	}
+}
+
+// TestAPanickingHostLeavesTheBatchIntact: a host whose evaluation panics
+// is rolled back to its own savepoint and the batch carries on — the other
+// hosts commit and the claim's transaction still ends cleanly. Without the
+// recover in evaluateOne, one bad rule tree would take down the whole
+// ticker goroutine, and with it the manager.
+func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "panicking-host")
+	bad := seedHost(t, d, org, "bad")
+	good := seedHost(t, d, org, "good")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	setCursor(t, d, org, bad, now, now.Add(-time.Hour), now.Add(-2*time.Minute))
+	setCursor(t, d, org, good, now, now.Add(-time.Hour), now.Add(-1*time.Minute))
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	res := rules.Result{
+		States:  []rules.TupleState{{Tuple: cpu, State: rules.StateOK, Since: now, EvaluatedAt: now}},
+		Host:    rules.HostState{State: rules.StateOK, Since: now, EvaluatedAt: now},
+		NextDue: now.Add(time.Hour),
+	}
+	n, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		if err := store.Apply(ctx, due, res); err != nil {
+			return err
+		}
+		if due.HostID == bad {
+			panic("a rule tree exploded")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue reported %d evaluated, want 1 (the other panicked)", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, bad); n != 0 {
+		t.Fatalf("the panicking host left %d check_states rows behind", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, good); n != 1 {
+		t.Fatalf("the healthy host wrote %d check_states rows, want 1", n)
+	}
+	if _, _, nextDue := cursorRow(t, d, bad); !nextDue.Before(now) {
+		t.Fatalf("the panicking host's next_due_at advanced to %v; it must stay due", nextDue)
+	}
+}

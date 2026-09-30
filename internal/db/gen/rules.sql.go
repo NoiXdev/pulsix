@@ -13,6 +13,129 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceEvalCursor = `-- name: AdvanceEvalCursor :exec
+UPDATE check_eval_cursor
+SET evaluated_at = now(), next_due_at = $1
+WHERE org_id = $2 AND host_id = $3
+`
+
+type AdvanceEvalCursorParams struct {
+	NextDueAt time.Time `json:"next_due_at"`
+	OrgID     uuid.UUID `json:"org_id"`
+	HostID    uuid.UUID `json:"host_id"`
+}
+
+// Task 9: the claim's own write-back, in the transaction that holds the
+// row lock. evaluated_at is now() — the transaction's start time, so it is
+// never later than the data the evaluation actually read, which means a
+// batch that committed between the claim and this statement leaves the
+// host dirty rather than silently clean. next_due_at is the evaluation's
+// own conclusion (internal/rules.Result.NextDue): the earliest of a
+// ripening candidate's deadline and a value's staleness deadline, or the
+// heartbeat when the host has nothing pending.
+func (q *Queries) AdvanceEvalCursor(ctx context.Context, arg AdvanceEvalCursorParams) error {
+	_, err := q.db.Exec(ctx, advanceEvalCursor, arg.NextDueAt, arg.OrgID, arg.HostID)
+	return err
+}
+
+const claimDueEvalCursors = `-- name: ClaimDueEvalCursors :many
+SELECT org_id, host_id FROM check_eval_cursor
+WHERE dirty_at > evaluated_at OR next_due_at <= now()
+ORDER BY next_due_at
+LIMIT $1
+FOR UPDATE SKIP LOCKED
+`
+
+type ClaimDueEvalCursorsRow struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Task 9, the ticker's claim (v0.3b-2 spec, "Trigger"), verbatim. Both
+// comparisons are against stored moments or the database's own now(),
+// never a manager's clock (backlog 2.80).
+//
+// FOR UPDATE SKIP LOCKED is the entire distribution mechanism between
+// managers: a row another manager is already evaluating is skipped rather
+// than waited for, so two tickers firing at the same instant take disjoint
+// sets and neither blocks. ORDER BY next_due_at drains a backlog
+// oldest-first (check_eval_cursor_due_idx serves it), and the LIMIT bounds
+// one transaction — a manager that has fallen behind catches up over
+// several ticks instead of in one transaction long enough to matter to
+// everything else sharing the pool.
+func (q *Queries) ClaimDueEvalCursors(ctx context.Context, lim int32) ([]ClaimDueEvalCursorsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueEvalCursors, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimDueEvalCursorsRow
+	for rows.Next() {
+		var i ClaimDueEvalCursorsRow
+		if err := rows.Scan(&i.OrgID, &i.HostID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countStateChangesInFlappingWindow = `-- name: CountStateChangesInFlappingWindow :many
+SELECT check_key, item, metric, count(*)::bigint AS change_count
+FROM check_state_changes
+WHERE org_id = $1 AND host_id = $2
+  AND at >= now() - $3::interval
+GROUP BY check_key, item, metric
+`
+
+type CountStateChangesInFlappingWindowParams struct {
+	OrgID          uuid.UUID       `json:"org_id"`
+	HostID         uuid.UUID       `json:"host_id"`
+	FlappingWindow pgtype.Interval `json:"flapping_window"`
+}
+
+type CountStateChangesInFlappingWindowRow struct {
+	CheckKey    string `json:"check_key"`
+	Item        string `json:"item"`
+	Metric      string `json:"metric"`
+	ChangeCount int64  `json:"change_count"`
+}
+
+// Task 9: CountStateChangesSince with the window computed in SQL instead
+// of handed in. The flapping count is a staleness comparison like any
+// other, so its boundary comes from the database's clock rather than from
+// whichever manager happens to be ticking (backlog 2.80) — otherwise two
+// managers would count different windows for the same host and the flag
+// would depend on who got there first. Same index, same shape as
+// CountStateChangesSince (see its comment).
+func (q *Queries) CountStateChangesInFlappingWindow(ctx context.Context, arg CountStateChangesInFlappingWindowParams) ([]CountStateChangesInFlappingWindowRow, error) {
+	rows, err := q.db.Query(ctx, countStateChangesInFlappingWindow, arg.OrgID, arg.HostID, arg.FlappingWindow)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountStateChangesInFlappingWindowRow
+	for rows.Next() {
+		var i CountStateChangesInFlappingWindowRow
+		if err := rows.Scan(
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.ChangeCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countStateChangesSince = `-- name: CountStateChangesSince :many
 SELECT check_key, item, metric, count(*)::bigint AS change_count
 FROM check_state_changes
@@ -131,6 +254,26 @@ func (q *Queries) CreateRule(ctx context.Context, arg CreateRuleParams) error {
 	return err
 }
 
+const deleteCheckHostState = `-- name: DeleteCheckHostState :exec
+DELETE FROM check_host_states
+WHERE org_id = $1 AND host_id = $2
+`
+
+type DeleteCheckHostStateParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Task 9: what an evaluation that judged no tuple at all asks for (see
+// internal/rules.Result's own doc comment). A host whose every check lost
+// its resolved interval must not keep showing the colour it had when its
+// last check was deleted — the roll-up is derived state, and the history
+// it was derived from lives in check_state_changes and is untouched here.
+func (q *Queries) DeleteCheckHostState(ctx context.Context, arg DeleteCheckHostStateParams) error {
+	_, err := q.db.Exec(ctx, deleteCheckHostState, arg.OrgID, arg.HostID)
+	return err
+}
+
 const deleteRule = `-- name: DeleteRule :execrows
 DELETE FROM check_rules WHERE org_id = $1 AND id = $2
 `
@@ -146,6 +289,54 @@ func (q *Queries) DeleteRule(ctx context.Context, arg DeleteRuleParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getCheckHostState = `-- name: GetCheckHostState :one
+SELECT org_id, host_id, state, crit_count, warn_count, unknown_count, since, evaluated_at FROM check_host_states
+WHERE org_id = $1 AND host_id = $2
+`
+
+type GetCheckHostStateParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Task 9: the roll-up the previous evaluation wrote, which is the only
+// thing the next one can carry HostState.Since from (see
+// internal/rules.Snapshot.PreviousHost). No row means "never evaluated".
+func (q *Queries) GetCheckHostState(ctx context.Context, arg GetCheckHostStateParams) (CheckHostState, error) {
+	row := q.db.QueryRow(ctx, getCheckHostState, arg.OrgID, arg.HostID)
+	var i CheckHostState
+	err := row.Scan(
+		&i.OrgID,
+		&i.HostID,
+		&i.State,
+		&i.CritCount,
+		&i.WarnCount,
+		&i.UnknownCount,
+		&i.Since,
+		&i.EvaluatedAt,
+	)
+	return i, err
+}
+
+const getHostFacts = `-- name: GetHostFacts :one
+SELECT facts FROM hosts WHERE org_id = $1 AND id = $2
+`
+
+type GetHostFactsParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Task 9: the facts a rule's fact() node reads (v0.3b-2 spec, "Facts are
+// strings"). Only the one jsonb column, never the whole host row — this
+// runs once per host per evaluation.
+func (q *Queries) GetHostFacts(ctx context.Context, arg GetHostFactsParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getHostFacts, arg.OrgID, arg.HostID)
+	var facts []byte
+	err := row.Scan(&facts)
+	return facts, err
 }
 
 const getRule = `-- name: GetRule :one
@@ -182,6 +373,51 @@ func (q *Queries) GetRule(ctx context.Context, arg GetRuleParams) (CheckRule, er
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertCheckStateChange = `-- name: InsertCheckStateChange :exec
+INSERT INTO check_state_changes (
+  at, org_id, host_id, check_key, item, metric, from_state, to_state, rule_id, value, label
+) VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9,
+  $10, $11
+)
+`
+
+type InsertCheckStateChangeParams struct {
+	At        time.Time   `json:"at"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	HostID    uuid.UUID   `json:"host_id"`
+	CheckKey  string      `json:"check_key"`
+	Item      string      `json:"item"`
+	Metric    string      `json:"metric"`
+	FromState string      `json:"from_state"`
+	ToState   string      `json:"to_state"`
+	RuleID    pgtype.UUID `json:"rule_id"`
+	Value     *float64    `json:"value"`
+	Label     *string     `json:"label"`
+}
+
+// Task 9: one transition appended to the history. Only actual transitions
+// reach this statement (Evaluate emits a Change only when the state
+// really moved), which is what the table's own CHECK (from_state <>
+// to_state) enforces on the other side.
+func (q *Queries) InsertCheckStateChange(ctx context.Context, arg InsertCheckStateChangeParams) error {
+	_, err := q.db.Exec(ctx, insertCheckStateChange,
+		arg.At,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+		arg.FromState,
+		arg.ToState,
+		arg.RuleID,
+		arg.Value,
+		arg.Label,
+	)
+	return err
 }
 
 const listCheckStates = `-- name: ListCheckStates :many
@@ -301,6 +537,35 @@ func (q *Queries) ListRules(ctx context.Context, arg ListRulesParams) ([]CheckRu
 	return items, nil
 }
 
+const markHostDirty = `-- name: MarkHostDirty :exec
+INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
+VALUES ($1, $2, now())
+ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at
+`
+
+type MarkHostDirtyParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Task 9, the ingest path's one contribution to evaluation (v0.3b-2 spec,
+// "Trigger"): one single-row upsert per ingest batch, run inside
+// internal/checks' own RecordObservations transaction so a cursor mark can
+// never be lost by a batch that committed. dirty_at is the database's own
+// now(), never the manager's wall clock, because it is compared against
+// evaluated_at — which the ticker writes from the same clock — and two
+// managers with skewed clocks must not disagree about whether a host has
+// unevaluated samples (backlog 2.80). Inside a transaction now() is the
+// transaction's start time, which is conservative in the only direction
+// that matters: it is never later than the samples this batch is writing.
+//
+// The ON CONFLICT target is (host_id), the table's primary key, so the
+// statement is one index probe and one in-place update on the hot path.
+func (q *Queries) MarkHostDirty(ctx context.Context, arg MarkHostDirtyParams) error {
+	_, err := q.db.Exec(ctx, markHostDirty, arg.OrgID, arg.HostID)
+	return err
+}
+
 const updateRule = `-- name: UpdateRule :execrows
 UPDATE check_rules
 SET name = $1, enabled = $2, scope = $3,
@@ -360,4 +625,102 @@ func (q *Queries) UpdateRule(ctx context.Context, arg UpdateRuleParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertCheckHostState = `-- name: UpsertCheckHostState :exec
+INSERT INTO check_host_states (
+  org_id, host_id, state, crit_count, warn_count, unknown_count, since, evaluated_at
+) VALUES (
+  $1, $2, $3, $4,
+  $5, $6, $7, $8
+)
+ON CONFLICT (host_id) DO UPDATE SET
+  state = excluded.state, crit_count = excluded.crit_count, warn_count = excluded.warn_count,
+  unknown_count = excluded.unknown_count, since = excluded.since, evaluated_at = excluded.evaluated_at
+`
+
+type UpsertCheckHostStateParams struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	HostID       uuid.UUID `json:"host_id"`
+	State        string    `json:"state"`
+	CritCount    int32     `json:"crit_count"`
+	WarnCount    int32     `json:"warn_count"`
+	UnknownCount int32     `json:"unknown_count"`
+	Since        time.Time `json:"since"`
+	EvaluatedAt  time.Time `json:"evaluated_at"`
+}
+
+// Task 9: the per-host roll-up the fleet overview reads, one row per host,
+// replaced on every evaluation that judged at least one tuple.
+func (q *Queries) UpsertCheckHostState(ctx context.Context, arg UpsertCheckHostStateParams) error {
+	_, err := q.db.Exec(ctx, upsertCheckHostState,
+		arg.OrgID,
+		arg.HostID,
+		arg.State,
+		arg.CritCount,
+		arg.WarnCount,
+		arg.UnknownCount,
+		arg.Since,
+		arg.EvaluatedAt,
+	)
+	return err
+}
+
+const upsertCheckState = `-- name: UpsertCheckState :exec
+INSERT INTO check_states (
+  org_id, host_id, check_key, item, metric, state, since, rule_id,
+  last_value, last_label, candidate_state, candidate_since, flapping, evaluated_at
+) VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9, $10,
+  $11, $12, $13, $14
+)
+ON CONFLICT (host_id, check_key, item, metric) DO UPDATE SET
+  state = excluded.state, since = excluded.since, rule_id = excluded.rule_id,
+  last_value = excluded.last_value, last_label = excluded.last_label,
+  candidate_state = excluded.candidate_state, candidate_since = excluded.candidate_since,
+  flapping = excluded.flapping, evaluated_at = excluded.evaluated_at
+`
+
+type UpsertCheckStateParams struct {
+	OrgID          uuid.UUID          `json:"org_id"`
+	HostID         uuid.UUID          `json:"host_id"`
+	CheckKey       string             `json:"check_key"`
+	Item           string             `json:"item"`
+	Metric         string             `json:"metric"`
+	State          string             `json:"state"`
+	Since          time.Time          `json:"since"`
+	RuleID         pgtype.UUID        `json:"rule_id"`
+	LastValue      *float64           `json:"last_value"`
+	LastLabel      *string            `json:"last_label"`
+	CandidateState *string            `json:"candidate_state"`
+	CandidateSince pgtype.Timestamptz `json:"candidate_since"`
+	Flapping       bool               `json:"flapping"`
+	EvaluatedAt    time.Time          `json:"evaluated_at"`
+}
+
+// Task 9: one tuple's state, written in place on every evaluation — the
+// "one row per tuple, overwritten" shape check_current already uses. Every
+// column except the key is replaced, candidate_state/candidate_since
+// included: a candidate that stopped ripening has to be cleared by the
+// same statement that would have set it, or a stale one would ripen later
+// against a wait that has long since ended.
+func (q *Queries) UpsertCheckState(ctx context.Context, arg UpsertCheckStateParams) error {
+	_, err := q.db.Exec(ctx, upsertCheckState,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+		arg.State,
+		arg.Since,
+		arg.RuleID,
+		arg.LastValue,
+		arg.LastLabel,
+		arg.CandidateState,
+		arg.CandidateSince,
+		arg.Flapping,
+		arg.EvaluatedAt,
+	)
+	return err
 }
