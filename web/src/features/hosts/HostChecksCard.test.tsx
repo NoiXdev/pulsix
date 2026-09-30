@@ -217,6 +217,78 @@ describe('HostChecksCard', () => {
     expect(row('cpu', 'load1').queryByText('stale')).not.toBeInTheDocument();
   });
 
+  it('renders each of the four rule-engine states with its own label, plus "not yet evaluated" for a tuple with no state row', async () => {
+    // The five markers a colour-blind operator (or a black-and-white
+    // screenshot) must be able to tell apart from text alone — colour is
+    // never the only carrier (v0.3b-2 spec).
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({
+            values: [
+              { item: '', metric: 'a_metric', value: 1, at: NOW, stale: false, state: 'ok', flapping: false },
+              { item: '', metric: 'b_metric', value: 1, at: NOW, stale: false, state: 'warn', flapping: false },
+              { item: '', metric: 'c_metric', value: 1, at: NOW, stale: false, state: 'crit', flapping: false },
+              { item: '', metric: 'd_metric', value: 1, at: NOW, stale: false, state: 'unknown', flapping: false },
+              { item: '', metric: 'e_metric', value: 1, at: NOW, stale: false, state: null, flapping: false },
+            ],
+          }),
+        ],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    expect(row('cpu', 'a_metric').getByText('ok')).toBeInTheDocument();
+    expect(row('cpu', 'b_metric').getByText('warn')).toBeInTheDocument();
+    expect(row('cpu', 'c_metric').getByText('crit')).toBeInTheDocument();
+    expect(row('cpu', 'd_metric').getByText('unknown')).toBeInTheDocument();
+    // Never rendered as "ok" — a tuple the rule engine has not looked at
+    // yet is not a clean bill of health.
+    expect(row('cpu', 'e_metric').getByText('not yet evaluated')).toBeInTheDocument();
+    expect(row('cpu', 'e_metric').queryByText('ok')).not.toBeInTheDocument();
+  });
+
+  it('flags a flapping tuple beside its state, not instead of it', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({
+            values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: 'warn', flapping: true }],
+          }),
+        ],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText('flapping')).toBeInTheDocument();
+    // The flag is additional information, not a replacement for the state
+    // it decorates.
+    expect(row('cpu', 'usage_percent').getByText('warn')).toBeInTheDocument();
+  });
+
+  it('says nothing about flapping for a stable tuple', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({
+            values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: 'ok', flapping: false }],
+          }),
+        ],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    expect(screen.queryByText('flapping')).not.toBeInTheDocument();
+  });
+
   it('names a skewed host clock rather than leaving every reading amber without a cause', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': {

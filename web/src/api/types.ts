@@ -87,6 +87,12 @@ export type HostChecks = components['schemas']['HostChecksOutputBody'];
 export type HostCheck = components['schemas']['HostCheckDTO'];
 export type HostCheckValue = components['schemas']['HostCheckValueDTO'];
 export type MetricPoint = components['schemas']['MetricPointDTO'];
+
+export type EffectiveRule = components['schemas']['EffectiveRuleDTO'];
+
+export type FleetHost = components['schemas']['FleetHostDTO'];
+export type FleetTotals = components['schemas']['FleetTotalsDTO'];
+export type FleetState = NonNullable<FleetHost['state']>;
 /**
  * The windows GET /hosts/{id}/metrics accepts, and nothing else: the route
  * refuses any other value with a 400 naming these three

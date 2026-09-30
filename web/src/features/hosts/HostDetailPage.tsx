@@ -14,6 +14,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { may } from '../../lib/roles.ts';
 import { HostAgentCard } from './HostAgentCard.tsx';
 import { HostChecksCard } from './HostChecksCard.tsx';
+import { EffectiveRulesPanel } from './EffectiveRulesPanel.tsx';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
 import { HostSshCard } from './HostSshCard.tsx';
 import { ConnectionTestCard } from './ConnectionTestCard.tsx';
@@ -195,6 +196,7 @@ export function HostDetailPage() {
 
       <HostAgentCard org={org} hostId={h.id} canWrite={may(role, 'agents.write')} />
       <HostChecksCard org={org} hostId={h.id} canRead={may(role, 'checks.read')} canWrite={may(role, 'checks.write')} />
+      <EffectiveRulesPanel org={org} hostId={h.id} canRead={may(role, 'checks.read')} />
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
       <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} />
       {h.managed && <ConnectionTestCard org={org} hostId={h.id} canWrite={canWrite} />}

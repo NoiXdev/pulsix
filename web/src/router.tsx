@@ -8,6 +8,7 @@ import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
 import { HostDetailPage } from './features/hosts/HostDetailPage.tsx';
+import { FleetPage } from './features/fleet/FleetPage.tsx';
 import { GroupsPage } from './features/inventory/GroupsPage.tsx';
 import { GroupDetailPage } from './features/inventory/GroupDetailPage.tsx';
 import { MembersPage } from './features/members/MembersPage.tsx';
@@ -100,6 +101,12 @@ const hostDetailRoute = createRoute({
   path: '/hosts/$id',
   component: HostDetailPage,
 });
+
+// fleetRoute is the fleet overview (v0.3b-2 spec, "Fleet page"): a
+// top-level entry beside Hosts rather than nested under /checks, since it
+// is a view across every host's own state, not one more page about the
+// check/rule pipeline's configuration.
+const fleetRoute = createRoute({ getParentRoute: () => orgRoute, path: '/fleet', component: FleetPage });
 
 const groupsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: GroupsPage });
 const groupDetailRoute = createRoute({
@@ -202,6 +209,7 @@ const routeTree = rootRoute.addChildren([
     orgIndexRoute,
     hostsRoute,
     hostDetailRoute,
+    fleetRoute,
     groupsRoute,
     groupDetailRoute,
     reposRoute,

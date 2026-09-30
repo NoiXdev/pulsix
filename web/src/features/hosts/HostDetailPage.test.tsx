@@ -51,6 +51,8 @@ describe('HostDetailPage', () => {
     let patched: unknown;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
@@ -80,6 +82,8 @@ describe('HostDetailPage', () => {
     let putTags: unknown;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
@@ -107,6 +111,8 @@ describe('HostDetailPage', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
@@ -132,6 +138,8 @@ describe('HostDetailPage', () => {
     window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
@@ -158,6 +166,8 @@ describe('HostDetailPage', () => {
     window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
@@ -182,6 +192,8 @@ describe('HostDetailPage', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
       'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
@@ -225,6 +237,8 @@ describe('HostDetailPage', () => {
       'GET /api/v1/orgs/acme/hosts/h1': HOST,
       'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
       'GET /api/v1/orgs/acme/bastions': { bastions: [] },
@@ -291,6 +305,8 @@ describe('HostDetailPage', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
       'GET /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'not found' }), { status: 404 }),
     });

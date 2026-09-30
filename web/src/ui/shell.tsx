@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Activity, Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, GitBranch, Globe, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
+import { Activity, Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, Globe, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { may } from '../lib/roles.ts';
 
@@ -131,6 +131,22 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             <Server size={16} />
             <span className="flex-1">Hosts</span>
           </Link>
+          {/* Fleet (v0.3b-2) is a view across every host's own monitoring
+              state, gated on the same checks.read the rest of the rule
+              surface uses — a viewer reads it, same as the Checks entry
+              below. */}
+          {may(org.role, 'checks.read') && (
+            <Link
+              to="/o/$org/fleet"
+              params={{ org: org.slug }}
+              activeOptions={{ exact: false }}
+              activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
+              inactiveProps={{ className: INACTIVE_LINK }}
+            >
+              <Gauge size={16} />
+              <span className="flex-1">Fleet</span>
+            </Link>
+          )}
           <Link
             to="/o/$org/groups"
             params={{ org: org.slug }}

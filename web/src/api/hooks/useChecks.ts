@@ -148,6 +148,25 @@ export interface MetricSelection {
 }
 
 /**
+ * useHostEffectiveRules reads one host's effective rule view (v0.3b-2
+ * spec, "Host page, effective rules panel"): per (check_key, item, metric,
+ * severity) tuple, the rule that decided it, the rules it shadowed, and
+ * whether the tuple is still one this host reports at all.
+ *
+ * Unlike useHostChecks this is not polled — the rule set changes when an
+ * operator edits it on the Rules tab (RulesPage), not on the agent's own
+ * heartbeat, so there is nothing here that goes stale between renders the
+ * way a current reading does.
+ */
+export function useHostEffectiveRules(org: string, hostId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['host-effective-rules', org, hostId],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/hosts/{id}/effective-rules', { params: { path: { org, id: hostId } } })),
+    enabled: !!org && !!hostId && enabled,
+  });
+}
+
+/**
  * useHostMetric reads one numeric metric's series, bucketed server-side.
  *
  * `selection` is null while no graph is open, so nothing is requested

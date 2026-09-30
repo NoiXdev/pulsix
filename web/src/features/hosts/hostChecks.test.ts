@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
+import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue } from '../../api/types.ts';
 
 const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
@@ -102,6 +102,29 @@ describe('clockSkewLabel', () => {
     ['an hour ahead is still inside the plausibility window and still wrong', -3600, '60 min ahead of'],
   ])('%s', (_name, offset, expected) => {
     expect(clockSkewLabel(offset)).toBe(expected);
+  });
+});
+
+describe('stateLabel', () => {
+  // Every one of the five markers below must carry a distinct text label,
+  // not merely a distinct tone: a colour-blind operator, or the same card
+  // in a black-and-white screenshot, reads the word, not the dot beside it
+  // (v0.3b-2 spec, "the four states must remain distinguishable without
+  // colour alone").
+  it.each([
+    ['a tuple with no state row was never evaluated — this is not "ok"', null, { label: 'not yet evaluated', tone: 'unknown' }],
+    ['ok', 'ok', { label: 'ok', tone: 'ok' }],
+    ['warn', 'warn', { label: 'warn', tone: 'warn' }],
+    ['crit', 'crit', { label: 'crit', tone: 'crit' }],
+    // unknown is its own state, textually distinct from "not yet
+    // evaluated" even though both currently share the unknown tone.
+    ['unknown', 'unknown', { label: 'unknown', tone: 'unknown' }],
+  ] as const)('%s', (_name, state, expected) => {
+    expect(stateLabel(state)).toEqual(expected);
+  });
+
+  it('gives null and "unknown" different words, not just the same colour twice', () => {
+    expect(stateLabel(null).label).not.toBe(stateLabel('unknown').label);
   });
 });
 

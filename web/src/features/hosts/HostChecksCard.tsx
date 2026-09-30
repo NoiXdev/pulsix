@@ -8,7 +8,7 @@ import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostChecks, useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
-import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel } from './hostChecks.ts';
+import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel } from './hostChecks.ts';
 import type { HostCheck, HostCheckValue, MetricRange } from '../../api/types.ts';
 
 /**
@@ -175,10 +175,27 @@ function ValueRow({
   const graphable = isGraphable(check, value);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
 
+  const st = stateLabel(value.state);
+
   return (
     <li className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="min-w-40 text-muted-foreground">{name}</span>
+        {/* v0.3b-2: the rule engine's own verdict for this tuple, distinct
+            from the v0.3b-1 stale/error markers below — a tuple can be
+            simultaneously stale (no fresh reading) and crit (its last
+            reading before that was bad enough to hold). `since` is the
+            tooltip, not the label itself: the label alone already carries
+            every state a colour-blind operator or a black-and-white
+            screenshot needs (stateLabel's own contract). */}
+        <span title={value.since ? `in this state since ${seenLabel(value.since, new Date())}` : undefined}>
+          <Pill tone={st.tone}>{st.label}</Pill>
+        </span>
+        {value.flapping && (
+          <span title="changed state five or more times in the last 30 minutes">
+            <Pill tone="warn">flapping</Pill>
+          </span>
+        )}
         {value.error !== undefined ? (
           <>
             {/* Ruling: the failure, not a number dressed up as current.

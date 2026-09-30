@@ -1,3 +1,4 @@
+import type { Tone } from '../../ui/badge.tsx';
 import type { HostCheck, HostCheckValue } from '../../api/types.ts';
 
 /**
@@ -91,6 +92,37 @@ export function clockSkewLabel(offsetSeconds: number | undefined): string | null
   if (seconds < CLOCK_SKEW_FLOOR) return null;
   const magnitude = seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${seconds} s`;
   return `${magnitude} ${offsetSeconds > 0 ? 'behind' : 'ahead of'}`;
+}
+
+/**
+ * stateLabel renders one tuple's rule-engine verdict (v0.3b-2) as a label
+ * and a Pill tone — never a tone alone. Pill already pairs its coloured dot
+ * with text (see ui/badge.tsx), but that text has to actually differ per
+ * state for the pairing to do any work: two Pills that both say "unknown"
+ * would still collapse to one shape in a black-and-white screenshot, which
+ * is exactly the failure the spec's "distinguishable without colour alone"
+ * requirement rules out.
+ *
+ * `null` is its own case, not folded into "unknown": HostCheckValueDTO's
+ * own doc says null means this tuple has never been evaluated (or its
+ * check no longer resolves an interval), which is a different fact from
+ * "the rule engine evaluated this and concluded unknown" — the controller's
+ * own ruling is that null must never read as "ok", and conflating it with
+ * "unknown" would still be reading it as a verdict rather than as no
+ * verdict at all.
+ */
+export function stateLabel(state: HostCheckValue['state'] | undefined): { label: string; tone: Tone } {
+  if (state === null || state === undefined) return { label: 'not yet evaluated', tone: 'unknown' };
+  switch (state) {
+    case 'ok':
+      return { label: 'ok', tone: 'ok' };
+    case 'warn':
+      return { label: 'warn', tone: 'warn' };
+    case 'crit':
+      return { label: 'crit', tone: 'crit' };
+    default:
+      return { label: 'unknown', tone: 'unknown' };
+  }
 }
 
 /** sourceLabel renders the scope a check was inherited from as the thing

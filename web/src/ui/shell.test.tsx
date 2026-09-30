@@ -45,6 +45,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
 
   const routeTree = rootRoute.addChildren([
     leaf('/o/$org/hosts'),
+    leaf('/o/$org/fleet'),
     leaf('/o/$org/groups'),
     leaf('/o/$org/checks'),
     leaf('/o/$org/checks/monitoring-groups'),
@@ -88,6 +89,21 @@ describe('AppShell', () => {
     renderShellAt('/o/acme/hosts', { role });
     await screen.findByText('page content');
     expect(screen.queryByRole('link', { name: 'Checks' }) !== null).toBe(shown);
+  });
+
+  // Same gate as Checks (checks.read, every named role) — an unrecognised
+  // role must not be offered a page it cannot open, the same reasoning the
+  // Checks case above pins.
+  it.each([
+    ['owner', true],
+    ['admin', true],
+    ['operator', true],
+    ['viewer', true],
+    ['', false],
+  ])('shows the Fleet entry to a %s: %s', async (role, shown) => {
+    renderShellAt('/o/acme/hosts', { role });
+    await screen.findByText('page content');
+    expect(screen.queryByRole('link', { name: 'Fleet' }) !== null).toBe(shown);
   });
 
   it('shows the org switcher with the current org selected', async () => {
