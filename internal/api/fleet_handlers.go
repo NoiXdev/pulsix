@@ -55,12 +55,21 @@ type fleetHostDTO struct {
 // fleetTotalsDTO counts HOSTS (not tuples) by roll-up state across the
 // filtered set — the header a fleet page renders without a second
 // request. NoData is the count of hosts carrying no roll-up row at all.
+//
+// Deliberately over the FILTERED set, not the organization as a whole: a
+// count that disagrees with the list the operator is looking at is worse
+// than useless, and an operator who wants the organization's own totals
+// clears the filter. huma builds the generated schema purely from these
+// struct tags, never from this doc comment, so the doc: tags below (and on
+// Totals itself, fleetOutput) are what actually carries this scope to a
+// generated-client author — without them "totals" reads as ambiguous
+// between "of this filtered list" and "of the whole organization".
 type fleetTotalsDTO struct {
-	Crit    int `json:"crit"`
-	Warn    int `json:"warn"`
-	Unknown int `json:"unknown"`
-	OK      int `json:"ok"`
-	NoData  int `json:"no_data"`
+	Crit    int `json:"crit" doc:"Hosts in the filtered set currently crit"`
+	Warn    int `json:"warn" doc:"Hosts in the filtered set currently warn"`
+	Unknown int `json:"unknown" doc:"Hosts in the filtered set currently unknown"`
+	OK      int `json:"ok" doc:"Hosts in the filtered set currently ok"`
+	NoData  int `json:"no_data" doc:"Hosts in the filtered set with no roll-up row at all — never evaluated"`
 }
 
 // fleetInput's Zone and Group are plain strings, not *uuid.UUID: like
@@ -82,8 +91,13 @@ type fleetInput struct {
 
 type fleetOutput struct {
 	Body struct {
-		Hosts  []fleetHostDTO `json:"hosts"`
-		Totals fleetTotalsDTO `json:"totals"`
+		Hosts []fleetHostDTO `json:"hosts"`
+		// Totals counts Hosts by roll-up state, i.e. it is scoped to
+		// whatever zone/group/tag filter this request carried — never the
+		// organization as a whole. Clear the filter to see the
+		// organization's own totals; this field never disagrees with the
+		// list beside it.
+		Totals fleetTotalsDTO `json:"totals" doc:"Per-state host counts over the filtered set above, not the whole organization"`
 	}
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -189,7 +190,12 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		}
 		statesByTuple, err := currentTupleStates(ctx, deps, scope.OrgID, hostID)
 		if err != nil {
-			return nil, mapChecksErr(ctx, err)
+			// currentTupleStates already maps and logs its own two failure
+			// modes (checks.Service.ResolveHost versus rules.StateStore) under
+			// their own names — see its own doc comment — so the error it
+			// returns is already the response this route should give, not a
+			// raw error for mapChecksErr to relabel as a checks failure.
+			return nil, err
 		}
 
 		out := &hostChecksOutput{}
@@ -412,10 +418,18 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 // caller's own `effective` list either, so toHostCheckDTO never looks it
 // up — this only ever matters for the disabled case, where the check
 // still appears (Enabled: false) but must not carry a live-looking state.
+//
+// The two calls below fail on behalf of two different packages, and each
+// error is mapped and logged in its own name rather than both being folded
+// into mapChecksErr's "unmapped checks error" at the caller: ResolveHost's
+// failure really is a checks.Service fault, but StatesForHost's is
+// rules.StateStore's, and logging it as a checks failure would send
+// on-call triage at the wrong package for a fault this route did nothing
+// to cause.
 func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[rules.Tuple]rules.TupleState, error) {
 	resolved, err := deps.Checks.ResolveHost(ctx, orgID, hostID)
 	if err != nil {
-		return nil, err
+		return nil, mapChecksErr(ctx, err)
 	}
 	resolvedKeys := make(map[string]bool, len(resolved.Checks))
 	for _, c := range resolved.Checks {
@@ -423,7 +437,8 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID)
 	}
 	states, err := deps.RuleStates.StatesForHost(ctx, orgID, hostID)
 	if err != nil {
-		return nil, fmt.Errorf("states for host: %w", err)
+		slog.ErrorContext(ctx, "host checks: rule states", "org_id", orgID, "host_id", hostID, "err", err)
+		return nil, huma.Error500InternalServerError("internal error")
 	}
 	byTuple := make(map[rules.Tuple]rules.TupleState, len(states))
 	for _, st := range states {

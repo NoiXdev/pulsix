@@ -155,6 +155,32 @@ func TestFleetRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("the secondary sort key is host name, not creation order", func(t *testing.T) {
+		// Two hosts sharing one state (rank alone cannot separate them),
+		// created in the OPPOSITE of name order. uuid.NewV7 embeds a
+		// timestamp, so the host created first also sorts first by id —
+		// a discriminating case: if a future change dropped the name
+		// tie-break (say, by swapping the stable sort for a plain one, or
+		// by building the roster from an id-ordered query), "fleet-tie-zzz"
+		// would come out ahead of "fleet-tie-aaa" because it was created,
+		// and given its state, first. A single scoped zone isolates these
+		// two from every other host this test seeds.
+		tieZone, err := f.s.Deps.Hosts.CreateZone(scoped, f.orgID, "fleet-tie-zone", "Tie Zone")
+		if err != nil {
+			t.Fatal(err)
+		}
+		zHost := seedCheckHost(t, f.s, scoped, f.orgID, tieZone.ID, "fleet-tie-zzz", "10.1.0.4", true, "")
+		aHost := seedCheckHost(t, f.s, scoped, f.orgID, tieZone.ID, "fleet-tie-aaa", "10.1.0.5", true, "")
+		seedHostState(t, f.s, f.orgID, zHost, "crit", 1, 0, 0, since, now)
+		seedHostState(t, f.s, f.orgID, aHost, "crit", 1, 0, 0, since, now)
+
+		body := f.fleet(t, f.viewerC, "zone="+tieZone.ID.String())
+		want := []string{aHost.String(), zHost.String()}
+		if got := body.hostIDs(); !equalStrings(got, want) {
+			t.Fatalf("tied hosts = %v, want name order (aaa before zzz) = %v", got, want)
+		}
+	})
+
 	t.Run("the zone filter", func(t *testing.T) {
 		other, err := f.s.Deps.Hosts.CreateZone(scoped, f.orgID, "fleet-zone-b", "Zone B")
 		if err != nil {

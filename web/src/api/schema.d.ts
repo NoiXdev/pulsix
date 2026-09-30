@@ -2745,18 +2745,34 @@ export interface components {
              */
             readonly $schema?: string;
             hosts: components["schemas"]["FleetHostDTO"][] | null;
+            /** @description Per-state host counts over the filtered set above, not the whole organization */
             totals: components["schemas"]["FleetTotalsDTO"];
         };
         FleetTotalsDTO: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Hosts in the filtered set currently crit
+             */
             crit: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Hosts in the filtered set with no roll-up row at all — never evaluated
+             */
             no_data: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Hosts in the filtered set currently ok
+             */
             ok: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Hosts in the filtered set currently unknown
+             */
             unknown: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Hosts in the filtered set currently warn
+             */
             warn: number;
         };
         GroupCreateInputBody: {
