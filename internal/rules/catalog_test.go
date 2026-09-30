@@ -14,9 +14,18 @@ import (
 // disk,service}.go), cross-checked against the brief: an entry missing
 // here is a metric no rule could ever be written against; an entry that
 // doesn't match the plugin's own reality is a silently wrong type check.
+//
+// cpu.load1/5/15 (internal/agent/checks/cpu.go:74-82) were missing from
+// the plan's original eight-entry list — a controller-confirmed omission,
+// not a deliberate cut (the architecture spec's own flagship rule example,
+// avg(cpu.load5, 10m) > fact("cpu_count") * 0.8, is unwritable without
+// cpu.load5 in the catalogue) — so the table below carries eleven entries.
 func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 	want := map[string]rules.CatalogueEntry{
 		"cpu.used_pct":         {CheckKey: "cpu", Kind: rules.MetricNumeric},
+		"cpu.load1":            {CheckKey: "cpu", Kind: rules.MetricNumeric},
+		"cpu.load5":            {CheckKey: "cpu", Kind: rules.MetricNumeric},
+		"cpu.load15":           {CheckKey: "cpu", Kind: rules.MetricNumeric},
 		"mem.used_pct":         {CheckKey: "memory", Kind: rules.MetricNumeric},
 		"mem.available_bytes":  {CheckKey: "memory", Kind: rules.MetricNumeric},
 		"swap.used_pct":        {CheckKey: "memory", Kind: rules.MetricNumeric},
@@ -36,6 +45,39 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		}
 		if gotEntry != wantEntry {
 			t.Fatalf("Catalogue()[%q] = %+v, want %+v", name, gotEntry, wantEntry)
+		}
+	}
+}
+
+// TestCatalogueCheckKeyMatchesEmittingPlugin is a second, independent
+// check on top of TestCatalogueMatchesShippedPlugins's literal table: a
+// metric's own namespace (the part before its first '.') names the plugin
+// that reports it — cpu.*, mem.*/swap.* (both properties of the memory
+// plugin's two gopsutil calls), disk.*, service.* — and CatalogueEntry's
+// CheckKey must always agree with that namespace. A hand-typed CheckKey
+// that silently disagreed with its own metric's prefix (a copy-paste slip
+// from the row above, say) would pass a plain struct-equality check
+// against an equally wrong "want" table but fails this one, since it is
+// derived from the metric name rather than restated by hand a second time.
+func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
+	prefixCheckKey := map[string]string{
+		"cpu":     "cpu",
+		"mem":     "memory",
+		"swap":    "memory",
+		"disk":    "disk",
+		"service": "service",
+	}
+	for name, entry := range rules.Catalogue() {
+		prefix, _, ok := strings.Cut(name, ".")
+		if !ok {
+			t.Fatalf("metric %q has no '.'-separated namespace to check", name)
+		}
+		wantKey, known := prefixCheckKey[prefix]
+		if !known {
+			t.Fatalf("metric %q has an unrecognized namespace %q — add it to prefixCheckKey", name, prefix)
+		}
+		if entry.CheckKey != wantKey {
+			t.Fatalf("Catalogue()[%q].CheckKey = %q, want %q (the %q namespace's own plugin)", name, entry.CheckKey, wantKey, prefix)
 		}
 	}
 }

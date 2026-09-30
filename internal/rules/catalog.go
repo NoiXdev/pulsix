@@ -36,6 +36,9 @@ type CatalogueEntry struct {
 func Catalogue() map[string]CatalogueEntry {
 	return map[string]CatalogueEntry{
 		"cpu.used_pct":         {CheckKey: "cpu", Kind: MetricNumeric},
+		"cpu.load1":            {CheckKey: "cpu", Kind: MetricNumeric},
+		"cpu.load5":            {CheckKey: "cpu", Kind: MetricNumeric},
+		"cpu.load15":           {CheckKey: "cpu", Kind: MetricNumeric},
 		"mem.used_pct":         {CheckKey: "memory", Kind: MetricNumeric},
 		"mem.available_bytes":  {CheckKey: "memory", Kind: MetricNumeric},
 		"swap.used_pct":        {CheckKey: "memory", Kind: MetricNumeric},
