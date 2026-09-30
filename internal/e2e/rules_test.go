@@ -9,12 +9,18 @@
 //  1. A threshold the host actually crosses reaches warn — no rule fires
 //     on a value nobody reported.
 //  2. A deterioration that holds long enough ripens into crit exactly when
-//     for_duration says it should, not before.
+//     for_duration says it should, not before — checked as a lower bound
+//     on wall-clock time elapsed since the threshold's own edit, not only
+//     as "crit eventually appears": an implementation that promoted on
+//     the very next tick regardless of for_duration would pass "eventually
+//     crit" just as well, faster, and only the timing check catches it.
 //  3. An improvement is never held back by for_duration: the moment a
 //     recovering value applies, ok returns at once.
 //  4. An agent that stops reporting altogether leaves its host unknown,
 //     once — and only once — three of its check's own intervals have
-//     passed with nothing new.
+//     passed with nothing new, checked the same way as claim 2: a lower
+//     bound on elapsed time since the agent's own last reading, not only
+//     that unknown eventually appears.
 //
 // How the crossing and the recovery are driven, and why not otherwise:
 // internal/agent/checks.Registry wires the agent's own, real cpu plugin
@@ -78,16 +84,34 @@ const (
 	ruleForCrit        = 20 * time.Second
 )
 
-// ruleTupleOut is the one field of GET /hosts/{id}/checks' value entries
-// checks_test.go's own checkValueOut does not carry: the rule engine's
-// verdict (v0.3b-2 Task 11's additive fields, host_check_handlers.go's
-// hostCheckValueDTO). A second, narrower struct rather than widening the
-// v0.3b-1 one: that type is this package's own pin of the v0.3b-1
-// contract, and this gate needs only the state, not every field on it.
+// ripenRaceMargin bounds claim 2's lower-bound check against one specific,
+// narrow race in the evaluation ticker's own ordering (ticker.go's Tick):
+// it reads its own "now" BEFORE it loads the rules a host is judged
+// against, so a PUT that commits in the brief window between those two
+// reads is picked up by a tick whose own "now" — and so whose
+// candidate_since — predates this test's own measurement of when that PUT
+// finished. That window is bounded by one host's claim-and-load latency,
+// which is well under a second; this margin is generous against it without
+// being anywhere near loose enough to hide a real for_duration bug (an
+// implementation that ignored for_duration and promoted on the very next
+// tick would still miss the lower bound by most of ruleForCrit's own 20s,
+// not by a couple of seconds).
+const ripenRaceMargin = 2 * time.Second
+
+// ruleTupleOut is the fields of GET /hosts/{id}/checks' value entries
+// checks_test.go's own checkValueOut does not need for its own gate: the
+// rule engine's verdict (v0.3b-2 Task 11's additive fields,
+// host_check_handlers.go's hostCheckValueDTO), plus the tuple's own At —
+// carried by that DTO already (v0.3b-1) but not by checkValueOut's own
+// pin of it — which this gate's claim 4 needs to compute staleness from
+// the agent's actual last reading, not from when the test called stop.
+// A second, narrower struct rather than widening the v0.3b-1 one: that
+// type is this package's own pin of the v0.3b-1 contract.
 type ruleTupleOut struct {
-	Metric string   `json:"metric"`
-	Value  *float64 `json:"value"`
-	State  *string  `json:"state"`
+	Metric string    `json:"metric"`
+	Value  *float64  `json:"value"`
+	State  *string   `json:"state"`
+	At     time.Time `json:"at"`
 }
 
 type ruleHostCheckOut struct {
@@ -96,10 +120,10 @@ type ruleHostCheckOut struct {
 }
 
 // cpuTupleState reads the host page's own monitoring section for the
-// whole-host cpu.used_pct tuple's current state and last value — the same
-// route checks_test.go's hostChecks reads, decoded into the shape that
-// also carries Task 11's verdict.
-func cpuTupleState(t *testing.T, w agentWorld, hostID string) (state *string, value *float64) {
+// whole-host cpu.used_pct tuple's current state, last value and last
+// reading time — the same route checks_test.go's hostChecks reads,
+// decoded into the shape that also carries Task 11's verdict.
+func cpuTupleState(t *testing.T, w agentWorld, hostID string) (state *string, value *float64, at time.Time) {
 	t.Helper()
 	var out struct {
 		Checks []ruleHostCheckOut `json:"checks"`
@@ -111,26 +135,30 @@ func cpuTupleState(t *testing.T, w agentWorld, hostID string) (state *string, va
 		}
 		for _, v := range c.Values {
 			if v.Metric == cpuMetric {
-				return v.State, v.Value
+				return v.State, v.Value, v.At
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, time.Time{}
 }
 
 // waitForTupleState polls the host page until the cpu.used_pct tuple
 // reads want, the way an operator watching the host page would — nothing
 // pushes this either. what names the phase being waited for, for a
-// timeout's own failure message.
-func waitForTupleState(t *testing.T, w agentWorld, hostID, want, what string, within time.Duration) {
+// timeout's own failure message. It returns the moment the wanted state
+// was first observed (wall-clock, this process' own clock) and the
+// tuple's own At at that moment, so a caller can assert a transition did
+// not happen too early as well as that it happened at all.
+func waitForTupleState(t *testing.T, w agentWorld, hostID, want, what string, within time.Duration) (observedAt time.Time, tupleAt time.Time) {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	var lastState *string
 	var lastValue *float64
 	for time.Now().Before(deadline) {
-		lastState, lastValue = cpuTupleState(t, w, hostID)
+		var lastAt time.Time
+		lastState, lastValue, lastAt = cpuTupleState(t, w, hostID)
 		if lastState != nil && *lastState == want {
-			return
+			return time.Now(), lastAt
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -143,6 +171,7 @@ func waitForTupleState(t *testing.T, w agentWorld, hostID, want, what string, wi
 	}
 	t.Fatalf("timed out waiting for %s (cpu.used_pct state %q); last state %s, last value %s%%",
 		what, want, gotState, gotValue)
+	return time.Time{}, time.Time{}
 }
 
 // ruleOut is the create/update response's rule id — the only field this
@@ -222,8 +251,23 @@ func TestRulePipelineGate(t *testing.T) {
 	// continuously, exactly as a genuinely rising value would, and the
 	// candidate started by this edit must hold, unbroken, for the whole of
 	// ruleForCrit before it is promoted (states.go's decide, step 4).
+	//
+	// ripenedAt is read right after the PUT's HTTP round trip completes —
+	// after the rule's new threshold has already committed, since the
+	// handler writes before it answers — so it is this test's own honest
+	// lower bound on when candidate_since could first have been set.
+	// Asserting the observed promotion is no earlier than ripenedAt +
+	// ruleForCrit (minus ripenRaceMargin) is what actually pins "not
+	// before for_duration ripens", not only "eventually crit": a rule
+	// engine that ignored for_duration and promoted on the next tick would
+	// fail this assertion by most of ruleForCrit's own 20 seconds.
 	putFormThreshold(t, w, critID, hostID, "e2e-cpu-crit", "crit", belowAnyPercentage, int(ruleForCrit/time.Second))
-	waitForTupleState(t, w, hostID, "crit", "crit's threshold ripening over ruleForCrit", ruleForCrit+60*time.Second)
+	ripenedAt := time.Now() // after the PUT's own commit, not before it
+	observedCrit, _ := waitForTupleState(t, w, hostID, "crit", "crit's threshold ripening over ruleForCrit", ruleForCrit+60*time.Second)
+	if elapsed := observedCrit.Sub(ripenedAt); elapsed < ruleForCrit-ripenRaceMargin {
+		t.Fatalf("crit was reached %s after the threshold's own PUT, want at least %s (ruleForCrit %s minus the %s race margin): "+
+			"for_duration looks like it was not honoured", elapsed, ruleForCrit-ripenRaceMargin, ruleForCrit, ripenRaceMargin)
+	}
 
 	// --- 3. A recovering value returns to ok at once -----------------------
 	// Both thresholds move back out of reach. Unlike the climb above,
@@ -241,8 +285,21 @@ func TestRulePipelineGate(t *testing.T) {
 	// evaluation already scheduled, states.go's nextDue) is what brings
 	// the ticker back to notice.
 	stop()
-	waitForTupleState(t, w, hostID, "unknown", "the stopped agent's tuple going stale",
+	observedUnknown, lastSampleAt := waitForTupleState(t, w, hostID, "unknown", "the stopped agent's tuple going stale",
 		3*ruleCheckInterval+90*time.Second)
+	// lastSampleAt is the agent's own timestamp for its last real reading —
+	// read back from the same response that first showed unknown, so it is
+	// exactly the ts.At staleAt was computed from (states.go). Unlike
+	// claim 2's PUT, there is no ordering race to margin against here:
+	// lastSampleAt was written well before stop() was even called, and a
+	// tick can only promote to unknown once its own "now" already exceeds
+	// lastSampleAt + 3x the interval — so this bound holds with no slack,
+	// and an implementation using, say, 1x the interval instead of 3x
+	// would miss it by a full two intervals.
+	if elapsed := observedUnknown.Sub(lastSampleAt); elapsed < 3*ruleCheckInterval {
+		t.Fatalf("the tuple went unknown %s after its own last reading, want at least %s (3x ruleCheckInterval): "+
+			"staleness looks like it was not honoured", elapsed, 3*ruleCheckInterval)
+	}
 
 	// The fleet overview agrees: this is the only host in the
 	// organization, so its roll-up is the whole page.
