@@ -39,9 +39,11 @@ export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPane
   const query = useHostEffectiveRules(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
   // v0.3b-3: this host's discovered items, looked up per unobserved entry
-  // below for its own last-reported date (see notObservedLabel) — the
-  // same GET /hosts/{id}/items HostChecksCard's own ValueRow reads for its
-  // ignored rows' origin.
+  // below for its own last-reported date (see notObservedLabel). This
+  // panel is the only consumer of GET /hosts/{id}/items on the host page
+  // — HostChecksCard's rows take `ignored` and `decided_by` off their own
+  // value instead (see useHostItems' doc comment for why that read must
+  // not come back).
   const items = useHostItems(org, hostId, canRead);
 
   const groupList = groups.data?.groups ?? [];

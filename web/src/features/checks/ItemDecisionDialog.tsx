@@ -32,6 +32,15 @@ const PREVIEW_DEBOUNCE_MS = 300;
  * actually agrees with the server's. */
 const PATTERN_MAX_BYTES = 512;
 
+/** The field's own `maxLength`, in UTF-16 code units — a DIFFERENT unit
+ * from PATTERN_MAX_BYTES above, which is why it is a second constant
+ * rather than the same one spent twice. The same number is deliberate and
+ * safe in exactly one direction: UTF-8 bytes are never fewer than UTF-16
+ * code units, so a cap of 512 units can never block a pattern the server
+ * would have accepted. It can let one through, which is what patternBytes
+ * catches. */
+const PATTERN_MAX_UTF16 = 512;
+
 /** utf8Length counts p as the server counts it: UTF-8 bytes. */
 function utf8Length(p: string): number {
   return new TextEncoder().encode(p).length;
@@ -246,7 +255,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
           <Input
             id="decision-pattern"
             required
-            maxLength={PATTERN_MAX_BYTES}
+            maxLength={PATTERN_MAX_UTF16}
             className="font-mono"
             placeholder={matchKind === 'glob' ? '/var/*, backup-*' : '/var, sshd'}
             value={pattern}

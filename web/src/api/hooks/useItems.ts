@@ -88,11 +88,20 @@ export function useItemDecisionPreview(org: string, body: ItemDecisionPreviewInp
  * scope, pattern and note.
  *
  * Two of this milestone's GUI pieces consume it, independently of the
- * org-wide Items tab's own `useItemDecisions`: HostChecksCard matches a
- * value's `(check.key, value.item)` against this list to show WHY a row
- * is ignored or watched (`decided_by`), and RuleDialog's item field offers
- * it as a picker's options. GET /items (organization-wide) stays
- * unimplemented here — nothing in this milestone's GUI needs it yet.
+ * org-wide Items tab's own `useItemDecisions`: EffectiveRulesPanel reads
+ * an unobserved entry's own last-reported date off it, and RuleDialog's
+ * item field offers it as a picker's options. GET /items
+ * (organization-wide) stays unimplemented here — nothing in this
+ * milestone's GUI needs it yet.
+ *
+ * HostChecksCard deliberately does NOT: its rows read `ignored` and
+ * `decided_by` off GET /hosts/{id}/checks, where one server-side
+ * items.Decide call resolves both. Matching a row against THIS list
+ * instead made one question two independently-timed reads of two tables,
+ * and a row whose own verdict and origin disagreed sent the Ignore/Watch
+ * button down the POST path, creating a duplicate decision that loses the
+ * older-created_at tie-break and dies silently. Do not reintroduce that
+ * lookup.
  *
  * Not polled, like useHostEffectiveRules: an item's discovery and its
  * decisions change on an operator's own action (this tab, or the row
