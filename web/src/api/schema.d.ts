@@ -2973,6 +2973,11 @@ export interface components {
             at: string;
             /** @description Set when collection failed; value and label are then both absent — check_current stores an error row with neither */
             error?: string;
+            /**
+             * Format: date-time
+             * @description When the rule engine last judged this tuple; absent when state is null
+             */
+            evaluated_at?: string;
             /** @description This tuple changed state five or more times in the last 30 minutes */
             flapping: boolean;
             /** @description The mount or unit this value is for; empty for a whole-host metric */
@@ -2992,6 +2997,8 @@ export interface components {
              * @enum {string|null}
              */
             state: "ok" | "warn" | "crit" | "unknown" | null;
+            /** @description Evaluated more than three of the check's own intervals ago; mirrors stale, but for the verdict rather than the reading */
+            state_stale: boolean;
             /**
              * Format: double
              * @description Set for a numeric metric

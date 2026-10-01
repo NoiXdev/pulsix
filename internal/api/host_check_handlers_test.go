@@ -30,10 +30,15 @@ type hostCheckValue struct {
 	At     time.Time `json:"at"`
 	Stale  bool      `json:"stale"`
 	// State, Since and Flapping are the rule engine's verdict on this tuple
-	// (v0.3b-2 Task 11) — additive to the v0.3b-1 fields above.
-	State    *string    `json:"state"`
-	Since    *time.Time `json:"since"`
-	Flapping bool       `json:"flapping"`
+	// (v0.3b-2 Task 11) — additive to the v0.3b-1 fields above. EvaluatedAt
+	// and StateStale are backlog 3.36's own addition: when the verdict was
+	// formed, and whether that is stale by the same three-interval rule
+	// Stale already applies to the reading.
+	State       *string    `json:"state"`
+	Since       *time.Time `json:"since"`
+	Flapping    bool       `json:"flapping"`
+	EvaluatedAt *time.Time `json:"evaluated_at"`
+	StateStale  bool       `json:"state_stale"`
 }
 
 type hostCheck struct {
@@ -626,9 +631,17 @@ func TestHostChecksReportsTupleState(t *testing.T) {
 		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now, Value: floatPtr(91)},
 		checks.Observation{HostID: f.web, CheckKey: "memory", Metric: "used_percent", At: now, Value: floatPtr(40)},
 		checks.Observation{HostID: f.web, CheckKey: "service", Item: "sshd", Metric: "state", At: now, Label: strPtr("active")},
+		checks.Observation{HostID: f.web, CheckKey: "disk", Item: "/", Metric: "used_percent", At: now, Value: floatPtr(55)},
 	)
 	seedTupleState(t, f.s, f.orgID, f.web, "cpu", "", "usage_percent", "crit", since, now, true)
 	seedTupleState(t, f.s, f.orgID, f.web, "service", "sshd", "state", "warn", since, now, false)
+	// disk's own seed interval is 5 minutes (SeedDefinitions), so three
+	// intervals is 15 minutes — stoppedEvaluatedAt sits well past that,
+	// while the observation above is fresh (At: now), exactly the shape
+	// backlog 3.36 describes: a ticker that stopped advancing EvaluatedAt
+	// while samples kept arriving on schedule.
+	stoppedEvaluatedAt := now.Add(-20 * time.Minute)
+	seedTupleState(t, f.s, f.orgID, f.web, "disk", "/", "used_percent", "crit", since, stoppedEvaluatedAt, false)
 
 	t.Run("a stored state reports state, since and flapping, and the v0.3b-1 fields did not move", func(t *testing.T) {
 		cpu := f.hostChecks(t, f.viewerC, f.web).byKey(t, "cpu")
@@ -648,6 +661,18 @@ func TestHostChecksReportsTupleState(t *testing.T) {
 		if v.Since == nil || !v.Since.Equal(since) {
 			t.Fatalf("cpu since = %v, want %v", v.Since, since)
 		}
+		// Evaluated a moment ago (EvaluatedAt == now, same stamp the
+		// evaluator would leave on a healthy tick) and the reading itself
+		// just arrived, so neither staleness flag should be set.
+		if v.EvaluatedAt == nil || !v.EvaluatedAt.Equal(now) {
+			t.Fatalf("cpu evaluated_at = %v, want %v", v.EvaluatedAt, now)
+		}
+		if v.StateStale {
+			t.Fatal("cpu state_stale = true, want false: evaluated just now")
+		}
+		if v.Stale {
+			t.Fatal("cpu stale = true, want false: the reading just arrived")
+		}
 	})
 
 	t.Run("a tuple with no state row reports null, never a fabricated ok", func(t *testing.T) {
@@ -663,6 +688,42 @@ func TestHostChecksReportsTupleState(t *testing.T) {
 		}
 		if memory.Values[0].Flapping {
 			t.Fatal("memory flapping = true, want false: never evaluated")
+		}
+		if memory.Values[0].EvaluatedAt != nil {
+			t.Fatalf("memory evaluated_at = %v, want none: never evaluated", *memory.Values[0].EvaluatedAt)
+		}
+		if memory.Values[0].StateStale {
+			t.Fatal("memory state_stale = true, want false: there is no verdict to be stale")
+		}
+	})
+
+	// backlog 3.36: the whole point of this pair — a verdict can be stale
+	// while the reading behind it is not. A stopped evaluation ticker, or a
+	// batch that keeps missing its deadline, leaves EvaluatedAt exactly
+	// where it stopped while samples keep flowing in on schedule; nothing
+	// before this field said so, and a tuple that crossed into crit long
+	// ago still rendered as a fresh crit with no way to tell the judgement
+	// itself was stuck.
+	t.Run("a verdict far older than the check's own interval reports state_stale, independent of the reading's own staleness", func(t *testing.T) {
+		disk := f.hostChecks(t, f.viewerC, f.web).byKey(t, "disk")
+		var root hostCheckValue
+		found := false
+		for _, v := range disk.Values {
+			if v.Item == "/" {
+				root, found = v, true
+			}
+		}
+		if !found {
+			t.Fatalf("disk values = %+v, want an entry for /", disk.Values)
+		}
+		if root.Stale {
+			t.Fatal("disk stale = true, want false: the reading just arrived")
+		}
+		if root.EvaluatedAt == nil || !root.EvaluatedAt.Equal(stoppedEvaluatedAt) {
+			t.Fatalf("disk evaluated_at = %v, want %v", root.EvaluatedAt, stoppedEvaluatedAt)
+		}
+		if !root.StateStale {
+			t.Fatal("disk state_stale = false, want true: evaluated 20 minutes ago against a 5-minute interval")
 		}
 	})
 

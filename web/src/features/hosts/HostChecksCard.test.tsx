@@ -309,6 +309,65 @@ describe('HostChecksCard', () => {
     expect(screen.queryByText('flapping')).not.toBeInTheDocument();
   });
 
+  // backlog 3.36: a stopped evaluator leaves a verdict exactly where it
+  // was while fresh samples keep arriving — `stale` (the reading) and
+  // `state_stale` (the verdict) are independent flags, and only the
+  // server can compute the second one (it alone knows the check's
+  // resolved interval). The marker is a Pill with its own text ("stale
+  // verdict"), not a colour change, so it reads in a black-and-white
+  // screenshot exactly like `stale` already does.
+  it('marks a stale verdict distinctly from a stale reading', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({
+            values: [
+              {
+                item: '',
+                metric: 'usage_percent',
+                value: 12.5,
+                at: NOW,
+                stale: false,
+                state: 'crit',
+                since: '2026-09-27T10:00:00Z',
+                evaluated_at: '2026-09-27T10:40:00Z',
+                state_stale: true,
+                flapping: false,
+              },
+              {
+                item: '',
+                metric: 'load1',
+                value: 0.4,
+                at: NOW,
+                stale: false,
+                state: 'ok',
+                since: NOW,
+                evaluated_at: NOW,
+                state_stale: false,
+                flapping: false,
+              },
+            ],
+          }),
+        ],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    // The reading itself is fresh — no "stale" pill — while the verdict is
+    // marked old, proving the two are read from independent flags rather
+    // than one driving the other.
+    expect(row('cpu', 'usage_percent').queryByText('stale')).not.toBeInTheDocument();
+    expect(row('cpu', 'usage_percent').getByText('stale verdict')).toBeInTheDocument();
+    expect(row('cpu', 'usage_percent').getByText('crit')).toBeInTheDocument();
+    // A tuple whose verdict is current carries no such marker.
+    expect(row('cpu', 'load1').queryByText('stale verdict')).not.toBeInTheDocument();
+  });
+
   it('opens the deciding rule for the value on screen from that value’s own row', async () => {
     // The explainability question an operator asks — "which rule decided
     // THIS number" — about the value already in front of them, not from a

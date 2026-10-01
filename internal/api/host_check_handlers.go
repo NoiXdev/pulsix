@@ -74,6 +74,22 @@ type hostCheckValueDTO struct {
 	// Flapping is always present, false (never true) exactly when State is
 	// null — there is nothing to flap on a tuple with no state.
 	Flapping bool `json:"flapping" doc:"This tuple changed state five or more times in the last 30 minutes"`
+	// EvaluatedAt and StateStale are backlog 3.36: samples kept arriving
+	// (Stale above stays false) is not the same question as "is the rule
+	// engine still judging them" — a ticker that stopped, or a batch that
+	// keeps missing its deadline, leaves the last verdict exactly as it was
+	// the moment evaluation stopped, with nothing before this pair to say
+	// so. EvaluatedAt is absent exactly when State is null, the same shape
+	// Since already has, for display ("judged 4 minutes ago"); StateStale
+	// mirrors Stale's own name and computation — three of the check's own
+	// intervals — but against EvaluatedAt rather than the reading's own At,
+	// and like Flapping it is always present, false (never true) exactly
+	// when State is null. Computed here, not in the SPA: only the server
+	// knows the check's resolved interval, and re-deriving the three-
+	// interval rule client-side would be a second copy of a rule that
+	// already lives in Go (toHostCheckDTO's own Stale computation below).
+	EvaluatedAt *time.Time `json:"evaluated_at,omitempty" doc:"When the rule engine last judged this tuple; absent when state is null"`
+	StateStale  bool       `json:"state_stale" doc:"Evaluated more than three of the check's own intervals ago; mirrors stale, but for the verdict rather than the reading"`
 }
 
 type hostCheckDTO struct {
@@ -391,8 +407,14 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 		v.Stale = now.Sub(c.At) > time.Duration(staleIntervals)*d.Interval
 		if st, ok := states[rules.Tuple{CheckKey: d.Key, Item: c.Item, Metric: c.Metric}]; ok {
 			state := string(st.State)
-			since := st.Since
+			since, evaluatedAt := st.Since, st.EvaluatedAt
 			v.State, v.Since, v.Flapping = &state, &since, st.Flapping
+			v.EvaluatedAt = &evaluatedAt
+			// Same three-interval rule as Stale above, against the moment
+			// the verdict was formed rather than the moment the reading
+			// arrived: a stopped evaluator still has fresh samples flowing
+			// in (Stale stays false) but stops advancing EvaluatedAt.
+			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*d.Interval
 		}
 		dto.Values[i] = v
 	}

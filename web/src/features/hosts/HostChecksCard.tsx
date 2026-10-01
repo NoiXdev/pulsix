@@ -244,10 +244,39 @@ function ValueRow({
             reading before that was bad enough to hold). `since` is the
             tooltip, not the label itself: the label alone already carries
             every state a colour-blind operator or a black-and-white
-            screenshot needs (stateLabel's own contract). */}
-        <span title={value.since ? `in this state since ${seenLabel(value.since, new Date())}` : undefined}>
+            screenshot needs (stateLabel's own contract). The tooltip now
+            also names when the verdict itself was formed (`evaluated_at`,
+            backlog 3.36) — "judged 4 minutes ago" — alongside how long it
+            has held. */}
+        <span
+          title={
+            value.state !== null
+              ? [
+                  value.since ? `in this state since ${seenLabel(value.since, new Date())}` : null,
+                  value.evaluated_at ? `judged ${seenLabel(value.evaluated_at, new Date())}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || undefined
+              : undefined
+          }
+        >
           <Pill tone={st.tone}>{st.label}</Pill>
         </span>
+        {/* backlog 3.36: samples can keep arriving on schedule (`stale`
+            below stays false) while the rule engine itself stopped
+            advancing — a dead ticker, a batch that keeps missing its
+            deadline. Without this, a tuple that crossed into crit long ago
+            still renders as a fresh crit with nothing on screen to say the
+            judgement is old. A Pill, not a colour change: its own text
+            ("stale verdict") distinguishes it from the state Pill beside
+            it the same way `stale` below distinguishes a stale reading
+            from a fresh one, without asking anyone to tell two colours
+            apart. */}
+        {value.state !== null && value.state_stale && (
+          <span title={value.evaluated_at ? `judged ${seenLabel(value.evaluated_at, new Date())}` : undefined}>
+            <Pill tone="warn">stale verdict</Pill>
+          </span>
+        )}
         {value.flapping && (
           <span title="changed state five or more times in the last 30 minutes">
             <Pill tone="warn">flapping</Pill>
