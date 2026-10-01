@@ -587,6 +587,35 @@ func TestItemDecisionMarksHostsDirty(t *testing.T) {
 		t.Fatal("org-scoped decision create did not mark web dirty")
 	}
 
+	// An update that MOVES a decision from one host to another marks
+	// BOTH: the host it stopped applying to is owed a re-judgement every
+	// bit as much as the one it now applies to, which is why the PUT
+	// handler calls markDirtyForDecision for the pre-update row as well
+	// as the post-update one (item_handlers.go, and the spec's own "As
+	// built" calls it out by name). Only create was covered before.
+	moved := f.createDecision(t, f.operatorC, byHostDecisionBody(f.web, "disk", "/moved", "ignore"))
+	webBefore, dbBefore := f.cursorDirtyAt(t, f.web), f.cursorDirtyAt(t, f.dbHost)
+	if webBefore == nil || dbBefore == nil {
+		t.Fatalf("both cursor rows should exist by now: web=%v db-1=%v", webBefore, dbBefore)
+	}
+	// A real gap, so "advanced" is not two now() calls landing in the
+	// same microsecond.
+	time.Sleep(10 * time.Millisecond)
+	if resp := requestJSON(t, f.operatorC, http.MethodPut, f.decisionsURL()+"/"+moved.ID,
+		byHostDecisionBody(f.dbHost, "disk", "/moved", "ignore")); resp.StatusCode != http.StatusOK {
+		t.Fatalf("move update = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	webAfter, dbAfter := f.cursorDirtyAt(t, f.web), f.cursorDirtyAt(t, f.dbHost)
+	if webAfter == nil || !webAfter.After(*webBefore) {
+		t.Fatalf("moving a decision AWAY from web did not mark web dirty again: %v -> %v", webBefore, webAfter)
+	}
+	if dbAfter == nil || !dbAfter.After(*dbBefore) {
+		t.Fatalf("moving a decision ONTO db-1 did not mark db-1 dirty: %v -> %v", dbBefore, dbAfter)
+	}
+	if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.decisionsURL()+"/"+moved.ID, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete the moved decision = %d", resp.StatusCode)
+	}
+
 	if resp := requestJSON(t, f.operatorC, http.MethodDelete, f.decisionsURL()+"/"+hostScoped.ID, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("delete = %d", resp.StatusCode)
 	}
