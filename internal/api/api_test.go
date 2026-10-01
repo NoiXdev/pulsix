@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
@@ -202,6 +203,16 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
 		Checks: &checks.Service{}, Rules: &rules.Service{}, RuleStates: rules.NewSQLStore(nil), AgentPush: noopPusher{},
+		// v0.3b-3's own two required dependencies. Zero-valued and
+		// nil-backed, like RuleStates above, for the same reason: these
+		// fixtures register every route and drive none, so nothing here
+		// ever reaches a query. They are listed because api.New refuses a
+		// half-wired Deps (TestNewRejectsHalfWiredDeps), and a required
+		// field missing from these literals is a failure no `go build`
+		// can see — go build does not compile test files — and no
+		// -run-filtered test run names. That is twice now: Deps.RuleStates
+		// broke exactly these five tests the same way one milestone ago.
+		Items: &items.Service{}, EvalDirty: rules.NewDirtyMarker(nil),
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 	}
 }
@@ -395,24 +406,37 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	if _, err := api.New(noRuleStates); err == nil || !strings.Contains(err.Error(), "RuleStates") {
 		t.Fatalf("api.New without RuleStates = %v, want an error naming RuleStates", err)
 	}
+	// Discovery and item decisions (v0.3b-3). EvalDirty like AgentPush
+	// above: a nil marker would not panic either — markDirtyForDecision is
+	// best-effort by design — it would just leave every decision waiting
+	// out its host's own staleness deadline, which is exactly the "I
+	// ignored it and nothing happened" the marker exists to prevent.
+	noItems := testDeps(t)
+	noItems.Items = nil
+	if _, err := api.New(noItems); err == nil || !strings.Contains(err.Error(), "Items") {
+		t.Fatalf("api.New without Items = %v, want an error naming Items", err)
+	}
+	noEvalDirty := testDeps(t)
+	noEvalDirty.EvalDirty = nil
+	if _, err := api.New(noEvalDirty); err == nil || !strings.Contains(err.Error(), "EvalDirty") {
+		t.Fatalf("api.New without EvalDirty = %v, want an error naming EvalDirty", err)
+	}
 }
 
-// testDeps returns a fully-wired (if inert) Deps, exactly like
-// TestHealthz's, for tests below that need a real api.New handler rather
-// than probing Deps.validate.
+// testDeps returns a fully-wired (if inert) Deps for tests that need a
+// real api.New handler rather than probing Deps.validate.
+//
+// It delegates to baseHealthzDeps rather than repeating the literal,
+// which is what its own comment used to claim ("exactly like
+// TestHealthz's") and is now true by construction. The two were
+// byte-identical copies, so a new required field had to be added in two
+// places or half these tests failed — and they failed invisibly, which is
+// the whole point: `go build` does not compile test files, and a
+// -run-filtered run never names them. One literal, one place to add the
+// next one.
 func testDeps(t *testing.T) api.Deps {
 	t.Helper()
-	return api.Deps{
-		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
-		ClientIP: clientip.New(nil),
-		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
-		Inventory: testInventory(), Renderer: testRenderer(),
-		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(),
-		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
-		Checks: &checks.Service{}, Rules: &rules.Service{}, RuleStates: rules.NewSQLStore(nil), AgentPush: noopPusher{},
-		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
-	}
+	return baseHealthzDeps(t)
 }
 
 // TestNotFoundServesSPA covers Task 15's embedding contract: a request
