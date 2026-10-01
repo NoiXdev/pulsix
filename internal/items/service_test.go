@@ -572,6 +572,62 @@ func TestListDecisionsScopedToOrg(t *testing.T) {
 	}
 }
 
+// TestDecisionsNarrowsToOneHost pins Service.Decisions — the per-host
+// read every per-host caller uses (the evaluation ticker, and since this
+// wave GET /hosts/{id}/checks and GET /hosts/{id}/items, both polled per
+// open host page). It must return the organization's own decisions plus
+// the named host's, and nothing bound to any OTHER host: the whole point
+// of it next to ListDecisions is that the database, not Decide.applies(),
+// drops those rows.
+func TestDecisionsNarrowsToOneHost(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	mine := uuid.Must(uuid.NewV7())
+	theirs := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := items.NewService(store, fakeCatalogue)
+
+	orgWide := validInput()
+	if _, err := svc.CreateDecision(ctx, org, testActor, orgWide); err != nil {
+		t.Fatalf("CreateDecision(org-wide) error = %v", err)
+	}
+	onMine := validInput()
+	onMine.Scope, onMine.HostID, onMine.Pattern = items.ScopeHost, &mine, "/srv"
+	onMine.MatchKind = items.MatchExact
+	if _, err := svc.CreateDecision(ctx, org, testActor, onMine); err != nil {
+		t.Fatalf("CreateDecision(this host) error = %v", err)
+	}
+	onTheirs := validInput()
+	onTheirs.Scope, onTheirs.HostID, onTheirs.Pattern = items.ScopeHost, &theirs, "/opt"
+	onTheirs.MatchKind = items.MatchExact
+	if _, err := svc.CreateDecision(ctx, org, testActor, onTheirs); err != nil {
+		t.Fatalf("CreateDecision(another host) error = %v", err)
+	}
+
+	got, err := svc.Decisions(ctx, org, &mine)
+	if err != nil {
+		t.Fatalf("Decisions() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Decisions(host) = %d decisions, want 2 (the organization's and this host's)", len(got))
+	}
+	for _, d := range got {
+		if d.Scope == items.ScopeHost && (d.HostID == nil || *d.HostID != mine) {
+			t.Fatalf("Decisions(host) returned a decision bound to another host: %+v", d)
+		}
+	}
+
+	// A nil host is the organization-scoped question, not a mistake: it
+	// asks for exactly the decisions that apply with nothing host-specific
+	// in play.
+	orgOnly, err := svc.Decisions(ctx, org, nil)
+	if err != nil {
+		t.Fatalf("Decisions(nil host) error = %v", err)
+	}
+	if len(orgOnly) != 1 || orgOnly[0].Scope != items.ScopeOrg {
+		t.Fatalf("Decisions(nil host) = %+v, want only the organization-scoped decision", orgOnly)
+	}
+}
+
 func TestPreviewExactPatternMatchesOne(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	host := uuid.Must(uuid.NewV7())

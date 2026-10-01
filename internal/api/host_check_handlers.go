@@ -459,7 +459,13 @@ type ignoredKey struct{ CheckKey, Item string }
 // Metrics with no item (cpu, memory) have nothing to ignore and are never
 // looked up — the same filter hostCheckDTO's own Ignored field documents.
 func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current) (map[ignoredKey]bool, error) {
-	ds, err := deps.Items.ListDecisions(ctx, orgID)
+	// Decisions, not ListDecisions: this route is polled every 30 s per
+	// open host page, and the only decisions that can ever govern an item
+	// on this host are the organization's own plus this host's — exactly
+	// what Decisions asks for, through the index the evaluation ticker's
+	// own lookup uses. Decide's applies() would drop every other host's
+	// anyway, so the result is identical and the read is narrower.
+	ds, err := deps.Items.Decisions(ctx, orgID, &hostID)
 	if err != nil {
 		slog.ErrorContext(ctx, "host checks: item decisions", "org_id", orgID, "host_id", hostID, "err", err)
 		return nil, huma.Error500InternalServerError("internal error")

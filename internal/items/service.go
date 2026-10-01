@@ -259,6 +259,24 @@ func (s *Service) ListDecisions(ctx context.Context, orgID uuid.UUID) ([]Decisio
 	return s.store.ListDecisions(ctx, orgID)
 }
 
+// Decisions returns the decisions that can govern an item on hostID: the
+// organization's own, plus — when hostID is non-nil — that one host's.
+// It is ListDecisions' narrow sibling, and the one every per-host caller
+// should use: the evaluation ticker already does (through the Store
+// directly), and so do GET /hosts/{id}/checks and GET /hosts/{id}/items,
+// both of which are polled per open host page. The underlying query
+// (`scope = 'org' OR (scope = 'host' AND host_id = $2)`) is backed by
+// check_item_decisions_lookup_idx, where ListDecisions is a scan of every
+// decision in the organization — including every other host's, which
+// Decide would only drop again in applies().
+//
+// A nil hostID asks for the organization-scoped decisions alone, which is
+// a meaningful question (nothing host-specific can apply) rather than a
+// mistake, so it is not refused here.
+func (s *Service) Decisions(ctx context.Context, orgID uuid.UUID, hostID *uuid.UUID) ([]Decision, error) {
+	return s.store.Decisions(ctx, orgID, hostID)
+}
+
 // Preview reports which known items would be governed by in, without
 // storing it. It resolves in against every known item of orgID — or, when
 // in is host-scoped, of that host alone, since previewing a host decision

@@ -208,11 +208,13 @@ func toItemDecisionDTO(d items.Decision) itemDecisionDTO {
 
 // toItemDTO renders v for the read routes, resolving its effective verdict
 // through items.Decide — the exact function the evaluation ticker and
-// GET /hosts/{id}/checks (host_check_handlers.go) both run. ds is the
-// organization's full decision list in every caller: Decide's own
-// applies() already narrows a scope=host decision to its own HostID, so
-// handing it the whole list is correct whether v.HostID is fixed (the
-// per-host route) or varies per row (the organization-wide one).
+// GET /hosts/{id}/checks (host_check_handlers.go) both run. ds must
+// contain every decision that could govern the rows handed in, and may
+// contain more: Decide's own applies() narrows a scope=host decision to
+// its own HostID regardless. The organization-wide listing therefore
+// passes the whole organization's decisions (ListDecisions), while the
+// per-host routes pass only the organization's plus that host's
+// (items.Service.Decisions) — the same answer from the narrower read.
 func toItemDTO(v items.View, ds []items.Decision) itemDTO {
 	res := items.Decide(ds, items.Target{HostID: v.HostID, CheckKey: v.CheckKey, Item: v.Name})
 	dto := itemDTO{
@@ -356,7 +358,12 @@ func registerItemRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapItemsErr(ctx, err)
 		}
-		ds, err := deps.Items.ListDecisions(ctx, scope.OrgID)
+		// The per-host read, so the per-host decision query (see
+		// items.Service.Decisions): this route sits beside
+		// GET /hosts/{id}/checks on every open host page and polls with
+		// it, and no decision bound to another host can govern an item
+		// here — toItemDTO's Decide would only drop it again.
+		ds, err := deps.Items.Decisions(ctx, scope.OrgID, &hostID)
 		if err != nil {
 			return nil, mapItemsErr(ctx, err)
 		}
