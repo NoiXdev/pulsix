@@ -209,6 +209,23 @@ func claimAll(t *testing.T, store *rules.EvalSQLStore, limit int) []rules.Due {
 	return got
 }
 
+// TestNewEvalSQLStoreRefusesANilItemStore pins the constructor's own
+// refusal. A nil ItemStore is not a store with a feature missing: Load
+// calls it for every host of every tick, so it is a nil-pointer
+// dereference on the first one — and the ticker's per-host recover would
+// turn that into one logged failure per host per tick, for ever, with the
+// wiring mistake nowhere in the message. It must fail where the mistake
+// was made instead. No database is needed to prove it, so this test does
+// not open one.
+func TestNewEvalSQLStoreRefusesANilItemStore(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewEvalSQLStore(nil items) returned a store, want a panic at construction")
+		}
+	}()
+	rules.NewEvalSQLStore(nil, cpuMinute(), nil, discard())
+}
+
 // TestWindowStatementOverASeededHypertable is review focus 2: every
 // aggregate over a real hypertable, plus the two windows whose answer is
 // the interesting one — a window holding no row at all (no entry, which

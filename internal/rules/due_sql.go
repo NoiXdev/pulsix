@@ -34,7 +34,20 @@ type EvalSQLStore struct {
 }
 
 // NewEvalSQLStore builds the store; a nil log is slog.Default().
+//
+// A nil items, unlike a nil log, has no sensible default: Load calls it
+// unconditionally for every host of every tick (discovery, then the
+// decisions the evaluator resolves), so a nil one is not a store with a
+// feature missing, it is a nil-pointer dereference on the first host.
+// Worse, it would be a quiet one — the ticker recovers per host, so the
+// panic would surface as one logged failure per host per tick, for ever,
+// with the wiring mistake that caused it nowhere in the message. Refused
+// here, at the one moment a programmer can still see the call site that
+// made it.
 func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, log *slog.Logger) *EvalSQLStore {
+	if items == nil {
+		panic("rules.NewEvalSQLStore: items must not be nil")
+	}
 	if log == nil {
 		log = slog.Default()
 	}
