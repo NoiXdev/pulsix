@@ -3059,6 +3059,8 @@ export interface components {
              * @description The agent's own timestamp for this reading
              */
             at: string;
+            /** @description The decision that produced ignored; absent when none matched */
+            decided_by?: components["schemas"]["ItemDecisionDTO"];
             /** @description Set when collection failed; value and label are then both absent — check_current stores an error row with neither */
             error?: string;
             /**

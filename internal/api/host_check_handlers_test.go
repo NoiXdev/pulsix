@@ -41,7 +41,11 @@ type hostCheckValue struct {
 	StateStale  bool       `json:"state_stale"`
 	// Ignored is v0.3b-3's own addition — see item_handlers_test.go's
 	// TestHostChecksReportsIgnoredAdditively for its dedicated coverage.
-	Ignored bool `json:"ignored"`
+	// DecidedBy rides with it, from the same resolution, so the row's own
+	// Ignore/Watch button never has to ask a second, differently-timed
+	// read what governs an item it already knows is ignored.
+	Ignored   bool             `json:"ignored"`
+	DecidedBy *itemDecisionDTO `json:"decided_by"`
 }
 
 type hostCheck struct {

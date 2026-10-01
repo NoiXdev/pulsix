@@ -806,6 +806,21 @@ describe('HostChecksCard', () => {
     const diskCheck = (values: unknown[]) =>
       check({ definition_id: 'd2', key: 'disk', plugin: 'disk', interval_seconds: 300, source: 'org', values });
 
+    /** A host-scoped exact decision on this very tuple — the one shape
+     * the row's own button could have written itself, and therefore the
+     * one it must flip with a PUT rather than stack a second POST on. */
+    const hostExactIgnore = {
+      id: 'hd1',
+      scope: 'host',
+      host_id: 'h1',
+      check_key: 'disk',
+      match_kind: 'exact',
+      pattern: '/var',
+      decision: 'ignore',
+      created_at: NOW,
+      updated_at: NOW,
+    };
+
     it('renders an ignored row as text — never "not yet evaluated" — even when a stale crit state is still attached', async () => {
       // Review focus: internal/items' own Apply deletes the state row the
       // instant an item is ignored, so the next read is guaranteed to
@@ -830,23 +845,21 @@ describe('HostChecksCard', () => {
       expect(row('disk', '/var used_percent').queryByText('not yet evaluated')).not.toBeInTheDocument();
     });
 
-    // Review finding: a decision made through the org-wide Items tab can
-    // start matching a value before THIS host's own discovery row exists
-    // for it (GET /hosts/{id}/items and GET /hosts/{id}/checks are two
-    // independently-timed reads — item discovery runs on the evaluation
-    // ticker, not on every checks poll). Before this fix the whole
-    // disclosure was simply absent in that window: an operator saw
-    // "ignored" with no affordance to even ask why, which is the exact
-    // confusion ruling 2 is written to prevent. It must still offer the
-    // disclosure, honestly saying the origin is not known — never
-    // guessing a scope nobody told this card.
-    it('still offers the disclosure for an ignored row with no matching discovery row yet, and says the origin is not known', async () => {
+    // The fallback, for an ignored value carrying no decision of its own.
+    // The server cannot produce that pairing any more — `ignored` and
+    // `decided_by` come out of one items.Decide call on the same value,
+    // and a verdict of ignore always has a decision behind it — but a
+    // bare, unexplained "ignored" with no affordance to even ask why is
+    // the exact confusion ruling 2 is written to prevent, so the
+    // disclosure must still appear and must say honestly that the origin
+    // is not known rather than guess a scope nobody told this card.
+    it('still offers the disclosure for an ignored row whose value names no decision, and says the origin is not known', async () => {
       const user = userEvent.setup();
       mockApi({
-        // No entry for disk/var at all — the race this fixture pins.
         'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
         'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
         'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        // ignored: true with no decided_by — the shape this fallback is for.
         'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
       });
       renderCard();
@@ -855,11 +868,11 @@ describe('HostChecksCard', () => {
       const summary = screen.getByText('Why ignored');
       // Closed, not absent — the body text exists in the DOM already (a
       // native <details>) but is not shown until the summary is opened.
-      expect(screen.getByText(/Origin not yet known/)).not.toBeVisible();
+      expect(screen.getByText(/Origin not known/)).not.toBeVisible();
 
       await user.click(summary);
 
-      expect(screen.getByText('Origin not yet known — this host has not reported discovering this item yet.')).toBeInTheDocument();
+      expect(screen.getByText('Origin not known — the last read of this value named no decision behind it.')).toBeInTheDocument();
       // Never a guess: no scope, pattern or note is invented in its place.
       expect(screen.queryByText(/organization pattern/)).not.toBeInTheDocument();
       expect(screen.queryByText('Set on this host')).not.toBeInTheDocument();
@@ -868,32 +881,30 @@ describe('HostChecksCard', () => {
     it('names an organization pattern as the origin, with its note, once the row is opened — not before', async () => {
       const user = userEvent.setup();
       mockApi({
-        'GET /api/v1/orgs/acme/hosts/h1/items': {
-          items: [
-            {
-              check_key: 'disk',
-              item: '/var',
-              first_seen: NOW,
-              last_seen: NOW,
-              reported: true,
-              decision: 'ignore',
-              decided_by: {
-                id: 'od1',
-                scope: 'org',
-                check_key: 'disk',
-                match_kind: 'glob',
-                pattern: '/mnt/scratch-*',
-                decision: 'ignore',
-                note: 'Backup volume runs hot on purpose.',
-                created_at: NOW,
-                updated_at: NOW,
-              },
-            },
-          ],
-        },
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
         'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
         'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-        'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            diskCheck([
+              ignoredValue({
+                decided_by: {
+                  id: 'od1',
+                  scope: 'org',
+                  check_key: 'disk',
+                  match_kind: 'glob',
+                  pattern: '/mnt/scratch-*',
+                  decision: 'ignore',
+                  note: 'Backup volume runs hot on purpose.',
+                  created_at: NOW,
+                  updated_at: NOW,
+                },
+              }),
+            ]),
+          ],
+        },
       });
       renderCard();
 
@@ -913,32 +924,30 @@ describe('HostChecksCard', () => {
     it('names "set on this host" for a decision made here, without repeating the pattern', async () => {
       const user = userEvent.setup();
       mockApi({
-        'GET /api/v1/orgs/acme/hosts/h1/items': {
-          items: [
-            {
-              check_key: 'disk',
-              item: '/var',
-              first_seen: NOW,
-              last_seen: NOW,
-              reported: true,
-              decision: 'ignore',
-              decided_by: {
-                id: 'hd1',
-                scope: 'host',
-                host_id: 'h1',
-                check_key: 'disk',
-                match_kind: 'exact',
-                pattern: '/var',
-                decision: 'ignore',
-                created_at: NOW,
-                updated_at: NOW,
-              },
-            },
-          ],
-        },
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
         'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
         'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-        'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            diskCheck([
+              ignoredValue({
+                decided_by: {
+                  id: 'hd1',
+                  scope: 'host',
+                  host_id: 'h1',
+                  check_key: 'disk',
+                  match_kind: 'exact',
+                  pattern: '/var',
+                  decision: 'ignore',
+                  created_at: NOW,
+                  updated_at: NOW,
+                },
+              }),
+            ]),
+          ],
+        },
       });
       renderCard();
 
@@ -957,30 +966,7 @@ describe('HostChecksCard', () => {
     it('shows a host watch overruling an organization pattern, and names the host decision as the one that decided it', async () => {
       const user = userEvent.setup();
       mockApi({
-        'GET /api/v1/orgs/acme/hosts/h1/items': {
-          items: [
-            {
-              check_key: 'disk',
-              item: '/var',
-              first_seen: NOW,
-              last_seen: NOW,
-              reported: true,
-              decision: 'watch',
-              decided_by: {
-                id: 'hd1',
-                scope: 'host',
-                host_id: 'h1',
-                check_key: 'disk',
-                match_kind: 'exact',
-                pattern: '/var',
-                decision: 'watch',
-                note: 'Needs eyes on it despite the fleet-wide pattern.',
-                created_at: NOW,
-                updated_at: NOW,
-              },
-            },
-          ],
-        },
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
         'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
         'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
         'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -988,7 +974,28 @@ describe('HostChecksCard', () => {
           monitored: true,
           checks: [
             diskCheck([
-              { item: '/var', metric: 'used_percent', value: 81.25, at: NOW, stale: false, state: 'ok', flapping: false, ignored: false },
+              {
+                item: '/var',
+                metric: 'used_percent',
+                value: 81.25,
+                at: NOW,
+                stale: false,
+                state: 'ok',
+                flapping: false,
+                ignored: false,
+                decided_by: {
+                  id: 'hd1',
+                  scope: 'host',
+                  host_id: 'h1',
+                  check_key: 'disk',
+                  match_kind: 'exact',
+                  pattern: '/var',
+                  decision: 'watch',
+                  note: 'Needs eyes on it despite the fleet-wide pattern.',
+                  created_at: NOW,
+                  updated_at: NOW,
+                },
+              },
             ]),
           ],
         },
@@ -1032,6 +1039,55 @@ describe('HostChecksCard', () => {
       });
     });
 
+    // The bug this pins: the row used to learn WHICH decision governs it
+    // from GET /hosts/{id}/items — a second, independently-timed read of
+    // check_items, which the evaluation ticker only fills on its next
+    // pass. This fixture is that window, and nothing else: the value is
+    // ignored and names the host-scoped exact decision that did it,
+    // while the items route still knows nothing about the tuple. The
+    // button must PUT that decision. A POST would be a second host-exact
+    // decision on the same tuple, and items' tie-break at equal
+    // specificity is the OLDER created_at — so the new one would lose,
+    // the row would not move, no error would appear, and every further
+    // click would add another dead row.
+    it('flips a decision the value itself names with a PUT, even when the items route knows nothing about the tuple yet', async () => {
+      const user = userEvent.setup();
+      let put: unknown;
+      let posted = false;
+      mockApi({
+        // Empty on purpose: discovery has not run for this item yet.
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [diskCheck([ignoredValue({ decided_by: hostExactIgnore })])],
+        },
+        'PUT /api/v1/orgs/acme/item-decisions/hd1': (req: MockRequest) => {
+          put = req.body;
+          return { decision: { ...hostExactIgnore, ...(req.body as object) } };
+        },
+        'POST /api/v1/orgs/acme/item-decisions': () => {
+          posted = true;
+          return new Response(JSON.stringify({ detail: 'a second decision would lose the tie-break' }), { status: 500 });
+        },
+      });
+      renderCard();
+
+      await user.click(await screen.findByRole('button', { name: 'Watch disk /var' }));
+
+      expect(posted).toBe(false);
+      expect(put).toEqual({
+        scope: 'host',
+        host_id: 'h1',
+        check_key: 'disk',
+        match_kind: 'exact',
+        pattern: '/var',
+        decision: 'watch',
+      });
+    });
+
     it('offers no item decision action for a whole-host metric — an item with no name is not a thing to ignore', async () => {
       mockApi({
         'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
@@ -1048,36 +1104,19 @@ describe('HostChecksCard', () => {
 
     it('hides the row action from a viewer, but still shows the ignored marker and its origin', async () => {
       mockApi({
-        'GET /api/v1/orgs/acme/hosts/h1/items': {
-          items: [
-            {
-              check_key: 'disk',
-              item: '/var',
-              first_seen: NOW,
-              last_seen: NOW,
-              reported: true,
-              decision: 'ignore',
-              decided_by: {
-                id: 'hd1',
-                scope: 'host',
-                host_id: 'h1',
-                check_key: 'disk',
-                match_kind: 'exact',
-                pattern: '/var',
-                decision: 'ignore',
-                created_at: NOW,
-                updated_at: NOW,
-              },
-            },
-          ],
-        },
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
         'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
         'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-        'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [diskCheck([ignoredValue({ decided_by: hostExactIgnore })])],
+        },
       });
       renderCard(true, false);
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
+      expect(screen.getByText('Why ignored')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /Watch disk/ })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /Ignore disk/ })).not.toBeInTheDocument();
     });

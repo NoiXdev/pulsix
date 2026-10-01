@@ -6,13 +6,12 @@ import { Button } from '../../ui/button.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
 import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostChecks, useHostEffectiveRules, useHostMetric, useMonitoringGroups, type MetricSelection } from '../../api/hooks/useChecks.ts';
-import { useHostItems } from '../../api/hooks/useItems.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
 import { clockSkewLabel, decisionOriginLabel, formatNumber, isGraphable, metricLabel, sourceLabel, verdictLabel } from './hostChecks.ts';
 import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
 import { ItemDecisionButton } from './ItemDecisionButton.tsx';
-import type { EffectiveRule, HostCheck, HostCheckValue, Item, MetricRange, MonitoringGroup } from '../../api/types.ts';
+import type { EffectiveRule, HostCheck, HostCheckValue, MetricRange, MonitoringGroup } from '../../api/types.ts';
 
 /** The tuple a "Rules" disclosure is open for — the same three fields that
  * name a tuple everywhere else on this card, without `range`: there is no
@@ -112,16 +111,8 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
   // useHostEffectiveRules' own doc comment.
   const effectiveRules = useHostEffectiveRules(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
-  // v0.3b-3: this host's discovered items, matched per-row below by
-  // (check_key, item) — the only source for WHY a row is ignored or
-  // watched (ItemDTO's own `decided_by`; HostCheckValueDTO carries only
-  // the boolean `ignored`). Not gated on `monitored`, matching
-  // effectiveRules and groups above: cheap, and simpler than a third
-  // enabled condition to keep in sync with the other two.
-  const items = useHostItems(org, hostId, canRead);
   const effective = effectiveRules.data?.effective ?? [];
   const groupList = groups.data?.groups ?? [];
-  const itemList = items.data?.items ?? [];
 
   const monitored = query.data?.monitored ?? false;
   const checks = query.data?.checks ?? [];
@@ -187,7 +178,6 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                         onOpen={setOpen}
                         effective={effective}
                         groups={groupList}
-                        items={itemList}
                         openRules={openRules}
                         onOpenRules={setOpenRules}
                       />
@@ -216,7 +206,6 @@ function ValueRow({
   onOpen,
   effective,
   groups,
-  items,
   openRules,
   onOpenRules,
 }: {
@@ -232,7 +221,6 @@ function ValueRow({
   onOpen: (selection: MetricSelection | null) => void;
   effective: EffectiveRule[];
   groups: MonitoringGroup[];
-  items: Item[];
   openRules: TupleKey | null;
   onOpenRules: (key: TupleKey | null) => void;
 }) {
@@ -240,14 +228,19 @@ function ValueRow({
   const graphable = isGraphable(check, value);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
 
-  // GET /hosts/{id}/items' own row for this exact tuple, when one exists —
-  // absent for a whole-host metric (items with no name are not rows at
-  // all, v0.3b-3 design) and, briefly, for an item observed this tick but
-  // not yet discovered by the next evaluation pass. `ignored` itself
-  // never depends on finding one: HostCheckValueDTO carries it already,
-  // resolved server-side regardless of whether this row exists yet.
-  const itemInfo = value.item !== '' ? items.find((it) => it.check_key === check.key && it.item === value.item) : undefined;
-  const decidedBy = itemInfo?.decided_by;
+  // The decision governing this tuple, out of THIS value's own read:
+  // HostCheckValueDTO carries `ignored` and `decided_by` from one
+  // server-side items.Decide call, so the verdict and its origin can
+  // never disagree. It used to be matched out of GET /hosts/{id}/items
+  // instead — a second, independently-timed read of check_items, which
+  // item discovery only fills on the next evaluation pass. In the window
+  // before it did (and for ever, if that request failed) a row knew it
+  // was ignored but not by what, and the Ignore/Watch button below
+  // treated "nothing governs this" as licence to POST a second decision
+  // that lost the older-created_at tie-break and died silently.
+  // Undefined for a whole-host metric — items with no name are not rows
+  // at all (v0.3b-3 design) — and whenever nothing decides this item.
+  const decidedBy = value.item !== '' ? value.decided_by : undefined;
 
   const st = verdictLabel(value.state, value.ignored);
 
@@ -405,14 +398,13 @@ function ValueRow({
           this one opens, so the state EffectiveRulesPanel's own shadowed-
           rules list already uses for the same shape is simpler here.
           Rendered even when `decidedBy` itself is unknown, as long as the
-          tuple IS ignored: a decision made through the org-wide Items tab
-          can start matching a value before this host's own discovery row
-          exists for it (GET /hosts/{id}/items and GET /hosts/{id}/checks
-          are two independently-timed reads — item discovery runs on the
-          evaluation ticker, not on every checks poll), and a bare,
-          unexplained "ignored" with no affordance to even ask why is
-          exactly the confusion ruling 2 exists to prevent. The placeholder
-          says plainly that the origin is not known yet — guessing a scope
+          tuple IS ignored. That pairing should now be unreachable —
+          `ignored` and `decided_by` come out of one server-side
+          items.Decide call on this very value, and a verdict of ignore
+          always has a decision behind it — but a bare, unexplained
+          "ignored" with no affordance to even ask why is exactly the
+          confusion ruling 2 exists to prevent, so the fallback stays. It
+          says plainly that the origin is not known; guessing a scope
           nobody told this card would be worse than saying nothing. */}
       {value.item !== '' && (decidedBy || value.ignored) && (
         <details className="text-[11px] text-muted-foreground">
@@ -426,7 +418,7 @@ function ValueRow({
                 {decidedBy.note && ` — ${decidedBy.note}`}
               </>
             ) : (
-              'Origin not yet known — this host has not reported discovering this item yet.'
+              'Origin not known — the last read of this value named no decision behind it.'
             )}
           </p>
         </details>

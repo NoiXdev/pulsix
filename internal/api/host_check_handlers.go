@@ -103,6 +103,23 @@ type hostCheckValueDTO struct {
 	// agent is asked to collect. Always false for an item-less metric
 	// (cpu, memory): there is nothing to ignore.
 	Ignored bool `json:"ignored" doc:"An item decision currently keeps this tuple from being judged; measurement continues regardless"`
+	// DecidedBy is the decision that produced Ignored — the same
+	// items.Decide resolution, from the same read, so the two can never
+	// disagree. Absent when nothing decides this tuple (the default,
+	// watch) and always absent for an item-less metric.
+	//
+	// It is here rather than left to GET /hosts/{id}/items because the
+	// row's Ignore/Watch button has to know whether a decision it could
+	// have written itself already governs the item: a host-scoped exact
+	// decision is flipped with a PUT, while a plain second POST loses the
+	// older-created_at tie-break to the first and dies on arrival,
+	// silently. Reading that from the items route made it a second,
+	// independently-timed read of a different table — check_items, which
+	// discovery only fills on the next evaluation pass — so for up to a
+	// tick (or for ever, if that request failed) the row knew it was
+	// ignored but not by what, and the button issued POSTs that could
+	// never win. Same read, same resolution, one answer.
+	DecidedBy *itemDecisionDTO `json:"decided_by,omitempty" doc:"The decision that produced ignored; absent when none matched"`
 }
 
 type hostCheckDTO struct {
@@ -388,7 +405,7 @@ func stillAsked(d checks.Definition, values []checks.Current) []checks.Current {
 	return kept
 }
 
-func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]bool) hostCheckDTO {
+func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) hostCheckDTO {
 	params := d.Params
 	if params == nil {
 		params = map[string]any{}
@@ -434,7 +451,13 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*d.Interval
 		}
 		if c.Item != "" {
-			v.Ignored = ignored[ignoredKey{CheckKey: d.Key, Item: c.Item}]
+			if res, ok := ignored[ignoredKey{CheckKey: d.Key, Item: c.Item}]; ok {
+				v.Ignored = res.Ignored()
+				if res.Decision != nil {
+					decided := toItemDecisionDTO(*res.Decision)
+					v.DecidedBy = &decided
+				}
+			}
 		}
 		dto.Values[i] = v
 	}
@@ -447,18 +470,23 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 type ignoredKey struct{ CheckKey, Item string }
 
 // hostIgnoredItems resolves, for every (check_key, item) pair hostID's
-// current values carry, whether an item decision currently makes it
-// ignored — through items.Decide, the exact function the evaluation
-// ticker runs, over the organization's full decision list (Decide's own
-// applies() narrows a scope=host decision to its own host). This is the
+// current values carry, what an item decision currently says about it —
+// through items.Decide, the exact function the evaluation ticker runs,
+// over the organization's own decisions plus this host's. This is the
 // read side's only way to learn "ignored" at all: Apply deletes an ignored
 // tuple's check_states row (its own doc comment says why), so there is no
 // state to read it off of — see internal/items' own design note, "the read
 // side therefore cannot learn 'ignored' from a state".
 //
+// It returns the whole items.Resolution, not just its verdict, because
+// hostCheckValueDTO reports both: the verdict as `ignored` and the
+// decision that produced it as `decided_by`. Keeping them one value from
+// one Decide call is what makes it impossible for the two to disagree —
+// see DecidedBy's own doc comment for the bug that cost.
+//
 // Metrics with no item (cpu, memory) have nothing to ignore and are never
 // looked up — the same filter hostCheckDTO's own Ignored field documents.
-func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current) (map[ignoredKey]bool, error) {
+func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current) (map[ignoredKey]items.Resolution, error) {
 	// Decisions, not ListDecisions: this route is polled every 30 s per
 	// open host page, and the only decisions that can ever govern an item
 	// on this host are the organization's own plus this host's — exactly
@@ -470,7 +498,7 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 		slog.ErrorContext(ctx, "host checks: item decisions", "org_id", orgID, "host_id", hostID, "err", err)
 		return nil, huma.Error500InternalServerError("internal error")
 	}
-	out := make(map[ignoredKey]bool, len(current))
+	out := make(map[ignoredKey]items.Resolution, len(current))
 	for _, c := range current {
 		if c.Item == "" {
 			continue
@@ -479,7 +507,7 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 		if _, ok := out[k]; ok {
 			continue
 		}
-		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Item: c.Item}).Ignored()
+		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Item: c.Item})
 	}
 	return out, nil
 }

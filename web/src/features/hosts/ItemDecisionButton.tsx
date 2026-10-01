@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Shield, ShieldOff } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../ui/button.tsx';
@@ -21,9 +22,16 @@ export interface ItemDecisionButtonProps {
    * `ignored`, already resolved server-side. Decides both the label
    * ("Ignore" vs "Watch") and which verdict the click writes. */
   ignored: boolean;
-  /** The decision currently governing this item, if any — ItemDTO's own
-   * `decided_by`, looked up by HostChecksCard from GET /hosts/{id}/items.
-   * Absent means nothing decides this item yet (the default, watch). */
+  /** The decision currently governing this item, if any —
+   * HostCheckValueDTO's own `decided_by`, out of the SAME read (and the
+   * same server-side items.Decide call) as `ignored` above. Absent means
+   * nothing decides this item yet (the default, watch).
+   *
+   * That it shares a read with `ignored` is load-bearing, not incidental:
+   * this pair is what decides POST versus PUT below, and when it came
+   * from GET /hosts/{id}/items instead — a differently-timed read of a
+   * table item discovery only fills on the next evaluation pass — the two
+   * could disagree, and every disagreement produced a dead decision. */
   decidedBy?: ItemDecision;
 }
 
@@ -61,6 +69,22 @@ function isOwnHostExactDecision(decidedBy: ItemDecision | undefined, checkKey: s
  * else governing the item — an organization pattern, a host glob — is
  * left alone and simply outranked by the new exact decision; this button
  * only ever edits a decision it could have created itself.
+ *
+ * Which makes `decidedBy` the whole safety of this control, and why it
+ * now rides on the value itself rather than being matched out of
+ * GET /hosts/{id}/items: that was a second read, of a table (check_items)
+ * the evaluation ticker only fills on its next pass, so for up to a tick
+ * — or for the whole life of the page, if that one request failed — a
+ * governed item looked ungoverned here and every click issued another
+ * POST. Each one lost the tie-break to the decision already there: the
+ * row did not move, no error appeared, and the Items tab quietly grew a
+ * dead row per click.
+ *
+ * `busy` closes the other half of the same window: mutateAsync resolves
+ * before the refetch it triggers lands, so between them the button would
+ * be enabled again while still rendering the pre-write `ignored` and
+ * `decidedBy`. It spans the invalidation too, so the next click can only
+ * happen against a state that already includes this one.
  */
 export function ItemDecisionButton({ org, hostId, checkKey, item, ignored, decidedBy }: ItemDecisionButtonProps) {
   const qc = useQueryClient();
@@ -68,9 +92,11 @@ export function ItemDecisionButton({ org, hostId, checkKey, item, ignored, decid
   const own = isOwnHostExactDecision(decidedBy, checkKey, item);
   const create = useCreateItemDecision(org);
   const update = useUpdateItemDecision(org, own ? decidedBy.id : '');
-  const pending = create.isPending || update.isPending;
+  const [busy, setBusy] = useState(false);
+  const pending = busy || create.isPending || update.isPending;
 
   async function onClick() {
+    setBusy(true);
     const body: ItemDecisionInput = {
       scope: 'host',
       host_id: hostId,
@@ -99,6 +125,8 @@ export function ItemDecisionButton({ org, hostId, checkKey, item, ignored, decid
       ]);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : 'Saving this decision failed', 'destructive');
+    } finally {
+      setBusy(false);
     }
   }
 

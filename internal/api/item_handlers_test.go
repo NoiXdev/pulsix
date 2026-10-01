@@ -735,7 +735,7 @@ func TestHostDecisionOverrulesOrgPattern(t *testing.T) {
 // apart from "never evaluated" — only `ignored` can.
 func TestHostChecksReportsIgnoredAdditively(t *testing.T) {
 	f := newItemsFixture(t, "items-ignored-additive")
-	f.createDecision(t, f.operatorC, byHostDecisionBody(f.web, "disk", "/var", "ignore"))
+	ignoreVar := f.createDecision(t, f.operatorC, byHostDecisionBody(f.web, "disk", "/var", "ignore"))
 
 	scoped := db.WithOrgScope(context.Background(), f.orgID)
 	res, err := f.s.Checks.RecordObservations(scoped, f.orgID, []checks.Observation{
@@ -767,5 +767,26 @@ func TestHostChecksReportsIgnoredAdditively(t *testing.T) {
 	}
 	if optValue == nil || optValue.Ignored {
 		t.Fatalf("/opt = %+v, want ignored=false: no decision names it", optValue)
+	}
+
+	// decided_by rides with `ignored`, out of the same items.Decide
+	// resolution — and note what this fixture does NOT do: nothing has
+	// discovered /var, so check_items has no row for it and
+	// GET /hosts/{id}/items would report nothing about it at all. That is
+	// precisely the window in which the host row's own Ignore/Watch
+	// button used to know it was ignored but not by what, and issued a
+	// second POST that lost the older-created_at tie-break to the
+	// decision already there — a dead row, no error, the verdict
+	// unchanged. The button reads this field now, so the two can never
+	// disagree.
+	if varValue.DecidedBy == nil {
+		t.Fatal("/var decided_by is absent, want the decision that ignored it named")
+	}
+	if varValue.DecidedBy.ID != ignoreVar.ID || varValue.DecidedBy.Scope != "host" ||
+		varValue.DecidedBy.MatchKind != "exact" || varValue.DecidedBy.Pattern != "/var" {
+		t.Fatalf("/var decided_by = %+v, want the host-scoped exact decision %q", varValue.DecidedBy, ignoreVar.ID)
+	}
+	if optValue.DecidedBy != nil {
+		t.Fatalf("/opt decided_by = %+v, want absent: no decision names it", optValue.DecidedBy)
 	}
 }
