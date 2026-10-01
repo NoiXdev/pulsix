@@ -617,3 +617,71 @@ func TestCheckRefusesAnOversizedExpression(t *testing.T) {
 		t.Fatalf("Create = %v, want ErrInvalidInput", err)
 	}
 }
+
+// TestCheckRefusesAnExpressionReadingAnotherChecksMetric: buildRule
+// derives CheckKey from in.Metric via the catalogue, and the evaluator
+// builds one Input per (check_key, item) populated only from that item's
+// own tuples. An expression bound to disk that reads mem.used_pct
+// therefore compiles, stores, and then never matches — a 201, a green
+// tuple and no page when memory fills. It must be refused at the caret
+// instead.
+func TestCheckRefusesAnExpressionReadingAnotherChecksMetric(t *testing.T) {
+	host := uuid.Must(uuid.NewV7())
+	org := uuid.Must(uuid.NewV7())
+	svc := rules.NewService(newFakeStore())
+
+	cases := []struct {
+		name       string
+		metric     string
+		expression string
+		caretAt    string
+	}{
+		{"a plain metric node", "disk.used_pct", `disk.used_pct > 90 or mem.used_pct > 90`, "mem.used_pct"},
+		{"a window node", "disk.used_pct", `avg(cpu.used_pct, 10m) > 90`, "avg"},
+		{"an arithmetic operand", "disk.used_pct", `disk.used_pct > mem.used_pct * 2`, "mem.used_pct"},
+		{"a label node", "disk.used_pct", `disk.used_pct > 90 and service.state == "failed"`, "service.state"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := hostForm(host)
+			in.Mode, in.Form, in.Metric = "expression", nil, tc.metric
+			in.Expression = tc.expression
+
+			checked, err := svc.Check(ctx, org, in)
+			if !errors.Is(err, rules.ErrInvalidInput) {
+				t.Fatalf("Check(%q) = %v, want ErrInvalidInput", tc.expression, err)
+			}
+			if checked.OK {
+				t.Fatalf("Checked.OK is true for %q", tc.expression)
+			}
+			if want := strings.Index(tc.expression, tc.caretAt); checked.Pos != want {
+				t.Fatalf("Pos = %d, want %d (the offending node's own position)", checked.Pos, want)
+			}
+			if !strings.Contains(checked.Message, "belongs to check") {
+				t.Fatalf("message = %q, want it to name the check the metric belongs to", checked.Message)
+			}
+			if _, err := svc.Create(ctx, org, in); !errors.Is(err, rules.ErrInvalidInput) {
+				t.Fatalf("Create = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+// TestCheckAcceptsASiblingMetricOfTheSameCheck is the other side of that
+// guard: reading a sibling metric of the SAME check is exactly what the
+// per-item Input exists to allow (disk.used_pct against disk.free_bytes of
+// the same mount), and must stay accepted.
+func TestCheckAcceptsASiblingMetricOfTheSameCheck(t *testing.T) {
+	host := uuid.Must(uuid.NewV7())
+	org := uuid.Must(uuid.NewV7())
+	svc := rules.NewService(newFakeStore())
+
+	in := hostForm(host)
+	in.Mode, in.Form, in.Metric = "expression", nil, "disk.used_pct"
+	in.Expression = `disk.used_pct > 90 and disk.free_bytes < 1000000 and avg(disk.inodes_used_pct, 10m) > 80`
+
+	checked, err := svc.Check(ctx, org, in)
+	if err != nil || !checked.OK {
+		t.Fatalf("Check(%q) = %+v, %v; a rule may read its own check's other metrics", in.Expression, checked, err)
+	}
+}

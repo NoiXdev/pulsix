@@ -225,6 +225,19 @@ func (s *Service) buildRule(in RuleInput) (Rule, int, error) {
 	if err != nil {
 		return Rule{}, pos, err
 	}
+	// The compiled trees are type-correct on their own terms, but nothing
+	// so far has tied them to the check key the rule is bound to. An
+	// expression naming a metric of a different check compiles fine and
+	// can then never match — see checkTreeBelongsTo for the whole failure.
+	// Form mode cannot produce one (Form.Metric is already required to
+	// equal in.Metric), but both trees are walked anyway: one guard over
+	// both modes cannot drift the way two would.
+	for _, tree := range []Node{trigger, clear} {
+		if err := checkTreeBelongsTo(tree, entry.CheckKey); err != nil {
+			p, wrapped := ruleError(err)
+			return Rule{}, p, wrapped
+		}
+	}
 
 	return Rule{
 		Name: name, Enabled: in.Enabled, Scope: in.Scope,

@@ -106,6 +106,44 @@ func typeErr(pos int, format string, args ...any) error {
 // one.
 const maxRuleDepth = 64
 
+// checkTreeBelongsTo refuses any node in n naming a catalogue metric that
+// belongs to a check other than checkKey. It is not part of TypeCheck,
+// which validates a tree on its own terms and has no rule to read a check
+// key off; a caller that knows the binding runs this as a second pass.
+//
+// Why it has to exist: the evaluator builds one Input per
+// ItemKey{CheckKey, Item}, populated only from that item's own tuples
+// (buildInputs). A rule bound to (disk, /var, disk.used_pct) whose
+// expression reads mem.used_pct therefore finds nothing in Input.Metrics,
+// Number returns ok=false, and Match returns false — for ever, silently.
+// The operator gets a 201, a green tuple and no page when memory fills.
+// That is the precise failure Catalogue's own doc comment says the
+// catalogue exists to prevent ("an unknown metric must be refused when the
+// rule is written, not silently never match"), reached by a different
+// door: the metric is known, it is just known to belong elsewhere.
+//
+// Labels are checked alongside metrics and windows. The mechanism is
+// identical — Input.Labels is filled from the same item's tuples — and
+// leaving them out would only mean one of the three node kinds that names
+// a catalogue metric could still never match.
+//
+// Depth is bounded by TypeCheck, which every caller runs first.
+func checkTreeBelongsTo(n Node, checkKey string) error {
+	switch n.Kind {
+	case KindMetric, KindWindow, KindLabel:
+		if entry, ok := Catalogue()[n.Name]; ok && entry.CheckKey != checkKey {
+			return typeErr(n.Pos, "metric %q belongs to check %q, not %q — a rule can only read the metrics of its own check",
+				n.Name, entry.CheckKey, checkKey)
+		}
+	}
+	for _, a := range n.Args {
+		if err := checkTreeBelongsTo(a, checkKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // TypeCheck validates a tree for storage: known metrics, matching kinds
 // (a numeric operator never touches a discrete metric and vice versa),
 // window bounds, nesting within maxRuleDepth, and a boolean root. The
