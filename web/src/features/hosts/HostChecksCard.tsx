@@ -271,7 +271,7 @@ function ValueRow({
             has held. */}
         <span
           title={
-            value.state !== null
+            value.state !== null && !value.ignored
               ? [
                   value.since ? `in this state since ${seenLabel(value.since, new Date())}` : null,
                   value.evaluated_at ? `judged ${seenLabel(value.evaluated_at, new Date())}` : null,
@@ -293,12 +293,22 @@ function ValueRow({
             it the same way `stale` below distinguishes a stale reading
             from a fresh one, without asking anyone to tell two colours
             apart. */}
-        {value.state !== null && value.state_stale && (
+        {/* All three of these — and the state Pill's own tooltip above —
+            are gated on `!ignored` for one reason: they read the state
+            row, which survives until the next tick drops it (Apply's own
+            contract). For those seconds an ignored row would say
+            "ignored" and "stale verdict" side by side, which claims the
+            engine stopped judging this and invites an operator to hunt a
+            dead ticker rather than recognise their own decision. Nothing
+            is lost by hiding them: an ignored item is not being judged,
+            so how old its last verdict is, and how often it used to
+            change, are both answers to a question nobody is asking. */}
+        {!value.ignored && value.state !== null && value.state_stale && (
           <span title={value.evaluated_at ? `judged ${seenLabel(value.evaluated_at, new Date())}` : undefined}>
             <Pill tone="warn">stale verdict</Pill>
           </span>
         )}
-        {value.flapping && (
+        {!value.ignored && value.flapping && (
           <span title="changed state five or more times in the last 30 minutes">
             <Pill tone="warn">flapping</Pill>
           </span>

@@ -845,6 +845,42 @@ describe('HostChecksCard', () => {
       expect(row('disk', '/var used_percent').queryByText('not yet evaluated')).not.toBeInTheDocument();
     });
 
+    // The pre-drop state row survives until the next tick (Apply deletes
+    // it when the evaluator next runs), so for those seconds an ignored
+    // row still carries state_stale, flapping and a "judged ..." tooltip
+    // from before the decision. Rendered, they say "the engine stopped
+    // judging this" — which sends an operator hunting a dead ticker
+    // instead of recognising the decision they just made.
+    it('shows neither "stale verdict" nor "flapping" on an ignored row, nor a judged-at tooltip, while the pre-drop state row is still there', async () => {
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            diskCheck([
+              ignoredValue({
+                state: 'crit',
+                since: '2026-01-01T00:00:00Z',
+                evaluated_at: '2026-01-01T00:00:00Z',
+                state_stale: true,
+                flapping: true,
+                decided_by: hostExactIgnore,
+              }),
+            ]),
+          ],
+        },
+      });
+      renderCard();
+
+      expect(await screen.findByText('ignored')).toBeInTheDocument();
+      expect(screen.queryByText('stale verdict')).not.toBeInTheDocument();
+      expect(screen.queryByText('flapping')).not.toBeInTheDocument();
+      expect(row('disk', '/var used_percent').queryByTitle(/judged/)).not.toBeInTheDocument();
+    });
+
     // The fallback, for an ignored value carrying no decision of its own.
     // The server cannot produce that pairing any more — `ignored` and
     // `decided_by` come out of one items.Decide call on the same value,
