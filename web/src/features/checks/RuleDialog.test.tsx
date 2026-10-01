@@ -139,6 +139,64 @@ describe('RuleDialog', () => {
     confirmSpy.mockRestore();
   });
 
+  it('names the clear condition it would delete before switching, and stays in form mode if that is declined', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    mockApi({
+      'POST /api/v1/orgs/acme/rules/validate': () => ({ ok: true, form_ready: true, source: 'cpu.used_pct >= 85' }),
+    });
+    renderDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'High CPU');
+    await user.type(screen.getByLabelText('Value'), '85');
+    await user.selectOptions(screen.getByLabelText('Clear condition'), '<');
+    await user.type(screen.getByLabelText('Clear value'), '80');
+
+    // The one-way-door warning is accepted; the clear-condition one is not.
+    confirmSpy.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    // The second confirmation names the condition by value: the grammar has
+    // no syntax for a clear condition, so the conversion deletes it, and
+    // the rule would then flip on every crossing of 85.
+    const dropMessage = confirmSpy.mock.calls[1][0] as string;
+    expect(dropMessage).toContain('< 80');
+    expect(dropMessage).toMatch(/clear condition/i);
+    // Declined, so nothing changed: still the form editor, clear condition
+    // still set.
+    expect(screen.queryByLabelText('Expression')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Clear value')).toHaveValue(80);
+
+    // Accepting both goes through, and the extra confirmation is asked
+    // again rather than remembered: it is destructive, unlike the one-way
+    // door warning, which is only asked once per dialog.
+    confirmSpy.mockReturnValue(true);
+    await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(3);
+    expect(await screen.findByLabelText('Expression')).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
+  it('does not ask about a clear condition when the rule has none', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi({
+      'POST /api/v1/orgs/acme/rules/validate': () => ({ ok: true, form_ready: true, source: 'cpu.used_pct > 90' }),
+    });
+    renderDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'High CPU');
+    await user.type(screen.getByLabelText('Value'), '90');
+    await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByLabelText('Expression')).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
   it('does not switch to the expression editor when the warning is declined', async () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);

@@ -29,6 +29,30 @@ const CONFIRM_SWITCH =
   "expression keeps exactly the shape the form produces — one comparison against this metric, no arithmetic, no time window, no \"or\". " +
   'Once it leaves that shape, this rule can only be edited as an expression from now on. Continue?';
 
+/** confirmDropClear is the second, separate confirmation a rule with a
+ * clear condition has to pass before it is converted.
+ *
+ * The expression grammar has no syntax for a clear condition at all, and
+ * the server stores clear_ast = NULL for every expression-mode rule, so the
+ * conversion does not merely close the way back — it deletes the
+ * hysteresis. A rule triggering at >= 85 and clearing at < 80 would start
+ * flipping between ok and warn on every crossing of 85, which is the exact
+ * behaviour the clear condition was written to prevent, with nothing on
+ * screen recording that it happened and no way to recover it by reopening
+ * the dialog.
+ *
+ * It names the condition rather than mentioning one in the abstract, and it
+ * is asked every time rather than once per dialog (unlike CONFIRM_SWITCH):
+ * this one is destructive, and the operator may well have added the clear
+ * condition after the first switch. */
+function confirmDropClear(op: string, value: string): string {
+  return (
+    `This rule clears at "${op} ${value}". The expression editor has no syntax for a clear condition, so saving as an ` +
+    'expression will remove it — the rule will then change state on every crossing of its threshold instead of holding ' +
+    'until the clear condition is met. Remove the clear condition and continue?'
+  );
+}
+
 export interface RuleDialogProps {
   org: string;
   /** The rule being edited; undefined creates one. */
@@ -55,7 +79,12 @@ export interface RuleDialogProps {
  * "threshold" edit, so that door stays closed for a seeded row entirely.
  *
  * The mode switch itself only ever runs forward through a confirmation
- * (form → expression); nothing in this dialog decodes an edited expression
+ * (form → expression), and through a second one naming the clear condition
+ * by value when the rule has one: the grammar cannot express a clear
+ * condition, so converting deletes it, and that is a change to what the
+ * rule DOES rather than only to how it is edited.
+ *
+ * Nothing in this dialog decodes an edited expression
  * back into form fields — the fields the form editor showed before the
  * switch simply stay held in state, untouched, so "switch back to form"
  * is a plain mode flip, not an attempt to parse whatever has since been
@@ -167,6 +196,9 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
       if (!confirm(CONFIRM_SWITCH)) return;
       setWarned(true);
     }
+    // Only a numeric metric can carry one: formBody puts clear_op/
+    // clear_value on the body for the numeric shape alone.
+    if (kind !== 'discrete' && clearOp !== '' && !confirm(confirmDropClear(clearOp, clearValue))) return;
     try {
       const checked = await checkRule.mutateAsync({ ...commonBody(), mode: 'form', form: formBody() });
       setExpression(checked.source ?? '');
