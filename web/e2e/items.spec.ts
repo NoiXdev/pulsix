@@ -129,8 +129,16 @@ test('an operator ignores a mount from the host page, then the Items tab sees, p
   try {
     agent = await enrolAndStart(page, HOST_NAME);
     await waitOnline(page, HOST_NAME);
-    await openHost(page, HOST_NAME);
     await addMountCheck(page, HOST_NAME);
+    // addMountCheck's own first act is `page.goto(`${base}/checks`)` (it
+    // has to be: that is where "New check" lives), so `page` is sitting on
+    // the Checks list, not the host page, once it returns. This is the
+    // navigation back — without it the wait below polls the Checks page's
+    // own DOM for a row that can only ever appear on the host page's
+    // monitoring card, and times out never having looked at the right page
+    // at all. Raising the timeout would not have fixed that, only made the
+    // failure slower.
+    await openHost(page, HOST_NAME);
     await waitForMountReading(page, 60_000);
 
     // --- Ignoring an item from the host page --------------------------
