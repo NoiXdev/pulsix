@@ -172,6 +172,29 @@ type CheckHostState struct {
 	EvaluatedAt  time.Time `json:"evaluated_at"`
 }
 
+type CheckItem struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	HostID    uuid.UUID `json:"host_id"`
+	CheckKey  string    `json:"check_key"`
+	Item      string    `json:"item"`
+	FirstSeen time.Time `json:"first_seen"`
+}
+
+type CheckItemDecision struct {
+	ID        uuid.UUID   `json:"id"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	Scope     string      `json:"scope"`
+	HostID    pgtype.UUID `json:"host_id"`
+	CheckKey  string      `json:"check_key"`
+	MatchKind string      `json:"match_kind"`
+	Pattern   string      `json:"pattern"`
+	Decision  string      `json:"decision"`
+	Note      string      `json:"note"`
+	CreatedBy pgtype.UUID `json:"created_by"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
 type CheckRule struct {
 	ID          uuid.UUID       `json:"id"`
 	OrgID       uuid.UUID       `json:"org_id"`
