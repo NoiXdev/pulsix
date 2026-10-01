@@ -266,6 +266,18 @@ ON CONFLICT (host_id) DO UPDATE SET
   state = excluded.state, crit_count = excluded.crit_count, warn_count = excluded.warn_count,
   unknown_count = excluded.unknown_count, since = excluded.since, evaluated_at = excluded.evaluated_at;
 
+-- name: DeleteCheckState :exec
+-- v0.3b-3 Task 5: what Evaluate asks for when an ignored tuple still has a
+-- stored row (internal/rules.Result.Dropped). A tuple with no resolved
+-- interval leaves its row standing (see internal/rules.Evaluate's own skip)
+-- — this is the one place an ignored tuple is handled differently, because
+-- an operator silencing a crit volume must not be left with a row that
+-- still says crit, with nothing left to re-judge it. Run before
+-- UpsertCheckState in Apply, inside the same claimed transaction.
+DELETE FROM check_states
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item) AND metric = sqlc.arg(metric);
+
 -- name: DeleteCheckHostState :exec
 -- Task 9: what an evaluation that judged no tuple at all asks for (see
 -- internal/rules.Result's own doc comment). A host whose every check lost

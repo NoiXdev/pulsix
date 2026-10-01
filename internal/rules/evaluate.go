@@ -102,9 +102,10 @@ type Snapshot struct {
 	// item, and every metric of that item shares its fate. It is resolved
 	// by Load, not by Evaluate — the evaluator stays pure and keeps no
 	// dependency on internal/items — so an absent key means watched, the
-	// unoverruled default, and this field carries no meaning of its own
-	// until a later task reads it (v0.3b-3 Task 5 owns the skip and the
-	// drop; this one only fills the map).
+	// unoverruled default. Evaluate skips a tuple whose key is set here
+	// exactly where it skips one with no resolved interval (see that skip),
+	// and names it in Result.Dropped when a previous state exists to
+	// delete.
 	Ignored map[ItemKey]bool
 }
 
@@ -115,14 +116,15 @@ type Snapshot struct {
 //
 // Host is the zero HostState when the evaluation judged no tuple at all —
 // either because the snapshot carried none, or because every one it
-// carried was left out for want of a resolved interval (see the skip in
-// Evaluate). A host with no tuples gets no roll-up row and renders as "no
-// data" (the spec's step 7), so a zero Host is an instruction to the
-// caller: write no row, and delete any check_host_states row the host
-// still has. A roll-up is derived state — the history it was derived from
-// lives in check_state_changes and is untouched — so leaving a stale one
-// behind would hold the host at whatever colour it last was for ever,
-// which is the very failure the interval exclusion exists to avoid.
+// carried was left out: for want of a resolved interval, or because an
+// operator ignored it (see the two skips in Evaluate). A host with no
+// tuples gets no roll-up row and renders as "no data" (the spec's step 7),
+// so a zero Host is an instruction to the caller: write no row, and delete
+// any check_host_states row the host still has. A roll-up is derived state
+// — the history it was derived from lives in check_state_changes and is
+// untouched — so leaving a stale one behind would hold the host at
+// whatever colour it last was for ever, which is the very failure both
+// exclusions exist to avoid.
 // Host.HostID is left zero: the snapshot does not name the host, and the
 // caller that loaded it already knows which one it is.
 type Result struct {
@@ -130,6 +132,19 @@ type Result struct {
 	Changes []Change
 	Host    HostState
 	NextDue time.Time
+	// Dropped lists the tuples whose stored check_states row must be
+	// deleted because nothing judges them any more: an ignored tuple that
+	// still has a Previous entry. Evaluate decides this; Apply deletes the
+	// rows, inside the claim's transaction and before it writes the states
+	// it did produce. This is the one place an ignored tuple is handled
+	// differently from a tuple whose check has no resolved interval, which
+	// deliberately leaves its row standing (see the skip in Evaluate): an
+	// operator who ignores a volume sitting at crit must not be left with
+	// a row that still says crit, with nothing left to re-judge it. A
+	// dropped tuple writes no check_state_changes row either — that table
+	// holds states, and "no longer judged" is not one; the audit log is
+	// where the reason for the drop lives.
+	Dropped []Tuple
 }
 
 // WindowRequests is what the store must fetch before Evaluate can run: one
@@ -185,6 +200,7 @@ func Evaluate(s Snapshot) Result {
 	var (
 		states  []TupleState
 		changes []Change
+		dropped []Tuple
 		// pending collects every moment this host has a reason to be looked
 		// at again: candidate ripenings and staleness deadlines (step 5).
 		pending []time.Time
@@ -206,6 +222,28 @@ func Evaluate(s Snapshot) Result {
 			// the thing it measured (backlog 3.28) one layer up: the stored
 			// row stays exactly as it is — nothing here deletes it — and
 			// the read side is what leaves it out.
+			continue
+		}
+
+		if s.Ignored[itemKeyOf(ts.Tuple)] {
+			// An operator's decision governs an item, so every metric of it
+			// shares the fate (Snapshot.Ignored's own doc comment): the
+			// tuple is skipped exactly like one with no resolved interval —
+			// no state, no change, no part in the roll-up, no pending
+			// deadline. What differs is what happens to the row already on
+			// disk. The no-resolved-interval skip above leaves it standing
+			// on purpose: the check is gone, so nothing should touch data
+			// nobody can refresh any more. An ignore is the opposite kind of
+			// absence — a watched item an operator has deliberately silenced,
+			// often while it is sitting at warn or crit at this very moment
+			// — and leaving that row in place would show that colour for
+			// ever with nothing left to re-judge it. So where a previous
+			// state exists, its Tuple is reported in Dropped for Apply to
+			// delete; a tuple ignored before its first evaluation has no row
+			// to drop in the first place.
+			if _, seen := s.Previous[ts.Tuple]; seen {
+				dropped = append(dropped, ts.Tuple)
+			}
 			continue
 		}
 
@@ -279,6 +317,7 @@ func Evaluate(s Snapshot) Result {
 		Changes: changes,
 		Host:    rollUp(states, s.Now, s.PreviousHost),
 		NextDue: nextDue(pending, s.Now),
+		Dropped: dropped,
 	}
 }
 

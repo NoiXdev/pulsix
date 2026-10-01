@@ -242,6 +242,22 @@ func (s *EvalSQLStore) Apply(ctx context.Context, d Due, res Result) error {
 	}
 	q := gen.New(tx)
 
+	// Dropped rows go first, before the states that were actually produced:
+	// an ignored tuple's stored check_states row must not outlive this
+	// evaluation (see Result.Dropped's own doc comment). There is nothing
+	// for these two loops to race over — Dropped and States never name the
+	// same tuple, since a tuple is only ever in one or the other — but
+	// deleting first is still the right order: it is the one that reads as
+	// "clear what is no longer judged, then write what is."
+	for _, t := range res.Dropped {
+		if err := q.DeleteCheckState(ctx, gen.DeleteCheckStateParams{
+			OrgID: d.OrgID, HostID: d.HostID,
+			CheckKey: t.CheckKey, Item: t.Item, Metric: t.Metric,
+		}); err != nil {
+			return fmt.Errorf("delete dropped check state: %w", err)
+		}
+	}
+
 	for _, st := range res.States {
 		// candidate_state and candidate_since are set together or not at
 		// all — the table's own CHECK. Evaluate never produces one without

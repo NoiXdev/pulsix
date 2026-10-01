@@ -772,6 +772,77 @@ func TestApplyDeletesTheRollUpWhenNothingIsJudged(t *testing.T) {
 	}
 }
 
+// TestApplyDropsAnIgnoredTuplesRowAndReWatchingStartsFresh is the Dropped
+// integration case: Apply really removes the row a Result.Dropped names,
+// and a tuple that becomes watched again on a later tick gets a Since of
+// that tick, never of the crossing stored in the row that was deleted —
+// because nothing judged it for every tick in between, so no continuity
+// across that gap is true to claim.
+func TestApplyDropsAnIgnoredTuplesRowAndReWatchingStartsFresh(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "drop-and-rewatch")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+
+	diskVar := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
+	firstTick := time.Now().UTC().Truncate(time.Microsecond)
+	originalCrossing := firstTick.Add(-24 * time.Hour)
+
+	// The row as it stood before the operator ignored the item: crit, and
+	// has been since yesterday.
+	insertCheckState(t, d, org, host, stateRow{
+		tuple: diskVar, state: rules.StateCrit,
+		since: originalCrossing, evaluatedAt: firstTick.Add(-time.Minute),
+	})
+	markDirty(t, d, org, host)
+
+	// Tick one: the evaluation that judges the item ignored. No state, no
+	// change, no roll-up — only Dropped naming the row to remove.
+	if _, err := store.ProcessDue(context.Background(), firstTick, 10, func(ctx context.Context, due rules.Due) error {
+		return store.Apply(ctx, due, rules.Result{
+			Dropped: []rules.Tuple{diskVar},
+			NextDue: firstTick.Add(time.Minute),
+		})
+	}); err != nil {
+		t.Fatalf("first ProcessDue: %v", err)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, host); n != 0 {
+		t.Fatalf("check_states rows after the drop = %d, want 0", n)
+	}
+
+	// Tick two, a day later: the operator has re-watched the item (or
+	// withdrawn the decision), and it is judged again — ok, this time.
+	secondTick := firstTick.Add(24 * time.Hour)
+	markDirty(t, d, org, host)
+	if _, err := store.ProcessDue(context.Background(), secondTick, 10, func(ctx context.Context, due rules.Due) error {
+		return store.Apply(ctx, due, rules.Result{
+			States: []rules.TupleState{{
+				Tuple: diskVar, State: rules.StateOK, Since: secondTick, EvaluatedAt: secondTick,
+			}},
+			Host:    rules.HostState{State: rules.StateOK, Since: secondTick, EvaluatedAt: secondTick},
+			NextDue: secondTick.Add(time.Minute),
+		})
+	}); err != nil {
+		t.Fatalf("second ProcessDue: %v", err)
+	}
+
+	states, err := rules.NewSQLStore(d).StatesForHost(context.Background(), org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("check_states rows after re-watching = %d, want 1", len(states))
+	}
+	got := states[0]
+	if got.State != rules.StateOK {
+		t.Fatalf("state = %s, want ok", got.State)
+	}
+	if !got.Since.Equal(secondTick) {
+		t.Fatalf("since = %v, want %v (the re-watching tick) — not %v (the original, now-untrue crossing)",
+			got.Since, secondTick, originalCrossing)
+	}
+}
+
 // TestAFailedHostLeavesNothingBehind: fn's error rolls that host's whole
 // transaction back — the writes Apply already made, and the cursor — so
 // the host is still exactly as due as it was.

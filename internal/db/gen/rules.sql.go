@@ -315,6 +315,38 @@ func (q *Queries) DeleteCheckHostState(ctx context.Context, arg DeleteCheckHostS
 	return err
 }
 
+const deleteCheckState = `-- name: DeleteCheckState :exec
+DELETE FROM check_states
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4 AND metric = $5
+`
+
+type DeleteCheckStateParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// v0.3b-3 Task 5: what Evaluate asks for when an ignored tuple still has a
+// stored row (internal/rules.Result.Dropped). A tuple with no resolved
+// interval leaves its row standing (see internal/rules.Evaluate's own skip)
+// — this is the one place an ignored tuple is handled differently, because
+// an operator silencing a crit volume must not be left with a row that
+// still says crit, with nothing left to re-judge it. Run before
+// UpsertCheckState in Apply, inside the same claimed transaction.
+func (q *Queries) DeleteCheckState(ctx context.Context, arg DeleteCheckStateParams) error {
+	_, err := q.db.Exec(ctx, deleteCheckState,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	return err
+}
+
 const deleteRule = `-- name: DeleteRule :execrows
 DELETE FROM check_rules WHERE org_id = $1 AND id = $2
 `

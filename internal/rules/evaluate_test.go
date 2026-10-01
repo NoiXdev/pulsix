@@ -86,6 +86,13 @@ func cpuWarn() rules.Rule {
 	return evalRule(warnID, cpuT, rules.SeverityWarn, compare(">", metric("cpu.used_pct"), number(80)))
 }
 
+// diskVarCrit is the ignore tests' own crit rule: it would match diskVarT's
+// measured value every time, so a case using it and still producing no
+// state proves the ignore skip, not an absent rule, is what kept it quiet.
+func diskVarCrit() rules.Rule {
+	return evalRule(critID, diskVarT, rules.SeverityCrit, compare(">", metric("disk.used_pct"), number(90)))
+}
+
 // snap is a healthy measurement: one numeric value, measured at `measured`,
 // belonging to a check whose resolved interval is `interval`.
 func snap(t rules.Tuple, value float64, measured time.Time, interval time.Duration) rules.TupleSnapshot {
@@ -1118,6 +1125,82 @@ func evaluateCases() []evalCase {
 			want: rules.Result{NextDue: at(20).Add(15 * time.Second)},
 		},
 		{
+			// An ignored item never evaluated before: the skip produces
+			// nothing, and there is no previous row for Dropped to name
+			// either. This is the quiet half of the ignore skip — the next
+			// case is the one that matters.
+			name: "an ignored tuple with no previous state produces nothing and no dropped entry",
+			snap: rules.Snapshot{
+				Now:       at(20),
+				Tuples:    []rules.TupleSnapshot{snap(diskVarT, 95, at(20), tenMin)},
+				Effective: []rules.Effective{eff(diskVarCrit(), diskVarT)},
+				Ignored:   map[rules.ItemKey]bool{{CheckKey: "disk", Item: "/var"}: true},
+			},
+			want: rules.Result{NextDue: at(20).Add(15 * time.Second)},
+		},
+		{
+			// Review focus 2: an operator ignores a volume that is sitting
+			// at crit right now. The tuple is skipped exactly like one
+			// with no resolved interval — no state, no change, no part in
+			// the roll-up — but unlike that case its stored row must not
+			// keep saying crit forever with nothing left to re-judge it,
+			// so it is named in Dropped for Apply to delete. The rule that
+			// would otherwise hold it at crit is present and would match,
+			// which is the point: the ignore skip outranks step 2 entirely
+			// rather than merely losing the match.
+			name: "an ignored tuple whose previous state is crit drops its row and writes no change",
+			snap: rules.Snapshot{
+				Now:       at(20),
+				Tuples:    []rules.TupleSnapshot{snap(diskVarT, 95, at(20), tenMin)},
+				Effective: []rules.Effective{eff(diskVarCrit(), diskVarT)},
+				Previous:  prev(wasBy(diskVarT, rules.StateCrit, at(5), critID)),
+				Ignored:   map[rules.ItemKey]bool{{CheckKey: "disk", Item: "/var"}: true},
+			},
+			want: rules.Result{
+				Dropped: []rules.Tuple{diskVarT},
+				NextDue: at(20).Add(15 * time.Second),
+			},
+		},
+		{
+			// Review focus 6: one ignored tuple previously at crit beside
+			// three watched tuples that are ok. The roll-up must read ok
+			// with the crit count at zero — the ignored tuple contributes
+			// nothing, not even a demoted count — and NextDue must be the
+			// earliest of the three watched tuples' own staleness
+			// deadlines (minute 50), never the ignored tuple's own much
+			// sooner one (minute 23, from its one-minute interval): an
+			// ignored tuple must not be able to smuggle in a wake-up the
+			// ticker would otherwise never have a reason for.
+			name: "a host with one ignored crit and three ok tuples rolls up to ok with the crit count at zero",
+			snap: rules.Snapshot{
+				Now: at(20),
+				Tuples: []rules.TupleSnapshot{
+					snap(diskVarT, 95, at(20), oneMin),
+					snap(cpuT, 10, at(20), tenMin),
+					snap(memT, 10, at(20), tenMin),
+					snap(diskRootT, 10, at(20), tenMin),
+				},
+				Effective: []rules.Effective{eff(diskVarCrit(), diskVarT)},
+				Previous: prev(
+					wasBy(diskVarT, rules.StateCrit, at(5), critID),
+					was(cpuT, rules.StateOK, at(0)),
+					was(memT, rules.StateOK, at(0)),
+					was(diskRootT, rules.StateOK, at(0)),
+				),
+				Ignored: map[rules.ItemKey]bool{{CheckKey: "disk", Item: "/var"}: true},
+			},
+			want: rules.Result{
+				States: []rules.TupleState{
+					{Tuple: cpuT, State: rules.StateOK, Since: at(0), LastValue: ptr(10.0), EvaluatedAt: at(20)},
+					{Tuple: memT, State: rules.StateOK, Since: at(0), LastValue: ptr(10.0), EvaluatedAt: at(20)},
+					{Tuple: diskRootT, State: rules.StateOK, Since: at(0), LastValue: ptr(10.0), EvaluatedAt: at(20)},
+				},
+				Dropped: []rules.Tuple{diskVarT},
+				Host:    rules.HostState{State: rules.StateOK, Crit: 0, Since: at(0), EvaluatedAt: at(20)},
+				NextDue: at(50),
+			},
+		},
+		{
 			// The roll-up carries its Since from the previous roll-up, not
 			// from the tuples: the host has stood at crit since minute 0,
 			// even though neither tuple holding it there is that old.
@@ -1538,6 +1621,9 @@ func assertResult(t *testing.T, got, want rules.Result) {
 	if !reflect.DeepEqual(got.Host, want.Host) {
 		t.Errorf("host:\n got %s\nwant %s", fmtHost(got.Host), fmtHost(want.Host))
 	}
+	if !reflect.DeepEqual(got.Dropped, want.Dropped) {
+		t.Errorf("dropped:\n got %s\nwant %s", fmtTuples(got.Dropped), fmtTuples(want.Dropped))
+	}
 	if !got.NextDue.Equal(want.NextDue) {
 		t.Errorf("next due: got %s, want %s", clock(got.NextDue), clock(want.NextDue))
 	}
@@ -1617,6 +1703,14 @@ func fmtChanges(changes []rules.Change) string {
 	out := make([]string, len(changes))
 	for i, c := range changes {
 		out[i] = fmtChange(c)
+	}
+	return "[" + strings.Join(out, "; ") + "]"
+}
+
+func fmtTuples(tuples []rules.Tuple) string {
+	out := make([]string, len(tuples))
+	for i, t := range tuples {
+		out[i] = fmt.Sprintf("%s/%s/%s", t.CheckKey, t.Item, t.Metric)
 	}
 	return "[" + strings.Join(out, "; ") + "]"
 }
