@@ -1,6 +1,6 @@
 // This file is the ticker's store: the claim that shares hosts between
 // managers and the write-back that ends one host's evaluation — both
-// inside the transaction the claim opened, so a host is evaluated and
+// inside one short transaction per host, so a host is evaluated and
 // recorded atomically or not at all. The reads that gather a host's inputs
 // are load_sql.go, and the one window statement is window_sql.go.
 //
@@ -40,7 +40,7 @@ func NewEvalSQLStore(d *db.DB, checks HostChecks, log *slog.Logger) *EvalSQLStor
 	return &EvalSQLStore{d: d, checks: checks, log: log}
 }
 
-// evalTxKey is the context key ProcessDue binds one host's transaction
+// evalTxKey is the context key evaluateOne binds one host's transaction
 // under. Load, Windows and Apply pick it up through conn below, which is
 // what makes "fn runs inside its own transaction" true of the three store
 // methods fn calls rather than only of fn itself. It is deliberately this
@@ -61,6 +61,10 @@ func claimTx(ctx context.Context) (pgx.Tx, bool) {
 // read-only caller make, is a legitimate thing to do and reads the same
 // rows either way.
 //
+// Keeping the reads on the claim's own transaction is what makes a host's
+// inputs and its write-back one consistent snapshot even though the
+// transaction now covers one host rather than the whole batch.
+//
 // Apply deliberately does not use this fallback (see errNoClaimTx): a
 // write outside the claim would be exactly the silent failure this file's
 // atomicity is built to prevent.
@@ -77,18 +81,38 @@ func (s *EvalSQLStore) conn(ctx context.Context) gen.DBTX {
 // four separate autocommitted statements, with no row lock on the cursor
 // and no way to undo the first three if the fourth failed — the whole
 // atomicity this store exists for, lost to a caller that simply forgot to
-// pass the context ProcessDue handed it. Refusing is the only behaviour
+// pass the context evaluateOne handed it. Refusing is the only behaviour
 // that cannot be got wrong quietly.
 var errNoClaimTx = errors.New("rules: apply evaluation outside a claimed host's transaction")
 
-// ProcessDue implements EvalStore. It follows internal/schedules'
-// DueSQLStore exactly rather than inventing a second claim protocol: one
-// transaction per batch takes the row locks, and each claimed host is then
-// processed inside its own savepoint (a pgx.Tx.Begin nested in a
-// transaction is a SAVEPOINT, not a new transaction), so a host whose data
-// is broken rolls back only its own writes. Hosts already committed to a
-// savepoint earlier in the batch are unaffected and are part of the one
-// commit at the end.
+// ProcessDue implements EvalStore: it lists up to limit dirty-or-due
+// hosts and then evaluates each one in a transaction of its own.
+//
+// The claim is deliberately in two halves (claimDue, then
+// LockOneEvalCursor per host) rather than internal/schedules' single
+// batch-wide transaction, which this store originally copied. The reason
+// that precedent does not transfer is the other side of the lock:
+// MarkHostDirty is an INSERT … ON CONFLICT on this same table, run inside
+// internal/checks' ingest transaction, on the 7 000-samples-a-second hot
+// path the whole cursor design exists to keep free. A row lock lives until
+// its transaction commits, so a transaction spanning a 200-host batch —
+// each host costing ContextForHost on a SECOND pool connection,
+// ListCheckCurrent, a full-organization ListRules, GetHostFacts,
+// ListCheckStates, the flapping count, the roll-up read, maybe the window
+// statement, then one upsert per tuple — would block every agent whose
+// host it had claimed for the length of the batch, and pin Postgres' xmin
+// horizon for just as long. Nothing writes internal/schedules' own due
+// table from a path like that.
+//
+// It is also what the spec asks for in so many words: "Each host is
+// evaluated in its own transaction, so one host whose data is broken
+// cannot roll back the others." A savepoint delivered the rollback
+// isolation that sentence gives as its reason, but not the lock lifetime.
+//
+// What the split costs is one race, and it is benign: between the scan and
+// the per-host lock another manager may take a host, or finish it. Either
+// way LockOneEvalCursor returns no row and the host is skipped — exactly
+// what the scan itself would have done a moment earlier.
 //
 // now is the ticker's own clock reading, which the pure evaluation is
 // stamped with. Nothing in the SQL below uses it: every dirty/staleness
@@ -100,57 +124,68 @@ var errNoClaimTx = errors.New("rules: apply evaluation outside a claimed host's 
 // still dirty or still overdue and the next tick retries it, the same
 // at-least-once guarantee a failed commit already gives.
 func (s *EvalSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error) {
-	tx, err := s.d.Pool().Begin(ctx)
+	due, err := s.claimDue(ctx, limit)
 	if err != nil {
-		return 0, fmt.Errorf("begin evaluation tick: %w", err)
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
-
-	rows, err := gen.New(tx).ClaimDueEvalCursors(ctx, int32(limit)) //nolint:gosec // limit is the ticker's own batch size
-	if err != nil {
-		return 0, fmt.Errorf("claim due evaluation cursors: %w", err)
+		return 0, err
 	}
 	done := 0
-	for i, r := range rows {
+	for i, d := range due {
 		if ctx.Err() != nil {
-			// The manager is shutting down. Every host from here on is left
-			// exactly as it is — still locked until the commit below
-			// releases it, still due — rather than started and each logging
-			// its own failure: one line here beats one per remaining host.
+			// The manager is shutting down, or the batch deadline fired.
+			// Every host from here on is left exactly as it is — still due —
+			// rather than started and each logging its own failure: one line
+			// here beats one per remaining host.
 			s.log.WarnContext(context.WithoutCancel(ctx), "evaluation batch cancelled; leaving the remaining hosts due for the next tick",
-				"evaluated", done, "remaining", len(rows)-i)
+				"evaluated", done, "remaining", len(due)-i)
 			break
 		}
-		if s.evaluateOne(ctx, tx, Due{OrgID: r.OrgID, HostID: r.HostID}, fn) {
+		if s.evaluateOne(ctx, d, fn) {
 			done++
 		}
-	}
-	// Committed on a detached context: a cancellation that arrives mid-batch
-	// must not discard the hosts whose savepoints already committed —
-	// re-evaluating them would be harmless, but the state changes they
-	// appended are history and would be written twice.
-	if err := tx.Commit(context.WithoutCancel(ctx)); err != nil {
-		return 0, fmt.Errorf("commit evaluation tick: %w", err)
 	}
 	return done, nil
 }
 
-// evaluateOne runs fn for one claimed host inside its own savepoint and
-// reports whether it committed. Any failure — fn's own error, or a
-// savepoint that will not begin or commit — leaves the host untouched and
-// still due; a panic is recovered here so that one host's bug costs that
-// host and not the batch, the belt to Ticker.tickSafely's suspenders.
+// claimDue lists the hosts this tick will try, in a transaction opened for
+// that one statement and rolled back the moment it returns. The scan takes
+// FOR UPDATE SKIP LOCKED so it does not list a host another manager is
+// mid-evaluation on; it does NOT hold those locks, because holding them is
+// precisely what ProcessDue's comment explains this store must not do.
+// Rollback rather than commit: the statement wrote nothing, and releasing
+// the locks is the entire point of ending the transaction.
+func (s *EvalSQLStore) claimDue(ctx context.Context, limit int) ([]Due, error) {
+	tx, err := s.d.Pool().Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin evaluation claim: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // read-only, nothing to lose
+
+	rows, err := gen.New(tx).ClaimDueEvalCursors(ctx, int32(limit)) //nolint:gosec // limit is the ticker's own batch size
+	if err != nil {
+		return nil, fmt.Errorf("claim due evaluation cursors: %w", err)
+	}
+	due := make([]Due, len(rows))
+	for i, r := range rows {
+		due[i] = Due{OrgID: r.OrgID, HostID: r.HostID}
+	}
+	return due, nil
+}
+
+// evaluateOne claims one host for real and runs fn for it inside that
+// host's own transaction, reporting whether it committed. Any failure —
+// the host already taken or no longer due, fn's own error, a transaction
+// that will not begin or commit — leaves the host untouched and still due;
+// a panic is recovered here so that one host's bug costs that host and not
+// the batch, the belt to Ticker.tickSafely's suspenders.
 //
-// The savepoint commits on ctx itself, deliberately unlike
-// internal/schedules' processRow, which detaches its write-back onto a
-// fresh context. The reason that one has to is that its write-back records
-// a job it has ALREADY enqueued, so losing the record re-fires the job.
-// Nothing here has an outside effect: every statement Apply issues is an
-// upsert or an append that was rolled back with it, so a host whose
-// savepoint is cut off by the batch deadline is simply evaluated again on
-// the next tick, writing the same state and the same single change. The
-// simpler lifetime is worth keeping while that stays true.
-func (s *EvalSQLStore) evaluateOne(ctx context.Context, tx pgx.Tx, d Due, fn func(ctx context.Context, d Due) error) (committed bool) {
+// The commit runs on ctx itself rather than on a detached context.
+// internal/schedules' processRow has to detach, because its write-back
+// records a job it has ALREADY enqueued and losing the record re-fires the
+// job. Nothing here has an outside effect: every statement Apply issues is
+// an upsert or an append that is rolled back with it, so a host whose
+// transaction is cut off by the batch deadline is simply evaluated again
+// on the next tick, writing the same state and the same single change.
+func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx context.Context, d Due) error) (committed bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.ErrorContext(context.WithoutCancel(ctx), "evaluating a host panicked; leaving it due for the next tick",
@@ -159,24 +194,37 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, tx pgx.Tx, d Due, fn fun
 		}
 	}()
 
-	sp, err := tx.Begin(ctx)
+	tx, err := s.d.Pool().Begin(ctx)
 	if err != nil {
-		s.log.ErrorContext(ctx, "begin host savepoint; leaving the host due for the next tick",
+		s.log.ErrorContext(ctx, "begin host transaction; leaving the host due for the next tick",
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return false
 	}
 	defer func() {
 		if !committed {
-			sp.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+			tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
 		}
 	}()
 
-	if err := fn(context.WithValue(ctx, evalTxKey{}, sp), d); err != nil {
+	// The claim proper. No row means another manager locked this host, or
+	// finished it, between the scan and now — not an error, and not worth a
+	// log line either: it is the ordinary outcome of two managers sharing a
+	// fleet.
+	switch _, err := gen.New(tx).LockOneEvalCursor(ctx, d.HostID); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return false
+	case err != nil:
+		s.log.ErrorContext(ctx, "lock host cursor; leaving the host due for the next tick",
+			"org", d.OrgID, "host", d.HostID, "err", err)
+		return false
+	}
+
+	if err := fn(context.WithValue(ctx, evalTxKey{}, tx), d); err != nil {
 		// fn (Ticker.evaluate) has already logged which step failed and why.
 		return false
 	}
-	if err := sp.Commit(ctx); err != nil {
-		s.log.ErrorContext(ctx, "commit host savepoint; leaving the host due for the next tick",
+	if err := tx.Commit(ctx); err != nil {
+		s.log.ErrorContext(ctx, "commit host transaction; leaving the host due for the next tick",
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return false
 	}
@@ -184,7 +232,7 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, tx pgx.Tx, d Due, fn fun
 }
 
 // Apply implements EvalStore: states, changes, roll-up and the cursor's
-// advance, all on the connection ProcessDue bound to ctx — so either the
+// advance, all on the connection evaluateOne bound to ctx — so either the
 // whole evaluation lands or none of it does.
 func (s *EvalSQLStore) Apply(ctx context.Context, d Due, res Result) error {
 	tx, ok := claimTx(ctx)

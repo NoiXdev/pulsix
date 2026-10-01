@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -612,7 +613,7 @@ func TestAFailedHostLeavesNothingBehind(t *testing.T) {
 	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// The bad host is claimed first (older next_due_at), so the good host's
-	// own savepoint commits after the failure rather than before it.
+	// own transaction commits after the failure rather than before it.
 	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
 	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
 
@@ -674,8 +675,9 @@ func TestLoadFailureLeavesTheHostDue(t *testing.T) {
 }
 
 // gateStore wraps an EvalStore and pauses inside Load, which is the point
-// at which its host's cursor row is already locked. It is how the test
-// below holds one ticker inside its claim while the other one runs.
+// at which its host's cursor row is already locked by the transaction
+// evaluating it. It is how the test below holds one ticker inside its
+// claim while the other one runs.
 type gateStore struct {
 	rules.EvalStore
 	entered chan struct{}
@@ -849,10 +851,10 @@ func TestTickerEvaluatesThroughTheRealStore(t *testing.T) {
 }
 
 // TestAPanickingHostLeavesTheBatchIntact: a host whose evaluation panics
-// is rolled back to its own savepoint and the batch carries on — the other
-// hosts commit and the claim's transaction still ends cleanly. Without the
-// recover in evaluateOne, one bad rule tree would take down the whole
-// ticker goroutine, and with it the manager.
+// has its own transaction rolled back and the batch carries on — the other
+// hosts commit on their own. Without the recover in evaluateOne, one bad
+// rule tree would take down the whole ticker goroutine, and with it the
+// manager.
 func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "panicking-host")
@@ -897,10 +899,10 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 
 // TestABatchCutShortKeepsWhatItCommitted is what the batch deadline
 // relies on (see rules.batchDeadlineFactor): when the batch's context ends
-// mid-pass, the hosts whose savepoints already committed are kept — the
-// claim's transaction commits on a detached context — the host that was in
-// flight is rolled back, and the hosts never reached are left untouched
-// and still due for whichever manager gets there first.
+// mid-pass, the hosts that already committed are kept — each one committed
+// its own transaction as it finished — the host that was in flight is
+// rolled back, and the hosts never reached are left untouched and still
+// due for whichever manager gets there first.
 func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "batch-cut-short")
@@ -935,7 +937,7 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 		t.Fatalf("ProcessDue: %v", err)
 	}
 	if n != 1 {
-		t.Fatalf("ProcessDue reported %d evaluated, want 1 — the first host's savepoint had already committed", n)
+		t.Fatalf("ProcessDue reported %d evaluated, want 1 — the first host had already committed", n)
 	}
 	if n := countRows(t, d, `SELECT count(*) FROM check_states WHERE host_id = $1`, first); n != 1 {
 		t.Fatalf("the host that finished before the cut wrote %d rows, want 1", n)
@@ -973,5 +975,130 @@ func TestWindowsRefusesAnUnknownAggregate(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "median") {
 		t.Fatalf("error = %v, want it to name the aggregate it refused", err)
+	}
+}
+
+// TestEvaluatingOneHostDoesNotBlockIngestForAnother is the lock-lifetime
+// claim ProcessDue's two-part claim exists for, and the one thing a
+// batch-wide transaction could never satisfy.
+//
+// MarkHostDirty is an INSERT … ON CONFLICT on check_eval_cursor, run
+// inside internal/checks' ingest transaction — the 7 000-samples-a-second
+// hot path the whole cursor design exists to keep free. It takes the same
+// row lock the claim does. While the claim held FOR UPDATE on every row of
+// a 200-host batch for the length of that batch, every agent whose host
+// had been claimed blocked on its ingest commit, holding its own pool
+// connection, for as long as the slowest host in the batch took.
+//
+// So: one host is held mid-evaluation while the ingest path's own
+// statement runs for a DIFFERENT host of the same batch. It has to go
+// through at once. With the batch-wide lock it blocks until the evaluation
+// is released, which the deadline below turns into a failure.
+func TestEvaluatingOneHostDoesNotBlockIngestForAnother(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "ingest-not-blocked")
+	held := seedHost(t, d, org, "held")
+	ingesting := seedHost(t, d, org, "ingesting")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	// The held host is claimed first (older next_due_at), so the other one
+	// is still in the batch, unevaluated, while the first one is paused.
+	setCursor(t, d, org, held, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, org, ingesting, 0, -time.Hour, -1*time.Minute)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	res := rules.Result{
+		States:  []rules.TupleState{{Tuple: cpu, State: rules.StateOK, Since: now, EvaluatedAt: now}},
+		Host:    rules.HostState{State: rules.StateOK, Since: now, EvaluatedAt: now},
+		NextDue: now.Add(time.Hour),
+	}
+
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	type batch struct {
+		n   int
+		err error
+	}
+	done := make(chan batch, 1)
+	go func() {
+		n, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+			if err := store.Apply(ctx, due, res); err != nil {
+				return err
+			}
+			if due.HostID == held {
+				close(inFlight)
+				<-release
+			}
+			return nil
+		})
+		done <- batch{n, err}
+	}()
+
+	select {
+	case <-inFlight:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the batch never reached its first host")
+	}
+
+	markCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	markErr := gen.New(d.Pool()).MarkHostDirty(markCtx, gen.MarkHostDirtyParams{OrgID: org, HostID: ingesting})
+	close(release)
+	if markErr != nil {
+		t.Fatalf("ingest blocked on the evaluation of another host: %v", markErr)
+	}
+
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("ProcessDue: %v", got.err)
+	}
+	if got.n != 2 {
+		t.Fatalf("ProcessDue evaluated %d hosts, want 2", got.n)
+	}
+}
+
+// TestAnAlreadyEvaluatedHostIsSkippedBeforeItIsEvaluatedAgain pins the one
+// race the two-part claim introduces, and that it is handled rather than
+// merely tolerated: the scan lists a host and releases its lock, another
+// manager evaluates it in the gap, and LockOneEvalCursor's repeated due
+// predicate then returns no row — so the host is skipped instead of being
+// evaluated a second time on the strength of a listing that has gone
+// stale.
+func TestAnAlreadyEvaluatedHostIsSkippedBeforeItIsEvaluatedAgain(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "claim-race")
+	taken := seedHost(t, d, org, "taken")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	setCursor(t, d, org, taken, 0, -time.Hour, -time.Minute)
+
+	// Stand in for the other manager finishing this host first: one full
+	// evaluation, which advances the cursor out of due-ness.
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	res := rules.Result{
+		States:  []rules.TupleState{{Tuple: cpu, State: rules.StateOK, Since: now, EvaluatedAt: now}},
+		Host:    rules.HostState{State: rules.StateOK, Since: now, EvaluatedAt: now},
+		NextDue: now.Add(time.Hour),
+	}
+	n, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		return store.Apply(ctx, due, res)
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("the first pass evaluated %d hosts, %v; want 1, nil", n, err)
+	}
+	if stillDue(t, d, taken) {
+		t.Fatal("the fixture is wrong: the host is still due after a full evaluation")
+	}
+
+	// The scan would no longer list this host — so drive the per-host claim
+	// directly, which is exactly the position a manager is in when it
+	// listed the host a moment before someone else finished it.
+	tx, err := d.Pool().Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck // read-only, test cleanup
+	if _, err := gen.New(tx).LockOneEvalCursor(context.Background(), taken); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("LockOneEvalCursor on a host that is no longer due = %v, want pgx.ErrNoRows", err)
 	}
 }

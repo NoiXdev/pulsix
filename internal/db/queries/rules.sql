@@ -111,17 +111,53 @@ ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at;
 -- inside the evaluation itself.
 --
 -- FOR UPDATE SKIP LOCKED is the entire distribution mechanism between
--- managers: a row another manager is already evaluating is skipped rather
--- than waited for, so two tickers firing at the same instant take disjoint
--- sets and neither blocks. ORDER BY next_due_at drains a backlog
--- oldest-first (check_eval_cursor_due_idx serves it), and the LIMIT bounds
--- one transaction — a manager that has fallen behind catches up over
--- several ticks instead of in one transaction long enough to matter to
--- everything else sharing the pool.
+-- managers: a row another manager is already EVALUATING is skipped rather
+-- than waited for, so two tickers firing at the same instant take largely
+-- disjoint sets and neither blocks. This statement's own transaction is
+-- opened for it alone and released immediately — the lock that matters is
+-- LockOneEvalCursor's, taken per host inside the transaction that
+-- evaluates it, and this one only keeps the scan from listing a host
+-- somebody is already busy with. Two managers scanning in the same instant
+-- can therefore still list the same host; the per-host lock is what makes
+-- exactly one of them evaluate it.
+--
+-- ORDER BY next_due_at drains a backlog oldest-first
+-- (check_eval_cursor_due_idx serves it), and the LIMIT bounds one tick — a
+-- manager that has fallen behind catches up over several ticks instead of
+-- in one pass long enough to matter to everything else sharing the pool.
 SELECT org_id, host_id FROM check_eval_cursor
 WHERE dirty_at > evaluated_at OR next_due_at <= now()
 ORDER BY next_due_at
 LIMIT sqlc.arg(lim)
+FOR UPDATE SKIP LOCKED;
+
+-- name: LockOneEvalCursor :one
+-- Task 9, the second half of the claim (see ClaimDueEvalCursors). The scan
+-- above lists the batch and releases its locks straight away; this
+-- statement is what actually claims ONE host, inside the short transaction
+-- that evaluates it and nothing else.
+--
+-- Splitting the claim in two is what keeps a row lock on this table short.
+-- The lock lives until its transaction commits, MarkHostDirty takes the
+-- same lock on the ingest path, and ingest is the 7 000-samples-a-second
+-- hot path the cursor design exists to keep free — so a single transaction
+-- spanning a whole 200-host batch, each host costing a dozen round trips,
+-- would block every agent whose host it had claimed for the length of the
+-- batch, and pin Postgres' xmin horizon for just as long. It is also what
+-- the spec asks for in so many words: "Each host is evaluated in its own
+-- transaction, so one host whose data is broken cannot roll back the
+-- others."
+--
+-- SKIP LOCKED, not a wait: another manager may have taken this host
+-- between the scan and now, and the honest answer to that is to skip it,
+-- exactly as the scan itself would have. The due predicate is repeated for
+-- the same reason — a host another manager has finished evaluating in the
+-- meantime is no longer due, and re-evaluating it would be wasted work.
+-- Both cases return no row, which the caller reads as "skip, not an
+-- error".
+SELECT org_id, host_id FROM check_eval_cursor
+WHERE host_id = sqlc.arg(host_id)
+  AND (dirty_at > evaluated_at OR next_due_at <= now())
 FOR UPDATE SKIP LOCKED;
 
 -- name: AdvanceEvalCursor :exec
@@ -145,9 +181,13 @@ FOR UPDATE SKIP LOCKED;
 -- first of its own next_due_at and the next batch of samples for it — so
 -- the bound is "the earliest pending deadline, or the host's next sample",
 -- NOT the 15-second heartbeat: the heartbeat only applies to a host with
--- nothing pending at all, and a host with a ripening candidate can have a
--- next_due_at hours out. In practice a host being ingested for is a host
--- ingesting again shortly, which is the short half of that minimum.
+-- nothing pending at all. That earliest pending deadline is itself bounded
+-- in minutes, not hours: internal/rules.Evaluate adds every measured
+-- tuple's staleness deadline to its pending set, so next_due_at is never
+-- later than three check intervals past the oldest reading, however long
+-- a ripening candidate's own for_duration may be. In practice a host being
+-- ingested for is a host ingesting again shortly, which is the short half
+-- of that minimum.
 UPDATE check_eval_cursor
 SET evaluated_at = now(), next_due_at = sqlc.arg(next_due_at)
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);

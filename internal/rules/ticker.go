@@ -27,10 +27,11 @@ import (
 
 // DefaultEvalInterval and DefaultEvalBatch are the tick's own defaults: 15
 // seconds (the spec's figure) and 200 hosts per batch. The batch bounds
-// one transaction, in the same spirit as internal/schedules' own batchSize
-// — a manager that has fallen behind catches up over several ticks rather
-// than in one transaction long enough to matter to everything else sharing
-// the pool.
+// one tick, in the same spirit as internal/schedules' own batchSize — a
+// manager that has fallen behind catches up over several ticks rather than
+// in one pass long enough to matter to everything else sharing the pool.
+// It no longer bounds one transaction: each host gets its own (see
+// EvalSQLStore.ProcessDue).
 const (
 	DefaultEvalInterval = 15 * time.Second
 	DefaultEvalBatch    = 200
@@ -41,26 +42,29 @@ const (
 // deserves the same bound, and this ticker is the more exposed of the two
 // to what it protects against.
 //
-// The shape: ProcessDue opens a transaction, claims up to `batch` cursor
-// rows with FOR UPDATE, and then — for every one of them — Load calls into
-// the check pipeline, which acquires ITS OWN pool connection
+// The shape: ProcessDue lists the batch, and then — for every host in it,
+// inside that host's own short transaction — Load calls into the check
+// pipeline, which acquires ITS OWN pool connection
 // (checks.Service.ResolveHost goes through MonitoredHosts and
-// loadResolveBundle, each on a connection of its own) while this batch is
-// already holding one. Under a pool saturated by HTTP traffic that second
-// acquisition can block indefinitely, and it blocks while holding the
-// first connection and up to `batch` row locks. Nothing would end it: Run
-// does not re-enter while Tick is running, so this manager would stop
-// evaluating altogether; every other manager's claim would SKIP LOCKED
-// past those rows and leave them to it; there is deliberately no lease to
-// expire and no reaper, because the design assumes a dead manager drops
-// its connection — and a hung one does not. The open transaction would
-// also pin Postgres' xmin horizon against vacuum for as long as it lasted.
+// loadResolveBundle, each on a connection of its own) while the host's
+// transaction is already holding one. Under a pool saturated by HTTP
+// traffic that second acquisition can block indefinitely, and it blocks
+// while holding the first connection and that host's cursor row lock.
+// Nothing would end it: Run does not re-enter while Tick is running, so
+// this manager would stop evaluating altogether; every other manager's
+// claim would SKIP LOCKED past that row and leave it to this one; there is
+// deliberately no lease to expire and no reaper, because the design
+// assumes a dead manager drops its connection — and a hung one does not.
+// The open transaction would also pin Postgres' xmin horizon against
+// vacuum for as long as it lasted.
 //
-// So the batch gets a deadline: pgx fails the blocked acquisition, the
-// claim's transaction rolls back or commits what it has, the row locks are
-// released, and every host it did not reach is still due for whichever
-// manager gets there first. minBatchDeadline is the floor, for the same
-// reason internal/schedules has one: with a short interval (a test's, a dev
+// Per-host transactions bound how much a single stuck host costs (one row
+// lock rather than the batch's), but not how long it costs it for, so the
+// batch still gets a deadline: pgx fails the blocked acquisition, that
+// host's transaction rolls back, its row lock is released, and every host
+// the batch did not reach is still due for whichever manager gets there
+// first. minBatchDeadline is the floor, for the same reason
+// internal/schedules has one: with a short interval (a test's, a dev
 // instance's) the multiple alone would be well under a second, and an
 // ordinarily slow batch would then be cut off instead of merely finishing
 // late.
@@ -102,14 +106,19 @@ type HostLoad struct {
 // ProcessDue hands it, and the SQL implementation runs them inside that
 // host's own transaction — so a host's reads and its write-back are one
 // atomic unit, and a failure anywhere in it leaves the host exactly as it
-// was, still due.
+// was, still due. "Its own transaction" is literal, not a savepoint in a
+// batch-wide one: the cursor row lock it holds is the same lock the ingest
+// path takes, so its lifetime is one host's evaluation and no longer (see
+// EvalSQLStore.ProcessDue).
 type EvalStore interface {
-	// ProcessDue claims up to limit cursors that are dirty or due and runs
-	// fn for each inside its own transaction, holding that cursor's row
-	// lock. fn's error rolls that host back and leaves its cursor
-	// untouched; the other hosts are unaffected. It returns the number of
-	// hosts fn returned nil for — the hosts actually evaluated, not the
-	// hosts claimed.
+	// ProcessDue lists up to limit cursors that are dirty or due and runs
+	// fn for each inside a transaction of its own, holding that one
+	// cursor's row lock for exactly as long as that host's evaluation.
+	// fn's error rolls that host back and leaves its cursor untouched; the
+	// other hosts are unaffected. A host another manager took between the
+	// listing and its own claim is skipped silently. It returns the number
+	// of hosts fn returned nil for — the hosts actually evaluated, not the
+	// hosts listed.
 	ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error)
 	// Load gathers one host's inputs: its tuples with the intervals that
 	// define staleness, its effective rules, its facts, its previous

@@ -72,6 +72,14 @@
 -- evaluating transaction, so a manager that dies mid-batch releases every
 -- host it held when its connection drops — which is why there is no lease
 -- to expire and no reaper to sweep.
+--
+-- That lifetime is why the claim is in two parts (ClaimDueEvalCursors then
+-- LockOneEvalCursor, internal/rules/due_sql.go): the scan lists a batch and
+-- lets its locks go at once, and the lock that is actually held belongs to
+-- one host's own transaction. MarkHostDirty takes the same row lock from
+-- the ingest path, so a lock held for the length of a 200-host batch would
+-- block every agent in that batch on its ingest commit — the hot path this
+-- whole table exists to keep free.
 CREATE TABLE check_eval_cursor (
   org_id       uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   host_id      uuid PRIMARY KEY,
