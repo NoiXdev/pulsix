@@ -96,6 +96,10 @@ type HostLoad struct {
 	Previous     map[Tuple]TupleState
 	Changes30    map[Tuple]int
 	PreviousHost *HostState
+	// Ignored is Snapshot.Ignored's own value, resolved by Load against
+	// this tick's own decisions and this tick's own items (v0.3b-3). See
+	// that field's doc comment for why it is keyed by ItemKey.
+	Ignored map[ItemKey]bool
 }
 
 // EvalStore is the ticker's store: the claim, the three reads one
@@ -275,6 +279,7 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		Previous:     load.Previous,
 		Changes30:    load.Changes30,
 		PreviousHost: load.PreviousHost,
+		Ignored:      load.Ignored,
 	}
 	// WindowRequests reads only Tuples and Effective, so it is computed on
 	// the snapshot while Windows is still nil and fills that field from its

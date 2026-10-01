@@ -17,6 +17,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/items"
 )
 
 // flappingWindow is how far back the change counter looks (the design's
@@ -45,6 +46,26 @@ type HostChecks interface {
 	// called once per host per evaluation, inside that host's transaction
 	// but on its own connection.
 	ContextForHost(ctx context.Context, orgID, hostID uuid.UUID) (CheckContext, error)
+}
+
+// ItemStore is the slice of items.Store this package needs: recording the
+// items a host reports this tick, and resolving what an operator decided
+// about them. internal/rules is free to import internal/items directly —
+// items is a leaf that imports neither rules nor checks (see its own doc
+// comment) — so, unlike HostChecks, this interface is not an
+// adapter breaking a cycle; it is declared here, next to Load, the one
+// method that calls it, purely to keep that dependency to the two methods
+// Load actually exercises rather than the whole of items.Store, and so
+// that a unit test can swap in a fake without touching the database (see
+// due_sql_test.go's own fakeItemStore).
+type ItemStore interface {
+	// Discover inserts every non-empty item in seen that check_items does
+	// not already have a row for; first_seen never moves on one it does.
+	Discover(ctx context.Context, orgID, hostID uuid.UUID, seen []items.Seen) error
+	// Decisions returns the organization's decisions plus, when hostID is
+	// non-nil, that host's — one query regardless of how many items the
+	// host reports.
+	Decisions(ctx context.Context, orgID uuid.UUID, hostID *uuid.UUID) ([]items.Decision, error)
 }
 
 // Load implements EvalStore. It assembles the whole HostLoad itself,
@@ -83,6 +104,25 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 			Interval: checkCtx.Intervals[r.CheckKey],
 		}
 	}
+
+	// Discovery and decision resolution (v0.3b-3 design, "Discovery and
+	// evaluation"): item names fall out of the tuples just read, so this
+	// runs here, in the same per-host evaluation and on the same unscoped,
+	// explicit-org_id posture as every other read in this function — both
+	// check_items and check_item_decisions carry the same org_isolation_
+	// bypass policy the rest of this store relies on (migration 00048), for
+	// exactly this caller. Discover runs before Decisions is even read, so
+	// an item appearing for the first time this very tick is already a
+	// candidate for a decision that predates it (review focus 3): nothing
+	// here is seeded once, Decide is run fresh every tick.
+	if err := s.items.Discover(ctx, d.OrgID, d.HostID, seenItems(reported)); err != nil {
+		return HostLoad{}, fmt.Errorf("discover items: %w", err)
+	}
+	decisions, err := s.items.Decisions(ctx, d.OrgID, &d.HostID)
+	if err != nil {
+		return HostLoad{}, fmt.Errorf("list item decisions: %w", err)
+	}
+	ignored := resolveIgnored(d.HostID, reported, decisions)
 
 	ruleRows, err := q.ListRules(ctx, gen.ListRulesParams{OrgID: d.OrgID})
 	if err != nil {
@@ -135,6 +175,7 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 		Previous:     previous,
 		Changes30:    changes30,
 		PreviousHost: previousHost,
+		Ignored:      ignored,
 	}, nil
 }
 
@@ -191,4 +232,52 @@ func textOf(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// seenItems derives Discover's own input from a host's reported tuples:
+// one items.Seen per distinct non-empty item name. cpu and memory report
+// one whole-host reading with an empty item — there is nothing there to
+// discover (the design's own "Items with an empty name" ruling) — and two
+// metrics of the same item (disk.used_pct and disk.free_bytes of the same
+// mount) collapse to the one item they share, since Discover's own primary
+// key is (host, check_key, item), not (…, metric).
+func seenItems(reported []Tuple) []items.Seen {
+	seen := make(map[items.Seen]bool, len(reported))
+	out := make([]items.Seen, 0, len(reported))
+	for _, t := range reported {
+		if t.Item == "" {
+			continue
+		}
+		s := items.Seen{CheckKey: t.CheckKey, Name: t.Item}
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// resolveIgnored runs items.Decide once per distinct ItemKey among
+// reported — including the empty-item ones, since a decision could in
+// principle name one even though nothing discovers it — and keeps only
+// the ones it resolved to Ignore. An absent key means watched
+// (Snapshot.Ignored's own doc comment), so a host with no matching
+// decision at all costs nothing beyond the lookup itself, and a host whose
+// decisions cover only some of its items marks exactly those.
+func resolveIgnored(hostID uuid.UUID, reported []Tuple, decisions []items.Decision) map[ItemKey]bool {
+	ignored := make(map[ItemKey]bool)
+	seen := make(map[ItemKey]bool, len(reported))
+	for _, t := range reported {
+		key := itemKeyOf(t)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		target := items.Target{HostID: hostID, CheckKey: key.CheckKey, Item: key.Item}
+		if items.Decide(decisions, target).Ignored() {
+			ignored[key] = true
+		}
+	}
+	return ignored
 }

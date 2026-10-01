@@ -37,6 +37,7 @@ import (
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
@@ -90,6 +91,14 @@ type App struct {
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
+	// items is the discovery and decisions service (v0.3b-3). Wired here
+	// because its constructor's check-key set is derived from
+	// rules.Catalogue() (itemCheckKeys, rules_ports.go), and this package
+	// is the only one that may import both internal/rules and
+	// internal/items. Nothing reads this field yet — the API surface is a
+	// later task — but the construction belongs in the same change that
+	// makes it possible at all.
+	items *items.Service
 }
 
 // Close releases the application's database pool and stops the reaper. It
@@ -221,6 +230,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// rules.StateStore is deliberately the narrower, read-only interface
 	// (see its own doc comment).
 	ruleStates := rules.NewSQLStore(appDB)
+	// Discovery and item decisions (v0.3b-3): one store, two lifecycles —
+	// itemsStore is also what the evaluation ticker's own EvalSQLStore
+	// discovers items and resolves decisions through (see evalTicker
+	// below), and itemsSvc is the validating, previewing surface a later
+	// task wires into the API. Both are built here because this is the
+	// only package allowed to import both internal/rules (for
+	// itemCheckKeys, rules_ports.go) and internal/items.
+	itemsStore := items.NewSQLStore(appDB)
+	itemsSvc := items.NewService(itemsStore, itemCheckKeys)
 	// Every organization gets its "default" zone, its "Linux base" check
 	// definitions and its five-row starter rule set the moment it is
 	// created, through whichever of the two paths created it — POST /orgs
@@ -479,7 +497,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// same resolver the agent's own configuration push uses. Stopped in
 	// Close and on every early return below; stopping waits for a batch
 	// still in flight (startLoop).
-	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), slog.Default()))
+	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), itemsStore, slog.Default()))
 	evalStop := startLoop(func(ctx context.Context) { _ = evalTicker.Run(ctx) })
 
 	var grpcServer *grpc.Server
@@ -532,6 +550,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
 		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopEmbedded: stopEmbedded,
+		items: itemsSvc,
 	}, nil
 }
 

@@ -97,6 +97,15 @@ type Snapshot struct {
 	// as "the state changed", would reset Since on every single tick,
 	// which is a far worse failure than a bounded drift.
 	PreviousHost *HostState
+	// Ignored is which items an operator has decided not to judge this
+	// tick, keyed by ItemKey rather than Tuple: a decision governs an
+	// item, and every metric of that item shares its fate. It is resolved
+	// by Load, not by Evaluate — the evaluator stays pure and keeps no
+	// dependency on internal/items — so an absent key means watched, the
+	// unoverruled default, and this field carries no meaning of its own
+	// until a later task reads it (v0.3b-3 Task 5 owns the skip and the
+	// drop; this one only fills the map).
+	Ignored map[ItemKey]bool
 }
 
 // Result is what one evaluation concluded: the new state of every tuple in

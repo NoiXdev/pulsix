@@ -29,15 +29,16 @@ import (
 type EvalSQLStore struct {
 	d      *db.DB
 	checks HostChecks
+	items  ItemStore
 	log    *slog.Logger
 }
 
 // NewEvalSQLStore builds the store; a nil log is slog.Default().
-func NewEvalSQLStore(d *db.DB, checks HostChecks, log *slog.Logger) *EvalSQLStore {
+func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, log *slog.Logger) *EvalSQLStore {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &EvalSQLStore{d: d, checks: checks, log: log}
+	return &EvalSQLStore{d: d, checks: checks, items: items, log: log}
 }
 
 // evalTxKey is the context key evaluateOne binds one host's transaction

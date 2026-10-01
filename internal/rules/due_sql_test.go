@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,30 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/rules"
 )
+
+// fakeItemStore is the fake rules.ItemStore the Seen-derivation unit test
+// uses: it records exactly what Discover and Decisions were called with,
+// isolating that derivation from items.SQLStore's own persistence (which
+// store_sql_test.go already covers) and from the database altogether for
+// the Decisions half.
+type fakeItemStore struct {
+	discovered   []items.Seen
+	decisions    []items.Decision
+	discoverErr  error
+	decisionsErr error
+}
+
+func (f *fakeItemStore) Discover(_ context.Context, _, _ uuid.UUID, seen []items.Seen) error {
+	f.discovered = append(f.discovered, seen...)
+	return f.discoverErr
+}
+
+func (f *fakeItemStore) Decisions(_ context.Context, _ uuid.UUID, _ *uuid.UUID) ([]items.Decision, error) {
+	return f.decisions, f.decisionsErr
+}
 
 // These tests exercise EvalSQLStore against the real database, because
 // every claim it makes is about SQL: that the claim is exclusive between
@@ -196,7 +219,7 @@ func TestWindowStatementOverASeededHypertable(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "windows")
 	host := seedHost(t, d, org, "win-host")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
@@ -267,7 +290,7 @@ func TestWindowsWithNoRequestsCostsNoStatement(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "no-windows")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, nil, time.Now())
 	if err != nil {
 		t.Fatalf("Windows: %v", err)
@@ -283,7 +306,7 @@ func TestMarkHostDirtyMakesAHostDue(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "dirty")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 
 	if got := claimAll(t, store, 10); len(got) != 0 {
 		t.Fatalf("a host that never ingested was claimed: %+v", got)
@@ -316,7 +339,7 @@ func TestClaimTakesAHostWhoseNextDueHasPassed(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "overdue")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 
 	// Evaluated exactly as recently as it was marked, so the host is not
 	// dirty; only next_due_at, a minute in the past, can claim it.
@@ -333,7 +356,7 @@ func TestClaimTakesAHostWhoseNextDueHasPassed(t *testing.T) {
 func TestClaimBoundsItsBatch(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "batch")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 
 	oldest := seedHost(t, d, org, "oldest")
 	middle := seedHost(t, d, org, "middle")
@@ -396,7 +419,7 @@ func TestLoadGathersEveryInputTheSnapshotNeeds(t *testing.T) {
 	insertStateChange(t, d, org, host, now.Add(-40*time.Minute), cpu, rules.StateWarn, rules.StateOK)
 	insertHostState(t, d, org, host, rules.StateWarn, 0, 1, 0, now.Add(-time.Hour), now.Add(-time.Minute))
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -439,7 +462,7 @@ func TestLoadOfANeverEvaluatedHostCarriesNoPreviousRollUp(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "fresh")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -467,7 +490,7 @@ func TestLoadIgnoresAnotherOrganizationsRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: orgA, HostID: hostA})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -480,6 +503,153 @@ func TestLoadIgnoresAnotherOrganizationsRows(t *testing.T) {
 	}
 }
 
+// TestLoadDiscoversNonEmptyItemsAndSkipsWholeHostChecks: a host with two
+// mounts gets two check_items rows — one each, even though /var is
+// reported by two metrics — and cpu's own whole-host reading, which
+// carries no item at all, gets none (the design's own "Items with an
+// empty name" ruling).
+func TestLoadDiscoversNonEmptyItemsAndSkipsWholeHostChecks(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "discover")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	varUsed := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
+	varFree := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.free_bytes"}
+	opt := rules.Tuple{CheckKey: "disk", Item: "/opt", Metric: "disk.used_pct"}
+	insertCurrent(t, d, org, host, cpu, ptr(10.0), nil, now, "")
+	insertCurrent(t, d, org, host, varUsed, ptr(50.0), nil, now, "")
+	insertCurrent(t, d, org, host, varFree, ptr(1e9), nil, now, "")
+	insertCurrent(t, d, org, host, opt, ptr(60.0), nil, now, "")
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	views, err := items.NewSQLStore(d).ItemsForHost(context.Background(), org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("check_items rows = %+v, want exactly 2 (the two mounts, none for cpu)", views)
+	}
+	names := map[string]bool{}
+	for _, v := range views {
+		if v.CheckKey != "disk" {
+			t.Fatalf("discovered an item for check %q, want only disk", v.CheckKey)
+		}
+		names[v.Name] = true
+	}
+	if !names["/var"] || !names["/opt"] {
+		t.Fatalf("discovered items = %+v, want /var and /opt", names)
+	}
+}
+
+// TestLoadSeenItemsDropsEmptyAndDedupesDuplicates is the Seen derivation's
+// own unit test: a fake ItemStore in place of the real one isolates what
+// Load derives from a host's tuples from what items.SQLStore does with it
+// (store_sql_test.go already covers that half), and Load still runs
+// against the real database for everything else it needs.
+func TestLoadSeenItemsDropsEmptyAndDedupesDuplicates(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "seen")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	varUsed := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
+	varFree := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.free_bytes"}
+	insertCurrent(t, d, org, host, cpu, ptr(10.0), nil, now, "")
+	insertCurrent(t, d, org, host, varUsed, ptr(50.0), nil, now, "")
+	insertCurrent(t, d, org, host, varFree, ptr(1e9), nil, now, "")
+
+	fake := &fakeItemStore{}
+	store := rules.NewEvalSQLStore(d, cpuMinute(), fake, discard())
+	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := []items.Seen{{CheckKey: "disk", Name: "/var"}}
+	if !reflect.DeepEqual(fake.discovered, want) {
+		t.Fatalf("Discover called with %+v, want %+v — cpu's empty item dropped, disk's two metrics of /var collapsed to one item", fake.discovered, want)
+	}
+}
+
+// TestIgnoredResolvesPerTickEvenWhenTheDecisionPredatesTheItem is review
+// focus 3: an operator may ignore a pattern before the item it matches has
+// ever been seen — ahead of a planned rollout, the design's own example —
+// and the very first evaluation after the item appears must already see
+// it ignored. Decide runs fresh every tick against this tick's own
+// decisions and this tick's own items; there is no "seed it once" step to
+// miss, so there is nothing to have missed here either.
+func TestIgnoredResolvesPerTickEvenWhenTheDecisionPredatesTheItem(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "predates")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// The decision is created first — check_items has no row for this item
+	// yet, since Discover has never run for this host.
+	decision := items.Decision{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Scope: items.ScopeHost, HostID: &host,
+		CheckKey: "disk", MatchKind: items.MatchGlob, Pattern: "/data*", Verdict: items.Ignore,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := items.NewSQLStore(d).CreateDecision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+
+	// The item appears only now, on the tick this test evaluates.
+	disk := rules.Tuple{CheckKey: "disk", Item: "/data", Metric: "disk.used_pct"}
+	insertCurrent(t, d, org, host, disk, ptr(90.0), nil, now, "")
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	key := rules.ItemKey{CheckKey: "disk", Item: "/data"}
+	if !load.Ignored[key] {
+		t.Fatalf("Ignored = %+v, want %+v ignored on its very first tick", load.Ignored, key)
+	}
+}
+
+// TestIgnoredDoesNotLeakAcrossHosts: a host-scoped decision on one host
+// must never govern another host's item of the same name, even though
+// Decisions is one query covering the whole organization's own decisions
+// plus this host's.
+func TestIgnoredDoesNotLeakAcrossHosts(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "no-leak")
+	host := seedHost(t, d, org, "h")
+	other := seedHost(t, d, org, "other")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	decision := items.Decision{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Scope: items.ScopeHost, HostID: &other,
+		CheckKey: "disk", MatchKind: items.MatchGlob, Pattern: "*", Verdict: items.Ignore,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := items.NewSQLStore(d).CreateDecision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+
+	disk := rules.Tuple{CheckKey: "disk", Item: "/data", Metric: "disk.used_pct"}
+	insertCurrent(t, d, org, host, disk, ptr(90.0), nil, now, "")
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	key := rules.ItemKey{CheckKey: "disk", Item: "/data"}
+	if load.Ignored[key] {
+		t.Fatalf("Ignored = %+v, want %+v watched — the matching decision belongs to another host", load.Ignored, key)
+	}
+}
+
 // TestApplyWritesEverythingInTheClaimsTransaction is review focus 5's
 // write half: states, changes, roll-up and the cursor's own advance all
 // land, and they land inside the transaction ProcessDue opened.
@@ -487,7 +657,7 @@ func TestApplyWritesEverythingInTheClaimsTransaction(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "apply")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	markDirty(t, d, org, host)
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -583,7 +753,7 @@ func TestApplyDeletesTheRollUpWhenNothingIsJudged(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "rollup-gone")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	markDirty(t, d, org, host)
 	insertHostState(t, d, org, host, rules.StateCrit, 1, 0, 0, now.Add(-time.Hour), now.Add(-time.Minute))
@@ -610,7 +780,7 @@ func TestAFailedHostLeavesNothingBehind(t *testing.T) {
 	org := seedOrg(t, d, "rollback")
 	good := seedHost(t, d, org, "good")
 	bad := seedHost(t, d, org, "bad")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// The bad host is claimed first (older next_due_at), so the good host's
 	// own transaction commits after the failure rather than before it.
@@ -668,7 +838,7 @@ func TestLoadFailureLeavesTheHostDue(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "load-fail")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, fixedChecks{err: errors.New("resolver down")}, discard())
+	store := rules.NewEvalSQLStore(d, fixedChecks{err: errors.New("resolver down")}, items.NewSQLStore(d), discard())
 	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err == nil {
 		t.Fatal("Load returned no error although the check pipeline failed")
 	}
@@ -715,7 +885,7 @@ func TestTwoTickersEvaluateOneDueHostExactlyOnce(t *testing.T) {
 	}
 	markDirty(t, d, org, host)
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	gate := &gateStore{EvalStore: store, entered: make(chan struct{}), release: make(chan struct{})}
 	opts := []rules.TickerOption{
 		rules.WithTickerClock(func() time.Time { return now }),
@@ -820,7 +990,7 @@ func TestTickerEvaluatesThroughTheRealStore(t *testing.T) {
 	}
 	markDirty(t, d, org, host)
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	tk := rules.NewTicker(store,
 		rules.WithTickerClock(func() time.Time { return now }),
 		rules.WithTickerLogger(discard()))
@@ -860,7 +1030,7 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	org := seedOrg(t, d, "panicking-host")
 	bad := seedHost(t, d, org, "bad")
 	good := seedHost(t, d, org, "good")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
 	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
@@ -906,7 +1076,7 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "batch-cut-short")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	first := seedHost(t, d, org, "first")
@@ -964,7 +1134,7 @@ func TestWindowsRefusesAnUnknownAggregate(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "unknown-agg")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	reqs := []rules.WindowRequest{
 		{Key: rules.ItemKey{CheckKey: "cpu"}, Metric: "cpu.used_pct", Agg: "avg", Seconds: 600},
 		{Key: rules.ItemKey{CheckKey: "cpu"}, Metric: "cpu.used_pct", Agg: "median", Seconds: 600},
@@ -999,7 +1169,7 @@ func TestEvaluatingOneHostDoesNotBlockIngestForAnother(t *testing.T) {
 	org := seedOrg(t, d, "ingest-not-blocked")
 	held := seedHost(t, d, org, "held")
 	ingesting := seedHost(t, d, org, "ingesting")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// The held host is claimed first (older next_due_at), so the other one
 	// is still in the batch, unevaluated, while the first one is paused.
@@ -1068,7 +1238,7 @@ func TestAnAlreadyEvaluatedHostIsSkippedBeforeItIsEvaluatedAgain(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "claim-race")
 	taken := seedHost(t, d, org, "taken")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	setCursor(t, d, org, taken, 0, -time.Hour, -time.Minute)
 
