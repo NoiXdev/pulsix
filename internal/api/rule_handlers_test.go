@@ -722,3 +722,78 @@ func TestRuleRoutes(t *testing.T) {
 		}
 	})
 }
+
+// TestEffectiveRulesHidesTuplesWhoseCheckNoLongerResolves pins the two
+// reads of one host agreeing about which of its tuples exist.
+//
+// GET /hosts/{id}/checks deliberately drops a tuple whose check no longer
+// resolves an interval (currentTupleStates, host_check_handlers.go): a
+// check_current row outlives the definition that produced it (backlog
+// 3.28), and a disabled check must not carry a live-looking verdict. The
+// effective-rules view read CurrentForHost raw and so still listed a
+// winner and its shadowed rules for exactly those tuples — a rule the
+// operator is shown as governing a tuple the host page says is not there.
+func TestEffectiveRulesHidesTuplesWhoseCheckNoLongerResolves(t *testing.T) {
+	f := newRulesFixture(t, "rules-disabled-check")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	if _, err := f.s.Checks.RecordObservations(scoped, f.orgID, []checks.Observation{
+		{HostID: f.host, CheckKey: "cpu", Metric: "cpu.load1", At: time.Now(), Value: floatPtr(8)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.createRule(t, f.operatorC, orgFormRuleBody("load rule", ">", 5))
+
+	hasLoad1 := func(t *testing.T) bool {
+		t.Helper()
+		resp := requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.host)+"/effective-rules", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("effective-rules = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var out struct {
+			Effective []effectiveRuleBody `json:"effective"`
+		}
+		decodeInto(t, resp, &out)
+		for _, e := range out.Effective {
+			if e.Metric == "cpu.load1" {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasLoad1(t) {
+		t.Fatal("cpu.load1 is absent from the effective view while its check still resolves; the fixture is wrong")
+	}
+
+	// Disable the seeded cpu definition at the host, exactly as
+	// TestHostChecksReportsTupleState does for service.
+	resp := requestJSON(t, f.ownerC, http.MethodGet, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/checks", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list checks = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var checkList struct {
+		Checks []checkDTO `json:"checks"`
+	}
+	decodeInto(t, resp, &checkList)
+	var cpuDef checkDTO
+	for _, d := range checkList.Checks {
+		if d.Key == "cpu" {
+			cpuDef = d
+		}
+	}
+	if cpuDef.ID == "" {
+		t.Fatalf("no seeded \"cpu\" check in %+v", checkList.Checks)
+	}
+	disable := requestJSON(t, f.operatorC, http.MethodPut, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/checks/"+cpuDef.ID, map[string]any{
+		"plugin": cpuDef.Plugin, "key": cpuDef.Key, "interval_seconds": cpuDef.IntervalSeconds,
+		"binding_kind": "host", "host_id": f.host.String(), "params": cpuDef.Params, "enabled": false,
+	})
+	if disable.StatusCode != http.StatusOK {
+		t.Fatalf("disable cpu at the host = %d %s", disable.StatusCode, mustReadBody(t, disable))
+	}
+
+	if hasLoad1(t) {
+		t.Fatal("the effective view still lists cpu.load1 although its check no longer resolves an interval; " +
+			"the host page drops that tuple, and the two reads must not disagree about which tuples exist")
+	}
+}

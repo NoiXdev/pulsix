@@ -265,12 +265,25 @@ func toGroupRanks(groups []checks.Group) []rules.GroupRank {
 }
 
 // toTuples adapts a host's current values to the tuples rules.Resolve
-// judges against. checks.Current is already one row per (check_key, item,
+// judges against, keeping only the ones whose check still resolves an
+// interval. checks.Current is already one row per (check_key, item,
 // metric) — the store's own primary key — so no deduplication is needed.
-func toTuples(current []checks.Current) []rules.Tuple {
-	out := make([]rules.Tuple, len(current))
-	for i, c := range current {
-		out[i] = rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric}
+//
+// The filter is the same one currentTupleStates applies to the host page's
+// states (host_check_handlers.go), from the same source, and for the same
+// reason: a check_current row outlives the definition that produced it
+// (backlog 3.28), and a tuple whose check was disabled or deleted is one
+// the evaluator stopped judging from that moment on. Listing a winner and
+// its shadowed rules for such a tuple here while the host page does not
+// show the tuple at all would be two reads of one host disagreeing about
+// which of its tuples exist.
+func toTuples(current []checks.Current, resolved map[string]bool) []rules.Tuple {
+	out := make([]rules.Tuple, 0, len(current))
+	for _, c := range current {
+		if !resolved[c.CheckKey] {
+			continue
+		}
+		out = append(out, rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric})
 	}
 	return out
 }
@@ -512,7 +525,11 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
-		host := rules.HostContext{HostID: hostID, Groups: toGroupRanks(groups), Tuples: toTuples(current)}
+		resolved, err := resolvedCheckKeys(ctx, deps, scope.OrgID, hostID)
+		if err != nil {
+			return nil, err
+		}
+		host := rules.HostContext{HostID: hostID, Groups: toGroupRanks(groups), Tuples: toTuples(current, resolved)}
 		effective := rules.Resolve(all, host)
 		out := &effectiveRulesOutput{}
 		out.Body.Effective = make([]effectiveRuleDTO, len(effective))

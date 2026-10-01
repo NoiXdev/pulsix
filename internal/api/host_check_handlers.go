@@ -427,13 +427,9 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 // on-call triage at the wrong package for a fault this route did nothing
 // to cause.
 func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[rules.Tuple]rules.TupleState, error) {
-	resolved, err := deps.Checks.ResolveHost(ctx, orgID, hostID)
+	resolvedKeys, err := resolvedCheckKeys(ctx, deps, orgID, hostID)
 	if err != nil {
-		return nil, mapChecksErr(ctx, err)
-	}
-	resolvedKeys := make(map[string]bool, len(resolved.Checks))
-	for _, c := range resolved.Checks {
-		resolvedKeys[c.Key] = true
+		return nil, err
 	}
 	states, err := deps.RuleStates.StatesForHost(ctx, orgID, hostID)
 	if err != nil {
@@ -448,6 +444,31 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID)
 		byTuple[st.Tuple] = st
 	}
 	return byTuple, nil
+}
+
+// resolvedCheckKeys is the set of check keys the manager still resolves an
+// interval for on hostID — the one question "does this tuple still exist?"
+// reduces to on the read side, and the exact input rules.ContextForHost
+// feeds the evaluator (internal/app/rules_ports.go's own adapter). A
+// disabled definition, or a key nothing binds any more, is absent from
+// ResolveHost's list, so "present here" and "the evaluator would still
+// evaluate this tuple" are the same question asked of the same data.
+//
+// It is a helper rather than two copies because two routes read the same
+// host and must agree about which of its tuples exist: this one
+// (currentTupleStates, for the states on the host page) and the effective-
+// rules view (rule_handlers.go). A tuple missing from one and listed by
+// the other is two reads of one host contradicting each other.
+func resolvedCheckKeys(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[string]bool, error) {
+	resolved, err := deps.Checks.ResolveHost(ctx, orgID, hostID)
+	if err != nil {
+		return nil, mapChecksErr(ctx, err)
+	}
+	keys := make(map[string]bool, len(resolved.Checks))
+	for _, c := range resolved.Checks {
+		keys[c.Key] = true
+	}
+	return keys, nil
 }
 
 // monitoringGroupNames maps group id to name, for naming the scope a
