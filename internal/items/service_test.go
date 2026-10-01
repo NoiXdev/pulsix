@@ -166,6 +166,16 @@ func fixedClock(t time.Time) items.Option {
 	return items.WithClock(func() time.Time { return t })
 }
 
+// fakeCatalogue stands in for rules.Catalogue()'s check keys: internal/items
+// must not import internal/rules (the evaluation ticker needs the reverse
+// edge, rules -> items, so items -> rules would cycle), so NewService takes
+// the valid check_key set as a required constructor argument. "disk" is the
+// only key every test needs; a second, "memory", exists so a test can prove
+// an unrelated known key does not make an unrecognised one pass.
+func fakeCatalogue() map[string]struct{} {
+	return map[string]struct{}{"disk": {}, "memory": {}}
+}
+
 var ctx = context.Background()
 
 // validInput returns a valid, org-scoped decision input watching nothing
@@ -252,7 +262,7 @@ func TestCreateDecisionValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := items.NewService(newFakeStore())
+			svc := items.NewService(newFakeStore(), fakeCatalogue)
 			_, err := svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), tt.in)
 			if !errors.Is(err, items.ErrInvalidInput) {
 				t.Fatalf("CreateDecision(%+v) error = %v, want ErrInvalidInput", tt.in, err)
@@ -264,12 +274,34 @@ func TestCreateDecisionValidation(t *testing.T) {
 	}
 }
 
+// TestCreateDecisionCheckKeyComesFromInjectedCatalogue proves CheckKey is
+// validated against whatever checkKeys the caller supplied to NewService,
+// not a set this package knows on its own: the same CheckKey is accepted
+// by one Service and refused by another, differing only in which function
+// they were constructed with.
+func TestCreateDecisionCheckKeyComesFromInjectedCatalogue(t *testing.T) {
+	in := validInput()
+	in.CheckKey = "service" // a real rules.Catalogue() check key, absent from fakeCatalogue
+
+	withService := items.NewService(newFakeStore(), func() map[string]struct{} {
+		return map[string]struct{}{"service": {}}
+	})
+	if _, err := withService.CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
+		t.Fatalf("CreateDecision() error = %v, want nil: the injected catalogue knows %q", err, in.CheckKey)
+	}
+
+	withoutService := items.NewService(newFakeStore(), fakeCatalogue)
+	if _, err := withoutService.CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, items.ErrInvalidInput) {
+		t.Fatalf("CreateDecision() error = %v, want ErrInvalidInput: fakeCatalogue does not know %q", err, in.CheckKey)
+	}
+}
+
 func TestCreateDecisionValid(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	host := uuid.Must(uuid.NewV7())
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	store := newFakeStore()
-	svc := items.NewService(store, fixedClock(now))
+	svc := items.NewService(store, fakeCatalogue, fixedClock(now))
 
 	in := validInput()
 	in.Scope, in.HostID = items.ScopeHost, &host
@@ -308,7 +340,7 @@ func TestCreateDecisionAcceptsNoteAtExactlyTheBoundary(t *testing.T) {
 	in := validInput()
 	in.Note = strings.Repeat("a", 500)
 
-	if _, err := items.NewService(newFakeStore()).CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
+	if _, err := items.NewService(newFakeStore(), fakeCatalogue).CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
 		t.Fatalf("CreateDecision() error = %v, want nil for a 500-rune note", err)
 	}
 }
@@ -317,7 +349,7 @@ func TestUpdateDecisionCrossOrgIsNotFound(t *testing.T) {
 	orgA := uuid.Must(uuid.NewV7())
 	orgB := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	created, err := svc.CreateDecision(ctx, orgA, validInput())
 	if err != nil {
@@ -333,7 +365,7 @@ func TestGetDecisionCrossOrgIsNotFound(t *testing.T) {
 	orgA := uuid.Must(uuid.NewV7())
 	orgB := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	created, err := svc.CreateDecision(ctx, orgA, validInput())
 	if err != nil {
@@ -349,7 +381,7 @@ func TestDeleteDecisionCrossOrgIsNotFound(t *testing.T) {
 	orgA := uuid.Must(uuid.NewV7())
 	orgB := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	created, err := svc.CreateDecision(ctx, orgA, validInput())
 	if err != nil {
@@ -370,7 +402,7 @@ func TestUpdateDecisionValid(t *testing.T) {
 	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	updated := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	store := newFakeStore()
-	svc := items.NewService(store, fixedClock(created))
+	svc := items.NewService(store, fakeCatalogue, fixedClock(created))
 
 	d, err := svc.CreateDecision(ctx, org, validInput())
 	if err != nil {
@@ -387,7 +419,7 @@ func TestUpdateDecisionValid(t *testing.T) {
 		t.Fatalf("store.UpdateDecision() seed error = %v", err)
 	}
 
-	svc = items.NewService(store, fixedClock(updated))
+	svc = items.NewService(store, fakeCatalogue, fixedClock(updated))
 	in := validInput()
 	in.Pattern, in.Verdict = "/mnt/*", items.Watch
 
@@ -415,7 +447,7 @@ func TestCreateDecisionStoreError(t *testing.T) {
 	store := newFakeStore()
 	wantErr := errors.New("boom")
 	store.forceCreateErr = wantErr
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	if _, err := svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), validInput()); !errors.Is(err, wantErr) {
 		t.Fatalf("CreateDecision() error = %v, want %v", err, wantErr)
@@ -428,7 +460,7 @@ func TestCreateDecisionStoreError(t *testing.T) {
 func TestUpdateDecisionStoreError(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	d, err := svc.CreateDecision(ctx, org, validInput())
 	if err != nil {
@@ -448,7 +480,7 @@ func TestPreviewStoreError(t *testing.T) {
 	store := newFakeStore()
 	wantErr := errors.New("boom")
 	store.forceItemsErr = wantErr
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	if _, err := svc.Preview(ctx, uuid.Must(uuid.NewV7()), validInput()); !errors.Is(err, wantErr) {
 		t.Fatalf("Preview() error = %v, want it to wrap %v", err, wantErr)
@@ -466,7 +498,7 @@ func (errReader) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
 // id generation: an entropy source that always fails must reach newID's
 // panic, not NewService's own default (crypto/rand).
 func TestCreateDecisionPanicsWhenEntropyFails(t *testing.T) {
-	svc := items.NewService(newFakeStore(), items.WithRand(errReader{}))
+	svc := items.NewService(newFakeStore(), fakeCatalogue, items.WithRand(errReader{}))
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected a panic when the entropy source fails")
@@ -478,7 +510,7 @@ func TestCreateDecisionPanicsWhenEntropyFails(t *testing.T) {
 func TestUpdateDecisionValidationReusesCreateRules(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	created, err := svc.CreateDecision(ctx, org, validInput())
 	if err != nil {
@@ -496,7 +528,7 @@ func TestListDecisionsScopedToOrg(t *testing.T) {
 	orgA := uuid.Must(uuid.NewV7())
 	orgB := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	if _, err := svc.CreateDecision(ctx, orgA, validInput()); err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
@@ -519,7 +551,7 @@ func TestPreviewExactPatternMatchesOne(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	store.seedItems(org, host, "disk", []string{"/var", "/var/log", "/home"})
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.MatchKind, in.Pattern = items.MatchExact, "/var"
@@ -541,7 +573,7 @@ func TestPreviewGlobMatchesSeveral(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	store.seedItems(org, host, "disk", []string{"/var", "/var/log", "/home"})
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.Pattern = "/var*"
@@ -560,7 +592,7 @@ func TestPreviewGlobMatchesNone(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	store.seedItems(org, host, "disk", []string{"/var", "/home"})
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.Pattern = "/opt*"
@@ -591,7 +623,7 @@ func TestPreviewCapsMatchesButReportsTrueTotal(t *testing.T) {
 		names[i] = fmt.Sprintf("item-%d", i)
 	}
 	store.seedItems(org, host, "disk", names)
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.Pattern = "*"
@@ -625,7 +657,7 @@ func TestPreviewAtExactlyLimitIsNotCapped(t *testing.T) {
 		names[i] = fmt.Sprintf("item-%d", i)
 	}
 	store.seedItems(org, host, "disk", names)
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.Pattern = "*"
@@ -655,7 +687,7 @@ func TestPreviewHostScopeOnlyLooksAtThatHost(t *testing.T) {
 	store := newFakeStore()
 	store.seedItems(org, hostA, "disk", []string{"/var"})
 	store.seedItems(org, hostB, "disk", []string{"/var"})
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.Scope, in.HostID, in.Pattern = items.ScopeHost, &hostA, "/var"
@@ -679,7 +711,7 @@ func TestPreviewWritesNothing(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	store.seedItems(org, host, "disk", []string{"/var"})
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	before, err := svc.ListDecisions(ctx, org)
 	if err != nil {
@@ -705,7 +737,7 @@ func TestPreviewWritesNothing(t *testing.T) {
 // own table, which Preview's validateMatch path shares verbatim).
 func TestPreviewValidatesInput(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
-	svc := items.NewService(newFakeStore())
+	svc := items.NewService(newFakeStore(), fakeCatalogue)
 
 	in := validInput()
 	in.CheckKey = "nonsense"
@@ -726,7 +758,7 @@ func TestPreviewIgnoresVerdictAndNoteValidation(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	store.seedItems(org, host, "disk", []string{"/var/log"}) // validInput's pattern is "/var/*"
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	in := validInput()
 	in.Verdict = ""                    // unset: the GUI's state before a radio is picked
@@ -746,7 +778,7 @@ func TestItemsForHostAndItemsForOrgPassThrough(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	store.seedItems(org, host, "disk", []string{"/var", "/home"})
-	svc := items.NewService(store)
+	svc := items.NewService(store, fakeCatalogue)
 
 	hostViews, err := svc.ItemsForHost(ctx, org, host)
 	if err != nil {

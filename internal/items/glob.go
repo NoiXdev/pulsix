@@ -4,18 +4,18 @@
 // governs one (host, check_key, item), and the Service that validates and
 // previews decisions before they are stored.
 //
-// internal/rules must not import internal/checks, and evaluation needs the
-// ignore decision; a leaf package both of them may depend on resolves that
-// tension without a third adapter layer between the two. items therefore
-// does not import internal/checks, and must not ever. It does import
-// internal/rules — deliberately, for the one thing Service.go needs from
-// it, the catalogue of check keys a decision's check_key may name — which
-// is safe only because the dependency runs one way: internal/rules does
-// not import internal/items (`go list -deps ./internal/rules/...` carries
-// no path back here). The cycle to watch for, before adding any further
-// import to this package, is exactly that one reversed: anything that
-// would make internal/rules (or something it depends on) import
-// internal/items.
+// items must import neither internal/rules nor internal/checks, and must
+// not ever — that is the whole point of this package: evaluation needs
+// Decide to resolve the ignore decision it holds while already inside
+// internal/rules, over internal/items' own types (Target, Resolution), so
+// the edge internal/rules -> internal/items must stay free to exist. A
+// leaf both of them may depend on is what makes that possible; the moment
+// this package imports either, it stops being a leaf and that edge
+// becomes a cycle the compiler refuses. This is also why Service does not
+// know the metric catalogue itself: the set of valid check keys a
+// decision's check_key may name is a required constructor argument
+// (NewService's own doc comment), supplied by whoever wires this package
+// up — internal/app, from rules.Catalogue() — not looked up here.
 package items
 
 import (
