@@ -13,9 +13,19 @@ import (
 // that has to prove every omitted paren correct is a printer with far more
 // ways to be wrong. This is also what a form-mode rule's Source is
 // regenerated from when it is converted to an expression (Task 3).
+//
+// Every arity is checked before an argument is indexed, exactly as Match,
+// Number and TypeCheck check theirs. Today's callers only ever hand it a
+// tree one of those three has already accepted, but Format is exported
+// from this package, and a malformed node must render as the empty string
+// the default branch already produces rather than panic in whatever
+// handler happened to reach it.
 func Format(n Node) string {
 	switch n.Kind {
 	case KindCompare:
+		if len(n.Args) != 2 {
+			return ""
+		}
 		return wrapFactor(n.Args[0]) + " " + n.Op + " " + wrapFactor(n.Args[1])
 	case KindLabel:
 		if n.Op == "in" {
@@ -31,6 +41,9 @@ func Format(n Node) string {
 	case KindOr:
 		return joinBoolArgs(n.Args, " or ")
 	case KindNot:
+		if len(n.Args) != 1 {
+			return ""
+		}
 		return "not " + wrapBool(n.Args[0])
 	default:
 		return formatNumeric(n)
@@ -74,6 +87,9 @@ func formatNumeric(n Node) string {
 	case KindFact:
 		return fmt.Sprintf("fact(%s)", quoteString(n.Name))
 	case KindArith:
+		if len(n.Args) != 2 {
+			return ""
+		}
 		if isUnaryMinus(n) {
 			return "-" + wrapFactor(n.Args[1])
 		}

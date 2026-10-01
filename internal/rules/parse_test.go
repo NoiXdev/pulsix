@@ -579,3 +579,27 @@ func TestTypeCheckRefusesADeeplyNestedNumericTree(t *testing.T) {
 		t.Fatalf("error %v does not unwrap to ErrInvalidRule", err)
 	}
 }
+
+// TestFormatSurvivesAMalformedNode: Format is exported from a package
+// whose other tree-walkers (Match, Number, TypeCheck) all check arity
+// before indexing Args, and the asymmetry is the kind of thing discovered
+// by a panic in a handler. A node with the wrong number of arguments
+// renders as the empty string the default branch already produces.
+func TestFormatSurvivesAMalformedNode(t *testing.T) {
+	cases := []struct {
+		name string
+		n    rules.Node
+	}{
+		{"compare with no operands", rules.Node{Kind: rules.KindCompare, Op: ">"}},
+		{"compare with one operand", rules.Node{Kind: rules.KindCompare, Op: ">", Args: []rules.Node{{Kind: rules.KindNumber, Num: 1}}}},
+		{"not with no operand", rules.Node{Kind: rules.KindNot}},
+		{"arith with one operand", rules.Node{Kind: rules.KindArith, Op: "+", Args: []rules.Node{{Kind: rules.KindNumber, Num: 1}}}},
+		{"and over a malformed child", rules.Node{Kind: rules.KindAnd, Args: []rules.Node{{Kind: rules.KindNot}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The assertion is that this returns at all.
+			_ = rules.Format(tc.n)
+		})
+	}
+}
