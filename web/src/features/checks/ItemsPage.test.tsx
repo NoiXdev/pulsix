@@ -117,6 +117,10 @@ describe('ItemsPage', () => {
     await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
     await user.type(screen.getByLabelText('Pattern'), '/mnt/backup*');
     await user.type(screen.getByLabelText('Note'), 'Backup volume runs hot on purpose.');
+    // Save stays disabled until the preview for the pattern just typed has
+    // landed — wait for it, rather than relying on typing the note taking
+    // longer than the 300ms debounce by accident.
+    await screen.findByText('Matches no currently known item — it still applies the moment one appears');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>

@@ -361,6 +361,10 @@ func TestItemDecisionRoutes(t *testing.T) {
 				"scope": "org", "check_key": "disk",
 				"match_kind": "glob", "pattern": "*", "decision": "maybe",
 			},
+			"organization-wide watch has no effect": {
+				"scope": "org", "check_key": "disk",
+				"match_kind": "glob", "pattern": "*", "decision": "watch",
+			},
 		}
 		for name, body := range cases {
 			t.Run(name, func(t *testing.T) {

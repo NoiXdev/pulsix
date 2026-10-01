@@ -183,6 +183,18 @@ func (s *Service) buildDecision(in DecisionInput) (Decision, error) {
 		return Decision{}, invalidf("verdict must be %q or %q", Ignore, Watch)
 	}
 
+	// An organization-wide watch is a no-op by construction: watching is
+	// already what happens to anything no decision names, so a decision
+	// that only restates the default can never change what gets judged.
+	// Refusing it here — rather than leaving it to the GUI to merely not
+	// offer the option — means the rule and the absent option say the same
+	// thing, and no such row can ever exist for a dialog (or any other
+	// caller) to later have to render truthfully and refuse to save.
+	if in.Scope == ScopeOrg && in.Verdict == Watch {
+		return Decision{}, invalidf(
+			"scope %q with verdict %q would have no effect: watching is already what happens by default", ScopeOrg, Watch)
+	}
+
 	d.Verdict, d.Note = in.Verdict, in.Note
 	return d, nil
 }

@@ -266,6 +266,15 @@ func TestCreateDecisionValidation(t *testing.T) {
 			func() items.DecisionInput { in := validInput(); in.Verdict = "mute"; return in }(),
 			`verdict must be "ignore" or "watch"`,
 		},
+		{
+			// validInput() is already org-scoped, so overriding only
+			// Verdict is enough to hit this combination — an
+			// organization-wide watch changes nothing, since watching is
+			// already what happens to anything no decision names.
+			"organization-wide watch has no effect",
+			func() items.DecisionInput { in := validInput(); in.Verdict = items.Watch; return in }(),
+			`scope "org" with verdict "watch" would have no effect`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -409,6 +418,7 @@ func TestDeleteDecisionCrossOrgIsNotFound(t *testing.T) {
 // and persisting every field the caller changed.
 func TestUpdateDecisionValid(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
 	createdBy := uuid.Must(uuid.NewV7())
 	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	updated := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
@@ -432,7 +442,12 @@ func TestUpdateDecisionValid(t *testing.T) {
 
 	svc = items.NewService(store, fakeCatalogue, fixedClock(updated))
 	in := validInput()
-	in.Pattern, in.Verdict = "/mnt/*", items.Watch
+	// Scoped to a host, not org: Watch only has an effect as a host-scoped
+	// overrule (an organization-wide watch is refused outright — see
+	// TestCreateDecisionValidation's "organization-wide watch has no
+	// effect" case), and this test wants a verdict change that is
+	// actually valid to prove the replace persists it.
+	in.Scope, in.HostID, in.Pattern, in.Verdict = items.ScopeHost, &host, "/mnt/*", items.Watch
 
 	got, err := svc.UpdateDecision(ctx, org, d.ID, in)
 	if err != nil {

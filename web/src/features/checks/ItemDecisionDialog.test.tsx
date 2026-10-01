@@ -160,10 +160,82 @@ describe('ItemDecisionDialog', () => {
     renderDialog();
 
     await user.type(screen.getByLabelText('Pattern'), '/var');
+    // Save stays disabled until the preview for this exact pattern has
+    // landed (see the dedicated staleness test below) — wait for it
+    // before clicking, the same way every other test here that clicks
+    // Save does.
+    await screen.findByText('Matches no currently known item — it still applies the moment one appears');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('a decision for this exact pattern already exists at this scope');
     expect(screen.getByRole('dialog', { name: 'New item decision' })).toBeInTheDocument();
+  });
+
+  it('does not save a pattern before its own preview has caught up with it — the debounce window is not a way around the second confirmation', async () => {
+    const user = userEvent.setup();
+    let posted = false;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mockApi({
+      'POST /api/v1/orgs/acme/item-decisions/preview': () => ({
+        matches: [{ host_id: 'h1', check_key: 'disk', item: '/a' }],
+        total: 9999,
+        capped: true,
+      }),
+      'POST /api/v1/orgs/acme/item-decisions': () => {
+        posted = true;
+        return { decision: { id: 'd1' } };
+      },
+    });
+    renderDialog();
+
+    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    // Clicked immediately after typing: well inside the 300ms debounce
+    // window, before a preview for "*" has even been asked for, let alone
+    // answered with its real (huge) total. Save must already be disabled
+    // at this point — a disabled button does not fire a click at all.
+    await user.type(screen.getByLabelText('Pattern'), '*');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(posted).toBe(false);
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    // The preview catches up once the debounce settles, Save re-enables,
+    // and only then does the second confirmation (correctly) fire.
+    await screen.findByText('Matches 9999 items');
+    expect(screen.getByRole('button', { name: 'Save' })).not.toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0]).toContain('9999');
+    expect(posted).toBe(false);
+
+    confirmSpy.mockRestore();
+  });
+
+  it('shows an organization-scoped watch stored outside this editor truthfully, and refuses to save it as is', async () => {
+    mockApi({
+      'POST /api/v1/orgs/acme/item-decisions/preview': () => ({ matches: [{ host_id: 'h1', check_key: 'disk', item: '/var' }], total: 1, capped: false }),
+    });
+    renderDialog({
+      decision: {
+        id: 'd-legacy',
+        scope: 'org',
+        check_key: 'disk',
+        match_kind: 'exact',
+        pattern: '/var',
+        decision: 'watch',
+        created_at: '',
+        updated_at: '',
+      },
+    });
+
+    // The true stored value is shown — "Watch", not a silent "Ignore" —
+    // and Save is disabled until the operator resolves the mismatch
+    // themselves (by picking Ignore, or by scoping it to a host).
+    const verdict = screen.getByLabelText('Verdict') as HTMLSelectElement;
+    expect(verdict.value).toBe('watch');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/stored as an organization-wide watch/i);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
   it('gives the note field room rather than a tucked-away corner', () => {

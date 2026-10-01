@@ -78,12 +78,41 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   const [pattern, setPattern] = useState(decision?.pattern ?? '');
   const [verdict, setVerdict] = useState<ItemDecisionVerdict>(decision?.decision ?? 'ignore');
   const [note, setNote] = useState(decision?.note ?? '');
-  const [preview, setPreview] = useState<{ total: number; capped: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Watch at organization scope is never offered — it changes nothing, so
-  // switching to org scope while watch is selected falls back to ignore,
-  // the only verdict that can have an effect there.
+  // The preview query lives here, not inside PatternPreview, because the
+  // confirmation gate below needs to know — synchronously, on every
+  // render — whether it describes the pattern currently typed. A version
+  // that let a child own the query and report back through a callback
+  // (an earlier round of this file) left a window open: the callback only
+  // fires from an effect, so clicking Save inside the 300ms debounce saw
+  // whatever the *previous* preview said (often "nothing yet", i.e. no
+  // confirmation at all) rather than blocking until a fresh one existed.
+  const [debouncedPattern, setDebouncedPattern] = useState(pattern);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPattern(pattern), PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [pattern]);
+
+  const liveBody = previewBody(scope, hostId, checkKey, matchKind, pattern);
+  const debouncedBody = previewBody(scope, hostId, checkKey, matchKind, debouncedPattern);
+  const preview = useItemDecisionPreview(org, debouncedBody);
+
+  // Stale exactly when there is something worth previewing at all
+  // (liveBody) and the query above does not yet describe that exact
+  // input: either the debounce has not caught up with what is currently
+  // typed, or the request for the debounced value has not landed a result
+  // (success or error) yet. Save stays disabled for the whole of this
+  // window — the review finding this fixes: typing a broad pattern and
+  // clicking Save before the preview ever ran skipped both the preview
+  // and the confirmation it exists to require.
+  const previewStale =
+    liveBody !== null && (pattern !== debouncedPattern || preview.isFetching || (preview.data === undefined && !preview.isError));
+
+  // Watch at organization scope is never offered — it changes nothing (and
+  // the server now refuses to store it at all), so switching to org scope
+  // while watch is selected falls back to ignore, the only verdict that
+  // can have an effect there.
   function onScopeChange(next: ItemDecisionScope) {
     setScope(next);
     if (next === 'org') {
@@ -91,6 +120,19 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
       setVerdict((v) => (v === 'watch' ? 'ignore' : v));
     }
   }
+
+  // True only for a decision loaded with a combination the server itself
+  // now refuses to ever write (org scope, watch verdict) — reachable only
+  // through a row written before that rule existed, or by hand, never
+  // through this dialog's own write path (onScopeChange above already
+  // clamps it on every live scope change). Surfaced truthfully rather
+  // than silently coerced to "ignore": a <select> whose bound value
+  // matches no rendered <option> shows its sole remaining option as
+  // selected while leaving the real value untouched, which previously
+  // meant the screen read "Ignore" while Save would have re-persisted
+  // "Watch" underneath it — showing the stored value truthfully and
+  // refusing to save beats showing one thing and submitting another.
+  const orgWatchMismatch = scope === 'org' && verdict === 'watch';
 
   function body(): ItemDecisionInput {
     return {
@@ -107,7 +149,12 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (preview?.capped && !confirm(confirmBroadMatch(preview.total))) return;
+    // Belt and braces alongside the disabled Save button below: a <button
+    // disabled> does not fire a click, but this guard keeps the decision
+    // in one place rather than trusting every path to the form down to
+    // the DOM's own submit semantics.
+    if (previewStale || orgWatchMismatch) return;
+    if (preview.data?.capped && !confirm(confirmBroadMatch(preview.data.total))) return;
     try {
       if (editing) await update.mutateAsync(body());
       else await create.mutateAsync(body());
@@ -118,7 +165,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   }
 
   const title = editing ? `Edit decision for ${decision.pattern}` : 'New item decision';
-  const saveDisabled = create.isPending || update.isPending;
+  const saveDisabled = create.isPending || update.isPending || previewStale || orgWatchMismatch;
 
   return (
     <Dialog open onClose={onClose} title={title} size="wide">
@@ -179,17 +226,33 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
             onChange={(e) => setPattern(e.target.value)}
           />
         </div>
-        <PatternPreview org={org} scope={scope} hostId={hostId} checkKey={checkKey} matchKind={matchKind} pattern={pattern} onResult={setPreview} />
+        <PatternPreview body={debouncedBody} query={preview} />
         <div className="flex flex-col gap-1">
           <Label htmlFor="decision-verdict">Verdict</Label>
           <select id="decision-verdict" className={SELECT} value={verdict} onChange={(e) => setVerdict(e.target.value as ItemDecisionVerdict)}>
             <option value="ignore">Ignore — stop judging this item</option>
             {scope === 'host' && <option value="watch">Watch — judge it even though a wider decision ignores it</option>}
+            {/* Renders the true stored value for the org+watch mismatch
+                case (see orgWatchMismatch's own comment) instead of letting
+                the select silently show "Ignore" for a "Watch" it still
+                holds — disabled, since this combination is not something
+                choosing it again from here could ever produce. */}
+            {orgWatchMismatch && (
+              <option value="watch" disabled>
+                Watch (stored outside this editor — has no effect at organization scope)
+              </option>
+            )}
           </select>
-          {scope === 'org' && (
+          {scope === 'org' && !orgWatchMismatch && (
             <p className="text-[11px] text-muted-foreground">
               Watch is not offered at organization scope: watching is already what happens by default, so an organization-wide watch
               would change nothing. It is available once this decision is scoped to a single host, which is the overrule it exists for.
+            </p>
+          )}
+          {orgWatchMismatch && (
+            <p role="alert" className="text-xs text-[var(--px-crit)]">
+              This decision is stored as an organization-wide watch, which has no effect and the server now refuses to save. Choose
+              ignore, or scope it to a host to keep watch as the overrule it is meant to be.
             </p>
           )}
         </div>
@@ -248,67 +311,41 @@ function previewBody(
 }
 
 /**
- * PatternPreview resolves what the pattern currently typed would match,
- * rendering the server's own total rather than the length of the capped
- * match list it also carries — "matches 4 182 items" is the sentence that
- * stops someone saving `*` (review focus 1). It previews as soon as scope,
- * host, check key, match kind and pattern are set, independent of whether
- * a verdict has been chosen yet: Preview validates none of that (see
- * previewBody's own doc comment).
+ * PatternPreview renders what the pattern currently debounced would match,
+ * from the query the dialog already fetched (useItemDecisionPreview lives
+ * in the parent now — see ItemDecisionDialog's own comment on `preview`
+ * for why rendering and the confirmation gate must read the same query
+ * rather than a child's own, separately-timed copy of it).
  *
- * It does not judge the pattern itself — an exact pattern containing a
- * glob character, say, is reported with the service's own message, which
- * names what is wrong and suggests the fix; a second, client-side check
- * here could only drift from the one that decides.
+ * It shows the server's own total rather than the length of the capped
+ * match list it also carries — "matches 4 182 items" is the sentence that
+ * stops someone saving `*` (review focus 1) — and does not judge the
+ * pattern itself: an exact pattern containing a glob character, say, is
+ * reported with the service's own message, which names what is wrong and
+ * suggests the fix; a second, client-side check here could only drift
+ * from the one that decides.
  */
 function PatternPreview({
-  org,
-  scope,
-  hostId,
-  checkKey,
-  matchKind,
-  pattern,
-  onResult,
+  body,
+  query,
 }: {
-  org: string;
-  scope: ItemDecisionScope;
-  hostId: string;
-  checkKey: string;
-  matchKind: ItemDecisionMatchKind;
-  pattern: string;
-  onResult: (result: { total: number; capped: boolean } | null) => void;
+  body: ItemDecisionPreviewInput | null;
+  query: ReturnType<typeof useItemDecisionPreview>;
 }) {
-  const [debouncedPattern, setDebouncedPattern] = useState(pattern);
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedPattern(pattern), PREVIEW_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [pattern]);
-
-  const body = previewBody(scope, hostId, checkKey, matchKind, debouncedPattern);
-  const preview = useItemDecisionPreview(org, body);
-
-  useEffect(() => {
-    onResult(preview.data ? { total: preview.data.total, capped: preview.data.capped } : null);
-    // onResult is the dialog's setPreview, a stable setState reference;
-    // depending on it as well would only risk re-running this on every
-    // parent render for no reason.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview.data]);
-
   if (body === null) {
     return <span className="text-[11px] text-muted-foreground">Type a pattern to see which items it would match.</span>;
   }
-  if (preview.isError) {
+  if (query.isError) {
     return (
       <p role="alert" className="text-xs text-[var(--px-crit)]">
-        {preview.error instanceof Error ? preview.error.message : 'Could not resolve this pattern'}
+        {query.error instanceof Error ? query.error.message : 'Could not resolve this pattern'}
       </p>
     );
   }
-  if (!preview.data) {
+  if (!query.data) {
     return <span className="text-[11px] text-muted-foreground">Matching…</span>;
   }
-  const { total, matches, capped } = preview.data;
+  const { total, matches, capped } = query.data;
   if (total === 0) {
     return (
       <span className="text-xs font-semibold text-[var(--px-warn)]">
