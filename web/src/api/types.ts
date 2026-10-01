@@ -73,6 +73,17 @@ export type RuleMetric = components['schemas']['RuleMetricDTO'];
 export type RuleScope = Rule['scope'];
 export type RuleMode = Rule['mode'];
 
+export type ItemDecision = components['schemas']['ItemDecisionDTO'];
+export type ItemDecisionInput = components['schemas']['ItemDecisionBody'];
+export type ItemDecisionScope = ItemDecision['scope'];
+export type ItemDecisionMatchKind = ItemDecision['match_kind'];
+export type ItemDecisionVerdict = ItemDecision['decision'];
+// POST /item-decisions/preview takes the same ItemDecisionBody shape but
+// reads only the fields that decide what a pattern matches — see
+// items.Service.Preview's own doc comment (internal/items/service.go) for
+// why decision and note play no part in it.
+export type ItemDecisionPreviewInput = Omit<ItemDecisionInput, 'decision' | 'note'>;
+
 export type CalendarEntry = components['schemas']['CalendarEntryDTO'];
 export type CalendarWindow = components['schemas']['CalendarWindowDTO'];
 
