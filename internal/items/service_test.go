@@ -572,6 +572,33 @@ func TestListDecisionsScopedToOrg(t *testing.T) {
 	}
 }
 
+// TestItemsForOrgRejectsAnOverLongGlob pins the one bound the read side
+// shares with every write path: GET /items' own `item` query parameter
+// reaches a LIKE scan over check_items, so an unbounded pattern is an
+// authenticated way to make a read expensive. ValidPattern's bound, the
+// same one a stored decision's pattern clears.
+func TestItemsForOrgRejectsAnOverLongGlob(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	store.seedItems(org, host, "disk", []string{"/var"})
+	svc := items.NewService(store, fakeCatalogue)
+
+	over := strings.Repeat("%x", items.MaxPatternLen)
+	if _, err := svc.ItemsForOrg(ctx, org, items.Filter{ItemGlob: over}); !errors.Is(err, items.ErrInvalidInput) {
+		t.Fatalf("ItemsForOrg(over-long glob) error = %v, want ErrInvalidInput", err)
+	}
+
+	// An ordinary glob, and the unset one, still pass straight through:
+	// the bound refuses abuse, not filtering.
+	if _, err := svc.ItemsForOrg(ctx, org, items.Filter{ItemGlob: "/var*"}); err != nil {
+		t.Fatalf("ItemsForOrg(ordinary glob) error = %v, want nil", err)
+	}
+	if _, err := svc.ItemsForOrg(ctx, org, items.Filter{}); err != nil {
+		t.Fatalf("ItemsForOrg(no glob) error = %v, want nil", err)
+	}
+}
+
 // TestDecisionsNarrowsToOneHost pins Service.Decisions — the per-host
 // read every per-host caller uses (the evaluation ticker, and since this
 // wave GET /hosts/{id}/checks and GET /hosts/{id}/items, both polled per

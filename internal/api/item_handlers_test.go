@@ -12,6 +12,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -465,6 +466,16 @@ func TestItemDecisionRoutes(t *testing.T) {
 		}
 		if resp := requestJSON(t, f.operatorC, http.MethodGet, f.hostURL(otherHost.ID)+"/items", nil); resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("host items for a foreign host id in my own org = %d, want 404 %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+
+		// GET /items' own `item` glob reaches a LIKE scan over
+		// check_items, so it clears the same ValidPattern bound every
+		// write path's pattern clears — an unbounded alternating-'%x'
+		// pattern is otherwise an authenticated way to make a read
+		// expensive.
+		overLong := strings.Repeat("%x", items.MaxPatternLen)
+		if resp := requestJSON(t, f.viewerC, http.MethodGet, f.itemsURL()+"?item="+url.QueryEscape(overLong), nil); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("org items with an over-long glob = %d, want 422 %s", resp.StatusCode, mustReadBody(t, resp))
 		}
 
 		// GET /items: not merely refused to a non-member (role matrix

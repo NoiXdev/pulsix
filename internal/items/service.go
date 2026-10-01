@@ -331,8 +331,21 @@ func (s *Service) ItemsForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]
 	return s.store.ItemsForHost(ctx, orgID, hostID)
 }
 
-// ItemsForOrg passes through to the store, so the API has one dependency
-// (this Service) for both items and decisions.
+// ItemsForOrg lists the organization's items, narrowed by f.
+//
+// f.ItemGlob, when set, goes through ValidPattern first — the same bound
+// every write path applies to the pattern an operator types. It is a
+// read, but not a free one: the store translates the glob into a
+// `LIKE ... ESCAPE '\'` over check_items, and a kilobytes-long
+// alternating-'%x' pattern is an authenticated but very cheap way to make
+// that scan expensive. Validating here rather than in the handler keeps
+// the bound in one place, next to the only other code that knows what a
+// pattern may be.
 func (s *Service) ItemsForOrg(ctx context.Context, orgID uuid.UUID, f Filter) ([]View, error) {
+	if f.ItemGlob != "" {
+		if err := ValidPattern(f.ItemGlob); err != nil {
+			return nil, err
+		}
+	}
 	return s.store.ItemsForOrg(ctx, orgID, f)
 }
