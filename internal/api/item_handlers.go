@@ -531,6 +531,19 @@ func registerItemRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// A host-scoped preview names a host, so it is a host-addressed
+		// route and answers like one: an id from another organization
+		// reads as "no such host", exactly as GET /hosts/{id}/items does
+		// three handlers up. Nothing leaked before this guard — the store
+		// filters on org_id, so the preview came back empty — but the
+		// same body refused with 422 by the sibling create path answered
+		// 200 here, which is one question with two answers and neither of
+		// them the uniform 404 the rest of the surface gives.
+		if input.Scope == items.ScopeHost && input.HostID != nil {
+			if _, err := deps.Hosts.GetHost(ctx, scope.OrgID, *input.HostID); err != nil {
+				return nil, mapChecksErr(ctx, err)
+			}
+		}
 		// Persists nothing — it calls Preview, never CreateDecision (a test
 		// proves it: a create attempt right after a preview call still sees
 		// an empty decision list). Not audited: this is a read shaped as a

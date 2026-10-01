@@ -468,6 +468,17 @@ func TestItemDecisionRoutes(t *testing.T) {
 			t.Fatalf("host items for a foreign host id in my own org = %d, want 404 %s", resp.StatusCode, mustReadBody(t, resp))
 		}
 
+		// POST /item-decisions/preview is host-addressed too whenever its
+		// body is host-scoped, and must answer the same 404 for the same
+		// id. It used to answer 200 with an empty match list (nothing
+		// leaked — the store filters on org_id) while the sibling create
+		// path refused the very same body with 422: one question, three
+		// answers.
+		if resp := postJSON(t, f.operatorC, f.decisionsURL()+"/preview",
+			byHostDecisionBody(otherHost.ID, "disk", "/var", "ignore")); resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("preview against a foreign host id = %d, want 404 %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+
 		// GET /items' own `item` glob reaches a LIKE scan over
 		// check_items, so it clears the same ValidPattern bound every
 		// write path's pattern clears — an unbounded alternating-'%x'
