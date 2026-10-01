@@ -1102,3 +1102,48 @@ func TestAnAlreadyEvaluatedHostIsSkippedBeforeItIsEvaluatedAgain(t *testing.T) {
 		t.Fatalf("LockOneEvalCursor on a host that is no longer due = %v, want pgx.ErrNoRows", err)
 	}
 }
+
+// TestEvalCursorRLS is check_eval_cursor's half of what
+// TestRulesAreIsolatedPerOrgByRLS does for check_rules and
+// TestStateStoreRLS (states_store_test.go) does for the three state
+// tables: it goes through d.WithOrg, so it exercises org_isolation's own
+// USING clause rather than the org_isolation_bypass policy every other
+// test in this file runs under.
+//
+// It matters here more than anywhere, not less: this is the one table in
+// the set whose every production statement runs UNSCOPED (the ticker
+// claims across all organizations at once), so the bypass policy is all
+// those statements ever meet and nothing else would notice org_isolation
+// being replaced with USING (true).
+func TestEvalCursorRLS(t *testing.T) {
+	d := testdb.Open(t)
+	orgA := seedOrg(t, d, "cursor-rls-a")
+	orgB := seedOrg(t, d, "cursor-rls-b")
+	hostA := seedHost(t, d, orgA, "h1")
+	hostB := seedHost(t, d, orgB, "h1")
+	markDirty(t, d, orgA, hostA)
+	markDirty(t, d, orgB, hostB)
+
+	var seen []uuid.UUID
+	err := d.WithOrg(context.Background(), orgA, func(tx pgx.Tx) error {
+		rows, err := tx.Query(context.Background(), "SELECT org_id FROM check_eval_cursor")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			seen = append(seen, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != orgA {
+		t.Fatalf("RLS leak on check_eval_cursor: saw %v, want only [%s]", seen, orgA)
+	}
+}
