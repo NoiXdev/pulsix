@@ -59,6 +59,10 @@ export default defineConfig({
     // sits after both.
     { name: 'rules', testMatch: /rules\.spec\.ts/, dependencies: ['agent'] },
     { name: 'fleet', testMatch: /fleet\.spec\.ts/, dependencies: ['rules'] },
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['fleet'] },
+    // The item decision pipeline's GUI half (v0.3b-3, backlog 3.6c): one
+    // real agent, same as fleet.spec.ts, so it sits right after it in the
+    // chain for the same reason — it needs the agent binary built.
+    { name: 'items', testMatch: /items\.spec\.ts/, dependencies: ['fleet'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['items'] },
   ],
 });
