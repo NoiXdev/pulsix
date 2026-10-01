@@ -1,20 +1,39 @@
 /**
  * The Items tab and the host page's own ignore action (v0.3b-3 spec): an
- * operator ignores a mount straight from the host page, then opens the
- * Items tab, watches the pattern editor's own preview count the one item
- * this host has actually discovered, saves the decision, and sees it
- * listed.
+ * operator ignores a mount straight from the host page, and — independently
+ * — creates a decision from the Items tab, watches its pattern editor's own
+ * preview count the item it names, saves it, and sees it listed.
+ *
+ * Two distinct mounts, not one, and that is deliberate: the two acts are
+ * two different ways to reach `POST /item-decisions`
+ * (`internal/api/item_handlers.go`), and giving them the same target would
+ * mean two decisions landing on the one `(host, check_key, item)` — which
+ * is a real, supported state (internal/items' own tie-break exists for
+ * exactly that), but asserting "the row is listed" against it needs an
+ * index or a timestamp to pick one of two otherwise-identical "Edit
+ * decision for /" buttons, and a test that only passes by picking a side
+ * is not proving what either the row action or the pattern editor
+ * actually ships: that EACH can create a decision a caller can find
+ * again, not that creating one from both surfaces is an interesting thing
+ * to do at the same moment on the same item. A second, distinct mount
+ * gives both acts an unambiguous target that is also honest about what
+ * the acts are — two routes to the same endpoint, not one shared flow
+ * with two steps.
  *
  * One real agent (the same binary fleet.spec.ts and agent.spec.ts enrol,
- * web/e2e/agent.ts), reporting one mount this spec names explicitly — "/",
- * the one mount point every platform these suites run on is guaranteed to
- * have (the same lever internal/e2e/items_test.go's own header comment
- * explains for its own, Go-side half of this gate). Discovery depends on a
- * real evaluation tick (internal/rules.Ticker, a fixed 15-second interval,
- * not something a test can shorten), so the preview below is polled —
- * reopening the dialog on a short interval — rather than asserted once:
- * the item simply is not there yet for the first several seconds after
- * the mount's first reading lands.
+ * web/e2e/agent.ts), with an explicit two-mount disk check: "/", the one
+ * mount point every platform these suites run on is guaranteed to have
+ * (the same lever internal/e2e/items_test.go's own header comment explains
+ * for its own, Go-side half of this gate), and "/tmp", equally guaranteed
+ * to exist and readable by the real disk plugin's `Usage` call regardless
+ * of whether it happens to be its own filesystem or shares `/`'s — Pulsix
+ * only cares that it is a path disk.Usage can stat, not that `mount(8)`
+ * lists it separately. Discovery depends on a real evaluation tick
+ * (internal/rules.Ticker, a fixed 15-second interval, not something a test
+ * can shorten), so the Items-tab preview below is polled — reopening the
+ * dialog on a short interval — rather than asserted once: the item simply
+ * is not there yet for the first several seconds after its first reading
+ * lands.
  *
  * Host-scoped throughout, not organization-scoped: this suite's shared
  * manager runs every other spec's own agents too, several of which also
@@ -34,7 +53,11 @@ test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-set
 
 const base = `/o/${ORG.slug}`;
 const HOST_NAME = 'items-e2e-host';
+// MOUNT is the host page's own target (the row action); ITEMS_TAB_MOUNT is
+// the Items tab's (the pattern editor) — see this file's own header
+// comment for why they must differ.
 const MOUNT = '/';
+const ITEMS_TAB_MOUNT = '/tmp';
 const CHECK_KEY = 'disk';
 
 /** enrolAndStart is agent.spec.ts's own two opening steps (create an
@@ -77,16 +100,17 @@ async function selectHost(dialog: Locator, hostName: string): Promise<void> {
   await hostSelect.selectOption({ label: hostName });
 }
 
-/** addMountCheck overrides hostName's disk check to the one explicit mount
- * this spec follows, at the shortest interval the API accepts — the same
- * "mounts" param internal/e2e/items_test.go gives the agent's real disk
- * plugin directly, through the GUI's own CheckDialog here instead. */
+/** addMountCheck overrides hostName's disk check to the two explicit
+ * mounts this spec follows (one per line in the dialog's own textarea),
+ * at the shortest interval the API accepts — the same "mounts" param
+ * internal/e2e/items_test.go gives the agent's real disk plugin directly,
+ * through the GUI's own CheckDialog here instead. */
 async function addMountCheck(page: Page, hostName: string): Promise<void> {
   await page.goto(`${base}/checks`);
   await page.getByRole('button', { name: 'New check' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Plugin').selectOption({ label: 'Disk' });
-  await dialog.getByLabel('Mounts (one per line, empty means every mount)').fill(MOUNT);
+  await dialog.getByLabel('Mounts (one per line, empty means every mount)').fill(`${MOUNT}\n${ITEMS_TAB_MOUNT}`);
   await dialog.getByLabel('Binds to').selectOption({ label: 'One host' });
   await selectHost(dialog, hostName);
   await dialog.getByLabel('Interval (seconds)').fill('10');
@@ -117,7 +141,7 @@ async function waitForMountReading(page: Page, timeout: number): Promise<void> {
   await expect(mountRow(page)).toBeVisible({ timeout });
 }
 
-test('an operator ignores a mount from the host page, then the Items tab sees, previews and saves the same decision', async ({ page }) => {
+test('an operator ignores a mount from the host page, and separately creates, previews and saves a decision from the Items tab', async ({ page }) => {
   // Discovery rides the real evaluation ticker's own fixed 15s interval
   // (internal/rules.Ticker, DefaultEvalInterval) — not something a test
   // can shorten — so this spec's own patience has to outlast it, the same
@@ -178,6 +202,11 @@ test('an operator ignores a mount from the host page, then the Items tab sees, p
 
     // --- The Items tab: create a decision, see the preview's count,
     //     save, see it listed ------------------------------------------
+    // A different mount from the one just ignored above — see this file's
+    // own header comment for why: this is a second, independent route to
+    // the same endpoint, not a second step continuing the first one, and
+    // giving it its own target is what keeps "see it listed" unambiguous
+    // without reaching for an index into two otherwise-identical rows.
     await page.goto(`${base}/checks/items`);
     await expect(page.getByRole('heading', { name: 'Checks' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Items' })).toHaveAttribute('aria-selected', 'true');
@@ -185,42 +214,39 @@ test('an operator ignores a mount from the host page, then the Items tab sees, p
     // The pattern editor's own preview resolves against check_items — the
     // evaluation ticker's own discovery pass, not the current reading this
     // spec already waited for above — so it is polled: reopen the dialog,
-    // ask the same question, and retry until the mount this host reported
-    // has actually been discovered.
-    const dialog = await waitForDiscoveredInPreview(page, HOST_NAME, 90_000);
+    // ask the same question, and retry until this mount has actually been
+    // discovered.
+    const dialog = await waitForDiscoveredInPreview(page, HOST_NAME, ITEMS_TAB_MOUNT, 90_000);
 
     // The verdict defaults to "ignore" already (ItemDecisionDialog's own
-    // default state) — and is an independent decision from the host page's
-    // own host-scoped exact one above, naming the exact same (check, item)
-    // on purpose: it is what the GUI calls "the same target, now through
-    // the general-purpose editor", not a conflicting one — internal/items'
-    // own tie-break (the older CreatedAt) is exactly what the host page's
-    // earlier write already demonstrated once, below.
+    // default state) — this spec is not about which verdict an operator
+    // picks, only that the editor can create, preview and list one.
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toHaveCount(0);
 
     // --- See it listed ---------------------------------------------------
     // "Edit …"/"Delete …" name the decision's own pattern, so — the same
     // shape rules.spec.ts's own listing check uses — they double as proof
-    // the row exists without a brittle row-by-CSS-class lookup across a
-    // page that may carry other specs' own host-scoped decisions too.
-    await expect(page.getByRole('button', { name: `Edit decision for ${MOUNT}` })).toBeVisible();
-    await expect(page.getByRole('button', { name: `Delete decision for ${MOUNT}` })).toBeVisible();
+    // the row exists without a brittle row-by-CSS-class lookup. Unique on
+    // the page: ITEMS_TAB_MOUNT names only the decision this act just
+    // created, never the host page's own "/" one from above or anything
+    // another spec's own host-scoped decision could name.
+    await expect(page.getByRole('button', { name: `Edit decision for ${ITEMS_TAB_MOUNT}` })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Delete decision for ${ITEMS_TAB_MOUNT}` })).toBeVisible();
   } finally {
     await agent?.stop();
   }
 });
 
-/** waitForDiscoveredInPreview opens "New decision", fills in the one
- * target this spec follows (host-scoped, exact, this host's own mount) and
- * polls — closing and reopening the dialog — until the preview reports at
- * least one match, returning the dialog left open on that successful
- * attempt so the caller can carry on filling and saving it. Reopening
- * rather than merely re-typing the pattern is what forces a fresh request
- * each attempt: the preview query is keyed on its whole body and would
- * otherwise serve the same cached "no match" answer for the life of one
- * open dialog. */
-async function waitForDiscoveredInPreview(page: Page, hostName: string, timeoutMs: number): Promise<Locator> {
+/** waitForDiscoveredInPreview opens "New decision", fills in a host-scoped,
+ * exact decision over pattern and polls — closing and reopening the
+ * dialog — until the preview reports exactly one match, returning the
+ * dialog left open on that successful attempt so the caller can carry on
+ * filling and saving it. Reopening rather than merely re-typing the
+ * pattern is what forces a fresh request each attempt: the preview query
+ * is keyed on its whole body and would otherwise serve the same cached
+ * "no match" answer for the life of one open dialog. */
+async function waitForDiscoveredInPreview(page: Page, hostName: string, pattern: string, timeoutMs: number): Promise<Locator> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     await page.getByRole('button', { name: 'New decision' }).click();
@@ -232,13 +258,13 @@ async function waitForDiscoveredInPreview(page: Page, hostName: string, timeoutM
     // initial state) — selected by value here anyway, so a future change
     // to that default cannot silently turn this into a glob match.
     await dialog.getByLabel('Match kind').selectOption({ value: 'exact' });
-    await dialog.getByLabel('Pattern').fill(MOUNT);
+    await dialog.getByLabel('Pattern').fill(pattern);
 
     const matched = dialog.getByText(/^Matches \d+ item/);
     try {
-      // Host-scoped, and this host reports exactly one disk item — the
-      // exact count, not merely "at least one", is "the preview's count"
-      // the brief asks this spec to see.
+      // Host-scoped, and this exact pattern names exactly one disk item on
+      // this host — the exact count, not merely "at least one", is "the
+      // preview's count" the brief asks this spec to see.
       await expect(matched).toHaveText('Matches 1 item', { timeout: 5_000 });
       return dialog;
     } catch {
@@ -247,7 +273,7 @@ async function waitForDiscoveredInPreview(page: Page, hostName: string, timeoutM
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toHaveCount(0);
     if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${hostName}'s mount ${MOUNT} to be discovered`);
+      throw new Error(`timed out waiting for ${hostName}'s mount ${pattern} to be discovered`);
     }
     await page.waitForTimeout(3_000);
   }
