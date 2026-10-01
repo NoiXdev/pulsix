@@ -438,7 +438,7 @@ func registerItemRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		d, err := deps.Items.CreateDecision(ctx, scope.OrgID, input)
+		d, err := deps.Items.CreateDecision(ctx, scope.OrgID, scope.UserID, input)
 		if err != nil {
 			return nil, mapItemsErr(ctx, err)
 		}

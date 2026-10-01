@@ -187,13 +187,20 @@ func (s *Service) buildDecision(in DecisionInput) (Decision, error) {
 	return d, nil
 }
 
-// CreateDecision validates in and stores a new decision bound to orgID.
-func (s *Service) CreateDecision(ctx context.Context, orgID uuid.UUID, in DecisionInput) (Decision, error) {
+// CreateDecision validates in and stores a new decision bound to orgID,
+// stamped with actor as CreatedBy — the house shape schedules.Service.Create,
+// triggers.Service.Create and maintenance.Service.Create all take the same
+// parameter for the same reason: a decision is an operator's call, and the
+// note alone answers why; CreatedBy is what lets a reader six months later
+// answer who, without having to dig through the audit log for the same
+// create event.
+func (s *Service) CreateDecision(ctx context.Context, orgID, actor uuid.UUID, in DecisionInput) (Decision, error) {
 	d, err := s.buildDecision(in)
 	if err != nil {
 		return Decision{}, err
 	}
 	d.ID, d.OrgID = s.newID(), orgID
+	d.CreatedBy = &actor
 	d.CreatedAt, d.UpdatedAt = s.now(), s.now()
 	if err := s.store.CreateDecision(ctx, d); err != nil {
 		return Decision{}, err

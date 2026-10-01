@@ -35,6 +35,7 @@ type itemDecisionDTO struct {
 	Pattern   string    `json:"pattern"`
 	Verdict   string    `json:"decision"`
 	Note      string    `json:"note"`
+	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -73,6 +74,9 @@ type itemsFixture struct {
 	orgSlug                              string
 	ownerC, operatorC, viewerC, stranger *http.Client
 	web, dbHost                          uuid.UUID
+	// operatorID is who every decision this fixture's operatorC creates is
+	// stamped CreatedBy with — exposed so a test can assert on it.
+	operatorID uuid.UUID
 }
 
 func newItemsFixture(t *testing.T, slug string) itemsFixture {
@@ -107,7 +111,7 @@ func newItemsFixture(t *testing.T, slug string) itemsFixture {
 	return itemsFixture{
 		s: s, orgID: org, orgSlug: slug,
 		ownerC: s.LoginAs(owner), operatorC: s.LoginAs(operator), viewerC: s.LoginAs(viewer),
-		stranger: s.LoginAs(stranger), web: web.ID, dbHost: dbHost.ID,
+		stranger: s.LoginAs(stranger), web: web.ID, dbHost: dbHost.ID, operatorID: operator,
 	}
 }
 
@@ -272,6 +276,13 @@ func TestItemDecisionRoutes(t *testing.T) {
 			created.MatchKind != "exact" || created.Pattern != "/var" || created.Verdict != "ignore" {
 			t.Fatalf("created = %+v, want the submitted fields echoed back", created)
 		}
+		// created_by names the operator who made the call — the handler's
+		// own fix: items.Service.CreateDecision now takes the acting
+		// principal, the same shape schedules/triggers/maintenance already
+		// use, rather than leaving the column permanently null.
+		if created.CreatedBy != f.operatorID.String() {
+			t.Fatalf("created.created_by = %q, want the operator %q", created.CreatedBy, f.operatorID)
+		}
 
 		resp := requestJSON(t, f.viewerC, http.MethodGet, f.decisionsURL()+"/"+created.ID, nil)
 		if resp.StatusCode != http.StatusOK {
@@ -291,6 +302,9 @@ func TestItemDecisionRoutes(t *testing.T) {
 			t.Fatalf("update = %d %s", resp.StatusCode, mustReadBody(t, resp))
 		}
 		decodeInto(t, resp, &single)
+		if single.Decision.CreatedBy != f.operatorID.String() {
+			t.Fatalf("update changed created_by: got %q, want it preserved as %q", single.Decision.CreatedBy, f.operatorID)
+		}
 		if single.Decision.Verdict != "watch" {
 			t.Fatalf("updated = %+v, want verdict watch", single.Decision)
 		}
@@ -426,6 +440,42 @@ func TestItemDecisionRoutes(t *testing.T) {
 				t.Errorf("%s in an org I am not a member of = %d, want 403", c.method, resp.StatusCode)
 			}
 		}
+
+		// GET /hosts/{id}/items: a host id belonging to a different
+		// organization, requested from an org the caller IS a member of,
+		// answers the uniform 404 (mapChecksErr via deps.Hosts.GetHost) —
+		// the same "invisible, not merely refused" contract every other
+		// host-scoped route in this codebase proves for a foreign host id
+		// (see e.g. TestRuleRoutes' own effective-rules case).
+		otherHostOrg := f.s.SeedOrg("items-other-host", otherOwner)
+		otherHostScoped := db.WithOrgScope(context.Background(), otherHostOrg)
+		otherHostZones, err := f.s.Deps.Hosts.ListZones(otherHostScoped, otherHostOrg)
+		if err != nil || len(otherHostZones) == 0 {
+			t.Fatalf("zones for the foreign-host org: %v", err)
+		}
+		otherHost, err := f.s.Deps.Hosts.CreateHost(otherHostScoped, otherHostOrg, hosts.HostInput{
+			Name: "foreign-host", Address: "10.0.9.98", ZoneID: otherHostZones[0].ID, Managed: true, Monitored: true,
+		})
+		if err != nil {
+			t.Fatalf("create foreign host: %v", err)
+		}
+		if resp := requestJSON(t, f.operatorC, http.MethodGet, f.hostURL(otherHost.ID)+"/items", nil); resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("host items for a foreign host id in my own org = %d, want 404 %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+
+		// GET /items: not merely refused to a non-member (role matrix
+		// already proves that) but genuinely blind to another
+		// organization's items — an item discovered in "items-other-host"
+		// must never appear in my own organization's listing, even one
+		// that shares an item name with something of mine.
+		f.discover(t, f.web, "disk", "/cross-org-canary")
+		foreignItems := itemsFixture{s: f.s, orgID: otherHostOrg, orgSlug: "items-other-host"}
+		foreignItems.discover(t, otherHost.ID, "disk", "/cross-org-canary")
+		for _, it := range f.orgItems(t, f.viewerC, "") {
+			if it.HostID == otherHost.ID.String() {
+				t.Fatalf("GET /items leaked a foreign organization's item: %+v", it)
+			}
+		}
 	})
 
 	// Create, update and delete each leave one attributable entry in the
@@ -530,7 +580,9 @@ func TestHostAndOrgItemsReportDiscoveredItems(t *testing.T) {
 		if len(list) != 2 {
 			t.Fatalf("web items = %+v, want 2", list)
 		}
+		names := map[string]bool{}
 		for _, it := range list {
+			names[it.Item] = true
 			if it.CheckKey != "disk" || it.FirstSeen.IsZero() {
 				t.Fatalf("item = %+v, want check_key disk and a first_seen", it)
 			}
@@ -547,13 +599,14 @@ func TestHostAndOrgItemsReportDiscoveredItems(t *testing.T) {
 				t.Fatalf("item = %+v, want no host_id on the per-host route", it)
 			}
 		}
-
-		// Cross-host isolation: db-1's own single item must not leak into
-		// web's listing.
-		for _, it := range list {
-			if it.Item == "/var" && it.CheckKey == "disk" {
-				continue
-			}
+		// Cross-host isolation: db-1 discovered its own "/var" too (on
+		// purpose — the next subtest's glob filter relies on two hosts
+		// sharing a name), so the isolation proof is not "db-1's item is
+		// absent by name" but "web's own two names, exactly, and nothing
+		// else" — a leak would either add a third name or change this set,
+		// and len(list) == 2 above already rules out a leaked extra row.
+		if !names["/var"] || !names["/tmp"] || len(names) != 2 {
+			t.Fatalf("web item names = %v, want exactly {/var, /tmp}", names)
 		}
 	})
 

@@ -15,6 +15,14 @@ import (
 	"github.com/noixdev/pulsix/internal/items"
 )
 
+// testActor stands in for the authenticated principal every CreateDecision
+// call in this file passes. TestCreateDecisionValid is the one test that
+// asserts on it directly (CreatedBy == testActor); TestUpdateDecisionValid
+// seeds its own, different fixed CreatedBy directly on the stored row
+// instead, to pin the separate claim that Update preserves whatever was
+// already there rather than re-stamping Update's own caller.
+var testActor = uuid.Must(uuid.NewV7())
+
 // fakeStore is an in-memory items.Store: no database, so the whole
 // validation table and the preview tests run without Docker. It keeps
 // items and decisions in separate maps, the same split the real Store's
@@ -263,7 +271,7 @@ func TestCreateDecisionValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := items.NewService(newFakeStore(), fakeCatalogue)
-			_, err := svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), tt.in)
+			_, err := svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), testActor, tt.in)
 			if !errors.Is(err, items.ErrInvalidInput) {
 				t.Fatalf("CreateDecision(%+v) error = %v, want ErrInvalidInput", tt.in, err)
 			}
@@ -286,12 +294,12 @@ func TestCreateDecisionCheckKeyComesFromInjectedCatalogue(t *testing.T) {
 	withService := items.NewService(newFakeStore(), func() map[string]struct{} {
 		return map[string]struct{}{"service": {}}
 	})
-	if _, err := withService.CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
+	if _, err := withService.CreateDecision(ctx, uuid.Must(uuid.NewV7()), testActor, in); err != nil {
 		t.Fatalf("CreateDecision() error = %v, want nil: the injected catalogue knows %q", err, in.CheckKey)
 	}
 
 	withoutService := items.NewService(newFakeStore(), fakeCatalogue)
-	if _, err := withoutService.CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, items.ErrInvalidInput) {
+	if _, err := withoutService.CreateDecision(ctx, uuid.Must(uuid.NewV7()), testActor, in); !errors.Is(err, items.ErrInvalidInput) {
 		t.Fatalf("CreateDecision() error = %v, want ErrInvalidInput: fakeCatalogue does not know %q", err, in.CheckKey)
 	}
 }
@@ -306,7 +314,7 @@ func TestCreateDecisionValid(t *testing.T) {
 	in := validInput()
 	in.Scope, in.HostID = items.ScopeHost, &host
 
-	got, err := svc.CreateDecision(ctx, org, in)
+	got, err := svc.CreateDecision(ctx, org, testActor, in)
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v, want nil", err)
 	}
@@ -321,6 +329,9 @@ func TestCreateDecisionValid(t *testing.T) {
 	}
 	if !got.CreatedAt.Equal(now) || !got.UpdatedAt.Equal(now) {
 		t.Fatalf("CreateDecision() timestamps = %v/%v, want both %v", got.CreatedAt, got.UpdatedAt, now)
+	}
+	if got.CreatedBy == nil || *got.CreatedBy != testActor {
+		t.Fatalf("CreateDecision() CreatedBy = %v, want %v", got.CreatedBy, testActor)
 	}
 
 	stored, err := store.GetDecision(ctx, org, got.ID)
@@ -340,7 +351,7 @@ func TestCreateDecisionAcceptsNoteAtExactlyTheBoundary(t *testing.T) {
 	in := validInput()
 	in.Note = strings.Repeat("a", 500)
 
-	if _, err := items.NewService(newFakeStore(), fakeCatalogue).CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
+	if _, err := items.NewService(newFakeStore(), fakeCatalogue).CreateDecision(ctx, uuid.Must(uuid.NewV7()), testActor, in); err != nil {
 		t.Fatalf("CreateDecision() error = %v, want nil for a 500-rune note", err)
 	}
 }
@@ -351,7 +362,7 @@ func TestUpdateDecisionCrossOrgIsNotFound(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue)
 
-	created, err := svc.CreateDecision(ctx, orgA, validInput())
+	created, err := svc.CreateDecision(ctx, orgA, testActor, validInput())
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
@@ -367,7 +378,7 @@ func TestGetDecisionCrossOrgIsNotFound(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue)
 
-	created, err := svc.CreateDecision(ctx, orgA, validInput())
+	created, err := svc.CreateDecision(ctx, orgA, testActor, validInput())
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
@@ -383,7 +394,7 @@ func TestDeleteDecisionCrossOrgIsNotFound(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue)
 
-	created, err := svc.CreateDecision(ctx, orgA, validInput())
+	created, err := svc.CreateDecision(ctx, orgA, testActor, validInput())
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
@@ -404,7 +415,7 @@ func TestUpdateDecisionValid(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue, fixedClock(created))
 
-	d, err := svc.CreateDecision(ctx, org, validInput())
+	d, err := svc.CreateDecision(ctx, org, testActor, validInput())
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
@@ -449,7 +460,7 @@ func TestCreateDecisionStoreError(t *testing.T) {
 	store.forceCreateErr = wantErr
 	svc := items.NewService(store, fakeCatalogue)
 
-	if _, err := svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), validInput()); !errors.Is(err, wantErr) {
+	if _, err := svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), testActor, validInput()); !errors.Is(err, wantErr) {
 		t.Fatalf("CreateDecision() error = %v, want %v", err, wantErr)
 	}
 }
@@ -462,7 +473,7 @@ func TestUpdateDecisionStoreError(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue)
 
-	d, err := svc.CreateDecision(ctx, org, validInput())
+	d, err := svc.CreateDecision(ctx, org, testActor, validInput())
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
@@ -504,7 +515,7 @@ func TestCreateDecisionPanicsWhenEntropyFails(t *testing.T) {
 			t.Fatal("expected a panic when the entropy source fails")
 		}
 	}()
-	_, _ = svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), validInput())
+	_, _ = svc.CreateDecision(ctx, uuid.Must(uuid.NewV7()), testActor, validInput())
 }
 
 func TestUpdateDecisionValidationReusesCreateRules(t *testing.T) {
@@ -512,7 +523,7 @@ func TestUpdateDecisionValidationReusesCreateRules(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue)
 
-	created, err := svc.CreateDecision(ctx, org, validInput())
+	created, err := svc.CreateDecision(ctx, org, testActor, validInput())
 	if err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
@@ -530,10 +541,10 @@ func TestListDecisionsScopedToOrg(t *testing.T) {
 	store := newFakeStore()
 	svc := items.NewService(store, fakeCatalogue)
 
-	if _, err := svc.CreateDecision(ctx, orgA, validInput()); err != nil {
+	if _, err := svc.CreateDecision(ctx, orgA, testActor, validInput()); err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
-	if _, err := svc.CreateDecision(ctx, orgB, validInput()); err != nil {
+	if _, err := svc.CreateDecision(ctx, orgB, testActor, validInput()); err != nil {
 		t.Fatalf("CreateDecision() error = %v", err)
 	}
 
