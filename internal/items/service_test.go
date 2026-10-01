@@ -300,6 +300,19 @@ func TestCreateDecisionValid(t *testing.T) {
 	}
 }
 
+// TestCreateDecisionAcceptsNoteAtExactlyTheBoundary pins the valid side of
+// the 500-rune note boundary: TestCreateDecisionValidation's "note too
+// long" case already pins 501 failing, but nothing before this asserted
+// that exactly 500 still succeeds.
+func TestCreateDecisionAcceptsNoteAtExactlyTheBoundary(t *testing.T) {
+	in := validInput()
+	in.Note = strings.Repeat("a", 500)
+
+	if _, err := items.NewService(newFakeStore()).CreateDecision(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
+		t.Fatalf("CreateDecision() error = %v, want nil for a 500-rune note", err)
+	}
+}
+
 func TestUpdateDecisionCrossOrgIsNotFound(t *testing.T) {
 	orgA := uuid.Must(uuid.NewV7())
 	orgB := uuid.Must(uuid.NewV7())
@@ -598,6 +611,40 @@ func TestPreviewCapsMatchesButReportsTrueTotal(t *testing.T) {
 	}
 }
 
+// TestPreviewAtExactlyLimitIsNotCapped pins the boundary review focus 1's
+// capped case does not: a buggy `Capped := len(Matches) == PreviewLimit`
+// would pass the over-the-limit test above (which seeds PreviewLimit+37
+// items) but wrongly report Capped at exactly PreviewLimit matches, where
+// nothing was actually left out.
+func TestPreviewAtExactlyLimitIsNotCapped(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	names := make([]string, items.PreviewLimit)
+	for i := range names {
+		names[i] = fmt.Sprintf("item-%d", i)
+	}
+	store.seedItems(org, host, "disk", names)
+	svc := items.NewService(store)
+
+	in := validInput()
+	in.Pattern = "*"
+
+	got, err := svc.Preview(ctx, org, in)
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if got.Total != items.PreviewLimit {
+		t.Fatalf("Preview() Total = %d, want %d", got.Total, items.PreviewLimit)
+	}
+	if got.Capped {
+		t.Fatal("Preview() Capped = true at exactly PreviewLimit matches, want false")
+	}
+	if len(got.Matches) != items.PreviewLimit {
+		t.Fatalf("Preview() len(Matches) = %d, want %d", len(got.Matches), items.PreviewLimit)
+	}
+}
+
 // TestPreviewHostScopeOnlyLooksAtThatHost pins the controller's decision
 // that a host-scoped input previews against that host's items, not the
 // whole organization's — a second host's matching item must never appear.
@@ -652,6 +699,10 @@ func TestPreviewWritesNothing(t *testing.T) {
 	}
 }
 
+// TestPreviewValidatesInput proves Preview still refuses an input broken
+// on a field that decides what it matches (CheckKey here; scope, host id,
+// match kind and pattern are exercised by TestCreateDecisionValidation's
+// own table, which Preview's validateMatch path shares verbatim).
 func TestPreviewValidatesInput(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	svc := items.NewService(newFakeStore())
@@ -660,6 +711,33 @@ func TestPreviewValidatesInput(t *testing.T) {
 	in.CheckKey = "nonsense"
 	if _, err := svc.Preview(ctx, org, in); !errors.Is(err, items.ErrInvalidInput) {
 		t.Fatalf("Preview() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+// TestPreviewIgnoresVerdictAndNoteValidation is the ruling this fix
+// implements: Preview answers what a pattern matches, which Verdict and
+// Note cannot change, so an unset verdict and a too-long note — both
+// unremarkable while an operator is still shaping the pattern in a GUI —
+// must not turn a preview into ErrInvalidInput. CreateDecision still
+// refuses both (TestCreateDecisionValidation's "note too long" and
+// "unknown verdict" cases).
+func TestPreviewIgnoresVerdictAndNoteValidation(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	store.seedItems(org, host, "disk", []string{"/var/log"}) // validInput's pattern is "/var/*"
+	svc := items.NewService(store)
+
+	in := validInput()
+	in.Verdict = ""                    // unset: the GUI's state before a radio is picked
+	in.Note = strings.Repeat("a", 501) // over buildDecision's 500-rune bound
+
+	got, err := svc.Preview(ctx, org, in)
+	if err != nil {
+		t.Fatalf("Preview() error = %v, want nil: Verdict/Note must not be validated here", err)
+	}
+	if got.Total != 1 {
+		t.Fatalf("Preview() Total = %d, want 1", got.Total)
 	}
 }
 

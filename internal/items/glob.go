@@ -1,11 +1,21 @@
-// Package items implements the pure half of "discovery and item decisions"
-// (v0.3b-3 design, "Resolving a decision" and "Decisions"): a small,
-// dependency-free glob over item names, and Decide, the strict total order
-// that picks which decision — if any — governs one (host, check_key, item).
+// Package items implements discovery and item decisions (v0.3b-3 design,
+// "Resolving a decision" and "Decisions"): a small glob over item names,
+// Decide, the strict total order that picks which decision — if any —
+// governs one (host, check_key, item), and the Service that validates and
+// previews decisions before they are stored.
+//
 // internal/rules must not import internal/checks, and evaluation needs the
 // ignore decision; a leaf package both of them may depend on resolves that
 // tension without a third adapter layer between the two. items therefore
-// imports neither.
+// does not import internal/checks, and must not ever. It does import
+// internal/rules — deliberately, for the one thing Service.go needs from
+// it, the catalogue of check keys a decision's check_key may name — which
+// is safe only because the dependency runs one way: internal/rules does
+// not import internal/items (`go list -deps ./internal/rules/...` carries
+// no path back here). The cycle to watch for, before adding any further
+// import to this package, is exactly that one reversed: anything that
+// would make internal/rules (or something it depends on) import
+// internal/items.
 package items
 
 import (

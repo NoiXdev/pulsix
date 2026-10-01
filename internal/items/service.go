@@ -109,12 +109,13 @@ func validCheckKeys() map[string]struct{} {
 	return keys
 }
 
-// buildDecision validates in into a fully populated Decision — everything
-// except ID, OrgID, CreatedBy and the timestamps, which CreateDecision and
-// UpdateDecision each set their own way. CreateDecision and UpdateDecision
-// both call this, so the two can never disagree about what a valid
-// decision is.
-func buildDecision(in DecisionInput) (Decision, error) {
+// validateMatch validates exactly the fields that decide which items a
+// decision governs — Scope, HostID, CheckKey, MatchKind and Pattern — and
+// returns a Decision with only those fields set. It is split out of
+// buildDecision so Preview can call it directly: Preview answers "what
+// would this pattern match", and Verdict or Note cannot change that
+// answer, so neither belongs in the validation a preview runs.
+func validateMatch(in DecisionInput) (Decision, error) {
 	switch in.Scope {
 	case ScopeOrg:
 		if in.HostID != nil {
@@ -151,6 +152,26 @@ func buildDecision(in DecisionInput) (Decision, error) {
 		return Decision{}, err
 	}
 
+	return Decision{
+		Scope: in.Scope, HostID: in.HostID, CheckKey: in.CheckKey,
+		MatchKind: in.MatchKind, Pattern: in.Pattern,
+	}, nil
+}
+
+// buildDecision validates in into a fully populated Decision — everything
+// except ID, OrgID, CreatedBy and the timestamps, which CreateDecision and
+// UpdateDecision each set their own way. It runs validateMatch first, so
+// Create, Update and Preview can never disagree about what a valid scope,
+// check key, match kind or pattern is, then validates the two fields a
+// preview has no use for: Note and Verdict. CreateDecision and
+// UpdateDecision both call this, so the two can never disagree about what
+// a valid decision is, either.
+func buildDecision(in DecisionInput) (Decision, error) {
+	d, err := validateMatch(in)
+	if err != nil {
+		return Decision{}, err
+	}
+
 	if n := utf8.RuneCountInString(in.Note); n > maxNoteRunes {
 		return Decision{}, invalidf("note must be at most %d characters, got %d", maxNoteRunes, n)
 	}
@@ -161,10 +182,8 @@ func buildDecision(in DecisionInput) (Decision, error) {
 		return Decision{}, invalidf("verdict must be %q or %q", Ignore, Watch)
 	}
 
-	return Decision{
-		Scope: in.Scope, HostID: in.HostID, CheckKey: in.CheckKey,
-		MatchKind: in.MatchKind, Pattern: in.Pattern, Verdict: in.Verdict, Note: in.Note,
-	}, nil
+	d.Verdict, d.Note = in.Verdict, in.Note
+	return d, nil
 }
 
 // CreateDecision validates in and stores a new decision bound to orgID.
@@ -230,8 +249,16 @@ func (s *Service) ListDecisions(ctx context.Context, orgID uuid.UUID) ([]Decisio
 // at PreviewLimit, but Total counts every matching item, not len(Matches).
 // A pattern that would catch the whole fleet must say so, even though the
 // service only ever builds a PreviewLimit-long list in memory to say it.
+//
+// Preview validates only the fields it reads — Scope, HostID, CheckKey,
+// MatchKind and Pattern — not Verdict or Note: neither can change what a
+// pattern matches, so an unset verdict or an over-long note, both
+// unremarkable while an operator is still shaping the pattern, must not
+// turn a count into an error. A previewed input that passes here can
+// still be rejected by CreateDecision/UpdateDecision for Verdict or Note;
+// a caller already has to let a pattern be previewed and then abandoned.
 func (s *Service) Preview(ctx context.Context, orgID uuid.UUID, in DecisionInput) (Preview, error) {
-	d, err := buildDecision(in)
+	d, err := validateMatch(in) // not buildDecision — see this function's own doc comment
 	if err != nil {
 		return Preview{}, err
 	}
