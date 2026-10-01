@@ -37,6 +37,35 @@ func TestWorse(t *testing.T) {
 	}
 }
 
+// TestStateRank pins the exported ordering Worse itself is built on and
+// that internal/api's fleet listing now sorts by directly (backlog 3.31):
+// every pair of states, both directions, against the single worst-to-best
+// order the design specifies — the same full-table treatment TestWorse
+// above gives Worse, so the exported surface is pinned at least as well as
+// the function it replaces a duplicate of.
+func TestStateRank(t *testing.T) {
+	// worst-to-best, per the design's own ordering.
+	order := []rules.State{rules.StateCrit, rules.StateWarn, rules.StateUnknown, rules.StateOK}
+	for i, a := range order {
+		for j, b := range order {
+			switch {
+			case i == j:
+				if rules.StateRank(a) != rules.StateRank(b) {
+					t.Errorf("StateRank(%s) != StateRank(%s), want equal (same state)", a, b)
+				}
+			case i < j:
+				if rules.StateRank(a) <= rules.StateRank(b) {
+					t.Errorf("StateRank(%s) <= StateRank(%s), want %s to outrank %s", a, b, a, b)
+				}
+			default:
+				if rules.StateRank(a) >= rules.StateRank(b) {
+					t.Errorf("StateRank(%s) >= StateRank(%s), want %s to outrank %s", a, b, b, a)
+				}
+			}
+		}
+	}
+}
+
 // seedZonedHost is seedHost (store_sql_test.go) plus the zone id, which
 // FleetFilter.ZoneID needs and seedHost itself discards.
 func seedZonedHost(t *testing.T, d *db.DB, org uuid.UUID, name string) (zoneID, hostID uuid.UUID) {

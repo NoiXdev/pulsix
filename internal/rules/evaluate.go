@@ -307,7 +307,7 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	// way of. The rule consulted is the effective one at the state's own
 	// severity, so a rule deleted while it held a crit leaves nothing
 	// behind to hold it (review focus 7).
-	if isAlerting(prev.State) && stateRank(target) < stateRank(prev.State) {
+	if isAlerting(prev.State) && StateRank(target) < StateRank(prev.State) {
 		if holder, ok := bySeverity[severityOf(prev.State)]; ok && holder.Clear.Kind != "" && !Match(holder.Clear, in) {
 			target, decider, decided = prev.State, holder, true
 		}
@@ -317,7 +317,7 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	// continuously for the rule's duration before it becomes the state; an
 	// improvement takes effect at once, because a host that is healthy
 	// again must not stay red for another ten minutes.
-	if stateRank(target) <= stateRank(prev.State) {
+	if StateRank(target) <= StateRank(prev.State) {
 		next.State = target
 		next.RuleID = ruleIDOf(decider, decided)
 		return next, nil

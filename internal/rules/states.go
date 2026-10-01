@@ -24,11 +24,17 @@ const (
 	StateUnknown State = "unknown"
 )
 
-// stateRank orders State for Worse: a higher number always outranks a
-// lower one. unknown ranks below warn deliberately (the design's own
-// wording): a known problem is more urgent than an unknown one, so one
-// expired mount cannot mask a real crit elsewhere on the same host.
-func stateRank(s State) int {
+// StateRank orders State for Worse and for any caller outside this package
+// that needs the same ordering to sort by (internal/api's fleet listing,
+// worst-first): a higher number always outranks a lower one. unknown ranks
+// below warn deliberately (the design's own wording): a known problem is
+// more urgent than an unknown one, so one expired mount cannot mask a real
+// crit elsewhere on the same host.
+//
+// Exported rather than restated: before this, internal/api's own
+// fleetStateRank re-declared this exact order with no compiler link
+// between the two — a change here could silently leave that copy behind.
+func StateRank(s State) int {
 	switch s {
 	case StateCrit:
 		return 3
@@ -44,7 +50,7 @@ func stateRank(s State) int {
 // Worse orders states for the roll-up: crit > warn > unknown > ok. A known
 // problem outranks an unknown one, so one expired mount cannot mask a crit.
 func Worse(a, b State) State {
-	if stateRank(a) >= stateRank(b) {
+	if StateRank(a) >= StateRank(b) {
 		return a
 	}
 	return b

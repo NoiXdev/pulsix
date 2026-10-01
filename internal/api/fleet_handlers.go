@@ -116,24 +116,18 @@ func toFleetHostDTO(h hosts.Host, st rules.HostState, hasState bool) fleetHostDT
 }
 
 // fleetStateRank orders the listing worst-first: a known problem before an
-// unknown one (rules.Worse's own crit > warn > unknown > ok ordering), and
-// a host that was never evaluated last of all — "no data" is neither a
-// problem to lead with nor a clean bill of health to bury real problems
-// under, so it trails every judged state, good or bad.
+// unknown one (rules.StateRank's own crit > warn > unknown > ok ordering,
+// the single definition of that order — this package no longer restates
+// it), and a host that was never evaluated last of all — "no data" is
+// neither a problem to lead with nor a clean bill of health to bury real
+// problems under, so it trails every judged state, good or bad.
 func fleetStateRank(state *string) int {
 	if state == nil {
 		return 4
 	}
-	switch rules.State(*state) {
-	case rules.StateCrit:
-		return 0
-	case rules.StateWarn:
-		return 1
-	case rules.StateUnknown:
-		return 2
-	default: // rules.StateOK
-		return 3
-	}
+	// rules.StateRank is ascending severity (ok=0 .. crit=3); the fleet
+	// listing sorts worst-first, so this rank is its complement.
+	return 3 - rules.StateRank(rules.State(*state))
 }
 
 // validateFleetTag enforces FleetFilter.Tag's own contract: a single "key"
