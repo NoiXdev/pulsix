@@ -403,13 +403,31 @@ function ValueRow({
           controlled one like the Rules panel above: there is no fetch
           behind it and nothing else on the card needs to close it when
           this one opens, so the state EffectiveRulesPanel's own shadowed-
-          rules list already uses for the same shape is simpler here. */}
-      {decidedBy && (
+          rules list already uses for the same shape is simpler here.
+          Rendered even when `decidedBy` itself is unknown, as long as the
+          tuple IS ignored: a decision made through the org-wide Items tab
+          can start matching a value before this host's own discovery row
+          exists for it (GET /hosts/{id}/items and GET /hosts/{id}/checks
+          are two independently-timed reads — item discovery runs on the
+          evaluation ticker, not on every checks poll), and a bare,
+          unexplained "ignored" with no affordance to even ask why is
+          exactly the confusion ruling 2 exists to prevent. The placeholder
+          says plainly that the origin is not known yet — guessing a scope
+          nobody told this card would be worse than saying nothing. */}
+      {value.item !== '' && (decidedBy || value.ignored) && (
         <details className="text-[11px] text-muted-foreground">
-          <summary className="cursor-pointer">{decidedBy.decision === 'ignore' ? 'Why ignored' : 'Why watched'}</summary>
+          <summary className="cursor-pointer">
+            {decidedBy ? (decidedBy.decision === 'ignore' ? 'Why ignored' : 'Why watched') : 'Why ignored'}
+          </summary>
           <p className="mt-1">
-            {decisionOriginLabel(decidedBy)}
-            {decidedBy.note && ` — ${decidedBy.note}`}
+            {decidedBy ? (
+              <>
+                {decisionOriginLabel(decidedBy)}
+                {decidedBy.note && ` — ${decidedBy.note}`}
+              </>
+            ) : (
+              'Origin not yet known — this host has not reported discovering this item yet.'
+            )}
           </p>
         </details>
       )}
