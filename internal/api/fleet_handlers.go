@@ -130,6 +130,30 @@ func fleetStateRank(state *string) int {
 	return 3 - rules.StateRank(rules.State(*state))
 }
 
+// sortFleetHosts orders hosts worst-first by fleetStateRank and, within a
+// tied rank, alphabetically by name — an explicit secondary key, not a
+// reliance on sort.SliceStable merely preserving whatever order the roster
+// happened to arrive in. Host names are unique within an organization
+// (00010_hosts.sql's own (org_id, name) constraint), so (rank, name) is a
+// strict total order and sort.Slice needs no stability to get it right.
+//
+// Before this, the sort compared only rank, and relied entirely on
+// QueryHosts already returning the roster name-ordered (store_sql.go) for
+// same-state hosts to land alphabetically — which is also why nothing ever
+// caught a regression here: QueryHosts always holds that precondition in
+// production, so sort.Slice and sort.SliceStable (and a comparator that
+// forgot the name entirely) all produced the same answer on every input
+// any test fed them. Backlog 3.34.
+func sortFleetHosts(hosts []fleetHostDTO) {
+	sort.Slice(hosts, func(i, j int) bool {
+		ri, rj := fleetStateRank(hosts[i].State), fleetStateRank(hosts[j].State)
+		if ri != rj {
+			return ri < rj
+		}
+		return hosts[i].Name < hosts[j].Name
+	})
+}
+
 // validateFleetTag enforces FleetFilter.Tag's own contract: a single "key"
 // or "key=value" token, equality or existence only. raw == "" (no filter)
 // always passes.
@@ -326,9 +350,7 @@ func registerFleetRoutes(hapi huma.API, deps Deps) {
 				totals.OK++
 			}
 		}
-		sort.SliceStable(out.Body.Hosts, func(i, j int) bool {
-			return fleetStateRank(out.Body.Hosts[i].State) < fleetStateRank(out.Body.Hosts[j].State)
-		})
+		sortFleetHosts(out.Body.Hosts)
 		out.Body.Totals = totals
 		return out, nil
 	})
