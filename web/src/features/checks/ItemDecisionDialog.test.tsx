@@ -270,6 +270,26 @@ describe('ItemDecisionDialog', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
+  // items.ValidPattern counts BYTES; the field's maxLength counts UTF-16
+  // code units. 512 multibyte characters pass the browser and are refused
+  // by the server, so the dialog measures the pattern the way the server
+  // will and says so before the round trip.
+  it('refuses a pattern that is within the field\'s character cap but over the server\'s byte bound', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /api/v1/orgs/acme/item-decisions/preview': () => ({ matches: [], total: 0, capped: false }),
+    });
+    renderDialog();
+
+    // 300 three-byte characters: 300 UTF-16 code units (well under
+    // maxLength=512) but 900 UTF-8 bytes.
+    await user.click(screen.getByLabelText('Pattern'));
+    await user.paste('あ'.repeat(300));
+
+    expect(await screen.findByText(/900 bytes long; the limit is 512/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
   it('gives the note field room rather than a tucked-away corner', () => {
     renderDialog();
     const note = screen.getByLabelText('Note') as HTMLTextAreaElement;

@@ -21,6 +21,22 @@ const TEXTAREA =
  * own. */
 const PREVIEW_DEBOUNCE_MS = 300;
 
+/** The server's own bound on a pattern (items.MaxPatternLen), in BYTES —
+ * which is what items.ValidPattern counts. The field's `maxLength` counts
+ * UTF-16 code units instead, and a code unit is one to three UTF-8 bytes
+ * (four, as a surrogate pair), so 512 characters of multibyte item names
+ * sail past the browser's cap and come back 422 from the server. Keeping
+ * maxLength as well is still worth it — it is a coarse cap that can never
+ * block a pattern the server would accept, since UTF-8 bytes are never
+ * fewer than UTF-16 units — but patternBytes below is the bound that
+ * actually agrees with the server's. */
+const PATTERN_MAX_BYTES = 512;
+
+/** utf8Length counts p as the server counts it: UTF-8 bytes. */
+function utf8Length(p: string): number {
+  return new TextEncoder().encode(p).length;
+}
+
 /** confirmBroadMatch is the second, explicit confirmation a pattern
  * matching more than the preview can show in full has to pass before it
  * is saved — the same spirit as RuleDialog's one-way mode-switch warning.
@@ -141,6 +157,9 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   // "Watch" underneath it — showing the stored value truthfully and
   // refusing to save beats showing one thing and submitting another.
   const orgWatchMismatch = scope === 'org' && verdict === 'watch';
+  // Measured on the trimmed pattern, because that is exactly what body()
+  // below submits and therefore what the server will measure.
+  const patternTooLong = utf8Length(pattern.trim()) > PATTERN_MAX_BYTES;
 
   function body(): ItemDecisionInput {
     return {
@@ -161,7 +180,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
     // disabled> does not fire a click, but this guard keeps the decision
     // in one place rather than trusting every path to the form down to
     // the DOM's own submit semantics.
-    if (previewStale || orgWatchMismatch) return;
+    if (previewStale || orgWatchMismatch || patternTooLong) return;
     if (preview.data?.capped && !confirm(confirmBroadMatch(preview.data.total))) return;
     try {
       if (editing) await update.mutateAsync(body());
@@ -173,7 +192,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   }
 
   const title = editing ? `Edit decision for ${decision.pattern}` : 'New item decision';
-  const saveDisabled = create.isPending || update.isPending || previewStale || orgWatchMismatch;
+  const saveDisabled = create.isPending || update.isPending || previewStale || orgWatchMismatch || patternTooLong;
 
   return (
     <Dialog open onClose={onClose} title={title} size="wide">
@@ -227,12 +246,18 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
           <Input
             id="decision-pattern"
             required
-            maxLength={512}
+            maxLength={PATTERN_MAX_BYTES}
             className="font-mono"
             placeholder={matchKind === 'glob' ? '/var/*, backup-*' : '/var, sshd'}
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
           />
+          {patternTooLong && (
+            <p role="alert" className="text-xs text-[var(--px-crit)]">
+              This pattern is {utf8Length(pattern.trim())} bytes long; the limit is {PATTERN_MAX_BYTES}. Item names outside the ASCII
+              range cost more than one byte each, so a pattern can pass the field&apos;s own character count and still be too long.
+            </p>
+          )}
         </div>
         <PatternPreview body={debouncedBody} query={preview} />
         <div className="flex flex-col gap-1">
