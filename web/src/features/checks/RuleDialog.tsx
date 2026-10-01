@@ -5,6 +5,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useCheckRule, useCreateRule, useUpdateRule } from '../../api/hooks/useRules.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
+import { useHostItems } from '../../api/hooks/useItems.ts';
 import { RuleForm } from './RuleForm.tsx';
 import { RuleExpression } from './RuleExpression.tsx';
 import type { MonitoringGroup, Rule, RuleFormValue, RuleInput, RuleMetric, RuleScope } from '../../api/types.ts';
@@ -290,10 +291,13 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
         )}
         {(scope === 'host' || scope === 'item') && <RuleHostPicker org={org} value={hostId} onChange={setHostId} />}
         {scope === 'item' && (
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-item">Item</Label>
-            <Input id="rule-item" required placeholder="/var, sshd, …" value={item} onChange={(e) => setItem(e.target.value)} />
-          </div>
+          <RuleItemPicker
+            org={org}
+            hostId={hostId}
+            checkKey={metrics.find((m) => m.name === metric)?.check_key}
+            value={item}
+            onChange={setItem}
+          />
         )}
         {mode === 'form' ? (
           <RuleForm
@@ -393,6 +397,59 @@ function RuleHostPicker({ org, value, onChange }: { org: string; value: string; 
           Could not load monitored hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
         </span>
       )}
+    </div>
+  );
+}
+
+/**
+ * RuleItemPicker names the item an item-scoped rule targets: a `<datalist>`
+ * over the chosen host's discovered items (GET /hosts/{id}/items), with
+ * the field underneath it a plain text input throughout (v0.3b-3 spec,
+ * "the rule editor's item field becomes a picker ... with free text still
+ * accepted"). A rule may name an item that has not appeared yet — the
+ * same decoupling ItemDecisionDialog's own pattern field has from the
+ * items it matches — so this never becomes a closed `<select>`: a
+ * `<datalist>` suggests without restricting what can be typed or
+ * submitted.
+ *
+ * `checkKey` narrows the suggestions to the check the rule's own metric
+ * belongs to (RuleMetric's own check_key) — a mount and a unit are never
+ * the same kind of item, and listing every item this host has ever
+ * reported, regardless of check, would suggest ones the rule's metric
+ * could not possibly apply to.
+ */
+function RuleItemPicker({
+  org,
+  hostId,
+  checkKey,
+  value,
+  onChange,
+}: {
+  org: string;
+  hostId: string;
+  checkKey: string | undefined;
+  value: string;
+  onChange: (item: string) => void;
+}) {
+  const items = useHostItems(org, hostId, hostId !== '');
+  const options = [...new Set((items.data?.items ?? []).filter((it) => it.check_key === checkKey).map((it) => it.item))].sort();
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor="rule-item">Item</Label>
+      <Input
+        id="rule-item"
+        required
+        list="rule-item-options"
+        placeholder="/var, sshd, …"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <datalist id="rule-item-options">
+        {options.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
     </div>
   );
 }

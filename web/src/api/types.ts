@@ -84,6 +84,13 @@ export type ItemDecisionVerdict = ItemDecision['decision'];
 // why decision and note play no part in it.
 export type ItemDecisionPreviewInput = Omit<ItemDecisionInput, 'decision' | 'note'>;
 
+// Item is GET /hosts/{id}/items' and GET /items' own row: a discovered
+// (check_key, item) pair, its effective verdict, and — when one matched —
+// the decision that produced it. `decided_by` is set for both an ignore
+// AND an overruling watch (review focus 3: "an organization pattern and a
+// host watch on the same item"), never only for the ignored case.
+export type Item = components['schemas']['ItemDTO'];
+
 export type CalendarEntry = components['schemas']['CalendarEntryDTO'];
 export type CalendarWindow = components['schemas']['CalendarWindowDTO'];
 

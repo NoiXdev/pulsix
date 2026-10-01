@@ -251,6 +251,43 @@ describe('RuleDialog', () => {
     );
   });
 
+  // v0.3b-3 spec: "The rule editor's item field becomes a picker over the
+  // selected host's discovered items, with free text still accepted — a
+  // rule may name an item that has not appeared yet, the same decoupling
+  // the decisions have."
+  it('offers the selected host’s discovered items as a picker, and still accepts a value that has not appeared yet', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h1', name: 'web-1' }], next_cursor: '' },
+      'GET /api/v1/orgs/acme/hosts/h1/items': {
+        items: [
+          { check_key: 'cpu', item: 'core0', first_seen: '', reported: true, decision: 'watch' },
+          { check_key: 'cpu', item: 'core1', first_seen: '', reported: true, decision: 'watch' },
+          // A different check's item must not pollute this picker's list —
+          // the rule's own metric already fixes which check it belongs to.
+          { check_key: 'memory', item: 'swap', first_seen: '', reported: true, decision: 'watch' },
+        ],
+      },
+    });
+    renderDialog();
+
+    await user.selectOptions(screen.getByLabelText('Applies to'), 'item');
+    await user.selectOptions(await screen.findByLabelText('Host'), 'h1');
+
+    const itemInput = (await screen.findByLabelText('Item')) as HTMLInputElement;
+    const listId = itemInput.getAttribute('list');
+    expect(listId).toBeTruthy();
+    await waitFor(() => expect(document.querySelectorAll(`#${listId} option`).length).toBeGreaterThan(0));
+    const options = [...document.querySelectorAll(`#${listId} option`)].map((o) => o.getAttribute('value'));
+    expect(options).toEqual(expect.arrayContaining(['core0', 'core1']));
+    expect(options).not.toContain('swap');
+
+    // The picker is a suggestion, not a cage: a value nothing has reported
+    // yet is still a valid thing to type and submit.
+    await user.type(itemInput, '/not-yet-seen');
+    expect(itemInput).toHaveValue('/not-yet-seen');
+  });
+
   it("shows the server's own refusal of a failed save, not a generic message", async () => {
     const user = userEvent.setup();
     mockApi({

@@ -75,6 +75,7 @@ describe('HostChecksCard when a mounted chart throws', () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
@@ -104,6 +105,7 @@ describe('HostChecksCard when a mounted chart throws', () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },

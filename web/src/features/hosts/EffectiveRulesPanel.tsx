@@ -1,7 +1,8 @@
 import { Card } from '../../ui/table.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
 import { useHostEffectiveRules, useMonitoringGroups } from '../../api/hooks/useChecks.ts';
-import type { EffectiveRule, MonitoringGroup, Rule } from '../../api/types.ts';
+import { useHostItems } from '../../api/hooks/useItems.ts';
+import type { EffectiveRule, Item, MonitoringGroup, Rule } from '../../api/types.ts';
 
 export interface EffectiveRulesPanelProps {
   org: string;
@@ -37,8 +38,14 @@ export interface EffectiveRulesPanelProps {
 export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPanelProps) {
   const query = useHostEffectiveRules(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
+  // v0.3b-3: this host's discovered items, looked up per unobserved entry
+  // below for its own last-reported date (see notObservedLabel) — the
+  // same GET /hosts/{id}/items HostChecksCard's own ValueRow reads for its
+  // ignored rows' origin.
+  const items = useHostItems(org, hostId, canRead);
 
   const groupList = groups.data?.groups ?? [];
+  const itemList = items.data?.items ?? [];
   // Observed entries are HostChecksCard's own disclosure's job — see the
   // module doc above. Only the remainder belongs on this page twice.
   const notObserved = (query.data?.effective ?? []).filter((e) => !e.observed);
@@ -57,7 +64,9 @@ export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPane
       {canRead && query.data && notObserved.length === 0 && (
         <p className="text-xs text-muted-foreground">No rule targets an item this host no longer reports.</p>
       )}
-      {canRead && query.data && notObserved.length > 0 && <EffectiveRuleEntries entries={notObserved} groups={groupList} />}
+      {canRead && query.data && notObserved.length > 0 && (
+        <EffectiveRuleEntries entries={notObserved} groups={groupList} items={itemList} />
+      )}
     </Card>
   );
 }
@@ -91,13 +100,20 @@ export interface EffectiveRuleEntriesProps {
    * for EffectiveRulesPanel's own remainder list, which is not anchored to
    * any row and has to name what each entry is about. */
   showTuple?: boolean;
+  /** This host's discovered items (v0.3b-3), for dating an unobserved
+   * entry's own "no longer observed" label — see notObservedLabel.
+   * Omitted (defaulting to none) by HostChecksCard's own per-row
+   * disclosure: every entry it renders is observed, by this module's own
+   * construction (see the module doc above), so the date never applies
+   * there and nothing needs to fetch the list a second time for it. */
+  items?: Item[];
 }
 
 /** EffectiveRuleEntries renders one or more (tuple, severity) verdicts —
  * exported so HostChecksCard's `ValueRow` can show exactly this rendering
  * for the tuple it already displays, rather than a second implementation
  * that could drift from this one. */
-export function EffectiveRuleEntries({ entries, groups, showTuple = true }: EffectiveRuleEntriesProps) {
+export function EffectiveRuleEntries({ entries, groups, showTuple = true, items = [] }: EffectiveRuleEntriesProps) {
   return (
     <ul className="flex flex-col gap-3">
       {entries.map((e) => (
@@ -106,14 +122,42 @@ export function EffectiveRuleEntries({ entries, groups, showTuple = true }: Effe
           entry={e}
           groups={groups}
           showTuple={showTuple}
+          items={items}
         />
       ))}
     </ul>
   );
 }
 
-function EffectiveRuleRow({ entry, groups, showTuple }: { entry: EffectiveRule; groups: MonitoringGroup[]; showTuple: boolean }) {
+/** notObservedLabel names the "no longer observed" marker, dated when
+ * GET /hosts/{id}/items knows this item's own last-reported moment —
+ * "not reported since 14 February" is actionable where the bare label is
+ * not (v0.3b-3 spec). `item` is the matching ItemDTO, when one has been
+ * discovered yet; falling back to the bare label rather than inventing a
+ * date is the honest answer for the gap between a rule naming an item and
+ * the next evaluation tick discovering it (review focus 2 of this
+ * milestone, "a decision that predates its item" — the same gap). */
+function notObservedLabel(item: Item | undefined): string {
+  if (item?.last_seen) return `not reported since ${new Date(item.last_seen).toLocaleDateString()}`;
+  return 'no longer observed';
+}
+
+function EffectiveRuleRow({
+  entry,
+  groups,
+  showTuple,
+  items,
+}: {
+  entry: EffectiveRule;
+  groups: MonitoringGroup[];
+  showTuple: boolean;
+  items: Item[];
+}) {
   const shadowed = entry.shadowed ?? [];
+  // Only ever looked up for an unobserved entry — see notObservedLabel's
+  // own doc comment for why a miss here (nothing discovered yet) is an
+  // expected case, not a bug.
+  const itemInfo = !entry.observed ? items.find((it) => it.check_key === entry.check_key && it.item === (entry.item ?? '')) : undefined;
   return (
     <li className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -121,7 +165,7 @@ function EffectiveRuleRow({ entry, groups, showTuple }: { entry: EffectiveRule; 
         <Pill tone={entry.severity === 'crit' ? 'crit' : 'warn'}>{entry.severity}</Pill>
         <Tag>{originChip(entry.winner, groups)}</Tag>
         <span className="text-[13px] text-foreground">{entry.winner.name}</span>
-        {!entry.observed && <Pill tone="unknown">no longer observed</Pill>}
+        {!entry.observed && <Pill tone="unknown">{notObservedLabel(itemInfo)}</Pill>}
       </div>
       <p className="mt-1 font-mono text-[11px] text-muted-foreground">{entry.winner.source}</p>
       {shadowed.length > 0 && (

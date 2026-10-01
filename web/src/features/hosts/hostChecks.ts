@@ -1,5 +1,5 @@
 import type { Tone } from '../../ui/badge.tsx';
-import type { HostCheck, HostCheckValue } from '../../api/types.ts';
+import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
 
 /**
  * The pure reading rules behind HostChecksCard, kept beside it rather than
@@ -129,6 +129,40 @@ export function stateLabel(state: HostCheckValue['state']): { label: string; ton
     default:
       return { label: 'unknown', tone: 'unknown' };
   }
+}
+
+/**
+ * verdictLabel renders what a ValueRow shows in place of the rule engine's
+ * own stateLabel, when an item decision is in play (v0.3b-3 spec, "Host
+ * page, monitoring card").
+ *
+ * `ignored` wins over whatever `state` happens to carry. The decisive case
+ * — this milestone's own review focus — is an item that already had a
+ * state row before it was ignored: `internal/items`' own Apply DELETES
+ * that row the moment the decision takes effect, so the very next read
+ * reports `state: null`, which stateLabel alone would render as "not yet
+ * evaluated". That is a different and false statement — nobody failed to
+ * judge this tuple yet, judging it was switched off on purpose — and
+ * conflating the two is exactly the lie v0.3b-2 went out of its way to
+ * avoid for the other three states. "ignored" is its own word, not a
+ * colour: the same "distinguishable without colour alone" contract
+ * stateLabel's own doc comment already carries.
+ */
+export function verdictLabel(state: HostCheckValue['state'], ignored: boolean): { label: string; tone: Tone } {
+  if (ignored) return { label: 'ignored', tone: 'unknown' };
+  return stateLabel(state);
+}
+
+/**
+ * decisionOriginLabel names where an item decision came from — the exact
+ * two sentences the v0.3b-3 design spec gives for this row ("Host page,
+ * monitoring card"): an organization-wide pattern names itself, because
+ * the pattern is the only thing that tells two org-scope decisions apart;
+ * a host-scoped one does not repeat the pattern, since the operator
+ * reading it is already standing on the one host it could possibly name.
+ */
+export function decisionOriginLabel(decision: ItemDecision): string {
+  return decision.scope === 'org' ? `By the organization pattern \`${decision.pattern}\`` : 'Set on this host';
 }
 
 /** sourceLabel renders the scope a check was inherited from as the thing

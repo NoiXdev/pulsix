@@ -66,6 +66,7 @@ describe('HostChecksCard chart chunk', () => {
   it('is not fetched before anyone asks for a graph', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
@@ -80,6 +81,7 @@ describe('HostChecksCard chart chunk', () => {
   it('starts loading on the click, not on the series that never arrives', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       // A series that fails is the sharpest form of "the data is not
@@ -103,6 +105,7 @@ describe('HostChecksCard chart chunk', () => {
   it('is fetched once, however often the graph is reopened', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': {

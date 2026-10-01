@@ -6,11 +6,13 @@ import { Button } from '../../ui/button.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
 import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostChecks, useHostEffectiveRules, useHostMetric, useMonitoringGroups, type MetricSelection } from '../../api/hooks/useChecks.ts';
+import { useHostItems } from '../../api/hooks/useItems.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { seenLabel } from '../workers/expiry.ts';
-import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel } from './hostChecks.ts';
+import { clockSkewLabel, decisionOriginLabel, formatNumber, isGraphable, metricLabel, sourceLabel, verdictLabel } from './hostChecks.ts';
 import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
-import type { EffectiveRule, HostCheck, HostCheckValue, MetricRange, MonitoringGroup } from '../../api/types.ts';
+import { ItemDecisionButton } from './ItemDecisionButton.tsx';
+import type { EffectiveRule, HostCheck, HostCheckValue, Item, MetricRange, MonitoringGroup } from '../../api/types.ts';
 
 /** The tuple a "Rules" disclosure is open for — the same three fields that
  * name a tuple everywhere else on this card, without `range`: there is no
@@ -110,8 +112,16 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
   // useHostEffectiveRules' own doc comment.
   const effectiveRules = useHostEffectiveRules(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
+  // v0.3b-3: this host's discovered items, matched per-row below by
+  // (check_key, item) — the only source for WHY a row is ignored or
+  // watched (ItemDTO's own `decided_by`; HostCheckValueDTO carries only
+  // the boolean `ignored`). Not gated on `monitored`, matching
+  // effectiveRules and groups above: cheap, and simpler than a third
+  // enabled condition to keep in sync with the other two.
+  const items = useHostItems(org, hostId, canRead);
   const effective = effectiveRules.data?.effective ?? [];
   const groupList = groups.data?.groups ?? [];
+  const itemList = items.data?.items ?? [];
 
   const monitored = query.data?.monitored ?? false;
   const checks = query.data?.checks ?? [];
@@ -170,12 +180,14 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                         key={`${v.item}:${v.metric}`}
                         org={org}
                         hostId={hostId}
+                        canWrite={canWrite}
                         check={c}
                         value={v}
                         open={open}
                         onOpen={setOpen}
                         effective={effective}
                         groups={groupList}
+                        items={itemList}
                         openRules={openRules}
                         onOpenRules={setOpenRules}
                       />
@@ -197,23 +209,30 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
 function ValueRow({
   org,
   hostId,
+  canWrite,
   check,
   value,
   open,
   onOpen,
   effective,
   groups,
+  items,
   openRules,
   onOpenRules,
 }: {
   org: string;
   hostId: string;
+  /** `checks.write` — gates the row action alone; the ignored marker and
+   * its origin are as much a `checks.read` fact as the state Pill beside
+   * them. */
+  canWrite: boolean;
   check: HostCheck;
   value: HostCheckValue;
   open: MetricSelection | null;
   onOpen: (selection: MetricSelection | null) => void;
   effective: EffectiveRule[];
   groups: MonitoringGroup[];
+  items: Item[];
   openRules: TupleKey | null;
   onOpenRules: (key: TupleKey | null) => void;
 }) {
@@ -221,7 +240,16 @@ function ValueRow({
   const graphable = isGraphable(check, value);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
 
-  const st = stateLabel(value.state);
+  // GET /hosts/{id}/items' own row for this exact tuple, when one exists —
+  // absent for a whole-host metric (items with no name are not rows at
+  // all, v0.3b-3 design) and, briefly, for an item observed this tick but
+  // not yet discovered by the next evaluation pass. `ignored` itself
+  // never depends on finding one: HostCheckValueDTO carries it already,
+  // resolved server-side regardless of whether this row exists yet.
+  const itemInfo = value.item !== '' ? items.find((it) => it.check_key === check.key && it.item === value.item) : undefined;
+  const decidedBy = itemInfo?.decided_by;
+
+  const st = verdictLabel(value.state, value.ignored);
 
   // The entries GET /hosts/{id}/effective-rules returns for exactly this
   // tuple — up to two (warn and crit are resolved independently). Every
@@ -302,8 +330,24 @@ function ValueRow({
             )}
           </>
         )}
-        {(rulesForTuple.length > 0 || graphable) && (
+        {(rulesForTuple.length > 0 || graphable || (value.item !== '' && canWrite)) && (
           <span className="ml-auto flex items-center gap-1">
+            {/* The row's own fast path (v0.3b-3 spec): an operator looking
+                at this value does not compose a pattern on the Items tab,
+                they silence or restore the one item in front of them.
+                Absent for a whole-host metric — items with no name are not
+                a thing to ignore — and for a viewer, who has no
+                checks.write to spend on it. */}
+            {value.item !== '' && canWrite && (
+              <ItemDecisionButton
+                org={org}
+                hostId={hostId}
+                checkKey={check.key}
+                item={value.item}
+                ignored={value.ignored}
+                decidedBy={decidedBy}
+              />
+            )}
             {rulesForTuple.length > 0 && (
               <Button
                 type="button"
@@ -353,6 +397,22 @@ function ValueRow({
           </span>
         )}
       </div>
+      {/* Says WHERE an ignore (or an overruling watch) came from — the
+          only place the note lives (v0.3b-3 spec: "say where an ignore
+          came from, and say it in the row"). A native disclosure, not a
+          controlled one like the Rules panel above: there is no fetch
+          behind it and nothing else on the card needs to close it when
+          this one opens, so the state EffectiveRulesPanel's own shadowed-
+          rules list already uses for the same shape is simpler here. */}
+      {decidedBy && (
+        <details className="text-[11px] text-muted-foreground">
+          <summary className="cursor-pointer">{decidedBy.decision === 'ignore' ? 'Why ignored' : 'Why watched'}</summary>
+          <p className="mt-1">
+            {decisionOriginLabel(decidedBy)}
+            {decidedBy.note && ` — ${decidedBy.note}`}
+          </p>
+        </details>
+      )}
       {isRulesOpen && (
         <div className="rounded-md border border-border p-2">
           <EffectiveRuleEntries entries={rulesForTuple} groups={groups} showTuple={false} />

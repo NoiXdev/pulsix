@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clockSkewLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel } from './hostChecks.ts';
-import type { HostCheck, HostCheckValue } from '../../api/types.ts';
+import { clockSkewLabel, decisionOriginLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel, verdictLabel } from './hostChecks.ts';
+import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
 
 const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
   item: '',
@@ -129,6 +129,54 @@ describe('stateLabel', () => {
 
   it('gives null and "unknown" different words, not just the same colour twice', () => {
     expect(stateLabel(null).label).not.toBe(stateLabel('unknown').label);
+  });
+});
+
+describe('verdictLabel', () => {
+  // The decisive case (review focus): an item that already had a state
+  // row before it was ignored reads as "ignored", never "not yet
+  // evaluated" — internal/items' own Apply deletes that row the moment
+  // the decision takes effect, so the next read reports state: null, and
+  // conflating that with "nobody has judged this yet" is the lie this
+  // milestone's predecessor went out of its way to avoid for the other
+  // four states.
+  it('says "ignored" for a tuple whose state row was just deleted, not "not yet evaluated"', () => {
+    expect(verdictLabel(null, true)).toEqual({ label: 'ignored', tone: 'unknown' });
+  });
+
+  it('says "ignored" even when a stale state value is still attached, since the decision is what governs the row now', () => {
+    expect(verdictLabel('crit', true)).toEqual({ label: 'ignored', tone: 'unknown' });
+  });
+
+  it('falls through to the ordinary rule-engine verdict when nothing ignores this tuple', () => {
+    expect(verdictLabel('warn', false)).toEqual({ label: 'warn', tone: 'warn' });
+    expect(verdictLabel(null, false)).toEqual({ label: 'not yet evaluated', tone: 'unknown' });
+  });
+});
+
+describe('decisionOriginLabel', () => {
+  const decision = (over: Partial<ItemDecision> = {}): ItemDecision => ({
+    id: 'd1',
+    scope: 'org',
+    check_key: 'disk',
+    match_kind: 'glob',
+    pattern: '/mnt/scratch-*',
+    decision: 'ignore',
+    created_at: '',
+    updated_at: '',
+    ...over,
+  });
+
+  it('names the organization pattern verbatim', () => {
+    expect(decisionOriginLabel(decision({ scope: 'org', pattern: '/mnt/scratch-*' }))).toBe(
+      'By the organization pattern `/mnt/scratch-*`',
+    );
+  });
+
+  it('says only "set on this host" for a host-scoped decision — the operator is already standing on the one host it could name', () => {
+    expect(decisionOriginLabel(decision({ scope: 'host', host_id: 'h1', match_kind: 'exact', pattern: '/var' }))).toBe(
+      'Set on this host',
+    );
   });
 });
 

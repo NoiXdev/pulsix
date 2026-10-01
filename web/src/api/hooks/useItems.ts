@@ -80,3 +80,28 @@ export function useItemDecisionPreview(org: string, body: ItemDecisionPreviewInp
     retry: false,
   });
 }
+
+/**
+ * useHostItems reads one host's discovered items (GET /hosts/{id}/items):
+ * every (check_key, item) this host has ever reported, each with its
+ * effective verdict and, when a decision governs it, that decision's own
+ * scope, pattern and note.
+ *
+ * Two of this milestone's GUI pieces consume it, independently of the
+ * org-wide Items tab's own `useItemDecisions`: HostChecksCard matches a
+ * value's `(check.key, value.item)` against this list to show WHY a row
+ * is ignored or watched (`decided_by`), and RuleDialog's item field offers
+ * it as a picker's options. GET /items (organization-wide) stays
+ * unimplemented here — nothing in this milestone's GUI needs it yet.
+ *
+ * Not polled, like useHostEffectiveRules: an item's discovery and its
+ * decisions change on an operator's own action (this tab, or the row
+ * action), not on the agent's heartbeat.
+ */
+export function useHostItems(org: string, hostId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['host-items', org, hostId],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/hosts/{id}/items', { params: { path: { org, id: hostId } } })),
+    enabled: !!org && !!hostId && enabled,
+  });
+}

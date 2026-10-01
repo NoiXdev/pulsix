@@ -55,6 +55,7 @@ function renderPanel(canRead = true) {
 describe('EffectiveRulesPanel', () => {
   it('labels an item-scoped rule whose item the host no longer reports', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
         effective: [
@@ -80,8 +81,71 @@ describe('EffectiveRulesPanel', () => {
     expect(screen.getByText('Item')).toBeInTheDocument();
   });
 
+  // v0.3b-3: first_seen and last_seen now exist (GET /hosts/{id}/items), so
+  // "no longer observed" can finally say since when — "not reported since
+  // 14 February" is actionable where the bare label was not.
+  it('names the date an item was last reported, once GET /hosts/{id}/items knows it', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': {
+        items: [
+          { check_key: 'disk', item: '/old-mount', first_seen: '2026-01-01T00:00:00Z', last_seen: '2026-02-14T08:00:00Z', reported: true, decision: 'watch' },
+        ],
+      },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'disk',
+            item: '/old-mount',
+            metric: 'disk.used_pct',
+            severity: 'crit',
+            observed: false,
+            winner: rule({
+              id: 'r4', name: 'Old mount critical', scope: 'item', host_id: 'h1', item: '/old-mount',
+              check_key: 'disk', metric: 'disk.used_pct', severity: 'crit',
+            }),
+            shadowed: [],
+          },
+        ],
+      },
+    });
+    renderPanel();
+
+    const expected = `not reported since ${new Date('2026-02-14T08:00:00Z').toLocaleDateString()}`;
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText('no longer observed')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the bare label when the item has not been discovered yet, rather than inventing a date', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'disk',
+            item: '/old-mount',
+            metric: 'disk.used_pct',
+            severity: 'crit',
+            observed: false,
+            winner: rule({
+              id: 'r4', name: 'Old mount critical', scope: 'item', host_id: 'h1', item: '/old-mount',
+              check_key: 'disk', metric: 'disk.used_pct', severity: 'crit',
+            }),
+            shadowed: [],
+          },
+        ],
+      },
+    });
+    renderPanel();
+
+    expect(await screen.findByText('no longer observed')).toBeInTheDocument();
+    expect(screen.queryByText(/not reported since/)).not.toBeInTheDocument();
+  });
+
   it('still folds the shadowed rules of an unobserved entry underneath it', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 10, created_at: '', updated_at: '' }] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
         effective: [
@@ -107,6 +171,7 @@ describe('EffectiveRulesPanel', () => {
 
   it('does not repeat an observed tuple — that is the per-row disclosure on the checks card', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
         effective: [
@@ -134,6 +199,7 @@ describe('EffectiveRulesPanel', () => {
 
   it('says nothing extra when every rule on this host still targets something it reports', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       // Only observed entries: the remainder this panel exists for is
       // empty, and it says so rather than showing a blank card.
@@ -147,6 +213,7 @@ describe('EffectiveRulesPanel', () => {
 
   it('asks for nothing without checks.read', async () => {
     const fetch = mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
     });
@@ -158,6 +225,7 @@ describe('EffectiveRulesPanel', () => {
 
   it('reports a failed read in the panel instead of an empty section', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': () =>
         new Response(JSON.stringify({ detail: 'effective rules unavailable' }), { status: 500 }),

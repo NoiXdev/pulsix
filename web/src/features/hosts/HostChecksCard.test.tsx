@@ -94,6 +94,7 @@ describe('HostChecksCard', () => {
   it('renders each check with the scope it is inherited from and its current values', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
@@ -121,6 +122,7 @@ describe('HostChecksCard', () => {
   it('offers a graph for numeric metrics only', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
@@ -136,6 +138,7 @@ describe('HostChecksCard', () => {
 
   it('renders a collection error as the failure, and keeps the graph to the history behind it', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -172,6 +175,7 @@ describe('HostChecksCard', () => {
 
   it('offers no graph for a discrete check whose collection is failing either', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -197,6 +201,7 @@ describe('HostChecksCard', () => {
 
   it('marks exactly what the server calls stale, never what the timestamps suggest', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -236,6 +241,7 @@ describe('HostChecksCard', () => {
     // screenshot) must be able to tell apart from text alone — colour is
     // never the only carrier (v0.3b-2 spec).
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -269,6 +275,7 @@ describe('HostChecksCard', () => {
 
   it('flags a flapping tuple beside its state, not instead of it', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -291,6 +298,7 @@ describe('HostChecksCard', () => {
 
   it('says nothing about flapping for a stable tuple', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -318,6 +326,7 @@ describe('HostChecksCard', () => {
   // screenshot exactly like `stale` already does.
   it('marks a stale verdict distinctly from a stale reading', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -377,6 +386,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': {
         groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 10, created_at: '', updated_at: '' }],
       },
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
         effective: [
           {
@@ -423,6 +433,7 @@ describe('HostChecksCard', () => {
   it('closes the rule disclosure on a second click, and keeps the value’s own state and graph controls untouched', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
         effective: [
           {
@@ -458,6 +469,7 @@ describe('HostChecksCard', () => {
 
   it('names a skewed host clock rather than leaving every reading amber without a cause', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -486,6 +498,7 @@ describe('HostChecksCard', () => {
     // because every other envelope in this file is monitored. The offset
     // is the same four minutes the monitored case renders.
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -503,6 +516,7 @@ describe('HostChecksCard', () => {
 
   it('says nothing about a clock nobody measured, and nothing about a punctual one', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
@@ -515,6 +529,7 @@ describe('HostChecksCard', () => {
     unmount();
 
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { ...THREE_SOURCES, clock_offset_seconds: 0.8 },
@@ -528,6 +543,7 @@ describe('HostChecksCard', () => {
     // Three states share one card, and the empty list is the one that reads
     // like a bug when it is silent.
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [] },
@@ -541,6 +557,7 @@ describe('HostChecksCard', () => {
     // `checks` is typed `HostCheckDTO[] | null` by the generated schema —
     // Go's nil slice reaches the SPA as JSON null, not [].
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: false, checks: null },
@@ -556,6 +573,7 @@ describe('HostChecksCard', () => {
     // the GUI can show where" — dropping the row instead would hide the
     // override that did it.
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -574,6 +592,7 @@ describe('HostChecksCard', () => {
 
   it('renders a load average at two decimals rather than the float it arrived as', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -590,6 +609,7 @@ describe('HostChecksCard', () => {
 
   it('says an unmonitored host is not being watched instead of listing values that look live', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
@@ -614,6 +634,7 @@ describe('HostChecksCard', () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
@@ -654,6 +675,7 @@ describe('HostChecksCard', () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
@@ -677,6 +699,7 @@ describe('HostChecksCard', () => {
     const user = userEvent.setup();
     let attempts = 0;
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
@@ -702,6 +725,7 @@ describe('HostChecksCard', () => {
   it('shows which window is on screen', async () => {
     const user = userEvent.setup();
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
@@ -726,6 +750,7 @@ describe('HostChecksCard', () => {
   it('shows a viewer the list and an operator the way to change it', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
@@ -741,6 +766,7 @@ describe('HostChecksCard', () => {
   it('asks for nothing at all without checks.read', async () => {
     const fetch = mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
@@ -752,6 +778,7 @@ describe('HostChecksCard', () => {
 
   it('reports a failed read in the card instead of an empty monitoring section', async () => {
     mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': () => new Response(JSON.stringify({ detail: 'checks unavailable' }), { status: 500 }),
@@ -759,5 +786,265 @@ describe('HostChecksCard', () => {
     renderCard();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('checks unavailable');
+  });
+
+  describe('item decisions (v0.3b-3)', () => {
+    /** An ignored value as the server actually sends it for a tuple with
+     * no prior history: `state: null`, because nothing has judged it. */
+    const ignoredValue = (over: Record<string, unknown> = {}) => ({
+      item: '/var',
+      metric: 'used_percent',
+      value: 81.25,
+      at: NOW,
+      stale: false,
+      state: null,
+      flapping: false,
+      ignored: true,
+      ...over,
+    });
+
+    const diskCheck = (values: unknown[]) =>
+      check({ definition_id: 'd2', key: 'disk', plugin: 'disk', interval_seconds: 300, source: 'org', values });
+
+    it('renders an ignored row as text — never "not yet evaluated" — even when a stale crit state is still attached', async () => {
+      // Review focus: internal/items' own Apply deletes the state row the
+      // instant an item is ignored, so the next read is guaranteed to
+      // carry state: null — but this fixture goes further and keeps
+      // state: 'crit' on the wire, to prove `ignored` wins regardless of
+      // whatever the state field happens to say, not only in the one
+      // shape the server actually produces.
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [diskCheck([ignoredValue({ state: 'crit' })])],
+        },
+      });
+      renderCard();
+
+      expect(await screen.findByText('ignored')).toBeInTheDocument();
+      expect(row('disk', '/var used_percent').queryByText('crit')).not.toBeInTheDocument();
+      expect(row('disk', '/var used_percent').queryByText('not yet evaluated')).not.toBeInTheDocument();
+    });
+
+    it('names an organization pattern as the origin, with its note, once the row is opened — not before', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': {
+          items: [
+            {
+              check_key: 'disk',
+              item: '/var',
+              first_seen: NOW,
+              last_seen: NOW,
+              reported: true,
+              decision: 'ignore',
+              decided_by: {
+                id: 'od1',
+                scope: 'org',
+                check_key: 'disk',
+                match_kind: 'glob',
+                pattern: '/mnt/scratch-*',
+                decision: 'ignore',
+                note: 'Backup volume runs hot on purpose.',
+                created_at: NOW,
+                updated_at: NOW,
+              },
+            },
+          ],
+        },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
+      });
+      renderCard();
+
+      expect(await screen.findByText('ignored')).toBeInTheDocument();
+      // Closed, not absent: a native <details>, so the content is already
+      // in the DOM for a click handler to reveal with no extra fetch —
+      // what "not before" asserts is that it starts unopened.
+      expect(screen.getByText(/organization pattern/)).not.toBeVisible();
+
+      await user.click(screen.getByText('Why ignored'));
+
+      expect(
+        screen.getByText('By the organization pattern `/mnt/scratch-*` — Backup volume runs hot on purpose.'),
+      ).toBeInTheDocument();
+    });
+
+    it('names "set on this host" for a decision made here, without repeating the pattern', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': {
+          items: [
+            {
+              check_key: 'disk',
+              item: '/var',
+              first_seen: NOW,
+              last_seen: NOW,
+              reported: true,
+              decision: 'ignore',
+              decided_by: {
+                id: 'hd1',
+                scope: 'host',
+                host_id: 'h1',
+                check_key: 'disk',
+                match_kind: 'exact',
+                pattern: '/var',
+                decision: 'ignore',
+                created_at: NOW,
+                updated_at: NOW,
+              },
+            },
+          ],
+        },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
+      });
+      renderCard();
+
+      await user.click(await screen.findByText('Why ignored'));
+
+      expect(screen.getByText('Set on this host')).toBeInTheDocument();
+      expect(screen.queryByText(/organization pattern/)).not.toBeInTheDocument();
+    });
+
+    // Review focus 3: an organization pattern would ignore this item, but a
+    // host-scoped exact watch overrules it. The row must show the ordinary
+    // verdict (not "ignored") AND name the host decision as the one that
+    // decided it — a resolver that silently ignored the org pattern
+    // altogether would ALSO show the right verdict, so the verdict alone
+    // proves nothing; only the disclosure naming the host decision does.
+    it('shows a host watch overruling an organization pattern, and names the host decision as the one that decided it', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': {
+          items: [
+            {
+              check_key: 'disk',
+              item: '/var',
+              first_seen: NOW,
+              last_seen: NOW,
+              reported: true,
+              decision: 'watch',
+              decided_by: {
+                id: 'hd1',
+                scope: 'host',
+                host_id: 'h1',
+                check_key: 'disk',
+                match_kind: 'exact',
+                pattern: '/var',
+                decision: 'watch',
+                note: 'Needs eyes on it despite the fleet-wide pattern.',
+                created_at: NOW,
+                updated_at: NOW,
+              },
+            },
+          ],
+        },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            diskCheck([
+              { item: '/var', metric: 'used_percent', value: 81.25, at: NOW, stale: false, state: 'ok', flapping: false, ignored: false },
+            ]),
+          ],
+        },
+      });
+      renderCard();
+
+      expect(await screen.findByText('ok')).toBeInTheDocument();
+      expect(screen.queryByText('ignored')).not.toBeInTheDocument();
+
+      await user.click(screen.getByText('Why watched'));
+
+      expect(
+        screen.getByText('Set on this host — Needs eyes on it despite the fleet-wide pattern.'),
+      ).toBeInTheDocument();
+    });
+
+    it('offers the row action to ignore an item, and posts a host-scoped exact decision for it', async () => {
+      const user = userEvent.setup();
+      let posted: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+        'POST /api/v1/orgs/acme/item-decisions': (req: MockRequest) => {
+          posted = req.body;
+          return { decision: { id: 'new', ...(req.body as object), created_at: NOW, updated_at: NOW } };
+        },
+      });
+      renderCard();
+
+      await user.click(await screen.findByRole('button', { name: 'Ignore disk /var' }));
+
+      expect(posted).toEqual({
+        scope: 'host',
+        host_id: 'h1',
+        check_key: 'disk',
+        match_kind: 'exact',
+        pattern: '/var',
+        decision: 'ignore',
+      });
+    });
+
+    it('offers no item decision action for a whole-host metric — an item with no name is not a thing to ignore', async () => {
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      });
+      renderCard();
+
+      await screen.findByRole('heading', { name: 'cpu' });
+      expect(screen.queryByRole('button', { name: /Ignore cpu/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Watch cpu/ })).not.toBeInTheDocument();
+    });
+
+    it('hides the row action from a viewer, but still shows the ignored marker and its origin', async () => {
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': {
+          items: [
+            {
+              check_key: 'disk',
+              item: '/var',
+              first_seen: NOW,
+              last_seen: NOW,
+              reported: true,
+              decision: 'ignore',
+              decided_by: {
+                id: 'hd1',
+                scope: 'host',
+                host_id: 'h1',
+                check_key: 'disk',
+                match_kind: 'exact',
+                pattern: '/var',
+                decision: 'ignore',
+                created_at: NOW,
+                updated_at: NOW,
+              },
+            },
+          ],
+        },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
+      });
+      renderCard(true, false);
+
+      expect(await screen.findByText('ignored')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Watch disk/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Ignore disk/ })).not.toBeInTheDocument();
+    });
   });
 });
