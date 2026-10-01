@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -46,7 +47,9 @@ type ruleDTO struct {
 	Origin     string       `json:"origin" enum:"seed,user"`
 	Scope      string       `json:"scope" enum:"org,group,host,item"`
 	GroupID    string       `json:"group_id,omitempty"`
+	GroupName  string       `json:"group_name,omitempty" doc:"The bound group's name, for a group-scoped rule; absent otherwise, and absent for a group this organization can no longer read"`
 	HostID     string       `json:"host_id,omitempty"`
+	HostName   string       `json:"host_name,omitempty" doc:"The bound host's name, for a host- or item-scoped rule; absent otherwise, and absent for a host this organization can no longer read"`
 	Item       string       `json:"item,omitempty"`
 	CheckKey   string       `json:"check_key" doc:"Derived from metric; the check this rule's metric belongs to"`
 	Metric     string       `json:"metric"`
@@ -202,6 +205,88 @@ func toRuleDTO(r rules.Rule) ruleDTO {
 	return dto
 }
 
+// ruleHostNames resolves, for a whole page of rules, the names of the
+// hosts the host- and item-scoped ones name — the same shape
+// check_handlers.go's checkHostNames resolves for checkDefinitionDTO's own
+// HostName, one store read for the page (deps.Hosts.ListHostsByIDs)
+// rather than one per rule. A failure to read is logged and answered with
+// no names: host_name is a label on a binding the operator can still see
+// by id, and losing the label is a far smaller failure than a 500 on the
+// whole list.
+func ruleHostNames(ctx context.Context, deps Deps, orgID uuid.UUID, list []rules.Rule) map[uuid.UUID]string {
+	ids := make([]uuid.UUID, 0, len(list))
+	for _, r := range list {
+		if r.HostID != nil {
+			ids = append(ids, *r.HostID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	found, err := deps.Hosts.ListHostsByIDs(ctx, orgID, ids)
+	if err != nil {
+		slog.ErrorContext(ctx, "resolve host names for rules", "org_id", orgID, "err", err)
+		return nil
+	}
+	names := make(map[uuid.UUID]string, len(found))
+	for _, h := range found {
+		names[h.ID] = h.Name
+	}
+	return names
+}
+
+// ruleGroupNames resolves, for a whole page of rules, the names of the
+// monitoring groups the group-scoped ones name. Unlike ruleHostNames this
+// reads every group in the organization in one call
+// (deps.Checks.ListGroups) rather than the ones a batch of ids names: an
+// organization's monitoring groups are a bounded, small set (unlike its
+// hosts), and every other reader of them in this codebase — the fleet
+// filter, the host page's group bundle — already reads the whole list the
+// same way, so a rule's own group name is one more use of that same read,
+// not a second shape of lookup.
+func ruleGroupNames(ctx context.Context, deps Deps, orgID uuid.UUID) map[uuid.UUID]string {
+	found, err := deps.Checks.ListGroups(ctx, orgID)
+	if err != nil {
+		slog.ErrorContext(ctx, "resolve group names for rules", "org_id", orgID, "err", err)
+		return nil
+	}
+	names := make(map[uuid.UUID]string, len(found))
+	for _, g := range found {
+		names[g.ID] = g.Name
+	}
+	return names
+}
+
+// ruleHostName is ruleHostNames for a route that answers with a single
+// rule: one lookup rather than a whole-page batch. Empty wherever the host
+// cannot be read — a host deleted between the two reads, say — which is
+// exactly what the omitempty field means.
+func ruleHostName(ctx context.Context, deps Deps, orgID uuid.UUID, r rules.Rule) string {
+	if r.HostID == nil {
+		return ""
+	}
+	h, err := deps.Hosts.GetHost(ctx, orgID, *r.HostID)
+	if err != nil {
+		slog.DebugContext(ctx, "resolve host name for a rule", "org_id", orgID, "host_id", *r.HostID, "err", err)
+		return ""
+	}
+	return h.Name
+}
+
+// ruleGroupName is ruleGroupNames for a route that answers with a single
+// rule.
+func ruleGroupName(ctx context.Context, deps Deps, orgID uuid.UUID, r rules.Rule) string {
+	if r.GroupID == nil {
+		return ""
+	}
+	g, err := deps.Checks.GetGroup(ctx, orgID, *r.GroupID)
+	if err != nil {
+		slog.DebugContext(ctx, "resolve group name for a rule", "org_id", orgID, "group_id", *r.GroupID, "err", err)
+		return ""
+	}
+	return g.Name
+}
+
 func toCheckedDTO(c rules.Checked) ruleCheckedDTO {
 	return ruleCheckedDTO{OK: c.OK, Pos: c.Pos, Message: c.Message, FormReady: c.FormReady, Source: c.Source}
 }
@@ -350,10 +435,24 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapRulesErr(ctx, err, 0)
 		}
+		// One batched lookup for the whole page, not one per rule — the
+		// same shape checkHostNames uses for checkDefinitionDTO (backlog
+		// 3.30). hostNames is scoped to the ids this page actually names;
+		// groupNames reads the organization's whole (small, bounded) group
+		// list, the same read every other group-name reader in this
+		// codebase already does.
+		hostNames := ruleHostNames(ctx, deps, scope.OrgID, list)
+		groupNames := ruleGroupNames(ctx, deps, scope.OrgID)
 		out := &ruleListOutput{}
 		out.Body.Rules = make([]ruleDTO, len(list))
 		for i, r := range list {
 			out.Body.Rules[i] = toRuleDTO(r)
+			if r.HostID != nil {
+				out.Body.Rules[i].HostName = hostNames[*r.HostID]
+			}
+			if r.GroupID != nil {
+				out.Body.Rules[i].GroupName = groupNames[*r.GroupID]
+			}
 		}
 		return out, nil
 	})
@@ -373,6 +472,8 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &ruleOutput{}
 		out.Body.Rule = toRuleDTO(r)
+		out.Body.Rule.HostName = ruleHostName(ctx, deps, scope.OrgID, r)
+		out.Body.Rule.GroupName = ruleGroupName(ctx, deps, scope.OrgID, r)
 		return out, nil
 	})
 
@@ -401,6 +502,8 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, r.ID.String(), fmt.Sprintf("created rule %q (%s)", r.Name, r.Metric))
 		out := &ruleOutput{}
 		out.Body.Rule = toRuleDTO(r)
+		out.Body.Rule.HostName = ruleHostName(ctx, deps, scope.OrgID, r)
+		out.Body.Rule.GroupName = ruleGroupName(ctx, deps, scope.OrgID, r)
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createRule", "rule"))
 
@@ -435,6 +538,8 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, r.ID.String(), fmt.Sprintf("updated rule %q (%s)", r.Name, r.Metric))
 		out := &ruleOutput{}
 		out.Body.Rule = toRuleDTO(r)
+		out.Body.Rule.HostName = ruleHostName(ctx, deps, scope.OrgID, r)
+		out.Body.Rule.GroupName = ruleGroupName(ctx, deps, scope.OrgID, r)
 		return out, nil
 	}, withAudit("updateRule", "rule"))
 

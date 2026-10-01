@@ -354,9 +354,12 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
  * value matches no option falls back to the empty placeholder and
  * swallows Save with no message).
  *
- * Unlike a check definition, RuleDTO carries no host_name for its target
- * — there is no enrichment to fall back on — so a missing current binding
- * is shown by its shortened id rather than a name.
+ * RuleDTO does carry host_name now (backlog 3.30), the same enrichment a
+ * check definition has, but only on the rule this dialog already loaded,
+ * not on an id this picker's own paginated host search resolves — the
+ * editable value here is a plain host id, so a missing current binding
+ * (one the search does not happen to return) is still shown by its
+ * shortened id rather than a name.
  */
 function RuleHostPicker({ org, value, onChange }: { org: string; value: string; onChange: (id: string) => void }) {
   const [q, setQ] = useState('');

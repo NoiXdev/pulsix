@@ -177,16 +177,23 @@ export function RulesPage() {
 }
 
 /** RuleTarget renders a rule's scope as what it applies to — the
- * organization, a named monitoring group, a host — never as the raw id
- * the API carries, mirroring ChecksPage's own Binding component. RuleDTO
- * carries no host_name the way CheckDefinitionDTO does, so a host or item
- * target is shown by its shortened id rather than a name. */
+ * organization, a named monitoring group, a named host — never as the raw
+ * id the API carries, mirroring ChecksPage's own Binding component.
+ * RuleDTO now carries host_name and group_name directly (backlog 3.30),
+ * the same enrichment checkDefinitionDTO already had; a rule whose host or
+ * group was deleted falls back to the shortened id exactly as it did
+ * before this field existed, so a name that was never resolved reads no
+ * differently from one that no longer resolves. The group list is still
+ * consulted as the fallback source for a group name: group_name is absent
+ * exactly when the group cannot be read, and the organization's own,
+ * separately loaded monitoring-group list may still know it in the narrow
+ * window between the two reads. */
 function RuleTarget({ org, rule, groups }: { org: string; rule: Rule; groups: MonitoringGroup[] }) {
   if (rule.scope === 'group' && rule.group_id) {
     const group = groups.find((g) => g.id === rule.group_id);
     return (
       <Link to="/o/$org/checks/monitoring-groups" params={{ org }} className="truncate text-[13px] text-foreground hover:text-primary">
-        {group?.name ?? `group ${rule.group_id.slice(0, 8)}`}
+        {rule.group_name ?? group?.name ?? `group ${rule.group_id.slice(0, 8)}`}
       </Link>
     );
   }
@@ -197,7 +204,7 @@ function RuleTarget({ org, rule, groups }: { org: string; rule: Rule; groups: Mo
         params={{ org, id: rule.host_id }}
         className="truncate font-mono text-[13px] text-foreground hover:text-primary"
       >
-        {rule.host_id.slice(0, 8)}
+        {rule.host_name ?? rule.host_id.slice(0, 8)}
         {rule.scope === 'item' && rule.item ? ` / ${rule.item}` : ''}
       </Link>
     );

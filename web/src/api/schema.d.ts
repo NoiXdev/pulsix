@@ -4254,7 +4254,11 @@ export interface components {
             /** @description Set when mode is form */
             form?: components["schemas"]["RuleFormDTO"];
             group_id?: string;
+            /** @description The bound group's name, for a group-scoped rule; absent otherwise, and absent for a group this organization can no longer read */
+            group_name?: string;
             host_id?: string;
+            /** @description The bound host's name, for a host- or item-scoped rule; absent otherwise, and absent for a host this organization can no longer read */
+            host_name?: string;
             id: string;
             item?: string;
             metric: string;

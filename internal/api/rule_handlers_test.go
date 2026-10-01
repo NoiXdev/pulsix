@@ -42,7 +42,9 @@ type ruleDTO struct {
 	Origin     string        `json:"origin"`
 	Scope      string        `json:"scope"`
 	GroupID    string        `json:"group_id"`
+	GroupName  string        `json:"group_name"`
 	HostID     string        `json:"host_id"`
+	HostName   string        `json:"host_name"`
 	Item       string        `json:"item"`
 	CheckKey   string        `json:"check_key"`
 	Metric     string        `json:"metric"`
@@ -423,6 +425,91 @@ func TestRuleRoutes(t *testing.T) {
 	// pinned against the parser's own answer, exactly like
 	// TestCheckInvalidCarriesPosition (internal/rules/service_test.go) pins
 	// it one layer down.
+	// backlog 3.30: a host- or item-scoped rule names the host it binds to,
+	// and a group-scoped rule names the group, the same enrichment
+	// checkDefinitionDTO already carries for its own host-bound
+	// definitions — resolved via the list route's own batched lookup
+	// (ruleHostNames/ruleGroupNames) as well as the single-rule routes
+	// (ruleHostName/ruleGroupName), so every shape that returns a ruleDTO
+	// agrees.
+	//
+	// The "degrades rather than errors" half of the brief (a rule whose
+	// host or group was deleted) has no reachable fixture here: both FKs
+	// on check_rules (00045) are ON DELETE CASCADE, so deleting a group or
+	// host takes every rule bound to it down with it — there is no
+	// surviving rule left to observe a blank name on, exactly the shape
+	// checkDefinitionDTO's own HostName is in (no such test exists for it
+	// either). ruleHostName/ruleGroupName/ruleHostNames/ruleGroupNames
+	// still log-and-return-empty on a lookup failure, the same defensive
+	// shape checkHostName/checkHostNames use, for the only way that path
+	// actually runs: a store error, not a dangling id.
+	t.Run("host- and group-scoped rules carry their target's name", func(t *testing.T) {
+		groupResp := postJSON(t, f.operatorC, f.groupsURL(), map[string]any{"name": "name lookup fleet", "selector": "role=web", "priority": 0})
+		if groupResp.StatusCode != http.StatusCreated {
+			t.Fatalf("create group = %d %s", groupResp.StatusCode, mustReadBody(t, groupResp))
+		}
+		var groupOut struct {
+			Group struct {
+				ID string `json:"id"`
+			} `json:"group"`
+		}
+		decodeInto(t, groupResp, &groupOut)
+		t.Cleanup(func() { requestJSON(t, f.operatorC, http.MethodDelete, f.groupsURL()+"/"+groupOut.Group.ID, nil) })
+
+		hostRule := f.createRule(t, f.operatorC, map[string]any{
+			"name": "names host rule", "scope": "host", "host_id": f.host.String(),
+			"metric": "mem.used_pct", "severity": "warn", "mode": "form",
+			"form": map[string]any{"metric": "mem.used_pct", "op": ">", "value": 90},
+		})
+		t.Cleanup(func() { requestJSON(t, f.operatorC, http.MethodDelete, f.rulesURL()+"/"+hostRule.ID, nil) })
+		if hostRule.HostName != "web-1" {
+			t.Fatalf("create host-scoped rule host_name = %q, want %q", hostRule.HostName, "web-1")
+		}
+
+		groupRule := f.createRule(t, f.operatorC, map[string]any{
+			"name": "names group rule", "scope": "group", "group_id": groupOut.Group.ID,
+			"metric": "disk.used_pct", "severity": "warn", "mode": "form",
+			"form": map[string]any{"metric": "disk.used_pct", "op": ">", "value": 90},
+		})
+		t.Cleanup(func() { requestJSON(t, f.operatorC, http.MethodDelete, f.rulesURL()+"/"+groupRule.ID, nil) })
+		if groupRule.GroupName != "name lookup fleet" {
+			t.Fatalf("create group-scoped rule group_name = %q, want %q", groupRule.GroupName, "name lookup fleet")
+		}
+
+		// GET by id agrees with what Create answered.
+		resp := requestJSON(t, f.viewerC, http.MethodGet, f.rulesURL()+"/"+hostRule.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("get host rule = %d", resp.StatusCode)
+		}
+		var single struct {
+			Rule ruleDTO `json:"rule"`
+		}
+		decodeInto(t, resp, &single)
+		if single.Rule.HostName != "web-1" {
+			t.Fatalf("get host rule host_name = %q, want %q", single.Rule.HostName, "web-1")
+		}
+
+		// The list route resolves both names through its own batched
+		// lookup, not a loop that happens to agree with the single-rule
+		// routes by coincidence.
+		listed := f.listRules(t, f.viewerC)
+		var listedHost, listedGroup *ruleDTO
+		for i := range listed {
+			switch listed[i].ID {
+			case hostRule.ID:
+				listedHost = &listed[i]
+			case groupRule.ID:
+				listedGroup = &listed[i]
+			}
+		}
+		if listedHost == nil || listedHost.HostName != "web-1" {
+			t.Fatalf("listed host rule = %+v, want host_name %q", listedHost, "web-1")
+		}
+		if listedGroup == nil || listedGroup.GroupName != "name lookup fleet" {
+			t.Fatalf("listed group rule = %+v, want group_name %q", listedGroup, "name lookup fleet")
+		}
+	})
+
 	t.Run("a malformed expression is refused with its position in the message", func(t *testing.T) {
 		const expr = "cpu.used_pct >"
 		_, perr := rules.Parse(expr)

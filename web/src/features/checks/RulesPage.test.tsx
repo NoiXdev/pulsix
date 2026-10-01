@@ -103,6 +103,40 @@ describe('RulesPage', () => {
     expect(screen.getByText('5 min')).toBeInTheDocument();
   });
 
+  // backlog 3.30: RuleDTO now carries host_name/group_name directly, so a
+  // host- or group-scoped rule's "Applies to" column shows a name even
+  // when it is not also present on the organization's own, separately
+  // loaded monitoring-group list — before this, a host target always fell
+  // back to its shortened id (RuleDTO carried no host_name at all), and a
+  // group target depended entirely on the groups list already containing
+  // a match.
+  it('names the host and group a rule targets, from the rule itself', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/rules': {
+        rules: [
+          rule({
+            id: 'r-host', name: 'Host memory', scope: 'host', host_id: 'h1', host_name: 'web-1',
+            metric: 'mem.used_pct', check_key: 'memory', form: { metric: 'mem.used_pct', op: '>=', value: 90 },
+          }),
+          rule({
+            id: 'r-group', name: 'Group disk', scope: 'group', group_id: 'g-unlisted', group_name: 'Db tier',
+            metric: 'disk.used_pct', check_key: 'disk', form: { metric: 'disk.used_pct', op: '>=', value: 90 },
+          }),
+        ],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByRole('link', { name: 'web-1' })).toBeInTheDocument();
+    // "g-unlisted" is deliberately absent from GROUPS, so this name can
+    // only have come from the rule's own group_name, not a cross-reference
+    // into the groups list.
+    expect(screen.getByRole('link', { name: 'Db tier' })).toBeInTheDocument();
+  });
+
   it('shows a viewer the rules but no write affordances', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
