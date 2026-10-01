@@ -123,8 +123,15 @@ describe('MembersPage', () => {
 
     renderPage(qc);
 
+    // Scoped by DOM structure, not by a CSS class name (backlog 3.33, the
+    // same fix FleetPage.test.tsx already carries for its own row lookup):
+    // MembersPage renders the name/e-mail pair as GridRow's direct child
+    // div, with the name itself one span below that — so the name's
+    // grandparent is the row, two parentElement hops up rather than a
+    // class-substring match that an unrelated styling rename would
+    // silently break.
     const saraName = await screen.findByText('Sara K.');
-    const saraRow = saraName.closest('div[class*="grid items-center"]') as HTMLElement;
+    const saraRow = saraName.parentElement?.parentElement as HTMLElement;
     await user.click(within(saraRow).getByText('viewer'));
 
     const roleDialog = (await screen.findByText('Change role · Sara K.')).closest('dialog') as HTMLElement;
