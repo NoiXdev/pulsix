@@ -91,11 +91,13 @@ func typeErr(pos int, format string, args ...any) error {
 // neither the HTTP recover middleware nor Ticker.tickSafely can catch it,
 // and the manager dies taking every tenant with it.
 //
-// TypeCheck is where the bound belongs because it is the one gate every
-// stored tree passes: Parse ends in it, Form.Compile's output goes through
-// it, and nothing writes ast/clear_ast without one of those two. A tree
-// read back from jsonb is therefore bounded by construction, because no
-// deeper one could ever have been written.
+// TypeCheck is where the bound belongs because it is the gate every tree
+// an operator can author passes: Parse ends in it, and buildRule is the
+// only writer of ast/clear_ast. Form.Compile does NOT call TypeCheck — it
+// does not need to, because it emits a tree of depth two at most (one
+// KindCompare over two leaves, or one bare KindLabel), so no form rule can
+// approach this bound by construction. Between the two, a tree read back
+// from jsonb is bounded: no deeper one could ever have been written.
 //
 // 64 is far past anything a rule a human writes needs — nesting is two or
 // three levels, and and/or are flat argument lists rather than nested

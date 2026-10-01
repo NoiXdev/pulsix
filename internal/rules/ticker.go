@@ -233,7 +233,7 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 	// The batch's own deadline — see batchDeadlineFactor for the failure it
 	// exists to end. It is not timidity about slow batches: it is the only
 	// thing that ever ends a batch blocked acquiring a second pool
-	// connection while holding the first and the batch's row locks.
+	// connection while holding the first and one host's cursor lock.
 	batchCtx, cancel := context.WithTimeout(ctx, t.batchDeadline())
 	n, err := t.store.ProcessDue(batchCtx, now, t.batch, func(ctx context.Context, d Due) error {
 		return t.evaluate(ctx, d, now)
