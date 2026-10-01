@@ -3,8 +3,9 @@
 // dependency-free glob over item names, and Decide, the strict total order
 // that picks which decision — if any — governs one (host, check_key, item).
 // internal/rules must not import internal/checks, and evaluation needs the
-// ignore decision; a leaf package both may depend on resolves that without a
-// third adapter layer. items therefore imports neither.
+// ignore decision; a leaf package both of them may depend on resolves that
+// tension without a third adapter layer between the two. items therefore
+// imports neither.
 package items
 
 import (

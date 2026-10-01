@@ -182,6 +182,35 @@ func TestDecideDoesNotMutateInput(t *testing.T) {
 	}
 }
 
+// TestDecideOlderCreatedAtWinsWithinScope pins beats's own CreatedAt
+// tie-break in isolation: two decisions at the same scope and the same
+// match kind, differing only in CreatedAt, must resolve to the older one —
+// not merely to whichever happens to sort first on id. The older decision
+// is deliberately given the larger id (the opposite of what uuid.NewV7's
+// monotonic ordering would naturally hand out), so this only passes by
+// actually consulting CreatedAt, not by the id tie-break coincidentally
+// agreeing with it (mirrors internal/rules/resolve_test.go's
+// TestResolveTwoRulesAtTheSameNonGroupScopeOlderWins).
+func TestDecideOlderCreatedAtWinsWithinScope(t *testing.T) {
+	host := uuid.Must(uuid.NewV7())
+	target := items.Target{HostID: host, CheckKey: "disk", Item: "/mnt/scratch-db"}
+
+	older := baseDecision("disk", "/mnt/scratch-*", items.Ignore)
+	older.CreatedAt = fixedTime(1)
+	older.ID = uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
+	newer := baseDecision("disk", "/mnt/scratch-*", items.Watch)
+	newer.CreatedAt = fixedTime(2)
+	newer.ID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+
+	got := items.Decide([]items.Decision{newer, older}, target)
+	if got.Decision == nil || got.Decision.ID != older.ID {
+		t.Fatalf("Decide(%+v) = %+v, want the older decision %s to win, not the newer one", target, got, older.ID)
+	}
+	if got.Verdict != items.Ignore {
+		t.Fatalf("verdict = %s, want ignore (the older decision's own verdict)", got.Verdict)
+	}
+}
+
 // TestDecideTwoEquallySpecificGlobsAcross100Shuffles is review focus 5: two
 // decisions tied on scope, match kind and CreatedAt must resolve to the same
 // Resolution — the smaller id wins — every time, regardless of the order the
