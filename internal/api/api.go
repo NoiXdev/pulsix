@@ -124,7 +124,7 @@ type Deps struct {
 	// EvalDirty marks a host's evaluation cursor dirty outside the
 	// evaluator's own write path — see EvalDirtyMarker's own doc comment
 	// (item_handlers.go) for why the item-decisions routes need this at
-	// all. *rules.DirtyMarker satisfies it in production.
+	// all. rules.DirtyMarker (a value type) satisfies it in production.
 	EvalDirty EvalDirtyMarker
 	// AgentPush delivers a host's freshly resolved check configuration to
 	// whatever agent is currently connected for it, after a check

@@ -45,3 +45,19 @@ func (m DirtyMarker) MarkHostDirty(ctx context.Context, orgID, hostID uuid.UUID)
 	}
 	return nil
 }
+
+// MarkHostsDirty is MarkHostDirty's batched sibling: one multi-row upsert
+// (unnest over hostIDs) rather than one round trip per host, mirroring the
+// shape api.CheckConfigPusher.PushHosts gives its own affected set for the
+// identical reason — a per-host loop over hundreds of hosts inside one HTTP
+// request is the exact cost CheckConfigPusher's own doc comment warns
+// against. An empty hostIDs is a legal no-op: the generated query's
+// unnest('{}'::uuid[]) produces no rows, and this issues the statement
+// anyway rather than special-casing the empty slice, so the caller never
+// has to.
+func (m DirtyMarker) MarkHostsDirty(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) error {
+	if err := gen.New(m.d).MarkHostsDirty(ctx, gen.MarkHostsDirtyParams{OrgID: orgID, HostIds: hostIDs}); err != nil {
+		return fmt.Errorf("mark hosts dirty: %w", err)
+	}
+	return nil
+}

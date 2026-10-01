@@ -90,6 +90,25 @@ INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
 VALUES (sqlc.arg(org_id), sqlc.arg(host_id), now())
 ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at;
 
+-- name: MarkHostsDirty :exec
+-- v0.3b-3's own caller (internal/api/item_handlers.go, via
+-- rules.DirtyMarker.MarkHostsDirty): an organization-scoped item decision
+-- affects every one of the organization's monitored hosts at once, and a
+-- per-host loop of MarkHostDirty would cost one round trip per host inside
+-- the request that created, changed or deleted the decision — exactly the
+-- shape CheckConfigPusher's own doc comment (check_handlers.go) warns
+-- against ("a per-host loop ... thousands of serial queries inside one
+-- HTTP request"). unnest expands the id array into one row per host, so
+-- the whole batch is one statement regardless of how many hosts it names.
+-- An empty array is a legal, no-op call: unnest('{}'::uuid[]) produces no
+-- rows, so the INSERT ... SELECT touches nothing.
+--
+-- Same ON CONFLICT target and the same database-clock dirty_at as
+-- MarkHostDirty above, for the same two reasons.
+INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
+SELECT sqlc.arg(org_id), unnest(sqlc.arg(host_ids)::uuid[]), now()
+ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at;
+
 -- name: ClaimDueEvalCursors :many
 -- Task 9, the ticker's claim (v0.3b-2 spec, "Trigger"), verbatim. The
 -- reading side of both comparisons is the database's own clock: dirty_at

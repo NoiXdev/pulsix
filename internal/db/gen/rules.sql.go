@@ -681,6 +681,36 @@ func (q *Queries) MarkHostDirty(ctx context.Context, arg MarkHostDirtyParams) er
 	return err
 }
 
+const markHostsDirty = `-- name: MarkHostsDirty :exec
+INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
+SELECT $1, unnest($2::uuid[]), now()
+ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at
+`
+
+type MarkHostsDirtyParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	HostIds []uuid.UUID `json:"host_ids"`
+}
+
+// v0.3b-3's own caller (internal/api/item_handlers.go, via
+// rules.DirtyMarker.MarkHostsDirty): an organization-scoped item decision
+// affects every one of the organization's monitored hosts at once, and a
+// per-host loop of MarkHostDirty would cost one round trip per host inside
+// the request that created, changed or deleted the decision — exactly the
+// shape CheckConfigPusher's own doc comment (check_handlers.go) warns
+// against ("a per-host loop ... thousands of serial queries inside one
+// HTTP request"). unnest expands the id array into one row per host, so
+// the whole batch is one statement regardless of how many hosts it names.
+// An empty array is a legal, no-op call: unnest('{}'::uuid[]) produces no
+// rows, so the INSERT ... SELECT touches nothing.
+//
+// Same ON CONFLICT target and the same database-clock dirty_at as
+// MarkHostDirty above, for the same two reasons.
+func (q *Queries) MarkHostsDirty(ctx context.Context, arg MarkHostsDirtyParams) error {
+	_, err := q.db.Exec(ctx, markHostsDirty, arg.OrgID, arg.HostIds)
+	return err
+}
+
 const updateRule = `-- name: UpdateRule :execrows
 UPDATE check_rules
 SET name = $1, enabled = $2, scope = $3,

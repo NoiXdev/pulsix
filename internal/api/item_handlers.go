@@ -27,7 +27,8 @@ import (
 // EvalDirtyMarker marks a host's evaluation cursor dirty outside the
 // evaluator's own write path — the identical single-row upsert
 // internal/checks' ingest path issues on every accepted batch
-// (checks/store_sql.go's own call to the generated MarkHostDirty).
+// (checks/store_sql.go's own call to the generated MarkHostDirty), plus a
+// batched sibling for the organization-scope case.
 //
 // The controller's own fix, not the spec's: creating, changing or deleting
 // a decision did nothing to make the affected host(s) due again, so an
@@ -41,11 +42,19 @@ import (
 // operator cannot act on — the host's own next due time still re-judges it
 // correctly, only later than intended.
 //
-// *rules.DirtyMarker satisfies it in production; declared here, with
-// exactly the one method this package calls, so internal/api never needs
+// MarkHostsDirty exists for the same reason CheckConfigPusher splits
+// PushHosts from a single-host call: an organization-scoped decision can
+// affect hundreds of hosts, and a loop calling MarkHostDirty once per host
+// inside the request would be exactly the serial-round-trip cost
+// CheckConfigPusher's own doc comment warns against.
+//
+// rules.DirtyMarker (a value type, not a pointer — NewDirtyMarker returns
+// one directly) satisfies this interface in production; declared here, with
+// exactly the two methods this package calls, so internal/api never needs
 // to import more of internal/rules than this.
 type EvalDirtyMarker interface {
 	MarkHostDirty(ctx context.Context, orgID, hostID uuid.UUID) error
+	MarkHostsDirty(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) error
 }
 
 // itemDecisionDTO mirrors items.Decision on the wire. Verdict is the wire
@@ -279,8 +288,19 @@ func itemDecisionSummary(verb string, d items.Decision) string {
 // affects, so the very next tick re-judges them rather than waiting for
 // each host's own staleness deadline — see EvalDirtyMarker's own doc
 // comment. A host-scoped decision marks just that host; an
-// organization-scoped one marks every host in the organization, since
-// Decide resolves an org-scoped decision against every one of them.
+// organization-scoped one marks every *monitored* host in the organization
+// in one batched call (EvalDirtyMarker.MarkHostsDirty), since Decide
+// resolves an org-scoped decision against every one of them.
+//
+// Narrowed to monitored hosts deliberately, not out of caution: an
+// unmonitored host runs no checks, so it has nothing an item decision could
+// ever change the judgment of, and ClaimDueEvalCursors (due_sql.go) carries
+// no monitored filter of its own — a dirtied unmonitored host is not merely
+// ignored, it is claimed and evaluated on the next tick, spending a real
+// slot in that batch for a host nothing is measuring. Marking it anyway
+// would make review focus 1's own worst case (an organization pattern
+// matching the whole fleet) burn ticker capacity on hosts that can never
+// contain the item the pattern was written about.
 //
 // Best-effort: a failure is logged, never turned into an error response —
 // the decision write has already committed, and the host's own next due
@@ -300,10 +320,17 @@ func markDirtyForDecision(ctx context.Context, deps Deps, orgID uuid.UUID, d ite
 			slog.ErrorContext(ctx, "list hosts to mark dirty after an organization item decision", "org_id", orgID, "err", err)
 			return
 		}
+		monitored := make([]uuid.UUID, 0, len(hostList))
 		for _, h := range hostList {
-			if err := deps.EvalDirty.MarkHostDirty(ctx, orgID, h.ID); err != nil {
-				slog.ErrorContext(ctx, "mark host dirty after an item decision", "org_id", orgID, "host_id", h.ID, "err", err)
+			if h.Monitored {
+				monitored = append(monitored, h.ID)
 			}
+		}
+		if len(monitored) == 0 {
+			return
+		}
+		if err := deps.EvalDirty.MarkHostsDirty(ctx, orgID, monitored); err != nil {
+			slog.ErrorContext(ctx, "mark hosts dirty after an organization item decision", "org_id", orgID, "hosts", len(monitored), "err", err)
 		}
 	}
 }
