@@ -64,7 +64,37 @@ func Parse(src string) (Node, error) {
 type parser struct {
 	toks []token
 	i    int
+	// depth is how many of parseExpr, parseUnary and parseFactor are on
+	// the stack right now; see enter.
+	depth int
 }
+
+// enter bounds the recursive descent below and must be paired with leave.
+// Nothing in the grammar flattens nesting: every "(" sends parseUnary back
+// through parseExpr -> parseOr -> parseAnd -> parseUnary, four stack frames
+// per parenthesis, and "not" and unary minus recurse directly. Without a
+// bound, an expression of a million "(" characters — well inside huma's
+// 1 MiB default body limit, and reachable through POST /rules/validate by
+// any member with the lowest read permission there is — exhausts the
+// goroutine stack, and `fatal error: stack overflow` is a runtime fatal
+// rather than a panic: no recover middleware and no Ticker.tickSafely
+// catches it, so the manager process dies with every tenant on it.
+//
+// maxRuleDepth is shared with TypeCheck deliberately. This counter bounds
+// FRAMES and TypeCheck's bounds NODES, and neither implies the other: a
+// parenthesis costs frames without costing tree depth, while "1+1+1+…"
+// left-folds into one tree level per term (parseArith) at a constant frame
+// depth. Both guards are needed, and one limit for both keeps the two
+// numbers from drifting into a gap only one shape falls through.
+func (p *parser) enter() error {
+	if p.depth >= maxRuleDepth {
+		return p.errorf("expression nests deeper than %d levels", maxRuleDepth)
+	}
+	p.depth++
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) cur() token { return p.toks[p.i] }
 
@@ -105,6 +135,10 @@ func (p *parser) expect(k tokKind, want string) (token, error) {
 
 // parseExpr is the grammar's entry point: expr := or.
 func (p *parser) parseExpr() (Node, error) {
+	if err := p.enter(); err != nil {
+		return Node{}, err
+	}
+	defer p.leave()
 	return p.parseOr()
 }
 
@@ -155,6 +189,10 @@ func (p *parser) parseAnd() (Node, error) {
 
 // parseUnary implements: unary := "not" unary | "(" expr ")" | predicate.
 func (p *parser) parseUnary() (Node, error) {
+	if err := p.enter(); err != nil {
+		return Node{}, err
+	}
+	defer p.leave()
 	if p.cur().kind == tokIdent && p.cur().text == "not" {
 		pos := p.cur().pos
 		p.advance()
@@ -327,6 +365,10 @@ func (p *parser) parseTerm() (Node, error) {
 // Format renders that shape back as "-x", but the tree Parse produces and
 // the tree a hand-built "0 - x" produces are the same.
 func (p *parser) parseFactor() (Node, error) {
+	if err := p.enter(); err != nil {
+		return Node{}, err
+	}
+	defer p.leave()
 	tok := p.cur()
 	switch tok.kind {
 	case tokNumber:

@@ -467,3 +467,115 @@ func TestFormatRoundTripsExactString(t *testing.T) {
 	}
 	assertSameTree(t, reparsed, node)
 }
+
+// TestParseRefusesNestingBeyondItsDepthBound is the parser's half of the
+// stack-overflow guard. Nothing in the grammar flattens nesting, so each
+// "(" costs four stack frames; a body of a million of them — well inside
+// huma's 1 MiB default, and reachable through POST /rules/validate by any
+// member with the lowest read permission there is — would overflow the
+// goroutine stack, which is a runtime FATAL that no recover anywhere can
+// catch. It must come back as an ordinary *rules.ParseError with a caret
+// position instead.
+//
+// A thousand parentheses is used rather than a million: the bound is 64,
+// so anything past it proves the same thing, and this way the test is
+// instant.
+func TestParseRefusesNestingBeyondItsDepthBound(t *testing.T) {
+	for _, src := range []string{
+		strings.Repeat("(", 1000) + "cpu.used_pct > 90",
+		strings.Repeat("not ", 1000) + "cpu.used_pct > 90",
+		"cpu.used_pct > " + strings.Repeat("-", 1000) + "90",
+		"cpu.used_pct > " + strings.Repeat("(", 1000) + "90",
+	} {
+		_, err := rules.Parse(src)
+		if err == nil {
+			t.Fatalf("Parse(%.20q…) = nil, want a depth failure", src)
+		}
+		var perr *rules.ParseError
+		if !errors.As(err, &perr) {
+			t.Fatalf("Parse(%.20q…) error %v is not a *rules.ParseError", src, err)
+		}
+		if !strings.Contains(perr.Msg, "nests deeper") {
+			t.Fatalf("Parse(%.20q…) message = %q, want it to name the nesting bound", src, perr.Msg)
+		}
+	}
+}
+
+// TestParseRefusesATreeDeeperThanTypeCheckAllows covers the shape the
+// parser's own frame counter cannot see: "1+1+1+…" is parsed by a loop, so
+// it stays at a constant stack depth while left-folding into a tree one
+// level deeper per term. TypeCheck's node-depth bound is what refuses it,
+// surfaced through Parse as the same *rules.ParseError.
+func TestParseRefusesATreeDeeperThanTypeCheckAllows(t *testing.T) {
+	src := "cpu.used_pct > " + strings.Repeat("1+", 1000) + "1"
+	_, err := rules.Parse(src)
+	if err == nil {
+		t.Fatalf("Parse of a %d-term arithmetic chain = nil, want a depth failure", 1001)
+	}
+	var perr *rules.ParseError
+	if !errors.As(err, &perr) {
+		t.Fatalf("error %v is not a *rules.ParseError", err)
+	}
+	if !strings.Contains(perr.Msg, "nests deeper") {
+		t.Fatalf("message = %q, want it to name the nesting bound", perr.Msg)
+	}
+}
+
+// TestParseAcceptsOrdinaryNesting guards the bound from being tightened
+// into the way of a rule somebody might actually write: parentheses and
+// boolean nesting a human would use must stay well inside it, and a long
+// "or" chain must cost one level rather than one per term (and/or are flat
+// argument lists).
+func TestParseAcceptsOrdinaryNesting(t *testing.T) {
+	src := `(cpu.used_pct > 90 and (cpu.load1 > 8 or cpu.load5 > 6)) or not (mem.used_pct > ((80 + 5) * 1))`
+	if _, err := rules.Parse(src); err != nil {
+		t.Fatalf("Parse(%q) = %v, want the ordinary nesting a rule uses to be accepted", src, err)
+	}
+	long := strings.TrimSuffix(strings.Repeat("cpu.used_pct > 90 or ", 200), " or ")
+	if _, err := rules.Parse(long); err != nil {
+		t.Fatalf("Parse of a 200-term or chain = %v; and/or are flat, so length must not cost depth", err)
+	}
+}
+
+// TestTypeCheckRefusesADeeplyNestedTree pins the bound on the side a tree
+// can reach without passing the parser at all — a tree decoded from the
+// ast jsonb column, which TypeCheck is the one gate for.
+func TestTypeCheckRefusesADeeplyNestedTree(t *testing.T) {
+	n := rules.Node{
+		Kind: rules.KindCompare, Op: ">",
+		Args: []rules.Node{{Kind: rules.KindMetric, Name: "cpu.used_pct"}, {Kind: rules.KindNumber, Num: 90}},
+	}
+	for range 500 {
+		n = rules.Node{Kind: rules.KindNot, Args: []rules.Node{n}}
+	}
+	err := rules.TypeCheck(n)
+	if err == nil {
+		t.Fatal("TypeCheck of a 500-deep tree = nil, want a depth failure")
+	}
+	var tcErr *rules.TypeCheckError
+	if !errors.As(err, &tcErr) {
+		t.Fatalf("error %v is not a *rules.TypeCheckError", err)
+	}
+	if !strings.Contains(tcErr.Msg, "nests deeper") {
+		t.Fatalf("message = %q, want it to name the nesting bound", tcErr.Msg)
+	}
+}
+
+// TestTypeCheckRefusesADeeplyNestedNumericTree is the same guard on
+// checkNumber's own recursion, which an arithmetic chain reaches instead.
+func TestTypeCheckRefusesADeeplyNestedNumericTree(t *testing.T) {
+	n := rules.Node{Kind: rules.KindNumber, Num: 1}
+	for range 500 {
+		n = rules.Node{Kind: rules.KindArith, Op: "+", Args: []rules.Node{{Kind: rules.KindNumber, Num: 1}, n}}
+	}
+	err := rules.TypeCheck(rules.Node{
+		Kind: rules.KindCompare, Op: ">",
+		Args: []rules.Node{{Kind: rules.KindMetric, Name: "cpu.used_pct"}, n},
+	})
+	if err == nil {
+		t.Fatal("TypeCheck of a 500-deep arithmetic tree = nil, want a depth failure")
+	}
+	if !errors.Is(err, rules.ErrInvalidRule) {
+		t.Fatalf("error %v does not unwrap to ErrInvalidRule", err)
+	}
+}

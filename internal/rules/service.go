@@ -23,6 +23,18 @@ const maxNameRunes = 100
 // deterioration can be made to wait, but never for longer than a day.
 const maxForDuration = 24 * time.Hour
 
+// maxExpressionBytes bounds an expression rule's source. The HTTP body
+// shape carries no maxLength of its own by design (see ruleBody), which
+// left this field with no bound at all until it reached the parser: huma's
+// default MaxBodyBytes is 1 MiB, and every byte of it was a byte Parse
+// would walk. The parser and TypeCheck each carry their own depth guard
+// now (maxRuleDepth), so this is no longer the load-bearing half — it is
+// the cheap outer one, refusing absurd input before a lexer allocates a
+// token per character. A few KiB is already far more rule than anyone can
+// read: the longest expression the form editor can produce is a few dozen
+// bytes, and a rule nobody can read is not a rule anyone meant to write.
+const maxExpressionBytes = 4096
+
 // Service validates and persists rules. It carries a clock because, unlike
 // checks.Service's groups and definitions, Store.Create/Update never hand
 // a database-stamped row back (see Store's own doc comment) — the
@@ -189,6 +201,13 @@ func (s *Service) buildRule(in RuleInput) (Rule, int, error) {
 	}
 	if in.For < 0 || in.For > maxForDuration {
 		return Rule{}, 0, invalidf("for_duration must be between 0 and %s", maxForDuration)
+	}
+	// Checked before the mode switch rather than inside compileRule's
+	// expression branch: an oversized expression is refused whether or not
+	// the caller also claimed form mode, so no path can reach the lexer
+	// with a megabyte in hand.
+	if n := len(in.Expression); n > maxExpressionBytes {
+		return Rule{}, 0, invalidf("expression must be at most %d bytes, got %d", maxExpressionBytes, n)
 	}
 	switch in.Severity {
 	case SeverityWarn, SeverityCrit:

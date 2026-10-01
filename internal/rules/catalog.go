@@ -83,18 +83,46 @@ func typeErr(pos int, format string, args ...any) error {
 	return &TypeCheckError{Pos: pos, Msg: fmt.Sprintf(format, args...)}
 }
 
+// maxRuleDepth bounds how deeply a rule tree may nest. Every walker in
+// this package is a plain recursion over Node.Args — TypeCheck here,
+// Match and Number in eval_node.go, Format, and encoding/json in both
+// directions — so tree depth is stack depth, and an unbounded tree is a
+// `fatal error: stack overflow`. That is a runtime fatal, not a panic:
+// neither the HTTP recover middleware nor Ticker.tickSafely can catch it,
+// and the manager dies taking every tenant with it.
+//
+// TypeCheck is where the bound belongs because it is the one gate every
+// stored tree passes: Parse ends in it, Form.Compile's output goes through
+// it, and nothing writes ast/clear_ast without one of those two. A tree
+// read back from jsonb is therefore bounded by construction, because no
+// deeper one could ever have been written.
+//
+// 64 is far past anything a rule a human writes needs — nesting is two or
+// three levels, and and/or are flat argument lists rather than nested
+// pairs, so a long conjunction costs one level, not one per term. The one
+// shape that reaches it is a chain the parser builds iteratively: "1+1+1+…"
+// left-folds into a tree one level deeper per term (see parseArith), which
+// is exactly why the parser's own frame counter cannot stand in for this
+// one.
+const maxRuleDepth = 64
+
 // TypeCheck validates a tree for storage: known metrics, matching kinds
 // (a numeric operator never touches a discrete metric and vice versa),
-// window bounds, and a boolean root. The evaluator (Match) never meets a
-// tree TypeCheck has rejected, but it still treats one as "does not
-// match" rather than trusting that TypeCheck was always called first.
+// window bounds, nesting within maxRuleDepth, and a boolean root. The
+// evaluator (Match) never meets a tree TypeCheck has rejected, but it
+// still treats one as "does not match" rather than trusting that TypeCheck
+// was always called first.
 func TypeCheck(n Node) error {
-	return checkBool(n)
+	return checkBool(n, 0)
 }
 
 // checkBool validates n as a boolean-producing node — the shape every
-// rule's root, and every argument of and/or/not, must have.
-func checkBool(n Node) error {
+// rule's root, and every argument of and/or/not, must have. depth is how
+// many ancestors n has; see maxRuleDepth for what it guards.
+func checkBool(n Node, depth int) error {
+	if depth > maxRuleDepth {
+		return typeErr(n.Pos, "nests deeper than %d levels", maxRuleDepth)
+	}
 	switch n.Kind {
 	case KindCompare:
 		switch n.Op {
@@ -106,7 +134,7 @@ func checkBool(n Node) error {
 			return typeErr(n.Pos, "compare: needs exactly two operands, got %d", len(n.Args))
 		}
 		for _, a := range n.Args {
-			if err := checkNumber(a); err != nil {
+			if err := checkNumber(a, depth+1); err != nil {
 				return err
 			}
 		}
@@ -130,7 +158,7 @@ func checkBool(n Node) error {
 			return typeErr(n.Pos, "%s: needs at least one operand", n.Kind)
 		}
 		for _, a := range n.Args {
-			if err := checkBool(a); err != nil {
+			if err := checkBool(a, depth+1); err != nil {
 				return err
 			}
 		}
@@ -139,7 +167,7 @@ func checkBool(n Node) error {
 		if len(n.Args) != 1 {
 			return typeErr(n.Pos, "not: needs exactly one operand, got %d", len(n.Args))
 		}
-		return checkBool(n.Args[0])
+		return checkBool(n.Args[0], depth+1)
 	default:
 		return typeErr(n.Pos, "%s: not a boolean expression", n.Kind)
 	}
@@ -147,8 +175,11 @@ func checkBool(n Node) error {
 
 // checkNumber validates n as a numeric-producing node — the shape every
 // argument of arith and compare, and a window's underlying metric, must
-// have.
-func checkNumber(n Node) error {
+// have. depth is how many ancestors n has; see maxRuleDepth.
+func checkNumber(n Node, depth int) error {
+	if depth > maxRuleDepth {
+		return typeErr(n.Pos, "nests deeper than %d levels", maxRuleDepth)
+	}
 	switch n.Kind {
 	case KindNumber:
 		return nil
@@ -192,7 +223,7 @@ func checkNumber(n Node) error {
 			return typeErr(n.Pos, "arith: needs exactly two operands, got %d", len(n.Args))
 		}
 		for _, a := range n.Args {
-			if err := checkNumber(a); err != nil {
+			if err := checkNumber(a, depth+1); err != nil {
 				return err
 			}
 		}

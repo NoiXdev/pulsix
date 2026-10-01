@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -576,5 +577,43 @@ func TestListFilters(t *testing.T) {
 	byScope, err := svc.List(ctx, org, rules.Filter{Scope: rules.ScopeHost})
 	if err != nil || len(byScope) != 2 {
 		t.Fatalf("filter by scope = %+v, %v", byScope, err)
+	}
+}
+
+// TestCheckRefusesAnOversizedExpression is the cheap outer half of the
+// stack-overflow guard: the HTTP body shape carries no maxLength of its
+// own (ruleBody's own comment explains why), so this service is the only
+// place an expression's length is bounded at all. Without it, huma's 1 MiB
+// default body limit was the only bound, and POST /rules/validate — a
+// checks.read route the editor calls on a debounce — handed every one of
+// those bytes to the lexer.
+//
+// Check rather than Create, because the validate route is the exposed one.
+func TestCheckRefusesAnOversizedExpression(t *testing.T) {
+	host := uuid.Must(uuid.NewV7())
+	org := uuid.Must(uuid.NewV7())
+	svc := rules.NewService(newFakeStore())
+
+	in := hostForm(host)
+	in.Mode = "expression"
+	in.Form = nil
+	// Valid syntax, just absurdly long: a chain of "or"s that the parser
+	// and TypeCheck would both otherwise accept, so the only thing that can
+	// refuse it is the length bound.
+	in.Expression = strings.TrimSuffix(strings.Repeat("cpu.used_pct > 90 or ", 1000), " or ")
+
+	checked, err := svc.Check(ctx, org, in)
+	if !errors.Is(err, rules.ErrInvalidInput) {
+		t.Fatalf("Check of a %d-byte expression = %v, want ErrInvalidInput", len(in.Expression), err)
+	}
+	if checked.OK {
+		t.Fatal("Checked.OK is true for an oversized expression")
+	}
+	if !strings.Contains(checked.Message, "at most") {
+		t.Fatalf("message = %q, want it to name the byte bound", checked.Message)
+	}
+	// Create and Update share buildRule, so the same input is refused there.
+	if _, err := svc.Create(ctx, org, in); !errors.Is(err, rules.ErrInvalidInput) {
+		t.Fatalf("Create = %v, want ErrInvalidInput", err)
 	}
 }
