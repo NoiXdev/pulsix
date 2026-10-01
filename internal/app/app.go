@@ -93,11 +93,11 @@ type App struct {
 	stopEmbedded func()
 	// items is the discovery and decisions service (v0.3b-3). Wired here
 	// because its constructor's check-key set is derived from
-	// rules.Catalogue() (itemCheckKeys, rules_ports.go), and this package
+	// rules.Catalogue() (ItemCheckKeys, rules_ports.go), and this package
 	// is the only one that may import both internal/rules and
-	// internal/items. Nothing reads this field yet — the API surface is a
-	// later task — but the construction belongs in the same change that
-	// makes it possible at all.
+	// internal/items. The same instance also backs api.Deps.Items
+	// (registerItemRoutes); this field itself is kept only because nothing
+	// else in this package needs to read it back out of App.
 	items *items.Service
 }
 
@@ -233,12 +233,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// Discovery and item decisions (v0.3b-3): one store, two lifecycles —
 	// itemsStore is also what the evaluation ticker's own EvalSQLStore
 	// discovers items and resolves decisions through (see evalTicker
-	// below), and itemsSvc is the validating, previewing surface a later
-	// task wires into the API. Both are built here because this is the
-	// only package allowed to import both internal/rules (for
-	// itemCheckKeys, rules_ports.go) and internal/items.
+	// below), and itemsSvc is the validating, previewing surface wired into
+	// the API below (Items, api.Deps). Both are built here because this is
+	// the only package allowed to import both internal/rules (for
+	// ItemCheckKeys, just below) and internal/items.
 	itemsStore := items.NewSQLStore(appDB)
-	itemsSvc := items.NewService(itemsStore, itemCheckKeys)
+	itemsSvc := items.NewService(itemsStore, ItemCheckKeys)
 	// Every organization gets its "default" zone, its "Linux base" check
 	// definitions and its five-row starter rule set the moment it is
 	// created, through whichever of the two paths created it — POST /orgs
@@ -429,6 +429,16 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// The fleet overview and the host page's tuple states (v0.3b-2 Task
 		// 11): the separately wired read-only store above.
 		RuleStates: ruleStates,
+		// Discovery and item decisions (v0.3b-3 Task 6): the same instance
+		// the organization-created hook graph does not touch (items has no
+		// seed set), built above alongside itemsStore. EvalDirty marks a
+		// decision's affected host(s) dirty the moment a mutating route
+		// commits, through the identical upsert internal/checks' ingest
+		// path uses — a separate, cheap wrapper on appDB (rules.DirtyMarker
+		// carries no port the ticker's own EvalSQLStore needs for this one
+		// statement).
+		Items:     itemsSvc,
+		EvalDirty: rules.NewDirtyMarker(appDB),
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
 		// out are the ones embedded at build time — nil in a build made

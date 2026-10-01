@@ -36,6 +36,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
@@ -148,6 +149,16 @@ type Server struct {
 	// organization gets, and so a test can seed rules directly through the
 	// service the routes under test read from.
 	Rules *rules.Service
+	// Items is discovery and item decisions' service (v0.3b-3), the same
+	// instance Deps.Items carries — exposed here, exactly like Checks and
+	// Rules, so a test can seed decisions directly through the service the
+	// routes under test read from. Discovering an item is not exposed on
+	// Service at all (only the evaluation ticker calls Store.Discover), so
+	// a test that needs one to exist builds its own items.NewSQLStore(s.DB)
+	// and calls Discover directly, scoped with db.WithOrgScope — exactly
+	// how checksFixture.record seeds observations through s.Checks instead
+	// of a second, parallel ingest path.
+	Items *items.Service
 	// Push records every check-configuration push the check routes make
 	// after a write commits (api.Deps.AgentPush). Production wires
 	// *agentapi.Service here; a test has no agent stream to observe, so
@@ -416,6 +427,12 @@ func New(t *testing.T, opts ...Option) *Server {
 	// second, separately built *rules.SQLStore, since rules.StateStore is
 	// deliberately narrower than the Store s.Rules already holds.
 	ruleStates := rules.NewSQLStore(d)
+	// Discovery and item decisions (v0.3b-3), wired exactly like production
+	// wiring (internal/app.Build): the check-key set comes from the same
+	// app.ItemCheckKeys adapter over rules.Catalogue(), so a test can never
+	// validate a decision against a different check-key universe than the
+	// manager actually runs.
+	s.Items = items.NewService(items.NewSQLStore(d), app.ItemCheckKeys)
 	s.Push = &PushRecorder{}
 	// Every organization gets its "default" zone, its check definitions
 	// seed set and its rule starter set through this hook, whichever of the
@@ -542,9 +559,16 @@ func New(t *testing.T, opts ...Option) *Server {
 		// every mutating check route (api.CheckConfigPusher). The recorder
 		// stands in for *agentapi.Service, which needs a live gRPC stream
 		// to observe anything at all.
-		Checks:      s.Checks,
-		Rules:       s.Rules,
-		RuleStates:  ruleStates,
+		Checks:     s.Checks,
+		Rules:      s.Rules,
+		RuleStates: ruleStates,
+		// The items surface (v0.3b-3): the same instance exposed as s.Items,
+		// and a real DirtyMarker on the test database — the item-decisions
+		// routes' prompt-reevaluation effect is observable the same way
+		// production reports it (a dirty check_eval_cursor row), not a
+		// stand-in a test has to trust blindly.
+		Items:       s.Items,
+		EvalDirty:   rules.NewDirtyMarker(d),
 		AgentPush:   s.Push,
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,

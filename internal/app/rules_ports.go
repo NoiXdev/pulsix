@@ -59,7 +59,7 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	return rules.CheckContext{Intervals: intervals, Groups: ranks}, nil
 }
 
-// itemCheckKeys adapts rules.Catalogue() into the set internal/items
+// ItemCheckKeys adapts rules.Catalogue() into the set internal/items
 // validates a decision's CheckKey against (items.NewService's own
 // required constructor argument): Catalogue's keys are metric names, so
 // this collapses them to the distinct check keys those metrics belong to.
@@ -67,7 +67,11 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 // entry added later is picked up by the very next validation or
 // discovery call rather than requiring a manager restart — the same
 // reason items.NewService takes a function rather than a snapshot.
-func itemCheckKeys() map[string]struct{} {
+//
+// Exported (not itemCheckKeys) so internal/api/apitest can wire the exact
+// same check-key set production does, rather than a hand-copied second
+// list that could silently drift from it.
+func ItemCheckKeys() map[string]struct{} {
 	entries := rules.Catalogue()
 	keys := make(map[string]struct{}, len(entries))
 	for _, e := range entries {

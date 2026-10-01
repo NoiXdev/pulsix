@@ -123,6 +123,15 @@ var auditAllowlist = map[string]string{
 	// audited) under keystroke noise.
 	"POST /api/v1/orgs/{org}/rules/validate": "a read (parses and type-checks a prospective rule) that uses POST only because the rule is a request body; persists nothing, and the editor calls it on a debounce, so auditing it would bury the real rule mutations under keystroke noise",
 
+	// v0.3b-3: the item-decisions pattern editor's live match count — the
+	// same shape as /rules/validate, /monitoring-groups/preview and
+	// /schedules/preview above: a read (resolves a pattern to the items it
+	// would match) that uses POST only because the pattern is a request
+	// body, and persists nothing — the editor calls this while an operator
+	// is still shaping a pattern, before they have even chosen ignore or
+	// watch.
+	"POST /api/v1/orgs/{org}/item-decisions/preview": "a read (resolves a pattern to the items it would match) that uses POST only because the pattern is a request body; persists nothing, and the editor calls it while an operator is still shaping a pattern",
+
 	// Task 10: the two public webhook receivers. Neither carries a session
 	// or bearer principal (there is none — the trigger's own secret is the
 	// credential, spec §3), so withAudit's actor resolution has nothing to

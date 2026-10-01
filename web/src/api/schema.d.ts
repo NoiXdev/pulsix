@@ -890,6 +890,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/hosts/{id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID items */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-items"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/hosts/{id}/metrics": {
         parameters: {
             query?: never;
@@ -1077,6 +1094,77 @@ export interface paths {
         put?: never;
         /** Post API v1 orgs by org invites */
         post: operations["createInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/item-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org item decisions */
+        get: operations["get-api-v1-orgs-by-org-item-decisions"];
+        put?: never;
+        /** Post API v1 orgs by org item decisions */
+        post: operations["createItemDecision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/item-decisions/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org item decisions preview */
+        post: operations["post-api-v1-orgs-by-org-item-decisions-preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/item-decisions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org item decisions by ID */
+        get: operations["get-api-v1-orgs-by-org-item-decisions-by-id"];
+        /** Put API v1 orgs by org item decisions by ID */
+        put: operations["updateItemDecision"];
+        post?: never;
+        /** Delete API v1 orgs by org item decisions by ID */
+        delete: operations["deleteItemDecision"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org items */
+        get: operations["get-api-v1-orgs-by-org-items"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2980,6 +3068,8 @@ export interface components {
             evaluated_at?: string;
             /** @description This tuple changed state five or more times in the last 30 minutes */
             flapping: boolean;
+            /** @description An item decision currently keeps this tuple from being judged; measurement continues regardless */
+            ignored: boolean;
             /** @description The mount or unit this value is for; empty for a whole-host metric */
             item: string;
             /** @description Set for a discrete metric, e.g. a service state */
@@ -3072,6 +3162,15 @@ export interface components {
             monitored?: boolean;
             name: string;
             zone_id: string;
+        };
+        HostItemsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostItemsOutputBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["ItemDTO"][] | null;
         };
         HostKeyInputBody: {
             /**
@@ -3302,6 +3401,112 @@ export interface components {
             expires_at: string;
             mail_sent: boolean;
             role: string;
+        };
+        ItemDTO: {
+            check_key: string;
+            /** @description The decision that produced this verdict; absent when none matched (the default, watch) */
+            decided_by?: components["schemas"]["ItemDecisionDTO"];
+            /**
+             * @description The effective verdict, resolved exactly like the evaluation ticker resolves it
+             * @enum {string}
+             */
+            decision: "ignore" | "watch";
+            /** Format: date-time */
+            first_seen: string;
+            /** @description Set only on the organization-wide listing */
+            host_id?: string;
+            host_name?: string;
+            item: string;
+            /**
+             * Format: date-time
+             * @description Absent when reported is false
+             */
+            last_seen?: string;
+            /** @description Whether this item is still among the host's current values */
+            reported: boolean;
+        };
+        ItemDecisionBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ItemDecisionBody.json
+             */
+            readonly $schema?: string;
+            /** @description One of the check keys the organization's checks resolve */
+            check_key: string;
+            /** @description ignore or watch; required for create/update, ignored by preview */
+            decision?: string;
+            /**
+             * Format: uuid
+             * @description Required for scope=host, forbidden otherwise
+             */
+            host_id?: string;
+            /** @description exact or glob */
+            match_kind: string;
+            /** @description Why, for the reader six months from now; at most 500 characters */
+            note?: string;
+            /** @description A literal item name (exact) or a '*' glob (glob) */
+            pattern: string;
+            /** @description org or host */
+            scope: string;
+        };
+        ItemDecisionDTO: {
+            check_key: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by?: string;
+            /** @enum {string} */
+            decision: "ignore" | "watch";
+            /** @description Set for scope=host, absent for scope=org */
+            host_id?: string;
+            id: string;
+            /** @enum {string} */
+            match_kind: "exact" | "glob";
+            note?: string;
+            pattern: string;
+            /** @enum {string} */
+            scope: "org" | "host";
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ItemDecisionListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ItemDecisionListOutputBody.json
+             */
+            readonly $schema?: string;
+            decisions: components["schemas"]["ItemDecisionDTO"][] | null;
+        };
+        ItemDecisionOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ItemDecisionOutputBody.json
+             */
+            readonly $schema?: string;
+            decision: components["schemas"]["ItemDecisionDTO"];
+        };
+        ItemPreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ItemPreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description True when matches holds fewer items than total */
+            capped: boolean;
+            matches: components["schemas"]["ItemPreviewTargetDTO"][] | null;
+            /**
+             * Format: int64
+             * @description Every matching item, not just the ones listed in matches
+             */
+            total: number;
+        };
+        ItemPreviewTargetDTO: {
+            check_key: string;
+            host_id: string;
+            item: string;
         };
         JobCancelOutputBody: {
             /**
@@ -3867,6 +4072,15 @@ export interface components {
             name: string;
             role: string;
             slug: string;
+        };
+        OrgItemsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgItemsOutputBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["ItemDTO"][] | null;
         };
         OrgJobSettingsDTO: {
             jobs_require_pinned_hosts: boolean;
@@ -7237,6 +7451,38 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-hosts-by-id-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostItemsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-hosts-by-id-metrics": {
         parameters: {
             query?: {
@@ -7827,6 +8073,243 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InviteCreateOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-item-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemDecisionListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createItemDecision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemDecisionBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemDecisionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-orgs-by-org-item-decisions-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemDecisionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemPreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-item-decisions-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemDecisionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateItemDecision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemDecisionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemDecisionOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteItemDecision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-items": {
+        parameters: {
+            query?: {
+                /** @description Filter by check key */
+                check?: string;
+                /** @description Filter by item name; the same one-character '*' glob the decisions use */
+                item?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgItemsOutputBody"];
                 };
             };
             /** @description Error */

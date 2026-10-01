@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
@@ -113,6 +114,18 @@ type Deps struct {
 	// GET /hosts/{id}/checks (registerHostCheckRoutes) and the whole of
 	// GET /fleet (registerFleetRoutes).
 	RuleStates rules.StateStore
+	// Items is discovery and item decisions' own surface (v0.3b-3, spec
+	// docs/superpowers/specs/2026-10-01-v0.3b-3-discovery-design.md): item
+	// CRUD reads, decision CRUD, and the preview a pattern editor drives
+	// before anyone has chosen ignore or watch. See registerItemRoutes and
+	// GET /hosts/{id}/checks (registerHostCheckRoutes), which resolves
+	// `ignored` through the same items.Decide the evaluation ticker runs.
+	Items *items.Service
+	// EvalDirty marks a host's evaluation cursor dirty outside the
+	// evaluator's own write path — see EvalDirtyMarker's own doc comment
+	// (item_handlers.go) for why the item-decisions routes need this at
+	// all. *rules.DirtyMarker satisfies it in production.
+	EvalDirty EvalDirtyMarker
 	// AgentPush delivers a host's freshly resolved check configuration to
 	// whatever agent is currently connected for it, after a check
 	// definition or monitoring group write commits. See CheckConfigPusher.
@@ -272,6 +285,12 @@ func (d Deps) validate() error {
 	}
 	if d.RuleStates == nil {
 		missing = append(missing, "RuleStates")
+	}
+	if d.Items == nil {
+		missing = append(missing, "Items")
+	}
+	if d.EvalDirty == nil {
+		missing = append(missing, "EvalDirty")
 	}
 	if d.AgentPush == nil {
 		missing = append(missing, "AgentPush")
@@ -485,6 +504,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerMonitoringGroupRoutes(orgScoped, deps) // /orgs/{org}/monitoring-groups...
 	registerHostCheckRoutes(orgScoped, deps)       // GET /orgs/{org}/hosts/{id}/checks, .../metrics
 	registerRuleRoutes(orgScoped, deps)            // /orgs/{org}/rules..., GET /orgs/{org}/hosts/{id}/effective-rules
+	registerItemRoutes(orgScoped, deps)            // /orgs/{org}/items, /orgs/{org}/item-decisions..., GET /orgs/{org}/hosts/{id}/items
 	registerFleetRoutes(orgScoped, deps)           // GET /orgs/{org}/fleet
 	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...

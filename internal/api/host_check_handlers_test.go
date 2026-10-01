@@ -39,6 +39,9 @@ type hostCheckValue struct {
 	Flapping    bool       `json:"flapping"`
 	EvaluatedAt *time.Time `json:"evaluated_at"`
 	StateStale  bool       `json:"state_stale"`
+	// Ignored is v0.3b-3's own addition — see item_handlers_test.go's
+	// TestHostChecksReportsIgnoredAdditively for its dedicated coverage.
+	Ignored bool `json:"ignored"`
 }
 
 type hostCheck struct {

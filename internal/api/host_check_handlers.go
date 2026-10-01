@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -90,6 +91,18 @@ type hostCheckValueDTO struct {
 	// already lives in Go (toHostCheckDTO's own Stale computation below).
 	EvaluatedAt *time.Time `json:"evaluated_at,omitempty" doc:"When the rule engine last judged this tuple; absent when state is null"`
 	StateStale  bool       `json:"state_stale" doc:"Evaluated more than three of the check's own intervals ago; mirrors stale, but for the verdict rather than the reading"`
+	// Ignored is v0.3b-3's own addition, additive like State/Since/Flapping
+	// above: every existing field keeps its name and meaning. It reports
+	// whether an item decision currently keeps this tuple from being
+	// judged, resolved through items.Decide — the exact function the
+	// evaluation ticker runs — rather than read off State: Apply deletes
+	// an ignored tuple's check_states row (its own doc comment says why),
+	// so a null State means both "never evaluated" and "being ignored",
+	// two different statements this field tells apart. Measurement
+	// continues regardless of this flag — ignoring never touches what the
+	// agent is asked to collect. Always false for an item-less metric
+	// (cpu, memory): there is nothing to ignore.
+	Ignored bool `json:"ignored" doc:"An item decision currently keeps this tuple from being judged; measurement continues regardless"`
 }
 
 type hostCheckDTO struct {
@@ -213,6 +226,10 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 			// raw error for mapChecksErr to relabel as a checks failure.
 			return nil, err
 		}
+		ignored, err := hostIgnoredItems(ctx, deps, scope.OrgID, hostID, current)
+		if err != nil {
+			return nil, err
+		}
 
 		out := &hostChecksOutput{}
 		out.Body.HostID = hostID.String()
@@ -225,7 +242,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		byKey := currentByKey(current)
 		now := time.Now()
 		for _, d := range effective {
-			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now, statesByTuple))
+			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored))
 		}
 		return out, nil
 	})
@@ -371,7 +388,7 @@ func stillAsked(d checks.Definition, values []checks.Current) []checks.Current {
 	return kept
 }
 
-func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState) hostCheckDTO {
+func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]bool) hostCheckDTO {
 	params := d.Params
 	if params == nil {
 		params = map[string]any{}
@@ -416,9 +433,49 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 			// in (Stale stays false) but stops advancing EvaluatedAt.
 			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*d.Interval
 		}
+		if c.Item != "" {
+			v.Ignored = ignored[ignoredKey{CheckKey: d.Key, Item: c.Item}]
+		}
 		dto.Values[i] = v
 	}
 	return dto
+}
+
+// ignoredKey identifies one (check_key, item) pair — an item decision's own
+// unit of effect, since every metric of the same item shares its fate
+// (items.Target carries no metric of its own, for the same reason).
+type ignoredKey struct{ CheckKey, Item string }
+
+// hostIgnoredItems resolves, for every (check_key, item) pair hostID's
+// current values carry, whether an item decision currently makes it
+// ignored — through items.Decide, the exact function the evaluation
+// ticker runs, over the organization's full decision list (Decide's own
+// applies() narrows a scope=host decision to its own host). This is the
+// read side's only way to learn "ignored" at all: Apply deletes an ignored
+// tuple's check_states row (its own doc comment says why), so there is no
+// state to read it off of — see internal/items' own design note, "the read
+// side therefore cannot learn 'ignored' from a state".
+//
+// Metrics with no item (cpu, memory) have nothing to ignore and are never
+// looked up — the same filter hostCheckDTO's own Ignored field documents.
+func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current) (map[ignoredKey]bool, error) {
+	ds, err := deps.Items.ListDecisions(ctx, orgID)
+	if err != nil {
+		slog.ErrorContext(ctx, "host checks: item decisions", "org_id", orgID, "host_id", hostID, "err", err)
+		return nil, huma.Error500InternalServerError("internal error")
+	}
+	out := make(map[ignoredKey]bool, len(current))
+	for _, c := range current {
+		if c.Item == "" {
+			continue
+		}
+		k := ignoredKey{CheckKey: c.CheckKey, Item: c.Item}
+		if _, ok := out[k]; ok {
+			continue
+		}
+		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Item: c.Item}).Ignored()
+	}
+	return out, nil
 }
 
 // currentTupleStates loads hostID's stored tuple states and keeps only the
