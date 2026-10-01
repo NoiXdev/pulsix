@@ -99,15 +99,23 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   const preview = useItemDecisionPreview(org, debouncedBody);
 
   // Stale exactly when there is something worth previewing at all
-  // (liveBody) and the query above does not yet describe that exact
+  // (liveBody) and this dialog does not have a count for that exact
   // input: either the debounce has not caught up with what is currently
-  // typed, or the request for the debounced value has not landed a result
-  // (success or error) yet. Save stays disabled for the whole of this
-  // window — the review finding this fixes: typing a broad pattern and
-  // clicking Save before the preview ever ran skipped both the preview
-  // and the confirmation it exists to require.
+  // typed, or the request for the debounced value has not landed a
+  // count. Save stays disabled for the whole of this window — the review
+  // finding this fixes: typing a broad pattern and clicking Save before
+  // the preview ever ran skipped both the preview and the confirmation
+  // it exists to require.
+  //
+  // A FAILED preview counts as stale too (it used to be the one way out
+  // of this gate): the count is the entire brake on a pattern that
+  // catches the fleet, and `capped` is undefined on an error, so an
+  // errored preview re-enabled Save AND silently skipped the second
+  // confirmation. With retry: false on the query, one network blip while
+  // `*` is typed was enough. The error text is already on screen; what
+  // this adds is that it blocks rather than merely informs.
   const previewStale =
-    liveBody !== null && (pattern !== debouncedPattern || preview.isFetching || (preview.data === undefined && !preview.isError));
+    liveBody !== null && (pattern !== debouncedPattern || preview.isFetching || preview.isError || preview.data === undefined);
 
   // Watch at organization scope is never offered — it changes nothing (and
   // the server now refuses to store it at all), so switching to org scope

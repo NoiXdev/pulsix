@@ -212,6 +212,38 @@ describe('ItemDecisionDialog', () => {
     confirmSpy.mockRestore();
   });
 
+  // A failed preview used to be the one way out of the gate: previewStale
+  // short-circuited on isError, and `capped` is undefined on an error, so
+  // Save re-enabled AND the second confirmation never fired. With
+  // retry: false on the query, one network blip while `*` is typed was
+  // enough to save a fleet-wide pattern with no brake at all.
+  it('keeps Save disabled when the preview itself failed — the count is the only brake there is', async () => {
+    const user = userEvent.setup();
+    let posted = false;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi({
+      'POST /api/v1/orgs/acme/item-decisions/preview': () => new Response(JSON.stringify({ detail: 'preview unavailable' }), { status: 500 }),
+      'POST /api/v1/orgs/acme/item-decisions': () => {
+        posted = true;
+        return { decision: { id: 'd1' } };
+      },
+    });
+    renderDialog();
+
+    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    await user.type(screen.getByLabelText('Pattern'), '*');
+
+    // The failure is surfaced — it is not silent — and Save stays
+    // disabled behind it rather than falling open.
+    expect(await screen.findByText(/preview unavailable/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(posted).toBe(false);
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+  });
+
   it('shows an organization-scoped watch stored outside this editor truthfully, and refuses to save it as is', async () => {
     mockApi({
       'POST /api/v1/orgs/acme/item-decisions/preview': () => ({ matches: [{ host_id: 'h1', check_key: 'disk', item: '/var' }], total: 1, capped: false }),
