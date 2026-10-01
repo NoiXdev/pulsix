@@ -102,21 +102,39 @@ type SQLStore struct{ q *gen.Queries }
 // statement runs inside the request's bound organization.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
-// Discover writes each of items via InsertCheckItem's own ON CONFLICT DO
-// NOTHING — one statement per item, not a single batched insert, because
-// the common case is a handful of items already known (every tick after
-// the first) and a failed primary-key probe per item is cheap. Discover
-// does not open a transaction of its own: it is designed to run inside
-// the evaluation ticker's own per-host transaction (a later task), so a
-// crash mid-batch leaves exactly the items already committed to that
-// transaction and nothing is duplicated when the tick retries.
+// Discover writes seen through InsertCheckItems' own ON CONFLICT DO
+// NOTHING: ONE statement for the whole host, whatever seen's length, with
+// the check keys and the item names passed as two parallel arrays the
+// query unnests in lockstep.
+//
+// One statement, not the per-item loop this replaced. Discover runs for
+// every host of every evaluation batch, for ever, and the row writes are
+// the cheap part — they happen once in an item's life. The statements did
+// not: twenty mounts on a DefaultEvalBatch of 200 hosts was 4 000 serial
+// round trips per tick, which is precisely the per-item-per-tick cost the
+// design rejected outright when it declined to store last_seen. And since
+// Discover runs on *db.DB with no transaction bound to ctx, every one of
+// those statements also acquired its own pool connection WHILE the host's
+// claim transaction was holding one — the shape rules.ticker's own
+// batchDeadlineFactor comment names as the failure the batch deadline
+// exists to end.
+//
+// Discover still opens no transaction of its own: it is designed to run
+// inside the evaluation ticker's per-host transaction, so a crash leaves
+// exactly the items already committed to that transaction and nothing is
+// duplicated when the tick retries. An empty seen is a no-op that still
+// issues the statement rather than special-casing the empty slice — two
+// empty arrays unnest to no rows at all.
 func (s *SQLStore) Discover(ctx context.Context, orgID, hostID uuid.UUID, seen []Seen) error {
-	for _, it := range seen {
-		if err := s.q.InsertCheckItem(ctx, gen.InsertCheckItemParams{
-			OrgID: orgID, HostID: hostID, CheckKey: it.CheckKey, Item: it.Name,
-		}); err != nil {
-			return fmt.Errorf("discover items: %w", err)
-		}
+	checkKeys := make([]string, len(seen))
+	names := make([]string, len(seen))
+	for i, it := range seen {
+		checkKeys[i], names[i] = it.CheckKey, it.Name
+	}
+	if err := s.q.InsertCheckItems(ctx, gen.InsertCheckItemsParams{
+		OrgID: orgID, HostID: hostID, CheckKeys: checkKeys, Items: names,
+	}); err != nil {
+		return fmt.Errorf("discover items: %w", err)
 	}
 	return nil
 }

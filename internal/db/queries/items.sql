@@ -1,14 +1,39 @@
--- name: InsertCheckItem :exec
+-- name: InsertCheckItems :exec
 -- Discovery (v0.3b-3 design, "Discovery and evaluation"): one row per
--- (host, check_key, item), written at most once in its life. ON CONFLICT
--- DO NOTHING is the whole mechanism — an item already known costs one
--- failed index probe on the primary key and nothing else; first_seen is
--- left exactly as it was on the existing row. first_seen is the
--- database's own now(), not a value the caller supplies — see migration
--- 00048's own comment on check_items for why no clock is threaded through
--- this statement.
+-- (host, check_key, item), written at most once in its life — a whole
+-- host's items in ONE statement.
+--
+-- One statement, not one per item (the shape this replaced): Discover runs
+-- for every host of every evaluation batch, for ever, so twenty mounts on
+-- a DefaultEvalBatch of 200 hosts was 4 000 serial round trips per tick.
+-- Worse, it runs on *db.DB with no bound transaction while that host's
+-- claim transaction already holds a pool connection, so every extra
+-- statement was also an extra pool acquisition in exactly the place
+-- rules.ticker's batchDeadlineFactor exists to keep short. The row writes
+-- themselves were always once-per-lifetime; it is the per-item STATEMENT
+-- this removes — the same reason, and the same unnest shape, as
+-- MarkHostsDirty in rules.sql.
+--
+-- The two unnests in the select list expand in lockstep, one row per
+-- (check_key, item) pair — the caller passes arrays of equal length,
+-- built from the same slice in one pass, so the lockstep never has a
+-- shorter array to pad with NULLs. (unnest(a, b) in FROM would say the
+-- same thing more plainly, but sqlc's static analysis — no live database
+-- behind this schema directory, see sqlc.yaml — does not know the
+-- two-argument form.) Two empty arrays are a legal no-op: unnest produces
+-- no rows, so the INSERT touches nothing.
+--
+-- ON CONFLICT DO NOTHING is still the whole mechanism — an item already
+-- known costs one failed index probe on the primary key and nothing else,
+-- and first_seen is left exactly as it was on the existing row. It also
+-- absorbs a pair repeated inside one call: DO NOTHING (unlike DO UPDATE)
+-- sees the row this very statement inserted a moment ago and simply skips
+-- the second. first_seen is the database's own now(), not a value the
+-- caller supplies — see migration 00048's own comment on check_items for
+-- why no clock is threaded through this statement.
 INSERT INTO check_items (org_id, host_id, check_key, item, first_seen)
-VALUES (sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(check_key), sqlc.arg(item), now())
+SELECT sqlc.arg(org_id), sqlc.arg(host_id),
+       unnest(sqlc.arg(check_keys)::text[]), unnest(sqlc.arg(items)::text[]), now()
 ON CONFLICT (host_id, check_key, item) DO NOTHING;
 
 -- name: ListItemsForHost :many

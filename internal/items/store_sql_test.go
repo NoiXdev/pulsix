@@ -168,6 +168,85 @@ func TestItemStoreDiscoverSurvivesGap(t *testing.T) {
 	}
 }
 
+// TestItemStoreDiscoverIsOneStatement pins the shape Discover's own doc
+// comment promises: a whole host's items go in ONE statement, not one per
+// item. It is proved through the only thing a store test can observe from
+// outside — first_seen is the database's own now(), which is the
+// TRANSACTION's timestamp, identical for every row one statement writes
+// and necessarily different for rows written by separate autocommitted
+// statements. Discover runs on *db.DB with no transaction bound to ctx
+// here, exactly as the per-item loop this replaced did, so a loop would
+// stamp each item its own now() and this assertion would fail.
+//
+// Why it matters enough to pin: the loop cost one serial round trip (and,
+// inside the evaluation ticker, one pool acquisition while that host's
+// claim transaction already held a connection) per item per host per
+// tick, for ever — the same per-item-per-tick cost the design rejected
+// outright when it declined to store last_seen.
+func TestItemStoreDiscoverIsOneStatement(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "items-discover-batch")
+	host := seedHost(t, d, org, "h1")
+	st := items.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	seen := []items.Seen{
+		{CheckKey: "disk", Name: "/"},
+		{CheckKey: "disk", Name: "/var"},
+		{CheckKey: "disk", Name: "/srv"},
+		{CheckKey: "service", Name: "sshd"},
+	}
+	if err := st.Discover(scoped, org, host, seen); err != nil {
+		t.Fatal(err)
+	}
+
+	views, err := st.ItemsForHost(scoped, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != len(seen) {
+		t.Fatalf("ItemsForHost after one Discover = %d items, want %d", len(views), len(seen))
+	}
+	for _, v := range views[1:] {
+		if !v.FirstSeen.Equal(views[0].FirstSeen) {
+			t.Fatalf("first_seen differs across one Discover call (%s=%v vs %s=%v): the batch was issued as more than one statement",
+				views[0].Name, views[0].FirstSeen, v.Name, v.FirstSeen)
+		}
+	}
+}
+
+// TestItemStoreDiscoverRepeatedItemInOneCall pins what the batched
+// statement does with the same (check_key, item) twice in ONE call — a
+// shape the per-item loop could not produce a self-conflict from, and the
+// one way INSERT ... SELECT unnest could have failed where the loop did
+// not. ON CONFLICT DO NOTHING (unlike DO UPDATE) absorbs a row the very
+// same statement inserted a moment earlier, so this must be one row and
+// no error. Discover's caller already collapses duplicates
+// (rules.seenItems), so this is about the store keeping its own contract
+// rather than relying on that.
+func TestItemStoreDiscoverRepeatedItemInOneCall(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "items-discover-dup")
+	host := seedHost(t, d, org, "h1")
+	st := items.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	err := st.Discover(scoped, org, host, []items.Seen{
+		{CheckKey: "disk", Name: "/var"},
+		{CheckKey: "disk", Name: "/var"},
+	})
+	if err != nil {
+		t.Fatalf("Discover with a repeated item = %v, want no error", err)
+	}
+	views, err := st.ItemsForHost(scoped, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("ItemsForHost after a repeated item = %d items, want 1", len(views))
+	}
+}
+
 // TestItemStoreDiscoverEmptySlice pins Discover's documented no-op shape
 // for an empty batch: no error, no row.
 func TestItemStoreDiscoverEmptySlice(t *testing.T) {
