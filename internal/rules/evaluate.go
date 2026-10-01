@@ -326,9 +326,10 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	// candidate_since is a column, not a variable, so a wait that started
 	// before a manager restart carries on from where it was rather than
 	// starting over (review focus 4). A candidate aiming at a different
-	// state is a different wait, so it starts its own clock.
+	// state is a different wait, so it starts its own clock — and so is a
+	// wait nobody was watching, which is what continuous below is for.
 	since := s.Now
-	if prev.Candidate == target && prev.CandidateSince != nil {
+	if prev.Candidate == target && prev.CandidateSince != nil && continuous(s, ts, prev) {
 		since = *prev.CandidateSince
 	}
 	// decided is guaranteed here rather than checked: this point is only
@@ -352,6 +353,28 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	next.Candidate = target
 	next.CandidateSince = &since
 	return next, &ripensAt
+}
+
+// continuous reports whether the previous evaluation of ts is recent
+// enough for a candidate it recorded to keep counting. A for_duration wait
+// is a claim that a deterioration HELD for that long, so it may only be
+// carried across a gap short enough that the tuple was actually being
+// watched through it — the same three intervals staleness itself uses.
+//
+// What this exists for is the one gap the staleness path cannot heal: a
+// tuple whose check stops resolving an interval is skipped entirely by
+// Evaluate, so its check_states row freezes exactly as it was, candidate
+// and all. Disable a disk check at 09:01 with a 10-minute crit candidate
+// set at 09:00, re-enable it three days later with the value still high,
+// and without this guard the first tick computes a ripening moment three
+// days in the past and promotes to crit at once — skipping the whole wait
+// on a deterioration never observed to hold, and then reporting "crit
+// since three days ago" for a span in which nothing was measured. A
+// manager restart does not reach this, because the staleness deadline
+// fires first and step 1 discards the candidate on its way through
+// unknown; a disabled check never runs that path at all.
+func continuous(s Snapshot, ts TupleSnapshot, prev TupleState) bool {
+	return !s.Now.After(prev.EvaluatedAt.Add(stalenessFactor * ts.Interval))
 }
 
 // buildInputs builds one Input per ItemKey rather than per tuple: a rule on

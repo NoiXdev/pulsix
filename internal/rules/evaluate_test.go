@@ -104,11 +104,22 @@ func wasBy(t rules.Tuple, st rules.State, since time.Time, ruleID uuid.UUID) rul
 	return s
 }
 
-// wasRipening is a previous state with a candidate waiting to ripen.
+// wasRipening is a previous state with a candidate waiting to ripen,
+// last evaluated at the moment that candidate was recorded — the ordinary,
+// continuous case, which is what a tuple being evaluated every tick looks
+// like.
 func wasRipening(t rules.Tuple, st rules.State, since time.Time, cand rules.State, candSince time.Time) rules.TupleState {
+	return wasRipeningLastSeen(t, st, since, cand, candSince, candSince)
+}
+
+// wasRipeningLastSeen is wasRipening with the previous evaluation's own
+// moment spelled out, for the case where it is far enough back that the
+// wait is no longer continuous (see Evaluate's own `continuous`).
+func wasRipeningLastSeen(t rules.Tuple, st rules.State, since time.Time, cand rules.State, candSince, evaluatedAt time.Time) rules.TupleState {
 	s := was(t, st, since)
 	s.Candidate = cand
 	s.CandidateSince = &candSince
+	s.EvaluatedAt = evaluatedAt
 	return s
 }
 
@@ -447,6 +458,56 @@ func evaluateCases() []evalCase {
 				}},
 				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(30), EvaluatedAt: at(30)},
 				NextDue: at(60),
+			},
+		},
+		{
+			// The row between "a candidate from before a restart ripens on
+			// the first tick after it" and "a tuple whose check has no
+			// resolved interval is left out entirely": a check disabled
+			// mid-ripening freezes its check_states row, candidate and all,
+			// and nothing sweeps it to unknown because the skip runs before
+			// step 1 ever does. Three days later the wait must start over
+			// rather than ripen on a deterioration nobody watched.
+			name: "a candidate frozen by a disabled check starts its wait over",
+			snap: rules.Snapshot{
+				Now:       at(4320), // three days after the candidate was set
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(4320), tenMin)},
+				Effective: []rules.Effective{eff(withFor(cpuCrit(), tenMin), cpuT)},
+				Previous:  prev(wasRipeningLastSeen(cpuT, rules.StateOK, at(0), rules.StateCrit, at(5), at(6))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateOK, Since: at(0),
+					LastValue: ptr(95.0), Candidate: rules.StateCrit, CandidateSince: ptr(at(4320)),
+					EvaluatedAt: at(4320),
+				}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(4320)},
+				NextDue: at(4330),
+			},
+		},
+		{
+			// The other side of the same guard: a gap inside the staleness
+			// window is an ordinary tick that happened to be late, and the
+			// wait it interrupted carries on. Without this the fix above
+			// would quietly reset every candidate on a ticker that overran.
+			name: "a candidate survives a gap still inside the staleness window",
+			snap: rules.Snapshot{
+				Now:       at(29),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(29), tenMin)},
+				Effective: []rules.Effective{eff(withFor(cpuCrit(), tenMin), cpuT)},
+				Previous:  prev(wasRipeningLastSeen(cpuT, rules.StateOK, at(0), rules.StateCrit, at(5), at(5))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateCrit, Since: at(29),
+					RuleID: &critID, LastValue: ptr(95.0), EvaluatedAt: at(29),
+				}},
+				Changes: []rules.Change{{
+					At: at(29), Tuple: cpuT, From: rules.StateOK, To: rules.StateCrit,
+					RuleID: &critID, Value: ptr(95.0),
+				}},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(29), EvaluatedAt: at(29)},
+				NextDue: at(59),
 			},
 		},
 		{
