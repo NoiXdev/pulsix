@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/hosts/selector"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -37,11 +38,25 @@ import (
 // renders that as "no data", never a colour. No omitempty on State, for
 // the same reason GET /hosts/{id}/checks' own new field has none: the key
 // is always present, explicitly null rather than silently missing.
+//
+// AllIgnored (backlog 3.44) is the one case State == nil does not, on its
+// own, tell apart: a host nobody has ever measured reads exactly like a
+// host whose every discovered item currently resolves to ignored — both
+// leave check_host_states with no row, since an evaluation with zero
+// judged tuples deletes it (the same contract State's own doc comment
+// names). AllIgnored is true only for the second case, and only ever
+// alongside State == nil — a host with even one judged tuple keeps its
+// real state regardless of how many other items are ignored. It is a
+// field of its own rather than a fifth rules.State value: ignoring is a
+// decision, not a measurement (rules.State's own doc comment, and the
+// v0.3b-3 design's "The third value" ruling applied one level up), and a
+// state comparison, a roll-up ordering or an alerting rule must never be
+// asked to have an opinion about it.
 type fleetHostDTO struct {
 	HostID string  `json:"host_id"`
 	Name   string  `json:"name"`
 	ZoneID string  `json:"zone_id"`
-	State  *string `json:"state" enum:"ok,warn,crit,unknown" doc:"null when this host has no roll-up row at all (\"no data\")"`
+	State  *string `json:"state" enum:"ok,warn,crit,unknown" doc:"null when this host has no roll-up row at all (\"no data\", or \"all ignored\" — see all_ignored)"`
 	Crit   int     `json:"crit"`
 	Warn   int     `json:"warn"`
 	// Unknown counts this host's tuples currently in the unknown state —
@@ -50,6 +65,9 @@ type fleetHostDTO struct {
 	Unknown     int        `json:"unknown"`
 	Since       *time.Time `json:"since,omitempty" doc:"When the current state began; absent when state is null"`
 	EvaluatedAt *time.Time `json:"evaluated_at,omitempty" doc:"absent when state is null"`
+	// AllIgnored is always false when State is non-nil. See this type's own
+	// doc comment for what distinguishes it from the plain "no data" case.
+	AllIgnored bool `json:"all_ignored" doc:"True when state is null because every item this host has discovered currently resolves to ignored, rather than because nothing has ever been measured"`
 }
 
 // fleetTotalsDTO counts HOSTS (not tuples) by roll-up state across the
@@ -69,7 +87,16 @@ type fleetTotalsDTO struct {
 	Warn    int `json:"warn" doc:"Hosts in the filtered set currently warn"`
 	Unknown int `json:"unknown" doc:"Hosts in the filtered set currently unknown"`
 	OK      int `json:"ok" doc:"Hosts in the filtered set currently ok"`
-	NoData  int `json:"no_data" doc:"Hosts in the filtered set with no roll-up row at all — never evaluated"`
+	// NoData no longer counts a host whose roll-up row is absent because
+	// every item it discovered is ignored — that host counts under
+	// AllIgnored instead (backlog 3.44), so the two buckets stay honest
+	// about which "no roll-up row" case each host is in, and still sum
+	// with every other bucket to the size of the filtered set.
+	NoData int `json:"no_data" doc:"Hosts in the filtered set with no roll-up row at all, and nothing discovered that is all ignored — never evaluated, or evaluated to zero tuples for a reason other than ignoring"`
+	// AllIgnored counts a host with no roll-up row whose discovered items
+	// all currently resolve to ignored — see fleetHostDTO.AllIgnored's own
+	// doc comment for the full distinction.
+	AllIgnored int `json:"all_ignored" doc:"Hosts in the filtered set with no roll-up row, because every item they discovered currently resolves to ignored"`
 }
 
 // fleetInput's Zone and Group are plain strings, not *uuid.UUID: like
@@ -102,10 +129,13 @@ type fleetOutput struct {
 }
 
 // toFleetHostDTO renders h's roll-up. hasState is false exactly when
-// check_host_states carries no row for h.
-func toFleetHostDTO(h hosts.Host, st rules.HostState, hasState bool) fleetHostDTO {
+// check_host_states carries no row for h; allIgnored is only consulted in
+// that case — a host with a real state keeps it regardless of what
+// allIgnored says (see fleetHostDTO.AllIgnored's own doc comment).
+func toFleetHostDTO(h hosts.Host, st rules.HostState, hasState, allIgnored bool) fleetHostDTO {
 	dto := fleetHostDTO{HostID: h.ID.String(), Name: h.Name, ZoneID: h.ZoneID.String()}
 	if !hasState {
+		dto.AllIgnored = allIgnored
 		return dto
 	}
 	state := string(st.State)
@@ -113,6 +143,38 @@ func toFleetHostDTO(h hosts.Host, st rules.HostState, hasState bool) fleetHostDT
 	dto.State, dto.Since, dto.EvaluatedAt = &state, &since, &evaluatedAt
 	dto.Crit, dto.Warn, dto.Unknown = st.Crit, st.Warn, st.Unknown
 	return dto
+}
+
+// allIgnoredHosts resolves, for every host that discovered at least one
+// item anywhere in the organization, whether every one of those items
+// currently resolves to ignored through items.Decide — the exact function
+// the evaluation ticker runs (internal/rules/load_sql.go's own
+// resolveIgnored). views and decisions are each the organization's own
+// single, unfiltered read (deps.Items.ItemsForOrg with the zero Filter,
+// deps.Items.ListDecisions): one query apiece for the whole fleet request,
+// not one per host or per item, the same bound the evaluation loader keeps
+// for the identical resolution run once per host rather than once per
+// tuple. A host absent from the result discovered nothing at all — still
+// "no data", never "all ignored" (fleetHostDTO.AllIgnored's own doc
+// comment).
+func allIgnoredHosts(views []items.View, decisions []items.Decision) map[uuid.UUID]bool {
+	byHost := make(map[uuid.UUID][]items.View, len(views))
+	for _, v := range views {
+		byHost[v.HostID] = append(byHost[v.HostID], v)
+	}
+	out := make(map[uuid.UUID]bool, len(byHost))
+	for hostID, hostViews := range byHost {
+		all := true
+		for _, v := range hostViews {
+			target := items.Target{HostID: hostID, CheckKey: v.CheckKey, Item: v.Name}
+			if !items.Decide(decisions, target).Ignored() {
+				all = false
+				break
+			}
+		}
+		out[hostID] = all
+	}
+	return out
 }
 
 // fleetStateRank orders the listing worst-first: a known problem before an
@@ -331,13 +393,32 @@ func registerFleetRoutes(hapi huma.API, deps Deps) {
 			byHost[st.HostID] = st
 		}
 
+		// Two more organization-wide reads, each already a single query
+		// regardless of how many hosts the roster holds (items.Service's own
+		// ItemsForOrg and ListDecisions) — see allIgnoredHosts' own doc
+		// comment for why this never becomes a per-host fan-out.
+		views, err := deps.Items.ItemsForOrg(ctx, scope.OrgID, items.Filter{})
+		if err != nil {
+			slog.ErrorContext(ctx, "fleet: items for org", "err", err)
+			return nil, huma.Error500InternalServerError("internal error")
+		}
+		decisions, err := deps.Items.ListDecisions(ctx, scope.OrgID)
+		if err != nil {
+			slog.ErrorContext(ctx, "fleet: item decisions", "err", err)
+			return nil, huma.Error500InternalServerError("internal error")
+		}
+		ignoredHosts := allIgnoredHosts(views, decisions)
+
 		out := &fleetOutput{}
 		out.Body.Hosts = make([]fleetHostDTO, len(roster))
 		var totals fleetTotalsDTO
 		for i, h := range roster {
 			st, ok := byHost[h.ID]
-			out.Body.Hosts[i] = toFleetHostDTO(h, st, ok)
+			allIgnored := !ok && ignoredHosts[h.ID]
+			out.Body.Hosts[i] = toFleetHostDTO(h, st, ok, allIgnored)
 			switch {
+			case allIgnored:
+				totals.AllIgnored++
 			case !ok:
 				totals.NoData++
 			case st.State == rules.StateCrit:

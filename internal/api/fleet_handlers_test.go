@@ -18,6 +18,7 @@ import (
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/items"
 )
 
 type fleetHostBody struct {
@@ -30,16 +31,18 @@ type fleetHostBody struct {
 	Unknown     int        `json:"unknown"`
 	Since       *time.Time `json:"since"`
 	EvaluatedAt *time.Time `json:"evaluated_at"`
+	AllIgnored  bool       `json:"all_ignored"`
 }
 
 type fleetBody struct {
 	Hosts  []fleetHostBody `json:"hosts"`
 	Totals struct {
-		Crit    int `json:"crit"`
-		Warn    int `json:"warn"`
-		Unknown int `json:"unknown"`
-		OK      int `json:"ok"`
-		NoData  int `json:"no_data"`
+		Crit       int `json:"crit"`
+		Warn       int `json:"warn"`
+		Unknown    int `json:"unknown"`
+		OK         int `json:"ok"`
+		NoData     int `json:"no_data"`
+		AllIgnored int `json:"all_ignored"`
 	} `json:"totals"`
 }
 
@@ -61,6 +64,39 @@ func (f checksFixture) fleet(t *testing.T, c *http.Client, query string) fleetBo
 	var out fleetBody
 	decodeInto(t, resp, &out)
 	return out
+}
+
+// discoverItem seeds hostID with one discovered item directly through the
+// discovery store — the same shape itemsFixture.discover
+// (item_handlers_test.go) uses. Duplicated here rather than shared because
+// checksFixture and itemsFixture are two separate fixtures this package
+// otherwise keeps apart; items.Service carries no Discover of its own
+// (only the evaluation ticker calls it), so the fixture builds its own
+// store on the shared test database, exactly like itemsFixture does.
+func (f checksFixture) discoverItem(t *testing.T, hostID uuid.UUID, checkKey, name string) {
+	t.Helper()
+	store := items.NewSQLStore(f.s.DB)
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	if err := store.Discover(scoped, f.orgID, hostID, []items.Seen{{CheckKey: checkKey, Name: name}}); err != nil {
+		t.Fatalf("discover item: %v", err)
+	}
+}
+
+// createItemDecision creates an item decision through the real API — the
+// same POST the Items tab's "ignore this item" action sends — and fails
+// the test unless the server accepts it. hostID is nil for scope "org".
+func (f checksFixture) createItemDecision(t *testing.T, scope string, hostID *uuid.UUID, checkKey, matchKind, pattern, verdict string) {
+	t.Helper()
+	body := map[string]any{
+		"scope": scope, "check_key": checkKey, "match_kind": matchKind, "pattern": pattern, "decision": verdict,
+	}
+	if hostID != nil {
+		body["host_id"] = hostID.String()
+	}
+	resp := postJSON(t, f.operatorC, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/item-decisions", body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create item decision = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
 }
 
 // hostIDs extracts fleetBody.Hosts' HostID column, in the order the
@@ -141,6 +177,11 @@ func TestFleetRoutes(t *testing.T) {
 		if cold.Since != nil || cold.EvaluatedAt != nil {
 			t.Fatalf("cold-1 = %+v, want since and evaluated_at both absent", cold)
 		}
+		// cold-1 discovered nothing at all — genuinely "no data", not "all
+		// ignored" (backlog 3.44's own distinction).
+		if cold.AllIgnored {
+			t.Fatalf("cold-1 all_ignored = true, want false: it never discovered anything to ignore")
+		}
 
 		crit := body.byHost(t, f.dbHost)
 		if crit.State == nil || *crit.State != "crit" || crit.Crit != 1 {
@@ -150,8 +191,8 @@ func TestFleetRoutes(t *testing.T) {
 			t.Fatalf("db-1 since/evaluated_at = %+v, want %v / %v", crit, since, now)
 		}
 
-		if body.Totals.Crit != 1 || body.Totals.Warn != 1 || body.Totals.Unknown != 1 || body.Totals.OK != 1 || body.Totals.NoData != 1 {
-			t.Fatalf("totals = %+v, want exactly one host per bucket", body.Totals)
+		if body.Totals.Crit != 1 || body.Totals.Warn != 1 || body.Totals.Unknown != 1 || body.Totals.OK != 1 || body.Totals.NoData != 1 || body.Totals.AllIgnored != 0 {
+			t.Fatalf("totals = %+v, want exactly one host per bucket and none in all_ignored", body.Totals)
 		}
 	})
 
@@ -248,6 +289,89 @@ func TestFleetRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("a host whose every discovered item is ignored reads all_ignored, not no data (backlog 3.44)", func(t *testing.T) {
+		host := seedCheckHost(t, f.s, scoped, f.orgID, zone, "fleet-ignored-1", "10.1.0.10", true, "")
+		f.discoverItem(t, host, "disk", "/data")
+		f.createItemDecision(t, "host", &host, "disk", "exact", "/data", "ignore")
+		// No seedHostState call: this reproduces exactly what Apply leaves
+		// behind once the only judged tuple is dropped as ignored — no
+		// check_host_states row at all (rules' own "a host with no tuples
+		// gets no row" contract), the same absence a never-evaluated host
+		// leaves.
+
+		body := f.fleet(t, f.viewerC, "")
+		row := body.byHost(t, host)
+		if row.State != nil {
+			t.Fatalf("fleet-ignored-1 state = %v, want null", *row.State)
+		}
+		if !row.AllIgnored {
+			t.Fatalf("fleet-ignored-1 all_ignored = false, want true: its only discovered item is ignored")
+		}
+		if body.Totals.AllIgnored != 1 {
+			t.Fatalf("totals.all_ignored = %d, want 1 (only fleet-ignored-1)", body.Totals.AllIgnored)
+		}
+		// cold-1 is still the only genuine "no data" host; this host must
+		// not have been counted there instead.
+		if body.Totals.NoData != 1 {
+			t.Fatalf("totals.no_data = %d, want 1 (only cold-1, unaffected by fleet-ignored-1)", body.Totals.NoData)
+		}
+	})
+
+	t.Run("a host with no roll-up row is not all_ignored unless every discovered item is", func(t *testing.T) {
+		host := seedCheckHost(t, f.s, scoped, f.orgID, zone, "fleet-partly-ignored-1", "10.1.0.11", true, "")
+		f.discoverItem(t, host, "disk", "/data")
+		f.discoverItem(t, host, "service", "sshd")
+		f.createItemDecision(t, "host", &host, "disk", "exact", "/data", "ignore")
+		// "sshd" carries no decision at all — the default verdict is watch
+		// (items.Decide's own doc comment) — so this host has a real,
+		// unignored item and must read as plain "no data", not "all
+		// ignored": claiming the honest middle case for a host that still
+		// has something unjudged would be exactly as dishonest as the
+		// "no data" collapse backlog 3.44 is about.
+		body := f.fleet(t, f.viewerC, "")
+		row := body.byHost(t, host)
+		if row.State != nil {
+			t.Fatalf("fleet-partly-ignored-1 state = %v, want null", *row.State)
+		}
+		if row.AllIgnored {
+			t.Fatalf("fleet-partly-ignored-1 all_ignored = true, want false: sshd is still watched")
+		}
+	})
+
+	t.Run("a host with a real roll-up state keeps it even if every discovered item is ignored", func(t *testing.T) {
+		host := seedCheckHost(t, f.s, scoped, f.orgID, zone, "fleet-ignored-but-ok-1", "10.1.0.12", true, "")
+		f.discoverItem(t, host, "disk", "/data")
+		f.createItemDecision(t, "host", &host, "disk", "exact", "/data", "ignore")
+		// Unlike the first case above, this host DOES still have a
+		// roll-up row — standing in for a host whose cpu/memory tuples
+		// (which discover no item at all, per the v0.3b-3 design's own
+		// "items with an empty name" ruling) are still judged and keep it
+		// ok. A host with even one judged tuple keeps its real state
+		// regardless of how many other items are ignored.
+		seedHostState(t, f.s, f.orgID, host, "ok", 0, 0, 0, since, now)
+
+		body := f.fleet(t, f.viewerC, "")
+		row := body.byHost(t, host)
+		if row.State == nil || *row.State != "ok" {
+			t.Fatalf("fleet-ignored-but-ok-1 state = %v, want ok", row.State)
+		}
+		if row.AllIgnored {
+			t.Fatalf("fleet-ignored-but-ok-1 all_ignored = true, want false: it has a real state")
+		}
+	})
+
+	t.Run("an organization-wide ignore decision marks a host all_ignored too", func(t *testing.T) {
+		host := seedCheckHost(t, f.s, scoped, f.orgID, zone, "fleet-org-ignored-1", "10.1.0.13", true, "")
+		f.discoverItem(t, host, "service", "sshd")
+		f.createItemDecision(t, "org", nil, "service", "glob", "*", "ignore")
+
+		body := f.fleet(t, f.viewerC, "")
+		row := body.byHost(t, host)
+		if row.State != nil || !row.AllIgnored {
+			t.Fatalf("fleet-org-ignored-1 = %+v, want state null and all_ignored true", row)
+		}
+	})
+
 	t.Run("an empty organization renders no hosts and zero totals", func(t *testing.T) {
 		owner := f.s.SeedUser("fleet-empty-owner@example.test", "correct horse battery")
 		f.s.SeedOrg("fleet-empty", owner)
@@ -262,11 +386,12 @@ func TestFleetRoutes(t *testing.T) {
 			t.Fatalf("empty org hosts = %+v, want none", body.Hosts)
 		}
 		if body.Totals != (struct {
-			Crit    int `json:"crit"`
-			Warn    int `json:"warn"`
-			Unknown int `json:"unknown"`
-			OK      int `json:"ok"`
-			NoData  int `json:"no_data"`
+			Crit       int `json:"crit"`
+			Warn       int `json:"warn"`
+			Unknown    int `json:"unknown"`
+			OK         int `json:"ok"`
+			NoData     int `json:"no_data"`
+			AllIgnored int `json:"all_ignored"`
 		}{}) {
 			t.Fatalf("empty org totals = %+v, want all zero", body.Totals)
 		}

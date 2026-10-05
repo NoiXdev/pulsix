@@ -2800,6 +2800,8 @@ export interface components {
             type: string;
         };
         FleetHostDTO: {
+            /** @description True when state is null because every item this host has discovered currently resolves to ignored, rather than because nothing has ever been measured */
+            all_ignored: boolean;
             /** Format: int64 */
             crit: number;
             /**
@@ -2815,7 +2817,7 @@ export interface components {
              */
             since?: string;
             /**
-             * @description null when this host has no roll-up row at all ("no data")
+             * @description null when this host has no roll-up row at all ("no data", or "all ignored" — see all_ignored)
              * @enum {string|null}
              */
             state: "ok" | "warn" | "crit" | "unknown" | null;
@@ -2839,12 +2841,17 @@ export interface components {
         FleetTotalsDTO: {
             /**
              * Format: int64
+             * @description Hosts in the filtered set with no roll-up row, because every item they discovered currently resolves to ignored
+             */
+            all_ignored: number;
+            /**
+             * Format: int64
              * @description Hosts in the filtered set currently crit
              */
             crit: number;
             /**
              * Format: int64
-             * @description Hosts in the filtered set with no roll-up row at all — never evaluated
+             * @description Hosts in the filtered set with no roll-up row at all, and nothing discovered that is all ignored — never evaluated, or evaluated to zero tuples for a reason other than ignoring
              */
             no_data: number;
             /**
