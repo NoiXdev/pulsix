@@ -151,15 +151,19 @@ type Result struct {
 // request per (item, window) that a winning rule's trigger or clear
 // condition names, deduplicated, in the order they are first needed.
 //
-// It reads only Tuples and Effective, so the ticker calls it on a Snapshot
-// whose Windows field is still nil and fills that field from the result.
-// Only rules judging a tuple Evaluate will actually judge contribute — one
-// the host reports and whose check still has a resolved interval — since a
-// window for anything else would be fetched and never read.
+// It reads only Tuples, Effective and Ignored, so the ticker calls it on a
+// Snapshot whose Windows field is still nil and fills that field from the
+// result. Only rules judging a tuple Evaluate will actually judge
+// contribute — one the host reports, whose check still has a resolved
+// interval, and whose item is not ignored — since a window for anything
+// else would be fetched and never read. The Ignored check mirrors Evaluate's
+// own skip (see there): an operator who ignores an item specifically to
+// stop paying for it must not keep paying for its window fetch forever on a
+// verdict nobody reads.
 func WindowRequests(s Snapshot) []WindowRequest {
 	reported := make(map[Tuple]bool, len(s.Tuples))
 	for _, ts := range s.Tuples {
-		if measured(ts) {
+		if measured(ts) && !s.Ignored[itemKeyOf(ts.Tuple)] {
 			reported[ts.Tuple] = true
 		}
 	}

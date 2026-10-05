@@ -1542,6 +1542,42 @@ func TestWindowRequests(t *testing.T) {
 	}
 }
 
+// TestWindowRequestsIgnored pins the cost 3.39 exists to cut: an item an
+// operator has ignored must not have its window fetched at all, even though
+// its tuple is measured and a winning rule names a window on it. Evaluate
+// would discard the tuple anyway (its own Ignored skip), so fetching the
+// window is pure waste paid every tick for a verdict nobody reads.
+func TestWindowRequestsIgnored(t *testing.T) {
+	trigger := evalRule(critID, diskRootT, rules.SeverityCrit,
+		compare(">", window("disk.used_pct", "avg", 300), number(90)))
+	clearing := withClear(trigger, compare("<", window("disk.used_pct", "min", 600), number(70)))
+
+	s := rules.Snapshot{
+		Now: at(20),
+		Tuples: []rules.TupleSnapshot{
+			snap(diskRootT, 95, at(20), tenMin),
+			snap(diskVarT, 10, at(20), tenMin),
+		},
+		Effective: []rules.Effective{
+			eff(clearing, diskRootT),
+			eff(clearing, diskVarT),
+		},
+		Ignored: map[rules.ItemKey]bool{
+			{CheckKey: "disk", Item: "/var"}: true,
+		},
+	}
+
+	root := rules.ItemKey{CheckKey: "disk", Item: "/"}
+	want := []rules.WindowRequest{
+		{Key: root, Metric: "disk.used_pct", Agg: "avg", Seconds: 300},
+		{Key: root, Metric: "disk.used_pct", Agg: "min", Seconds: 600},
+	}
+	got := rules.WindowRequests(s)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("window requests:\n got %+v\nwant %+v", got, want)
+	}
+}
+
 // TestWindowRequestsWithoutWindows guards the contract the ticker relies
 // on: WindowRequests reads only Tuples and Effective, so it may be called
 // on a Snapshot whose Windows field is still nil, and a rule set that
