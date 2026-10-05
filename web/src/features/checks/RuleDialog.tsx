@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useId, useState, type FormEvent } from 'react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -417,6 +417,12 @@ function RuleHostPicker({ org, value, onChange }: { org: string; value: string; 
  * the same kind of item, and listing every item this host has ever
  * reported, regardless of check, would suggest ones the rule's metric
  * could not possibly apply to.
+ *
+ * The `<datalist>`'s id is generated per instance with useId rather than a
+ * fixed string: a `list=` attribute resolves by id against the whole
+ * document, and two mounted pickers sharing one id would silently collide
+ * — the browser binds to whichever datalist it finds first, offering one
+ * picker's suggestions on the other's input, with no error to notice it by.
  */
 function RuleItemPicker({
   org,
@@ -433,6 +439,7 @@ function RuleItemPicker({
 }) {
   const items = useHostItems(org, hostId, hostId !== '');
   const options = [...new Set((items.data?.items ?? []).filter((it) => it.check_key === checkKey).map((it) => it.item))].sort();
+  const optionsId = useId();
 
   return (
     <div className="flex flex-col gap-1">
@@ -440,12 +447,12 @@ function RuleItemPicker({
       <Input
         id="rule-item"
         required
-        list="rule-item-options"
+        list={optionsId}
         placeholder="/var, sshd, …"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
-      <datalist id="rule-item-options">
+      <datalist id={optionsId}>
         {options.map((name) => (
           <option key={name} value={name} />
         ))}
