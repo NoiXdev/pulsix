@@ -12,11 +12,32 @@
 //     Ignored, never a fabricated "ok" (items.Decide's own contract,
 //     Apply's Dropped rows, see internal/rules' own doc comments).
 //     Measurement is unaffected throughout: the mount's value keeps
-//     arriving regardless of the verdict.
+//     arriving regardless of the verdict. The host still reads ok, not
+//     "no data", because cpu.used_pct and mem.used_pct are still judged —
+//     the mixed case backlog 3.44 requires stay real: a host with some
+//     tuples ignored and some still watched keeps its genuine state.
 //  3. The operator watches the same item again (not merely deletes the
 //     decision — an explicit "watch" row the same way an operator who
 //     changed their mind would edit it from the Items tab): the item is
 //     judged again, and the host returns to crit.
+//  4. The operator then ignores every tuple this host has — disk's own
+//     mount again, plus cpu and memory each through an org-syntax-free,
+//     host-scoped glob decision naming no item at all (items.Decide's own
+//     doc comment: a decision may name the empty item even though nothing
+//     discovers it, since cpu and memory report one whole-host reading
+//     with no item to discover — the v0.3b-3 design's own "items with an
+//     empty name" ruling). With nothing left to judge, Apply deletes the
+//     roll-up row entirely (rules' own "a host with no tuples at all gets
+//     no row" contract) — the fleet overview's GET /fleet must now read
+//     this host as "all ignored", not as indistinguishable from a host
+//     nobody ever measured or one whose agent is broken (backlog 3.44).
+//     This is the case the first version of this gate deliberately never
+//     reached: claim 2 above keeps cpu and memory judged specifically so
+//     the host stays "ok" rather than falling into "no data" for a reason
+//     this gate was not about — claim 4 is what now asserts through that
+//     exact case instead of routing around it, on the same host, with
+//     measurement for every one of its three tuples still proven to
+//     continue regardless.
 //
 // How the crossing is driven, and why not otherwise: like rules_test.go's
 // own cpu scenario, nothing here fakes a value — the agent's real disk
@@ -39,11 +60,8 @@
 // their own seed checks to a short host-bound interval (the same
 // itemCheckInterval lever as disk), so cpu.used_pct and mem.used_pct have
 // each reported — and so resolved a real "ok" against their own seed
-// rules — well before the fleet roll-up is asked to read "ok" for claim 2.
-// Without that, the host's roll-up would carry zero judged tuples the
-// moment the disk item is ignored (nothing yet to call it "ok" about) and
-// read as "no data" rather than "ok" — a real distinction (fleet_handlers.
-// go's own State: nil doc comment), just not the one this gate is about.
+// rules — well before the fleet roll-up is asked to read "ok" for claim 2,
+// and well before claim 4 asks to ignore them outright.
 //
 // The seed service check (sshd, seed.go's own "every host Pulsix manages
 // runs sshd" assumption) is disabled outright, before the agent ever
@@ -100,27 +118,44 @@ type itemHostCheckOut struct {
 	Values []itemTupleOut `json:"values"`
 }
 
-// diskTupleState reads the host page's own monitoring section for
-// itemMount's disk.used_pct tuple: its current state (nil when never
+// cpuUsedPct and memUsedPct are the two whole-host metrics claim 4 also
+// ignores, through a glob decision naming no item at all — see this file's
+// own header comment on why that is a valid target even though neither
+// check reports an item to discover.
+const (
+	cpuUsedPct = "cpu.used_pct"
+	memUsedPct = "mem.used_pct"
+)
+
+// tupleState reads the host page's own monitoring section for one
+// (checkKey, item, metric) tuple: its current state (nil when never
 // evaluated or dropped as ignored), its last reported value, and whether
-// an item decision currently keeps it from being judged.
-func diskTupleState(t *testing.T, w agentWorld, hostID string) (state *string, value *float64, ignored bool) {
+// an item decision currently keeps it from being judged. item is "" for a
+// whole-host check like cpu or memory, which report no item at all.
+func tupleState(t *testing.T, w agentWorld, hostID, checkKey, item, metric string) (state *string, value *float64, ignored bool) {
 	t.Helper()
 	var out struct {
 		Checks []itemHostCheckOut `json:"checks"`
 	}
 	w.api.do(http.MethodGet, "/api/v1/orgs/"+w.org+"/hosts/"+hostID+"/checks", nil, &out)
 	for _, c := range out.Checks {
-		if c.Key != "disk" {
+		if c.Key != checkKey {
 			continue
 		}
 		for _, v := range c.Values {
-			if v.Item == itemMount && v.Metric == diskUsedPct {
+			if v.Item == item && v.Metric == metric {
 				return v.State, v.Value, v.Ignored
 			}
 		}
 	}
 	return nil, nil, false
+}
+
+// diskTupleState reads itemMount's disk.used_pct tuple — see tupleState's
+// own doc comment for the general shape this specializes.
+func diskTupleState(t *testing.T, w agentWorld, hostID string) (state *string, value *float64, ignored bool) {
+	t.Helper()
+	return tupleState(t, w, hostID, "disk", itemMount, diskUsedPct)
 }
 
 // waitForItemTupleState polls the host page until itemMount's disk.used_pct
@@ -152,25 +187,36 @@ func waitForItemTupleState(t *testing.T, w agentWorld, hostID string, wantState 
 		what, wantStateStr, wantIgnored, gotState, lastIgnored)
 }
 
-// fleetHostState reads the fleet overview's roll-up for hostID — the same
-// route rules_test.go's own TestRulePipelineGate asserts its final claim
-// through, so a host decision's effect on the whole-host colour is read
-// the exact way the fleet page reads it, not off any per-tuple field.
-func fleetHostState(t *testing.T, w agentWorld, hostID string) *string {
+// fleetHostRow mirrors the fleet overview's wire shape this gate needs: the
+// roll-up state plus backlog 3.44's own all_ignored flag, the field that
+// tells apart a host with no roll-up row because nothing ever measured it
+// from one with no roll-up row because every item it discovered currently
+// resolves to ignored (fleet_handlers.go's own fleetHostDTO.AllIgnored doc
+// comment).
+type fleetHostRow struct {
+	HostID     string  `json:"host_id"`
+	State      *string `json:"state"`
+	AllIgnored bool    `json:"all_ignored"`
+}
+
+// fleetHost reads the fleet overview's row for hostID — the same route
+// rules_test.go's own TestRulePipelineGate asserts its final claim through,
+// so a host decision's effect on the whole-host colour is read the exact
+// way the fleet page reads it, not off any per-tuple field. A host absent
+// from the response (should not happen for a host this gate itself
+// enrolled) reads as the zero fleetHostRow: state nil, all_ignored false.
+func fleetHost(t *testing.T, w agentWorld, hostID string) fleetHostRow {
 	t.Helper()
 	var fleet struct {
-		Hosts []struct {
-			HostID string  `json:"host_id"`
-			State  *string `json:"state"`
-		} `json:"hosts"`
+		Hosts []fleetHostRow `json:"hosts"`
 	}
 	w.api.do(http.MethodGet, "/api/v1/orgs/"+w.org+"/fleet", nil, &fleet)
 	for _, h := range fleet.Hosts {
 		if h.HostID == hostID {
-			return h.State
+			return h
 		}
 	}
-	return nil
+	return fleetHostRow{}
 }
 
 // waitForFleetState polls the fleet overview until hostID's roll-up reads
@@ -180,7 +226,7 @@ func waitForFleetState(t *testing.T, w agentWorld, hostID, want, what string, wi
 	deadline := time.Now().Add(within)
 	var last *string
 	for time.Now().Before(deadline) {
-		last = fleetHostState(t, w, hostID)
+		last = fleetHost(t, w, hostID).State
 		if last != nil && *last == want {
 			return
 		}
@@ -191,6 +237,30 @@ func waitForFleetState(t *testing.T, w agentWorld, hostID, want, what string, wi
 		got = *last
 	}
 	t.Fatalf("timed out waiting for %s (fleet state %q); last fleet state %s", what, want, got)
+}
+
+// waitForFleetAllIgnored polls the fleet overview until hostID carries no
+// roll-up row (state null) AND all_ignored is set — the distinct reading
+// backlog 3.44 gives a host whose every discovered item currently resolves
+// to ignored, as opposed to a host nobody has ever measured (state null,
+// all_ignored false).
+func waitForFleetAllIgnored(t *testing.T, w agentWorld, hostID, what string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	var last fleetHostRow
+	for time.Now().Before(deadline) {
+		last = fleetHost(t, w, hostID)
+		if last.State == nil && last.AllIgnored {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	got := "<none>"
+	if last.State != nil {
+		got = *last.State
+	}
+	t.Fatalf("timed out waiting for %s (fleet state null, all_ignored true); last fleet state %s, last all_ignored %v",
+		what, got, last.AllIgnored)
 }
 
 // itemDecisionOut is the create/update response's decision id — the only
@@ -223,6 +293,20 @@ func updateItemDecision(t *testing.T, w agentWorld, decisionID, hostID, verdict 
 	w.api.do(http.MethodPut, "/api/v1/orgs/"+w.org+"/item-decisions/"+decisionID, map[string]any{
 		"scope": "host", "host_id": hostID, "check_key": "disk",
 		"match_kind": "exact", "pattern": itemMount, "decision": verdict,
+	}, nil)
+}
+
+// ignoreWholeHostCheck creates a host-scoped, glob decision matching every
+// item of checkKey — "*" matches the empty item too (items.Match's own
+// doc comment: segments split on '*' both land empty, and an empty prefix
+// trivially prefixes, and an empty suffix trivially suffixes, the empty
+// remainder) — so this is how claim 4 ignores cpu and memory, neither of
+// which has an item for an exact-match decision to name at all.
+func ignoreWholeHostCheck(t *testing.T, w agentWorld, hostID, checkKey string) {
+	t.Helper()
+	w.api.do(http.MethodPost, "/api/v1/orgs/"+w.org+"/item-decisions", map[string]any{
+		"scope": "host", "host_id": hostID, "check_key": checkKey,
+		"match_kind": "glob", "pattern": "*", "decision": "ignore",
 	}, nil)
 }
 
@@ -324,4 +408,53 @@ func TestItemDecisionPipelineGate(t *testing.T) {
 
 	waitForItemTupleState(t, w, hostID, stringPtr("crit"), false, "the watched mount judged again", 60*time.Second)
 	waitForFleetState(t, w, hostID, "crit", "the fleet roll-up once the item is watched again", 60*time.Second)
+
+	// --- 4. The operator ignores every tuple this host has: the roll-up
+	//        row disappears, and the fleet overview must read that as "all
+	//        ignored", not the same "no data" it gives a host nobody has
+	//        ever measured (backlog 3.44) ----------------------------------
+	// disk's own mount, watched again by claim 3, is ignored a second time
+	// by editing decisionID back to "ignore" — not a second, brand-new
+	// decision for the same (host, check, pattern): items.Decision.beats'
+	// own tie-break between two decisions that otherwise rank equal (same
+	// scope, same match kind) favours the OLDER CreatedAt, so a fresh
+	// decision would lose outright to claim 3's still-standing "watch" row
+	// rather than override it — an operator's own edit, exactly like claim
+	// 3's own update, is the correct act here. cpu and memory are ignored
+	// for the first time, each through a host-scoped glob naming no item
+	// (ignoreWholeHostCheck's own doc comment) — the only way to ignore a
+	// whole-host check that discovers no item to pick at all.
+	updateItemDecision(t, w, decisionID, hostID, "ignore")
+	ignoreWholeHostCheck(t, w, hostID, "cpu")
+	ignoreWholeHostCheck(t, w, hostID, "memory")
+
+	// With nothing left for this host to judge, Apply deletes the roll-up
+	// row (rules' own "a host with no tuples at all gets no row" contract)
+	// — the same absence a host nobody has ever measured leaves. The fleet
+	// overview must tell the two apart: this host has three real, discovered
+	// tuples and an operator's own decision over every one of them.
+	waitForFleetAllIgnored(t, w, hostID, "the fleet roll-up once every tuple is ignored", 60*time.Second)
+
+	// Measurement never stopped for any of the three. disk's own mount
+	// carries an item, so GET /hosts/{id}/checks reports its ignored flag
+	// directly — the same claim claim 2 already pins. cpu and memory
+	// report no item at all, and hostIgnoredItems (host_check_handlers.go)
+	// deliberately never looks one up for an itemless metric ("metrics
+	// with no item have nothing to ignore", its own doc comment) — that
+	// route's ignored flag is an Items-tab affordance, and there is no
+	// item row for either of these to show it against. Their own evaluation
+	// tuple is still dropped from judgement (resolveIgnored draws no such
+	// exception — load_sql.go's own doc comment: "including the empty-item
+	// ones"), which is exactly why the fleet roll-up above went to null —
+	// so what is left to check here is only that a real value kept
+	// arriving for both, not a flag this route was never going to set.
+	if _, value, ignored := diskTupleState(t, w, hostID); value == nil || !ignored {
+		t.Fatalf("itemMount's value/ignored = %v/%v once all-ignored, want a real value and ignored=true", value, ignored)
+	}
+	if _, value, _ := tupleState(t, w, hostID, "cpu", "", cpuUsedPct); value == nil {
+		t.Fatalf("cpu.used_pct's value = nil once all-ignored, want measurement to continue regardless")
+	}
+	if _, value, _ := tupleState(t, w, hostID, "memory", "", memUsedPct); value == nil {
+		t.Fatalf("mem.used_pct's value = nil once all-ignored, want measurement to continue regardless")
+	}
 }
