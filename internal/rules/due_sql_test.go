@@ -31,6 +31,16 @@ type fakeItemStore struct {
 	decisions    []items.Decision
 	discoverErr  error
 	decisionsErr error
+
+	// decisionsCalls counts how many times Decisions was invoked, not what
+	// it was invoked with — Load must read it exactly once per host and
+	// resolve every item's decision from that one result in memory
+	// (ItemStore.Decisions' own doc comment). A regression that moved the
+	// call into the per-item loop instead would still pass every assertion
+	// on fake.decisions' content, since this fake answers the same rows
+	// however many times it is asked; only a count catches the extra
+	// queries.
+	decisionsCalls int
 }
 
 func (f *fakeItemStore) Discover(_ context.Context, _, _ uuid.UUID, seen []items.Seen) error {
@@ -39,6 +49,7 @@ func (f *fakeItemStore) Discover(_ context.Context, _, _ uuid.UUID, seen []items
 }
 
 func (f *fakeItemStore) Decisions(_ context.Context, _ uuid.UUID, _ *uuid.UUID) ([]items.Decision, error) {
+	f.decisionsCalls++
 	return f.decisions, f.decisionsErr
 }
 
@@ -569,6 +580,15 @@ func TestLoadDiscoversNonEmptyItemsAndSkipsWholeHostChecks(t *testing.T) {
 // Load derives from a host's tuples from what items.SQLStore does with it
 // (store_sql_test.go already covers that half), and Load still runs
 // against the real database for everything else it needs.
+//
+// It also pins the cost ItemStore.Decisions' own doc comment names: Load
+// reads it once per host and resolves every item's decision from that one
+// result in memory, not once per item. The fixture seeds two distinct
+// items (/var and /opt, on top of cpu's whole-host reading that carries no
+// item at all) precisely so a regression that moved the Decisions call
+// into a per-item loop would be caught here — with only one item in play,
+// "once per host" and "once per item" are the same number, and the
+// distinction those two shapes make would be invisible.
 func TestLoadSeenItemsDropsEmptyAndDedupesDuplicates(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "seen")
@@ -578,9 +598,11 @@ func TestLoadSeenItemsDropsEmptyAndDedupesDuplicates(t *testing.T) {
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
 	varUsed := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
 	varFree := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.free_bytes"}
+	opt := rules.Tuple{CheckKey: "disk", Item: "/opt", Metric: "disk.used_pct"}
 	insertCurrent(t, d, org, host, cpu, ptr(10.0), nil, now, "")
 	insertCurrent(t, d, org, host, varUsed, ptr(50.0), nil, now, "")
 	insertCurrent(t, d, org, host, varFree, ptr(1e9), nil, now, "")
+	insertCurrent(t, d, org, host, opt, ptr(60.0), nil, now, "")
 
 	fake := &fakeItemStore{}
 	store := rules.NewEvalSQLStore(d, cpuMinute(), fake, discard())
@@ -588,9 +610,14 @@ func TestLoadSeenItemsDropsEmptyAndDedupesDuplicates(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	want := []items.Seen{{CheckKey: "disk", Name: "/var"}}
+	// ListCheckCurrent orders rows by (check_key, item, metric), so /opt
+	// sorts ahead of /var.
+	want := []items.Seen{{CheckKey: "disk", Name: "/opt"}, {CheckKey: "disk", Name: "/var"}}
 	if !reflect.DeepEqual(fake.discovered, want) {
 		t.Fatalf("Discover called with %+v, want %+v — cpu's empty item dropped, disk's two metrics of /var collapsed to one item", fake.discovered, want)
+	}
+	if fake.decisionsCalls != 1 {
+		t.Fatalf("Decisions called %d times for one host with two items, want exactly 1", fake.decisionsCalls)
 	}
 }
 
