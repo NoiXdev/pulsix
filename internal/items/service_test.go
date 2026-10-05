@@ -39,6 +39,15 @@ type fakeStore struct {
 	forceCreateErr error
 	forceUpdateErr error
 	forceItemsErr  error
+
+	// orgFilters records every Filter ItemsForOrg was called with, in call
+	// order — not what it matched, but what it was asked to match. Preview
+	// pushing CheckKey/ItemGlob into the query rather than fetching
+	// everything and narrowing in Go (3.40) is invisible to an assertion on
+	// the returned views alone, since this fake's own ItemsForOrg already
+	// applies the filter either way; only the recorded argument can tell
+	// the two shapes apart.
+	orgFilters []items.Filter
 }
 
 func newFakeStore() *fakeStore {
@@ -70,6 +79,7 @@ func (f *fakeStore) ItemsForHost(_ context.Context, orgID, hostID uuid.UUID) ([]
 func (f *fakeStore) ItemsForOrg(_ context.Context, orgID uuid.UUID, filter items.Filter) ([]items.View, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.orgFilters = append(f.orgFilters, filter)
 	if f.forceItemsErr != nil {
 		return nil, f.forceItemsErr
 	}
@@ -783,6 +793,58 @@ func TestPreviewAtExactlyLimitIsNotCapped(t *testing.T) {
 	}
 	if len(got.Matches) != items.PreviewLimit {
 		t.Fatalf("Preview() len(Matches) = %d, want %d", len(got.Matches), items.PreviewLimit)
+	}
+}
+
+// TestPreviewOrgScopePushesFilterIntoQuery pins 3.40: an org-scope Preview
+// must ask ItemsForOrg for exactly the check key and pattern it is
+// previewing, not Filter{} (every item in the organization) narrowed in Go
+// afterwards. The fake's own ItemsForOrg filters correctly either way
+// (seedItems/the Match loop below would pass under the old shape too), so
+// only the recorded Filter argument — not the returned matches — can tell
+// the two shapes apart.
+func TestPreviewOrgScopePushesFilterIntoQuery(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	store.seedItems(org, host, "disk", []string{"/var", "/var/log", "/home"})
+	svc := items.NewService(store, fakeCatalogue)
+
+	in := validInput()
+	in.CheckKey, in.Pattern = "disk", "/var*"
+
+	if _, err := svc.Preview(ctx, org, in); err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+
+	if len(store.orgFilters) != 1 {
+		t.Fatalf("ItemsForOrg called %d times, want 1", len(store.orgFilters))
+	}
+	want := items.Filter{CheckKey: "disk", ItemGlob: "/var*"}
+	if got := store.orgFilters[0]; got != want {
+		t.Fatalf("ItemsForOrg filter = %+v, want %+v (the zero Filter would fetch every item)", got, want)
+	}
+}
+
+// TestPreviewHostScopeDoesNotCallItemsForOrg pins the other half of 3.40's
+// shape: a host-scoped preview must never reach the org-wide listing at
+// all, pushed-down filter or not — ItemsForHost already bounds the fetch
+// to one host.
+func TestPreviewHostScopeDoesNotCallItemsForOrg(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	store.seedItems(org, host, "disk", []string{"/var"})
+	svc := items.NewService(store, fakeCatalogue)
+
+	in := validInput()
+	in.Scope, in.HostID, in.Pattern = items.ScopeHost, &host, "/var"
+
+	if _, err := svc.Preview(ctx, org, in); err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if len(store.orgFilters) != 0 {
+		t.Fatalf("ItemsForOrg called %d times for a host-scoped preview, want 0", len(store.orgFilters))
 	}
 }
 

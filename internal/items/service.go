@@ -285,8 +285,23 @@ func (s *Service) Decisions(ctx context.Context, orgID uuid.UUID, hostID *uuid.U
 //
 // It is the brake, so it reports the truth about size: Matches is capped
 // at PreviewLimit, but Total counts every matching item, not len(Matches).
-// A pattern that would catch the whole fleet must say so, even though the
-// service only ever builds a PreviewLimit-long list in memory to say it.
+// A pattern that would catch the whole fleet must say so.
+//
+// The org-scope branch pushes CheckKey and Pattern into ItemsForOrg's own
+// Filter rather than fetching Filter{} — every item in the organization —
+// and narrowing in Go: the store already translates CheckKey and ItemGlob
+// into the query (the SPA's own organization-wide items listing uses the
+// same Filter), so there is no reason this call site should be the one
+// that materialises the whole table to count a match. That matters most
+// for exactly the pattern this preview is the brake against (review focus
+// 1, "a pattern of '*'"): the one that matches everything is now also the
+// cheapest to count, not the most expensive. Total is simply len(views)
+// once the query itself has done the filtering, so a caller still gets the
+// true count even though Matches is capped. The host-scope branch keeps
+// filtering in Go: ItemsForHost already bounds the fetch to one host, so
+// there is no org-wide table to avoid materialising, and adding a Filter
+// parameter there would be a second code path for the one case this fix is
+// about.
 //
 // Preview validates only the fields it reads — Scope, HostID, CheckKey,
 // MatchKind and Pattern — not Verdict or Note: neither can change what a
@@ -301,27 +316,44 @@ func (s *Service) Preview(ctx context.Context, orgID uuid.UUID, in DecisionInput
 		return Preview{}, err
 	}
 
-	var views []View
+	var out Preview
 	if d.Scope == ScopeHost {
-		views, err = s.store.ItemsForHost(ctx, orgID, *d.HostID)
-	} else {
-		views, err = s.store.ItemsForOrg(ctx, orgID, Filter{})
+		views, err := s.store.ItemsForHost(ctx, orgID, *d.HostID)
+		if err != nil {
+			return Preview{}, fmt.Errorf("preview decision: %w", err)
+		}
+		for _, v := range views {
+			if v.CheckKey != d.CheckKey || !Match(d.Pattern, v.Name) {
+				continue
+			}
+			out.Total++
+			if len(out.Matches) < PreviewLimit {
+				out.Matches = append(out.Matches, Target{HostID: v.HostID, CheckKey: v.CheckKey, Item: v.Name})
+			}
+		}
+		out.Capped = out.Total > PreviewLimit
+		return out, nil
 	}
+
+	// d.Pattern is a valid Filter.ItemGlob regardless of MatchKind: an
+	// exact pattern is, by validateMatch's own check, one with no '*' in
+	// it, which is exactly a glob that matches only its own literal value.
+	views, err := s.store.ItemsForOrg(ctx, orgID, Filter{CheckKey: d.CheckKey, ItemGlob: d.Pattern})
 	if err != nil {
 		return Preview{}, fmt.Errorf("preview decision: %w", err)
 	}
-
-	var out Preview
-	for _, v := range views {
-		if v.CheckKey != d.CheckKey || !Match(d.Pattern, v.Name) {
-			continue
-		}
-		out.Total++
-		if len(out.Matches) < PreviewLimit {
-			out.Matches = append(out.Matches, Target{HostID: v.HostID, CheckKey: v.CheckKey, Item: v.Name})
+	out.Total = len(views)
+	out.Capped = out.Total > PreviewLimit
+	n := out.Total
+	if n > PreviewLimit {
+		n = PreviewLimit
+	}
+	if n > 0 {
+		out.Matches = make([]Target, n)
+		for i, v := range views[:n] {
+			out.Matches[i] = Target{HostID: v.HostID, CheckKey: v.CheckKey, Item: v.Name}
 		}
 	}
-	out.Capped = out.Total > PreviewLimit
 	return out, nil
 }
 
