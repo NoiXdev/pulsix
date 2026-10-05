@@ -20,6 +20,7 @@ const host = (over: Record<string, unknown> = {}) => ({
   crit: 0,
   warn: 0,
   unknown: 0,
+  all_ignored: false,
   ...over,
 });
 
@@ -55,8 +56,9 @@ describe('FleetPage', () => {
           host({ host_id: 'h-unknown', name: 'cache-1', state: 'unknown', crit: 0, warn: 0, unknown: 3 }),
           host({ host_id: 'h-ok', name: 'lb-1', state: 'ok' }),
           host({ host_id: 'h-nodata', name: 'new-1', state: null }),
+          host({ host_id: 'h-ignored', name: 'ignored-1', state: null, all_ignored: true }),
         ],
-        totals: { crit: 1, warn: 1, unknown: 1, ok: 1, no_data: 1 },
+        totals: { crit: 1, warn: 1, unknown: 1, ok: 1, no_data: 1, all_ignored: 1 },
       },
     });
     renderPage();
@@ -64,8 +66,8 @@ describe('FleetPage', () => {
     await screen.findByText('db-1');
     // Rendered in the exact server order — this page must not silently
     // re-sort behind the API's own worst-first contract.
-    const names = screen.getAllByRole('link', { name: /db-1|web-1|cache-1|lb-1|new-1/ }).map((el) => el.textContent);
-    expect(names).toEqual(['db-1', 'web-1', 'cache-1', 'lb-1', 'new-1']);
+    const names = screen.getAllByRole('link', { name: /db-1|web-1|cache-1|lb-1|new-1|ignored-1/ }).map((el) => el.textContent);
+    expect(names).toEqual(['db-1', 'web-1', 'cache-1', 'lb-1', 'new-1', 'ignored-1']);
 
     expect(screen.getByText('crit')).toBeInTheDocument();
     expect(screen.getByText('warn')).toBeInTheDocument();
@@ -74,6 +76,9 @@ describe('FleetPage', () => {
     // A host with no roll-up row at all reads as "no data" — never as a
     // colour it happened to hold before its last check was removed.
     expect(screen.getByText('no data')).toBeInTheDocument();
+    // backlog 3.44: a host with no roll-up row because every item it
+    // discovered is ignored reads as its own word, not "no data".
+    expect(screen.getByText('all ignored')).toBeInTheDocument();
 
     // Scoped by DOM structure, not by a CSS class name: FleetRow renders
     // the Link as GridRow's direct child, so its own parent element is the
@@ -90,7 +95,7 @@ describe('FleetPage', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
       'GET /api/v1/orgs/acme/fleet': {
         hosts: [host()],
-        totals: { crit: 3, warn: 2, unknown: 1, ok: 5, no_data: 4 },
+        totals: { crit: 3, warn: 2, unknown: 1, ok: 5, no_data: 4, all_ignored: 2 },
       },
     });
     renderPage();
@@ -101,6 +106,7 @@ describe('FleetPage', () => {
     expect(totals).toHaveTextContent('1 unknown');
     expect(totals).toHaveTextContent('5 ok');
     expect(totals).toHaveTextContent('4 no data');
+    expect(totals).toHaveTextContent('2 all ignored');
   });
 
   it('renders an explicit empty state for an organization with no hosts, rather than a blank page', async () => {
@@ -108,7 +114,7 @@ describe('FleetPage', () => {
       'GET /api/v1/orgs/acme': org('viewer'),
       'GET /api/v1/orgs/acme/zones': { zones: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/fleet': { hosts: [], totals: { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0 } },
+      'GET /api/v1/orgs/acme/fleet': { hosts: [], totals: { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 } },
     });
     renderPage();
 
@@ -124,7 +130,7 @@ describe('FleetPage', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
       'GET /api/v1/orgs/acme/fleet': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
-        return { hosts: [host()], totals: { crit: 0, warn: 0, unknown: 0, ok: 1, no_data: 0 } };
+        return { hosts: [host()], totals: { crit: 0, warn: 0, unknown: 0, ok: 1, no_data: 0, all_ignored: 0 } };
       },
     });
     renderPage();
@@ -144,7 +150,7 @@ describe('FleetPage', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
       'GET /api/v1/orgs/acme/fleet': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
-        return { hosts: [host()], totals: { crit: 0, warn: 0, unknown: 0, ok: 1, no_data: 0 } };
+        return { hosts: [host()], totals: { crit: 0, warn: 0, unknown: 0, ok: 1, no_data: 0, all_ignored: 0 } };
       },
     });
     renderPage();
@@ -169,7 +175,7 @@ describe('FleetPage', () => {
             { status: 422, headers: { 'Content-Type': 'application/json' } },
           );
         }
-        return { hosts: [host()], totals: { crit: 0, warn: 0, unknown: 0, ok: 1, no_data: 0 } };
+        return { hosts: [host()], totals: { crit: 0, warn: 0, unknown: 0, ok: 1, no_data: 0, all_ignored: 0 } };
       },
     });
     renderPage();
@@ -192,7 +198,7 @@ describe('FleetPage', () => {
       'GET /api/v1/orgs/acme': org('none'),
       'GET /api/v1/orgs/acme/fleet': () => {
         fleetAsked = true;
-        return { hosts: [], totals: { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0 } };
+        return { hosts: [], totals: { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 } };
       },
     });
     renderPage();

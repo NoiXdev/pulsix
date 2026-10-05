@@ -21,9 +21,21 @@ import type { FleetHost } from '../../api/types.ts';
  * stale colour behind (fleet_handlers.go's own toFleetHostDTO). The
  * controller's own ruling is that this must read as "no data", never as a
  * colour the host happened to be showing when its last check vanished.
+ *
+ * allIgnored (backlog 3.44) narrows that null case further: true means
+ * check_host_states carries no row precisely because every item this host
+ * discovered currently resolves to ignored, not because nothing was ever
+ * measured. It is its own word ("all ignored"), not a shade of "no data" —
+ * an operator who silenced the last item on a host must be able to tell
+ * their own decision apart from a host nobody is watching or an agent that
+ * went quiet, and a shared label would erase exactly that. `accent`
+ * (badge.tsx's own non-state tone, already used for a deliberate,
+ * non-alarming marker like "invited") keeps it visually apart from
+ * `unknown`'s "no data" too, so the distinction does not rely on the label
+ * text alone either.
  */
-export function fleetStateLabel(state: FleetHost['state']): { label: string; tone: Tone } {
-  if (state === null) return { label: 'no data', tone: 'unknown' };
+export function fleetStateLabel(state: FleetHost['state'], allIgnored: boolean): { label: string; tone: Tone } {
+  if (state === null) return allIgnored ? { label: 'all ignored', tone: 'accent' } : { label: 'no data', tone: 'unknown' };
   switch (state) {
     case 'ok':
       return { label: 'ok', tone: 'ok' };

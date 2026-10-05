@@ -103,7 +103,7 @@ export function FleetPage() {
   }
 
   const hosts = fleet.data?.hosts ?? [];
-  const t = fleet.data?.totals ?? { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0 };
+  const t = fleet.data?.totals ?? { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 };
   const zoneNameById = new Map((zones.data?.zones ?? []).map((z) => [z.id, z.name]));
 
   return (
@@ -112,7 +112,7 @@ export function FleetPage() {
       {filters}
       <p className="text-[13px] text-muted-foreground">
         Totals for this filtered view, not the whole organization: {t.crit} crit · {t.warn} warn · {t.unknown} unknown · {t.ok} ok ·{' '}
-        {t.no_data} no data
+        {t.no_data} no data · {t.all_ignored} all ignored
       </p>
       <Card>
         <GridHeader columns={COLUMNS}>
@@ -134,7 +134,7 @@ export function FleetPage() {
 }
 
 function FleetRow({ org, host, zoneName }: { org: string; host: FleetHost; zoneName: string | undefined }) {
-  const st = fleetStateLabel(host.state);
+  const st = fleetStateLabel(host.state, host.all_ignored);
   return (
     <GridRow columns={COLUMNS}>
       <span title={host.since ? `in this state since ${seenLabel(host.since, new Date())}` : undefined}>
