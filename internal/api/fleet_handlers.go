@@ -182,7 +182,12 @@ func allIgnoredHosts(views []items.View, decisions []items.Decision) map[uuid.UU
 // the single definition of that order — this package no longer restates
 // it), and a host that was never evaluated last of all — "no data" is
 // neither a problem to lead with nor a clean bill of health to bury real
-// problems under, so it trails every judged state, good or bad.
+// problems under, so it trails every judged state, good or bad. An
+// all-ignored host (fleetHostDTO.AllIgnored) shares this same last tier
+// rather than getting one of its own: it is deliberately not a problem to
+// surface above "no data", and sortFleetHosts' own name tie-break already
+// keeps the two from scrambling together, so there is nothing an extra
+// tier would buy an operator scanning the list worst-first.
 func fleetStateRank(state *string) int {
 	if state == nil {
 		return 4
