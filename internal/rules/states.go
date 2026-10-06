@@ -99,6 +99,27 @@ type HostState struct {
 	Since, EvaluatedAt  time.Time
 }
 
+// AlertInput is what internal/alerts.Reconcile (v0.4a) needs from one
+// host's evaluation to decide the alert lifecycle: the states and roll-up
+// an evaluation just produced, plus the changes that got it there. It
+// lives here rather than in internal/alerts because internal/alerts
+// imports internal/rules for State, StateRank, TupleState, HostState and
+// Change already — the reverse import must never exist, and this struct
+// is the one thing Reconcile's signature and a future AlertSink interface
+// both need to share.
+//
+// States is the states after this evaluation, not a diff: decision 4 (the
+// host roll-up opens the only alert an all-unknown host gets) needs Host,
+// and decision 6 (a flapping tuple holds its alert open) needs each
+// TupleState's own Flapping flag, and neither is on a Change.
+type AlertInput struct {
+	OrgID, HostID uuid.UUID
+	At            time.Time
+	Changes       []Change
+	States        []TupleState // the states after this evaluation
+	Host          HostState    // the roll-up, home of decision 4
+}
+
 // FleetFilter narrows HostStates. The zero FleetFilter matches every host
 // in the organization.
 //
