@@ -68,7 +68,7 @@ INSERT INTO alerts (
   $7, $8, $8,
   COALESCE(
     (SELECT flapping FROM check_states s
-     WHERE s.host_id = $2 AND s.check_key = $4
+     WHERE $3::text = 'tuple' AND s.host_id = $2 AND s.check_key = $4
        AND s.item = $5 AND s.metric = $6),
     false)
 )
@@ -100,9 +100,13 @@ type InsertAlertParams struct {
 // value the store already has in hand, inside the same transaction the
 // evaluator just wrote that row in). A scope='host' subject's check_key,
 // item and metric are all ” by construction (migration 00049's own
-// CHECK) and check_states never carries a row shaped like that, so the
-// subquery finds nothing and COALESCE falls back to false — a host alert
-// can never open already flapping.
+// CHECK on alerts), but check_states carries no such CHECK on its own
+// columns — nothing stops a row shaped (check_key=”, item=”, metric=”)
+// from existing there too. @scope::text = 'tuple' is therefore load-bearing,
+// not redundant with the empty-string columns: it is what makes a
+// scope='host' open consult check_states not at all, rather than merely
+// "usually" matching nothing because real tuples happen to have non-empty
+// keys (see TestExecuteOpenHostScopeNeverFlaps's own adversarial row).
 func (q *Queries) InsertAlert(ctx context.Context, arg InsertAlertParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertAlert,
 		arg.OrgID,
@@ -269,23 +273,39 @@ func (q *Queries) SetAlertFlapping(ctx context.Context, arg SetAlertFlappingPara
 }
 
 const sweepStaleAlerts = `-- name: SweepStaleAlerts :execrows
-UPDATE alerts a SET closed_at = $1, closed_reason = 'stale'
-WHERE a.closed_at IS NULL AND a.scope = 'tuple'
-  AND NOT EXISTS (
-    SELECT 1 FROM check_states s
-    WHERE s.host_id = a.host_id AND s.check_key = a.check_key
-      AND s.item = a.item AND s.metric = a.metric)
+WITH swept AS (
+  UPDATE alerts a SET closed_at = $1, closed_reason = 'stale'
+  WHERE a.closed_at IS NULL AND a.scope = 'tuple'
+    AND NOT EXISTS (
+      SELECT 1 FROM check_states s
+      WHERE s.host_id = a.host_id AND s.check_key = a.check_key
+        AND s.item = a.item AND s.metric = a.metric)
+  RETURNING id, org_id
+)
+INSERT INTO alert_events (org_id, alert_id, at, kind)
+SELECT org_id, id, $1, 'closed' FROM swept
 `
 
-// The design doc's own statement, verbatim ("The sweep"): driven by open
-// alerts, not by states, because a host whose last check was removed
-// never becomes due again and a per-host sweep would miss exactly that
-// case. scope = 'tuple' excludes host-scope alerts, which carry no
-// check_key/item/metric by construction and would otherwise never match
-// any check_states row either way — excluding them here is what makes
-// that exclusion a fact of this statement rather than an accident of the
-// NOT EXISTS always happening to hold for them.
-func (q *Queries) SweepStaleAlerts(ctx context.Context, now pgtype.Timestamptz) (int64, error) {
+// The design doc's own UPDATE, driven by open alerts rather than by
+// states, because a host whose last check was removed never becomes due
+// again and a per-host sweep would miss exactly that case. scope = 'tuple'
+// excludes host-scope alerts, which carry no check_key/item/metric by
+// construction and would otherwise never match any check_states row
+// either way — excluding them here is what makes that exclusion a fact of
+// this statement rather than an accident of the NOT EXISTS always
+// happening to hold for them.
+//
+// The design doc's own text stopped at the UPDATE; the CTE and INSERT
+// below are a ruling made after review, not part of the brief: the design
+// predates alert_events, and without this every alert the sweep closes
+// would read as an episode that opened and never ended on Task 10's own
+// timeline (closed_at would be set with no matching 'closed' event).
+// RETURNING feeds straight into the event insert so the two can never
+// drift apart — a swept row and its event are the same statement, not two
+// that could partially fail — and :execrows now counts the INSERT, since
+// it runs one row per swept alert and "how many did the sweep swept"
+// means the same thing either way.
+func (q *Queries) SweepStaleAlerts(ctx context.Context, now time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, sweepStaleAlerts, now)
 	if err != nil {
 		return 0, err

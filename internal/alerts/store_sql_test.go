@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/db"
@@ -227,6 +228,17 @@ func TestExecuteOpenHostScopeNeverFlaps(t *testing.T) {
 	st := alerts.NewSQLStore(d)
 	sub := alerts.Subject{HostID: host, Scope: alerts.ScopeHost}
 
+	// The adversarial fixture: check_states carries no CHECK forbidding
+	// empty check_key/item/metric (unlike alerts' own CHECK on scope, see
+	// migration 00049), so a row shaped exactly like a host-scope
+	// Subject's own empty columns is insertable. Without InsertAlert's own
+	// scope = 'tuple' guard this row — not merely "no row at all" — is
+	// what a host-scope open would match, and would open already
+	// flapping. A fixture with zero check_states rows cannot tell "no
+	// match because excluded by scope" apart from "no match because
+	// nothing happened to be there".
+	upsertCheckState(t, d, org, host, "", "", "", true)
+
 	tx := beginTx(t, d)
 	err := st.Execute(context.Background(), tx, org, []alerts.Action{
 		{Kind: alerts.ActionOpen, Subject: sub, At: time.Now(), Severity: rules.StateUnknown},
@@ -392,36 +404,52 @@ func TestExecuteWritesAckVoided(t *testing.T) {
 	}
 }
 
-// TestExecuteClearsSnoozeUntilChangeOnSeverityMove pins the other half of
-// RaiseAlertSeverity's own SET list: ClearsSnoozeUntilChange must turn the
-// flag off, and a severity action that does not ask for it must leave an
-// existing one standing.
-func TestExecuteClearsSnoozeUntilChangeOnSeverityMove(t *testing.T) {
-	d := testdb.Open(t)
-	org, host := seedHost(t, d)
-	st := alerts.NewSQLStore(d)
-	sub := tuple(host, "mem", "", "used_percent")
-	ctx := context.Background()
+// TestExecuteSnoozeUntilChangeOnlyClearsWhenAsked pins both halves of
+// RaiseAlertSeverity's own third SET target: ClearsSnoozeUntilChange must
+// turn the flag off, AND a severity action that does not ask for it must
+// leave an existing one standing — driving only the first case would let
+// the ELSE branch of that CASE collapse to an unconditional "false" (every
+// severity move silently dropping an until-change snooze) without
+// failing anything.
+func TestExecuteSnoozeUntilChangeOnlyClearsWhenAsked(t *testing.T) {
+	cases := []struct {
+		name    string
+		clears  bool
+		wantSet bool
+	}{
+		{name: "clears when asked", clears: true, wantSet: false},
+		{name: "left standing otherwise", clears: false, wantSet: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testdb.Open(t)
+			org, host := seedHost(t, d)
+			st := alerts.NewSQLStore(d)
+			sub := tuple(host, "mem", "", "used_percent")
+			ctx := context.Background()
 
-	tx := beginTx(t, d)
-	if err := st.Execute(ctx, tx, org, []alerts.Action{
-		{Kind: alerts.ActionOpen, Subject: sub, At: time.Now(), Severity: rules.StateWarn},
-	}); err != nil {
-		t.Fatalf("execute open: %v", err)
-	}
-	open, _ := st.OpenForHost(ctx, tx, org, host)
-	id := open[0].ID
-	if _, err := tx.Exec(ctx, `UPDATE alerts SET snooze_until_change = true WHERE id = $1`, id); err != nil {
-		t.Fatalf("seed snooze_until_change: %v", err)
-	}
+			tx := beginTx(t, d)
+			if err := st.Execute(ctx, tx, org, []alerts.Action{
+				{Kind: alerts.ActionOpen, Subject: sub, At: time.Now(), Severity: rules.StateWarn},
+			}); err != nil {
+				t.Fatalf("execute open: %v", err)
+			}
+			open, _ := st.OpenForHost(ctx, tx, org, host)
+			id := open[0].ID
+			if _, err := tx.Exec(ctx, `UPDATE alerts SET snooze_until_change = true WHERE id = $1`, id); err != nil {
+				t.Fatalf("seed snooze_until_change: %v", err)
+			}
 
-	if err := st.Execute(ctx, tx, org, []alerts.Action{
-		{Kind: alerts.ActionSeverity, AlertID: id, At: time.Now(), Severity: rules.StateCrit, ClearsSnoozeUntilChange: true},
-	}); err != nil {
-		t.Fatalf("execute severity + clear snooze: %v", err)
-	}
-	if row := alertRowByID(t, tx, id); row.snoozeUntilChange {
-		t.Fatalf("snooze_until_change still set after ClearsSnoozeUntilChange")
+			if err := st.Execute(ctx, tx, org, []alerts.Action{
+				{Kind: alerts.ActionSeverity, AlertID: id, At: time.Now(), Severity: rules.StateCrit, ClearsSnoozeUntilChange: tc.clears},
+			}); err != nil {
+				t.Fatalf("execute severity change: %v", err)
+			}
+			if row := alertRowByID(t, tx, id); row.snoozeUntilChange != tc.wantSet {
+				t.Fatalf("snooze_until_change = %v, want %v (ClearsSnoozeUntilChange=%v)",
+					row.snoozeUntilChange, tc.wantSet, tc.clears)
+			}
+		})
 	}
 }
 
@@ -582,14 +610,29 @@ func TestSweepClosesAlertsWhoseTupleIsGone(t *testing.T) {
 		t.Fatalf("sweep closed %d alerts, want 1", n)
 	}
 
+	var id uuid.UUID
 	var closedReason *string
 	err = d.Pool().QueryRow(context.Background(),
-		`SELECT closed_reason FROM alerts WHERE org_id = $1 AND host_id = $2`, org, host).Scan(&closedReason)
+		`SELECT id, closed_reason FROM alerts WHERE org_id = $1 AND host_id = $2`, org, host).Scan(&id, &closedReason)
 	if err != nil {
 		t.Fatalf("read swept alert: %v", err)
 	}
 	if closedReason == nil || *closedReason != "stale" {
 		t.Fatalf("closed_reason = %v, want stale", closedReason)
+	}
+
+	// The post-review ruling: the sweep writes a 'closed' event in the same
+	// statement, not only the column — without it a swept alert would read
+	// on Task 10's own timeline as an episode that opened and never ended.
+	kinds := alertEventKinds(t, d.Pool(), id)
+	count := 0
+	for _, k := range kinds {
+		if k == "closed" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("closed events after sweep = %d, want exactly 1: %v", count, kinds)
 	}
 }
 
@@ -650,4 +693,93 @@ func TestSweepLeavesHostScopeAlertsAlone(t *testing.T) {
 	if len(open) != 1 {
 		t.Fatalf("got %d open alerts after sweep, want the host-scope alert to survive: %+v", len(open), open)
 	}
+}
+
+// TestOrgIDGuardsEveryAlertStatement is the fix for a gap review found:
+// every statement in queries/alerts.sql names org_id precisely because the
+// evaluator's own transaction is unscoped (00049's org_isolation_bypass
+// policy applies whenever pulsix.org_id is unset, which this tx never
+// sets), yet alerts.id and hosts.id are both globally unique UUIDs — so
+// every test above, each running under a single organization, would stay
+// green even if "AND org_id = @org_id" were quietly deleted from
+// ListOpenAlertsForHost, GetAlertSeverity, RaiseAlertSeverity,
+// SetAlertFlapping or CloseAlert. That guard is the only tenant isolation
+// on this path at all, which is why CLAUDE.md puts tenancy at >= 90%
+// coverage.
+//
+// Each subtest below drives one statement directly against org B's
+// credentials but org A's own alert id/host id, and asserts org A's row
+// is untouched — RaiseAlertSeverity, SetAlertFlapping and CloseAlert are
+// :exec statements that silently affect zero rows rather than erroring
+// when the WHERE matches nothing, so "no error" alone would prove
+// nothing; reading the row back after each call is what actually pins the
+// guard. GetAlertSeverity and ListOpenAlertsForHost are read statements,
+// so their own guard is pinned by what they return instead.
+func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, hostA := seedHost(t, d)
+	orgB, _ := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+
+	tx := beginTx(t, d)
+	if err := st.Execute(ctx, tx, orgA, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: tuple(hostA, "disk", "/", "used_percent"), At: time.Now(), Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(ctx, tx, orgA, hostA)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v (%d rows)", err, len(open))
+	}
+	alertA := open[0].ID
+	q := gen.New(tx)
+
+	t.Run("OpenForHost", func(t *testing.T) {
+		got, err := st.OpenForHost(ctx, tx, orgB, hostA)
+		if err != nil {
+			t.Fatalf("open for host as orgB: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("OpenForHost(orgB, hostA) = %+v, want none of org A's alerts", got)
+		}
+	})
+
+	t.Run("GetAlertSeverity", func(t *testing.T) {
+		if _, err := q.GetAlertSeverity(ctx, gen.GetAlertSeverityParams{ID: alertA, OrgID: orgB}); err == nil {
+			t.Fatalf("GetAlertSeverity(alertA, orgB) returned no error, want org A's row to be invisible to org B")
+		}
+	})
+
+	t.Run("RaiseAlertSeverity", func(t *testing.T) {
+		if err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+			Severity: "crit", SeverityRank: 3, ClearsSnooze: false, ID: alertA, OrgID: orgB,
+		}); err != nil {
+			t.Fatalf("RaiseAlertSeverity(alertA, orgB): %v", err)
+		}
+		if row := alertRowByID(t, tx, alertA); row.severity != "warn" {
+			t.Fatalf("severity = %q after a wrong-org raise, want warn (unchanged)", row.severity)
+		}
+	})
+
+	t.Run("SetAlertFlapping", func(t *testing.T) {
+		if err := q.SetAlertFlapping(ctx, gen.SetAlertFlappingParams{ID: alertA, OrgID: orgB}); err != nil {
+			t.Fatalf("SetAlertFlapping(alertA, orgB): %v", err)
+		}
+		if row := alertRowByID(t, tx, alertA); row.wasFlapping {
+			t.Fatalf("was_flapping = true after a wrong-org flap, want unchanged")
+		}
+	})
+
+	t.Run("CloseAlert", func(t *testing.T) {
+		reason := "resolved"
+		if err := q.CloseAlert(ctx, gen.CloseAlertParams{
+			ClosedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}, Reason: &reason, ID: alertA, OrgID: orgB,
+		}); err != nil {
+			t.Fatalf("CloseAlert(alertA, orgB): %v", err)
+		}
+		if row := alertRowByID(t, tx, alertA); row.closedAt != nil {
+			t.Fatalf("closed_at = %v after a wrong-org close, want nil (unchanged)", row.closedAt)
+		}
+	})
 }

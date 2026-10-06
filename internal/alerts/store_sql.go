@@ -168,19 +168,20 @@ func (s *SQLStore) open(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a 
 	return q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{OrgID: orgID, AlertID: id, At: a.At, Kind: eventOpened})
 }
 
-// raiseAlertSeverityRank is the rank RaiseAlertSeverity's own CASE must
-// agree with — rules.StateRank, not the brief's literal CASE text (which
-// ranked unknown above warn): the brief's own review focus calls this
-// duplication out by name and asks for a test proving the two agree
-// rather than trusting that they do, and
-// TestPeakSeverityRankMatchesRulesStateRank (store_sql_test.go) is that
-// test, driven across every ordered pair of the three severities an alert
-// can carry — not just crit and warn, which outranks either way and so
-// cannot expose a warn/unknown transposition. queries/alerts.sql carries
-// the fixed ordering (crit=3, warn=2, unknown=1); this is the Go side of
-// the same number, never recomputed from rules.StateRank at runtime so
-// that a change to one without the other fails loudly in that test
-// instead of silently agreeing by accident.
+// raiseAlertSeverityRank is RaiseAlertSeverity's own @severity_rank
+// parameter: simply rules.StateRank delegated to, the single source of
+// truth on the Go side, converted to the int32 RaiseAlertSeverityParams
+// wants. The frozen copy is on the SQL side, not here: queries/alerts.sql's
+// CASE (crit=3, warn=2, unknown=1) cannot call rules.StateRank — SQL has
+// no way to — so it is a literal that must be kept in sync by hand, not
+// one computed at runtime, and it is exactly the brief's own literal CASE
+// text (which ranked unknown above warn) that got this wrong the first
+// time. TestPeakSeverityRankMatchesRulesStateRank (store_sql_test.go) is
+// the test the brief's own review focus asked for, proving the two still
+// agree rather than trusting they do — driven across every ordered pair
+// of the three severities an alert can carry, not just crit and warn,
+// which outranks either way and so cannot expose a warn/unknown
+// transposition.
 func raiseAlertSeverityRank(s rules.State) int32 { return int32(rules.StateRank(s)) } //nolint:gosec // StateRank is 0..3
 
 // raiseSeverity is ActionSeverity: the severity column always moves (the
@@ -242,7 +243,11 @@ func (s *SQLStore) close(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a
 // not scoped to one host or one organization (design doc "The sweep"):
 // driven by open alerts rather than by check_states, so a host whose last
 // check was removed and therefore never becomes due again still gets its
-// alert closed.
+// alert closed. SweepStaleAlerts itself writes the matching 'closed' event
+// for every alert it sweeps, in the same statement — a post-review
+// correction to the design doc, which specified only the UPDATE, from
+// before alert_events existed; without it a swept alert would read on
+// Task 10's own timeline as an episode that opened and never ended.
 func (s *SQLStore) Sweep(ctx context.Context, now time.Time) (int, error) {
 	tx, err := s.d.Pool().Begin(ctx)
 	if err != nil {
@@ -250,7 +255,7 @@ func (s *SQLStore) Sweep(ctx context.Context, now time.Time) (int, error) {
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
 
-	n, err := gen.New(tx).SweepStaleAlerts(ctx, pgtype.Timestamptz{Time: now, Valid: true})
+	n, err := gen.New(tx).SweepStaleAlerts(ctx, now)
 	if err != nil {
 		return 0, fmt.Errorf("sweep stale alerts: %w", err)
 	}
