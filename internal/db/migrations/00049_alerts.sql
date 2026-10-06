@@ -112,7 +112,7 @@ CREATE INDEX alerts_open_idx ON alerts (org_id, opened_at DESC) WHERE closed_at 
 CREATE INDEX alerts_org_opened_idx ON alerts (org_id, opened_at DESC);
 
 -- alert_events is the append-only history behind the current-state columns
--- above: every alert.go column answers "what is true right now", while
+-- above: every column on alerts answers "what is true right now", while
 -- this table answers "what happened, in order" — the design's own answer
 -- to decision 2, because an acknowledgement silently voided by a rising
 -- severity would otherwise leave no trace that anyone ever held it, which
