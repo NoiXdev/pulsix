@@ -37,7 +37,7 @@ func normalize(in Input, now time.Time) (Window, error) {
 	}
 	w.Note = in.Note
 	switch in.TargetKind {
-	case TargetHost, TargetGroup:
+	case TargetHost, TargetGroup, TargetMonitoringGroup:
 		if in.TargetID == nil {
 			return w, fmt.Errorf("%w: a %s window needs target_id", ErrInvalidInput, in.TargetKind)
 		}
@@ -46,9 +46,20 @@ func normalize(in Input, now time.Time) (Window, error) {
 			return w, fmt.Errorf("%w: an organization window takes no target_id", ErrInvalidInput)
 		}
 	default:
-		return w, fmt.Errorf("%w: target_kind must be host, inventory_group or org", ErrInvalidInput)
+		return w, fmt.Errorf("%w: target_kind must be host, inventory_group, monitoring_group or org", ErrInvalidInput)
 	}
 	w.TargetKind, w.TargetID = in.TargetKind, in.TargetID
+
+	reason := in.Reason
+	if reason == "" {
+		reason = ReasonMaintenance
+	}
+	switch reason {
+	case ReasonMaintenance, ReasonSilence:
+	default:
+		return w, fmt.Errorf("%w: reason must be maintenance or silence", ErrInvalidInput)
+	}
+	w.Reason = reason
 
 	cron := strings.TrimSpace(in.Cron)
 	if cron == "" {

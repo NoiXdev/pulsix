@@ -47,7 +47,7 @@ func ActiveAt(w Window, at time.Time) (bool, error) {
 // maintenance (final review, Important #3).
 func Occurrences(w Window, from, to time.Time, max int) ([]Occurrence, bool, error) {
 	occ := func(start, end time.Time) Occurrence {
-		return Occurrence{WindowID: w.ID, Name: w.Name, TargetKind: w.TargetKind, TargetID: w.TargetID, TargetName: w.TargetName, Start: start, End: end}
+		return Occurrence{WindowID: w.ID, Name: w.Name, TargetKind: w.TargetKind, TargetID: w.TargetID, TargetName: w.TargetName, Reason: w.Reason, Start: start, End: end}
 	}
 	if !w.Recurring() {
 		if w.StartsAt == nil || w.EndsAt == nil {

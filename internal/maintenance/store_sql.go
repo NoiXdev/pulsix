@@ -23,10 +23,10 @@ func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
 // columns maps a window onto its nullable columns.
 type columns struct {
-	hostID, groupID  pgtype.UUID
-	startsAt, endsAt pgtype.Timestamptz
-	cron, timezone   *string
-	duration         *int32
+	hostID, groupID, monitoringGroupID pgtype.UUID
+	startsAt, endsAt                   pgtype.Timestamptz
+	cron, timezone                     *string
+	duration                           *int32
 }
 
 func toColumns(w Window) columns {
@@ -36,6 +36,8 @@ func toColumns(w Window) columns {
 		c.hostID = db.NullUUID(w.TargetID)
 	case TargetGroup:
 		c.groupID = db.NullUUID(w.TargetID)
+	case TargetMonitoringGroup:
+		c.monitoringGroupID = db.NullUUID(w.TargetID)
 	}
 	if w.Recurring() {
 		cron, tz := w.Cron, w.Timezone
@@ -51,8 +53,9 @@ func (st *SQLStore) Create(ctx context.Context, w Window) (Window, error) {
 	c := toColumns(w)
 	id, err := st.q.CreateMaintenanceWindow(ctx, gen.CreateMaintenanceWindowParams{
 		ID: w.ID, OrgID: w.OrgID, Name: w.Name, TargetKind: string(w.TargetKind), HostID: c.hostID, GroupID: c.groupID,
-		StartsAt: c.startsAt, EndsAt: c.endsAt, Cron: c.cron, DurationSeconds: c.duration, Timezone: c.timezone,
-		Note: w.Note, CreatedBy: db.NullUUID(w.CreatedBy),
+		MonitoringGroupID: c.monitoringGroupID, StartsAt: c.startsAt, EndsAt: c.endsAt, Cron: c.cron,
+		DurationSeconds: c.duration, Timezone: c.timezone, Note: w.Note, Reason: string(reasonOrDefault(w.Reason)),
+		CreatedBy: db.NullUUID(w.CreatedBy),
 	})
 	if err := mapWriteErr(err); err != nil {
 		return Window{}, fmt.Errorf("create maintenance window: %w", err)
@@ -87,8 +90,9 @@ func (st *SQLStore) Update(ctx context.Context, w Window, revision int64) (Windo
 	c := toColumns(w)
 	n, err := st.q.UpdateMaintenanceWindow(ctx, gen.UpdateMaintenanceWindowParams{
 		Name: w.Name, TargetKind: string(w.TargetKind), HostID: c.hostID, GroupID: c.groupID,
-		StartsAt: c.startsAt, EndsAt: c.endsAt, Cron: c.cron, DurationSeconds: c.duration, Timezone: c.timezone,
-		Note: w.Note, OrgID: w.OrgID, ID: w.ID, Revision: revision,
+		MonitoringGroupID: c.monitoringGroupID, StartsAt: c.startsAt, EndsAt: c.endsAt, Cron: c.cron,
+		DurationSeconds: c.duration, Timezone: c.timezone, Note: w.Note, Reason: string(reasonOrDefault(w.Reason)),
+		OrgID: w.OrgID, ID: w.ID, Revision: revision,
 	})
 	if err := mapWriteErr(err); err != nil {
 		return Window{}, fmt.Errorf("update maintenance window: %w", err)
@@ -127,10 +131,21 @@ func mapWriteErr(err error) error {
 	return err
 }
 
+// reasonOrDefault applies the same default normalize does, for a Window
+// built directly rather than through Service.Create/Update — otherwise an
+// empty Reason would reach the NOT NULL, CHECK-constrained column as "" and
+// be rejected instead of defaulting.
+func reasonOrDefault(r Reason) Reason {
+	if r == "" {
+		return ReasonMaintenance
+	}
+	return r
+}
+
 func toWindow(r gen.ListMaintenanceWindowsRow) Window {
 	w := Window{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, TargetKind: TargetKind(r.TargetKind), TargetName: r.TargetName,
-		StartsAt: db.TimePtr(r.StartsAt), EndsAt: db.TimePtr(r.EndsAt), Note: r.Note,
+		StartsAt: db.TimePtr(r.StartsAt), EndsAt: db.TimePtr(r.EndsAt), Note: r.Note, Reason: Reason(r.Reason),
 		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
 	}
 	switch w.TargetKind {
@@ -138,6 +153,8 @@ func toWindow(r gen.ListMaintenanceWindowsRow) Window {
 		w.TargetID = db.UUIDPtr(r.HostID)
 	case TargetGroup:
 		w.TargetID = db.UUIDPtr(r.GroupID)
+	case TargetMonitoringGroup:
+		w.TargetID = db.UUIDPtr(r.MonitoringGroupID)
 	}
 	if r.Cron != nil {
 		w.Cron = *r.Cron

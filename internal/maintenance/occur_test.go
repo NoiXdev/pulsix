@@ -137,6 +137,19 @@ func TestOccurrencesSpringForwardGap(t *testing.T) {
 	}
 }
 
+// TestOccurrenceCarriesItsReason is what Mute (v0.4a T4) depends on: it
+// tells silence from plain maintenance by reading Occurrence.Reason, so the
+// reason must survive the trip from the stored window to every occurrence
+// the occurrence logic produces — not stop at the store.
+func TestOccurrenceCarriesItsReason(t *testing.T) {
+	w := maintenance.Window{ID: uuid.Must(uuid.NewV7()), Name: "db upgrade", TargetKind: maintenance.TargetHost,
+		Reason: maintenance.ReasonSilence, StartsAt: ptr(at("2026-09-22T10:00:00Z")), EndsAt: ptr(at("2026-09-22T12:00:00Z"))}
+	got, _, err := maintenance.Occurrences(w, at("2026-09-22T00:00:00Z"), at("2026-09-23T00:00:00Z"), 5)
+	if err != nil || len(got) != 1 || got[0].Reason != maintenance.ReasonSilence {
+		t.Fatalf("occurrences = %+v, %v", got, err)
+	}
+}
+
 // TestOccurrencesReportsTheCap is the final review's Important #3 at its
 // source: the cap and an exhausted timetable both end the loop, and only
 // the first is a truncation the caller must pass on.

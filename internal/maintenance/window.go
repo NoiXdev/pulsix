@@ -26,9 +26,21 @@ var (
 type TargetKind string
 
 const (
-	TargetHost  TargetKind = "host"
-	TargetGroup TargetKind = "inventory_group"
-	TargetOrg   TargetKind = "org"
+	TargetHost            TargetKind = "host"
+	TargetGroup           TargetKind = "inventory_group"
+	TargetMonitoringGroup TargetKind = "monitoring_group"
+	TargetOrg             TargetKind = "org"
+)
+
+// Reason is why a window exists: a plain maintenance window, or the face
+// v0.4a gives alert silencing — a one-off window with internal visibility
+// and Reason = ReasonSilence, reusing targets, overlap handling, RLS, API
+// and GUI instead of standing up a parallel subsystem.
+type Reason string
+
+const (
+	ReasonMaintenance Reason = "maintenance"
+	ReasonSilence     Reason = "silence"
 )
 
 // Window is one stored maintenance window. A one-off window has StartsAt
@@ -46,6 +58,7 @@ type Window struct {
 	Duration             time.Duration
 	Timezone             string
 	Note                 string
+	Reason               Reason
 	CreatedBy            *uuid.UUID
 	CreatedAt, UpdatedAt time.Time
 	Revision             int64
@@ -78,6 +91,9 @@ type Input struct {
 	Duration         string
 	Timezone         string
 	Note             string
+	// Reason is empty for a plain maintenance window; normalize defaults
+	// it to ReasonMaintenance.
+	Reason Reason
 }
 
 // Occurrence is one concrete stretch of a window, for the calendar.
@@ -87,5 +103,6 @@ type Occurrence struct {
 	TargetKind TargetKind
 	TargetID   *uuid.UUID
 	TargetName string
+	Reason     Reason
 	Start, End time.Time
 }

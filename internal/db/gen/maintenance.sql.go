@@ -14,27 +14,30 @@ import (
 )
 
 const createMaintenanceWindow = `-- name: CreateMaintenanceWindow :one
-INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, group_id, starts_at, ends_at, cron,
-  duration_seconds, timezone, note, created_by)
+INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, group_id, monitoring_group_id, starts_at,
+  ends_at, cron, duration_seconds, timezone, note, reason, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
-  $8, $9, $10, $11, $12, $13)
+  $8, $9, $10, $11, $12, $13,
+  $14, $15)
 RETURNING id
 `
 
 type CreateMaintenanceWindowParams struct {
-	ID              uuid.UUID          `json:"id"`
-	OrgID           uuid.UUID          `json:"org_id"`
-	Name            string             `json:"name"`
-	TargetKind      string             `json:"target_kind"`
-	HostID          pgtype.UUID        `json:"host_id"`
-	GroupID         pgtype.UUID        `json:"group_id"`
-	StartsAt        pgtype.Timestamptz `json:"starts_at"`
-	EndsAt          pgtype.Timestamptz `json:"ends_at"`
-	Cron            *string            `json:"cron"`
-	DurationSeconds *int32             `json:"duration_seconds"`
-	Timezone        *string            `json:"timezone"`
-	Note            string             `json:"note"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
+	ID                uuid.UUID          `json:"id"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	Name              string             `json:"name"`
+	TargetKind        string             `json:"target_kind"`
+	HostID            pgtype.UUID        `json:"host_id"`
+	GroupID           pgtype.UUID        `json:"group_id"`
+	MonitoringGroupID pgtype.UUID        `json:"monitoring_group_id"`
+	StartsAt          pgtype.Timestamptz `json:"starts_at"`
+	EndsAt            pgtype.Timestamptz `json:"ends_at"`
+	Cron              *string            `json:"cron"`
+	DurationSeconds   *int32             `json:"duration_seconds"`
+	Timezone          *string            `json:"timezone"`
+	Note              string             `json:"note"`
+	Reason            string             `json:"reason"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
 }
 
 func (q *Queries) CreateMaintenanceWindow(ctx context.Context, arg CreateMaintenanceWindowParams) (uuid.UUID, error) {
@@ -45,12 +48,14 @@ func (q *Queries) CreateMaintenanceWindow(ctx context.Context, arg CreateMainten
 		arg.TargetKind,
 		arg.HostID,
 		arg.GroupID,
+		arg.MonitoringGroupID,
 		arg.StartsAt,
 		arg.EndsAt,
 		arg.Cron,
 		arg.DurationSeconds,
 		arg.Timezone,
 		arg.Note,
+		arg.Reason,
 		arg.CreatedBy,
 	)
 	var id uuid.UUID
@@ -76,10 +81,11 @@ func (q *Queries) DeleteMaintenanceWindow(ctx context.Context, arg DeleteMainten
 }
 
 const getMaintenanceWindow = `-- name: GetMaintenanceWindow :one
-SELECT w.id, w.org_id, w.name, w.target_kind, w.host_id, w.group_id, w.starts_at, w.ends_at, w.cron, w.duration_seconds, w.timezone, w.note, w.created_by, w.created_at, w.updated_at, w.revision, COALESCE(h.name, g.name, '')::text AS target_name
+SELECT w.id, w.org_id, w.name, w.target_kind, w.host_id, w.group_id, w.starts_at, w.ends_at, w.cron, w.duration_seconds, w.timezone, w.note, w.created_by, w.created_at, w.updated_at, w.revision, w.reason, w.monitoring_group_id, COALESCE(h.name, g.name, m.name, '')::text AS target_name
 FROM maintenance_windows AS w
 LEFT JOIN hosts AS h ON h.org_id = w.org_id AND h.id = w.host_id
 LEFT JOIN inventory_groups AS g ON g.org_id = w.org_id AND g.id = w.group_id
+LEFT JOIN monitoring_groups AS m ON m.org_id = w.org_id AND m.id = w.monitoring_group_id
 WHERE w.org_id = $1 AND w.id = $2
 `
 
@@ -89,23 +95,25 @@ type GetMaintenanceWindowParams struct {
 }
 
 type GetMaintenanceWindowRow struct {
-	ID              uuid.UUID          `json:"id"`
-	OrgID           uuid.UUID          `json:"org_id"`
-	Name            string             `json:"name"`
-	TargetKind      string             `json:"target_kind"`
-	HostID          pgtype.UUID        `json:"host_id"`
-	GroupID         pgtype.UUID        `json:"group_id"`
-	StartsAt        pgtype.Timestamptz `json:"starts_at"`
-	EndsAt          pgtype.Timestamptz `json:"ends_at"`
-	Cron            *string            `json:"cron"`
-	DurationSeconds *int32             `json:"duration_seconds"`
-	Timezone        *string            `json:"timezone"`
-	Note            string             `json:"note"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
-	Revision        int64              `json:"revision"`
-	TargetName      string             `json:"target_name"`
+	ID                uuid.UUID          `json:"id"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	Name              string             `json:"name"`
+	TargetKind        string             `json:"target_kind"`
+	HostID            pgtype.UUID        `json:"host_id"`
+	GroupID           pgtype.UUID        `json:"group_id"`
+	StartsAt          pgtype.Timestamptz `json:"starts_at"`
+	EndsAt            pgtype.Timestamptz `json:"ends_at"`
+	Cron              *string            `json:"cron"`
+	DurationSeconds   *int32             `json:"duration_seconds"`
+	Timezone          *string            `json:"timezone"`
+	Note              string             `json:"note"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	Revision          int64              `json:"revision"`
+	Reason            string             `json:"reason"`
+	MonitoringGroupID pgtype.UUID        `json:"monitoring_group_id"`
+	TargetName        string             `json:"target_name"`
 }
 
 func (q *Queries) GetMaintenanceWindow(ctx context.Context, arg GetMaintenanceWindowParams) (GetMaintenanceWindowRow, error) {
@@ -128,38 +136,43 @@ func (q *Queries) GetMaintenanceWindow(ctx context.Context, arg GetMaintenanceWi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Reason,
+		&i.MonitoringGroupID,
 		&i.TargetName,
 	)
 	return i, err
 }
 
 const listMaintenanceWindows = `-- name: ListMaintenanceWindows :many
-SELECT w.id, w.org_id, w.name, w.target_kind, w.host_id, w.group_id, w.starts_at, w.ends_at, w.cron, w.duration_seconds, w.timezone, w.note, w.created_by, w.created_at, w.updated_at, w.revision, COALESCE(h.name, g.name, '')::text AS target_name
+SELECT w.id, w.org_id, w.name, w.target_kind, w.host_id, w.group_id, w.starts_at, w.ends_at, w.cron, w.duration_seconds, w.timezone, w.note, w.created_by, w.created_at, w.updated_at, w.revision, w.reason, w.monitoring_group_id, COALESCE(h.name, g.name, m.name, '')::text AS target_name
 FROM maintenance_windows AS w
 LEFT JOIN hosts AS h ON h.org_id = w.org_id AND h.id = w.host_id
 LEFT JOIN inventory_groups AS g ON g.org_id = w.org_id AND g.id = w.group_id
+LEFT JOIN monitoring_groups AS m ON m.org_id = w.org_id AND m.id = w.monitoring_group_id
 WHERE w.org_id = $1
 ORDER BY w.name
 `
 
 type ListMaintenanceWindowsRow struct {
-	ID              uuid.UUID          `json:"id"`
-	OrgID           uuid.UUID          `json:"org_id"`
-	Name            string             `json:"name"`
-	TargetKind      string             `json:"target_kind"`
-	HostID          pgtype.UUID        `json:"host_id"`
-	GroupID         pgtype.UUID        `json:"group_id"`
-	StartsAt        pgtype.Timestamptz `json:"starts_at"`
-	EndsAt          pgtype.Timestamptz `json:"ends_at"`
-	Cron            *string            `json:"cron"`
-	DurationSeconds *int32             `json:"duration_seconds"`
-	Timezone        *string            `json:"timezone"`
-	Note            string             `json:"note"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
-	Revision        int64              `json:"revision"`
-	TargetName      string             `json:"target_name"`
+	ID                uuid.UUID          `json:"id"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	Name              string             `json:"name"`
+	TargetKind        string             `json:"target_kind"`
+	HostID            pgtype.UUID        `json:"host_id"`
+	GroupID           pgtype.UUID        `json:"group_id"`
+	StartsAt          pgtype.Timestamptz `json:"starts_at"`
+	EndsAt            pgtype.Timestamptz `json:"ends_at"`
+	Cron              *string            `json:"cron"`
+	DurationSeconds   *int32             `json:"duration_seconds"`
+	Timezone          *string            `json:"timezone"`
+	Note              string             `json:"note"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	Revision          int64              `json:"revision"`
+	Reason            string             `json:"reason"`
+	MonitoringGroupID pgtype.UUID        `json:"monitoring_group_id"`
+	TargetName        string             `json:"target_name"`
 }
 
 func (q *Queries) ListMaintenanceWindows(ctx context.Context, orgID uuid.UUID) ([]ListMaintenanceWindowsRow, error) {
@@ -188,6 +201,8 @@ func (q *Queries) ListMaintenanceWindows(ctx context.Context, orgID uuid.UUID) (
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
+			&i.Reason,
+			&i.MonitoringGroupID,
 			&i.TargetName,
 		); err != nil {
 			return nil, err
@@ -202,26 +217,29 @@ func (q *Queries) ListMaintenanceWindows(ctx context.Context, orgID uuid.UUID) (
 
 const updateMaintenanceWindow = `-- name: UpdateMaintenanceWindow :execrows
 UPDATE maintenance_windows SET name = $1, target_kind = $2, host_id = $3,
-  group_id = $4, starts_at = $5, ends_at = $6,
-  cron = $7, duration_seconds = $8, timezone = $9,
-  note = $10, revision = revision + 1, updated_at = now()
-WHERE org_id = $11 AND id = $12 AND revision = $13
+  group_id = $4, monitoring_group_id = $5,
+  starts_at = $6, ends_at = $7, cron = $8,
+  duration_seconds = $9, timezone = $10, note = $11, reason = $12,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = $13 AND id = $14 AND revision = $15
 `
 
 type UpdateMaintenanceWindowParams struct {
-	Name            string             `json:"name"`
-	TargetKind      string             `json:"target_kind"`
-	HostID          pgtype.UUID        `json:"host_id"`
-	GroupID         pgtype.UUID        `json:"group_id"`
-	StartsAt        pgtype.Timestamptz `json:"starts_at"`
-	EndsAt          pgtype.Timestamptz `json:"ends_at"`
-	Cron            *string            `json:"cron"`
-	DurationSeconds *int32             `json:"duration_seconds"`
-	Timezone        *string            `json:"timezone"`
-	Note            string             `json:"note"`
-	OrgID           uuid.UUID          `json:"org_id"`
-	ID              uuid.UUID          `json:"id"`
-	Revision        int64              `json:"revision"`
+	Name              string             `json:"name"`
+	TargetKind        string             `json:"target_kind"`
+	HostID            pgtype.UUID        `json:"host_id"`
+	GroupID           pgtype.UUID        `json:"group_id"`
+	MonitoringGroupID pgtype.UUID        `json:"monitoring_group_id"`
+	StartsAt          pgtype.Timestamptz `json:"starts_at"`
+	EndsAt            pgtype.Timestamptz `json:"ends_at"`
+	Cron              *string            `json:"cron"`
+	DurationSeconds   *int32             `json:"duration_seconds"`
+	Timezone          *string            `json:"timezone"`
+	Note              string             `json:"note"`
+	Reason            string             `json:"reason"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ID                uuid.UUID          `json:"id"`
+	Revision          int64              `json:"revision"`
 }
 
 func (q *Queries) UpdateMaintenanceWindow(ctx context.Context, arg UpdateMaintenanceWindowParams) (int64, error) {
@@ -230,12 +248,14 @@ func (q *Queries) UpdateMaintenanceWindow(ctx context.Context, arg UpdateMainten
 		arg.TargetKind,
 		arg.HostID,
 		arg.GroupID,
+		arg.MonitoringGroupID,
 		arg.StartsAt,
 		arg.EndsAt,
 		arg.Cron,
 		arg.DurationSeconds,
 		arg.Timezone,
 		arg.Note,
+		arg.Reason,
 		arg.OrgID,
 		arg.ID,
 		arg.Revision,

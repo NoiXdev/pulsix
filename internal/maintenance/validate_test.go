@@ -54,3 +54,41 @@ func TestNormalize(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// TestWindowDefaultsToMaintenanceReason covers the migration's own
+// guarantee: an input that says nothing about reason stores "maintenance",
+// so every window written before reason existed keeps meaning what it
+// meant.
+func TestWindowDefaultsToMaintenanceReason(t *testing.T) {
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	in := Input{Name: "nightly", TargetKind: TargetOrg, Cron: "@daily", Duration: "1h", Timezone: "UTC"}
+	w, err := normalize(in, now)
+	if err != nil || w.Reason != ReasonMaintenance {
+		t.Fatalf("reason = %q, %v; want %q", w.Reason, err, ReasonMaintenance)
+	}
+}
+
+func TestWindowRejectsAnUnknownReason(t *testing.T) {
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	in := Input{Name: "nightly", TargetKind: TargetOrg, Cron: "@daily", Duration: "1h", Timezone: "UTC", Reason: "snooze"}
+	if _, err := normalize(in, now); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	}
+}
+
+// TestMonitoringGroupWindowNeedsATargetID holds a monitoring-group window
+// to the same shape as a host or inventory-group one.
+func TestMonitoringGroupWindowNeedsATargetID(t *testing.T) {
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	start, end := now.Add(time.Hour), now.Add(3*time.Hour)
+	in := Input{Name: "silence", TargetKind: TargetMonitoringGroup, StartsAt: &start, EndsAt: &end}
+	if _, err := normalize(in, now); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	}
+	group := uuid.Must(uuid.NewV7())
+	in.TargetID = &group
+	w, err := normalize(in, now)
+	if err != nil || w.TargetKind != TargetMonitoringGroup || w.TargetID == nil || *w.TargetID != group {
+		t.Fatalf("w = %+v, %v", w, err)
+	}
+}

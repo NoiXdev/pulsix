@@ -31,6 +31,17 @@ func seedHost(t *testing.T, d *db.DB, slug string) (org, host uuid.UUID) {
 	return o.ID, host
 }
 
+// seedMonitoringGroup inserts a monitoring group directly, the same way
+// seedHost seeds its zone and host.
+func seedMonitoringGroup(t *testing.T, d *db.DB, org uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO monitoring_groups (id, org_id, name, selector) VALUES ($1, $2, $3, 'tag:x')`, id, org, name); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestWindowStoreRoundTrip(t *testing.T) {
 	d := testdb.Open(t)
 	org, host := seedHost(t, d, "maint-store")
@@ -47,6 +58,31 @@ func TestWindowStoreRoundTrip(t *testing.T) {
 	}
 	if oneOff.TargetName != "web-1" || *oneOff.TargetID != host || !oneOff.EndsAt.Equal(end) || oneOff.Revision != 1 || oneOff.Recurring() {
 		t.Fatalf("one-off = %+v", oneOff)
+	}
+	// A Window built without a Reason — as every window before this
+	// migration existed — still reads back as "maintenance".
+	if oneOff.Reason != maintenance.ReasonMaintenance {
+		t.Fatalf("reason = %q, want %q", oneOff.Reason, maintenance.ReasonMaintenance)
+	}
+	silence, err := st.Create(scoped, maintenance.Window{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "silence web-1", TargetKind: maintenance.TargetHost, TargetID: &host,
+		Reason: maintenance.ReasonSilence, StartsAt: &start, EndsAt: &end,
+	})
+	if err != nil || silence.Reason != maintenance.ReasonSilence {
+		t.Fatalf("silence = %+v, %v", silence, err)
+	}
+	group := seedMonitoringGroup(t, d, org, "web tier")
+	groupWindow, err := st.Create(scoped, maintenance.Window{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "silence web tier", TargetKind: maintenance.TargetMonitoringGroup, TargetID: &group,
+		Reason: maintenance.ReasonSilence, StartsAt: &start, EndsAt: &end,
+	})
+	if err != nil || groupWindow.TargetName != "web tier" || groupWindow.TargetID == nil || *groupWindow.TargetID != group {
+		t.Fatalf("monitoring-group window = %+v, %v", groupWindow, err)
+	}
+	ghostGroup := uuid.Must(uuid.NewV7())
+	if _, err := st.Create(scoped, maintenance.Window{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "ghost group", TargetKind: maintenance.TargetMonitoringGroup, TargetID: &ghostGroup,
+		StartsAt: &start, EndsAt: &end}); !errors.Is(err, maintenance.ErrInvalidInput) {
+		t.Fatalf("unknown monitoring group = %v", err)
 	}
 	recurring, err := st.Create(scoped, maintenance.Window{
 		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "nightly", TargetKind: maintenance.TargetOrg,

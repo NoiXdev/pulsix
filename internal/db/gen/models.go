@@ -83,6 +83,38 @@ type AgentEnrollment struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type Alert struct {
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	HostID               uuid.UUID          `json:"host_id"`
+	Scope                string             `json:"scope"`
+	CheckKey             string             `json:"check_key"`
+	Item                 string             `json:"item"`
+	Metric               string             `json:"metric"`
+	OpenedAt             time.Time          `json:"opened_at"`
+	Severity             string             `json:"severity"`
+	PeakSeverity         string             `json:"peak_severity"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason         *string            `json:"closed_reason"`
+	AcknowledgedAt       pgtype.Timestamptz `json:"acknowledged_at"`
+	AcknowledgedBy       pgtype.UUID        `json:"acknowledged_by"`
+	AcknowledgedSeverity *string            `json:"acknowledged_severity"`
+	AckNote              string             `json:"ack_note"`
+	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeUntilChange    bool               `json:"snooze_until_change"`
+	WasFlapping          bool               `json:"was_flapping"`
+}
+
+type AlertEvent struct {
+	ID      uuid.UUID   `json:"id"`
+	OrgID   uuid.UUID   `json:"org_id"`
+	AlertID uuid.UUID   `json:"alert_id"`
+	At      time.Time   `json:"at"`
+	Kind    string      `json:"kind"`
+	ActorID pgtype.UUID `json:"actor_id"`
+	Payload []byte      `json:"payload"`
+}
+
 type ApiToken struct {
 	ID         uuid.UUID          `json:"id"`
 	UserID     uuid.UUID          `json:"user_id"`
@@ -473,22 +505,24 @@ type JobTrigger struct {
 }
 
 type MaintenanceWindow struct {
-	ID              uuid.UUID          `json:"id"`
-	OrgID           uuid.UUID          `json:"org_id"`
-	Name            string             `json:"name"`
-	TargetKind      string             `json:"target_kind"`
-	HostID          pgtype.UUID        `json:"host_id"`
-	GroupID         pgtype.UUID        `json:"group_id"`
-	StartsAt        pgtype.Timestamptz `json:"starts_at"`
-	EndsAt          pgtype.Timestamptz `json:"ends_at"`
-	Cron            *string            `json:"cron"`
-	DurationSeconds *int32             `json:"duration_seconds"`
-	Timezone        *string            `json:"timezone"`
-	Note            string             `json:"note"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
-	Revision        int64              `json:"revision"`
+	ID                uuid.UUID          `json:"id"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	Name              string             `json:"name"`
+	TargetKind        string             `json:"target_kind"`
+	HostID            pgtype.UUID        `json:"host_id"`
+	GroupID           pgtype.UUID        `json:"group_id"`
+	StartsAt          pgtype.Timestamptz `json:"starts_at"`
+	EndsAt            pgtype.Timestamptz `json:"ends_at"`
+	Cron              *string            `json:"cron"`
+	DurationSeconds   *int32             `json:"duration_seconds"`
+	Timezone          *string            `json:"timezone"`
+	Note              string             `json:"note"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	Revision          int64              `json:"revision"`
+	Reason            string             `json:"reason"`
+	MonitoringGroupID pgtype.UUID        `json:"monitoring_group_id"`
 }
 
 type MonitoringGroup struct {
