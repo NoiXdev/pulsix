@@ -30,6 +30,24 @@ func start() {
 		return
 	}
 	url, errC = c.ConnectionString(ctx, "sslmode=disable")
+	if errC != nil {
+		return
+	}
+
+	// Migrate exactly once per test binary, here inside the same sync.Once
+	// that starts the container, instead of once per call to Open or URL.
+	// goose's own up-to-date check ("no migrations to run") still means
+	// reading its bookkeeping table and walking the embedded migration list
+	// on every single call, and with Open called dozens of times in one
+	// package that added up to real per-test cost for no benefit: nothing
+	// changes the schema between one test and the next (backlog 3.46).
+	admin, err := db.Open(ctx, url)
+	if err != nil {
+		errC = err
+		return
+	}
+	defer admin.Close()
+	errC = admin.Migrate(ctx)
 }
 
 // appRole is the least-privilege PostgreSQL role the returned *db.DB queries
@@ -49,14 +67,11 @@ func Open(t *testing.T) *db.DB {
 
 	ctx := context.Background()
 
-	// Migrations need DDL privileges (creating tables, extensions and the
-	// pulsix_app role itself), so they run through the bootstrap superuser
-	// connection. That connection is kept open only for the post-test
-	// truncate, since pulsix_app is deliberately not granted TRUNCATE.
+	// Migrations already ran once in start(), through the bootstrap
+	// superuser, before url was ever handed out — see the comment there.
+	// This connection exists only to run the post-test truncate, since
+	// pulsix_app is deliberately not granted TRUNCATE.
 	admin, err := db.Open(ctx, url)
-	fatalOnErr(t, err)
-
-	err = admin.Migrate(ctx)
 	fatalOnErr(t, err)
 
 	d, err := db.OpenAsRole(ctx, url, appRole)
@@ -88,12 +103,10 @@ func URL(t *testing.T) string {
 	fatalOnErr(t, errC)
 
 	ctx := context.Background()
+	// Already migrated by start(); this connection exists only for the
+	// post-test truncate below.
 	admin, err := db.Open(ctx, url)
 	fatalOnErr(t, err)
-	if err := admin.Migrate(ctx); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
 	t.Cleanup(func() {
 		truncateAll(ctx, t, admin)
 		admin.Close()
