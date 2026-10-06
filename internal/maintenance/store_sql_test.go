@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -129,4 +130,33 @@ func TestWindowStoreRoundTrip(t *testing.T) {
 	if err := st.Delete(scoped, org, up.ID); !errors.Is(err, maintenance.ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
 	}
+}
+
+// TestMonitoringGroupKindColumnPairingIsEnforced holds the database to the
+// same pairing invariant migration 00032 already gives host_id and
+// group_id: a row cannot say target_kind = 'monitoring_group' while
+// leaving monitoring_group_id NULL. normalize() guards the one path the
+// app uses to write a window; this guards the table itself — a hand-edited
+// row, or a future caller that bypasses normalize() — so the test goes
+// around the store and normalize() on purpose, straight to SQL.
+func TestMonitoringGroupKindColumnPairingIsEnforced(t *testing.T) {
+	d := testdb.Open(t)
+	org, _ := seedHost(t, d, "maint-kind-pairing")
+	start, end := at("2026-09-22T10:00:00Z"), at("2026-09-22T12:00:00Z")
+	_, err := d.Pool().Exec(ctx,
+		`INSERT INTO maintenance_windows (id, org_id, name, target_kind, starts_at, ends_at)
+		 VALUES ($1, $2, 'bad monitoring group window', 'monitoring_group', $3, $4)`,
+		uuid.Must(uuid.NewV7()), org, start, end)
+	if !isCheckViolation(err) {
+		t.Fatalf("err = %v, want a check_violation", err)
+	}
+}
+
+// isCheckViolation reports SQLSTATE 23514 (check_violation) — the same
+// helper internal/rules and internal/items use for the same reason: db
+// package only exposes helpers for unique (23505) and foreign key (23503)
+// violations, neither of which is what a deliberately-mismatched row hits.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }

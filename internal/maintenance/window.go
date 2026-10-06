@@ -49,7 +49,8 @@ type Window struct {
 	ID, OrgID  uuid.UUID
 	Name       string
 	TargetKind TargetKind
-	// TargetID is the host or inventory group; nil for the organization.
+	// TargetID is the host, inventory group or monitoring group; nil for
+	// the organization.
 	TargetID *uuid.UUID
 	// TargetName is the host's or group's name, read with the window.
 	TargetName           string
