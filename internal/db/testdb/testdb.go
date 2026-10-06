@@ -45,18 +45,21 @@ func start() {
 	// to Open or URL, and keep it for the rest of the binary — opening a
 	// pool (and the connection(s) pgxpool.New's initial Ping makes) on
 	// every single test was its own measurable cost on top of the
-	// migration and truncate work it exists to do (backlog 3.46).
+	// migration and truncate work it exists to do (backlog 3.46). It has to
+	// be the superuser, not pulsix_app: migrations need DDL privileges —
+	// creating tables, extensions and the pulsix_app role itself — that
+	// pulsix_app deliberately does not have.
 	admin, err = db.Open(ctx, url)
 	if err != nil {
 		errC = err
 		return
 	}
 
-	// Migrate exactly once per test binary, for the same reason: goose's
-	// own up-to-date check ("no migrations to run") still means reading its
-	// bookkeeping table and walking the embedded migration list on every
-	// single call, and nothing changes the schema between one test and the
-	// next in a binary.
+	// Migrate exactly once per test binary, for a cost reason on top of the
+	// privilege one above: goose's own up-to-date check ("no migrations to
+	// run") still means reading its bookkeeping table and walking the
+	// embedded migration list on every single call, and nothing changes the
+	// schema between one test and the next in a binary.
 	errC = admin.Migrate(ctx)
 }
 
@@ -120,20 +123,31 @@ func URL(t *testing.T) string {
 // deliberately not granted TRUNCATE. Shared by Open and URL's cleanup.
 func truncateAll(ctx context.Context, t *testing.T, admin *db.DB) {
 	t.Helper()
-	// One multi-table TRUNCATE instead of one statement per table: Postgres
-	// takes every table's lock together instead of one at a time, which
-	// measured dramatically cheaper once the schema grew past a few dozen
-	// tables, several of them TimescaleDB hypertables (backlog 3.46). The
-	// table list is still built from pg_tables inside the same DO block, at
-	// truncate time, so a migration that adds a table tomorrow is still
-	// covered automatically — nothing here names a table by hand.
+	// One multi-table TRUNCATE instead of one statement per table: measured
+	// roughly 10x faster once the schema grew past a few dozen tables,
+	// several of them TimescaleDB hypertables (backlog 3.46). The real
+	// mechanism isn't pinned down — both forms run inside this one DO
+	// block's single transaction, so "every lock taken together instead of
+	// one at a time" cannot by itself explain a tenfold gap. The likelier
+	// causes are CASCADE re-walking FK-reachable tables once per statement
+	// across the old loop's dozens of statements, and the per-statement
+	// plpgsql EXECUTE parse/plan, but neither was isolated to confirm it —
+	// read this as "measured faster", not as a verified why.
+	//
+	// The table list is still built from pg_tables inside the same DO
+	// block, at truncate time, so a migration that adds a table tomorrow is
+	// still covered automatically — nothing here names a table by hand.
+	// ORDER BY makes the lock-acquisition order deterministic: harmless
+	// today (tests run sequentially), but cheap insurance against a
+	// deadlock between two truncates once something runs them concurrently
+	// against the one admin pool this package now shares.
 	//
 	// A failing truncate must be loud: silently leaving rows behind makes
 	// the next test fail somewhere unrelated.
 	if _, err := admin.Pool().Exec(ctx, `DO $$
 	DECLARE tables text;
 	BEGIN
-		SELECT string_agg(quote_ident(tablename), ', ') INTO tables
+		SELECT string_agg(quote_ident(tablename), ', ' ORDER BY tablename) INTO tables
 			FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version';
 		IF tables IS NOT NULL THEN
 			EXECUTE 'TRUNCATE TABLE ' || tables || ' CASCADE';

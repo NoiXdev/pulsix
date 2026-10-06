@@ -78,6 +78,14 @@ func TestTruncateCoversTablesNotInAnyHandWrittenList(t *testing.T) {
 		}
 	})
 
+	// This subtest depends on the previous one having run first in the same
+	// test binary (truncate empties rows, it does not drop the table, so
+	// the ordering dependency is "the table already exists", not "it has a
+	// row in it"). Run alone — e.g. via -run of just this subtest — its own
+	// SELECT fails with "relation does not exist" rather than a clear
+	// assertion failure; that is accepted here rather than engineered away,
+	// since go test always runs a parent test's subtests in the order
+	// they're registered.
 	t.Run("table is empty after the subtest's cleanup", func(t *testing.T) {
 		url := testdb.URL(t)
 		ctx := context.Background()
@@ -94,6 +102,13 @@ func TestTruncateCoversTablesNotInAnyHandWrittenList(t *testing.T) {
 		}
 		if count != 0 {
 			t.Errorf("zz_testdb_coverage_probe has %d rows, want 0 (truncateAll must cover tables no list names by hand)", count)
+		}
+
+		// Drop the probe table rather than leaving it in public for the
+		// rest of the binary: every later truncateAll call would otherwise
+		// keep including it in its table list for no reason.
+		if _, err := d.Pool().Exec(ctx, `DROP TABLE IF EXISTS zz_testdb_coverage_probe`); err != nil {
+			t.Errorf("drop coverage probe table: %v", err)
 		}
 	})
 }
