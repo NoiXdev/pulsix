@@ -18,6 +18,13 @@ var (
 	once sync.Once
 	url  string
 	errC error
+	// admin is the bootstrap superuser pool opened once in start() and
+	// reused by every call to Open and URL for the rest of the binary — see
+	// start()'s comment for why opening one per test was worth avoiding. It
+	// is never closed: it lives exactly as long as the container, which
+	// this package also never tears down, relying on the process exit (or
+	// testcontainers' own reaper) to clean both up.
+	admin *db.DB
 )
 
 func start() {
@@ -34,19 +41,22 @@ func start() {
 		return
 	}
 
-	// Migrate exactly once per test binary, here inside the same sync.Once
-	// that starts the container, instead of once per call to Open or URL.
-	// goose's own up-to-date check ("no migrations to run") still means
-	// reading its bookkeeping table and walking the embedded migration list
-	// on every single call, and with Open called dozens of times in one
-	// package that added up to real per-test cost for no benefit: nothing
-	// changes the schema between one test and the next (backlog 3.46).
-	admin, err := db.Open(ctx, url)
+	// Open the bootstrap superuser pool once here, instead of once per call
+	// to Open or URL, and keep it for the rest of the binary — opening a
+	// pool (and the connection(s) pgxpool.New's initial Ping makes) on
+	// every single test was its own measurable cost on top of the
+	// migration and truncate work it exists to do (backlog 3.46).
+	admin, err = db.Open(ctx, url)
 	if err != nil {
 		errC = err
 		return
 	}
-	defer admin.Close()
+
+	// Migrate exactly once per test binary, for the same reason: goose's
+	// own up-to-date check ("no migrations to run") still means reading its
+	// bookkeeping table and walking the embedded migration list on every
+	// single call, and nothing changes the schema between one test and the
+	// next in a binary.
 	errC = admin.Migrate(ctx)
 }
 
@@ -67,20 +77,16 @@ func Open(t *testing.T) *db.DB {
 
 	ctx := context.Background()
 
-	// Migrations already ran once in start(), through the bootstrap
-	// superuser, before url was ever handed out — see the comment there.
-	// This connection exists only to run the post-test truncate, since
-	// pulsix_app is deliberately not granted TRUNCATE.
-	admin, err := db.Open(ctx, url)
-	fatalOnErr(t, err)
-
 	d, err := db.OpenAsRole(ctx, url, appRole)
 	fatalOnErr(t, err)
 
 	t.Cleanup(func() {
+		// admin is the package-level bootstrap superuser pool opened once in
+		// start() and shared by every test in the binary. pulsix_app is
+		// deliberately not granted TRUNCATE, so the post-test cleanup always
+		// runs through admin, never through d.
 		truncateAll(ctx, t, admin)
 		d.Close()
-		admin.Close()
 	})
 	return d
 }
@@ -103,13 +109,8 @@ func URL(t *testing.T) string {
 	fatalOnErr(t, errC)
 
 	ctx := context.Background()
-	// Already migrated by start(); this connection exists only for the
-	// post-test truncate below.
-	admin, err := db.Open(ctx, url)
-	fatalOnErr(t, err)
 	t.Cleanup(func() {
 		truncateAll(ctx, t, admin)
-		admin.Close()
 	})
 	return url
 }
