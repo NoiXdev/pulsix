@@ -96,7 +96,7 @@ func hasClose(acts []alerts.Action) bool {
 	return ok
 }
 
-func mustBeOneOpen(t *testing.T, acts []alerts.Action, wantAt time.Time) {
+func mustBeOneOpen(t *testing.T, acts []alerts.Action, wantAt time.Time, wantSeverity rules.State) {
 	t.Helper()
 	if len(acts) != 1 {
 		t.Fatalf("got %d actions, want exactly 1 open: %+v", len(acts), acts)
@@ -108,13 +108,16 @@ func mustBeOneOpen(t *testing.T, acts []alerts.Action, wantAt time.Time) {
 	if !a.At.Equal(wantAt) {
 		t.Fatalf("open At = %v, want %v", a.At, wantAt)
 	}
+	if a.Severity != wantSeverity {
+		t.Fatalf("open Severity = %q, want %q", a.Severity, wantSeverity)
+	}
 }
 
 func TestReconcileOpensOneAlertPerEpisode(t *testing.T) {
 	sub := tupleSubject("disk", "/", "used_percent")
 	// warn opens; the alert then survives crit and the fall back to warn.
 	acts := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), nil)
-	mustBeOneOpen(t, acts, t0)
+	mustBeOneOpen(t, acts, t0, rules.StateWarn)
 
 	a := openAlert(sub, rules.StateWarn, t0)
 	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{a})
@@ -196,6 +199,12 @@ func TestReconcileUnknownOpensOnlyAHostAlert(t *testing.T) {
 	if opens[0].Subject.Scope != alerts.ScopeHost {
 		t.Fatalf("the one open action has scope %q, want host", opens[0].Subject.Scope)
 	}
+	if opens[0].Severity != rules.StateUnknown {
+		t.Fatalf("the host open carries severity %q, want unknown", opens[0].Severity)
+	}
+	if !opens[0].At.Equal(t0) {
+		t.Fatalf("the host open's At = %v, want Host.Since = %v (not in.At = %v)", opens[0].At, t0, t0.Add(time.Hour))
+	}
 }
 
 func TestReconcileFlappingHoldsTheAlertOpen(t *testing.T) {
@@ -207,6 +216,13 @@ func TestReconcileFlappingHoldsTheAlertOpen(t *testing.T) {
 	got := alerts.Reconcile(input(flapping), []alerts.Alert{a})
 	if hasClose(got) {
 		t.Fatalf("a flapping tuple at ok closed its alert: %+v", got)
+	}
+	flapped, ok := findKind(got, alerts.ActionFlapped)
+	if !ok {
+		t.Fatalf("a flapping tuple at ok on an alert not yet marked flapping produced %+v, want a flapped action latching was_flapping", got)
+	}
+	if flapped.AlertID != a.ID {
+		t.Fatalf("flapped action carries AlertID %v, want %v", flapped.AlertID, a.ID)
 	}
 
 	settled := stateAt(sub, rules.StateOK, t0)
@@ -373,23 +389,49 @@ func TestReconcileDoesNotReopenAnAlreadyOpenHostAlert(t *testing.T) {
 // TestReconcileOrderFollowsStatesOrder pins the determinism requirement:
 // the returned []Action must be a function of in.States' own order, never
 // of Go's randomized map iteration order over the alerts Reconcile indexes
-// internally. Run across several input sizes since a map-iteration bug
-// would not necessarily show on every length.
+// internally from open. Odd-indexed metrics already have an open alert (at
+// warn, with the tuple now reading crit), so Reconcile must advance them
+// — ActionSeverity, carrying AlertID — while the even-indexed ones have no
+// alert and must open instead — ActionOpen, carrying Subject. A nil open
+// slice (the previous version of this test) leaves bySubject empty, so an
+// implementation that produced output by ranging over that empty map
+// would emit nothing and still pass; populating it here means a
+// map-iteration bug scrambles this alternating pattern instead. Run across
+// several input sizes since such a bug would not necessarily show on every
+// length.
 func TestReconcileOrderFollowsStatesOrder(t *testing.T) {
 	metrics := []string{"m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7"}
+	subs := make([]alerts.Subject, len(metrics))
 	states := make([]rules.TupleState, len(metrics))
 	for i, m := range metrics {
-		states[i] = stateAt(tupleSubject("disk", "/", m), rules.StateWarn, t0)
+		subs[i] = tupleSubject("disk", "/", m)
+		states[i] = stateAt(subs[i], rules.StateCrit, t0)
+	}
+
+	open := make([]alerts.Alert, 0, len(metrics)/2)
+	alertIDs := make(map[int]uuid.UUID, len(metrics)/2)
+	for i := range metrics {
+		if i%2 == 1 {
+			a := openAlert(subs[i], rules.StateWarn, t0)
+			open = append(open, a)
+			alertIDs[i] = a.ID
+		}
 	}
 
 	for n := 1; n <= len(metrics); n++ {
-		got := alerts.Reconcile(input(states[:n]...), nil)
+		got := alerts.Reconcile(input(states[:n]...), open)
 		if len(got) != n {
-			t.Fatalf("n=%d: got %d actions, want %d", n, len(got), n)
+			t.Fatalf("n=%d: got %d actions, want %d: %+v", n, len(got), n, got)
 		}
-		for i, a := range got {
-			if a.Subject.Metric != metrics[i] {
-				t.Fatalf("n=%d: action %d has metric %q, want %q (order must follow in.States)", n, i, a.Subject.Metric, metrics[i])
+		for i, act := range got {
+			if i%2 == 0 {
+				if act.Kind != alerts.ActionOpen || act.Subject.Metric != metrics[i] {
+					t.Fatalf("n=%d: action %d = %+v, want an open for metric %q (order must follow in.States)", n, i, act, metrics[i])
+				}
+				continue
+			}
+			if act.Kind != alerts.ActionSeverity || act.AlertID != alertIDs[i] {
+				t.Fatalf("n=%d: action %d = %+v, want a severity action for alert %v (order must follow in.States)", n, i, act, alertIDs[i])
 			}
 		}
 	}
