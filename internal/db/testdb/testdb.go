@@ -106,12 +106,25 @@ func URL(t *testing.T) string {
 // deliberately not granted TRUNCATE. Shared by Open and URL's cleanup.
 func truncateAll(ctx context.Context, t *testing.T, admin *db.DB) {
 	t.Helper()
+	// One multi-table TRUNCATE instead of one statement per table: Postgres
+	// takes every table's lock together instead of one at a time, which
+	// measured dramatically cheaper once the schema grew past a few dozen
+	// tables, several of them TimescaleDB hypertables (backlog 3.46). The
+	// table list is still built from pg_tables inside the same DO block, at
+	// truncate time, so a migration that adds a table tomorrow is still
+	// covered automatically — nothing here names a table by hand.
+	//
 	// A failing truncate must be loud: silently leaving rows behind makes
 	// the next test fail somewhere unrelated.
-	if _, err := admin.Pool().Exec(ctx, `DO $$ DECLARE r record; BEGIN
-		FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version' LOOP
-			EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
-		END LOOP; END $$;`); err != nil {
+	if _, err := admin.Pool().Exec(ctx, `DO $$
+	DECLARE tables text;
+	BEGIN
+		SELECT string_agg(quote_ident(tablename), ', ') INTO tables
+			FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version';
+		IF tables IS NOT NULL THEN
+			EXECUTE 'TRUNCATE TABLE ' || tables || ' CASCADE';
+		END IF;
+	END $$;`); err != nil {
 		t.Errorf("truncate tables after test: %v", err)
 	}
 }

@@ -52,6 +52,52 @@ func TestURLReturnsMigratedConnectionString(t *testing.T) {
 	}
 }
 
+// TestTruncateCoversTablesNotInAnyHandWrittenList proves truncateAll's
+// coverage still comes from querying pg_tables at truncate time, not from a
+// list anyone edited by hand: a table this test creates on the fly, which no
+// migration and no line in testdb.go ever names, must still come back empty
+// in the next test. If truncateAll ever regressed to a fixed table list, this
+// is the case that would catch it — a real migration adding a table would
+// otherwise rot that list silently until a seemingly unrelated test flaked.
+func TestTruncateCoversTablesNotInAnyHandWrittenList(t *testing.T) {
+	t.Run("create an ad hoc table and insert a row", func(t *testing.T) {
+		url := testdb.URL(t)
+		ctx := context.Background()
+		admin, err := db.Open(ctx, url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer admin.Close()
+		if _, err := admin.Pool().Exec(ctx,
+			`CREATE TABLE IF NOT EXISTS zz_testdb_coverage_probe (id int)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.Pool().Exec(ctx,
+			`INSERT INTO zz_testdb_coverage_probe (id) VALUES (1)`); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("table is empty after the subtest's cleanup", func(t *testing.T) {
+		url := testdb.URL(t)
+		ctx := context.Background()
+		d, err := db.Open(ctx, url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+
+		var count int
+		if err := d.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM zz_testdb_coverage_probe`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Errorf("zz_testdb_coverage_probe has %d rows, want 0 (truncateAll must cover tables no list names by hand)", count)
+		}
+	})
+}
+
 func TestOpenTruncatesTablesBetweenTests(t *testing.T) {
 	// Two subtests sharing one testdb.Open each: the first subtest's
 	// t.Cleanup (which truncates) runs when it returns, before the second
