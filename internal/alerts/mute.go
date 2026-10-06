@@ -65,18 +65,23 @@ func muteReasonRank(r MuteReason) int {
 }
 
 // muteReasonForWindow maps a maintenance.Reason onto the MuteReason Mute
-// reports. The switch carries no default arm that falls through to a
-// reason: maintenance.Reason has exactly two values today, and an
-// occurrence carrying a third, unrecognised one must fail a test loudly
-// here, never silently read as "maintenance".
-func muteReasonForWindow(r maintenance.Reason) MuteReason {
+// reports. maintenance.Reason is a plain string, not a closed enum — the
+// type system does not stop a hand-edited row, or a schema this code has
+// not caught up with, from carrying a third value — so an unrecognised
+// reason reports ok == false and Mute excludes that window entirely,
+// rather than ever reading it back as "maintenance" or taking the whole
+// call down over one bad row: the same shape items.Decide's own applies
+// gives a value its CHECK constraint does not permit
+// (internal/items/decide.go).
+func muteReasonForWindow(r maintenance.Reason) (reason MuteReason, ok bool) {
 	switch r {
 	case maintenance.ReasonMaintenance:
-		return MuteMaintenance
+		return MuteMaintenance, true
 	case maintenance.ReasonSilence:
-		return MuteSilence
+		return MuteSilence, true
+	default:
+		return "", false // not a value the schema's CHECK constraint permits; guarded rather than trusted
 	}
-	panic(fmt.Sprintf("alerts: unrecognised maintenance.Reason %q", r))
 }
 
 // beats is Mute's own strict total order over applicable Suppressions:
@@ -144,9 +149,13 @@ func Mute(a Alert, windows []maintenance.Occurrence, now time.Time) Suppression 
 		if !covers(w, now) {
 			continue
 		}
+		reason, ok := muteReasonForWindow(w.Reason)
+		if !ok {
+			continue
+		}
 		end := w.End
 		id := w.WindowID
-		consider(Suppression{Muted: true, Reason: muteReasonForWindow(w.Reason), Until: &end, WindowID: &id})
+		consider(Suppression{Muted: true, Reason: reason, Until: &end, WindowID: &id})
 	}
 
 	return winner

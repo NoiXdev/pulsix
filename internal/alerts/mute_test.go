@@ -226,20 +226,55 @@ func TestMuteTieBreakIsDeterministic(t *testing.T) {
 	})
 }
 
-// TestMutePanicsOnUnrecognisedWindowReason is the other half of the
-// explicit-switch ruling: a window reason neither ReasonMaintenance nor
-// ReasonSilence must surface loudly, not fall through and silently label
-// itself "maintenance".
-func TestMutePanicsOnUnrecognisedWindowReason(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatalf("Mute did not panic on an unrecognised window reason")
-		}
-	}()
-
+// TestMuteExcludesWindowWithUnrecognisedReason is the other half of the
+// explicit-switch ruling: maintenance.Reason is a plain string, not a
+// closed enum, so a window reason neither ReasonMaintenance nor
+// ReasonSilence must be excluded — the window contributes nothing — rather
+// than taking the whole call down or, worse, silently reading back as
+// "maintenance".
+func TestMuteExcludesWindowWithUnrecognisedReason(t *testing.T) {
 	w := maintenance.Occurrence{
 		WindowID: uuid.Must(uuid.NewV7()), Reason: maintenance.Reason("bogus"),
 		Start: t0.Add(-time.Hour), End: t0.Add(time.Hour),
 	}
-	alerts.Mute(alerts.Alert{}, []maintenance.Occurrence{w}, t0)
+
+	got := alerts.Mute(alerts.Alert{}, []maintenance.Occurrence{w}, t0)
+
+	if got.Muted {
+		t.Fatalf("got %+v, want Muted: false — an unrecognised window reason must not mute", got)
+	}
+	if got.Reason == alerts.MuteMaintenance {
+		t.Fatalf("got %+v, want anything but maintenance: an unrecognised reason must never silently read as maintenance", got)
+	}
+}
+
+// TestMuteWindowEndingExactlyAtNowDoesNotCover pins the half-open
+// [Start, End) boundary covers relies on: a window has already ended at
+// the exact instant it ends, so it must not mute at now == End. The other
+// tests all leave an hour's margin around this seam and so cannot catch a
+// regression that flips covers from strict-before to not-after.
+func TestMuteWindowEndingExactlyAtNowDoesNotCover(t *testing.T) {
+	w := maintenance.Occurrence{
+		WindowID: uuid.Must(uuid.NewV7()), Reason: maintenance.ReasonMaintenance,
+		Start: t0.Add(-time.Hour), End: t0,
+	}
+
+	got := alerts.Mute(alerts.Alert{}, []maintenance.Occurrence{w}, t0)
+
+	if got.Muted {
+		t.Fatalf("got %+v, want Muted: false — the window ends exactly at now", got)
+	}
+}
+
+// TestMuteSnoozedUntilExactlyNowIsNotMuted is the same boundary for a
+// snooze: SnoozedUntil equal to now, not merely in the past, must not
+// mute — the snooze has already elapsed at the instant it names.
+func TestMuteSnoozedUntilExactlyNowIsNotMuted(t *testing.T) {
+	a := alertSnoozedUntil(t0)
+
+	got := alerts.Mute(a, nil, t0)
+
+	if got.Muted {
+		t.Fatalf("got %+v, want Muted: false — SnoozedUntil equals now", got)
+	}
 }
