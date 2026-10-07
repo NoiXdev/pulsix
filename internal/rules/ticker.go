@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // DefaultEvalInterval and DefaultEvalBatch are the tick's own defaults: 15
@@ -138,11 +139,33 @@ type EvalStore interface {
 	Apply(ctx context.Context, d Due, res Result) error
 }
 
+// AlertSink is internal/alerts.Service's own front door, declared here
+// instead of there because the import has to run one way only:
+// internal/alerts already imports internal/rules for Change, State,
+// TupleState, HostState and AlertInput, so internal/rules importing
+// internal/alerts back would be a cycle. Declaring the interface next to
+// its one caller and letting alerts.Service satisfy it from the other side
+// is what keeps the dependency pointing one direction.
+type AlertSink interface {
+	// Apply runs inside the evaluator's transaction, per host — the same
+	// transaction EvalStore.Apply just wrote states, changes and the
+	// roll-up through, by way of the context evaluateOne bound it to. An
+	// error here rolls the whole host back, exactly like an EvalStore.Apply
+	// error already does: the two write-backs are one atomic unit.
+	Apply(ctx context.Context, tx pgx.Tx, in AlertInput) error
+	// Sweep runs once per tick, outside any host's transaction, after
+	// ProcessDue returns — including on a tick that claimed no host at
+	// all, which is exactly when a host that stopped being evaluated
+	// altogether needs sweeping (a due queue never revisits it).
+	Sweep(ctx context.Context, now time.Time) error
+}
+
 // Ticker evaluates dirty-or-due hosts on a fixed interval. Several
 // managers may each run one: the claim's FOR UPDATE SKIP LOCKED
 // distributes hosts across them without any claim protocol of its own.
 type Ticker struct {
 	store    EvalStore
+	alerts   AlertSink
 	now      func() time.Time
 	interval time.Duration
 	batch    int
@@ -199,10 +222,21 @@ func WithTickerLogger(l *slog.Logger) TickerOption {
 	}
 }
 
-// NewTicker builds the ticker on store, with every option defaulted.
-func NewTicker(store EvalStore, opts ...TickerOption) *Ticker {
+// NewTicker builds the ticker on store and alerts, with every option
+// defaulted. alerts is a required positional argument, not a TickerOption
+// — the same ruling internal/items got in v0.3b-3 — so a forgotten wire is
+// a compile error rather than half the alerting silently never running. A
+// nil alerts panics here, at construction, for the same reason
+// NewEvalSQLStore refuses a nil items: every tick would otherwise reach
+// for it and nil-pointer-panic once per host per tick, with the wiring
+// mistake that caused it nowhere in the message.
+func NewTicker(store EvalStore, alerts AlertSink, opts ...TickerOption) *Ticker {
+	if alerts == nil {
+		panic("rules.NewTicker: alerts sink must not be nil")
+	}
 	t := &Ticker{
 		store:         store,
+		alerts:        alerts,
 		now:           time.Now,
 		interval:      DefaultEvalInterval,
 		batch:         DefaultEvalBatch,
@@ -243,6 +277,15 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 		return t.evaluate(ctx, d, now)
 	})
 	cancel()
+	// Sweep runs once per tick, outside any host's transaction, whether or
+	// not ProcessDue found anything due — a host whose last check was
+	// taken away never becomes due again, so this is precisely the tick
+	// that must still look for it. Its own failure is a delayed cleanup,
+	// not a reason to leave every host ProcessDue just evaluated due
+	// again, so it is logged rather than folded into err.
+	if err := t.alerts.Sweep(ctx, now); err != nil {
+		t.log.ErrorContext(ctx, "sweep orphaned alerts; the next tick retries", "err", err)
+	}
 	if elapsed := t.now().Sub(now); elapsed > t.interval {
 		t.overruns.Add(1)
 		// Once per occurrence, with both numbers that say what to do about
@@ -261,9 +304,10 @@ func (t *Ticker) batchDeadline() time.Duration {
 }
 
 // evaluate is one host: load, fetch the windows its rules ask for,
-// evaluate, apply. Every error is returned, which is what rolls that one
-// host back and leaves it due — and logged here, where the host is still
-// in hand to name.
+// evaluate, apply, then feed the same result to the alert sink on the
+// claimed host's own transaction. Every error is returned, which is what
+// rolls that one host back and leaves it due — and logged here, where the
+// host is still in hand to name.
 func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	load, err := t.store.Load(ctx, d)
 	if err != nil {
@@ -294,8 +338,29 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		}
 		snap.Windows = windows
 	}
-	if err := t.store.Apply(ctx, d, Evaluate(snap)); err != nil {
+	res := Evaluate(snap)
+	if err := t.store.Apply(ctx, d, res); err != nil {
 		t.log.ErrorContext(ctx, "apply evaluation; leaving the host due for the next tick",
+			"org", d.OrgID, "host", d.HostID, "err", err)
+		return err
+	}
+	// The alert sink runs on the same claimed transaction the store's own
+	// write-back just used — claimTx(ctx) is what evaluateOne
+	// (due_sql.go) bound it under — so a sink failure rolls back the
+	// states, changes and roll-up Apply just wrote, exactly as a store
+	// failure already would. Falling back to an unclaimed connection, the
+	// way Apply itself refuses to (errNoClaimTx's own doc comment), would
+	// let the sink write outside the host's atomicity instead of inside
+	// it.
+	tx, ok := claimTx(ctx)
+	if !ok {
+		return errNoClaimTx
+	}
+	if err := t.alerts.Apply(ctx, tx, AlertInput{
+		OrgID: d.OrgID, HostID: d.HostID, At: now,
+		Changes: res.Changes, States: res.States, Host: res.Host,
+	}); err != nil {
+		t.log.ErrorContext(ctx, "apply alerts; leaving the host due for the next tick",
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return err
 	}

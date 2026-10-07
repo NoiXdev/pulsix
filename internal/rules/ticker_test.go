@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/rules"
 )
@@ -35,9 +36,53 @@ var (
 
 func due(host uuid.UUID) rules.Due { return rules.Due{OrgID: tickO, HostID: host} }
 
+// stubTx is a pgx.Tx that is never actually used: these orchestration
+// tests exercise fakeEvalStore, not EvalSQLStore, so nothing ever calls a
+// method on it — it exists only so fakeEvalStore.ProcessDue has something
+// to bind under the claimed-transaction context key (via
+// rules.ContextWithClaimedTx, export_test.go's own seam) the way
+// EvalSQLStore's real evaluateOne does, which is what lets Ticker.evaluate
+// reach the sink at all.
+type stubTx struct{ pgx.Tx }
+
+// fakeSink is the rules.AlertSink test double. Apply records exactly what
+// it was called with, in order, so a test can pin the AlertInput a host's
+// evaluation produced; Sweep counts its own calls. Both can be made to
+// fail, for the tests that exercise the two kinds of "leave it due".
+type fakeSink struct {
+	mu sync.Mutex
+
+	calls    []rules.AlertInput
+	applyErr error
+
+	sweeps   int
+	sweepErr error
+}
+
+func (s *fakeSink) Apply(_ context.Context, _ pgx.Tx, in rules.AlertInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.applyErr != nil {
+		return s.applyErr
+	}
+	s.calls = append(s.calls, in)
+	return nil
+}
+
+func (s *fakeSink) Sweep(_ context.Context, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweeps++
+	return s.sweepErr
+}
+
 // fakeEvalStore claims a fixed list of hosts and records everything the
 // ticker asked it to do. ProcessDue counts the hosts fn returned nil for,
-// exactly as the SQL store's contract says it must.
+// exactly as the SQL store's contract says it must. It also binds a stub
+// claimed-transaction to fn's own context (see stubTx) — the one piece of
+// EvalSQLStore.evaluateOne's real behaviour these orchestration tests
+// still need, now that Ticker.evaluate reaches for it after every
+// successful store.Apply.
 type fakeEvalStore struct {
 	mu sync.Mutex
 
@@ -87,7 +132,7 @@ func (f *fakeEvalStore) ProcessDue(ctx context.Context, now time.Time, limit int
 		if i >= limit {
 			break
 		}
-		if err := fn(ctx, d); err != nil {
+		if err := fn(rules.ContextWithClaimedTx(ctx, stubTx{}), d); err != nil {
 			continue // the failed host's own transaction rolled back
 		}
 		n++
@@ -181,7 +226,7 @@ func TestTickEvaluatesEveryClaimedHost(t *testing.T) {
 	store.loadErr[hostB] = errors.New("boom")
 	log, buf := quietLogger()
 
-	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
 	n, err := tk.Tick(context.Background())
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -219,7 +264,7 @@ func TestTickEvaluatesEveryClaimedHost(t *testing.T) {
 // judge one tuple against two different presents.
 func TestTickStampsEveryHostWithTheInjectedClock(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
-	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }))
 	if _, err := tk.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -248,7 +293,7 @@ func TestTickFetchesExactlyTheWindowsTheRulesAskFor(t *testing.T) {
 	store := newFakeEvalStore(load, due(hostA))
 	store.windows = map[rules.WindowRequest]float64{want: 95}
 
-	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }))
 	if _, err := tk.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -272,7 +317,7 @@ func TestTickFetchesExactlyTheWindowsTheRulesAskFor(t *testing.T) {
 // not pay for a statement with an empty VALUES list.
 func TestTickSkipsTheWindowFetchWhenNoRuleNeedsOne(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
-	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }))
 	if _, err := tk.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -288,7 +333,7 @@ func TestTickSkipsTheWindowFetchWhenNoRuleNeedsOne(t *testing.T) {
 func TestTickReportsAClaimFailure(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
 	store.claimErr = errors.New("claim failed")
-	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }))
 	n, err := tk.Tick(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "claim failed") {
 		t.Fatalf("Tick error = %v, want the claim's own", err)
@@ -304,7 +349,7 @@ func TestTickReportsAClaimFailure(t *testing.T) {
 func TestTickDefaults(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
 	clock := &elapsedClock{start: tickEpoch, elapsed: 14 * time.Second}
-	tk := rules.NewTicker(store, rules.WithTickerClock(clock.now))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(clock.now))
 	if _, err := tk.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -324,7 +369,7 @@ func TestTickCountsAndLogsAnOverrunOnce(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA), due(hostB))
 	clock := &elapsedClock{start: tickEpoch, elapsed: 40 * time.Second}
 	log, buf := quietLogger()
-	tk := rules.NewTicker(store,
+	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(clock.now), rules.WithInterval(15*time.Second),
 		rules.WithBatch(2), rules.WithTickerLogger(log))
 
@@ -357,7 +402,7 @@ func TestTickCountsAndLogsAnOverrunOnce(t *testing.T) {
 // app.Close's stop wait bounded.
 func TestRunTicksUntilItsContextEnds(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
-	tk := rules.NewTicker(store,
+	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(func() time.Time { return tickEpoch }),
 		rules.WithInterval(2*time.Millisecond))
 
@@ -399,7 +444,7 @@ func TestRunLogsATickFailureAndKeepsGoing(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
 	store.claimErr = errors.New("claim failed")
 	log, buf := quietLogger()
-	tk := rules.NewTicker(store,
+	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(func() time.Time { return tickEpoch }),
 		rules.WithInterval(2*time.Millisecond), rules.WithTickerLogger(log))
 
@@ -451,7 +496,7 @@ func (p *panicStore) ProcessDue(ctx context.Context, now time.Time, limit int, f
 func TestRunSurvivesAPanickingTick(t *testing.T) {
 	store := &panicStore{fakeEvalStore: newFakeEvalStore(cpuLoad(), due(hostA))}
 	log, buf := quietLogger()
-	tk := rules.NewTicker(store,
+	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(func() time.Time { return tickEpoch }),
 		rules.WithInterval(2*time.Millisecond), rules.WithTickerLogger(log))
 
@@ -503,7 +548,7 @@ func TestTickBoundsItsBatchWithADeadline(t *testing.T) {
 			if tc.interval > 0 {
 				opts = append(opts, rules.WithInterval(tc.interval))
 			}
-			tk := rules.NewTicker(store, opts...)
+			tk := rules.NewTicker(store, &fakeSink{}, opts...)
 
 			before := time.Now()
 			if _, err := tk.Tick(context.Background()); err != nil {
@@ -526,7 +571,7 @@ func TestTickBoundsItsBatchWithADeadline(t *testing.T) {
 func TestTickPassesTheBatchDeadlineDownToEveryHost(t *testing.T) {
 	store := newFakeEvalStore(cpuLoad(), due(hostA))
 	store.recordLoadDeadline = true
-	tk := rules.NewTicker(store, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }))
 	if _, err := tk.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -534,5 +579,136 @@ func TestTickPassesTheBatchDeadlineDownToEveryHost(t *testing.T) {
 	defer store.mu.Unlock()
 	if store.loadDeadlines != 1 {
 		t.Fatalf("Load ran with a deadline %d times, want 1", store.loadDeadlines)
+	}
+}
+
+// TestNewTickerRefusesANilSink pins the constructor's own refusal. The
+// alerts sink is a required positional argument, not a TickerOption — the
+// same ruling internal/items' own required arguments got in v0.3b-3 — so
+// that a forgotten wire is a panic at construction, or better, a compile
+// error from the missing parameter, rather than half the alerting silently
+// never running. No store, no database, no evaluation is needed to prove
+// it: the panic belongs at construction, before any of that runs.
+func TestNewTickerRefusesANilSink(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewTicker(store, nil) returned a ticker, want a panic at construction")
+		}
+	}()
+	rules.NewTicker(newFakeEvalStore(cpuLoad()), nil)
+}
+
+// TestTickCallsSweepOnce is the sweep half of the wiring: Sweep runs
+// exactly once per Tick, independent of how many hosts were due —
+// including a tick that claimed none at all, which the design doc calls
+// out as precisely the case a per-host sweep would miss (a host whose last
+// check was taken away never becomes due again). A ticker that called
+// Sweep once per evaluated host, or skipped it on an empty batch, would
+// both pass every other test in this file and still fail this one.
+func TestTickCallsSweepOnce(t *testing.T) {
+	t.Run("hosts due", func(t *testing.T) {
+		store := newFakeEvalStore(cpuLoad(), due(hostA), due(hostB))
+		sink := &fakeSink{}
+		tk := rules.NewTicker(store, sink, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+		if _, err := tk.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		if sink.sweeps != 1 {
+			t.Fatalf("Sweep ran %d times for a batch of 2 hosts, want exactly 1", sink.sweeps)
+		}
+	})
+	t.Run("no hosts due", func(t *testing.T) {
+		store := newFakeEvalStore(cpuLoad()) // claims nothing
+		sink := &fakeSink{}
+		tk := rules.NewTicker(store, sink, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+		if _, err := tk.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		if sink.sweeps != 1 {
+			t.Fatalf("Sweep ran %d times on a tick with nothing due, want exactly 1 — this is precisely the tick an orphaned host needs sweeping on", sink.sweeps)
+		}
+	})
+}
+
+// TestSweepErrorDoesNotFailTheTick: a sweep that could not run is a
+// delayed cleanup, not a reason to leave every evaluated host due again —
+// so its error is logged and Tick's own result is unaffected.
+func TestSweepErrorDoesNotFailTheTick(t *testing.T) {
+	store := newFakeEvalStore(cpuLoad(), due(hostA))
+	sink := &fakeSink{sweepErr: errors.New("sweep boom")}
+	log, buf := quietLogger()
+	tk := rules.NewTicker(store, sink,
+		rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
+
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick returned %v, want nil — a sweep failure must not fail the tick", err)
+	}
+	if n != 1 {
+		t.Fatalf("Tick evaluated %d hosts, want 1 — unaffected by the sweep failure", n)
+	}
+	if !strings.Contains(buf.String(), "sweep boom") {
+		t.Fatalf("the sweep failure was not logged; log was %q", buf.String())
+	}
+}
+
+// TestTickFeedsTheAlertSinkPerEvaluatedHost is the fake-store half of the
+// task's own test: the sink is called once per successfully-applied host,
+// with the post-evaluation states and roll-up the store itself just wrote
+// — not a diff, and not called at all for the host whose Load failed. The
+// real per-host-transaction half of this claim — that the sink runs on the
+// same pgx.Tx the store write just committed through — can only be shown
+// against the real EvalSQLStore, so it lives in due_sql_test.go as
+// TestEvaluateFeedsTheAlertSinkInTheHostTransaction.
+func TestTickFeedsTheAlertSinkPerEvaluatedHost(t *testing.T) {
+	store := newFakeEvalStore(cpuLoad(), due(hostA), due(hostB))
+	store.loadErr[hostB] = errors.New("boom")
+	sink := &fakeSink{}
+	tk := rules.NewTicker(store, sink, rules.WithTickerClock(func() time.Time { return tickEpoch }))
+	if _, err := tk.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("sink called %d times, want once per evaluated host", len(sink.calls))
+	}
+	got := sink.calls[0]
+	if got.OrgID != tickO || got.HostID != hostA {
+		t.Fatalf("sink saw org=%s host=%s, want the applied host org=%s host=%s", got.OrgID, got.HostID, tickO, hostA)
+	}
+	if got.Host.State != rules.StateCrit || len(got.States) == 0 {
+		t.Fatalf("the sink got %+v, want the post-evaluation states and roll-up", got)
+	}
+	if len(got.Changes) != 1 {
+		t.Fatalf("sink changes = %+v, want exactly one", got.Changes)
+	}
+	if !got.At.Equal(tickEpoch) {
+		t.Fatalf("sink saw At=%v, want the tick's own now=%v", got.At, tickEpoch)
+	}
+}
+
+// TestSinkErrorLeavesTheHostDue (fake-store half): a sink failure must
+// fail the whole host's evaluation, exactly like a store.Apply failure
+// does — ProcessDue's own contract ("fn's error rolls that host back")
+// does not distinguish which step inside fn returned it. The transactional
+// half of that claim (check_states actually unwritten, the cursor actually
+// untouched) needs the real store, and lives in due_sql_test.go.
+func TestSinkErrorLeavesTheHostDue(t *testing.T) {
+	store := newFakeEvalStore(cpuLoad(), due(hostA))
+	sink := &fakeSink{applyErr: errors.New("sink boom")}
+	log, buf := quietLogger()
+	tk := rules.NewTicker(store, sink, rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
+
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("Tick evaluated %d hosts, want 0 — the sink failed", n)
+	}
+	if _, ok := store.appliedFor(hostA); !ok {
+		t.Fatal("store.Apply was never called — this test wants the sink, not the store, to be the failing step")
+	}
+	if !strings.Contains(buf.String(), "sink boom") {
+		t.Fatalf("the sink failure was not logged; log was %q", buf.String())
 	}
 }

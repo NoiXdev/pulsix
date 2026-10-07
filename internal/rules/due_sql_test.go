@@ -1006,8 +1006,8 @@ func TestTwoTickersEvaluateOneDueHostExactlyOnce(t *testing.T) {
 		rules.WithTickerClock(func() time.Time { return now }),
 		rules.WithTickerLogger(discard()),
 	}
-	first := rules.NewTicker(gate, opts...)
-	second := rules.NewTicker(store, opts...)
+	first := rules.NewTicker(gate, &fakeSink{}, opts...)
+	second := rules.NewTicker(store, &fakeSink{}, opts...)
 
 	type tick struct {
 		n   int
@@ -1106,7 +1106,7 @@ func TestTickerEvaluatesThroughTheRealStore(t *testing.T) {
 	markDirty(t, d, org, host)
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
-	tk := rules.NewTicker(store,
+	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(func() time.Time { return now }),
 		rules.WithTickerLogger(discard()))
 	n, err := tk.Tick(context.Background())
@@ -1132,6 +1132,128 @@ func TestTickerEvaluatesThroughTheRealStore(t *testing.T) {
 	}
 	if _, _, nextDue := cursorRow(t, d, host); !nextDue.After(now) {
 		t.Fatalf("next_due_at = %v, want a moment after now", nextDue)
+	}
+}
+
+// TestEvaluateFeedsTheAlertSinkInTheHostTransaction is the transactional
+// half of the task's own test (ticker_test.go carries the fake-store half,
+// which pins the sink's inputs without a database): driven through the
+// real EvalSQLStore, a host evaluated to crit reaches the sink exactly
+// once, on the same claimed transaction its own write-back just used —
+// which TestSinkErrorRollsTheHostBack below proves by making that
+// transaction roll back.
+func TestEvaluateFeedsTheAlertSinkInTheHostTransaction(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "sink-feed")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertCurrent(t, d, org, host, cpu, ptr(95.0), nil, now.Add(-10*time.Second), "")
+	// A prior ok state, so this evaluation is a transition and not a first
+	// insert — Evaluate only records a Change once there is a state to
+	// move away from (evaluate.go: "a tuple's first evaluation is an
+	// insert, not a transition").
+	insertCheckState(t, d, org, host, stateRow{tuple: cpu, state: rules.StateOK, since: now.Add(-time.Hour), evaluatedAt: now.Add(-time.Minute)})
+	rule := hostRule(org, host)
+	rule.Severity = rules.SeverityCrit
+	rule.For = 0
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	markDirty(t, d, org, host)
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	sink := &fakeSink{}
+	tk := rules.NewTicker(store, sink,
+		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("Tick evaluated %d hosts, want 1", n)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("sink called %d times, want once per evaluated host", len(sink.calls))
+	}
+	got := sink.calls[0]
+	if got.OrgID != org || got.HostID != host {
+		t.Fatalf("sink saw org=%s host=%s, want org=%s host=%s", got.OrgID, got.HostID, org, host)
+	}
+	if got.Host.State != rules.StateCrit || len(got.States) == 0 {
+		t.Fatalf("the sink got %+v, want the post-evaluation states and roll-up", got)
+	}
+	if len(got.Changes) != 1 || got.Changes[0].To != rules.StateCrit {
+		t.Fatalf("sink changes = %+v, want exactly one change to crit", got.Changes)
+	}
+	if !got.At.Equal(now) {
+		t.Fatalf("sink saw At=%v, want the tick's own now=%v", got.At, now)
+	}
+}
+
+// TestSinkErrorRollsTheHostBack: the sink runs inside the same per-host
+// transaction as the store's own write-back, so a sink failure must roll
+// back everything that transaction did — check_states stays unwritten, the
+// roll-up stays unwritten and the cursor stays exactly where it was, the
+// same guarantee a store.Apply failure already gives (TestAFailedHostLeavesNothingBehind).
+func TestSinkErrorRollsTheHostBack(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "sink-error")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertCurrent(t, d, org, host, cpu, ptr(95.0), nil, now.Add(-10*time.Second), "")
+	// A prior ok state, so this evaluation would otherwise insert a real
+	// check_state_changes row — without it, that table's own "stays empty"
+	// assertion below would pass whether or not the rollback worked, since
+	// a first-ever evaluation writes no change row in the first place (see
+	// TestEvaluateFeedsTheAlertSinkInTheHostTransaction's own comment).
+	insertCheckState(t, d, org, host, stateRow{tuple: cpu, state: rules.StateOK, since: now.Add(-time.Hour), evaluatedAt: now.Add(-time.Minute)})
+	rule := hostRule(org, host)
+	rule.Severity = rules.SeverityCrit
+	rule.For = 0
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	markDirty(t, d, org, host)
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	sink := &fakeSink{applyErr: errors.New("sink boom")}
+	log, buf := quietLogger()
+	tk := rules.NewTicker(store, sink,
+		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(log))
+
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("Tick evaluated %d hosts, want 0 — the sink failed", n)
+	}
+	// The pre-seeded ok row is still exactly what it was: the upsert that
+	// would have overwritten it with crit rolled back along with the sink's
+	// own failure.
+	var state string
+	if err := d.Pool().QueryRow(context.Background(), `SELECT state FROM check_states WHERE host_id = $1`, host).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(rules.StateOK) {
+		t.Fatalf("check_states.state = %q, want %q — the sink's failure must roll back the store's own write-back too", state, rules.StateOK)
+	}
+	if got := countRows(t, d, `SELECT count(*) FROM check_state_changes WHERE host_id = $1`, host); got != 0 {
+		t.Fatalf("check_state_changes rows = %d, want 0 — the ok-to-crit change must not survive the sink's rollback", got)
+	}
+	if got := countRows(t, d, `SELECT count(*) FROM check_host_states WHERE host_id = $1`, host); got != 0 {
+		t.Fatalf("check_host_states rows = %d, want 0", got)
+	}
+	if !stillDue(t, d, host) {
+		t.Fatal("the host's cursor advanced even though the sink failed; it must stay due for the next tick")
+	}
+	if !strings.Contains(buf.String(), "sink boom") {
+		t.Fatalf("the sink failure was not logged; log was %q", buf.String())
 	}
 }
 

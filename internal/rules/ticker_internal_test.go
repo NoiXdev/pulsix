@@ -9,7 +9,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
+
+// noopAlertSink satisfies AlertSink for the tests below, none of which are
+// about alerts at all: the batch deadline and the claim-outside-a-tx
+// refusal. NewTicker's sink argument is required (a nil one panics), so
+// every construction needs one of these even where it is never called.
+type noopAlertSink struct{}
+
+func (noopAlertSink) Apply(context.Context, pgx.Tx, AlertInput) error { return nil }
+func (noopAlertSink) Sweep(context.Context, time.Time) error          { return nil }
 
 // stuckStore is a batch that never finishes on its own: ProcessDue blocks
 // until its context ends, which is what a batch blocked acquiring a second
@@ -42,7 +52,7 @@ func (s *stuckStore) Apply(context.Context, Due, Result) error { return nil }
 // miniature.
 func TestTheBatchDeadlineCutsAStuckBatchLoose(t *testing.T) {
 	store := &stuckStore{entered: make(chan struct{})}
-	tk := NewTicker(store,
+	tk := NewTicker(store, noopAlertSink{},
 		WithInterval(time.Millisecond),
 		WithTickerLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	tk.deadlineFloor = 50 * time.Millisecond
@@ -81,7 +91,7 @@ func TestBatchDeadline(t *testing.T) {
 		{interval: time.Second, floor: minBatchDeadline, want: minBatchDeadline},
 	}
 	for _, tc := range cases {
-		tk := NewTicker(nil, WithInterval(tc.interval))
+		tk := NewTicker(nil, noopAlertSink{}, WithInterval(tc.interval))
 		tk.deadlineFloor = tc.floor
 		if got := tk.batchDeadline(); got != tc.want {
 			t.Fatalf("batchDeadline(interval=%v, floor=%v) = %v, want %v", tc.interval, tc.floor, got, tc.want)

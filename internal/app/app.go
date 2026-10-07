@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/agentapi"
 	"github.com/noixdev/pulsix/internal/agentdist"
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
@@ -507,7 +508,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// same resolver the agent's own configuration push uses. Stopped in
 	// Close and on every early return below; stopping waits for a batch
 	// still in flight (startLoop).
-	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), itemsStore, slog.Default()))
+	//
+	// alerts.Service is the ticker's required AlertSink (v0.4a): every
+	// host's evaluation now feeds its states, changes and roll-up into the
+	// alert lifecycle on the same per-host transaction, and the same
+	// ticker sweeps orphaned alerts once per tick. There is no second wire
+	// to forget — NewTicker panics at construction if this argument is
+	// ever left out.
+	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
+	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), itemsStore, slog.Default()), alertsSvc)
 	evalStop := startLoop(func(ctx context.Context) { _ = evalTicker.Run(ctx) })
 
 	var grpcServer *grpc.Server
