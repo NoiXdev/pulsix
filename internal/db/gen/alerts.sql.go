@@ -520,6 +520,18 @@ type ListMaintenanceWindowsForHostParams struct {
 // group targets are deliberately not resolved here, the same gap
 // internal/maintenance.Service's own HostsInMaintenance leaves for the
 // same target kind today.
+//
+// An inventory-group target covers EVERY member here, not only the
+// managed ones HostsInMaintenance counts (backlog 4.30, settled rather
+// than left undocumented): an unmanaged host still reports checks and
+// still raises alerts, so a window covering its group must mute it, while
+// a scheduled Ansible run that could never touch it has no reason to be
+// guarded on its account. The two answers differ because the two
+// questions do; see HostsInMaintenance's own doc comment for the other
+// half of this note. Both reasons are returned — a 'silence' window is
+// exactly what this read exists for, and alerts.Mute labels the two
+// apart; that is the opposite of HostsInMaintenance, which filters
+// silence out.
 func (q *Queries) ListMaintenanceWindowsForHost(ctx context.Context, arg ListMaintenanceWindowsForHostParams) ([]MaintenanceWindow, error) {
 	rows, err := q.db.Query(ctx, listMaintenanceWindowsForHost, arg.OrgID, arg.HostID, arg.Now)
 	if err != nil {

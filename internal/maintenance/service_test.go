@@ -303,3 +303,50 @@ func TestOccurrencesBetweenReportsAWindowsCap(t *testing.T) {
 		t.Fatalf("a range the window fits in = truncated %v, %v", capped, err)
 	}
 }
+
+// TestHostsInMaintenanceIgnoresSilenceWindows is v0.4a's final review,
+// Important: silencing an alert is not a reason to pause the fleet's
+// scheduled work. A silence window is a maintenance_windows row with
+// reason = 'silence' (decision 3 — one table, not a parallel subsystem),
+// so without a filter here it reached internal/schedules' own maintenance
+// guard and turned every covered schedule into skipped_maintenance. An
+// operator muting a noisy alert would have silently stopped that host's
+// patching, with nothing on screen to connect the two.
+func TestHostsInMaintenanceIgnoresSilenceWindows(t *testing.T) {
+	now := at("2026-09-22T10:30:00Z")
+	store := newFakeStore()
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	svc := maintenance.NewService(store, fakeGroups{}, func() time.Time { return now }, nil, quiet)
+
+	silence := maintenance.Input{
+		Name: "mute the disk alert", TargetKind: maintenance.TargetHost, TargetID: &host,
+		StartsAt: ptr(now.Add(-time.Hour)), EndsAt: ptr(now.Add(time.Hour)),
+		Reason: maintenance.ReasonSilence,
+	}
+	if _, err := svc.Create(ctx, org, uuid.Must(uuid.NewV7()), silence); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.HostsInMaintenance(ctx, org, []uuid.UUID{host}, now)
+	if err != nil {
+		t.Fatalf("HostsInMaintenance: %v", err)
+	}
+	if got[host] {
+		t.Fatal("a silence window put the host in maintenance; scheduled runs would be paused by a mute")
+	}
+
+	// The same window, the same instant, as a maintenance window: the
+	// filter must be the only thing that differed.
+	plain := silence
+	plain.Name, plain.Reason = "patch night", maintenance.ReasonMaintenance
+	if _, err := svc.Create(ctx, org, uuid.Must(uuid.NewV7()), plain); err != nil {
+		t.Fatal(err)
+	}
+	got, err = svc.HostsInMaintenance(ctx, org, []uuid.UUID{host}, now)
+	if err != nil {
+		t.Fatalf("HostsInMaintenance: %v", err)
+	}
+	if !got[host] {
+		t.Fatal("a maintenance window did not cover the host")
+	}
+}

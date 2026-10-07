@@ -107,16 +107,34 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 }
 
 // HostsInMaintenance returns the subset of hostIDs that an active window
-// covers at the instant at: an organization window covers every host, a
-// group window the managed hosts of the group and its subgroups. This
-// answers the schedules' maintenance guard (spec §6), whose contract is
-// fail-closed: a stored window that no longer evaluates — a hand-edited
-// row, or one that predates a validation change; Create/Update never
-// accept an invalid cron or timezone — fails the whole call instead of
-// being silently ignored, naming the window so the caller can log the
-// detail. List's "active now" display and OccurrencesBetween's calendar
-// stay best-effort and skip such a window instead, since neither is a
-// safety guard.
+// with Reason == ReasonMaintenance covers at the instant at: an
+// organization window covers every host, a group window the managed hosts
+// of the group and its subgroups. This answers the schedules' maintenance
+// guard (spec §6), whose contract is fail-closed: a stored window that no
+// longer evaluates — a hand-edited row, or one that predates a validation
+// change; Create/Update never accept an invalid cron or timezone — fails
+// the whole call instead of being silently ignored, naming the window so
+// the caller can log the detail. List's "active now" display and
+// OccurrencesBetween's calendar stay best-effort and skip such a window
+// instead, since neither is a safety guard.
+//
+// The reason filter is what keeps v0.4a's alert silencing out of this
+// answer (v0.4a final review, Important): a silence window says "do not
+// notify", a maintenance window says "work is happening here". Without
+// the filter, silencing an alert also paused every scheduled Ansible run
+// whose guard is skip or exclude_hosts — an operator muting a noisy disk
+// alert would silently stop that host's patching, with the run log saying
+// only "skipped_maintenance".
+//
+// Two consumers now read maintenance windows and they resolve a GROUP
+// target differently, deliberately (backlog 4.30, settled here rather
+// than left as a divergence nobody wrote down): this one covers only the
+// MANAGED hosts of an inventory group, because a run that cannot touch an
+// unmanaged host has no reason to be guarded on its account; alerts'
+// suppression CTE (queries/alerts.sql, ListMaintenanceWindowsForHost)
+// covers every member, because an unmanaged host still reports checks and
+// still raises alerts. Each answer is right for its own question; neither
+// should be changed to match the other.
 func (s *Service) HostsInMaintenance(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID, at time.Time) (map[uuid.UUID]bool, error) {
 	windows, err := s.store.List(ctx, orgID)
 	if err != nil {
@@ -125,6 +143,19 @@ func (s *Service) HostsInMaintenance(ctx context.Context, orgID uuid.UUID, hostI
 	covered := map[uuid.UUID]bool{}
 	all := false
 	for _, w := range windows {
+		if reasonOrDefault(w.Reason) != ReasonMaintenance {
+			// Skipped before ActiveAt, not after: a silence window is not
+			// this guard's business at all, so a broken cron on one must
+			// not fail a run that it could never have covered either way.
+			//
+			// Read through reasonOrDefault (store_sql.go) rather than
+			// compared raw, so an unset Reason keeps meaning what
+			// normalize and the column's own DEFAULT already make it mean
+			// — maintenance. That is also the fail-closed direction for a
+			// guard: the only reason that stops guarding a run is the one
+			// explicitly named as not being about running anything.
+			continue
+		}
 		active, err := ActiveAt(w, at)
 		if err != nil {
 			return nil, fmt.Errorf("evaluate maintenance window %s: %w", w.ID, err)

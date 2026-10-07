@@ -287,6 +287,18 @@ ORDER BY at, from_state, to_state;
 -- group targets are deliberately not resolved here, the same gap
 -- internal/maintenance.Service's own HostsInMaintenance leaves for the
 -- same target kind today.
+--
+-- An inventory-group target covers EVERY member here, not only the
+-- managed ones HostsInMaintenance counts (backlog 4.30, settled rather
+-- than left undocumented): an unmanaged host still reports checks and
+-- still raises alerts, so a window covering its group must mute it, while
+-- a scheduled Ansible run that could never touch it has no reason to be
+-- guarded on its account. The two answers differ because the two
+-- questions do; see HostsInMaintenance's own doc comment for the other
+-- half of this note. Both reasons are returned — a 'silence' window is
+-- exactly what this read exists for, and alerts.Mute labels the two
+-- apart; that is the opposite of HostsInMaintenance, which filters
+-- silence out.
 WITH RECURSIVE ancestors AS (
   SELECT g.id, g.parent_id FROM inventory_groups g
     JOIN inventory_memberships m ON m.group_id = g.id
