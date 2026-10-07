@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 )
 
 type totpEnrolOutput struct {
@@ -22,6 +23,42 @@ type recoveryOutput struct {
 	Body struct {
 		RecoveryCodes []string `json:"recovery_codes"`
 	}
+}
+
+// verifyFactorCode proves the caller still holds the account's second
+// factor, by either of the two things that count as holding it: a code
+// from the authenticator, or one of the recovery codes issued at
+// enrolment. The recovery code is consumed on a match and only on a
+// match — a rejected attempt must cost nothing, or every typo would be
+// permanent progress towards being locked out of a finite set.
+//
+// Both callers need exactly this, and for the same reason: the step-up
+// (/auth/totp/verify) and the removal of TOTP itself (DELETE /auth/totp).
+// Removal is why the recovery code must be accepted here at all (backlog
+// 1.19): losing the authenticator is the case recovery codes exist for,
+// and verifying against the TOTP secret alone left the only factor
+// nobody can prove any more as the only factor nobody can remove.
+//
+// The two codes travel in separate fields rather than one: `code` is
+// pattern-bound to six digits at the schema, so a recovery code could
+// not pass through it, and nothing has to guess which kind arrived.
+func verifyFactorCode(ctx context.Context, deps Deps, userID uuid.UUID, in *codeInput) error {
+	var (
+		ok  bool
+		err error
+	)
+	if in.Body.RecoveryCode != "" {
+		ok, err = deps.TOTP.VerifyRecovery(ctx, userID, in.Body.RecoveryCode)
+	} else {
+		ok, err = deps.TOTP.Verify(ctx, userID, in.Body.Code)
+	}
+	if err != nil {
+		return mapAuthErr(ctx, err)
+	}
+	if !ok {
+		return huma.Error401Unauthorized("invalid code")
+	}
+	return nil
 }
 
 // okOutput is used by mutation endpoints that have nothing to report beyond
@@ -113,17 +150,8 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		var ok bool
-		if in.Body.RecoveryCode != "" {
-			ok, err = deps.TOTP.VerifyRecovery(ctx, p.UserID, in.Body.RecoveryCode)
-		} else {
-			ok, err = deps.TOTP.Verify(ctx, p.UserID, in.Body.Code)
-		}
-		if err != nil {
-			return nil, mapAuthErr(ctx, err)
-		}
-		if !ok {
-			return nil, huma.Error401Unauthorized("invalid code")
+		if err := verifyFactorCode(ctx, deps, p.UserID, in); err != nil {
+			return nil, err
 		}
 		if err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
 			return nil, mapAuthErr(ctx, err)
@@ -139,12 +167,8 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err := requireFreshFactor(ctx, deps, p); err != nil {
 			return nil, err
 		}
-		ok, err := deps.TOTP.Verify(ctx, p.UserID, in.Body.Code)
-		if err != nil {
-			return nil, mapAuthErr(ctx, err)
-		}
-		if !ok {
-			return nil, huma.Error401Unauthorized("invalid code")
+		if err := verifyFactorCode(ctx, deps, p.UserID, in); err != nil {
+			return nil, err
 		}
 		// Refused with 409 when TOTP is the account's last second factor.
 		if err := secondFactors(deps).DisableTOTP(ctx, p.UserID); err != nil {
