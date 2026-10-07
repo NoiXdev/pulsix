@@ -78,6 +78,19 @@ describe('AlertRow', () => {
     expect(ack).not.toHaveTextContent(/overtaken/i);
   });
 
+  it('shows a fresh ack as covering even on an alert whose peak once reached crit (compares against current severity, not peak)', () => {
+    // Acknowledged just now, at warn — the current severity — while the
+    // episode's own peak already reached crit earlier and, by decision 1,
+    // never comes back down. A row that compared the current severity
+    // against peakSeverity instead of ackSeverity, or ackSeverity against
+    // peakSeverity instead of severity, would see crit outranking warn and
+    // wrongly render this brand-new acknowledgement as already overtaken.
+    render(<AlertRow alert={{ ...open, ackAt: '2026-10-01T01:00:00Z', ackSeverity: 'warn', ackBy: 'u1', severity: 'warn', peakSeverity: 'crit' }} />);
+    const ack = screen.getByTestId('alert-ack');
+    expect(ack).toHaveTextContent(/acknowledged/i);
+    expect(ack).not.toHaveTextContent(/overtaken/i);
+  });
+
   it('shows an unacknowledged alert plainly, with no overtaken note', () => {
     render(<AlertRow alert={open} />);
     const ack = screen.getByTestId('alert-ack');
@@ -187,13 +200,7 @@ describe('alertRow pure helpers', () => {
     expect(isAckCovering(open)).toBe(false);
   });
 
-  it('isAckCovering compares against the current severity, not the peak', () => {
-    // Acknowledged at crit, peak is still crit, but the alert's own current
-    // severity has fallen to warn — still covered (decision 2: improvement
-    // does not void). Comparing against peakSeverity instead of severity
-    // here would also happen to pass (crit >= crit), so this alone would
-    // not catch a peak/current mixup — paired with the "worsens" case
-    // below, it does.
+  it('isAckCovering holds through an improvement from crit back to warn (decision 2, "the other direction")', () => {
     const a = { ...open, ackAt: 't', ackSeverity: 'crit' as const, severity: 'warn' as const, peakSeverity: 'crit' as const };
     expect(isAckCovering(a)).toBe(true);
   });
@@ -201,6 +208,21 @@ describe('alertRow pure helpers', () => {
   it('isAckCovering is voided once current severity outranks the stored ack severity', () => {
     const a = { ...open, ackAt: 't', ackSeverity: 'warn' as const, severity: 'crit' as const, peakSeverity: 'crit' as const };
     expect(isAckCovering(a)).toBe(false);
+  });
+
+  it('isAckCovering compares against the current severity, not the peak', () => {
+    // Acknowledged at warn while the alert's own current severity is also
+    // warn (the server stamps ackSeverity from the CURRENT severity at the
+    // instant of the ack, never the peak) — but the episode's peak already
+    // reached crit earlier and a peak only ever rises, so it stays crit
+    // forever after. A version that compared against peakSeverity instead
+    // of severity would see rank(crit) > rank(warn) and wrongly report
+    // this freshly-covering ack as voided — unlike the two cases above
+    // (where peak and ackSeverity happen to be equal, so either field
+    // gives the same answer), this is the one case that actually tells the
+    // two comparisons apart.
+    const a = { ...open, ackAt: 't', ackSeverity: 'warn' as const, severity: 'warn' as const, peakSeverity: 'crit' as const };
+    expect(isAckCovering(a)).toBe(true);
   });
 
   it('subjectLabel names a host-scope alert "Host", carrying no check/item/metric', () => {
