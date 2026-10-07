@@ -117,6 +117,16 @@ func (s *Service) Sweep(ctx context.Context, now time.Time) error {
 // turns what was an unbounded N+1 — one recursive CTE per alert, for
 // every alert List returns — into one fetch per distinct host.
 func (s *Service) suppression(ctx context.Context, orgID uuid.UUID, a Alert, now time.Time, cache map[uuid.UUID][]maintenance.Occurrence) (Suppression, error) {
+	if a.ClosedAt != nil {
+		// A closed episode cannot be muted: suppression answers "would
+		// this notify right now", and a closed alert will never notify
+		// again whatever window covers its host (v0.4a final review, Minor
+		// 8). Computing it anyway rendered a resolved alert on a host
+		// currently in maintenance as "Muted — in maintenance until …",
+		// which reads as a claim about an episode that ended hours ago,
+		// and cost a recursive-CTE fetch per distinct host to produce.
+		return Suppression{}, nil
+	}
 	windows, ok := cache[a.Subject.HostID]
 	if !ok {
 		var err error

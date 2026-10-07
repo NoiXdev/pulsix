@@ -631,3 +631,49 @@ func TestListSharesWindowsForHostAcrossAlertsOnTheSameHost(t *testing.T) {
 		t.Errorf("WindowsForHost called with host %s, want %s", store.windowCalls[0], host)
 	}
 }
+
+// TestClosedAlertsGetNoSuppression is v0.4a's final review, Minor 8:
+// suppression answers "would this notify right now", and a closed episode
+// will never notify again whatever window covers its host. Computing it
+// anyway labelled a resolved alert "Muted — in maintenance until …", and
+// cost one recursive-CTE fetch per distinct host of the closed rows to
+// produce it.
+func TestClosedAlertsGetNoSuppression(t *testing.T) {
+	store := newFakeStore()
+	host := uuid.Must(uuid.NewV7())
+	closedAt := t0.Add(30 * time.Minute)
+	a := openAlert(alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "cpu", Metric: "used"}, rules.StateWarn, t0)
+	a.ClosedAt, a.ClosedReason = &closedAt, alerts.Resolved
+	store.alerts[a.ID] = a
+	// The host IS in maintenance right now — which is exactly what used to
+	// leak onto the closed row.
+	store.windows[host] = []maintenance.Occurrence{{
+		WindowID: uuid.Must(uuid.NewV7()), Name: "patch night", Reason: maintenance.ReasonMaintenance,
+		Start: t0, End: t0.Add(4 * time.Hour),
+	}}
+	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
+
+	views, err := svc.List(ctx, orgID, alerts.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("List returned %d views, want 1", len(views))
+	}
+	if views[0].Suppression.Muted {
+		t.Fatalf("a closed alert reported %+v, want no suppression at all", views[0].Suppression)
+	}
+	if len(store.windowCalls) != 0 {
+		t.Fatalf("WindowsForHost called %v for a closed alert; the fetch is pure waste", store.windowCalls)
+	}
+
+	// Get takes the same path, so the detail page cannot disagree with the
+	// row the operator clicked.
+	d, err := svc.Get(ctx, orgID, a.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if d.Suppression.Muted || len(store.windowCalls) != 0 {
+		t.Fatalf("Get reported %+v after %v window fetches, want neither", d.Suppression, store.windowCalls)
+	}
+}

@@ -788,3 +788,51 @@ func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
 		}
 	})
 }
+
+// TestOperatorWritesRunUnderRowLevelSecurity is v0.4a's final review,
+// Important: Acknowledge, Unacknowledge, Snooze and Unsnooze used to begin
+// their transaction on the bare pool, so the only thing keeping an
+// organization's acknowledgement inside its own tenant was the hand-written
+// org_id predicate — one of the two layers, on the four endpoints that
+// mutate operator-visible state. They now begin through db.DB.Begin, which
+// binds the request's own scope.
+//
+// The test distinguishes the two states rather than merely re-proving the
+// predicate: it calls the store with a context scoped to org B while
+// passing org A's id, the combination a bug or a future refactor could
+// produce. Under RLS the row is not visible and the update matches nothing;
+// without it, the org_id predicate alone would happily find org A's row and
+// acknowledge it.
+func TestOperatorWritesRunUnderRowLevelSecurity(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, hostA := seedHost(t, d)
+	orgB, _ := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+	insertOpenAlert(t, d, orgA, hostA, "disk", "/", "used_percent")
+
+	var id uuid.UUID
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT id FROM alerts WHERE org_id = $1 AND host_id = $2`, orgA, hostA).Scan(&id); err != nil {
+		t.Fatalf("read seeded alert: %v", err)
+	}
+	actor := seedUser(t, d)
+
+	// Scoped to the alert's own organization: the ordinary request, which
+	// must still work now that the transaction is bound at all.
+	if err := st.Acknowledge(db.WithOrgScope(ctx, orgA), orgA, id, actor, "mine", time.Now()); err != nil {
+		t.Fatalf("acknowledge as the owning organization: %v", err)
+	}
+	if row := alertRowByID(t, d.Pool(), id); row.ackAt == nil {
+		t.Fatal("the owning organization's acknowledgement did not land")
+	}
+
+	// Scoped to another organization: RLS hides the row, so the UPDATE
+	// matches nothing and the store says so.
+	if err := st.Snooze(db.WithOrgScope(ctx, orgB), orgA, id, actor, nil, true, time.Now()); err == nil {
+		t.Fatal("snoozing org A's alert from org B's scope succeeded; the transaction is not bound to the request's organization")
+	}
+	if row := alertRowByID(t, d.Pool(), id); row.snoozeUntilChange {
+		t.Fatal("org B's snooze landed on org A's alert")
+	}
+}

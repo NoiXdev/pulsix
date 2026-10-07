@@ -566,13 +566,25 @@ func (s *SQLStore) WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, 
 	return out, nil
 }
 
-// writeAlertAction runs fn inside its own transaction on the bare pool —
-// the same posture Sweep uses above, for the same reason: an operator
-// action has no caller-owned tx to run inside, unlike Execute. The row
-// update and its matching event (where one exists) commit or roll back
+// writeAlertAction runs fn inside its own transaction: an operator action
+// has no caller-owned tx to run inside, unlike Execute, and the row update
+// and its matching event (where one exists) must commit or roll back
 // together, never partially.
+//
+// It opens that transaction through db.DB.Begin, not the bare pool, so it
+// is bound to the request's own organization scope and row-level security
+// applies to every statement inside it — the same posture every read in
+// this file already takes (v0.4a final review, Important). An earlier
+// version reached for s.d.Pool().Begin and justified it as "the same
+// posture Sweep uses"; that conflated two different things. Sweep is
+// genuinely cross-organization and has no scope to bind. These four are
+// single-organization requests arriving with one already bound, so
+// bypassing it dropped one of the two layers that keep an acknowledgement
+// or a snooze inside its own tenant — not a live leak, since the
+// hand-written org_id predicates are all present, but the file was
+// internally inconsistent about which layer it was relying on.
 func (s *SQLStore) writeAlertAction(ctx context.Context, fn func(q *gen.Queries) error) error {
-	tx, err := s.d.Pool().Begin(ctx)
+	tx, err := s.d.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
