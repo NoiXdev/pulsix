@@ -9,6 +9,7 @@ import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
 import { HostDetailPage } from './features/hosts/HostDetailPage.tsx';
 import { FleetPage } from './features/fleet/FleetPage.tsx';
+import { AlertsPage } from './features/alerts/AlertsPage.tsx';
 import { GroupsPage } from './features/inventory/GroupsPage.tsx';
 import { GroupDetailPage } from './features/inventory/GroupDetailPage.tsx';
 import { MembersPage } from './features/members/MembersPage.tsx';
@@ -108,6 +109,12 @@ const hostDetailRoute = createRoute({
 // is a view across every host's own state, not one more page about the
 // check/rule pipeline's configuration.
 const fleetRoute = createRoute({ getParentRoute: () => orgRoute, path: '/fleet', component: FleetPage });
+
+// alertsRoute is the Alerts list (v0.4a design doc, "GUI"): alongside Fleet
+// rather than nested under /checks — it reads what the rule engine
+// concluded (open episodes, not configuration), the same reasoning
+// fleetRoute's own comment gives for sitting beside Checks instead of under it.
+const alertsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/alerts', component: AlertsPage });
 
 const groupsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: GroupsPage });
 const groupDetailRoute = createRoute({
@@ -213,6 +220,7 @@ const routeTree = rootRoute.addChildren([
     hostsRoute,
     hostDetailRoute,
     fleetRoute,
+    alertsRoute,
     groupsRoute,
     groupDetailRoute,
     reposRoute,

@@ -146,7 +146,7 @@ describe('calendar helpers', () => {
     const cells = weekCells([entry({ at: new Date(2026, 8, 22, 4).toISOString() }), entry({ at: new Date(2026, 8, 29).toISOString() })], new Date(2026, 8, 21));
     expect(cells[1][1]).toHaveLength(1);
     expect(cells.flat(2)).toHaveLength(1);
-    expect(windowsIn([{ window_id: 'w', name: 'x', target_kind: 'org', start: new Date(2026, 8, 22, 2).toISOString(), end: new Date(2026, 8, 22, 4).toISOString() }], new Date(2026, 8, 22, 3), new Date(2026, 8, 22, 6))).toHaveLength(1);
+    expect(windowsIn([{ window_id: 'w', name: 'x', target_kind: 'org', reason: 'maintenance', start: new Date(2026, 8, 22, 2).toISOString(), end: new Date(2026, 8, 22, 4).toISOString() }], new Date(2026, 8, 22, 3), new Date(2026, 8, 22, 6))).toHaveLength(1);
   });
 });
 

@@ -484,6 +484,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org alerts */
+        get: operations["get-api-v1-orgs-by-org-alerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/alerts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org alerts by ID */
+        get: operations["get-api-v1-orgs-by-org-alerts-by-id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/alerts/{id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org alerts by ID acknowledge */
+        post: operations["acknowledgeAlert"];
+        /** Delete API v1 orgs by org alerts by ID acknowledge */
+        delete: operations["unacknowledgeAlert"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/alerts/{id}/snooze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org alerts by ID snooze */
+        post: operations["snoozeAlert"];
+        /** Delete API v1 orgs by org alerts by ID snooze */
+        delete: operations["unsnoozeAlert"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/bastions": {
         parameters: {
             query?: never;
@@ -2321,6 +2391,114 @@ export interface components {
             readonly $schema?: string;
             tokens: components["schemas"]["AgentTokenDTO"][] | null;
         };
+        AlertAcknowledgeInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertAcknowledgeInputBody.json
+             */
+            readonly $schema?: string;
+            note?: string;
+        };
+        AlertDTO: {
+            /** Format: date-time */
+            ack_at?: string;
+            ack_by?: string;
+            ack_note?: string;
+            /** @enum {string} */
+            ack_severity?: "warn" | "crit" | "unknown";
+            check_key?: string;
+            /** Format: date-time */
+            closed_at?: string;
+            /** @enum {string} */
+            closed_reason?: "resolved" | "stale";
+            host_id: string;
+            id: string;
+            item?: string;
+            metric?: string;
+            /** @enum {string} */
+            mute_reason?: "maintenance" | "silence" | "snooze";
+            /** @description Set only when mute_reason is maintenance or silence */
+            mute_window_id?: string;
+            muted: boolean;
+            /**
+             * Format: date-time
+             * @description Absent for an unbounded snooze-until-change
+             */
+            muted_until?: string;
+            /** Format: date-time */
+            opened_at: string;
+            /** @enum {string} */
+            peak_severity: "warn" | "crit" | "unknown";
+            /** @enum {string} */
+            scope: "tuple" | "host";
+            /** @enum {string} */
+            severity: "warn" | "crit" | "unknown";
+            snooze_until_change: boolean;
+            /** Format: date-time */
+            snoozed_until?: string;
+            was_flapping: boolean;
+        };
+        AlertDetailDTO: {
+            timeline: components["schemas"]["AlertTimelineEntryDTO"][] | null;
+        };
+        AlertEventDTO: {
+            actor_id?: string;
+            /** Format: date-time */
+            at: string;
+            id: string;
+            /** @enum {string} */
+            kind: "opened" | "severity_raised" | "acknowledged" | "ack_voided" | "snoozed" | "unsnoozed" | "closed";
+        };
+        AlertGetOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertGetOutputBody.json
+             */
+            readonly $schema?: string;
+            alert: components["schemas"]["AlertDetailDTO"];
+        };
+        AlertListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertListOutputBody.json
+             */
+            readonly $schema?: string;
+            alerts: components["schemas"]["AlertDTO"][] | null;
+        };
+        AlertSnoozeInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertSnoozeInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description Mute until this instant; mutually exclusive with until_change
+             */
+            until?: string;
+            /** @description Mute until the alert's severity next changes; mutually exclusive with until */
+            until_change?: boolean;
+        };
+        AlertStateChangeDTO: {
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            from_state: "ok" | "warn" | "crit" | "unknown";
+            /** @enum {string} */
+            to_state: "ok" | "warn" | "crit" | "unknown";
+        };
+        AlertTimelineEntryDTO: {
+            /** Format: date-time */
+            at: string;
+            change?: components["schemas"]["AlertStateChangeDTO"];
+            event?: components["schemas"]["AlertEventDTO"];
+            /** @enum {string} */
+            kind: "event" | "state_change";
+        };
         BastionBodyDTO: {
             /**
              * Format: uri
@@ -2431,6 +2609,8 @@ export interface components {
             /** Format: date-time */
             end: string;
             name: string;
+            /** @enum {string} */
+            reason: "maintenance" | "silence";
             /** Format: date-time */
             start: string;
             target_id?: string;
@@ -3717,6 +3897,8 @@ export interface components {
             ends_at?: string;
             name: string;
             note?: string;
+            /** @enum {string} */
+            reason?: "maintenance" | "silence";
             /** Format: date-time */
             starts_at?: string;
             /** @description The host or inventory group; omit for the organization */
@@ -3739,6 +3921,8 @@ export interface components {
             id: string;
             name: string;
             note?: string;
+            /** @enum {string} */
+            reason: "maintenance" | "silence";
             /** Format: int64 */
             revision: number;
             /** Format: date-time */
@@ -6156,6 +6340,218 @@ export interface operations {
             path: {
                 org: string;
                 host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-alerts": {
+        parameters: {
+            query?: {
+                /** @description open or closed */
+                state?: string;
+                /** @description warn, crit or unknown */
+                severity?: string;
+                /** @description Restrict to one host's alerts — the host page's own view */
+                host?: string;
+                /** @description tuple or host */
+                scope?: string;
+                /** @description true or false */
+                acknowledged?: string;
+                /** @description true or false */
+                muted?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-alerts-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertGetOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    acknowledgeAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertAcknowledgeInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    unacknowledgeAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    snoozeAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertSnoozeInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    unsnoozeAlert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
             };
             cookie?: never;
         };

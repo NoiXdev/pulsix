@@ -11,11 +11,11 @@ import type { MaintenanceWindow } from '../../api/types.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const nightly: MaintenanceWindow = {
-  id: 'w1', name: 'nightly', target_kind: 'org', cron: '0 2 * * 6', description: 'Sat at 02:00', duration: '2h',
+  id: 'w1', name: 'nightly', target_kind: 'org', reason: 'maintenance', cron: '0 2 * * 6', description: 'Sat at 02:00', duration: '2h',
   timezone: 'Europe/Berlin', active_now: true, revision: 1, created_at: '', updated_at: '',
 };
 const dbUpgrade: MaintenanceWindow = {
-  id: 'w2', name: 'db upgrade', target_kind: 'host', target_id: 'h1', target_name: 'db-1', starts_at: '2026-09-22T10:00:00Z',
+  id: 'w2', name: 'db upgrade', target_kind: 'host', reason: 'maintenance', target_id: 'h1', target_name: 'db-1', starts_at: '2026-09-22T10:00:00Z',
   ends_at: '2026-09-22T12:00:00Z', note: 'kernel', active_now: false, revision: 3, created_at: '', updated_at: '',
 };
 const noHosts = { hosts: [], next_cursor: '' };

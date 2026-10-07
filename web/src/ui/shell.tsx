@@ -147,6 +147,21 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
               <span className="flex-1">Fleet</span>
             </Link>
           )}
+          {/* Alerts (v0.4a) is the durable-episode view beside Fleet's own
+              live roll-up — same checks.read bar as Fleet and Checks, since
+              it is a read of what the rule engine already concluded. */}
+          {may(org.role, 'checks.read') && (
+            <Link
+              to="/o/$org/alerts"
+              params={{ org: org.slug }}
+              activeOptions={{ exact: false }}
+              activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
+              inactiveProps={{ className: INACTIVE_LINK }}
+            >
+              <Bell size={16} />
+              <span className="flex-1">Alerts</span>
+            </Link>
+          )}
           <Link
             to="/o/$org/groups"
             params={{ org: org.slug }}

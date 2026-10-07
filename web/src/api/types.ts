@@ -111,6 +111,24 @@ export type EffectiveRule = components['schemas']['EffectiveRuleDTO'];
 export type FleetHost = components['schemas']['FleetHostDTO'];
 export type FleetTotals = components['schemas']['FleetTotalsDTO'];
 export type FleetState = NonNullable<FleetHost['state']>;
+
+// Alert is one episode (v0.4a design, "one episode, one alert"): List's own
+// row, already flattened with its Suppression verdict (muted/mute_reason/
+// muted_until/mute_window_id) by the server — see alert_handlers.go's own
+// toAlertDTO. `severity` is the alert's own tracked current severity, which
+// the lifecycle never sets back to "ok" even while the underlying tuple
+// reads ok during a flap (decision 6) — it is not the same thing as "what
+// the tuple reads right now", which this DTO does not carry at all; v0.4a's
+// list only shows severity/peak_severity/open-ness, exactly the three facts
+// the design doc's GUI section calls for.
+export type Alert = components['schemas']['AlertDTO'];
+export type AlertScope = Alert['scope'];
+export type AlertSeverity = NonNullable<Alert['severity']>;
+export type AlertCloseReason = NonNullable<Alert['closed_reason']>;
+export type AlertMuteReason = NonNullable<Alert['mute_reason']>;
+export type AlertAcknowledgeInput = components['schemas']['AlertAcknowledgeInputBody'];
+export type AlertSnoozeInput = components['schemas']['AlertSnoozeInputBody'];
+
 /**
  * The windows GET /hosts/{id}/metrics accepts, and nothing else: the route
  * refuses any other value with a 400 naming these three
