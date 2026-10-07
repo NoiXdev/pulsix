@@ -45,6 +45,15 @@ const (
 	// (GetSession refuses them), so the reaper only bounds growth; the 7
 	// days are a retention window for forensics, not a security margin.
 	SessionRetentionGrace = 7 * 24 * time.Hour
+	// PendingEnrolmentTTL is how long a begun-but-unfinished TOTP
+	// re-enrolment may sit before the reaper clears its pending secret
+	// (backlog 1.35). Enrolling means scanning a code and typing six
+	// digits — minutes of work — so a day is generously past "still in
+	// progress" while staying far short of "forgotten for good". Nothing
+	// is lost by being wrong on the long side: a pending secret
+	// authenticates nothing until it is confirmed, and starting over
+	// re-issues one.
+	PendingEnrolmentTTL = 24 * time.Hour
 	// AdvisoryKeyAuthReaper is the pg_try_advisory_lock key of this reaper.
 	// Arbitrary but must never change (like db.migrationLockKey 7256 and
 	// schedule.AdvisoryKeyRetest 8311, which this sits next to in the same
@@ -64,6 +73,10 @@ type ReaperStore interface {
 	// expiredBefore (the sweep's now minus SessionRetentionGrace) and
 	// reports how many went.
 	DeleteExpiredSessions(ctx context.Context, expiredBefore time.Time) (int64, error)
+	// ClearAbandonedTOTPEnrolments nulls the pending secret of every
+	// re-enrolment begun before startedBefore and never finished. It clears
+	// the attempt, never the confirmed factor on the same row.
+	ClearAbandonedTOTPEnrolments(ctx context.Context, startedBefore time.Time) (int64, error)
 }
 
 // Locker is the advisory-lock port (schedule.AdvisoryLocker satisfies it):
@@ -101,41 +114,58 @@ func (r *Reaper) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, _, err := r.Sweep(ctx); err != nil {
+			if _, err := r.Sweep(ctx); err != nil {
 				r.logger().ErrorContext(ctx, "auth reaper sweep failed", "err", err)
 			}
 		}
 	}
 }
 
-// Sweep does one pass and returns how many ceremonies and sessions were
-// deleted. The advisory lock (when wired) is held across both deletes, so
-// a concurrent instance's sweep skips wholesale; the ceremonies' delete
-// runs first and a failing session delete still reports the ceremonies
-// count (the first error stops nothing else — each delete is its own
-// statement and the next tick retries whatever remains).
-func (r *Reaper) Sweep(ctx context.Context) (ceremonies, sessions int64, err error) {
+// SweepResult is what one pass removed. It is a struct rather than a
+// third positional count because three same-typed numbers returned side
+// by side are a mis-ordering waiting to happen, and every caller reads
+// them for a log line where the wrong label is invisible.
+type SweepResult struct {
+	Ceremonies int64
+	Sessions   int64
+	Enrolments int64
+}
+
+// Sweep does one pass and reports what it removed. The advisory lock
+// (when wired) is held across all three passes, so a concurrent
+// instance's sweep skips wholesale. The passes run in order and each
+// returns the counts collected so far alongside its error — a failure
+// midway is accounted for rather than reported as nothing done, and the
+// next tick retries whatever remains.
+func (r *Reaper) Sweep(ctx context.Context) (SweepResult, error) {
+	var res SweepResult
 	if r.locker != nil {
 		locked, err := r.locker.TryLock(ctx)
 		if err != nil {
-			return 0, 0, fmt.Errorf("acquire auth reaper lock: %w", err)
+			return res, fmt.Errorf("acquire auth reaper lock: %w", err)
 		}
 		if !locked {
-			return 0, 0, nil // another instance's sweep is running
+			return res, nil // another instance's sweep is running
 		}
 		defer r.locker.Unlock(ctx)
 	}
 
 	now := r.nowValue()
-	ceremonies, err = r.store.DeleteExpiredCeremonies(ctx, now)
+	var err error
+	res.Ceremonies, err = r.store.DeleteExpiredCeremonies(ctx, now)
 	if err != nil {
-		return 0, 0, fmt.Errorf("delete expired ceremonies: %w", err)
+		return SweepResult{}, fmt.Errorf("delete expired ceremonies: %w", err)
 	}
-	sessions, err = r.store.DeleteExpiredSessions(ctx, now.Add(-SessionRetentionGrace))
+	res.Sessions, err = r.store.DeleteExpiredSessions(ctx, now.Add(-SessionRetentionGrace))
 	if err != nil {
-		return ceremonies, 0, fmt.Errorf("delete expired sessions: %w", err)
+		return SweepResult{Ceremonies: res.Ceremonies}, fmt.Errorf("delete expired sessions: %w", err)
 	}
-	return ceremonies, sessions, nil
+	res.Enrolments, err = r.store.ClearAbandonedTOTPEnrolments(ctx, now.Add(-PendingEnrolmentTTL))
+	if err != nil {
+		return SweepResult{Ceremonies: res.Ceremonies, Sessions: res.Sessions},
+			fmt.Errorf("clear abandoned totp enrolments: %w", err)
+	}
+	return res, nil
 }
 
 func (r *Reaper) intervalValue() time.Duration {

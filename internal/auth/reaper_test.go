@@ -26,10 +26,13 @@ type fakeReaperStore struct {
 	mu           sync.Mutex
 	ceremonyCuts []time.Time
 	sessionCuts  []time.Time
+	enrolCuts    []time.Time
 	ceremonies   int64
 	sessions     int64
+	enrolments   int64
 	errCeremony  error
 	errSession   error
+	errEnrolment error
 }
 
 func (f *fakeReaperStore) DeleteExpiredCeremonies(_ context.Context, expiredBefore time.Time) (int64, error) {
@@ -44,6 +47,13 @@ func (f *fakeReaperStore) DeleteExpiredSessions(_ context.Context, expiredBefore
 	defer f.mu.Unlock()
 	f.sessionCuts = append(f.sessionCuts, expiredBefore)
 	return f.sessions, f.errSession
+}
+
+func (f *fakeReaperStore) ClearAbandonedTOTPEnrolments(_ context.Context, startedBefore time.Time) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enrolCuts = append(f.enrolCuts, startedBefore)
+	return f.enrolments, f.errEnrolment
 }
 
 func (f *fakeReaperStore) calls() (int, int) {
@@ -92,7 +102,8 @@ func TestReaperSweepSelectsRowsByThePredicates(t *testing.T) {
 	store := &fakeReaperStore{ceremonies: 2, sessions: 3}
 	r := auth.NewReaper(store, nil, 0, now, nil)
 
-	ceremonies, sessions, err := r.Sweep(ctx)
+	res, err := r.Sweep(ctx)
+	ceremonies, sessions := res.Ceremonies, res.Sessions
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -110,6 +121,13 @@ func TestReaperSweepSelectsRowsByThePredicates(t *testing.T) {
 	if !sessionCuts[0].Equal(want) {
 		t.Fatalf("session cutoff = %v, want now - 7d = %v", sessionCuts[0], want)
 	}
+	// Backlog 1.35's own cutoff, pinned like the two above it.
+	if len(store.enrolCuts) != 1 {
+		t.Fatalf("enrolment sweep ran %d times, want once", len(store.enrolCuts))
+	}
+	if wantEnrol := now().Add(-auth.PendingEnrolmentTTL); !store.enrolCuts[0].Equal(wantEnrol) {
+		t.Fatalf("enrolment cutoff = %v, want now - PendingEnrolmentTTL = %v", store.enrolCuts[0], wantEnrol)
+	}
 }
 
 // TestReaperSweepReportsThePartialCountOnError: a failing session delete
@@ -118,7 +136,8 @@ func TestReaperSweepReportsThePartialCountOnError(t *testing.T) {
 	store := &fakeReaperStore{ceremonies: 2, errSession: errors.New("delete failed")}
 	r := auth.NewReaper(store, nil, 0, nil, nil)
 
-	ceremonies, sessions, err := r.Sweep(ctx)
+	res, err := r.Sweep(ctx)
+	ceremonies, sessions := res.Ceremonies, res.Sessions
 	if err == nil || !errors.Is(err, store.errSession) {
 		t.Fatalf("Sweep err = %v, want the store's error wrapped", err)
 	}
@@ -131,7 +150,8 @@ func TestReaperSweepPropagatesCeremonyError(t *testing.T) {
 	store := &fakeReaperStore{errCeremony: errors.New("delete failed")}
 	r := auth.NewReaper(store, nil, 0, nil, nil)
 
-	ceremonies, sessions, err := r.Sweep(ctx)
+	res, err := r.Sweep(ctx)
+	ceremonies, sessions := res.Ceremonies, res.Sessions
 	if err == nil || !errors.Is(err, store.errCeremony) {
 		t.Fatalf("Sweep err = %v, want the store's error wrapped", err)
 	}
@@ -148,7 +168,8 @@ func TestReaperSkipsWhenAnotherInstanceHoldsTheLock(t *testing.T) {
 	locker := &fakeReaperLocker{held: false}
 	r := auth.NewReaper(store, locker, 0, nil, nil)
 
-	ceremonies, sessions, err := r.Sweep(ctx)
+	res, err := r.Sweep(ctx)
+	ceremonies, sessions := res.Ceremonies, res.Sessions
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -170,7 +191,7 @@ func TestReaperReleasesTheLockAfterItsWork(t *testing.T) {
 	locker := &fakeReaperLocker{held: true}
 	r := auth.NewReaper(store, locker, 0, nil, nil)
 
-	if _, _, err := r.Sweep(ctx); err != nil {
+	if _, err := r.Sweep(ctx); err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
 	if n, m := store.calls(); n != 1 || m != 1 {
@@ -187,7 +208,7 @@ func TestReaperReportsALostLockRaceAsAnError(t *testing.T) {
 	store := &fakeReaperStore{}
 	r := auth.NewReaper(store, errLocker{}, 0, nil, nil)
 
-	if _, _, err := r.Sweep(ctx); err == nil {
+	if _, err := r.Sweep(ctx); err == nil {
 		t.Fatal("Sweep with a failing locker must return the error")
 	}
 	if n, _ := store.calls(); n != 0 {

@@ -13,6 +13,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearAbandonedTOTPEnrolments = `-- name: ClearAbandonedTOTPEnrolments :execrows
+UPDATE totp_secrets
+SET pending_secret_sealed = NULL, pending_created_at = NULL
+WHERE pending_created_at IS NOT NULL AND pending_created_at < $1::timestamptz
+`
+
+// Backlog 1.35: a re-enrolment that was begun and never finished leaves a
+// sealed pending secret behind for good. Only the pending pair is cleared
+// — secret_sealed and confirmed_at are the factor the account is actually
+// using, and they live on the same row. Strictly less than the cutoff, so
+// a row aged exactly to it survives, matching the ceremony sweep.
+func (q *Queries) ClearAbandonedTOTPEnrolments(ctx context.Context, startedBefore time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, clearAbandonedTOTPEnrolments, startedBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const confirmTOTP = `-- name: ConfirmTOTP :execrows
 UPDATE totp_secrets
 SET secret_sealed = pending_secret_sealed,

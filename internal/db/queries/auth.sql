@@ -97,3 +97,13 @@ UPDATE recovery_codes SET used_at = now() WHERE user_id = $1 AND code_hash = $2 
 -- count must exclude them explicitly — a row's existence is not evidence
 -- it can still be redeemed.
 SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL;
+
+-- name: ClearAbandonedTOTPEnrolments :execrows
+-- Backlog 1.35: a re-enrolment that was begun and never finished leaves a
+-- sealed pending secret behind for good. Only the pending pair is cleared
+-- — secret_sealed and confirmed_at are the factor the account is actually
+-- using, and they live on the same row. Strictly less than the cutoff, so
+-- a row aged exactly to it survives, matching the ceremony sweep.
+UPDATE totp_secrets
+SET pending_secret_sealed = NULL, pending_created_at = NULL
+WHERE pending_created_at IS NOT NULL AND pending_created_at < @started_before::timestamptz;

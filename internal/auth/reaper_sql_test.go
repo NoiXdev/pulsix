@@ -130,7 +130,8 @@ func TestReaperSQLReapsExpiredRowsSparesLive(t *testing.T) {
 	boundarySession := createSessionAt(t, q, u1, baseTime.Add(-7*24*time.Hour), false)
 	revokedWithinGrace := createSessionAt(t, q, u1, baseTime.Add(-time.Hour), true)
 
-	ceremonies, sessions, err := reaper.Sweep(ctx)
+	res, err := reaper.Sweep(ctx)
+	ceremonies, sessions := res.Ceremonies, res.Sessions
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -158,7 +159,8 @@ func TestReaperSQLReapsExpiredRowsSparesLive(t *testing.T) {
 	// One microsecond past the boundary: the exactly-at-threshold rows are
 	// now beyond their thresholds and go.
 	clock.Advance(time.Microsecond)
-	ceremonies, sessions, err = reaper.Sweep(ctx)
+	res, err = reaper.Sweep(ctx)
+	ceremonies, sessions = res.Ceremonies, res.Sessions
 	if err != nil {
 		t.Fatalf("second Sweep: %v", err)
 	}
@@ -200,6 +202,10 @@ func (s *blockingReaperStore) DeleteExpiredSessions(inner context.Context, expir
 	return s.inner.DeleteExpiredSessions(inner, expiredBefore)
 }
 
+func (s *blockingReaperStore) ClearAbandonedTOTPEnrolments(inner context.Context, startedBefore time.Time) (int64, error) {
+	return s.inner.ClearAbandonedTOTPEnrolments(inner, startedBefore)
+}
+
 func heldAdvisoryLocks(t *testing.T, d *db.DB, key int64) int {
 	t.Helper()
 	var n int
@@ -234,7 +240,8 @@ func TestReaperSQLAdvisoryLockPreventsConcurrentDoubleRun(t *testing.T) {
 	}
 	result := make(chan sweepResult, 1)
 	go func() {
-		ceremonies, sessions, err := r1.Sweep(ctx)
+		res, err := r1.Sweep(ctx)
+		ceremonies, sessions := res.Ceremonies, res.Sessions
 		result <- sweepResult{ceremonies, sessions, err}
 	}()
 	<-first.entered
@@ -247,7 +254,8 @@ func TestReaperSQLAdvisoryLockPreventsConcurrentDoubleRun(t *testing.T) {
 	// The second manager's sweep loses the race and does nothing.
 	second := &fakeReaperStore{}
 	r2 := auth.NewReaper(second, schedule.NewAdvisoryLocker(d.Pool(), auth.AdvisoryKeyAuthReaper), 0, clock.Now, nil)
-	ceremonies, sessions, err := r2.Sweep(ctx)
+	res, err := r2.Sweep(ctx)
+	ceremonies, sessions := res.Ceremonies, res.Sessions
 	if err != nil {
 		t.Fatalf("second reaper's Sweep: %v", err)
 	}
@@ -277,5 +285,83 @@ func TestReaperSQLAdvisoryLockPreventsConcurrentDoubleRun(t *testing.T) {
 	locker1.Unlock(ctx)
 	if n := heldAdvisoryLocks(t, d, auth.AdvisoryKeyAuthReaper); n != 0 {
 		t.Fatalf("%d sessions still hold the advisory lock after the sweep", n)
+	}
+}
+
+// seedPendingTOTPAt writes a re-enrolment that was started and never
+// finished, aged to `at`. The production query stamps pending_created_at
+// with now(), which a test cannot age, so the row goes in directly — the
+// same thing putCeremonyAt and createSessionAt already do for their own
+// rows, and for the same reason.
+func seedPendingTOTPAt(t *testing.T, d *db.DB, email string, at time.Time) uuid.UUID {
+	t.Helper()
+	q := gen.New(d.Pool())
+	uid := seedReaperUser(t, q, email)
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO totp_secrets (user_id, secret_sealed, confirmed_at, pending_secret_sealed, pending_created_at)
+		VALUES ($1, $2, now(), $2, $3)`,
+		uid, []byte("sealed-"+email), at); err != nil {
+		t.Fatalf("seeding a pending enrolment: %v", err)
+	}
+	return uid
+}
+
+func pendingTOTPCount(t *testing.T, d *db.DB, uid uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM totp_secrets WHERE user_id = $1 AND pending_secret_sealed IS NOT NULL`,
+		uid).Scan(&n); err != nil {
+		t.Fatalf("counting pending enrolments: %v", err)
+	}
+	return n
+}
+
+// Backlog 1.35. A re-enrolment that is begun and abandoned leaves a sealed
+// pending secret behind for good. It can authenticate nothing — confirmed_at
+// is what makes a secret usable, and promotion never ran — so this is hygiene
+// rather than a hole. But it is hygiene on a secret, and the column it needs
+// to be swept by (pending_created_at) was put there for exactly this.
+//
+// The confirmed secret on the same row must survive: the sweep clears the
+// abandoned *attempt*, never the factor the account is actually using.
+func TestReaperSQLClearsAbandonedEnrolmentsSparesLiveOnes(t *testing.T) {
+	d := testdb.Open(t)
+	clock := newMutableClock(baseTime)
+	reaper := auth.NewReaper(gen.New(d.Pool()), nil, 0, clock.Now, nil)
+
+	abandoned := seedPendingTOTPAt(t, d, "reaper-pending-old@example.test",
+		baseTime.Add(-auth.PendingEnrolmentTTL-time.Microsecond))
+	boundary := seedPendingTOTPAt(t, d, "reaper-pending-edge@example.test",
+		baseTime.Add(-auth.PendingEnrolmentTTL))
+	fresh := seedPendingTOTPAt(t, d, "reaper-pending-new@example.test",
+		baseTime.Add(-time.Minute))
+
+	res, err := reaper.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if res.Enrolments != 1 {
+		t.Fatalf("Sweep cleared %d abandoned enrolments, want 1", res.Enrolments)
+	}
+	if pendingTOTPCount(t, d, abandoned) != 0 {
+		t.Fatal("the abandoned enrolment must be cleared")
+	}
+	if pendingTOTPCount(t, d, boundary) != 1 {
+		t.Fatal("an enrolment aged exactly to the cutoff must survive a strict-less-than sweep, as the ceremony sweep does")
+	}
+	if pendingTOTPCount(t, d, fresh) != 1 {
+		t.Fatal("an enrolment still in progress must survive")
+	}
+
+	// The factor the account actually uses is on the same row.
+	var confirmed int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM totp_secrets WHERE user_id = $1 AND confirmed_at IS NOT NULL AND secret_sealed IS NOT NULL`,
+		abandoned).Scan(&confirmed); err != nil {
+		t.Fatalf("checking the confirmed secret: %v", err)
+	}
+	if confirmed != 1 {
+		t.Fatal("clearing the abandoned attempt must not touch the confirmed secret on the same row")
 	}
 }
