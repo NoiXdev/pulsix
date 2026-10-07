@@ -69,12 +69,45 @@ describe('AlertRow', () => {
     // assertion can see) would pass every other test in this file and
     // still fail this one.
     render(<AlertRow alert={{ ...open, wasFlapping: true, severity: 'warn', peakSeverity: 'crit' }} />);
-    expect(screen.getByTestId('alert-flapping')).toBeInTheDocument();
+    const marker = screen.getByTestId('alert-flapping');
+    expect(marker).toBeInTheDocument();
+    // Present tense while the alert is open — "flapped" (the closed row's
+    // own past-tense wording, asserted below) would be just as wrong here
+    // as the reverse.
+    expect(marker).toHaveTextContent(/flapping/i);
   });
 
-  it('shows no flapping marker once the tuple has settled', () => {
+  it('shows no flapping marker when the tuple has never flapped', () => {
     render(<AlertRow alert={{ ...open, wasFlapping: false }} />);
     expect(screen.queryByTestId('alert-flapping')).not.toBeInTheDocument();
+  });
+
+  it('keeps the flapping marker on a closed, resolved episode, but as a past-tense historical note', () => {
+    // Review finding (Important), round 2: wasFlapping only ever latches
+    // and never clears (store_sql.go's own SetAlertFlapping), so a closed
+    // episode that flapped while it was open still carries the flag —
+    // rightly so, "this episode flapped" is real history worth keeping
+    // visible. What is NOT right is reusing the open row's present-tense
+    // copy ("is still flapping", "keeps the alert open") beside a Closed
+    // pill: that asserts an active problem on an alert that has already
+    // resolved. Both new tests use closed fixtures, which is exactly the
+    // combination the first draft shipped with no coverage at all.
+    render(<AlertRow alert={{ ...open, closedAt: '2026-10-02T00:00:00Z', closedReason: 'resolved', wasFlapping: true }} />);
+    expect(screen.getByTestId('alert-open')).toHaveTextContent(/closed/i);
+    const marker = screen.getByTestId('alert-flapping');
+    expect(marker).toBeInTheDocument();
+    expect(marker).toHaveTextContent(/flapped/i);
+    expect(marker).not.toHaveTextContent(/is still flapping/i);
+  });
+
+  it('never claims a closed alert is still open because of its flapping marker', () => {
+    // The title/tooltip is the one place the old copy's "keeps the alert
+    // open" language could survive even after the visible label changed —
+    // this pins the whole string, not just the visible text.
+    render(<AlertRow alert={{ ...open, closedAt: '2026-10-02T00:00:00Z', closedReason: 'resolved', wasFlapping: true }} />);
+    const marker = screen.getByTestId('alert-flapping');
+    expect(marker.title.toLowerCase()).not.toContain('keeps the alert open');
+    expect(marker.title.toLowerCase()).not.toContain('is still flapping');
   });
 
   it('reads "Closed" once closedAt is set, never "Open"', () => {

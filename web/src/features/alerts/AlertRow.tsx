@@ -42,12 +42,18 @@ export interface AlertRowProps {
  *    that gap used to be silent — Open / peak crit / tracked warn, with no
  *    explanation — because `wasFlapping` was mapped into the row model and
  *    never rendered. The `alert-flapping` marker beside this cell is that
- *    explanation: it is the one wire field that actually says "still
- *    flapping", so it renders here, next to the value it qualifies,
- *    whenever `wasFlapping` is true — not gated on `open`, since the flag
- *    only ever latches and never clears (store_sql.go's own
- *    SetAlertFlapping), so it stays true as part of a closed episode's own
- *    history too.
+ *    explanation: it is the one wire field that actually says "flapped",
+ *    so it renders here, next to the value it qualifies, whenever
+ *    `wasFlapping` is true — not gated on `open`, since the flag only ever
+ *    latches and never clears (store_sql.go's own SetAlertFlapping), so a
+ *    resolved episode that flapped keeps the marker as part of its own
+ *    history. A SECOND review finding (also Important, caught only once a
+ *    closed-and-flapped fixture existed to test it) is why the marker's
+ *    own text depends on `open` too: a closed row showing the open-tuple
+ *    present tense ("is still flapping", "keeps the alert open") asserts
+ *    something false right beside a `Closed` pill. Open reads "flapping"
+ *    with the decision-6 explanation; closed reads "flapped" — a past-tense
+ *    historical note with no claim about the alert's current state.
  *
  * Acknowledgement renders as a fourth, related fact: decision 2 voids an
  * ack once the current severity outruns `ackSeverity`, and isAckCovering
@@ -84,10 +90,14 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
         {alert.wasFlapping && (
           <span
             data-testid="alert-flapping"
-            title="This tuple is still flapping between ok and a worse state — decision 6 keeps the alert open until it settles, even on a tick where it currently reads ok"
+            title={
+              open
+                ? "This tuple is still flapping between ok and a worse state — decision 6 keeps the alert open until it settles, even on a tick where it currently reads ok"
+                : 'This episode flapped between ok and a worse state while it was open — recorded here as part of its history, not a claim about its current state'
+            }
             className="text-[10px] font-semibold text-[var(--px-warn)]"
           >
-            flapping
+            {open ? 'flapping' : 'flapped'}
           </span>
         )}
       </span>
