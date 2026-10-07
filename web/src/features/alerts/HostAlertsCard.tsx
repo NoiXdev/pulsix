@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
 import { useAlert, useAlerts } from '../../api/hooks/useAlerts.ts';
@@ -17,11 +18,21 @@ export interface HostAlertsCardProps {
 /**
  * HostAlertsCard is the host page's own alerts section (v0.4a design doc,
  * "GUI": "an alerts section on the host page reading the same endpoint
- * filtered"). It reads GET /orgs/{org}/alerts?host={hostId} — the exact
- * list route the org-wide Alerts page uses, filtered to this host — never
- * a host-specific route: alert_handlers.go's own doc comment is explicit
- * that the host view is a filter on List, not a seventh endpoint, and
- * there is nothing else to call here.
+ * filtered"). It reads GET /orgs/{org}/alerts?host={hostId}&state=open —
+ * the exact list route the org-wide Alerts page uses, filtered to this
+ * host — never a host-specific route: alert_handlers.go's own doc comment
+ * is explicit that the host view is a filter on List, not a seventh
+ * endpoint, and there is nothing else to call here.
+ *
+ * `state=open` is deliberate, not an incidental default: a host page
+ * answers "what is wrong with this machine right now", and the empty
+ * state below — "no alerts, this host is healthy" — is most of this
+ * card's value. That state is unreachable if closed alerts stayed in the
+ * list: a host that ever had a single alert would show a row forever and
+ * could never again read as healthy. The history is not lost, only moved
+ * — the link at the foot of the card goes to the org-wide Alerts page,
+ * which already filters by host and renders a closed episode's own
+ * `resolved`/`stale` labelling.
  *
  * Each alert renders through AlertRow unmodified, so this card cannot
  * drift from the org-wide page's own three-facts rendering (whether the
@@ -30,7 +41,7 @@ export interface HostAlertsCardProps {
  * different presentation of the same row. `canWrite` is never passed
  * (AlertRow defaults it to false): acknowledging and snoozing stay the
  * Alerts page's own job — this card only answers "what does this host
- * currently have" and, per alert, "what is its full story".
+ * currently have open" and, per alert, "what is its full story".
  *
  * That second question is AlertTimeline, fetched from the detail endpoint
  * (useAlert) only once an operator actually opens one alert's disclosure
@@ -39,14 +50,21 @@ export interface HostAlertsCardProps {
  * alerts costs one list request until something is actually expanded.
  */
 export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
-  const alerts = useAlerts(org, { host: hostId }, canRead);
+  const alerts = useAlerts(org, { host: hostId, state: 'open' }, canRead);
   const [open, setOpen] = useState<string | null>(null);
 
   const rows = (alerts.data?.alerts ?? []).map(alertToRowAlert);
 
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">Alerts</h2>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-[13px] font-semibold">Alerts</h2>
+        {canRead && (
+          <Link to="/o/$org/alerts" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
+            Full history, including closed alerts
+          </Link>
+        )}
+      </div>
 
       {!canRead && <p className="text-xs text-muted-foreground">Alerts are visible to members of this organization.</p>}
       {canRead && alerts.isError && (
@@ -56,7 +74,7 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
       )}
       {canRead && !alerts.data && !alerts.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
       {canRead && alerts.data && rows.length === 0 && (
-        <p className="text-xs text-muted-foreground">No alerts for this host right now — it is healthy.</p>
+        <p className="text-xs text-muted-foreground">No open alerts for this host right now — it is healthy.</p>
       )}
       {canRead && alerts.data && rows.length > 0 && (
         <ul className="flex flex-col gap-3">

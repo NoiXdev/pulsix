@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { HostAlertsCard } from '../HostAlertsCard.tsx';
 
@@ -22,17 +23,33 @@ const alert = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** HostAlertsCard links to the org-wide Alerts page (`<Link to="/o/$org/alerts">`),
+ * which needs a real router context to resolve — this builds the same
+ * minimal host-route-plus-destination-route tree HostChecksCard.test.tsx
+ * already uses for its own "Manage checks" link. */
 function renderCard(canRead = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const rootRoute = createRootRoute();
+  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
+  const alertsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/alerts', component: () => <div>ALERTS PAGE</div> });
+  const hostRoute = createRoute({
+    getParentRoute: () => orgRoute,
+    path: '/hosts/$id',
+    component: () => <HostAlertsCard org="acme" hostId="h1" canRead={canRead} />,
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([alertsRoute, hostRoute])]),
+    history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
+  });
   return render(
     <QueryClientProvider client={qc}>
-      <HostAlertsCard org="acme" hostId="h1" canRead={canRead} />
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   );
 }
 
 describe('HostAlertsCard', () => {
-  it('reads the list endpoint filtered by host, not a host-specific route', async () => {
+  it('reads the list endpoint filtered by host and to open alerts only, not a host-specific route', async () => {
     let askedSearch: Record<string, string> | undefined;
     mockApi({
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
@@ -48,11 +65,14 @@ describe('HostAlertsCard', () => {
     // additionally) called a made-up host-specific endpoint would either
     // 404 against this mock (there is no route registered for it) or
     // leave `askedSearch` unset for this one, so this assertion is the one
-    // that would fail if a seventh route were invented.
+    // that would fail if a seventh route were invented. `state=open` is
+    // pinned the same way: a card that dropped this filter would still
+    // pass every other assertion in this file.
     expect(askedSearch?.host).toBe('h1');
+    expect(askedSearch?.state).toBe('open');
   });
 
-  it('renders an explicit empty state when the host has no alerts (it is healthy)', async () => {
+  it('renders an explicit empty state when the host has no alerts at all (it is healthy)', async () => {
     mockApi({ 'GET /api/v1/orgs/acme/alerts': { alerts: [] } });
     renderCard();
 
@@ -60,7 +80,28 @@ describe('HostAlertsCard', () => {
     expect(screen.queryByTestId('alert-open')).not.toBeInTheDocument();
   });
 
-  it('renders the three facts for each of this host\'s alerts: open-ness, peak severity, tracked severity', async () => {
+  it('renders the healthy empty state for a host whose alerts are all closed, not just a host with none at all', async () => {
+    // The case a "no alerts at all" fixture cannot catch: a host that HAD
+    // an alert, now closed, must still read as healthy once the card asks
+    // for state=open. This mock plays the server's own part in that —
+    // returning the closed alert only if asked for anything other than
+    // open — so a regression that dropped the state=open filter (or asked
+    // for "closed") would see that alert come back and fail the assertion
+    // below, instead of silently passing the way a no-alerts-at-all
+    // fixture would.
+    mockApi({
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        if (req.search.get('state') === 'open') return { alerts: [] };
+        return { alerts: [alert({ closed_at: '2026-10-02T00:00:00Z', closed_reason: 'resolved' })] };
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText(/healthy/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('alert-open')).not.toBeInTheDocument();
+  });
+
+  it('renders the three facts for each of this host\'s open alerts: open-ness, peak severity, tracked severity', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/alerts': {
         alerts: [alert({ severity: 'warn', peak_severity: 'crit', closed_at: undefined })],
@@ -72,6 +113,15 @@ describe('HostAlertsCard', () => {
     expect(screen.getByTestId('alert-open')).toHaveTextContent(/open/i);
     expect(screen.getByTestId('alert-peak')).toHaveTextContent(/crit/i);
     expect(screen.getByTestId('alert-current')).toHaveTextContent(/warn/i);
+  });
+
+  it('links to the org-wide Alerts page for history, including closed alerts', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme/alerts': { alerts: [] } });
+    renderCard();
+
+    await screen.findByText(/healthy/i);
+    const link = screen.getByRole('link', { name: /full history, including closed alerts/i });
+    expect(link).toHaveAttribute('href', '/o/acme/alerts');
   });
 
   it('asks for nothing without checks.read', async () => {
@@ -86,6 +136,7 @@ describe('HostAlertsCard', () => {
 
     expect(await screen.findByText(/visible to members/i)).toBeInTheDocument();
     expect(asked).toBe(false);
+    expect(screen.queryByRole('link', { name: /full history/i })).not.toBeInTheDocument();
   });
 
   it('shows a read error rather than hanging on "Loading…" forever', async () => {
