@@ -26,14 +26,24 @@ const alert = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function renderPage() {
+function renderPage(initialPath = '/o/acme/alerts') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const alertsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/alerts', component: AlertsPage });
+  // Mirrors router.tsx's own alertsRoute exactly (fix round 2):
+  // HostAlertsCard's link depends on this page actually reading `?host=`
+  // back out, not just on the link carrying it.
+  const alertsRoute = createRoute({
+    getParentRoute: () => orgRoute,
+    path: '/alerts',
+    validateSearch: (search: Record<string, unknown>) => ({
+      host: typeof search.host === 'string' ? search.host : undefined,
+    }),
+    component: AlertsPage,
+  });
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([alertsRoute])]),
-    history: createMemoryHistory({ initialEntries: ['/o/acme/alerts'] }),
+    history: createMemoryHistory({ initialEntries: [initialPath] }),
   });
   return render(
     <QueryClientProvider client={qc}>
@@ -299,5 +309,51 @@ describe('AlertsPage', () => {
 
     await user.click(await screen.findByRole('button', { name: /unacknowledge/i }));
     await waitFor(() => expect(called).toBe(true));
+  });
+
+  it('opens pre-filtered to one host when the URL carries ?host= (HostAlertsCard\'s own link)', async () => {
+    // Fix round 3: this is the other half of HostAlertsCard's link — the
+    // link carrying `?host=` is worthless if this page does not actually
+    // read it back into its own filter and request. A version that kept
+    // starting `filter` at a bare `{}` would send no `host` at all here
+    // and still pass every other test in this file.
+    let askedSearch: Record<string, string> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        askedSearch = Object.fromEntries(req.search.entries());
+        return { alerts: [] };
+      },
+    });
+    renderPage('/o/acme/alerts?host=h1');
+
+    await screen.findByText(/No alerts match this view/);
+    expect(askedSearch?.host).toBe('h1');
+    // The operator must be able to SEE the list is narrowed, not just have
+    // it silently be shorter than expected (fix round 2's own review
+    // finding) — and must have a way back to the unscoped view.
+    expect(screen.getByText(/one host's alerts only/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /show every alert/i })).toBeInTheDocument();
+  });
+
+  it('clears the host scope and re-requests every alert when "Show every alert" is clicked', async () => {
+    const user = userEvent.setup();
+    const asked: Array<Record<string, string>> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        asked.push(Object.fromEntries(req.search.entries()));
+        return { alerts: [] };
+      },
+    });
+    renderPage('/o/acme/alerts?host=h1');
+
+    await screen.findByText(/one host's alerts only/i);
+    expect(asked.at(-1)?.host).toBe('h1');
+
+    await user.click(screen.getByRole('button', { name: /show every alert/i }));
+
+    await waitFor(() => expect(asked.at(-1)?.host).toBe(''));
+    expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
   });
 });

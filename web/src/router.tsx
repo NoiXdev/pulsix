@@ -114,7 +114,20 @@ const fleetRoute = createRoute({ getParentRoute: () => orgRoute, path: '/fleet',
 // rather than nested under /checks — it reads what the rule engine
 // concluded (open episodes, not configuration), the same reasoning
 // fleetRoute's own comment gives for sitting beside Checks instead of under it.
-const alertsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/alerts', component: AlertsPage });
+//
+// `?host=` is HostAlertsCard's own escape hatch (v0.4a Task 10 fix round
+// 2): that card scopes itself to one host's OPEN alerts only — its own
+// empty state ("this host is healthy") is unreachable otherwise — so the
+// only way back to a host's closed-alert history is a link here, and that
+// link has to land pre-scoped rather than on the unscoped full list.
+const alertsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/alerts',
+  validateSearch: (search: Record<string, unknown>) => ({
+    host: typeof search.host === 'string' ? search.host : undefined,
+  }),
+  component: AlertsPage,
+});
 
 const groupsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: GroupsPage });
 const groupDetailRoute = createRoute({

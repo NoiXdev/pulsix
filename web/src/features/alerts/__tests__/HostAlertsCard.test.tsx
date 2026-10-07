@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider, useSearch } from '@tanstack/react-router';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { HostAlertsCard } from '../HostAlertsCard.tsx';
 
@@ -23,15 +23,34 @@ const alert = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** A stand-in for the real AlertsPage that reads back whatever `?host=`
+ * the link actually sent — this is what lets the test below tell "the
+ * link carries the host" apart from "the link merely points at the right
+ * path", which a bare href-string assertion could not (fix round 2's own
+ * review finding). */
+function AlertsPageStub() {
+  const search = useSearch({ strict: false }) as { host?: string };
+  return <div>ALERTS PAGE host={search.host ?? '(none)'}</div>;
+}
+
 /** HostAlertsCard links to the org-wide Alerts page (`<Link to="/o/$org/alerts">`),
  * which needs a real router context to resolve — this builds the same
  * minimal host-route-plus-destination-route tree HostChecksCard.test.tsx
- * already uses for its own "Manage checks" link. */
+ * already uses for its own "Manage checks" link. `alertsRoute` carries the
+ * same `validateSearch` the real `router.tsx` declares, so a test clicking
+ * through exercises the same search-parsing the app does. */
 function renderCard(canRead = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const alertsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/alerts', component: () => <div>ALERTS PAGE</div> });
+  const alertsRoute = createRoute({
+    getParentRoute: () => orgRoute,
+    path: '/alerts',
+    validateSearch: (search: Record<string, unknown>) => ({
+      host: typeof search.host === 'string' ? search.host : undefined,
+    }),
+    component: AlertsPageStub,
+  });
   const hostRoute = createRoute({
     getParentRoute: () => orgRoute,
     path: '/hosts/$id',
@@ -115,13 +134,25 @@ describe('HostAlertsCard', () => {
     expect(screen.getByTestId('alert-current')).toHaveTextContent(/warn/i);
   });
 
-  it('links to the org-wide Alerts page for history, including closed alerts', async () => {
+  it('links to the org-wide Alerts page pre-scoped to this host, not the unscoped full list', async () => {
+    // The bug this test is written against: a link to /o/$org/alerts with
+    // no search at all. That would still satisfy a bare `toHaveAttribute
+    // ('href', '/o/acme/alerts')` assertion (fix round 2 shipped exactly
+    // that, and its own test could not catch it) while actually landing
+    // the operator on the unscoped list with no way back to this host's
+    // history — so this asserts the href carries `?host=h1` AND that a
+    // real navigation through the link lands on a page that can read it
+    // back out via useSearch, not only that the string happens to match.
+    const user = userEvent.setup();
     mockApi({ 'GET /api/v1/orgs/acme/alerts': { alerts: [] } });
     renderCard();
 
     await screen.findByText(/healthy/i);
     const link = screen.getByRole('link', { name: /full history, including closed alerts/i });
-    expect(link).toHaveAttribute('href', '/o/acme/alerts');
+    expect(link).toHaveAttribute('href', '/o/acme/alerts?host=h1');
+
+    await user.click(link);
+    expect(await screen.findByText('ALERTS PAGE host=h1')).toBeInTheDocument();
   });
 
   it('asks for nothing without checks.read', async () => {

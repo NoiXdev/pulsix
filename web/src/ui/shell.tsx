@@ -154,6 +154,10 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             <Link
               to="/o/$org/alerts"
               params={{ org: org.slug }}
+              // Unscoped: the sidebar's own entry point is the full
+              // organization-wide list, never a host — host-scoping comes
+              // only from HostAlertsCard's own link, which sets this.
+              search={{ host: undefined }}
               activeOptions={{ exact: false }}
               activeProps={{ className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' }}
               inactiveProps={{ className: INACTIVE_LINK }}

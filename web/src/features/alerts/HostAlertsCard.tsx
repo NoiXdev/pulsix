@@ -29,10 +29,18 @@ export interface HostAlertsCardProps {
  * state below — "no alerts, this host is healthy" — is most of this
  * card's value. That state is unreachable if closed alerts stayed in the
  * list: a host that ever had a single alert would show a row forever and
- * could never again read as healthy. The history is not lost, only moved
- * — the link at the foot of the card goes to the org-wide Alerts page,
- * which already filters by host and renders a closed episode's own
- * `resolved`/`stale` labelling.
+ * could never again read as healthy.
+ *
+ * The history is not lost, only moved: the link beside the heading sends
+ * `search={{ host: hostId }}` to the org-wide Alerts page — `alertsRoute`
+ * validates that search parameter (router.tsx) and `AlertsPage` seeds its
+ * own filter from it, so the operator lands pre-scoped to this host,
+ * closed episodes included, with their own `resolved`/`stale` labelling,
+ * rather than on the unscoped full list (fix round 2: a first version of
+ * this link pointed at the org-wide page with no search at all — the
+ * review finding that caught it: "it removed the only path to a host's
+ * closed-alert history and pointed at a replacement that does not
+ * exist").
  *
  * Each alert renders through AlertRow unmodified, so this card cannot
  * drift from the org-wide page's own three-facts rendering (whether the
@@ -60,7 +68,12 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-[13px] font-semibold">Alerts</h2>
         {canRead && (
-          <Link to="/o/$org/alerts" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
+          <Link
+            to="/o/$org/alerts"
+            params={{ org }}
+            search={{ host: hostId }}
+            className="text-xs text-muted-foreground hover:text-primary"
+          >
             Full history, including closed alerts
           </Link>
         )}
