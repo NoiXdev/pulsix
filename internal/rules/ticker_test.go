@@ -665,11 +665,12 @@ func TestEvaluateRefusesToApplyAlertsOutsideAClaim(t *testing.T) {
 
 // TestTickCallsSweepOnce is the sweep half of the wiring: Sweep runs
 // exactly once per Tick, independent of how many hosts were due —
-// including a tick that claimed none at all, which the design doc calls
-// out as precisely the case a per-host sweep would miss (a host whose last
-// check was taken away never becomes due again). A ticker that called
-// Sweep once per evaluated host, or skipped it on an empty batch, would
-// both pass every other test in this file and still fail this one.
+// including a tick that claimed none at all, which is precisely the case
+// a per-host sweep would miss, since the sweep is driven by open alerts
+// rather than by a due queue and must answer for subjects no host's
+// evaluation reaches this tick. A ticker that called Sweep once per
+// evaluated host, or skipped it on an empty batch, would both pass every
+// other test in this file and still fail this one.
 func TestTickCallsSweepOnce(t *testing.T) {
 	t.Run("hosts due", func(t *testing.T) {
 		store := newFakeEvalStore(cpuLoad(), due(hostA), due(hostB))

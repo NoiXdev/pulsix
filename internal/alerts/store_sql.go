@@ -487,10 +487,14 @@ func (s *SQLStore) close(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a
 
 // Sweep implements Store. It runs in its own transaction on the bare
 // pool — never the pgx.Tx OpenForHost and Execute take — because it is
-// not scoped to one host or one organization (design doc "The sweep"):
-// driven by open alerts rather than by check_states, so a host whose last
-// check was removed and therefore never becomes due again still gets its
-// alert closed. SweepStaleAlerts itself writes the matching 'closed' event
+// not scoped to one host or one organization (design doc "The sweep"): it
+// is driven by open alerts rather than by check_states, so it answers for
+// subjects no host's evaluation reaches on a given tick, across every
+// organization, with no org loop. What it catches and what it cannot is
+// in queries/alerts.sql's own comment on SweepStaleAlerts; in short, a
+// tuple whose check_states row is GONE. A check taken off a host leaves
+// that row standing and is closed by Reconcile instead.
+// SweepStaleAlerts itself writes the matching 'closed' event
 // for every alert it sweeps, in the same statement — a post-review
 // correction to the design doc, which specified only the UPDATE, from
 // before alert_events existed; without it a swept alert would read on
