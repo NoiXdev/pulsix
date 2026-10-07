@@ -46,27 +46,40 @@ func due(host uuid.UUID) rules.Due { return rules.Due{OrgID: tickO, HostID: host
 type stubTx struct{ pgx.Tx }
 
 // fakeSink is the rules.AlertSink test double. Apply records exactly what
-// it was called with, in order, so a test can pin the AlertInput a host's
-// evaluation produced; Sweep counts its own calls. Both can be made to
-// fail, for the tests that exercise the two kinds of "leave it due".
+// it was called with, in order — before checking applyErr, not after, so a
+// failure-path test can still assert what the sink was reached with rather
+// than inferring it from a log line — and Sweep counts its own calls. Both
+// can be made to fail, for the tests that exercise the two kinds of "leave
+// it due".
 type fakeSink struct {
 	mu sync.Mutex
 
 	calls    []rules.AlertInput
 	applyErr error
+	// onApply, when set, runs on every Apply call with the tx it was
+	// handed, before applyErr is consulted. TestEvaluateFeedsTheAlertSink-
+	// InTheHostTransaction (due_sql_test.go) is the one test that sets it:
+	// it reads the row straight through tx to prove the sink is on the
+	// host's own still-uncommitted transaction, not merely that *some*
+	// pgx.Tx value — nil included, since this type discards its argument
+	// entirely otherwise — was passed. An error here fails Apply the same
+	// way applyErr does.
+	onApply func(ctx context.Context, tx pgx.Tx, in rules.AlertInput) error
 
 	sweeps   int
 	sweepErr error
 }
 
-func (s *fakeSink) Apply(_ context.Context, _ pgx.Tx, in rules.AlertInput) error {
+func (s *fakeSink) Apply(ctx context.Context, tx pgx.Tx, in rules.AlertInput) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.applyErr != nil {
-		return s.applyErr
-	}
 	s.calls = append(s.calls, in)
-	return nil
+	if s.onApply != nil {
+		if err := s.onApply(ctx, tx, in); err != nil {
+			return err
+		}
+	}
+	return s.applyErr
 }
 
 func (s *fakeSink) Sweep(_ context.Context, _ time.Time) error {
@@ -596,6 +609,58 @@ func TestNewTickerRefusesANilSink(t *testing.T) {
 		}
 	}()
 	rules.NewTicker(newFakeEvalStore(cpuLoad()), nil)
+}
+
+// bareEvalStore calls fn without ever binding a claimed transaction to its
+// context — exactly the mistake Ticker.evaluate's own claimTx(ctx) check
+// exists to catch. fakeEvalStore (used everywhere else in this file) binds
+// a stub one unconditionally via rules.ContextWithClaimedTx precisely so
+// the orchestration tests above don't have to care about this at all; this
+// type exists solely so one test still exercises the branch they all now
+// skip.
+type bareEvalStore struct{ load rules.HostLoad }
+
+func (b bareEvalStore) ProcessDue(ctx context.Context, _ time.Time, _ int, fn func(context.Context, rules.Due) error) (int, error) {
+	if err := fn(ctx, due(hostA)); err != nil {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func (b bareEvalStore) Load(context.Context, rules.Due) (rules.HostLoad, error) { return b.load, nil }
+
+func (b bareEvalStore) Windows(context.Context, rules.Due, []rules.WindowRequest, time.Time) (map[rules.WindowRequest]float64, error) {
+	return nil, nil
+}
+
+func (b bareEvalStore) Apply(context.Context, rules.Due, rules.Result) error { return nil }
+
+// TestEvaluateRefusesToApplyAlertsOutsideAClaim: without a claimed
+// transaction on the context, evaluate must refuse to call the sink at all
+// — falling back to an unclaimed connection would let the sink write
+// outside the host's atomicity, the same hazard Apply itself already
+// refuses (errNoClaimTx). The host is left due, and the refusal is logged
+// rather than silent, since nothing else would ever say why this host
+// stopped advancing.
+func TestEvaluateRefusesToApplyAlertsOutsideAClaim(t *testing.T) {
+	store := bareEvalStore{load: cpuLoad()}
+	sink := &fakeSink{}
+	log, buf := quietLogger()
+	tk := rules.NewTicker(store, sink, rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
+
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("Tick evaluated %d hosts, want 0 — no transaction was ever claimed", n)
+	}
+	if len(sink.calls) != 0 {
+		t.Fatal("the sink was reached even though no transaction was claimed")
+	}
+	if !strings.Contains(buf.String(), "apply alerts outside a claimed host's transaction") {
+		t.Fatalf("the refusal was not logged; log was %q", buf.String())
+	}
 }
 
 // TestTickCallsSweepOnce is the sweep half of the wiring: Sweep runs

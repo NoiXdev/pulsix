@@ -1164,7 +1164,22 @@ func TestEvaluateFeedsTheAlertSinkInTheHostTransaction(t *testing.T) {
 	markDirty(t, d, org, host)
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
-	sink := &fakeSink{}
+	// onApply reads check_states straight through the tx Apply was handed,
+	// rather than trusting that *some* pgx.Tx value arrived: the host's own
+	// write-back is still uncommitted at this point, so only the claimed
+	// transaction itself can see "crit" here — the pool, any other
+	// connection, or a nil tx (which would instead panic the call, caught
+	// by evaluateOne's recover and counted as a failed host below) would
+	// all see the pre-evaluation "ok" row or nothing at all. An earlier
+	// version of this test passed even against Apply(ctx, nil, …) because
+	// fakeSink.Apply discarded its tx argument entirely — this is what
+	// makes the test's own name actually true.
+	var sawStateViaTx string
+	var readErr error
+	sink := &fakeSink{onApply: func(ctx context.Context, tx pgx.Tx, in rules.AlertInput) error {
+		readErr = tx.QueryRow(ctx, `SELECT state FROM check_states WHERE host_id = $1`, in.HostID).Scan(&sawStateViaTx)
+		return nil // surfaced below, not as an Apply failure: a wrong read should fail this assertion, not n
+	}}
 	tk := rules.NewTicker(store, sink,
 		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
 	n, err := tk.Tick(context.Background())
@@ -1190,6 +1205,12 @@ func TestEvaluateFeedsTheAlertSinkInTheHostTransaction(t *testing.T) {
 	}
 	if !got.At.Equal(now) {
 		t.Fatalf("sink saw At=%v, want the tick's own now=%v", got.At, now)
+	}
+	if readErr != nil {
+		t.Fatalf("reading check_states through the sink's own tx: %v", readErr)
+	}
+	if sawStateViaTx != string(rules.StateCrit) {
+		t.Fatalf("the sink's own tx read check_states.state = %q, want %q — Apply must run on the host's own claimed, still-uncommitted transaction", sawStateViaTx, rules.StateCrit)
 	}
 }
 

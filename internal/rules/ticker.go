@@ -283,8 +283,20 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 	// that must still look for it. Its own failure is a delayed cleanup,
 	// not a reason to leave every host ProcessDue just evaluated due
 	// again, so it is logged rather than folded into err.
-	if err := t.alerts.Sweep(ctx, now); err != nil {
-		t.log.ErrorContext(ctx, "sweep orphaned alerts; the next tick retries", "err", err)
+	//
+	// It gets its own deadline rather than running on ctx unbounded, for
+	// exactly the reason batchCtx exists above: Sweep acquires a pool
+	// connection too, and under pool exhaustion pgx blocks until its
+	// context ends. Unbounded, that would be until process shutdown —
+	// stalling this ticker's every later tick forever, the same failure
+	// batchCtx exists to end for ProcessDue. batchCtx itself is already
+	// cancelled by this point, so Sweep gets a fresh one on the same
+	// budget rather than reusing it.
+	sweepCtx, cancel := context.WithTimeout(ctx, t.batchDeadline())
+	sweepErr := t.alerts.Sweep(sweepCtx, now)
+	cancel()
+	if sweepErr != nil {
+		t.log.ErrorContext(ctx, "sweep orphaned alerts; the next tick retries", "err", sweepErr)
 	}
 	if elapsed := t.now().Sub(now); elapsed > t.interval {
 		t.overruns.Add(1)
@@ -354,6 +366,13 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	// it.
 	tx, ok := claimTx(ctx)
 	if !ok {
+		// Unreachable in production — evaluateOne (due_sql.go) always binds
+		// the claim before calling fn — but logged all the same: this
+		// function's own doc comment promises every error is logged here,
+		// and a silent return would leave the host skipped every tick
+		// forever with nothing in the logs to say why.
+		t.log.ErrorContext(ctx, "apply alerts outside a claimed host's transaction; leaving the host due for the next tick",
+			"org", d.OrgID, "host", d.HostID, "err", errNoClaimTx)
 		return errNoClaimTx
 	}
 	if err := t.alerts.Apply(ctx, tx, AlertInput{
