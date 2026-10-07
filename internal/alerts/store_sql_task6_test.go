@@ -11,6 +11,7 @@ package alerts_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -225,7 +226,7 @@ func TestAcknowledgeWritesRowAndEvent(t *testing.T) {
 
 	actor := seedUser(t, d)
 	at := time.Now().UTC().Truncate(time.Microsecond)
-	if err := st.Acknowledge(context.Background(), org, open[0].ID, actor, rules.StateWarn, "looking", at); err != nil {
+	if err := st.Acknowledge(context.Background(), org, open[0].ID, actor, "looking", at); err != nil {
 		t.Fatalf("Acknowledge: %v", err)
 	}
 
@@ -280,9 +281,13 @@ func TestAcknowledgeRejectsAnAlreadyClosedAlert(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	err = st.Acknowledge(context.Background(), org, open[0].ID, uuid.Must(uuid.NewV7()), rules.StateWarn, "late", time.Now().UTC())
-	if err == nil {
-		t.Fatal("Acknowledge on a closed alert returned no error, want ErrInvalidInput")
+	err = st.Acknowledge(context.Background(), org, open[0].ID, uuid.Must(uuid.NewV7()), "late", time.Now().UTC())
+	// errors.Is, not just "err == nil" (review finding, Minor): this is
+	// the only test covering AcknowledgeAlert's own closed_at IS NULL
+	// guard, and asserting mere non-nilness would also pass on
+	// ErrNotFound, a constraint violation, or a dropped connection.
+	if !errors.Is(err, alerts.ErrInvalidInput) {
+		t.Fatalf("Acknowledge on a closed alert: err = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -371,7 +376,7 @@ func TestUnacknowledgeWritesNoEvent(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 	id, actor := open[0].ID, seedUser(t, d)
-	if err := st.Acknowledge(context.Background(), org, id, actor, rules.StateWarn, "", time.Now().UTC()); err != nil {
+	if err := st.Acknowledge(context.Background(), org, id, actor, "", time.Now().UTC()); err != nil {
 		t.Fatalf("Acknowledge: %v", err)
 	}
 	before, err := st.Events(context.Background(), org, id)
@@ -436,5 +441,153 @@ func TestWindowsForHostResolvesOrgHostAndInventoryGroupTargets(t *testing.T) {
 		if !ids[want] {
 			t.Errorf("missing expected window %s among %v", want, ids)
 		}
+	}
+}
+
+// recurringWindow creates a recurring maintenance window targeting host
+// (or the organization, when host is nil) — WindowsForHost's own
+// occurrenceAt (store_sql.go) is the only thing in this package that ever
+// evaluates one, and until this test, nothing had.
+func recurringWindow(t *testing.T, d *db.DB, org uuid.UUID, host *uuid.UUID, reason maintenance.Reason, cron, timezone string, duration time.Duration) uuid.UUID {
+	t.Helper()
+	kind := "org"
+	if host != nil {
+		kind = "host"
+	}
+	secs := int32(duration / time.Second) //nolint:gosec // test fixture, small durations only
+	id, err := gen.New(d.Pool()).CreateMaintenanceWindow(context.Background(), gen.CreateMaintenanceWindowParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "rw-" + kind + "-" + uuid.Must(uuid.NewV7()).String(), TargetKind: kind,
+		HostID: db.NullUUID(host), Cron: &cron, DurationSeconds: &secs, Timezone: &timezone, Note: "", Reason: string(reason),
+	})
+	if err != nil {
+		t.Fatalf("create recurring %s window: %v", kind, err)
+	}
+	return id
+}
+
+// TestWindowsForHostResolvesARecurringWindowMidStretch closes Finding 4:
+// occurrenceAt's recurring branch (store_sql.go) — the most intricate new
+// Go in the Task 6 diff — had no test of any kind before this one, fake
+// or real. A daily window from 12:00 to 14:00 UTC, asked about at 13:00
+// (mid-stretch) must report the *stretch's* own bounds, not the instant
+// asked about; asked about at 15:00 (after it ended, before tomorrow's)
+// must report nothing at all.
+func TestWindowsForHostResolvesARecurringWindowMidStretch(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	windowID := recurringWindow(t, d, org, &host, maintenance.ReasonMaintenance, "0 12 * * *", "UTC", 2*time.Hour)
+
+	midStretch := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+	got, err := st.WindowsForHost(context.Background(), org, host, midStretch)
+	if err != nil {
+		t.Fatalf("WindowsForHost (mid-stretch): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d occurrences, want 1: %+v", len(got), got)
+	}
+	wantStart := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 1, 1, 14, 0, 0, 0, time.UTC)
+	if got[0].WindowID != windowID || !got[0].Start.Equal(wantStart) || !got[0].End.Equal(wantEnd) {
+		t.Fatalf("occurrence = %+v, want window %s spanning [%v, %v)", got[0], windowID, wantStart, wantEnd)
+	}
+
+	afterStretch := time.Date(2026, 1, 1, 15, 0, 0, 0, time.UTC)
+	got, err = st.WindowsForHost(context.Background(), org, host, afterStretch)
+	if err != nil {
+		t.Fatalf("WindowsForHost (after the stretch): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d occurrences after the stretch ended, want 0: %+v", len(got), got)
+	}
+}
+
+// TestAcknowledgeCapturesSeverityAsOfTheWrite is Finding 1's own
+// integration proof: AcknowledgeAlert no longer takes a severity
+// parameter at all (it never reaches the Go layer), so the only way
+// acknowledged_severity can end up correct is if the UPDATE's own
+// `acknowledged_severity = severity` reads the row's current value. This
+// raises the alert to crit and commits *before* ever calling Acknowledge
+// — simulating "the evaluator moved it in the gap Service's own earlier
+// GetAlert could not see" — and asserts the ack lands at crit, never at
+// whatever a caller might have believed the severity to be.
+func TestAcknowledgeCapturesSeverityAsOfTheWrite(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	tx := beginTx(t, d)
+	sub := tuple(host, "cpu", "", "used")
+	now := time.Now().UTC()
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(context.Background(), tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: open[0].ID, At: now, Severity: rules.StateCrit},
+	}); err != nil {
+		t.Fatalf("execute raise to crit: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	actor := seedUser(t, d)
+	if err := st.Acknowledge(context.Background(), org, open[0].ID, actor, "late", time.Now().UTC()); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	got, err := st.GetAlert(context.Background(), org, open[0].ID)
+	if err != nil {
+		t.Fatalf("GetAlert: %v", err)
+	}
+	if got.AckSeverity != rules.StateCrit {
+		t.Fatalf("AckSeverity = %q, want %q — Acknowledge must capture the row's own current severity, not whatever a caller last saw", got.AckSeverity, rules.StateCrit)
+	}
+}
+
+// TestSnoozeRejectsAnAlreadyClosedAlert is Minor A's own test: SnoozeAlert
+// gained the same closed_at IS NULL guard AcknowledgeAlert already had,
+// since without it a closed alert could be snoozed and List would then
+// report it Muted.
+func TestSnoozeRejectsAnAlreadyClosedAlert(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	tx := beginTx(t, d)
+	sub := tuple(host, "cpu", "", "used")
+	now := time.Now().UTC()
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(context.Background(), tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionClose, AlertID: open[0].ID, At: now, Reason: alerts.Resolved},
+	}); err != nil {
+		t.Fatalf("execute close: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	until := time.Now().UTC().Add(time.Hour)
+	err = st.Snooze(context.Background(), org, open[0].ID, uuid.Must(uuid.NewV7()), &until, false, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Snooze on a closed alert returned no error, want an error (the row must not change)")
+	}
+	got, getErr := st.GetAlert(context.Background(), org, open[0].ID)
+	if getErr != nil {
+		t.Fatalf("GetAlert: %v", getErr)
+	}
+	if got.SnoozedUntil != nil {
+		t.Fatalf("SnoozedUntil = %v after a rejected Snooze on a closed alert, want nil", got.SnoozedUntil)
 	}
 }

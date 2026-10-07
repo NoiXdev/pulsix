@@ -164,7 +164,10 @@ WHERE org_id = @org_id
   AND (sqlc.narg(acknowledged)::boolean IS NULL
        OR (sqlc.narg(acknowledged)::boolean AND acknowledged_at IS NOT NULL)
        OR (NOT sqlc.narg(acknowledged)::boolean AND acknowledged_at IS NULL))
-ORDER BY opened_at DESC;
+-- id breaks a tie between two alerts one Execute call opened at the
+-- identical opened_at (review finding, Minor): without it, two runs of
+-- this same query could disagree on which of the two comes first.
+ORDER BY opened_at DESC, id;
 
 -- name: ListAlertEvents :many
 -- Get's own timeline, the event half (timeline.go's mergeTimeline merges
@@ -179,11 +182,19 @@ SELECT * FROM alert_events WHERE org_id = @org_id AND alert_id = @alert_id ORDER
 -- check_state_changes rows inside the alert's lifetime, [from_at, to_at]
 -- inclusive at both ends (the brief's own "[opened_at, closed_at]").
 -- Service.Get never calls this for a scope='host' alert — see its own
--- doc comment for why.
+-- doc comment for why. check_state_changes carries no unique id (it is a
+-- hypertable with no single-row PK, 00046's own comment) — ctid breaks a
+-- tie between two rows sharing the same `at` for the same tuple, which
+-- `at` alone leaves to whatever order Postgres felt like that run,
+-- undermining mergeTimeline's own determinism (timeline.go). This is sound
+-- specifically because the hypertable chunks by day (00046): two rows
+-- that tie on `at` to the microsecond necessarily fall in the same
+-- physical chunk, so their ctids are comparable, unlike ctid compared
+-- across chunks in general.
 SELECT * FROM check_state_changes
 WHERE org_id = @org_id AND host_id = @host_id AND check_key = @check_key AND item = @item AND metric = @metric
   AND at >= @from_at AND at <= @to_at
-ORDER BY at;
+ORDER BY at, ctid;
 
 -- name: ListMaintenanceWindowsForHost :many
 -- Store.WindowsForHost's own candidate set: every maintenance window
@@ -191,13 +202,20 @@ ORDER BY at;
 -- or an inventory group host_id is a member of or descends into through
 -- any chain of parent_id (the recursive CTE walks from host_id's own
 -- direct memberships up to the root, so a window on an ancestor group
--- still matches). Time is not filtered here — a recurring window's own
--- cron cannot be evaluated in SQL — so this can return a window that is
--- not actually active right now; occurrenceAt (store_sql.go) is what
--- decides that, in Go, the same split ActiveAt/Occurrences already draw
--- in internal/maintenance. Monitoring-group targets are deliberately not
--- resolved here, the same gap internal/maintenance.Service's own
--- HostsInMaintenance leaves for the same target kind today.
+-- still matches). A recurring window's own cron cannot be evaluated in
+-- SQL, so every row with one is returned regardless of time —
+-- occurrenceAt (store_sql.go) is what decides whether it is active right
+-- now, the same split ActiveAt/Occurrences already draw in
+-- internal/maintenance. A one-off window, by contrast, *is* filtered here
+-- by @now: review finding (Important) — List ran this query once per
+-- alert in a loop, and an unbounded scan of every one-off window the
+-- organization has ever created (most of them long expired) was pure
+-- waste on the feature's main read path; occurrenceAt's own one-off
+-- branch would have excluded them anyway, so filtering here changes no
+-- result, only how much gets shipped out of Postgres to do it. Monitoring-
+-- group targets are deliberately not resolved here, the same gap
+-- internal/maintenance.Service's own HostsInMaintenance leaves for the
+-- same target kind today.
 WITH RECURSIVE ancestors AS (
   SELECT g.id, g.parent_id FROM inventory_groups g
     JOIN inventory_memberships m ON m.group_id = g.id
@@ -210,19 +228,26 @@ SELECT w.* FROM maintenance_windows w
 WHERE w.org_id = @org_id
   AND (w.target_kind = 'org'
        OR (w.target_kind = 'host' AND w.host_id = @host_id)
-       OR (w.target_kind = 'inventory_group' AND w.group_id IN (SELECT id FROM ancestors)));
+       OR (w.target_kind = 'inventory_group' AND w.group_id IN (SELECT id FROM ancestors)))
+  AND (w.cron IS NOT NULL OR (w.starts_at <= @now::timestamptz AND w.ends_at > @now::timestamptz));
 
 -- name: AcknowledgeAlert :execrows
--- Service.Acknowledge's own write: acknowledged_severity is the alert's
--- *current* severity at the moment of acknowledging (decision 2 — a later
--- rise past this value is what voids it, Reconcile's own advance), passed
--- in by the caller rather than read here, since Service already has it
--- from the GetAlert it issued to validate the alert is still open.
--- closed_at IS NULL in the WHERE is that same validation, re-asserted at
--- the statement that actually writes: zero rows affected means the alert
+-- Service.Acknowledge's own write: acknowledged_severity is set to
+-- `severity` — the row's own column, unqualified, which standard SQL
+-- resolves to the pre-update value of the row being written, never a
+-- caller-supplied parameter (review finding, Important). Service's own
+-- GetAlert reads the alert once to decide ErrNotFound/ErrInvalidInput
+-- (closed) before calling this, and that round trip is stale the instant
+-- it returns; Reconcile's own advance can raise the severity in the gap
+-- between it and this statement committing. Reading it fresh, in the same
+-- statement, under the row's own lock, is what makes "acknowledge the
+-- severity as of right now" true rather than "as of whenever Service
+-- happened to look" — anything else reopens exactly the silent-ack gap
+-- decision 2 exists to close. closed_at IS NULL in the WHERE is Service's
+-- same validation, re-asserted here: zero rows affected means the alert
 -- closed in the gap between Service's check and this statement, which
 -- Store.Acknowledge reports as ErrInvalidInput, not silently succeeding.
-UPDATE alerts SET acknowledged_at = @at, acknowledged_by = @actor, acknowledged_severity = @severity, ack_note = @note
+UPDATE alerts SET acknowledged_at = @at, acknowledged_by = @actor, acknowledged_severity = severity, ack_note = @note
 WHERE org_id = @org_id AND id = @id AND closed_at IS NULL;
 
 -- name: UnacknowledgeAlert :execrows
@@ -232,10 +257,13 @@ WHERE org_id = @org_id AND id = @id;
 -- name: SnoozeAlert :execrows
 -- Service.Snooze's own write, after it has already rejected the
 -- combinations migration 00049 leaves the table itself unable to reject
--- (both until and until_change, or an until in the past) — this statement
--- trusts its caller the way RaiseAlertSeverity already trusts Execute's.
+-- (both until and until_change, or neither, or an until in the past) —
+-- this statement trusts its caller the way RaiseAlertSeverity already
+-- trusts Execute's. closed_at IS NULL (review finding, Minor): without
+-- it, a closed alert could be snoozed and List would then report it
+-- Muted — a mute with nothing left to mute.
 UPDATE alerts SET snoozed_until = @until, snooze_until_change = @until_change
-WHERE org_id = @org_id AND id = @id;
+WHERE org_id = @org_id AND id = @id AND closed_at IS NULL;
 
 -- name: UnsnoozeAlert :execrows
 UPDATE alerts SET snoozed_until = NULL, snooze_until_change = false

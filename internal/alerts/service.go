@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -91,29 +92,51 @@ func (s *Service) Sweep(ctx context.Context, now time.Time) error {
 }
 
 // suppression computes Mute's verdict for one alert, fetching the windows
-// that cover its host right now. Called fresh per alert, never cached
-// across a List call, because a window can start or end between two
-// alerts' own lookups just as easily as between two calls.
-func (s *Service) suppression(ctx context.Context, orgID uuid.UUID, a Alert, now time.Time) (Suppression, error) {
-	windows, err := s.store.WindowsForHost(ctx, orgID, a.Subject.HostID, now)
-	if err != nil {
-		return Suppression{}, fmt.Errorf("windows for host %s: %w", a.Subject.HostID, err)
+// that cover its host right now — or, when cache is non-nil, reusing a
+// prior fetch for the same host within this same call. Get passes a nil
+// cache (exactly one alert, nothing to reuse); List passes one shared
+// across every row.
+//
+// Review finding (Important) corrected an earlier version of this
+// comment, which argued *against* caching on the grounds that "a window
+// can start or end between two alerts' own lookups" — backwards: List
+// pins `now` once (its own caller, below) and hands the identical instant
+// to every Mute either way, so two alerts on the same host already get
+// the same verdict as of the same instant whether or not the windows
+// fetch is shared. Sharing it is strictly more consistent, not less, and
+// turns what was an unbounded N+1 — one recursive CTE per alert, for
+// every alert List returns — into one fetch per distinct host.
+func (s *Service) suppression(ctx context.Context, orgID uuid.UUID, a Alert, now time.Time, cache map[uuid.UUID][]maintenance.Occurrence) (Suppression, error) {
+	windows, ok := cache[a.Subject.HostID]
+	if !ok {
+		var err error
+		windows, err = s.store.WindowsForHost(ctx, orgID, a.Subject.HostID, now)
+		if err != nil {
+			return Suppression{}, fmt.Errorf("windows for host %s: %w", a.Subject.HostID, err)
+		}
+		if cache != nil {
+			cache[a.Subject.HostID] = windows
+		}
 	}
 	return Mute(a, windows, now), nil
 }
 
 // List returns the organization's alerts matching f, each with its own
 // Suppression. Muted has no SQL column to filter on (Filter's own doc
-// comment) — it is applied here, after Mute has run for the row.
+// comment) — it is applied here, after Mute has run for the row. now is
+// pinned once, and the per-host windows cache is shared across every row
+// (suppression's own doc comment) — one WindowsForHost call per distinct
+// host among the results, not one per alert.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter) ([]View, error) {
 	rows, err := s.store.ListAlerts(ctx, orgID, f)
 	if err != nil {
 		return nil, fmt.Errorf("list alerts: %w", err)
 	}
 	now := s.clock()
+	cache := map[uuid.UUID][]maintenance.Occurrence{}
 	out := make([]View, 0, len(rows))
 	for _, a := range rows {
-		sup, err := s.suppression(ctx, orgID, a, now)
+		sup, err := s.suppression(ctx, orgID, a, now, cache)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +162,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Detail, error) 
 		return Detail{}, err
 	}
 	now := s.clock()
-	sup, err := s.suppression(ctx, orgID, a, now)
+	sup, err := s.suppression(ctx, orgID, a, now, nil)
 	if err != nil {
 		return Detail{}, err
 	}
@@ -168,10 +191,17 @@ func invalidf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidInput, fmt.Sprintf(format, args...))
 }
 
-// Acknowledge records that actor knows about alert id, storing the
-// alert's own *current* severity (decision 2: "stored... which makes
-// 'does the ack still cover this' a comparison rather than a second state
-// to maintain" — migration 00049's own words). It is not a mute:
+// Acknowledge records that actor knows about alert id. The row's own
+// *current* severity is what gets stored (decision 2: "stored... which
+// makes 'does the ack still cover this' a comparison rather than a second
+// state to maintain" — migration 00049's own words) — Store.Acknowledge
+// reads it itself, inside the same statement that writes it, rather than
+// this method passing along what GetAlert saw a moment ago: that value is
+// already stale the instant this function has it, and a concurrent
+// severity rise in the gap would otherwise land as a silent, understated
+// acknowledgement, exactly what decision 2 exists to prevent (review
+// finding, Important). GetAlert is still needed here, for ErrNotFound and
+// the closed check below — just not for the severity. It is not a mute:
 // Suppression is untouched, only Mute decides that. A closed alert cannot
 // be acknowledged — there is nothing left to escalate stopping an
 // acknowledgement would prevent.
@@ -183,7 +213,7 @@ func (s *Service) Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, n
 	if a.ClosedAt != nil {
 		return invalidf("cannot acknowledge a closed alert")
 	}
-	return s.store.Acknowledge(ctx, orgID, id, actor, a.Severity, note, s.clock())
+	return s.store.Acknowledge(ctx, orgID, id, actor, note, s.clock())
 }
 
 // Unacknowledge clears alert id's acknowledgement. There is no
@@ -196,13 +226,21 @@ func (s *Service) Unacknowledge(ctx context.Context, orgID, id, actor uuid.UUID)
 }
 
 // Snooze mutes alert id until an instant or until its severity next
-// changes — never both (design doc "Suppression": snooze "hangs off one
-// open alert and can end 'when the state changes'", one or the other) —
-// and never an instant already in the past, which could never un-mute
-// anything.
+// changes — never both, and never neither (design doc "Suppression":
+// snooze "hangs off one open alert and can end 'when the state
+// changes'" — it is always one or the other; huma cannot express "exactly
+// one of" at the transport layer, so this is where that rule has to live,
+// review finding, Important: until == nil && !untilChange used to reach
+// the store as a silent unsnooze, reported back as success with a
+// 'snoozed' event in the audit trail for an alert that was not, in fact,
+// snoozed) — and never an instant already in the past, which could never
+// un-mute anything.
 func (s *Service) Snooze(ctx context.Context, orgID, id, actor uuid.UUID, until *time.Time, untilChange bool) error {
 	if until != nil && untilChange {
 		return invalidf("until and untilChange are mutually exclusive")
+	}
+	if until == nil && !untilChange {
+		return invalidf("snooze requires either until or untilChange")
 	}
 	now := s.clock()
 	if until != nil && until.Before(now) {

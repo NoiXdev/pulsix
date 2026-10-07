@@ -107,19 +107,26 @@ type Store interface {
 	// for that target kind today.
 	WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, now time.Time) ([]maintenance.Occurrence, error)
 
-	// Acknowledge records that actor acknowledged id at severity (the
-	// alert's own current severity — decision 2's comparison needs it
-	// stored, not inferred), stamping both the row and its
-	// 'acknowledged' event at `at`. ErrInvalidInput if id is already
+	// Acknowledge records that actor acknowledged id, stamping both the
+	// row and its 'acknowledged' event at `at`. acknowledged_severity is
+	// set to the alert's own current severity, read inside this same
+	// statement rather than supplied by the caller — decision 2's
+	// comparison needs the value as of the moment this commits, and a
+	// severity rules.State parameter here would instead be whatever
+	// Service's own GetAlert saw one round trip earlier, which a
+	// concurrent severity rise could have already moved past (review
+	// finding, Important: that gap is exactly the silent acknowledgement
+	// decision 2 exists to prevent). ErrInvalidInput if id is already
 	// closed, ErrNotFound if it does not exist.
-	Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, severity rules.State, note string, at time.Time) error
+	Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, note string, at time.Time) error
 	// Unacknowledge clears id's acknowledgement. No event: migration
 	// 00049's alert_events CHECK has no 'unacknowledged' kind.
 	Unacknowledge(ctx context.Context, orgID, id, actor uuid.UUID, at time.Time) error
 	// Snooze mutes id until an instant or until its severity next
 	// changes, writing the matching 'snoozed' event. Validation (not
-	// both, not in the past) is Service's job; this writes whatever it
-	// is given.
+	// both, not neither, not in the past) is Service's job; this writes
+	// whatever it is given, and ErrNotFound if id does not exist or is
+	// already closed.
 	Snooze(ctx context.Context, orgID, id, actor uuid.UUID, until *time.Time, untilChange bool, at time.Time) error
 	// Unsnooze clears id's snooze, bounded or unbounded, writing the
 	// matching 'unsnoozed' event.
@@ -465,7 +472,7 @@ func occurrenceAt(r gen.MaintenanceWindow, now time.Time) (maintenance.Occurrenc
 // WindowsForHost implements Store.
 func (s *SQLStore) WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, now time.Time) ([]maintenance.Occurrence, error) {
 	rows, err := gen.New(s.d).ListMaintenanceWindowsForHost(ctx, gen.ListMaintenanceWindowsForHostParams{
-		OrgID: orgID, HostID: db.NullUUID(&hostID),
+		OrgID: orgID, HostID: db.NullUUID(&hostID), Now: now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list maintenance windows for host: %w", err)
@@ -500,11 +507,10 @@ func (s *SQLStore) writeAlertAction(ctx context.Context, fn func(q *gen.Queries)
 }
 
 // Acknowledge implements Store.
-func (s *SQLStore) Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, severity rules.State, note string, at time.Time) error {
+func (s *SQLStore) Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, note string, at time.Time) error {
 	return s.writeAlertAction(ctx, func(q *gen.Queries) error {
-		sev := string(severity)
 		n, err := q.AcknowledgeAlert(ctx, gen.AcknowledgeAlertParams{
-			At: pgtype.Timestamptz{Time: at, Valid: true}, Actor: db.NullUUID(&actor), Severity: &sev, Note: note,
+			At: pgtype.Timestamptz{Time: at, Valid: true}, Actor: db.NullUUID(&actor), Note: note,
 			OrgID: orgID, ID: id,
 		})
 		if err != nil {

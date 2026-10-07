@@ -27,11 +27,12 @@ var ctx = context.Background()
 
 // ackCall and snoozeCall record exactly the arguments fakeStore's own
 // Acknowledge/Snooze were called with — not the alert they mutate — so a
-// test can assert Service passed the right severity or actor even if the
-// fake's own bookkeeping happened to produce the right alert by accident.
+// test can assert Service passed the right actor even if the fake's own
+// bookkeeping happened to produce the right alert by accident. ackCall
+// carries no severity: Service no longer passes one (review finding,
+// Important — see fakeStore.Acknowledge's own comment for why).
 type ackCall struct {
 	id, actor uuid.UUID
-	severity  rules.State
 	note      string
 	at        time.Time
 }
@@ -72,8 +73,9 @@ type fakeStore struct {
 	changesCalls []changesCall
 	changesErr   error
 
-	windows    map[uuid.UUID][]maintenance.Occurrence
-	windowsErr error
+	windows     map[uuid.UUID][]maintenance.Occurrence
+	windowCalls []uuid.UUID // every hostID WindowsForHost was called with, in order — TestListSharesWindowsForHostAcrossAlertsOnTheSameHost's own evidence
+	windowsErr  error
 
 	ackCalls      []ackCall
 	ackErr        error
@@ -167,19 +169,29 @@ func (f *fakeStore) StateChanges(_ context.Context, _ uuid.UUID, subject alerts.
 }
 
 func (f *fakeStore) WindowsForHost(_ context.Context, _, hostID uuid.UUID, _ time.Time) ([]maintenance.Occurrence, error) {
+	f.windowCalls = append(f.windowCalls, hostID)
 	if f.windowsErr != nil {
 		return nil, f.windowsErr
 	}
 	return f.windows[hostID], nil
 }
 
-func (f *fakeStore) Acknowledge(_ context.Context, _, id, actor uuid.UUID, severity rules.State, note string, at time.Time) error {
+// Acknowledge mirrors AcknowledgeAlert's own real-SQL shape after the
+// review fix: acknowledged_severity comes from the row's own *current*
+// Severity, read here — at the moment this runs, not from an argument
+// Service passed in — the same thing `SET acknowledged_severity =
+// severity` (unqualified, the pre-update value of the row) does atomically
+// in Postgres. Service has no severity parameter to give this method
+// anymore; a test that wants to prove the race is closed mutates
+// f.alerts[id].Severity before calling Acknowledge and asserts the stored
+// AckSeverity followed it (TestAcknowledgeStoresTheRowsLiveSeverity).
+func (f *fakeStore) Acknowledge(_ context.Context, _, id, actor uuid.UUID, note string, at time.Time) error {
 	if f.ackErr != nil {
 		return f.ackErr
 	}
-	f.ackCalls = append(f.ackCalls, ackCall{id: id, actor: actor, severity: severity, note: note, at: at})
+	f.ackCalls = append(f.ackCalls, ackCall{id: id, actor: actor, note: note, at: at})
 	a := f.alerts[id]
-	a.AckAt, a.AckBy, a.AckSeverity, a.AckNote = &at, &actor, severity, note
+	a.AckAt, a.AckBy, a.AckSeverity, a.AckNote = &at, &actor, a.Severity, note
 	f.alerts[id] = a
 	return nil
 }
@@ -243,9 +255,6 @@ func TestAcknowledgeRecordsActorAndSeverity(t *testing.T) {
 		t.Fatalf("store.Acknowledge called %d times, want 1", len(store.ackCalls))
 	}
 	call := store.ackCalls[0]
-	if call.severity != rules.StateCrit {
-		t.Errorf("stored severity = %q, want %q (the alert's own current severity)", call.severity, rules.StateCrit)
-	}
 	if call.actor != actor {
 		t.Errorf("stored actor = %s, want %s", call.actor, actor)
 	}
@@ -255,11 +264,42 @@ func TestAcknowledgeRecordsActorAndSeverity(t *testing.T) {
 	if !call.at.Equal(now) {
 		t.Errorf("stored at = %v, want the service's own clock %v", call.at, now)
 	}
-	// The stored row itself reflects it too, not only the call Service
-	// made — pinning that AckSeverity is a stored column, not a
-	// transient argument the fake happened to echo back.
+	// AckSeverity on the stored row is the alert's own current severity —
+	// Service no longer passes one at all (see fakeStore.Acknowledge's own
+	// comment); this is the only place left that proves it landed.
 	if got := store.alerts[a.ID].AckSeverity; got != rules.StateCrit {
 		t.Errorf("alerts[id].AckSeverity = %q, want %q", got, rules.StateCrit)
+	}
+}
+
+// TestAcknowledgeStoresTheRowsLiveSeverity is Finding 1's own regression
+// test: it proves Acknowledge captures severity at the moment the store
+// writes, not whatever Service's own GetAlert saw one round trip earlier.
+// fakeStore.Acknowledge reads f.alerts[id].Severity itself (mirroring
+// AcknowledgeAlert's `SET acknowledged_severity = severity`); mutating the
+// stored alert's severity directly, bypassing Service entirely, is the
+// closest a fake without real transactions can come to simulating "the
+// evaluator raised this alert in the gap between GetAlert and the write"
+// — an implementation that threaded Service's own earlier read through
+// again would get this wrong.
+func TestAcknowledgeStoresTheRowsLiveSeverity(t *testing.T) {
+	store := newFakeStore()
+	a := openAlert(tupleSubject("disk", "", "used"), rules.StateWarn, t0)
+	store.alerts[a.ID] = a
+	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
+
+	// Simulate a concurrent severity rise landing between Service's own
+	// GetAlert and the moment the store actually writes: mutate the row
+	// out from under Acknowledge before calling it.
+	raised := a
+	raised.Severity = rules.StateCrit
+	store.alerts[a.ID] = raised
+
+	if err := svc.Acknowledge(ctx, orgID, a.ID, uuid.Must(uuid.NewV7()), "late"); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	if got := store.alerts[a.ID].AckSeverity; got != rules.StateCrit {
+		t.Fatalf("AckSeverity = %q, want %q (the row's own severity as of the write, not warn)", got, rules.StateCrit)
 	}
 }
 
@@ -309,7 +349,26 @@ func TestSnoozeRejectsAnUntilInThePast(t *testing.T) {
 	}
 }
 
-// TestSnoozeAcceptsAFutureUntil is the positive counterpart to the two
+// TestSnoozeRejectsNeitherUntilNorUntilChange is Finding 2's own
+// regression test: Snooze(nil, false) used to reach the store as a silent
+// unsnooze (SnoozeAlert sets both columns to their cleared values) while
+// still writing a 'snoozed' event — the caller sees success and the audit
+// trail claims a mute that never happened. huma cannot express "exactly
+// one of" at the transport layer, so the rejection has to live here.
+func TestSnoozeRejectsNeitherUntilNorUntilChange(t *testing.T) {
+	store := newFakeStore()
+	svc := alerts.NewService(store, clockAt(t0))
+
+	err := svc.Snooze(ctx, orgID, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), nil, false)
+	if !errors.Is(err, alerts.ErrInvalidInput) {
+		t.Fatalf("Snooze(nil, false): err = %v, want ErrInvalidInput", err)
+	}
+	if len(store.snoozeCalls) != 0 {
+		t.Errorf("store.Snooze called %d times, want 0", len(store.snoozeCalls))
+	}
+}
+
+// TestSnoozeAcceptsAFutureUntil is the positive counterpart to the
 // rejection tests above: without it, an implementation that rejected
 // every Snooze call unconditionally would also pass them.
 func TestSnoozeAcceptsAFutureUntil(t *testing.T) {
@@ -530,5 +589,34 @@ func TestListLabelsMutedAlertsAndFilters(t *testing.T) {
 	}
 	if len(filtered) != 1 || filtered[0].ID != muted.ID {
 		t.Fatalf("List (muted only) = %+v, want exactly the alert on the muted host", filtered)
+	}
+}
+
+// TestListSharesWindowsForHostAcrossAlertsOnTheSameHost is Finding 3's own
+// regression test: List used to call WindowsForHost once per alert, so an
+// organization with 200 open alerts on 50 hosts ran 200 recursive CTEs
+// instead of 50. Two alerts on the identical host must produce exactly
+// one WindowsForHost call for that host, not two.
+func TestListSharesWindowsForHostAcrossAlertsOnTheSameHost(t *testing.T) {
+	store := newFakeStore()
+	host := uuid.Must(uuid.NewV7())
+	a := openAlert(alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "cpu", Metric: "used"}, rules.StateWarn, t0)
+	b := openAlert(alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "disk", Metric: "used"}, rules.StateWarn, t0)
+	store.alerts[a.ID] = a
+	store.alerts[b.ID] = b
+	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
+
+	views, err := svc.List(ctx, orgID, alerts.Filter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("List returned %d views, want 2", len(views))
+	}
+	if len(store.windowCalls) != 1 {
+		t.Fatalf("WindowsForHost called %d times, want 1 for two alerts sharing one host: %v", len(store.windowCalls), store.windowCalls)
+	}
+	if store.windowCalls[0] != host {
+		t.Errorf("WindowsForHost called with host %s, want %s", store.windowCalls[0], host)
 	}
 }
