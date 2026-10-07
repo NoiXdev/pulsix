@@ -134,3 +134,118 @@ WITH swept AS (
 )
 INSERT INTO alert_events (org_id, alert_id, at, kind)
 SELECT org_id, id, @now, 'closed' FROM swept;
+
+-- Task 6, spec docs/superpowers/specs/2026-10-06-v0.4a-alerts-design.md,
+-- "Suppression": the read and operator-action statements alerts.Service
+-- issues directly on the bare pool (never the evaluator's tx above) —
+-- List, Get, Acknowledge, Snooze and their reversals. Unlike the
+-- lifecycle statements above, these run from the API's own request
+-- handling, so RLS already does its job; org_id is still named explicitly
+-- in every WHERE clause anyway, the convention every other store in this
+-- schema keeps regardless (see e.g. maintenance.sql's own GetMaintenanceWindow).
+
+-- name: GetAlert :one
+SELECT * FROM alerts WHERE org_id = @org_id AND id = @id;
+
+-- name: ListAlerts :many
+-- Service.List's own Filter, forwarded almost verbatim: each optional
+-- field matches everything when NULL, the same "param IS NULL OR
+-- <condition>" idiom hosts.sql's own ListHosts and rules.sql's own
+-- ListRules already use. Muted has no column to filter on — Service.List
+-- applies it in Go, after Mute has run.
+SELECT * FROM alerts
+WHERE org_id = @org_id
+  AND (sqlc.narg(open)::boolean IS NULL
+       OR (sqlc.narg(open)::boolean AND closed_at IS NULL)
+       OR (NOT sqlc.narg(open)::boolean AND closed_at IS NOT NULL))
+  AND (sqlc.narg(severity)::text IS NULL OR severity = sqlc.narg(severity)::text)
+  AND (sqlc.narg(host_id)::uuid IS NULL OR host_id = sqlc.narg(host_id)::uuid)
+  AND (sqlc.narg(scope)::text IS NULL OR scope = sqlc.narg(scope)::text)
+  AND (sqlc.narg(acknowledged)::boolean IS NULL
+       OR (sqlc.narg(acknowledged)::boolean AND acknowledged_at IS NOT NULL)
+       OR (NOT sqlc.narg(acknowledged)::boolean AND acknowledged_at IS NULL))
+ORDER BY opened_at DESC;
+
+-- name: ListAlertEvents :many
+-- Get's own timeline, the event half (timeline.go's mergeTimeline merges
+-- this with ListStateChangesForTuple below). Ordered by (at, id): id only
+-- ever breaks a tie between two events this package itself wrote at the
+-- very same instant (raiseSeverity's own severity_raised + ack_voided
+-- pair), which carries no further meaning worth encoding.
+SELECT * FROM alert_events WHERE org_id = @org_id AND alert_id = @alert_id ORDER BY at, id;
+
+-- name: ListStateChangesForTuple :many
+-- Get's own timeline, the state-change half: the tuple's own
+-- check_state_changes rows inside the alert's lifetime, [from_at, to_at]
+-- inclusive at both ends (the brief's own "[opened_at, closed_at]").
+-- Service.Get never calls this for a scope='host' alert — see its own
+-- doc comment for why.
+SELECT * FROM check_state_changes
+WHERE org_id = @org_id AND host_id = @host_id AND check_key = @check_key AND item = @item AND metric = @metric
+  AND at >= @from_at AND at <= @to_at
+ORDER BY at;
+
+-- name: ListMaintenanceWindowsForHost :many
+-- Store.WindowsForHost's own candidate set: every maintenance window
+-- whose target could cover host_id — the organization, the host itself,
+-- or an inventory group host_id is a member of or descends into through
+-- any chain of parent_id (the recursive CTE walks from host_id's own
+-- direct memberships up to the root, so a window on an ancestor group
+-- still matches). Time is not filtered here — a recurring window's own
+-- cron cannot be evaluated in SQL — so this can return a window that is
+-- not actually active right now; occurrenceAt (store_sql.go) is what
+-- decides that, in Go, the same split ActiveAt/Occurrences already draw
+-- in internal/maintenance. Monitoring-group targets are deliberately not
+-- resolved here, the same gap internal/maintenance.Service's own
+-- HostsInMaintenance leaves for the same target kind today.
+WITH RECURSIVE ancestors AS (
+  SELECT g.id, g.parent_id FROM inventory_groups g
+    JOIN inventory_memberships m ON m.group_id = g.id
+    WHERE m.org_id = @org_id AND m.host_id = @host_id
+  UNION
+  SELECT p.id, p.parent_id FROM inventory_groups p
+    JOIN ancestors a ON p.id = a.parent_id
+)
+SELECT w.* FROM maintenance_windows w
+WHERE w.org_id = @org_id
+  AND (w.target_kind = 'org'
+       OR (w.target_kind = 'host' AND w.host_id = @host_id)
+       OR (w.target_kind = 'inventory_group' AND w.group_id IN (SELECT id FROM ancestors)));
+
+-- name: AcknowledgeAlert :execrows
+-- Service.Acknowledge's own write: acknowledged_severity is the alert's
+-- *current* severity at the moment of acknowledging (decision 2 — a later
+-- rise past this value is what voids it, Reconcile's own advance), passed
+-- in by the caller rather than read here, since Service already has it
+-- from the GetAlert it issued to validate the alert is still open.
+-- closed_at IS NULL in the WHERE is that same validation, re-asserted at
+-- the statement that actually writes: zero rows affected means the alert
+-- closed in the gap between Service's check and this statement, which
+-- Store.Acknowledge reports as ErrInvalidInput, not silently succeeding.
+UPDATE alerts SET acknowledged_at = @at, acknowledged_by = @actor, acknowledged_severity = @severity, ack_note = @note
+WHERE org_id = @org_id AND id = @id AND closed_at IS NULL;
+
+-- name: UnacknowledgeAlert :execrows
+UPDATE alerts SET acknowledged_at = NULL, acknowledged_by = NULL, acknowledged_severity = NULL, ack_note = ''
+WHERE org_id = @org_id AND id = @id;
+
+-- name: SnoozeAlert :execrows
+-- Service.Snooze's own write, after it has already rejected the
+-- combinations migration 00049 leaves the table itself unable to reject
+-- (both until and until_change, or an until in the past) — this statement
+-- trusts its caller the way RaiseAlertSeverity already trusts Execute's.
+UPDATE alerts SET snoozed_until = @until, snooze_until_change = @until_change
+WHERE org_id = @org_id AND id = @id;
+
+-- name: UnsnoozeAlert :execrows
+UPDATE alerts SET snoozed_until = NULL, snooze_until_change = false
+WHERE org_id = @org_id AND id = @id;
+
+-- name: InsertAlertActorEvent :exec
+-- The human-caused counterpart to InsertAlertEvent above: acknowledged,
+-- snoozed and unsnoozed all name their actor (migration 00049's own
+-- ON DELETE SET NULL on alert_events.actor_id is exactly for this column).
+-- There is no 'unacknowledged' kind in the CHECK — Store.Unacknowledge
+-- writes no event at all, so this is never called for it.
+INSERT INTO alert_events (org_id, alert_id, at, kind, actor_id)
+VALUES (@org_id, @alert_id, @at, @kind, @actor_id);

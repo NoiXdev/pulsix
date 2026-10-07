@@ -22,6 +22,7 @@ package alerts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -44,11 +46,29 @@ const (
 	eventSeverityRaised = "severity_raised"
 	eventAckVoided      = "ack_voided"
 	eventClosed         = "closed"
+
+	// eventAcknowledged, eventSnoozed and eventUnsnoozed are Task 6's own
+	// three: the operator-caused events migration 00049's alert_events
+	// CHECK reserves a kind for. There is deliberately no
+	// "unacknowledged" kind — Store.Unacknowledge writes no event at all
+	// (service.go's own doc comment on Service.Unacknowledge says why).
+	eventAcknowledged = "acknowledged"
+	eventSnoozed      = "snoozed"
+	eventUnsnoozed    = "unsnoozed"
+)
+
+// Sentinels the API (a later task) maps to HTTP, in the shape
+// internal/items and internal/maintenance already use.
+var (
+	ErrNotFound     = errors.New("not found")
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 // Store is what Task 7's evaluator wiring calls to carry out one host's
-// Reconcile verdict, and what the ticker calls once per tick for the
-// sweep (design doc: "Ticker.Tick calls AlertSink.Sweep once per tick").
+// Reconcile verdict, what the ticker calls once per tick for the sweep
+// (design doc: "Ticker.Tick calls AlertSink.Sweep once per tick"), and
+// what Task 6's Service itself calls for every read and operator action:
+// list, get, acknowledge, snooze and their reversals.
 type Store interface {
 	// OpenForHost returns every alert org/host has open right now — the
 	// `open []Alert` Reconcile's own signature consumes.
@@ -63,7 +83,76 @@ type Store interface {
 	// row no longer exists, across every organization, and reports how
 	// many it closed.
 	Sweep(ctx context.Context, now time.Time) (int, error)
+
+	// GetAlert returns one alert by id, org-scoped. ErrNotFound when no
+	// such alert exists in this organization.
+	GetAlert(ctx context.Context, orgID, id uuid.UUID) (Alert, error)
+	// ListAlerts returns the organization's alerts matching f, newest
+	// opened first.
+	ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]Alert, error)
+	// Events returns alertID's own alert_events, in order — half of
+	// Get's timeline (the other half is StateChanges below).
+	Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Event, error)
+	// StateChanges returns subject's check_state_changes rows with
+	// from <= at <= to. Callers never ask this for a host-scope Subject
+	// (alert.go's own ScopeHost): check_host_states is a roll-up with no
+	// change log to match it against.
+	StateChanges(ctx context.Context, orgID uuid.UUID, subject Subject, from, to time.Time) ([]StateChange, error)
+	// WindowsForHost returns every maintenance window active at now
+	// whose target covers hostID — the organization, the host itself, or
+	// an inventory group hostID descends into, group resolution included
+	// (design doc "Suppression": "that belongs in SQL"). It never
+	// resolves a monitoring-group target, the same gap
+	// internal/maintenance.Service's own HostsInMaintenance leaves open
+	// for that target kind today.
+	WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, now time.Time) ([]maintenance.Occurrence, error)
+
+	// Acknowledge records that actor acknowledged id at severity (the
+	// alert's own current severity — decision 2's comparison needs it
+	// stored, not inferred), stamping both the row and its
+	// 'acknowledged' event at `at`. ErrInvalidInput if id is already
+	// closed, ErrNotFound if it does not exist.
+	Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, severity rules.State, note string, at time.Time) error
+	// Unacknowledge clears id's acknowledgement. No event: migration
+	// 00049's alert_events CHECK has no 'unacknowledged' kind.
+	Unacknowledge(ctx context.Context, orgID, id, actor uuid.UUID, at time.Time) error
+	// Snooze mutes id until an instant or until its severity next
+	// changes, writing the matching 'snoozed' event. Validation (not
+	// both, not in the past) is Service's job; this writes whatever it
+	// is given.
+	Snooze(ctx context.Context, orgID, id, actor uuid.UUID, until *time.Time, untilChange bool, at time.Time) error
+	// Unsnooze clears id's snooze, bounded or unbounded, writing the
+	// matching 'unsnoozed' event.
+	Unsnooze(ctx context.Context, orgID, id, actor uuid.UUID, at time.Time) error
 }
+
+// Filter narrows ListAlerts. The zero Filter matches every alert in the
+// organization — each pointer field is nil for "either", the same
+// "narrow, don't filter in Go" shape internal/items.Filter already uses.
+type Filter struct {
+	// Open, non-nil, restricts to open (true) or closed (false) alerts.
+	Open *bool
+	// Severity, non-empty, restricts to one severity.
+	Severity rules.State
+	// HostID, non-nil, restricts to one host — the design doc's own "the
+	// host view is a filter on this list, not its own endpoint".
+	HostID *uuid.UUID
+	// Scope, non-empty, restricts to 'tuple' or 'host' alerts.
+	Scope Scope
+	// Acknowledged, non-nil, restricts to acknowledged (true) or
+	// unacknowledged (false) alerts.
+	Acknowledged *bool
+	// Muted, non-nil, restricts to muted (true) or unmuted (false)
+	// alerts. There is no column for this — Service.List applies it in
+	// Go, after Mute has run for each row.
+	Muted *bool
+}
+
+// var _ Store = (*SQLStore)(nil) pins SQLStore to the full interface at
+// compile time, so a forgotten method is a build failure here rather than
+// a surprise at whichever call site first tries to use SQLStore as a
+// Store.
+var _ Store = (*SQLStore)(nil)
 
 // SQLStore implements Store.
 type SQLStore struct{ d *db.DB }
@@ -263,4 +352,221 @@ func (s *SQLStore) Sweep(ctx context.Context, now time.Time) (int, error) {
 		return 0, fmt.Errorf("commit sweep: %w", err)
 	}
 	return int(n), nil
+}
+
+// GetAlert implements Store.
+func (s *SQLStore) GetAlert(ctx context.Context, orgID, id uuid.UUID) (Alert, error) {
+	r, err := gen.New(s.d).GetAlert(ctx, gen.GetAlertParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Alert{}, ErrNotFound
+	}
+	if err != nil {
+		return Alert{}, fmt.Errorf("get alert: %w", err)
+	}
+	return toAlert(r), nil
+}
+
+// textOrNil turns "" into a nil *string, the narg idiom every optional
+// text Filter field below forwards to ListAlerts: an empty State or Scope
+// means "match any", never the literal empty string.
+func textOrNil[T ~string](v T) *string {
+	if v == "" {
+		return nil
+	}
+	s := string(v)
+	return &s
+}
+
+// ListAlerts implements Store.
+func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]Alert, error) {
+	rows, err := gen.New(s.d).ListAlerts(ctx, gen.ListAlertsParams{
+		OrgID: orgID, Open: f.Open, Severity: textOrNil(f.Severity), HostID: db.NullUUID(f.HostID),
+		Scope: textOrNil(f.Scope), Acknowledged: f.Acknowledged,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list alerts: %w", err)
+	}
+	out := make([]Alert, len(rows))
+	for i, r := range rows {
+		out[i] = toAlert(r)
+	}
+	return out, nil
+}
+
+// Events implements Store.
+func (s *SQLStore) Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Event, error) {
+	rows, err := gen.New(s.d).ListAlertEvents(ctx, gen.ListAlertEventsParams{OrgID: orgID, AlertID: alertID})
+	if err != nil {
+		return nil, fmt.Errorf("list alert events: %w", err)
+	}
+	out := make([]Event, len(rows))
+	for i, r := range rows {
+		out[i] = Event{ID: r.ID, At: r.At, Kind: r.Kind, ActorID: db.UUIDPtr(r.ActorID)}
+	}
+	return out, nil
+}
+
+// StateChanges implements Store.
+func (s *SQLStore) StateChanges(ctx context.Context, orgID uuid.UUID, subject Subject, from, to time.Time) ([]StateChange, error) {
+	rows, err := gen.New(s.d).ListStateChangesForTuple(ctx, gen.ListStateChangesForTupleParams{
+		OrgID: orgID, HostID: subject.HostID, CheckKey: subject.CheckKey, Item: subject.Item, Metric: subject.Metric,
+		FromAt: from, ToAt: to,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list state changes: %w", err)
+	}
+	out := make([]StateChange, len(rows))
+	for i, r := range rows {
+		out[i] = StateChange{At: r.At, FromState: rules.State(r.FromState), ToState: rules.State(r.ToState)}
+	}
+	return out, nil
+}
+
+// occurrenceAt decides whether one raw maintenance_windows row (r) covers
+// the instant now and, if so, the stretch's own Start/End — the same
+// question internal/maintenance.ActiveAt answers, kept here rather than
+// exported from that package because WindowsForHost is the only caller
+// and needs the stretch's bounds, not just a bool. A one-off window reads
+// its own starts_at/ends_at directly; a recurring one delegates to
+// maintenance.ActiveAt for the yes/no and maintenance.Occurrences — asked
+// for the sliver [now, now+1ns) — for the active stretch's own bounds,
+// both already proven against the same cron math (occur_test.go). A
+// window that does not evaluate (a hand-edited bad cron or timezone) is
+// reported inactive rather than failing the whole call — suppression
+// display is best-effort the same way OccurrencesBetween's own calendar
+// is, never a safety gate.
+func occurrenceAt(r gen.MaintenanceWindow, now time.Time) (maintenance.Occurrence, bool) {
+	reason := maintenance.Reason(r.Reason)
+	if r.Cron == nil {
+		starts, ends := db.TimePtr(r.StartsAt), db.TimePtr(r.EndsAt)
+		if starts == nil || ends == nil || now.Before(*starts) || !now.Before(*ends) {
+			return maintenance.Occurrence{}, false
+		}
+		return maintenance.Occurrence{WindowID: r.ID, Reason: reason, Start: *starts, End: *ends}, true
+	}
+	if r.Timezone == nil || r.DurationSeconds == nil {
+		return maintenance.Occurrence{}, false
+	}
+	w := maintenance.Window{
+		ID: r.ID, Reason: reason, Cron: *r.Cron, Timezone: *r.Timezone,
+		Duration: time.Duration(*r.DurationSeconds) * time.Second,
+	}
+	active, err := maintenance.ActiveAt(w, now)
+	if err != nil || !active {
+		return maintenance.Occurrence{}, false
+	}
+	occs, _, err := maintenance.Occurrences(w, now, now.Add(time.Nanosecond), 1)
+	if err != nil || len(occs) == 0 {
+		return maintenance.Occurrence{}, false
+	}
+	return occs[0], true
+}
+
+// WindowsForHost implements Store.
+func (s *SQLStore) WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, now time.Time) ([]maintenance.Occurrence, error) {
+	rows, err := gen.New(s.d).ListMaintenanceWindowsForHost(ctx, gen.ListMaintenanceWindowsForHostParams{
+		OrgID: orgID, HostID: db.NullUUID(&hostID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list maintenance windows for host: %w", err)
+	}
+	var out []maintenance.Occurrence
+	for _, r := range rows {
+		if occ, active := occurrenceAt(r, now); active {
+			out = append(out, occ)
+		}
+	}
+	return out, nil
+}
+
+// writeAlertAction runs fn inside its own transaction on the bare pool —
+// the same posture Sweep uses above, for the same reason: an operator
+// action has no caller-owned tx to run inside, unlike Execute. The row
+// update and its matching event (where one exists) commit or roll back
+// together, never partially.
+func (s *SQLStore) writeAlertAction(ctx context.Context, fn func(q *gen.Queries) error) error {
+	tx, err := s.d.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	if err := fn(gen.New(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// Acknowledge implements Store.
+func (s *SQLStore) Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, severity rules.State, note string, at time.Time) error {
+	return s.writeAlertAction(ctx, func(q *gen.Queries) error {
+		sev := string(severity)
+		n, err := q.AcknowledgeAlert(ctx, gen.AcknowledgeAlertParams{
+			At: pgtype.Timestamptz{Time: at, Valid: true}, Actor: db.NullUUID(&actor), Severity: &sev, Note: note,
+			OrgID: orgID, ID: id,
+		})
+		if err != nil {
+			return fmt.Errorf("acknowledge alert: %w", err)
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: alert is closed", ErrInvalidInput)
+		}
+		return q.InsertAlertActorEvent(ctx, gen.InsertAlertActorEventParams{
+			OrgID: orgID, AlertID: id, At: at, Kind: eventAcknowledged, ActorID: db.NullUUID(&actor),
+		})
+	})
+}
+
+// Unacknowledge implements Store. actor and at are unused: no event is
+// written (this method's own doc comment on Store explains why), so there
+// is nothing here to stamp either against — both stay in the signature
+// for symmetry with Snooze/Unsnooze, which do write one.
+func (s *SQLStore) Unacknowledge(ctx context.Context, orgID, id, actor uuid.UUID, at time.Time) error {
+	_, _ = actor, at
+	return s.writeAlertAction(ctx, func(q *gen.Queries) error {
+		n, err := q.UnacknowledgeAlert(ctx, gen.UnacknowledgeAlertParams{OrgID: orgID, ID: id})
+		if err != nil {
+			return fmt.Errorf("unacknowledge alert: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// Snooze implements Store.
+func (s *SQLStore) Snooze(ctx context.Context, orgID, id, actor uuid.UUID, until *time.Time, untilChange bool, at time.Time) error {
+	return s.writeAlertAction(ctx, func(q *gen.Queries) error {
+		n, err := q.SnoozeAlert(ctx, gen.SnoozeAlertParams{
+			Until: db.NullTime(until), UntilChange: untilChange, OrgID: orgID, ID: id,
+		})
+		if err != nil {
+			return fmt.Errorf("snooze alert: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return q.InsertAlertActorEvent(ctx, gen.InsertAlertActorEventParams{
+			OrgID: orgID, AlertID: id, At: at, Kind: eventSnoozed, ActorID: db.NullUUID(&actor),
+		})
+	})
+}
+
+// Unsnooze implements Store.
+func (s *SQLStore) Unsnooze(ctx context.Context, orgID, id, actor uuid.UUID, at time.Time) error {
+	return s.writeAlertAction(ctx, func(q *gen.Queries) error {
+		n, err := q.UnsnoozeAlert(ctx, gen.UnsnoozeAlertParams{OrgID: orgID, ID: id})
+		if err != nil {
+			return fmt.Errorf("unsnooze alert: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return q.InsertAlertActorEvent(ctx, gen.InsertAlertActorEventParams{
+			OrgID: orgID, AlertID: id, At: at, Kind: eventUnsnoozed, ActorID: db.NullUUID(&actor),
+		})
+	})
 }

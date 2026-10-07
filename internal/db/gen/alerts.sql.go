@@ -13,6 +13,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acknowledgeAlert = `-- name: AcknowledgeAlert :execrows
+UPDATE alerts SET acknowledged_at = $1, acknowledged_by = $2, acknowledged_severity = $3, ack_note = $4
+WHERE org_id = $5 AND id = $6 AND closed_at IS NULL
+`
+
+type AcknowledgeAlertParams struct {
+	At       pgtype.Timestamptz `json:"at"`
+	Actor    pgtype.UUID        `json:"actor"`
+	Severity *string            `json:"severity"`
+	Note     string             `json:"note"`
+	OrgID    uuid.UUID          `json:"org_id"`
+	ID       uuid.UUID          `json:"id"`
+}
+
+// Service.Acknowledge's own write: acknowledged_severity is the alert's
+// *current* severity at the moment of acknowledging (decision 2 — a later
+// rise past this value is what voids it, Reconcile's own advance), passed
+// in by the caller rather than read here, since Service already has it
+// from the GetAlert it issued to validate the alert is still open.
+// closed_at IS NULL in the WHERE is that same validation, re-asserted at
+// the statement that actually writes: zero rows affected means the alert
+// closed in the gap between Service's check and this statement, which
+// Store.Acknowledge reports as ErrInvalidInput, not silently succeeding.
+func (q *Queries) AcknowledgeAlert(ctx context.Context, arg AcknowledgeAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, acknowledgeAlert,
+		arg.At,
+		arg.Actor,
+		arg.Severity,
+		arg.Note,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const closeAlert = `-- name: CloseAlert :exec
 UPDATE alerts SET closed_at = $1, closed_reason = $2
 WHERE id = $3 AND org_id = $4
@@ -37,6 +75,51 @@ func (q *Queries) CloseAlert(ctx context.Context, arg CloseAlertParams) error {
 		arg.OrgID,
 	)
 	return err
+}
+
+const getAlert = `-- name: GetAlert :one
+
+SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping FROM alerts WHERE org_id = $1 AND id = $2
+`
+
+type GetAlertParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// Task 6, spec docs/superpowers/specs/2026-10-06-v0.4a-alerts-design.md,
+// "Suppression": the read and operator-action statements alerts.Service
+// issues directly on the bare pool (never the evaluator's tx above) —
+// List, Get, Acknowledge, Snooze and their reversals. Unlike the
+// lifecycle statements above, these run from the API's own request
+// handling, so RLS already does its job; org_id is still named explicitly
+// in every WHERE clause anyway, the convention every other store in this
+// schema keeps regardless (see e.g. maintenance.sql's own GetMaintenanceWindow).
+func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (Alert, error) {
+	row := q.db.QueryRow(ctx, getAlert, arg.OrgID, arg.ID)
+	var i Alert
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.HostID,
+		&i.Scope,
+		&i.CheckKey,
+		&i.Item,
+		&i.Metric,
+		&i.OpenedAt,
+		&i.Severity,
+		&i.PeakSeverity,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.AcknowledgedAt,
+		&i.AcknowledgedBy,
+		&i.AcknowledgedSeverity,
+		&i.AckNote,
+		&i.SnoozedUntil,
+		&i.SnoozeUntilChange,
+		&i.WasFlapping,
+	)
+	return i, err
 }
 
 const getAlertSeverity = `-- name: GetAlertSeverity :one
@@ -123,6 +206,35 @@ func (q *Queries) InsertAlert(ctx context.Context, arg InsertAlertParams) (uuid.
 	return id, err
 }
 
+const insertAlertActorEvent = `-- name: InsertAlertActorEvent :exec
+INSERT INTO alert_events (org_id, alert_id, at, kind, actor_id)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertAlertActorEventParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	AlertID uuid.UUID   `json:"alert_id"`
+	At      time.Time   `json:"at"`
+	Kind    string      `json:"kind"`
+	ActorID pgtype.UUID `json:"actor_id"`
+}
+
+// The human-caused counterpart to InsertAlertEvent above: acknowledged,
+// snoozed and unsnoozed all name their actor (migration 00049's own
+// ON DELETE SET NULL on alert_events.actor_id is exactly for this column).
+// There is no 'unacknowledged' kind in the CHECK — Store.Unacknowledge
+// writes no event at all, so this is never called for it.
+func (q *Queries) InsertAlertActorEvent(ctx context.Context, arg InsertAlertActorEventParams) error {
+	_, err := q.db.Exec(ctx, insertAlertActorEvent,
+		arg.OrgID,
+		arg.AlertID,
+		arg.At,
+		arg.Kind,
+		arg.ActorID,
+	)
+	return err
+}
+
 const insertAlertEvent = `-- name: InsertAlertEvent :exec
 INSERT INTO alert_events (org_id, alert_id, at, kind)
 VALUES ($1, $2, $3, $4)
@@ -147,6 +259,196 @@ func (q *Queries) InsertAlertEvent(ctx context.Context, arg InsertAlertEventPara
 		arg.Kind,
 	)
 	return err
+}
+
+const listAlertEvents = `-- name: ListAlertEvents :many
+SELECT id, org_id, alert_id, at, kind, actor_id, payload FROM alert_events WHERE org_id = $1 AND alert_id = $2 ORDER BY at, id
+`
+
+type ListAlertEventsParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	AlertID uuid.UUID `json:"alert_id"`
+}
+
+// Get's own timeline, the event half (timeline.go's mergeTimeline merges
+// this with ListStateChangesForTuple below). Ordered by (at, id): id only
+// ever breaks a tie between two events this package itself wrote at the
+// very same instant (raiseSeverity's own severity_raised + ack_voided
+// pair), which carries no further meaning worth encoding.
+func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams) ([]AlertEvent, error) {
+	rows, err := q.db.Query(ctx, listAlertEvents, arg.OrgID, arg.AlertID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AlertEvent
+	for rows.Next() {
+		var i AlertEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.AlertID,
+			&i.At,
+			&i.Kind,
+			&i.ActorID,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAlerts = `-- name: ListAlerts :many
+SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping FROM alerts
+WHERE org_id = $1
+  AND ($2::boolean IS NULL
+       OR ($2::boolean AND closed_at IS NULL)
+       OR (NOT $2::boolean AND closed_at IS NOT NULL))
+  AND ($3::text IS NULL OR severity = $3::text)
+  AND ($4::uuid IS NULL OR host_id = $4::uuid)
+  AND ($5::text IS NULL OR scope = $5::text)
+  AND ($6::boolean IS NULL
+       OR ($6::boolean AND acknowledged_at IS NOT NULL)
+       OR (NOT $6::boolean AND acknowledged_at IS NULL))
+ORDER BY opened_at DESC
+`
+
+type ListAlertsParams struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	Open         *bool       `json:"open"`
+	Severity     *string     `json:"severity"`
+	HostID       pgtype.UUID `json:"host_id"`
+	Scope        *string     `json:"scope"`
+	Acknowledged *bool       `json:"acknowledged"`
+}
+
+// Service.List's own Filter, forwarded almost verbatim: each optional
+// field matches everything when NULL, the same "param IS NULL OR
+// <condition>" idiom hosts.sql's own ListHosts and rules.sql's own
+// ListRules already use. Muted has no column to filter on — Service.List
+// applies it in Go, after Mute has run.
+func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]Alert, error) {
+	rows, err := q.db.Query(ctx, listAlerts,
+		arg.OrgID,
+		arg.Open,
+		arg.Severity,
+		arg.HostID,
+		arg.Scope,
+		arg.Acknowledged,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Alert
+	for rows.Next() {
+		var i Alert
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.HostID,
+			&i.Scope,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.OpenedAt,
+			&i.Severity,
+			&i.PeakSeverity,
+			&i.ClosedAt,
+			&i.ClosedReason,
+			&i.AcknowledgedAt,
+			&i.AcknowledgedBy,
+			&i.AcknowledgedSeverity,
+			&i.AckNote,
+			&i.SnoozedUntil,
+			&i.SnoozeUntilChange,
+			&i.WasFlapping,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMaintenanceWindowsForHost = `-- name: ListMaintenanceWindowsForHost :many
+WITH RECURSIVE ancestors AS (
+  SELECT g.id, g.parent_id FROM inventory_groups g
+    JOIN inventory_memberships m ON m.group_id = g.id
+    WHERE m.org_id = $1 AND m.host_id = $2
+  UNION
+  SELECT p.id, p.parent_id FROM inventory_groups p
+    JOIN ancestors a ON p.id = a.parent_id
+)
+SELECT w.id, w.org_id, w.name, w.target_kind, w.host_id, w.group_id, w.starts_at, w.ends_at, w.cron, w.duration_seconds, w.timezone, w.note, w.created_by, w.created_at, w.updated_at, w.revision, w.reason, w.monitoring_group_id FROM maintenance_windows w
+WHERE w.org_id = $1
+  AND (w.target_kind = 'org'
+       OR (w.target_kind = 'host' AND w.host_id = $2)
+       OR (w.target_kind = 'inventory_group' AND w.group_id IN (SELECT id FROM ancestors)))
+`
+
+type ListMaintenanceWindowsForHostParams struct {
+	OrgID  uuid.UUID   `json:"org_id"`
+	HostID pgtype.UUID `json:"host_id"`
+}
+
+// Store.WindowsForHost's own candidate set: every maintenance window
+// whose target could cover host_id — the organization, the host itself,
+// or an inventory group host_id is a member of or descends into through
+// any chain of parent_id (the recursive CTE walks from host_id's own
+// direct memberships up to the root, so a window on an ancestor group
+// still matches). Time is not filtered here — a recurring window's own
+// cron cannot be evaluated in SQL — so this can return a window that is
+// not actually active right now; occurrenceAt (store_sql.go) is what
+// decides that, in Go, the same split ActiveAt/Occurrences already draw
+// in internal/maintenance. Monitoring-group targets are deliberately not
+// resolved here, the same gap internal/maintenance.Service's own
+// HostsInMaintenance leaves for the same target kind today.
+func (q *Queries) ListMaintenanceWindowsForHost(ctx context.Context, arg ListMaintenanceWindowsForHostParams) ([]MaintenanceWindow, error) {
+	rows, err := q.db.Query(ctx, listMaintenanceWindowsForHost, arg.OrgID, arg.HostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MaintenanceWindow
+	for rows.Next() {
+		var i MaintenanceWindow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.TargetKind,
+			&i.HostID,
+			&i.GroupID,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.Cron,
+			&i.DurationSeconds,
+			&i.Timezone,
+			&i.Note,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Revision,
+			&i.Reason,
+			&i.MonitoringGroupID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listOpenAlertsForHost = `-- name: ListOpenAlertsForHost :many
@@ -219,6 +521,68 @@ func (q *Queries) ListOpenAlertsForHost(ctx context.Context, arg ListOpenAlertsF
 	return items, nil
 }
 
+const listStateChangesForTuple = `-- name: ListStateChangesForTuple :many
+SELECT at, org_id, host_id, check_key, item, metric, from_state, to_state, rule_id, value, label FROM check_state_changes
+WHERE org_id = $1 AND host_id = $2 AND check_key = $3 AND item = $4 AND metric = $5
+  AND at >= $6 AND at <= $7
+ORDER BY at
+`
+
+type ListStateChangesForTupleParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	FromAt   time.Time `json:"from_at"`
+	ToAt     time.Time `json:"to_at"`
+}
+
+// Get's own timeline, the state-change half: the tuple's own
+// check_state_changes rows inside the alert's lifetime, [from_at, to_at]
+// inclusive at both ends (the brief's own "[opened_at, closed_at]").
+// Service.Get never calls this for a scope='host' alert — see its own
+// doc comment for why.
+func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateChangesForTupleParams) ([]CheckStateChange, error) {
+	rows, err := q.db.Query(ctx, listStateChangesForTuple,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+		arg.FromAt,
+		arg.ToAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CheckStateChange
+	for rows.Next() {
+		var i CheckStateChange
+		if err := rows.Scan(
+			&i.At,
+			&i.OrgID,
+			&i.HostID,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.FromState,
+			&i.ToState,
+			&i.RuleID,
+			&i.Value,
+			&i.Label,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const raiseAlertSeverity = `-- name: RaiseAlertSeverity :exec
 UPDATE alerts SET severity = $1,
   peak_severity = CASE WHEN $2::int > (
@@ -272,6 +636,35 @@ func (q *Queries) SetAlertFlapping(ctx context.Context, arg SetAlertFlappingPara
 	return err
 }
 
+const snoozeAlert = `-- name: SnoozeAlert :execrows
+UPDATE alerts SET snoozed_until = $1, snooze_until_change = $2
+WHERE org_id = $3 AND id = $4
+`
+
+type SnoozeAlertParams struct {
+	Until       pgtype.Timestamptz `json:"until"`
+	UntilChange bool               `json:"until_change"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	ID          uuid.UUID          `json:"id"`
+}
+
+// Service.Snooze's own write, after it has already rejected the
+// combinations migration 00049 leaves the table itself unable to reject
+// (both until and until_change, or an until in the past) — this statement
+// trusts its caller the way RaiseAlertSeverity already trusts Execute's.
+func (q *Queries) SnoozeAlert(ctx context.Context, arg SnoozeAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, snoozeAlert,
+		arg.Until,
+		arg.UntilChange,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const sweepStaleAlerts = `-- name: SweepStaleAlerts :execrows
 WITH swept AS (
   UPDATE alerts a SET closed_at = $1, closed_reason = 'stale'
@@ -307,6 +700,42 @@ SELECT org_id, id, $1, 'closed' FROM swept
 // means the same thing either way.
 func (q *Queries) SweepStaleAlerts(ctx context.Context, now time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, sweepStaleAlerts, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unacknowledgeAlert = `-- name: UnacknowledgeAlert :execrows
+UPDATE alerts SET acknowledged_at = NULL, acknowledged_by = NULL, acknowledged_severity = NULL, ack_note = ''
+WHERE org_id = $1 AND id = $2
+`
+
+type UnacknowledgeAlertParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UnacknowledgeAlert(ctx context.Context, arg UnacknowledgeAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unacknowledgeAlert, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unsnoozeAlert = `-- name: UnsnoozeAlert :execrows
+UPDATE alerts SET snoozed_until = NULL, snooze_until_change = false
+WHERE org_id = $1 AND id = $2
+`
+
+type UnsnoozeAlertParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UnsnoozeAlert(ctx context.Context, arg UnsnoozeAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unsnoozeAlert, arg.OrgID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
