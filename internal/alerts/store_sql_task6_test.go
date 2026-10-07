@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -188,7 +189,7 @@ func TestListAlertsFiltersBySeverityAndOpen(t *testing.T) {
 	}
 
 	warnSev := rules.StateWarn
-	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{Severity: warnSev})
+	rows, _, err := st.ListAlerts(context.Background(), org, alerts.Filter{Severity: warnSev}, "", 0)
 	if err != nil {
 		t.Fatalf("list by severity: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestListAlertsFiltersBySeverityAndOpen(t *testing.T) {
 	}
 
 	isOpen := true
-	rows, err = st.ListAlerts(context.Background(), org, alerts.Filter{Open: &isOpen})
+	rows, _, err = st.ListAlerts(context.Background(), org, alerts.Filter{Open: &isOpen}, "", 0)
 	if err != nil {
 		t.Fatalf("list by open: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestGetAlertAndListAlertsNameEachAlertsOwnHost(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{})
+	rows, _, err := st.ListAlerts(context.Background(), org, alerts.Filter{}, "", 0)
 	if err != nil {
 		t.Fatalf("list alerts: %v", err)
 	}
@@ -323,7 +324,7 @@ func TestListAlertsAcknowledgedFilterUsesCoverageNotMerePresence(t *testing.T) {
 	}
 
 	trueF := true
-	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &trueF})
+	rows, _, err := st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &trueF}, "", 0)
 	if err != nil {
 		t.Fatalf("list acknowledged=true: %v", err)
 	}
@@ -334,7 +335,7 @@ func TestListAlertsAcknowledgedFilterUsesCoverageNotMerePresence(t *testing.T) {
 	}
 
 	falseF := false
-	rows, err = st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &falseF})
+	rows, _, err = st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &falseF}, "", 0)
 	if err != nil {
 		t.Fatalf("list acknowledged=false: %v", err)
 	}
@@ -421,7 +422,7 @@ func TestListAlertsAndGetAlertAgreeOnAFullyPopulatedRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAlert: %v", err)
 	}
-	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{})
+	rows, _, err := st.ListAlerts(context.Background(), org, alerts.Filter{}, "", 0)
 	if err != nil {
 		t.Fatalf("ListAlerts: %v", err)
 	}
@@ -880,5 +881,117 @@ func TestSnoozeRejectsAnAlreadyClosedAlert(t *testing.T) {
 	}
 	if got.SnoozedUntil != nil {
 		t.Fatalf("SnoozedUntil = %v after a rejected Snooze on a closed alert, want nil", got.SnoozedUntil)
+	}
+}
+
+// TestListAlertsPaginates is v0.4a's final review, Important: the alerts
+// table has no retention policy by design, the feature's own front page
+// defaults to no state filter, and the query had no LIMIT — so every page
+// load read every alert the organization had ever opened. It now pages on
+// the (opened_at, id) keyset its ORDER BY already provided.
+//
+// The test walks the whole set one row at a time, which is what proves the
+// cursor is a keyset and not an offset: every row must appear exactly once
+// and in the server's own newest-first order, and the last page must hand
+// back an empty cursor rather than looping.
+func TestListAlertsPaginates(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+
+	base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
+	const total = 5
+	for i := range total {
+		insertAlertAt(t, d, org, host, "disk", "/m"+strconv.Itoa(i), "used_pct", base.Add(time.Duration(i)*time.Minute))
+	}
+
+	var seen []uuid.UUID
+	cursor := ""
+	for page := 0; page <= total+1; page++ {
+		rows, next, err := st.ListAlerts(ctx, org, alerts.Filter{}, cursor, 1)
+		if err != nil {
+			t.Fatalf("list page %d: %v", page, err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		if len(rows) != 1 {
+			t.Fatalf("page %d returned %d rows, want the limit of 1", page, len(rows))
+		}
+		seen = append(seen, rows[0].ID)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(seen) != total {
+		t.Fatalf("walking one row at a time saw %d alerts, want %d", len(seen), total)
+	}
+	unique := map[uuid.UUID]bool{}
+	for _, id := range seen {
+		if unique[id] {
+			t.Fatalf("alert %s appeared on two pages", id)
+		}
+		unique[id] = true
+	}
+
+	// The same set unpaginated, to pin that the order the pages walked is
+	// the server's own newest-first one and not an artefact of paging.
+	all, next, err := st.ListAlerts(ctx, org, alerts.Filter{}, "", total)
+	if err != nil {
+		t.Fatalf("list unpaginated: %v", err)
+	}
+	if next != "" {
+		t.Fatalf("next cursor = %q on a page that holds every alert, want empty", next)
+	}
+	for i, a := range all {
+		if a.ID != seen[i] {
+			t.Fatalf("row %d: paged walk saw %s, one page sees %s", i, seen[i], a.ID)
+		}
+	}
+}
+
+// TestListAlertsRejectsAMalformedCursor: a ?cursor= value EncodeCursor did
+// not produce is the caller's mistake, and the store says so with a
+// sentinel the API maps to 400 rather than letting it surface as a 500.
+func TestListAlertsRejectsAMalformedCursor(t *testing.T) {
+	d := testdb.Open(t)
+	org, _ := seedHost(t, d)
+	_, _, err := alerts.NewSQLStore(d).ListAlerts(context.Background(), org, alerts.Filter{}, "not-a-cursor", 10)
+	if !errors.Is(err, alerts.ErrInvalidCursor) {
+		t.Fatalf("ListAlerts with a malformed cursor = %v, want ErrInvalidCursor", err)
+	}
+}
+
+// TestAlertCursorRoundTrips pins the format itself: the pair the keyset
+// resumes from must survive encoding and decoding exactly, to the
+// nanosecond, or the first row of the next page is silently the last row
+// of the previous one again.
+func TestAlertCursorRoundTrips(t *testing.T) {
+	at := time.Date(2026, 10, 7, 14, 3, 7, 123456789, time.UTC)
+	id := uuid.Must(uuid.NewV7())
+	gotAt, gotID, err := alerts.DecodeCursor(alerts.EncodeCursor(at, id))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !gotAt.Equal(at) || gotID != id {
+		t.Fatalf("round trip = (%v, %s), want (%v, %s)", gotAt, gotID, at, id)
+	}
+	if gotAt, gotID, err := alerts.DecodeCursor(""); err != nil || !gotAt.IsZero() || gotID != uuid.Nil {
+		t.Fatalf("the empty cursor decoded to (%v, %s, %v), want the zero first-page values", gotAt, gotID, err)
+	}
+}
+
+// insertAlertAt seeds one open tuple alert with an explicit opened_at, so
+// the pagination tests above have a known keyset order to walk.
+func insertAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, checkKey, item, metric string, openedAt time.Time) {
+	t.Helper()
+	_, err := d.Pool().Exec(context.Background(), `
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
+		VALUES ($1, $2, 'tuple', $3, $4, $5, $6, 'warn', 'warn')`,
+		org, host, checkKey, item, metric, openedAt)
+	if err != nil {
+		t.Fatalf("insert alert at %v: %v", openedAt, err)
 	}
 }

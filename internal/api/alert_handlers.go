@@ -156,11 +156,20 @@ type alertListInput struct {
 	Scope        string `query:"scope" doc:"tuple or host"`
 	Acknowledged string `query:"acknowledged" doc:"true or false"`
 	Muted        string `query:"muted" doc:"true or false"`
+	Cursor       string `query:"cursor" doc:"Opaque cursor from a previous page's next_cursor"`
+	Limit        int    `query:"limit" doc:"Page size; the server clamps it"`
 }
 
 type alertListOutput struct {
 	Body struct {
 		Alerts []AlertDTO `json:"alerts"`
+		// NextCursor is empty on the last page, the same contract the
+		// hosts list already gives. A page can be shorter than the limit
+		// while this is still set — Service.List applies the `muted`
+		// filter after the page is cut (see its own doc comment) — so a
+		// client follows this until it comes back empty rather than until
+		// a page looks short.
+		NextCursor string `json:"next_cursor"`
 	}
 }
 
@@ -207,7 +216,7 @@ func registerAlertRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		list, err := deps.Alerts.List(ctx, scope.OrgID, f)
+		list, next, err := deps.Alerts.List(ctx, scope.OrgID, f, in.Cursor, in.Limit)
 		if err != nil {
 			return nil, mapAlertsErr(ctx, err)
 		}
@@ -216,6 +225,7 @@ func registerAlertRoutes(hapi huma.API, deps Deps) {
 		for i, v := range list {
 			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.HostName, v.Suppression)
 		}
+		out.Body.NextCursor = next
 		return out, nil
 	})
 
@@ -356,6 +366,10 @@ func parseAlertListFilter(in *alertListInput) (alerts.Filter, error) {
 // ErrNotFound -> 404.
 func mapAlertsErr(ctx context.Context, err error) error {
 	switch {
+	case errors.Is(err, alerts.ErrInvalidCursor):
+		// A malformed ?cursor= is the caller's mistake, not the server's —
+		// the same 400 mapHostsErr already gives hosts.ErrInvalidCursor.
+		return huma.Error400BadRequest("invalid cursor")
 	case errors.Is(err, alerts.ErrInvalidInput):
 		msg := err.Error()
 		return huma.Error422UnprocessableEntity(msg, &huma.ErrorDetail{Message: msg, Location: "body"})

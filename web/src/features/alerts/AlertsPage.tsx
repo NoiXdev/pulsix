@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Card, GridHeader } from '../../ui/table.tsx';
+import { Button } from '../../ui/button.tsx';
+import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import { useAlerts, useUnacknowledgeAlert, useUnsnoozeAlert, type AlertFilter } from '../../api/hooks/useAlerts.ts';
+import { useAlert, useAlerts, useUnacknowledgeAlert, useUnsnoozeAlert, type AlertFilter } from '../../api/hooks/useAlerts.ts';
 import { may } from '../../lib/roles.ts';
 import { AlertFilters } from './AlertFilters.tsx';
 import { AlertRow, ALERTS_COLUMNS } from './AlertRow.tsx';
+import { AlertTimeline } from './AlertTimeline.tsx';
 import { AcknowledgeDialog } from './AcknowledgeDialog.tsx';
 import { SnoozeDialog } from './SnoozeDialog.tsx';
 import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
@@ -33,6 +36,15 @@ import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
  * follows HostsListPage's own `?q=` pattern exactly: adjusting state
  * during render, not in an effect, because navigating here again with a
  * different `?host=` does not remount this component.
+ *
+ * Each row carries the same timeline disclosure HostAlertsCard already
+ * has, and for the reason the design doc opens with: "nobody can yet say
+ * host X was critical from 14:03 to 14:51 on Tuesday, Anna acknowledged it
+ * at 14:12". That card shows OPEN alerts only, so until this page had a
+ * disclosure of its own the API could answer that question and the GUI
+ * could not — for any alert that had ended (review finding, Important).
+ * The panel mounts useAlert only once a row is actually expanded, the
+ * same "pay for it when it is asked for" discipline the card holds.
  *
  * "Show every alert" (clearHostFilter) clears BOTH the local filter and
  * the URL's own `?host=` (fix round 3's own review finding): clearing
@@ -63,6 +75,7 @@ export function AlertsPage() {
   const unsnooze = useUnsnoozeAlert(org);
   const [acking, setAcking] = useState<string | null>(null);
   const [snoozing, setSnoozing] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const header = <h1 className="text-xl font-semibold">Alerts</h1>;
 
@@ -125,7 +138,7 @@ export function AlertsPage() {
     );
   }
 
-  const rows = (alerts.data?.alerts ?? []).map(alertToRowAlert);
+  const rows = (alerts.data?.pages.flatMap((p) => p.alerts ?? []) ?? []).map(alertToRowAlert);
 
   async function onUnacknowledge(a: AlertRowAlert) {
     try {
@@ -158,21 +171,62 @@ export function AlertsPage() {
           <span>Mute</span>
           <span />
         </GridHeader>
-        {rows.map((a) => (
-          <AlertRow
-            key={a.id}
-            alert={a}
-            canWrite={canWrite}
-            onAcknowledge={(alert) => setAcking(alert.id)}
-            onUnacknowledge={(alert) => void onUnacknowledge(alert)}
-            onSnooze={(alert) => setSnoozing(alert.id)}
-            onUnsnooze={(alert) => void onUnsnooze(alert)}
-          />
-        ))}
+        {rows.map((a) => {
+          const open = expanded === a.id;
+          return (
+            <div key={a.id}>
+              <AlertRow
+                alert={a}
+                canWrite={canWrite}
+                onAcknowledge={(alert) => setAcking(alert.id)}
+                onUnacknowledge={(alert) => void onUnacknowledge(alert)}
+                onSnooze={(alert) => setSnoozing(alert.id)}
+                onUnsnooze={(alert) => void onUnsnooze(alert)}
+              />
+              <div className="flex justify-end border-b border-border px-4 py-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  aria-expanded={open}
+                  aria-label={`Timeline for ${a.hostName}`}
+                  onClick={() => setExpanded(open ? null : a.id)}
+                >
+                  {open ? 'Hide timeline' : 'Show timeline'}
+                </Button>
+              </div>
+              {open && <AlertTimelinePanel org={org} alertId={a.id} />}
+            </div>
+          );
+        })}
         {rows.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No alerts match this view.</p>}
       </Card>
+      {alerts.hasNextPage && (
+        <LoadMoreButton onClick={() => void alerts.fetchNextPage()} loading={alerts.isFetchingNextPage} />
+      )}
       {acking && <AcknowledgeDialog org={org} alertId={acking} onClose={() => setAcking(null)} />}
       {snoozing && <SnoozeDialog org={org} alertId={snoozing} onClose={() => setSnoozing(null)} />}
     </>
+  );
+}
+
+/** AlertTimelinePanel is one row's disclosure body: GET /alerts/{id}, the
+ * only route that carries a timeline at all. Split out so useAlert is
+ * mounted — and therefore requested — only for a row somebody actually
+ * expanded, exactly as HostAlertsCard's own panel of the same name is. */
+function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) {
+  const detail = useAlert(org, alertId);
+
+  return (
+    <div className="border-b border-border p-3">
+      {detail.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          {detail.error instanceof Error ? detail.error.message : 'Could not read this alert\u2019s timeline.'}
+        </p>
+      )}
+      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {detail.data && (
+        <AlertTimeline entries={detail.data.alert.timeline ?? []} closedReason={detail.data.alert.closed_reason ?? ''} />
+      )}
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { AlertAcknowledgeInput, AlertSnoozeInput } from '../types.ts';
 
@@ -20,20 +20,51 @@ export interface AlertFilter {
   muted?: boolean;
 }
 
+/** Alerts fetched per page. The API defaults to 20 and clamps at 100
+ * (internal/alerts MaxListLimit); asking explicitly keeps the page size a
+ * decision made here rather than an accident of the server default — the
+ * same reasoning HOSTS_PAGE_SIZE already carries. */
+export const ALERTS_PAGE_SIZE = 50;
+
+/** useInvalidate refreshes BOTH keys an alert mutation can affect: the
+ * list (['alerts', org, filter]) and one alert's own detail
+ * (['alert', org, id]), which the timeline is read from. Targeting only
+ * the list was harmless while nothing rendered a timeline beside a write
+ * — HostAlertsCard offers no row actions — but AlertsPage now discloses
+ * the timeline right next to Acknowledge and Snooze, so an acknowledgement
+ * would have left the open timeline below it still showing the state
+ * before it (review finding, Minor 10). */
 function useInvalidate(org: string) {
   const qc = useQueryClient();
-  return () => void qc.invalidateQueries({ queryKey: ['alerts', org] });
+  return () => {
+    void qc.invalidateQueries({ queryKey: ['alerts', org] });
+    void qc.invalidateQueries({ queryKey: ['alert', org] });
+  };
 }
 
 /**
  * useAlerts reads the organization's alerts matching `filter`, newest
  * opened first (the server's own order — this page does not re-sort, the
- * same discipline FleetPage already holds).
+ * same discipline FleetPage already holds), one page per request,
+ * following the API's `next_cursor` through `fetchNextPage`.
+ *
+ * Paginated because the alerts table has no retention policy by design
+ * (an alert must outlive check_state_changes' 90 days), so an unpaginated
+ * list grew without limit and the page's own default filter asks for
+ * every state (review finding, Important). The shape is useHosts' own,
+ * down to the page size constant.
+ *
+ * `next_cursor` is the only thing that says whether another page exists:
+ * the server applies the `muted` filter after cutting the page, so a page
+ * can come back shorter than ALERTS_PAGE_SIZE — even empty — with more
+ * still to come. getNextPageParam therefore reads the cursor and never
+ * the row count.
  */
 export function useAlerts(org: string, filter: AlertFilter = {}, enabled = true) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['alerts', org, filter],
-    queryFn: () =>
+    initialPageParam: '',
+    queryFn: ({ pageParam }) =>
       unwrap(
         api.GET('/api/v1/orgs/{org}/alerts', {
           params: {
@@ -45,10 +76,13 @@ export function useAlerts(org: string, filter: AlertFilter = {}, enabled = true)
               scope: filter.scope ?? '',
               acknowledged: filter.acknowledged === undefined ? '' : String(filter.acknowledged),
               muted: filter.muted === undefined ? '' : String(filter.muted),
+              cursor: pageParam || undefined,
+              limit: ALERTS_PAGE_SIZE,
             },
           },
         }),
       ),
+    getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     enabled: !!org && enabled,
   });
 }

@@ -22,8 +22,11 @@ package alerts
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,7 +65,71 @@ const (
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrInvalidCursor is what DecodeCursor returns for a ?cursor= value
+	// EncodeCursor did not produce, so the API can answer 400 rather than
+	// 500 — the same sentinel hosts and audit each expose for their own
+	// paginated lists.
+	ErrInvalidCursor = errors.New("invalid cursor")
 )
+
+// DefaultListLimit and MaxListLimit bound List's page size:
+// DefaultListLimit when the caller asks for none (limit <= 0),
+// MaxListLimit as a hard ceiling on however large a page they do ask for.
+// The numbers are hosts' own (internal/hosts), since the Alerts page is
+// the same kind of list read by the same kind of operator.
+const (
+	DefaultListLimit = 20
+	MaxListLimit     = 100
+)
+
+// clampLimit applies those two bounds.
+func clampLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return DefaultListLimit
+	case limit > MaxListLimit:
+		return MaxListLimit
+	}
+	return limit
+}
+
+// EncodeCursor and DecodeCursor are the keyset-cursor format ListAlerts
+// pages on: exactly the (opened_at, id) pair a stable
+// ORDER BY opened_at DESC, id DESC needs to resume after the last row of
+// the previous page. Opaque to callers, and the same shape
+// audit.EncodeCursor already gives its own (at, id) feed — nanoseconds
+// rather than a formatted instant, so the cursor survives a round trip
+// without depending on a timestamp layout.
+func EncodeCursor(openedAt time.Time, id uuid.UUID) string {
+	raw := strconv.FormatInt(openedAt.UnixNano(), 10) + "|" + id.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// DecodeCursor reverses EncodeCursor. An empty cursor decodes to the zero
+// time and uuid.Nil with no error: that is the "first page" case, not a
+// malformed cursor.
+func DecodeCursor(cursor string) (time.Time, uuid.UUID, error) {
+	if cursor == "" {
+		return time.Time{}, uuid.Nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, uuid.Nil, ErrInvalidCursor
+	}
+	nanoStr, idStr, ok := strings.Cut(string(raw), "|")
+	if !ok {
+		return time.Time{}, uuid.Nil, ErrInvalidCursor
+	}
+	nano, err := strconv.ParseInt(nanoStr, 10, 64)
+	if err != nil {
+		return time.Time{}, uuid.Nil, ErrInvalidCursor
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return time.Time{}, uuid.Nil, ErrInvalidCursor
+	}
+	return time.Unix(0, nano), id, nil
+}
 
 // Store is what Task 7's evaluator wiring calls to carry out one host's
 // Reconcile verdict, what the ticker calls once per tick for the sweep
@@ -89,9 +156,13 @@ type Store interface {
 	// join names org_id). ErrNotFound when no such alert exists in this
 	// organization.
 	GetAlert(ctx context.Context, orgID, id uuid.UUID) (AlertWithHost, error)
-	// ListAlerts returns the organization's alerts matching f, newest
-	// opened first, each with its host's name.
-	ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]AlertWithHost, error)
+	// ListAlerts returns one page of the organization's alerts matching f,
+	// newest opened first, each with its host's name, plus the cursor for
+	// the next page (empty when there is none). cursor is opaque — see
+	// EncodeCursor/DecodeCursor — and limit arrives already clamped by
+	// Service.List, so an implementation may trust it (SQLStore clamps it
+	// again anyway; see there).
+	ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]AlertWithHost, string, error)
 	// Events returns alertID's own alert_events, in order — half of
 	// Get's timeline (the other half is StateChanges below).
 	Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Event, error)
@@ -465,19 +536,62 @@ func textOrNil[T ~string](v T) *string {
 }
 
 // ListAlerts implements Store.
-func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]AlertWithHost, error) {
+// It asks the query for one row more than limit — the standard way to
+// learn "is there a next page" without a second COUNT, the same technique
+// hosts.SQLStore.ListHosts and audit.SQLStore.List both use — and encodes
+// the cursor from the last row it actually returns.
+func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]AlertWithHost, string, error) {
+	// Clamped here as well as in Service.List, through the same function,
+	// so the two can never disagree and a direct call (a test, a future
+	// caller) cannot reach the slicing below with a limit of zero — which
+	// would index out[-1]. Service clamps so that every Store
+	// implementation, fakes included, is handed a sane page size; this
+	// clamps so that this one cannot be got wrong at all.
+	limit = clampLimit(limit)
+	cursorAt, cursorID, err := DecodeCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
 	rows, err := gen.New(s.d).ListAlerts(ctx, gen.ListAlertsParams{
 		OrgID: orgID, Open: f.Open, Severity: textOrNil(f.Severity), HostID: db.NullUUID(f.HostID),
 		Scope: textOrNil(f.Scope), Acknowledged: f.Acknowledged,
+		CursorOpenedAt: cursorTimeToPg(cursor, cursorAt), CursorID: cursorIDToPg(cursor, cursorID),
+		RowLimit: int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.List before it ever reaches here
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list alerts: %w", err)
+		return nil, "", fmt.Errorf("list alerts: %w", err)
 	}
 	out := make([]AlertWithHost, len(rows))
 	for i, r := range rows {
 		out[i] = toAlertFromListRow(r)
 	}
-	return out, nil
+	next := ""
+	if len(out) > limit {
+		last := out[limit-1]
+		next = EncodeCursor(last.OpenedAt, last.ID)
+		out = out[:limit]
+	}
+	return out, next, nil
+}
+
+// cursorTimeToPg and cursorIDToPg return an unset pgtype value for the
+// empty cursor — the "first page" case. DecodeCursor already reports the
+// zero time and uuid.Nil for it, but the query tests "cursor_opened_at IS
+// NULL" to disable the keyset condition, and a zero timestamptz marked
+// Valid is not NULL. The same pair hosts.SQLStore and audit.SQLStore each
+// carry, for the same reason.
+func cursorTimeToPg(cursor string, at time.Time) pgtype.Timestamptz {
+	if cursor == "" {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: at, Valid: true}
+}
+
+func cursorIDToPg(cursor string, id uuid.UUID) pgtype.UUID {
+	if cursor == "" {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 // Events implements Store.

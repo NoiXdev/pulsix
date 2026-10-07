@@ -8,6 +8,7 @@ package alerts_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -134,9 +135,22 @@ func (f *fakeStore) GetAlert(_ context.Context, _, id uuid.UUID) (alerts.AlertWi
 	return alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]}, nil
 }
 
-func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Filter) ([]alerts.AlertWithHost, error) {
+// ListAlerts mirrors the real query's own contract closely enough that
+// Service's pagination is testable here: the same (opened_at DESC, id
+// DESC) order, the same keyset resume, and the same "one row past limit
+// decides whether there is a next page". The map it iterates has no order
+// of its own, so the sort is load-bearing rather than cosmetic — without
+// it a paged result would differ run to run.
+func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Filter, cursor string, limit int) ([]alerts.AlertWithHost, string, error) {
 	if f.listErr != nil {
-		return nil, f.listErr
+		return nil, "", f.listErr
+	}
+	cursorAt, cursorID, err := alerts.DecodeCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	if limit <= 0 {
+		limit = alerts.DefaultListLimit // Service clamps; this guards a direct call
 	}
 	var out []alerts.AlertWithHost
 	for _, a := range f.alerts {
@@ -159,9 +173,33 @@ func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Fil
 		if filter.Acknowledged != nil && *filter.Acknowledged != covered {
 			continue
 		}
+		if cursor != "" && !beforeKeyset(a, cursorAt, cursorID) {
+			continue
+		}
 		out = append(out, alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]})
 	}
-	return out, nil
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].OpenedAt.Equal(out[j].OpenedAt) {
+			return out[i].OpenedAt.After(out[j].OpenedAt)
+		}
+		return out[i].ID.String() > out[j].ID.String()
+	})
+	next := ""
+	if len(out) > limit {
+		last := out[limit-1]
+		next = alerts.EncodeCursor(last.OpenedAt, last.ID)
+		out = out[:limit]
+	}
+	return out, next, nil
+}
+
+// beforeKeyset is the fake's own "(opened_at, id) < (cursor_at,
+// cursor_id)" — the row comparison the real query makes in SQL.
+func beforeKeyset(a alerts.Alert, cursorAt time.Time, cursorID uuid.UUID) bool {
+	if !a.OpenedAt.Equal(cursorAt) {
+		return a.OpenedAt.Before(cursorAt)
+	}
+	return a.ID.String() < cursorID.String()
 }
 
 func (f *fakeStore) Events(_ context.Context, _, alertID uuid.UUID) ([]alerts.Event, error) {
@@ -579,7 +617,7 @@ func TestListLabelsMutedAlertsAndFilters(t *testing.T) {
 
 	svc := alerts.NewService(store, clockAt(now))
 
-	all, err := svc.List(ctx, orgID, alerts.Filter{})
+	all, _, err := svc.List(ctx, orgID, alerts.Filter{}, "", 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -594,7 +632,7 @@ func TestListLabelsMutedAlertsAndFilters(t *testing.T) {
 	}
 
 	mutedOnly := true
-	filtered, err := svc.List(ctx, orgID, alerts.Filter{Muted: &mutedOnly})
+	filtered, _, err := svc.List(ctx, orgID, alerts.Filter{Muted: &mutedOnly}, "", 0)
 	if err != nil {
 		t.Fatalf("List (muted only): %v", err)
 	}
@@ -617,7 +655,7 @@ func TestListSharesWindowsForHostAcrossAlertsOnTheSameHost(t *testing.T) {
 	store.alerts[b.ID] = b
 	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
 
-	views, err := svc.List(ctx, orgID, alerts.Filter{})
+	views, _, err := svc.List(ctx, orgID, alerts.Filter{}, "", 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -653,7 +691,7 @@ func TestClosedAlertsGetNoSuppression(t *testing.T) {
 	}}
 	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
 
-	views, err := svc.List(ctx, orgID, alerts.Filter{})
+	views, _, err := svc.List(ctx, orgID, alerts.Filter{}, "", 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

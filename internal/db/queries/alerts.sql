@@ -195,6 +195,15 @@ WHERE a.org_id = @org_id AND a.id = @id;
 -- GetAlert's own comment explains — composite (org_id, host_id), LEFT
 -- JOIN defensively though the FK makes a miss impossible in practice.
 --
+-- Paginated on (opened_at, id), the keyset the ORDER BY already provided
+-- (v0.4a final review, Important). The alerts table has no retention
+-- policy by design — an alert must outlive the 90 days of
+-- check_state_changes — so the set this reads only ever grows, and the
+-- feature's own front page defaults to no state filter at all. Unbounded,
+-- it read every alert the organization had ever opened on every page
+-- load, and Service.List then ran Mute over all of them. Hosts have been
+-- cursor-paginated here since v0.1; this follows the same shape.
+--
 -- `acknowledged` filters by COVERAGE, not by "has acknowledged_at ever
 -- been set" (review finding, Important, corrected from an earlier version
 -- of this query that used exactly that weaker test): design decision 2 —
@@ -231,10 +240,19 @@ WHERE a.org_id = @org_id
            AND (a.acknowledged_at IS NULL
                 OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
                     > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND (
+    sqlc.narg(cursor_opened_at)::timestamptz IS NULL
+    OR (a.opened_at, a.id) < (sqlc.narg(cursor_opened_at)::timestamptz, sqlc.narg(cursor_id)::uuid)
+  )
 -- id breaks a tie between two alerts one Execute call opened at the
 -- identical opened_at (review finding, Minor): without it, two runs of
--- this same query could disagree on which of the two comes first.
-ORDER BY a.opened_at DESC, a.id;
+-- this same query could disagree on which of the two comes first. It is
+-- DESC, matching opened_at, because it is now also half of the keyset the
+-- cursor condition above resumes from — a row comparison is only a valid
+-- keyset when every column of it runs the same way as the ORDER BY, which
+-- is exactly the shape ListAuditEventsForOrg already uses.
+ORDER BY a.opened_at DESC, a.id DESC
+LIMIT sqlc.arg(row_limit);
 
 -- name: ListAlertEvents :many
 -- Get's own timeline, the event half (timeline.go's mergeTimeline merges

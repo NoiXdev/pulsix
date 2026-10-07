@@ -141,16 +141,32 @@ func (s *Service) suppression(ctx context.Context, orgID uuid.UUID, a Alert, now
 	return Mute(a, windows, now), nil
 }
 
-// List returns the organization's alerts matching f, each with its own
-// Suppression. Muted has no SQL column to filter on (Filter's own doc
+// List returns one page of the organization's alerts matching f, each with
+// its own Suppression, plus the cursor for the next page (empty when there
+// is none). Muted has no SQL column to filter on (Filter's own doc
 // comment) — it is applied here, after Mute has run for the row. now is
 // pinned once, and the per-host windows cache is shared across every row
 // (suppression's own doc comment) — one WindowsForHost call per distinct
 // host among the results, not one per alert.
-func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter) ([]View, error) {
-	rows, err := s.store.ListAlerts(ctx, orgID, f)
+//
+// The page is bounded because the alerts table is not: it has no retention
+// policy by design (an alert must outlive check_state_changes' 90 days),
+// so an unpaginated list grew without limit and Mute ran over all of it
+// (v0.4a final review, Important). limit is clamped here rather than at
+// the transport, the same place hosts.Service.ListHosts clamps its own.
+//
+// The Muted filter is applied AFTER the page is cut, so a page can come
+// back shorter than limit — occasionally even empty — while next is still
+// non-empty. That is deliberate and the cursor stays correct either way:
+// it is encoded from the last row the QUERY returned, not the last row
+// this filter kept, so following it never skips an alert. A caller that
+// filters on muted should follow the cursor until it comes back empty
+// rather than until a page looks short, which is what useAlerts'
+// infinite query already does.
+func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]View, string, error) {
+	rows, next, err := s.store.ListAlerts(ctx, orgID, f, cursor, clampLimit(limit))
 	if err != nil {
-		return nil, fmt.Errorf("list alerts: %w", err)
+		return nil, "", fmt.Errorf("list alerts: %w", err)
 	}
 	now := s.clock()
 	cache := map[uuid.UUID][]maintenance.Occurrence{}
@@ -158,14 +174,14 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter) ([]View, 
 	for _, a := range rows {
 		sup, err := s.suppression(ctx, orgID, a.Alert, now, cache)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if f.Muted != nil && *f.Muted != sup.Muted {
 			continue
 		}
 		out = append(out, View{Alert: a.Alert, HostName: a.HostName, Suppression: sup})
 	}
-	return out, nil
+	return out, next, nil
 }
 
 // Get returns one alert with its Suppression and its timeline: the

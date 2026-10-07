@@ -402,4 +402,82 @@ describe('AlertsPage', () => {
     expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
     expect(asked.at(-1)?.host).toBe('');
   });
+  it('discloses a closed alert\u2019s timeline, which is otherwise unreachable in the GUI', async () => {
+    // The design doc opens with "nobody can yet say host X was critical
+    // from 14:03 to 14:51 on Tuesday, Anna acknowledged it at 14:12".
+    // HostAlertsCard shows open alerts only, so before this disclosure the
+    // API could answer that and the GUI could not, for any alert that had
+    // ended (review finding, Important). The fixture is deliberately a
+    // CLOSED alert, the case the host card can never render.
+    const user = userEvent.setup();
+    let detailCalls = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': {
+        alerts: [alert({ id: 'a-closed', closed_at: '2026-10-01T14:51:00Z', closed_reason: 'resolved' })],
+      },
+      'GET /api/v1/orgs/acme/alerts/a-closed': () => {
+        detailCalls += 1;
+        return {
+          alert: {
+            ...alert({ id: 'a-closed', closed_at: '2026-10-01T14:51:00Z', closed_reason: 'resolved' }),
+            timeline: [
+              { at: '2026-10-01T14:03:00Z', kind: 'event', event: { kind: 'opened' } },
+              { at: '2026-10-01T14:12:00Z', kind: 'event', event: { kind: 'acknowledged' } },
+              { at: '2026-10-01T14:51:00Z', kind: 'event', event: { kind: 'closed' } },
+            ],
+          },
+        };
+      },
+    });
+    renderPage();
+
+    const toggle = await screen.findByRole('button', { name: /timeline for web-1/i });
+    // Nothing is fetched until the row is actually expanded — the same
+    // "pay for it when it is asked for" rule HostAlertsCard holds.
+    expect(detailCalls).toBe(0);
+
+    await user.click(toggle);
+    await waitFor(() => expect(detailCalls).toBe(1));
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    // "Alert opened" and "Closed — resolved …" exist only on the
+    // timeline; the row itself renders neither, so these prove the panel
+    // and not the row.
+    await screen.findByText('Alert opened');
+    expect(screen.getByText(/Closed — resolved/)).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('follows next_cursor rather than stopping at the first page', async () => {
+    // The list is unbounded over a table the design gives no retention, so
+    // it is paginated (review finding, Important). "Load more" must follow
+    // the server's own cursor, and must disappear once the server stops
+    // handing one back.
+    const user = userEvent.setup();
+    const cursors: Array<string | null> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        const cursor = req.search.get('cursor');
+        cursors.push(cursor);
+        if (!cursor) {
+          return { alerts: [alert({ id: 'a-page1', host_name: 'web-1' })], next_cursor: 'cur-2' };
+        }
+        return { alerts: [alert({ id: 'a-page2', host_name: 'web-9' })], next_cursor: '' };
+      },
+    });
+    renderPage();
+
+    await screen.findByText('web-1');
+    expect(screen.queryByText('web-9')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    await screen.findByText('web-9');
+    expect(screen.getByText('web-1')).toBeInTheDocument();
+    expect(cursors).toEqual([null, 'cur-2']);
+    await waitFor(() => expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument());
+  });
 });

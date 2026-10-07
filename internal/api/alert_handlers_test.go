@@ -161,7 +161,8 @@ type alertOut struct {
 }
 
 type alertListOut struct {
-	Alerts []alertOut `json:"alerts"`
+	Alerts     []alertOut `json:"alerts"`
+	NextCursor string     `json:"next_cursor"`
 }
 
 type alertTimelineEntryOut struct {
@@ -534,4 +535,65 @@ func (l alertListOut) ids() []string {
 		out[i] = a.ID
 	}
 	return out
+}
+
+// TestAlertListPaginates is v0.4a's final review, Important, at the HTTP
+// layer: GET /alerts had neither a limit nor a cursor over a table the
+// design deliberately gives no retention, so the feature's own front page
+// read every alert the organization had ever opened. The route now takes
+// ?limit= and ?cursor= and answers next_cursor, the same contract the
+// hosts list already gives.
+func TestAlertListPaginates(t *testing.T) {
+	f := newAlertFixture(t, "alert-pages")
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	var want []string
+	for i := range 3 {
+		// Newest first is the list's order, so seed oldest first and
+		// reverse: want[0] is the newest.
+		id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "disk", "/m"+string(rune('a'+i)), "used_pct"),
+			rules.StateWarn, base.Add(time.Duration(i)*time.Minute))
+		want = append([]string{id.String()}, want...)
+	}
+
+	var got []string
+	cursor := ""
+	for range 5 {
+		u := f.alertsURL("?limit=1")
+		if cursor != "" {
+			u += "&cursor=" + url.QueryEscape(cursor)
+		}
+		resp := requestJSON(t, f.viewerC, http.MethodGet, u, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list page = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var page alertListOut
+		decodeInto(t, resp, &page)
+		if len(page.Alerts) != 1 {
+			t.Fatalf("page returned %d alerts, want the requested limit of 1", len(page.Alerts))
+		}
+		got = append(got, page.Alerts[0].ID)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if len(got) != len(want) {
+		t.Fatalf("paged walk saw %d alerts, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("page %d = %s, want %s (newest opened first)", i, got[i], want[i])
+		}
+	}
+}
+
+// TestAlertListRejectsAMalformedCursor: a cursor the server did not mint
+// is the caller's mistake and answers 400, never a 500 from a decode
+// failure surfacing as an unmapped error.
+func TestAlertListRejectsAMalformedCursor(t *testing.T) {
+	f := newAlertFixture(t, "alert-bad-cursor")
+	resp := requestJSON(t, f.viewerC, http.MethodGet, f.alertsURL("?cursor=not-a-cursor"), nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("list with a malformed cursor = %d %s, want 400", resp.StatusCode, mustReadBody(t, resp))
+	}
 }

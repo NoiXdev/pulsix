@@ -366,16 +366,24 @@ WHERE a.org_id = $1
            AND (a.acknowledged_at IS NULL
                 OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
                     > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
-ORDER BY a.opened_at DESC, a.id
+  AND (
+    $7::timestamptz IS NULL
+    OR (a.opened_at, a.id) < ($7::timestamptz, $8::uuid)
+  )
+ORDER BY a.opened_at DESC, a.id DESC
+LIMIT $9
 `
 
 type ListAlertsParams struct {
-	OrgID        uuid.UUID   `json:"org_id"`
-	Open         *bool       `json:"open"`
-	Severity     *string     `json:"severity"`
-	HostID       pgtype.UUID `json:"host_id"`
-	Scope        *string     `json:"scope"`
-	Acknowledged *bool       `json:"acknowledged"`
+	OrgID          uuid.UUID          `json:"org_id"`
+	Open           *bool              `json:"open"`
+	Severity       *string            `json:"severity"`
+	HostID         pgtype.UUID        `json:"host_id"`
+	Scope          *string            `json:"scope"`
+	Acknowledged   *bool              `json:"acknowledged"`
+	CursorOpenedAt pgtype.Timestamptz `json:"cursor_opened_at"`
+	CursorID       pgtype.UUID        `json:"cursor_id"`
+	RowLimit       int32              `json:"row_limit"`
 }
 
 type ListAlertsRow struct {
@@ -409,6 +417,15 @@ type ListAlertsRow struct {
 // GetAlert's own comment explains — composite (org_id, host_id), LEFT
 // JOIN defensively though the FK makes a miss impossible in practice.
 //
+// Paginated on (opened_at, id), the keyset the ORDER BY already provided
+// (v0.4a final review, Important). The alerts table has no retention
+// policy by design — an alert must outlive the 90 days of
+// check_state_changes — so the set this reads only ever grows, and the
+// feature's own front page defaults to no state filter at all. Unbounded,
+// it read every alert the organization had ever opened on every page
+// load, and Service.List then ran Mute over all of them. Hosts have been
+// cursor-paginated here since v0.1; this follows the same shape.
+//
 // `acknowledged` filters by COVERAGE, not by "has acknowledged_at ever
 // been set" (review finding, Important, corrected from an earlier version
 // of this query that used exactly that weaker test): design decision 2 —
@@ -429,7 +446,11 @@ type ListAlertsRow struct {
 // acknowledged_at IS NOT NULL alongside it.
 // id breaks a tie between two alerts one Execute call opened at the
 // identical opened_at (review finding, Minor): without it, two runs of
-// this same query could disagree on which of the two comes first.
+// this same query could disagree on which of the two comes first. It is
+// DESC, matching opened_at, because it is now also half of the keyset the
+// cursor condition above resumes from — a row comparison is only a valid
+// keyset when every column of it runs the same way as the ORDER BY, which
+// is exactly the shape ListAuditEventsForOrg already uses.
 func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListAlertsRow, error) {
 	rows, err := q.db.Query(ctx, listAlerts,
 		arg.OrgID,
@@ -438,6 +459,9 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 		arg.HostID,
 		arg.Scope,
 		arg.Acknowledged,
+		arg.CursorOpenedAt,
+		arg.CursorID,
+		arg.RowLimit,
 	)
 	if err != nil {
 		return nil, err

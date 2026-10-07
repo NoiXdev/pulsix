@@ -61,7 +61,11 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
   const alerts = useAlerts(org, { host: hostId, state: 'open' }, canRead);
   const [open, setOpen] = useState<string | null>(null);
 
-  const rows = (alerts.data?.alerts ?? []).map(alertToRowAlert);
+  // One page is the whole of this card's answer: it asks for open alerts
+  // on one host, and a host with more than a page of simultaneously open
+  // alerts has a problem no list length fixes. The org-wide page's own
+  // Load more (and its `?host=` link, below) is where the rest lives.
+  const rows = (alerts.data?.pages.flatMap((p) => p.alerts ?? []) ?? []).map(alertToRowAlert);
 
   return (
     <Card className="p-4">

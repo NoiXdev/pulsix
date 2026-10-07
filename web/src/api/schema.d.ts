@@ -2506,6 +2506,7 @@ export interface components {
              */
             readonly $schema?: string;
             alerts: components["schemas"]["AlertDTO"][] | null;
+            next_cursor: string;
         };
         AlertSnoozeInputBody: {
             /**
@@ -6419,6 +6420,10 @@ export interface operations {
                 acknowledged?: string;
                 /** @description true or false */
                 muted?: string;
+                /** @description Opaque cursor from a previous page's next_cursor */
+                cursor?: string;
+                /** @description Page size; the server clamps it */
+                limit?: number;
             };
             header?: never;
             path: {
