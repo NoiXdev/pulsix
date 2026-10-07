@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/audit"
@@ -159,6 +160,13 @@ type Server struct {
 	// how checksFixture.record seeds observations through s.Checks instead
 	// of a second, parallel ingest path.
 	Items *items.Service
+	// Alerts is the alert lifecycle's own service (v0.4a), the same
+	// instance Deps.Alerts carries. Opening an alert is not exposed on
+	// Service at all (only Apply, driven by a rules evaluation, does
+	// that) — a test that needs an open alert to exist builds its own
+	// alerts.NewSQLStore(s.DB) and drives Execute directly on a bare tx,
+	// exactly the shape internal/alerts' own store_sql_test.go uses.
+	Alerts *alerts.Service
 	// Push records every check-configuration push the check routes make
 	// after a write commits (api.Deps.AgentPush). Production wires
 	// *agentapi.Service here; a test has no agent stream to observe, so
@@ -519,6 +527,12 @@ func New(t *testing.T, opts ...Option) *Server {
 	// (internal/app.Build).
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(d), app.NewGroupHosts(resolver), time.Now, rand.Reader, nil)
 	schedulesSvc.SetMaintenance(maintenanceSvc)
+	// The alert lifecycle's own service (v0.4a Task 8), wired exactly like
+	// production (internal/app.Build): store plus clock, nothing else —
+	// Apply and Sweep are driven by the evaluation ticker, not exercised
+	// here, the same way the schedule/notification tickers above are not
+	// started either.
+	s.Alerts = alerts.NewService(alerts.NewSQLStore(d), time.Now)
 	// A finished scheduled run group queues its notifications, as in
 	// production; the dispatcher is not started here (like the reaper).
 	jobsQueue.SetRunGroupSink(notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil))
@@ -573,6 +587,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
+		Alerts:      s.Alerts,
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},

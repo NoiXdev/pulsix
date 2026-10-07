@@ -28,10 +28,20 @@ type maintenanceWindowDTO struct {
 	Duration    string     `json:"duration,omitempty" doc:"Length of each occurrence, e.g. 2h or 90m"`
 	Timezone    string     `json:"timezone,omitempty"`
 	Note        string     `json:"note,omitempty"`
-	ActiveNow   bool       `json:"active_now"`
-	Revision    int64      `json:"revision"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// Reason is why the window exists: a plain maintenance window, or the
+	// face v0.4a gives alert silencing (design doc "Suppression") — a
+	// silence window mutes any alert it covers, surfaced on the alert as
+	// mute_reason = silence (alert_handlers.go). Added by v0.4a Task 8.
+	// target_kind deliberately does NOT grow a matching monitoring_group
+	// value here, even though maintenance.TargetMonitoringGroup already
+	// exists in Go: nothing resolves monitoring-group membership for
+	// suppression yet, so offering that target would store a window that
+	// silently mutes nothing (design doc review note, v0.4a Task 8).
+	Reason    string    `json:"reason" enum:"maintenance,silence"`
+	ActiveNow bool      `json:"active_now"`
+	Revision  int64     `json:"revision"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // MaintenanceWindowBody is the create/update body: starts_at and ends_at
@@ -46,6 +56,9 @@ type MaintenanceWindowBody struct {
 	Duration   string     `json:"duration,omitempty" maxLength:"20" doc:"1m to 744h, whole minutes"`
 	Timezone   string     `json:"timezone,omitempty" maxLength:"64"`
 	Note       string     `json:"note,omitempty" maxLength:"1000"`
+	// Reason is empty for a plain maintenance window; the service
+	// defaults it to "maintenance" (maintenance.normalize). v0.4a Task 8.
+	Reason string `json:"reason,omitempty" enum:"maintenance,silence"`
 }
 
 type maintenanceListOutput struct {
@@ -171,6 +184,7 @@ func (b MaintenanceWindowBody) input() (maintenance.Input, error) {
 	return maintenance.Input{
 		Name: b.Name, TargetKind: maintenance.TargetKind(b.TargetKind), TargetID: target,
 		StartsAt: b.StartsAt, EndsAt: b.EndsAt, Cron: b.Cron, Duration: b.Duration, Timezone: b.Timezone, Note: b.Note,
+		Reason: maintenance.Reason(b.Reason),
 	}, nil
 }
 
@@ -178,7 +192,7 @@ func toMaintenanceWindowDTO(w maintenance.Window, active bool) maintenanceWindow
 	dto := maintenanceWindowDTO{
 		ID: w.ID.String(), Name: w.Name, TargetKind: string(w.TargetKind), TargetName: w.TargetName,
 		StartsAt: w.StartsAt, EndsAt: w.EndsAt, Cron: w.Cron, Duration: w.DurationText(), Timezone: w.Timezone,
-		Note: w.Note, ActiveNow: active, Revision: w.Revision, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
+		Note: w.Note, Reason: string(w.Reason), ActiveNow: active, Revision: w.Revision, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}
 	if w.TargetID != nil {
 		dto.TargetID = w.TargetID.String()

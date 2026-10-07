@@ -15,6 +15,7 @@ type maintenanceWindowOut struct {
 	Cron        string `json:"cron"`
 	Description string `json:"description"`
 	Duration    string `json:"duration"`
+	Reason      string `json:"reason"`
 	ActiveNow   bool   `json:"active_now"`
 	Revision    int64  `json:"revision"`
 }
@@ -90,5 +91,71 @@ func TestMaintenanceWindowLifecycle(t *testing.T) {
 	}
 	if resp := requestJSON(t, f.viewerC, http.MethodGet, f.maintenanceURL()+"/"+created.Window.ID, nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
+	}
+}
+
+// TestMaintenanceWindowReasonRoundTrips covers v0.4a Task 8's own addition:
+// the API gains `reason` (design doc "API and permissions": "the
+// maintenance endpoints gain reason and the monitoring_group target" —
+// target_kind's own enum deliberately stays host/inventory_group/org,
+// maintenance_handlers.go's own doc comment on the field says why). An
+// omitted reason must default to "maintenance" (the service's own
+// normalize), and an explicit "silence" must round-trip through create,
+// get and list unchanged — this is the field the alert API's own
+// mute_reason = silence depends on to label a muted alert correctly.
+func TestMaintenanceWindowReasonRoundTrips(t *testing.T) {
+	f := newRunFixture(t, "maint-reason")
+	now := time.Now().UTC()
+
+	plain := map[string]any{
+		"name": "patch window", "target_kind": "org",
+		"starts_at": now.Add(time.Hour).Format(time.RFC3339), "ends_at": now.Add(2 * time.Hour).Format(time.RFC3339),
+	}
+	resp := postJSON(t, f.operatorC, f.maintenanceURL(), plain)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create plain = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var plainOut struct {
+		Window maintenanceWindowOut `json:"window"`
+	}
+	decodeInto(t, resp, &plainOut)
+	if plainOut.Window.Reason != "maintenance" {
+		t.Fatalf("reason = %q, want the default maintenance when omitted", plainOut.Window.Reason)
+	}
+
+	silence := map[string]any{
+		"name": "silence noisy disk check", "target_kind": "host", "target_id": f.hostA.String(), "reason": "silence",
+		"starts_at": now.Add(3 * time.Hour).Format(time.RFC3339), "ends_at": now.Add(4 * time.Hour).Format(time.RFC3339),
+	}
+	resp = postJSON(t, f.operatorC, f.maintenanceURL(), silence)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create silence = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var silenceOut struct {
+		Window maintenanceWindowOut `json:"window"`
+	}
+	decodeInto(t, resp, &silenceOut)
+	if silenceOut.Window.Reason != "silence" {
+		t.Fatalf("reason = %q, want silence (what was submitted)", silenceOut.Window.Reason)
+	}
+
+	var got struct {
+		Window maintenanceWindowOut `json:"window"`
+	}
+	decodeInto(t, requestJSON(t, f.viewerC, http.MethodGet, f.maintenanceURL()+"/"+silenceOut.Window.ID, nil), &got)
+	if got.Window.Reason != "silence" {
+		t.Fatalf("get reason = %q, want silence (must survive a round trip, not just the create response)", got.Window.Reason)
+	}
+
+	var list struct {
+		Windows []maintenanceWindowOut `json:"windows"`
+	}
+	decodeInto(t, requestJSON(t, f.viewerC, http.MethodGet, f.maintenanceURL(), nil), &list)
+	reasons := map[string]string{}
+	for _, w := range list.Windows {
+		reasons[w.ID] = w.Reason
+	}
+	if reasons[plainOut.Window.ID] != "maintenance" || reasons[silenceOut.Window.ID] != "silence" {
+		t.Fatalf("list reasons = %+v, want %s=maintenance and %s=silence", reasons, plainOut.Window.ID, silenceOut.Window.ID)
 	}
 }

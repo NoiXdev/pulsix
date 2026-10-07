@@ -401,6 +401,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(appDB), NewGroupHosts(resolver), time.Now, rand.Reader, slog.Default())
 	schedulesSvc.SetMaintenance(maintenanceSvc)
 
+	// alerts.Service (v0.4a): built here, ahead of api.New, so the same
+	// instance backs both the API's own read/acknowledge/snooze surface
+	// (Deps.Alerts, registerAlertRoutes) and the evaluation ticker's
+	// required AlertSink below — one wire, not two to keep in sync.
+	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
@@ -448,6 +454,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Notify:      notifySvc,
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
+		Alerts:      alertsSvc,
 	})
 	if err != nil {
 		appDB.Close()
@@ -509,13 +516,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// Close and on every early return below; stopping waits for a batch
 	// still in flight (startLoop).
 	//
-	// alerts.Service is the ticker's required AlertSink (v0.4a): every
-	// host's evaluation now feeds its states, changes and roll-up into the
-	// alert lifecycle on the same per-host transaction, and the same
-	// ticker sweeps orphaned alerts once per tick. There is no second wire
-	// to forget — NewTicker panics at construction if this argument is
-	// ever left out.
-	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
+	// alertsSvc (built above, ahead of api.New) is the ticker's required
+	// AlertSink: every host's evaluation now feeds its states, changes and
+	// roll-up into the alert lifecycle on the same per-host transaction,
+	// and the same ticker sweeps orphaned alerts once per tick. There is
+	// no second wire to forget — NewTicker panics at construction if this
+	// argument is ever left out.
 	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), itemsStore, slog.Default()), alertsSvc)
 	evalStop := startLoop(func(ctx context.Context) { _ = evalTicker.Run(ctx) })
 

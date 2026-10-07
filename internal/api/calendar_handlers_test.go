@@ -28,15 +28,20 @@ func TestCalendar(t *testing.T) {
 			State        string `json:"state"`
 		} `json:"entries"`
 		Maintenance []struct {
-			Name string `json:"name"`
+			Name   string `json:"name"`
+			Reason string `json:"reason"`
 		} `json:"maintenance"`
 	}
 	decodeInto(t, requestJSON(t, f.viewerC, http.MethodGet, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/calendar?"+q.Encode(), nil), &cal)
 	if len(cal.Entries) != 7 || cal.Entries[0].ScheduleName != "Nightly" || cal.Entries[0].State != "planned" {
 		t.Fatalf("entries = %+v, want 7 planned nightly runs", cal.Entries)
 	}
-	if len(cal.Maintenance) != 1 || cal.Maintenance[0].Name != "db upgrade" {
-		t.Fatalf("maintenance = %+v", cal.Maintenance)
+	// Reason threads through from internal/maintenance's own Occurrence
+	// (v0.4a Task 8): the window above was created with no reason, so the
+	// calendar must report the service's own "maintenance" default, not
+	// an empty string the DTO happened to leave unset.
+	if len(cal.Maintenance) != 1 || cal.Maintenance[0].Name != "db upgrade" || cal.Maintenance[0].Reason != "maintenance" {
+		t.Fatalf("maintenance = %+v, want one db-upgrade window with reason=maintenance", cal.Maintenance)
 	}
 	for _, bad := range []url.Values{
 		{"from": {"yesterday"}, "to": {now.Format(time.RFC3339)}},

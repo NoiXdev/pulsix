@@ -25,13 +25,17 @@ type calendarEntryDTO struct {
 }
 
 type calendarWindowDTO struct {
-	WindowID   string    `json:"window_id"`
-	Name       string    `json:"name"`
-	TargetKind string    `json:"target_kind" enum:"host,inventory_group,org"`
-	TargetID   string    `json:"target_id,omitempty"`
-	TargetName string    `json:"target_name,omitempty"`
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
+	WindowID   string `json:"window_id"`
+	Name       string `json:"name"`
+	TargetKind string `json:"target_kind" enum:"host,inventory_group,org"`
+	TargetID   string `json:"target_id,omitempty"`
+	TargetName string `json:"target_name,omitempty"`
+	// Reason is why the window exists (v0.4a Task 8, maintenance_handlers.go's
+	// own doc comment on the same field explains why target_kind's enum does
+	// not grow a matching monitoring_group value here).
+	Reason string    `json:"reason" enum:"maintenance,silence"`
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
 }
 
 type calendarInput struct {
@@ -92,7 +96,10 @@ func registerCalendarRoutes(hapi huma.API, deps Deps) {
 		}
 		out.Body.Maintenance = make([]calendarWindowDTO, len(v.Maintenance))
 		for i, w := range v.Maintenance {
-			dto := calendarWindowDTO{WindowID: w.WindowID.String(), Name: w.Name, TargetKind: string(w.TargetKind), TargetName: w.TargetName, Start: w.Start, End: w.End}
+			dto := calendarWindowDTO{
+				WindowID: w.WindowID.String(), Name: w.Name, TargetKind: string(w.TargetKind), TargetName: w.TargetName,
+				Reason: string(w.Reason), Start: w.Start, End: w.End,
+			}
 			if w.TargetID != nil {
 				dto.TargetID = w.TargetID.String()
 			}

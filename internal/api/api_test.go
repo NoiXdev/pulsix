@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
@@ -214,6 +215,10 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// broke exactly these five tests the same way one milestone ago.
 		Items: &items.Service{}, EvalDirty: rules.NewDirtyMarker(nil),
 		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
+		// v0.4a's own required dependency (Task 8): the alert API. Zero-
+		// valued for the same reason every sibling on this line is — this
+		// fixture registers every route and drives none.
+		Alerts: &alerts.Service{},
 	}
 }
 
@@ -420,6 +425,16 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	noEvalDirty.EvalDirty = nil
 	if _, err := api.New(noEvalDirty); err == nil || !strings.Contains(err.Error(), "EvalDirty") {
 		t.Fatalf("api.New without EvalDirty = %v, want an error naming EvalDirty", err)
+	}
+	// The alert API (v0.4a Task 8). This is the regression the design
+	// doc's own review focus calls out by name: the last two milestones
+	// each added a required Deps field and left exactly these
+	// -run-filtered tests the only thing that could have caught a
+	// forgotten wire, since go build does not compile test files.
+	noAlerts := testDeps(t)
+	noAlerts.Alerts = nil
+	if _, err := api.New(noAlerts); err == nil || !strings.Contains(err.Error(), "Alerts") {
+		t.Fatalf("api.New without Alerts = %v, want an error naming Alerts", err)
 	}
 }
 

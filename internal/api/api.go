@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/calendar"
@@ -138,6 +139,13 @@ type Deps struct {
 	// Calendar lays out schedule occurrences and maintenance windows
 	// (spec 2026-09-18 §8).
 	Calendar *calendar.Service
+	// Alerts is the alert lifecycle's own read/acknowledge/snooze surface
+	// (v0.4a design doc, "API and permissions"): List, Get and the four
+	// operator actions. The same instance also backs the evaluation
+	// ticker's AlertSink in production (internal/app.Build) — nothing
+	// here drives that side, only the six routes registerAlertRoutes
+	// wires.
+	Alerts *alerts.Service
 	// AuthRateLimit is how many failed authentication attempts one client
 	// address may make per minute on each rate-limited auth endpoint
 	// (login, TOTP verify, passkey login finish, invite accept) —
@@ -303,6 +311,9 @@ func (d Deps) validate() error {
 	}
 	if d.Calendar == nil {
 		missing = append(missing, "Calendar")
+	}
+	if d.Alerts == nil {
+		missing = append(missing, "Alerts")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -512,4 +523,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerNotifyDigestRoutes(orgScoped, deps)    // /orgs/{org}/notification-digest
 	registerCalendarRoutes(orgScoped, deps)        // GET /orgs/{org}/calendar
 	registerOrgSettingsRoutes(orgScoped, deps)     // /orgs/{org}/settings/jobs
+	registerAlertRoutes(orgScoped, deps)           // /orgs/{org}/alerts..., the host view is List's own ?host= filter
 }
