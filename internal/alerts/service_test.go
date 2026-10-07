@@ -152,7 +152,11 @@ func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Fil
 		if filter.Scope != "" && filter.Scope != a.Subject.Scope {
 			continue
 		}
-		if filter.Acknowledged != nil && *filter.Acknowledged != (a.AckAt != nil) {
+		// Coverage, not mere presence (review finding, Important, carried
+		// into the fake so it keeps agreeing with the real SQL's own fix):
+		// an ack given at warn does not cover a later rise to crit.
+		covered := a.AckAt != nil && rules.StateRank(a.Severity) <= rules.StateRank(a.AckSeverity)
+		if filter.Acknowledged != nil && *filter.Acknowledged != covered {
 			continue
 		}
 		out = append(out, alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]})

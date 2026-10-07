@@ -34,10 +34,20 @@ export interface AlertRowProps {
  *  - alert-peak: the episode's peak severity (decision 1 — one episode is
  *    one alert, and the peak is what an operator triages on, not whatever
  *    the tuple happens to read at the moment they looked).
- *  - alert-current: the alert's own current severity. Note this is NOT a
- *    live read of the tuple (nothing on the wire DTO carries that) — it is
- *    the alert's own tracked `severity`, which a flap holds at its last
- *    non-ok value rather than following the tuple down to ok.
+ *  - alert-current ("Tracked" in the header, not "Current"): the alert's
+ *    own tracked severity. This is NOT a live read of the tuple (nothing
+ *    on the wire DTO carries that) — it is the last non-ok value a flap
+ *    holds it at rather than following the tuple down to ok, which is
+ *    exactly why "Current" would mislabel it. Review finding (Important):
+ *    that gap used to be silent — Open / peak crit / tracked warn, with no
+ *    explanation — because `wasFlapping` was mapped into the row model and
+ *    never rendered. The `alert-flapping` marker beside this cell is that
+ *    explanation: it is the one wire field that actually says "still
+ *    flapping", so it renders here, next to the value it qualifies,
+ *    whenever `wasFlapping` is true — not gated on `open`, since the flag
+ *    only ever latches and never clears (store_sql.go's own
+ *    SetAlertFlapping), so it stays true as part of a closed episode's own
+ *    history too.
  *
  * Acknowledgement renders as a fourth, related fact: decision 2 voids an
  * ack once the current severity outruns `ackSeverity`, and isAckCovering
@@ -69,8 +79,17 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
       <span data-testid="alert-peak">
         <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{alert.peakSeverity}</Pill>
       </span>
-      <span data-testid="alert-current">
+      <span data-testid="alert-current" className="flex items-center gap-1.5">
         <Pill tone={SEVERITY_TONE[alert.severity] ?? 'unknown'}>{alert.severity}</Pill>
+        {alert.wasFlapping && (
+          <span
+            data-testid="alert-flapping"
+            title="This tuple is still flapping between ok and a worse state — decision 6 keeps the alert open until it settles, even on a tick where it currently reads ok"
+            className="text-[10px] font-semibold text-[var(--px-warn)]"
+          >
+            flapping
+          </span>
+        )}
       </span>
       <span data-testid="alert-ack" className="flex min-w-0 flex-col">
         <span className="truncate text-[13px]">{covering ? 'Acknowledged' : 'Unacknowledged'}</span>

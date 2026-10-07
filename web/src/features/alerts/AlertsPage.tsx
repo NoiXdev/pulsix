@@ -108,7 +108,7 @@ export function AlertsPage() {
           <span>Open</span>
           <span>Host</span>
           <span>Peak</span>
-          <span>Current</span>
+          <span>Tracked</span>
           <span>Ack</span>
           <span>Mute</span>
           <span />

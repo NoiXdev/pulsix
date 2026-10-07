@@ -2441,7 +2441,45 @@ export interface components {
             was_flapping: boolean;
         };
         AlertDetailDTO: {
+            /** Format: date-time */
+            ack_at?: string;
+            ack_by?: string;
+            ack_note?: string;
+            /** @enum {string} */
+            ack_severity?: "warn" | "crit" | "unknown";
+            check_key?: string;
+            /** Format: date-time */
+            closed_at?: string;
+            /** @enum {string} */
+            closed_reason?: "resolved" | "stale";
+            host_id: string;
+            host_name: string;
+            id: string;
+            item?: string;
+            metric?: string;
+            /** @enum {string} */
+            mute_reason?: "maintenance" | "silence" | "snooze";
+            /** @description Set only when mute_reason is maintenance or silence */
+            mute_window_id?: string;
+            muted: boolean;
+            /**
+             * Format: date-time
+             * @description Absent for an unbounded snooze-until-change
+             */
+            muted_until?: string;
+            /** Format: date-time */
+            opened_at: string;
+            /** @enum {string} */
+            peak_severity: "warn" | "crit" | "unknown";
+            /** @enum {string} */
+            scope: "tuple" | "host";
+            /** @enum {string} */
+            severity: "warn" | "crit" | "unknown";
+            snooze_until_change: boolean;
+            /** Format: date-time */
+            snoozed_until?: string;
             timeline: components["schemas"]["AlertTimelineEntryDTO"][] | null;
+            was_flapping: boolean;
         };
         AlertEventDTO: {
             actor_id?: string;

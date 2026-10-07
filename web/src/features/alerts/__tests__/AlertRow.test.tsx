@@ -52,12 +52,29 @@ describe('AlertRow', () => {
   it('reads "Open" for an alert whose tuple currently reads ok but which decision 6 keeps open (still flapping)', () => {
     // The row this bug would actually hide: closedAt is still null (the
     // alert never closed, exactly what a flapping tuple does per decision
-    // 6), so "open" must say Open even though wasFlapping is the only
-    // visible trace of why it has not closed. A row that inferred
-    // openness from wasFlapping or from severity instead of closedAt
-    // would flip this.
+    // 6), so "open" must say Open regardless of wasFlapping. A row that
+    // inferred openness from wasFlapping or from severity instead of
+    // closedAt would flip this.
     render(<AlertRow alert={{ ...open, wasFlapping: true }} />);
     expect(screen.getByTestId('alert-open')).toHaveTextContent(/open/i);
+  });
+
+  it('shows a flapping marker, so "open while the peak has not been read in a while" has a visible reason (decision 6)', () => {
+    // Review finding (Important): wasFlapping was mapped into the row
+    // model and never rendered anywhere. The scenario the three-facts
+    // rule exists for — Open / peak crit / current warn, because the
+    // tuple is still flapping between ok and warn — left the operator
+    // with no explanation for why it had not closed. A row that dropped
+    // wasFlapping on the floor (or rendered it only in a tooltip no
+    // assertion can see) would pass every other test in this file and
+    // still fail this one.
+    render(<AlertRow alert={{ ...open, wasFlapping: true, severity: 'warn', peakSeverity: 'crit' }} />);
+    expect(screen.getByTestId('alert-flapping')).toBeInTheDocument();
+  });
+
+  it('shows no flapping marker once the tuple has settled', () => {
+    render(<AlertRow alert={{ ...open, wasFlapping: false }} />);
+    expect(screen.queryByTestId('alert-flapping')).not.toBeInTheDocument();
   });
 
   it('reads "Closed" once closedAt is set, never "Open"', () => {

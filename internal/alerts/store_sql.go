@@ -148,8 +148,13 @@ type Filter struct {
 	HostID *uuid.UUID
 	// Scope, non-empty, restricts to 'tuple' or 'host' alerts.
 	Scope Scope
-	// Acknowledged, non-nil, restricts to acknowledged (true) or
-	// unacknowledged (false) alerts.
+	// Acknowledged, non-nil, restricts by COVERAGE (true) or its absence
+	// (false) — not merely whether acknowledged_at has ever been set
+	// (review finding, Important, corrected from an earlier version of
+	// this filter that used exactly that weaker test): an ack given at
+	// warn that the alert has since outgrown by rising to crit counts as
+	// false here, the same decision-2 comparison isAckCovering makes in
+	// Go and the ListAlerts SQL's own CASE makes in the database.
 	Acknowledged *bool
 	// Muted, non-nil, restricts to muted (true) or unmuted (false)
 	// alerts. There is no column for this — Service.List applies it in

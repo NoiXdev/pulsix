@@ -12,6 +12,7 @@ package alerts_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -264,6 +265,235 @@ func TestGetAlertAndListAlertsNameEachAlertsOwnHost(t *testing.T) {
 			t.Fatalf("GetAlert(%s).HostName = %q, want %q (List's own answer for the same host)", r.ID, got.HostName, gotNames[r.Subject.HostID])
 		}
 	}
+}
+
+// TestListAlertsAcknowledgedFilterUsesCoverageNotMerePresence is review
+// finding 2 (Important): the server used to filter `acknowledged` on
+// `acknowledged_at IS NOT NULL` alone — "has anyone ever acknowledged
+// this" — while the row the GUI renders labels acknowledgement by
+// COVERAGE (design decision 2: a worsening severity voids an
+// acknowledgement). An alert acknowledged at warn that has since risen to
+// crit therefore used to render "Unacknowledged — overtaken" on screen
+// while being excluded from a Filter{Acknowledged: false} query and
+// included in Filter{Acknowledged: true} — the exact opposite of what an
+// operator filtering for unhandled work needs to find. The fix makes the
+// predicate itself a coverage comparison, the same severity-rank CASE
+// RaiseAlertSeverity's own peak_severity column already uses.
+func TestListAlertsAcknowledgedFilterUsesCoverageNotMerePresence(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	sub := tuple(host, "cpu", "", "used")
+	now := time.Now().UTC()
+
+	tx := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(context.Background(), tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	id := open[0].ID
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit open: %v", err)
+	}
+
+	// Acknowledged while still at warn: acknowledged_severity = warn.
+	actor := seedUser(t, d)
+	if err := st.Acknowledge(context.Background(), org, id, actor, "", now); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+
+	// Then the tuple worsens to crit — VoidsAck true, the same shape
+	// Reconcile's own advance() produces — which leaves acknowledged_at
+	// and acknowledged_severity on the row untouched (RaiseAlertSeverity
+	// only ever moves severity/peak_severity/snooze_until_change) but
+	// means this ack no longer covers.
+	tx2 := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx2, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: now.Add(time.Minute), Severity: rules.StateCrit, VoidsAck: true},
+	}); err != nil {
+		t.Fatalf("execute raise to crit: %v", err)
+	}
+	if err := tx2.Commit(context.Background()); err != nil {
+		t.Fatalf("commit raise: %v", err)
+	}
+
+	trueF := true
+	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &trueF})
+	if err != nil {
+		t.Fatalf("list acknowledged=true: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID == id {
+			t.Fatalf("list(acknowledged=true) includes an alert whose ack (warn) no longer covers its severity (crit) — the filter is still presence-based, not coverage-based")
+		}
+	}
+
+	falseF := false
+	rows, err = st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &falseF})
+	if err != nil {
+		t.Fatalf("list acknowledged=false: %v", err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("list(acknowledged=false) does not include an alert whose ack (warn) no longer covers its severity (crit) — an operator filtering for unhandled work would miss exactly this alert")
+	}
+}
+
+// TestListAlertsAndGetAlertAgreeOnAFullyPopulatedRow is the Minor review
+// finding this milestone's own review made load-bearing: nothing pinned
+// toAlertFromListRow's completeness against toAlertFromGetRow's. The two
+// are hand-written, field-by-field conversions off two different
+// sqlc-generated row types (store_sql.go's own doc comment on why they are
+// not shared) — dropping one field from only one of the two converters
+// compiles clean and returns a zero value nobody notices unless something
+// asserts on that exact field. This alert is pushed through every column
+// the table has (raised severity so peak != severity, acknowledged with a
+// note, flapped, snoozed, then closed) and ListAlerts/GetAlert's own
+// answers for the identical row are required to be byte-for-byte equal —
+// an asymmetric drop in either converter fails this immediately, which is
+// exactly finding 2's own risk: AckSeverity missing from the list mapping
+// would make every acknowledged row on the list page render
+// "Unacknowledged — overtaken" while Get kept reporting it correctly.
+func TestListAlertsAndGetAlertAgreeOnAFullyPopulatedRow(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	sub := tuple(host, "cpu", "", "used")
+	t0 := time.Now().UTC().Truncate(time.Microsecond)
+
+	tx := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: t0, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(context.Background(), tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	id := open[0].ID
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit open: %v", err)
+	}
+
+	actor := seedUser(t, d)
+	if err := st.Acknowledge(context.Background(), org, id, actor, "watching closely", t0.Add(time.Minute)); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+
+	tx2 := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx2, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: t0.Add(2 * time.Minute), Severity: rules.StateCrit, VoidsAck: true},
+		{Kind: alerts.ActionFlapped, AlertID: id, At: t0.Add(2 * time.Minute)},
+	}); err != nil {
+		t.Fatalf("execute raise+flap: %v", err)
+	}
+	if err := tx2.Commit(context.Background()); err != nil {
+		t.Fatalf("commit raise+flap: %v", err)
+	}
+
+	until := t0.Add(time.Hour)
+	if err := st.Snooze(context.Background(), org, id, actor, &until, false, t0.Add(3*time.Minute)); err != nil {
+		t.Fatalf("Snooze: %v", err)
+	}
+
+	tx3 := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx3, org, []alerts.Action{
+		{Kind: alerts.ActionClose, AlertID: id, At: t0.Add(4 * time.Minute), Reason: alerts.Stale},
+	}); err != nil {
+		t.Fatalf("execute close: %v", err)
+	}
+	if err := tx3.Commit(context.Background()); err != nil {
+		t.Fatalf("commit close: %v", err)
+	}
+
+	viaGet, err := st.GetAlert(context.Background(), org, id)
+	if err != nil {
+		t.Fatalf("GetAlert: %v", err)
+	}
+	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{})
+	if err != nil {
+		t.Fatalf("ListAlerts: %v", err)
+	}
+	var viaList alerts.AlertWithHost
+	found := false
+	for _, r := range rows {
+		if r.ID == id {
+			viaList, found = r, true
+		}
+	}
+	if !found {
+		t.Fatalf("ListAlerts did not return the alert at all: %+v", rows)
+	}
+
+	if !reflect.DeepEqual(normalizeAlertTimes(viaGet.Alert), normalizeAlertTimes(viaList.Alert)) {
+		t.Fatalf("GetAlert and ListAlerts disagree on the same row:\n  GetAlert:   %+v\n  ListAlerts: %+v", viaGet.Alert, viaList.Alert)
+	}
+	if viaGet.HostName != viaList.HostName || viaGet.HostName == "" {
+		t.Fatalf("HostName = %q (Get) / %q (List), want both equal and non-empty", viaGet.HostName, viaList.HostName)
+	}
+
+	// Belt and braces: pin the concrete values too, so a field dropped
+	// identically from BOTH converters (which the Get/List comparison
+	// above cannot see) still fails here.
+	want := alerts.Alert{
+		ID:      id,
+		OrgID:   org,
+		Subject: sub,
+
+		OpenedAt: t0,
+		Severity: rules.StateCrit,
+		Peak:     rules.StateCrit,
+
+		ClosedAt:     timePtr(t0.Add(4 * time.Minute)),
+		ClosedReason: alerts.Stale,
+
+		AckAt:       timePtr(t0.Add(time.Minute)),
+		AckBy:       &actor,
+		AckSeverity: rules.StateWarn,
+		AckNote:     "watching closely",
+
+		SnoozedUntil:      timePtr(until),
+		SnoozeUntilChange: false,
+
+		WasFlapping: true,
+	}
+	if !reflect.DeepEqual(normalizeAlertTimes(viaList.Alert), normalizeAlertTimes(want)) {
+		t.Fatalf("ListAlerts row = %+v, want %+v", viaList.Alert, want)
+	}
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+// normalizeAlertTimes converts every time.Time/*time.Time field to UTC
+// before a reflect.DeepEqual comparison — Postgres hands pgx's own driver
+// back timestamps in the connection's local zone (CEST here, not UTC), and
+// time.Time's struct representation (including its *Location pointer)
+// differs between two values naming the identical instant in different
+// zones, which would otherwise fail this test on a difference that is not
+// a real one.
+func normalizeAlertTimes(a alerts.Alert) alerts.Alert {
+	a.OpenedAt = a.OpenedAt.UTC()
+	if a.ClosedAt != nil {
+		a.ClosedAt = timePtr(a.ClosedAt.UTC())
+	}
+	if a.AckAt != nil {
+		a.AckAt = timePtr(a.AckAt.UTC())
+	}
+	if a.SnoozedUntil != nil {
+		a.SnoozedUntil = timePtr(a.SnoozedUntil.UTC())
+	}
+	return a
 }
 
 func TestAcknowledgeWritesRowAndEvent(t *testing.T) {

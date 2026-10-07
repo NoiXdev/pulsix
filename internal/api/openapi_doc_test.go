@@ -73,3 +73,41 @@ func TestDocument(t *testing.T) {
 		t.Error("Document() second call did not produce a document")
 	}
 }
+
+// TestAlertDetailDTOSchemaCarriesEveryAlertField guards a gap a JSON
+// round-trip test cannot see: AlertDetailDTO (alert_handlers.go) embeds
+// AlertDTO anonymously to share one field set between the list and detail
+// routes. huma's own schema builder (schema.go's getFields) skips an
+// anonymous field whose NAME — which, for an embedded field, is the
+// embedded type's own name — is unexported, the same rule normal struct
+// fields follow. encoding/json does not share that rule: it promotes an
+// unexported-TYPE embed's exported fields regardless, so the wire shape
+// was always correct and only the generated OpenAPI document — and with
+// it, the TypeScript client Task 10 depends on — silently lost every
+// field but timeline. Keeping AlertDTO exported is what fixes this; this
+// test is what stops it coming back quietly.
+func TestAlertDetailDTOSchemaCarriesEveryAlertField(t *testing.T) {
+	doc, err := Document()
+	if err != nil {
+		t.Fatalf("Document() error = %v", err)
+	}
+	var parsed struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("Document() did not produce valid JSON: %v", err)
+	}
+	detail, ok := parsed.Components.Schemas["AlertDetailDTO"]
+	if !ok {
+		t.Fatal(`Document() components.schemas missing "AlertDetailDTO"`)
+	}
+	for _, field := range []string{"id", "host_id", "host_name", "scope", "opened_at", "severity", "peak_severity", "timeline"} {
+		if _, ok := detail.Properties[field]; !ok {
+			t.Errorf("AlertDetailDTO schema missing %q — an embedded DTO's own fields were dropped from the OpenAPI document (properties: %+v)", field, detail.Properties)
+		}
+	}
+}

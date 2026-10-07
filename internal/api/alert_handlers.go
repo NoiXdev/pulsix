@@ -24,13 +24,13 @@ import (
 // "an ack is arguably a lighter act ... that is a backlog question, not a
 // reason to grow the permission model here".
 
-// alertDTO is one alerts.Alert plus its host's name and its
+// AlertDTO is one alerts.Alert plus its host's name and its
 // alerts.Suppression on the wire — the shape alerts.View already carries,
 // flattened rather than nested so the list and the detail route (which
 // embeds this in alertDetailDTO) share one set of field names. Severity is
 // never "ok" (migration 00049's own CHECK; alert.go's doc comment on Alert
 // says why) — hence the enum.
-type alertDTO struct {
+type AlertDTO struct {
 	ID     string `json:"id"`
 	HostID string `json:"host_id"`
 	// HostName is joined in by the store (ListAlerts/GetAlert's own SQL,
@@ -75,8 +75,8 @@ type alertDTO struct {
 // off alerts.Alert itself: the lifecycle's own Alert (Reconcile/Execute)
 // has no concept of a host name, only alerts.View/Detail do, once
 // Service.List/Get attach it from the store's own join.
-func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression) alertDTO {
-	dto := alertDTO{
+func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression) AlertDTO {
+	dto := AlertDTO{
 		ID: a.ID.String(), HostID: a.Subject.HostID.String(), HostName: hostName, Scope: string(a.Subject.Scope),
 		CheckKey: a.Subject.CheckKey, Item: a.Subject.Item, Metric: a.Subject.Metric,
 		OpenedAt: a.OpenedAt, Severity: string(a.Severity), Peak: string(a.Peak),
@@ -121,15 +121,15 @@ type alertTimelineEntryDTO struct {
 	Change *alertStateChangeDTO `json:"change,omitempty"`
 }
 
-// alertDetailDTO is alertDTO plus its timeline — GET /alerts/{id}'s own
+// alertDetailDTO is AlertDTO plus its timeline — GET /alerts/{id}'s own
 // shape, matching alerts.Detail.
 type alertDetailDTO struct {
-	alertDTO
+	AlertDTO
 	Timeline []alertTimelineEntryDTO `json:"timeline"`
 }
 
 func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
-	out := alertDetailDTO{alertDTO: toAlertDTO(d.Alert, d.HostName, d.Suppression)}
+	out := alertDetailDTO{AlertDTO: toAlertDTO(d.Alert, d.HostName, d.Suppression)}
 	out.Timeline = make([]alertTimelineEntryDTO, len(d.Timeline))
 	for i, e := range d.Timeline {
 		entry := alertTimelineEntryDTO{At: e.At, Kind: string(e.Kind)}
@@ -160,7 +160,7 @@ type alertListInput struct {
 
 type alertListOutput struct {
 	Body struct {
-		Alerts []alertDTO `json:"alerts"`
+		Alerts []AlertDTO `json:"alerts"`
 	}
 }
 
@@ -212,7 +212,7 @@ func registerAlertRoutes(hapi huma.API, deps Deps) {
 			return nil, mapAlertsErr(ctx, err)
 		}
 		out := &alertListOutput{}
-		out.Body.Alerts = make([]alertDTO, len(list))
+		out.Body.Alerts = make([]AlertDTO, len(list))
 		for i, v := range list {
 			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.HostName, v.Suppression)
 		}

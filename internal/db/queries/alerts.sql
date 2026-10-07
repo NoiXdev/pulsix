@@ -171,6 +171,25 @@ WHERE a.org_id = @org_id AND a.id = @id;
 -- applies it in Go, after Mute has run. host_name is joined the same way
 -- GetAlert's own comment explains — composite (org_id, host_id), LEFT
 -- JOIN defensively though the FK makes a miss impossible in practice.
+--
+-- `acknowledged` filters by COVERAGE, not by "has acknowledged_at ever
+-- been set" (review finding, Important, corrected from an earlier version
+-- of this query that used exactly that weaker test): design decision 2 —
+-- an acknowledgement given at warn does not cover a later rise to crit —
+-- is the whole reason alerts.go's own isAckCovering (and this page's own
+-- "Unacknowledged — overtaken" label) exists, and a presence-only filter
+-- put an overtaken alert in Acknowledged while the row right next to it
+-- labelled the same alert Unacknowledged. An operator filtering for
+-- unhandled work needs exactly the covering comparison here, not merely
+-- "was this ever touched". The two CASE expressions are the same literal
+-- severity ranking (crit=3, warn=2, unknown=1, else 0) RaiseAlertSeverity's
+-- own peak_severity column already uses — kept in sync by hand for the
+-- same reason that query's own comment gives: SQL cannot call
+-- rules.StateRank. acknowledged_severity is NULL whenever acknowledged_at
+-- is (the alerts table's own CHECK), which this ELSE 0 relies on: an
+-- unacknowledged row's "ack rank" reads 0, below every real severity, so
+-- it can never read as covered even without the explicit
+-- acknowledged_at IS NOT NULL alongside it.
 SELECT a.*, COALESCE(h.name, '')::text AS host_name
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -182,8 +201,13 @@ WHERE a.org_id = @org_id
   AND (sqlc.narg(host_id)::uuid IS NULL OR a.host_id = sqlc.narg(host_id)::uuid)
   AND (sqlc.narg(scope)::text IS NULL OR a.scope = sqlc.narg(scope)::text)
   AND (sqlc.narg(acknowledged)::boolean IS NULL
-       OR (sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NOT NULL)
-       OR (NOT sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NULL))
+       OR (sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT sqlc.narg(acknowledged)::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
 -- id breaks a tie between two alerts one Execute call opened at the
 -- identical opened_at (review finding, Minor): without it, two runs of
 -- this same query could disagree on which of the two comes first.
