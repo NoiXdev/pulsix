@@ -47,7 +47,7 @@ describe('MaintenancePage', () => {
     expect(within(row).getByText('Sat at 02:00 · for 2h · Europe/Berlin')).toBeInTheDocument();
     expect(within(row).getByText('active now')).toHaveStyle({ color: 'var(--px-maintenance)' });
     expect(screen.getByText('Host db-1')).toBeInTheDocument();
-    expect(screen.getByText('1 active now · schedules can skip runs or leave out hosts during a window')).toBeInTheDocument();
+    expect(screen.getByText(/1 active now · maintenance lets schedules skip/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New window' })).not.toBeInTheDocument();
   });
 
@@ -66,7 +66,7 @@ describe('MaintenancePage', () => {
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'New window' }));
-    const dialog = screen.getByRole('dialog', { name: 'New maintenance window' });
+    const dialog = screen.getByRole('dialog', { name: 'New window' });
     await user.type(within(dialog).getByLabelText('Name'), 'db patching');
     await user.selectOptions(within(dialog).getByLabelText('Applies to'), 'inventory_group');
     await user.selectOptions(await within(dialog).findByRole('combobox', { name: 'Group' }), 'g1');
@@ -75,7 +75,7 @@ describe('MaintenancePage', () => {
     await user.type(within(dialog).getByLabelText('Timezone'), 'UTC');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() =>
-      expect(posted).toEqual({ name: 'db patching', target_kind: 'inventory_group', target_id: 'g1', note: '', cron: '0 2 * * 6', duration: '2h', timezone: 'UTC' }),
+      expect(posted).toEqual({ name: 'db patching', target_kind: 'inventory_group', target_id: 'g1', note: '', reason: 'maintenance', cron: '0 2 * * 6', duration: '2h', timezone: 'UTC' }),
     );
   });
 
@@ -98,9 +98,70 @@ describe('MaintenancePage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put?.ifMatch).toBe('"3"'));
     expect(put?.body).toEqual({
-      name: 'db upgrade', target_kind: 'host', target_id: 'h1', note: 'kernel',
+      name: 'db upgrade', target_kind: 'host', target_id: 'h1', note: 'kernel', reason: 'maintenance',
       starts_at: '2026-09-22T10:00:00.000Z', ends_at: '2026-09-22T12:00:00.000Z',
     });
+  });
+
+  // v0.4a final review, Important. Decision 3 claims silencing "reuses the
+  // API and GUI"; it reused the API only. body() omitted `reason`,
+  // MaintenanceWindowBody.Reason is omitempty, and the service defaults an
+  // empty one to `maintenance` — so the Save button on an unchanged
+  // silence window converted it back, un-muting every alert it covered and
+  // newly pausing that host's scheduled runs, invisibly.
+  it('preserves reason=silence through an unchanged edit', async () => {
+    const user = userEvent.setup();
+    const silence: MaintenanceWindow = { ...dbUpgrade, id: 'w3', name: 'mute disk', reason: 'silence', revision: 7 };
+    let put: { body: Record<string, unknown> } | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/maintenance-windows': { windows: [silence] },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h1', name: 'db-1' }], next_cursor: '' },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'PUT /api/v1/orgs/acme/maintenance-windows/w3': (req: MockRequest) => {
+        put = { body: req.body as Record<string, unknown> };
+        return { window: silence };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit mute disk' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit mute disk' });
+    expect(within(dialog).getByLabelText('Why')).toHaveValue('silence');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put?.body.reason).toBe('silence'));
+  });
+
+  // The other half: the reason has to be settable and visible, or decision
+  // 3's "reuses the GUI" stays false in the other direction — a window
+  // created here could only ever be a maintenance one, and the list could
+  // not tell the two apart.
+  it('creates a silence window and labels it in the list', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    const silence: MaintenanceWindow = { ...dbUpgrade, id: 'w4', name: 'mute disk', reason: 'silence' };
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/maintenance-windows': { windows: [silence] },
+      'GET /api/v1/orgs/acme/hosts': noHosts,
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'POST /api/v1/orgs/acme/maintenance-windows': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return { window: silence };
+      },
+    });
+    renderPage();
+
+    const row = (await screen.findByText('mute disk')).closest('[data-row]')!.parentElement as HTMLElement;
+    expect(within(row).getByText('silence')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'New window' }));
+    const dialog = screen.getByRole('dialog', { name: 'New window' });
+    await user.type(within(dialog).getByLabelText('Name'), 'mute it');
+    await user.selectOptions(within(dialog).getByLabelText('Why'), 'silence');
+    await user.type(within(dialog).getByLabelText('From'), '2026-09-22T10:00');
+    await user.type(within(dialog).getByLabelText('Until'), '2026-09-22T12:00');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted?.reason).toBe('silence'));
   });
 });
 

@@ -12,10 +12,22 @@ import { fromLocalInput, toLocalInput } from './time.ts';
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 type TargetKind = 'org' | 'host' | 'inventory_group';
+type WindowReason = 'maintenance' | 'silence';
 
-/** WindowDialog creates or edits a maintenance window: its target (the
- * organization, a host or an inventory group) and either a one-off
- * stretch or a recurring timetable. */
+/** WindowDialog creates or edits a maintenance window: its reason, its
+ * target (the organization, a host or an inventory group) and either a
+ * one-off stretch or a recurring timetable.
+ *
+ * The reason is a field here, not merely something the API accepts (v0.4a
+ * final review, Important). v0.4a decision 3 makes silencing the face of a
+ * maintenance window rather than a second subsystem, and claims it
+ * therefore "reuses the API and GUI" — which was true of the API and not
+ * of the GUI: `body()` omitted `reason`, `MaintenanceWindowBody.Reason` is
+ * omitempty, and the service defaults an empty one to `maintenance`. So
+ * any save from this dialog silently converted a silence window back into
+ * a maintenance one, un-muting every alert it covered and (since the
+ * schedules' guard reads maintenance windows) newly pausing that host's
+ * scheduled runs, with nothing on screen to say either had happened. */
 export function WindowDialog({ org, window: w, onClose }: { org: string; window?: MaintenanceWindow; onClose: () => void }) {
   const create = useCreateMaintenanceWindow(org);
   const update = useUpdateMaintenanceWindow(org, w?.id ?? '');
@@ -30,6 +42,7 @@ export function WindowDialog({ org, window: w, onClose }: { org: string; window?
   const [duration, setDuration] = useState(w?.duration ?? '2h');
   const [timezone, setTimezone] = useState(w?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [note, setNote] = useState(w?.note ?? '');
+  const [reason, setReason] = useState<WindowReason>((w?.reason as WindowReason) ?? 'maintenance');
   const [error, setError] = useState<string | null>(null);
   const hosts = useHosts(org, { managed: true, q: hostQuery || undefined });
   const groups = useGroups(org);
@@ -37,7 +50,7 @@ export function WindowDialog({ org, window: w, onClose }: { org: string; window?
   const groupList = groups.data?.groups ?? [];
 
   function body(): MaintenanceWindowInput {
-    const base = { name, target_kind: kind, ...(kind !== 'org' && targetId ? { target_id: targetId } : {}), note };
+    const base = { name, target_kind: kind, ...(kind !== 'org' && targetId ? { target_id: targetId } : {}), note, reason };
     return recurring
       ? { ...base, cron, duration, timezone }
       : { ...base, starts_at: startsAt ? fromLocalInput(startsAt) : undefined, ends_at: endsAt ? fromLocalInput(endsAt) : undefined };
@@ -56,10 +69,15 @@ export function WindowDialog({ org, window: w, onClose }: { org: string; window?
   }
 
   return (
-    <Dialog open onClose={onClose} title={w ? `Edit ${w.name}` : 'New maintenance window'} size="wide">
+    <Dialog open onClose={onClose} title={w ? `Edit ${w.name}` : 'New window'} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <Label htmlFor="mw-name">Name</Label>
         <Input id="mw-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
+        <Label htmlFor="mw-reason">Why</Label>
+        <select id="mw-reason" className={SELECT} value={reason} onChange={(e) => setReason(e.target.value as WindowReason)}>
+          <option value="maintenance">Maintenance — work is happening; scheduled runs can skip these hosts</option>
+          <option value="silence">Silence — do not raise alerts; scheduled runs are unaffected</option>
+        </select>
         <Label htmlFor="mw-kind">Applies to</Label>
         <select id="mw-kind" className={SELECT} value={kind} onChange={(e) => { setKind(e.target.value as TargetKind); setTargetId(''); }}>
           <option value="org">The whole organization</option>
