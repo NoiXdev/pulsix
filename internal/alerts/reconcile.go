@@ -63,8 +63,39 @@ func Reconcile(in rules.AlertInput, open []Alert) []Action {
 		actions = append(actions, advance(in.At, ts, existing)...)
 	}
 
+	actions = append(actions, staleActions(in, bySubject)...)
 	actions = append(actions, hostAction(in, bySubject)...)
 	return actions
+}
+
+// staleActions is design decision 5's "the check is taken off the host or
+// disabled" path, and the reason it is here rather than in the sweep: the
+// evaluator leaves an unmeasured tuple's check_states row standing on
+// purpose (rules.Result.Unmeasured's own doc comment), so the sweep's
+// "no state row exists" test — which catches the item-dropped path — can
+// never see this one. The subject has nonetheless gone: nothing measures
+// the tuple any more, nothing will ever judge it ok, and `stale` is the
+// honest close for it, the same word the sweep uses for the same fact.
+//
+// It runs over in.Unmeasured, never over the open alerts, so the result
+// stays a function of the input's own order (this file's own doc
+// comment). Closing an alert that is not open is impossible by
+// construction: bySubject only holds open ones.
+func staleActions(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
+	var out []Action
+	for _, t := range in.Unmeasured {
+		sub := Subject{
+			HostID:   in.HostID,
+			Scope:    ScopeTuple,
+			CheckKey: t.CheckKey,
+			Item:     t.Item,
+			Metric:   t.Metric,
+		}
+		if existing, found := bySubject[sub]; found {
+			out = append(out, Action{Kind: ActionClose, AlertID: existing.ID, At: in.At, Reason: Stale})
+		}
+	}
+	return out
 }
 
 // closeOrFlap is lifecycle step 2 and decision 6: an open alert whose
@@ -114,6 +145,16 @@ func advance(at time.Time, ts rules.TupleState, existing Alert) []Action {
 // tuple, is what opens or closes the one scope-host alert. It exists only
 // while the roll-up itself reads unknown; any other roll-up state closes
 // it, the mirror image of a tuple alert closing on ok.
+//
+// The close reason distinguishes two of those "any other" states that are
+// not the same fact at all (v0.4a final review, Critical, the host half of
+// decision 5): a roll-up that reads ok/warn/crit says the host was judged
+// and is no longer unknown — resolved. The ZERO HostState says the host
+// was not judged at all, because every check it had has been taken off it
+// (rules.Result.Host's own doc comment: "write no row, and delete the one
+// that is there"). That is a vanished subject, not a recovery, so it
+// closes `stale` for exactly the reason decision 5 gives: "closing those
+// as resolved would be a lie in the one table whose job is the record".
 func hostAction(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 	sub := Subject{HostID: in.HostID, Scope: ScopeHost}
 	existing, found := bySubject[sub]
@@ -127,5 +168,9 @@ func hostAction(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 	if !found {
 		return nil
 	}
-	return []Action{{Kind: ActionClose, AlertID: existing.ID, At: in.At, Reason: Resolved}}
+	reason := Resolved
+	if in.Host.State == "" {
+		reason = Stale
+	}
+	return []Action{{Kind: ActionClose, AlertID: existing.ID, At: in.At, Reason: reason}}
 }

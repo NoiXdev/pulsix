@@ -436,3 +436,66 @@ func TestReconcileOrderFollowsStatesOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestReconcileClosesAnUnmeasuredTupleStale is design decision 5's second
+// path, decided here rather than by the sweep (v0.4a final review,
+// Critical): a tuple whose check the manager no longer resolves is left
+// out of the evaluation with its check_states row standing, so it appears
+// in AlertInput.Unmeasured and in no TupleState at all. It is not healthy
+// — nothing judged it — so `stale`, not `resolved`, and dated by the
+// tick's own At, since nothing else says when it went.
+func TestReconcileClosesAnUnmeasuredTupleStale(t *testing.T) {
+	sub := tupleSubject("disk", "/", "used_pct")
+	a := openAlert(sub, rules.StateCrit, t0)
+
+	in := input()
+	in.Unmeasured = []rules.Tuple{{CheckKey: sub.CheckKey, Item: sub.Item, Metric: sub.Metric}}
+
+	acts := alerts.Reconcile(in, []alerts.Alert{a})
+	if len(acts) != 1 {
+		t.Fatalf("got %d actions, want exactly 1 close: %+v", len(acts), acts)
+	}
+	got := acts[0]
+	if got.Kind != alerts.ActionClose || got.AlertID != a.ID {
+		t.Fatalf("action = %+v, want a close of %s", got, a.ID)
+	}
+	if got.Reason != alerts.Stale {
+		t.Fatalf("close reason = %q, want stale", got.Reason)
+	}
+	if !got.At.Equal(in.At) {
+		t.Fatalf("close At = %v, want the tick's own %v", got.At, in.At)
+	}
+}
+
+// TestReconcileIgnoresUnmeasuredTuplesWithNoOpenAlert: the report is made
+// every tick a tuple stays unmeasured (rules.Result.Unmeasured's own doc
+// comment), so the second and every later tick must decide nothing at all
+// rather than closing an already-closed alert.
+func TestReconcileIgnoresUnmeasuredTuplesWithNoOpenAlert(t *testing.T) {
+	in := input()
+	in.Unmeasured = []rules.Tuple{{CheckKey: "disk", Item: "/", Metric: "used_pct"}}
+
+	if acts := alerts.Reconcile(in, nil); len(acts) != 0 {
+		t.Fatalf("got %+v, want no actions for an unmeasured tuple nothing is open on", acts)
+	}
+}
+
+// TestReconcileClosesTheHostAlertStaleWhenNothingIsJudged is decision 5
+// applied to the host roll-up. rules.Evaluate returns the ZERO HostState
+// when it judged no tuple at all — "write no row, and delete the one that
+// is there" — which happens exactly when every check has been taken off
+// the host. That is a vanished subject, not a recovery, so the host alert
+// closes stale; a roll-up that actually reads ok still closes resolved.
+func TestReconcileClosesTheHostAlertStaleWhenNothingIsJudged(t *testing.T) {
+	a := openAlert(hostSubject(), rules.StateUnknown, t0)
+
+	gone := alerts.Reconcile(withHost(input(), rules.HostState{HostID: hostID}), []alerts.Alert{a})
+	if len(gone) != 1 || gone[0].Kind != alerts.ActionClose || gone[0].Reason != alerts.Stale {
+		t.Fatalf("zero roll-up produced %+v, want one close with reason stale", gone)
+	}
+
+	healthy := alerts.Reconcile(input(), []alerts.Alert{a})
+	if len(healthy) != 1 || healthy[0].Kind != alerts.ActionClose || healthy[0].Reason != alerts.Resolved {
+		t.Fatalf("an ok roll-up produced %+v, want one close with reason resolved", healthy)
+	}
+}

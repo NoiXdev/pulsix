@@ -278,11 +278,15 @@ func (t *Ticker) Tick(ctx context.Context) (int, error) {
 	})
 	cancel()
 	// Sweep runs once per tick, outside any host's transaction, whether or
-	// not ProcessDue found anything due — a host whose last check was
-	// taken away never becomes due again, so this is precisely the tick
-	// that must still look for it. Its own failure is a delayed cleanup,
-	// not a reason to leave every host ProcessDue just evaluated due
-	// again, so it is logged rather than folded into err.
+	// not ProcessDue found anything due: it is driven by open alerts, not
+	// by a due queue, so it answers for subjects no host's evaluation
+	// would reach this tick. (An earlier version of this comment said "a
+	// host whose last check was taken away never becomes due again";
+	// v0.4a's final review disproved that — nextDue hands such a host the
+	// 15-second heartbeat like any other, and TestHostStaysDueAfterIts
+	// LastCheckIsRemoved in internal/alerts pins it.) Its own failure is a
+	// delayed cleanup, not a reason to leave every host ProcessDue just
+	// evaluated due again, so it is logged rather than folded into err.
 	//
 	// It gets its own deadline rather than running on ctx unbounded, for
 	// exactly the reason batchCtx exists above: Sweep acquires a pool
@@ -378,6 +382,7 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	if err := t.alerts.Apply(ctx, tx, AlertInput{
 		OrgID: d.OrgID, HostID: d.HostID, At: now,
 		Changes: res.Changes, States: res.States, Host: res.Host,
+		Unmeasured: res.Unmeasured,
 	}); err != nil {
 		t.log.ErrorContext(ctx, "apply alerts; leaving the host due for the next tick",
 			"org", d.OrgID, "host", d.HostID, "err", err)

@@ -52,8 +52,8 @@ INSERT INTO alerts (
   @opened_at, @severity, @severity,
   COALESCE(
     (SELECT flapping FROM check_states s
-     WHERE @scope::text = 'tuple' AND s.host_id = @host_id AND s.check_key = @check_key
-       AND s.item = @item AND s.metric = @metric),
+     WHERE @scope::text = 'tuple' AND s.org_id = @org_id AND s.host_id = @host_id
+       AND s.check_key = @check_key AND s.item = @item AND s.metric = @metric),
     false)
 )
 RETURNING id;
@@ -105,13 +105,36 @@ VALUES (@org_id, @alert_id, @at, @kind);
 
 -- name: SweepStaleAlerts :execrows
 -- The design doc's own UPDATE, driven by open alerts rather than by
--- states, because a host whose last check was removed never becomes due
--- again and a per-host sweep would miss exactly that case. scope = 'tuple'
--- excludes host-scope alerts, which carry no check_key/item/metric by
--- construction and would otherwise never match any check_states row
--- either way — excluding them here is what makes that exclusion a fact of
--- this statement rather than an accident of the NOT EXISTS always
--- happening to hold for them.
+-- states. scope = 'tuple' excludes host-scope alerts, which carry no
+-- check_key/item/metric by construction and would otherwise never match
+-- any check_states row either way — excluding them here is what makes
+-- that exclusion a fact of this statement rather than an accident of the
+-- NOT EXISTS always happening to hold for them.
+--
+-- What this statement does and does NOT catch (v0.4a final review,
+-- Critical): "no check_states row exists" is true of exactly one of
+-- decision 5's four paths, the item dropped by an operator's decision —
+-- rules.Result.Dropped is the only thing outside ON DELETE CASCADE that
+-- deletes such a row. A check taken off a host or disabled leaves the row
+-- standing on purpose (rules.Result.Unmeasured's own doc comment), and is
+-- closed inside the host's own evaluation transaction instead, by
+-- alerts.Reconcile's staleActions. A deleted rule leaves the tuple judged
+-- ok, which closes `resolved` — the honest word for a tuple that is
+-- genuinely healthy, which is why the design doc's decision 5 was
+-- corrected rather than the code. A decommissioned host takes its alerts
+-- with it through the composite FK. This sweep therefore remains the
+-- central net decision 5 asks for — it is what a FIFTH deletion site
+-- added next year would be caught by without knowing alerts exist — but
+-- it is no longer the only mechanism, because it cannot be.
+--
+-- An earlier version of this comment justified the sweep by "a host whose
+-- last check was removed never becomes due again". That is false:
+-- rules.nextDue returns a 15-second heartbeat for a host with nothing
+-- pending, and ClaimDueEvalCursors (rules.sql) takes any cursor whose
+-- next_due_at has passed, so such a host keeps being evaluated until it
+-- is deleted. The sweep is still right to be instance-wide rather than
+-- per host — it is cheap, needs no org loop, and does not depend on any
+-- host being looked at — but not for that reason.
 --
 -- The design doc's own text stopped at the UPDATE; the CTE and INSERT
 -- below are a ruling made after review, not part of the brief: the design
@@ -128,7 +151,7 @@ WITH swept AS (
   WHERE a.closed_at IS NULL AND a.scope = 'tuple'
     AND NOT EXISTS (
       SELECT 1 FROM check_states s
-      WHERE s.host_id = a.host_id AND s.check_key = a.check_key
+      WHERE s.org_id = a.org_id AND s.host_id = a.host_id AND s.check_key = a.check_key
         AND s.item = a.item AND s.metric = a.metric)
   RETURNING id, org_id
 )

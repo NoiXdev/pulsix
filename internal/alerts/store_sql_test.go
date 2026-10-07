@@ -598,9 +598,14 @@ func TestSweepClosesAlertsWhoseTupleIsGone(t *testing.T) {
 	d := testdb.Open(t)
 	org, host := seedHost(t, d)
 	insertOpenAlert(t, d, org, host, "disk", "/", "used_percent")
-	// No check_states row for this subject exists at all — the same end
-	// state "the last check was removed" produces, and exactly the
-	// condition SweepStaleAlerts' NOT EXISTS is written to detect.
+	// No check_states row for this subject exists at all — exactly the
+	// condition SweepStaleAlerts' NOT EXISTS is written to detect, and
+	// what rules.Result.Dropped leaves behind when an operator ignores an
+	// item. An earlier version of this comment also claimed it was "the
+	// same end state 'the last check was removed' produces"; v0.4a's final
+	// review found that false — removing a check leaves the row standing —
+	// and the real cause is now driven end to end in lifecycle_sql_test.go
+	// rather than assumed here.
 
 	n, err := alerts.NewSQLStore(d).Sweep(context.Background(), time.Now())
 	if err != nil {

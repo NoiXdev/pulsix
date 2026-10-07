@@ -1006,8 +1006,9 @@ func evaluateCases() []evalCase {
 					Tuple: memT, State: rules.StateOK, Since: at(0),
 					LastValue: ptr(50.0), EvaluatedAt: at(20),
 				}},
-				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(20)},
-				NextDue: at(50),
+				Host:       rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(20)},
+				NextDue:    at(50),
+				Unmeasured: []rules.Tuple{cpuT},
 			},
 		},
 		{
@@ -1055,7 +1056,7 @@ func evaluateCases() []evalCase {
 				Previous:     prev(wasBy(cpuT, rules.StateCrit, at(5), critID)),
 				PreviousHost: &rules.HostState{State: rules.StateCrit, Since: at(0)},
 			},
-			want: rules.Result{NextDue: at(20).Add(15 * time.Second)},
+			want: rules.Result{NextDue: at(20).Add(15 * time.Second), Unmeasured: []rules.Tuple{cpuT}},
 		},
 		{
 			// The exclusion reaches the siblings too: the rule on
@@ -1082,8 +1083,9 @@ func evaluateCases() []evalCase {
 					Tuple: diskRootT, State: rules.StateOK, Since: at(0),
 					LastValue: ptr(95.0), EvaluatedAt: at(20),
 				}},
-				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(20)},
-				NextDue: at(50),
+				Host:       rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(20)},
+				NextDue:    at(50),
+				Unmeasured: []rules.Tuple{diskFreeRootT},
 			},
 		},
 		{
@@ -1121,6 +1123,21 @@ func evaluateCases() []evalCase {
 				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(0), 0)},
 				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
 				Previous:  prev(wasBy(cpuT, rules.StateCrit, at(5), critID)),
+			},
+			want: rules.Result{NextDue: at(20).Add(15 * time.Second), Unmeasured: []rules.Tuple{cpuT}},
+		},
+		{
+			// The mirror of the case above, and the reason Unmeasured
+			// tests Previous at all: a tuple whose check lost its interval
+			// before it was ever evaluated has no stored state to leave
+			// standing, so it can hold no alert and there is nothing for
+			// the sink to close. Reporting it would be noise on every tick
+			// for as long as the check_current row survives.
+			name: "an unmeasured tuple with no previous state is not reported at all",
+			snap: rules.Snapshot{
+				Now:       at(20),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(0), 0)},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
 			},
 			want: rules.Result{NextDue: at(20).Add(15 * time.Second)},
 		},
@@ -1659,6 +1676,14 @@ func assertResult(t *testing.T, got, want rules.Result) {
 	}
 	if !reflect.DeepEqual(got.Dropped, want.Dropped) {
 		t.Errorf("dropped:\n got %s\nwant %s", fmtTuples(got.Dropped), fmtTuples(want.Dropped))
+	}
+	// Unmeasured is asserted on every case for the same reason Dropped is:
+	// it is what v0.4a's alert sink closes a stale alert from, and a case
+	// that silently stopped reporting it would leave an alert open for
+	// ever with every other field still correct (v0.4a final review,
+	// Critical).
+	if !reflect.DeepEqual(got.Unmeasured, want.Unmeasured) {
+		t.Errorf("unmeasured:\n got %s\nwant %s", fmtTuples(got.Unmeasured), fmtTuples(want.Unmeasured))
 	}
 	if !got.NextDue.Equal(want.NextDue) {
 		t.Errorf("next due: got %s, want %s", clock(got.NextDue), clock(want.NextDue))

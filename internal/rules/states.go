@@ -118,6 +118,17 @@ type AlertInput struct {
 	Changes       []Change
 	States        []TupleState // the states after this evaluation
 	Host          HostState    // the roll-up, home of decision 4
+	// Unmeasured is Result.Unmeasured: the tuples this evaluation stopped
+	// judging because their check is no longer resolved for the host,
+	// each of which keeps its check_states row (see that field's own doc
+	// comment). They carry no state — there is nothing left to judge them
+	// against — so they appear here as bare Tuples rather than in States,
+	// and the sink's only business with them is closing an alert that is
+	// still open on one. Without them "the check was taken off the host"
+	// is the one of design decision 5's four paths that the central sweep
+	// cannot see, because the row it looks for is still there (v0.4a
+	// final review, Critical).
+	Unmeasured []Tuple
 }
 
 // FleetFilter narrows HostStates. The zero FleetFilter matches every host

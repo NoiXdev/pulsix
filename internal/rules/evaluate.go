@@ -145,6 +145,20 @@ type Result struct {
 	// holds states, and "no longer judged" is not one; the audit log is
 	// where the reason for the drop lives.
 	Dropped []Tuple
+	// Unmeasured lists the tuples this evaluation left out because their
+	// check has no resolved interval any more, and which had a stored
+	// state to leave standing. Unlike Dropped it is NOT an instruction to
+	// the store: nothing deletes these rows (see the skip in Evaluate for
+	// why). It exists for one consumer, v0.4a's alert sink: the sweep
+	// recognises a vanished subject by the absence of a check_states row,
+	// and this is the one path that stops judging a tuple while keeping
+	// one, so without this report an alert open on a check an operator
+	// deleted or disabled could never close at all (v0.4a final review,
+	// Critical). Reported every tick the tuple stays unmeasured, not only
+	// the first: the consumer is idempotent (there is no alert left to
+	// close on the second pass), and a once-only report would need state
+	// this pure function deliberately does not keep.
+	Unmeasured []Tuple
 }
 
 // WindowRequests is what the store must fetch before Evaluate can run: one
@@ -202,9 +216,10 @@ func Evaluate(s Snapshot) Result {
 	byTuple := rulesPerTuple(s.Effective)
 
 	var (
-		states  []TupleState
-		changes []Change
-		dropped []Tuple
+		states     []TupleState
+		changes    []Change
+		dropped    []Tuple
+		unmeasured []Tuple
 		// pending collects every moment this host has a reason to be looked
 		// at again: candidate ripenings and staleness deadlines (step 5).
 		pending []time.Time
@@ -226,6 +241,20 @@ func Evaluate(s Snapshot) Result {
 			// the thing it measured (backlog 3.28) one layer up: the stored
 			// row stays exactly as it is — nothing here deletes it — and
 			// the read side is what leaves it out.
+			//
+			// Leaving the row standing is precisely why the tuple has to be
+			// NAMED here rather than silently skipped (v0.4a final review,
+			// Critical): v0.4a's alert sweep recognises a vanished subject
+			// by the absence of its check_states row, and this is the one
+			// path that takes a tuple out of the evaluation while keeping
+			// that row — so an alert open on it would never close at all.
+			// Unmeasured is the report that closes it, in the very
+			// transaction this evaluation already holds. Only a tuple with
+			// a stored state can hold an alert, which is why this mirrors
+			// the Previous test the Ignored skip below already makes.
+			if _, seen := s.Previous[ts.Tuple]; seen {
+				unmeasured = append(unmeasured, ts.Tuple)
+			}
 			continue
 		}
 
@@ -317,11 +346,12 @@ func Evaluate(s Snapshot) Result {
 	}
 
 	return Result{
-		States:  states,
-		Changes: changes,
-		Host:    rollUp(states, s.Now, s.PreviousHost),
-		NextDue: nextDue(pending, s.Now),
-		Dropped: dropped,
+		States:     states,
+		Changes:    changes,
+		Host:       rollUp(states, s.Now, s.PreviousHost),
+		NextDue:    nextDue(pending, s.Now),
+		Dropped:    dropped,
+		Unmeasured: unmeasured,
 	}
 }
 
