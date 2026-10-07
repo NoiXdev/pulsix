@@ -47,6 +47,9 @@ type fakeTOTPStore struct {
 	// UseRecoveryCode
 	useRecoveryOK  bool
 	useRecoveryErr error
+
+	// CountUnusedRecoveryCodes
+	unusedRecovery int
 }
 
 func (f *fakeTOTPStore) GetTOTPSecret(context.Context, uuid.UUID) (auth.TOTPSecretRow, error) {
@@ -94,6 +97,10 @@ func (f *fakeTOTPStore) ReplaceRecoveryCodes(context.Context, uuid.UUID) error {
 func (f *fakeTOTPStore) DeleteTOTP(context.Context, uuid.UUID) error {
 	f.deleteCalls++
 	return f.deleteErr
+}
+
+func (f *fakeTOTPStore) CountUnusedRecoveryCodes(context.Context, uuid.UUID) (int, error) {
+	return f.unusedRecovery, nil
 }
 
 func (f *fakeTOTPStore) UseRecoveryCode(context.Context, uuid.UUID, []byte) (bool, error) {

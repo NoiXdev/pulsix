@@ -86,6 +86,10 @@ type TOTPStore interface {
 	// UseRecoveryCode reports whether it consumed an unused recovery code
 	// matching codeHash.
 	UseRecoveryCode(ctx context.Context, userID uuid.UUID, codeHash []byte) (bool, error)
+	// CountUnusedRecoveryCodes reports how many of the account's recovery
+	// codes can still be redeemed. Spent codes are kept rather than
+	// deleted, so this is deliberately not "how many rows exist".
+	CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
 // TOTP manages time-based one-time passwords and recovery codes.
@@ -280,6 +284,15 @@ func dedupSteps(a, b int64) []int64 {
 }
 
 // VerifyRecovery consumes one recovery code.
+// RecoveryCodesRemaining reports how many recovery codes the account can
+// still redeem. The account page shows it so that a set emptying one code
+// at a time stops being invisible: the person spending them is the one who
+// has already lost their usual factor, and running out silently is how a
+// recoverable situation becomes an administrator reset.
+func (t *TOTP) RecoveryCodesRemaining(ctx context.Context, userID uuid.UUID) (int, error) {
+	return t.store.CountUnusedRecoveryCodes(ctx, userID)
+}
+
 func (t *TOTP) VerifyRecovery(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(code))))
 	return t.store.UseRecoveryCode(ctx, userID, sum[:])

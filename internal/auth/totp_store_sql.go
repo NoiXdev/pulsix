@@ -61,6 +61,12 @@ func (s *SQLTOTPStore) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 	return s.q.DeleteTOTP(ctx, userID)
 }
 
+// CountUnusedRecoveryCodes implements TOTPStore.
+func (s *SQLTOTPStore) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int, error) {
+	n, err := s.q.CountUnusedRecoveryCodes(ctx, userID)
+	return int(n), err
+}
+
 func (s *SQLTOTPStore) UseRecoveryCode(ctx context.Context, userID uuid.UUID, codeHash []byte) (bool, error) {
 	n, err := s.q.UseRecoveryCode(ctx, gen.UseRecoveryCodeParams{UserID: userID, CodeHash: codeHash})
 	return n == 1, err

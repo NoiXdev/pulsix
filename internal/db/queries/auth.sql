@@ -90,3 +90,10 @@ INSERT INTO recovery_codes (user_id, code_hash) VALUES ($1, $2);
 
 -- name: UseRecoveryCode :execrows
 UPDATE recovery_codes SET used_at = now() WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL;
+
+-- name: CountUnusedRecoveryCodes :one
+-- Backlog 1.19/1.34: how many codes the account still has. Spent codes
+-- are kept rather than deleted (UseRecoveryCode stamps used_at), so the
+-- count must exclude them explicitly — a row's existence is not evidence
+-- it can still be redeemed.
+SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL;

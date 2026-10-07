@@ -48,6 +48,11 @@ type loginOutput struct {
 		// one. Exactly one of the two is always true — a password never
 		// completes a session on its own.
 		MFAEnrolmentRequired bool `json:"mfa_enrolment_required"`
+		// RecoveryCodesRemaining is how many recovery codes the account can
+		// still redeem — the account page shows it beside the regenerate
+		// action, so that a set emptying one code at a time is visible
+		// before it empties rather than after.
+		RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
 	}
 }
 
@@ -66,6 +71,11 @@ type meOutput struct {
 		// such a session straight to enrolment; a session that is not
 		// MFA-complete with this false has a factor to verify instead.
 		MFAEnrolmentRequired bool `json:"mfa_enrolment_required"`
+		// RecoveryCodesRemaining is how many recovery codes the account can
+		// still redeem — the account page shows it beside the regenerate
+		// action, so that a set emptying one code at a time is visible
+		// before it empties rather than after.
+		RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
 		// TOTPConfirmed says whether the account has a confirmed TOTP
 		// factor. Combined client-side with whether GET /auth/passkeys
 		// returns any credential, it tells the account security page
@@ -130,6 +140,11 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		out.Body.User.ID, out.Body.User.Email, out.Body.User.DisplayName = u.ID.String(), u.Email, u.DisplayName
 		out.Body.MFAComplete, out.Body.InstanceAdmin = p.MFAComplete, p.InstanceAdmin
 		out.Body.TOTPConfirmed = totpConfirmed
+		remaining, err := deps.TOTP.RecoveryCodesRemaining(ctx, p.UserID)
+		if err != nil {
+			return nil, mapAuthErr(ctx, err)
+		}
+		out.Body.RecoveryCodesRemaining = remaining
 		if !p.MFAComplete {
 			enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)
 			if err != nil {

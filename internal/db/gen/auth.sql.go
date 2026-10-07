@@ -35,6 +35,21 @@ func (q *Queries) ConfirmTOTP(ctx context.Context, userID uuid.UUID) (int64, err
 	return result.RowsAffected(), nil
 }
 
+const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
+SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL
+`
+
+// Backlog 1.19/1.34: how many codes the account still has. Spent codes
+// are kept rather than deleted (UseRecoveryCode stamps used_at), so the
+// count must exclude them explicitly — a row's existence is not evidence
+// it can still be redeemed.
+func (q *Queries) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnusedRecoveryCodes, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
 VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END)
