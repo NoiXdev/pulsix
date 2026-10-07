@@ -63,6 +63,11 @@ export default defineConfig({
     // real agent, same as fleet.spec.ts, so it sits right after it in the
     // chain for the same reason — it needs the agent binary built.
     { name: 'items', testMatch: /items\.spec\.ts/, dependencies: ['fleet'] },
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['items'] },
+    // The alert lifecycle's GUI half (v0.4a, closeout task): one more real
+    // agent, same reason items.spec.ts sits right after fleet.spec.ts —
+    // it needs the agent binary built and a rule to drive a real tuple to
+    // crit.
+    { name: 'alerts', testMatch: /alerts\.spec\.ts/, dependencies: ['items'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['alerts'] },
   ],
 });
