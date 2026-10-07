@@ -75,6 +75,19 @@ type Alert struct {
 	WasFlapping bool
 }
 
+// AlertWithHost pairs an Alert with its host's name — Get and List's own
+// read shape, not the lifecycle's: Reconcile/Execute (Apply, the per-tick
+// path) never need a host's name and keep passing bare Alert values
+// around, so this stays out of Alert itself rather than growing every
+// internal caller an unused field. The store's GetAlert/ListAlerts join
+// hosts for exactly this (store_sql.go's own doc comment on why the join
+// names org_id); Service.Get/List unwrap it onto View/Detail's own
+// HostName field.
+type AlertWithHost struct {
+	Alert
+	HostName string
+}
+
 // ActionKind is what Reconcile decided must happen to one alert.
 type ActionKind string
 

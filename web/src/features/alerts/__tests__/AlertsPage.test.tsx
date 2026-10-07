@@ -12,6 +12,7 @@ const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', rol
 const alert = (over: Record<string, unknown> = {}) => ({
   id: 'a1',
   host_id: 'h1',
+  host_name: 'web-1',
   scope: 'tuple',
   check_key: 'disk',
   item: '/var',
@@ -49,8 +50,8 @@ describe('AlertsPage', () => {
       'GET /api/v1/orgs/acme': org('operator'),
       'GET /api/v1/orgs/acme/alerts': {
         alerts: [
-          alert({ id: 'a-crit', check_key: 'cpu', item: '', metric: 'load', severity: 'crit', peak_severity: 'crit' }),
-          alert({ id: 'a-warn', check_key: 'disk', item: '/var', metric: 'use_pct' }),
+          alert({ id: 'a-crit', host_id: 'h-crit', host_name: 'db-1', check_key: 'cpu', item: '', metric: 'load', severity: 'crit', peak_severity: 'crit' }),
+          alert({ id: 'a-warn', host_id: 'h-warn', host_name: 'web-2', check_key: 'disk', item: '/var', metric: 'use_pct' }),
         ],
       },
     });
@@ -58,6 +59,15 @@ describe('AlertsPage', () => {
 
     await screen.findByText('cpu · load');
     expect(screen.getByText('disk · /var · use_pct')).toBeInTheDocument();
+    // Each alert's own host name is on screen, and attached to its own
+    // row, not the other one's — the same wrong-host regression the
+    // backend's own join test guards against (a row that showed every
+    // alert under one constant or swapped host name would still pass a
+    // check that merely looked for "db-1" and "web-2" somewhere on the
+    // page, so this pins each name to its own row's host cell instead).
+    const hostCells = screen.getAllByTestId('alert-host');
+    expect(hostCells[0]).toHaveTextContent('db-1');
+    expect(hostCells[1]).toHaveTextContent('web-2');
     // Each row's own three facts are on screen, not merged into one cell.
     expect(screen.getAllByTestId('alert-open')).toHaveLength(2);
     expect(screen.getAllByTestId('alert-peak')).toHaveLength(2);

@@ -145,29 +145,49 @@ SELECT org_id, id, @now, 'closed' FROM swept;
 -- schema keeps regardless (see e.g. maintenance.sql's own GetMaintenanceWindow).
 
 -- name: GetAlert :one
-SELECT * FROM alerts WHERE org_id = @org_id AND id = @id;
+-- Joined to hosts on the composite (org_id, host_id) — never host_id
+-- alone — the same guard every other reference in this schema gives a
+-- cross-table lookup (GetMaintenanceWindow's own comment above), even
+-- though alerts.host_id is already a single table's primary key and could
+-- not actually resolve to a different organization's row: the lifecycle's
+-- own transaction (store_sql.go's package doc) is unscoped and bypasses
+-- RLS by design, so every join here names org_id on principle, not only
+-- where a collision could occur. LEFT JOIN, not INNER: the composite FK
+-- (migration 00049) with ON DELETE CASCADE means an alert cannot outlive
+-- its host, so host_name is never actually missing — the LEFT JOIN plus
+-- COALESCE is defensive, not load-bearing, the same posture
+-- GetMaintenanceWindow already takes for a target that in its case
+-- genuinely can be absent.
+SELECT a.*, COALESCE(h.name, '')::text AS host_name
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+WHERE a.org_id = @org_id AND a.id = @id;
 
 -- name: ListAlerts :many
 -- Service.List's own Filter, forwarded almost verbatim: each optional
 -- field matches everything when NULL, the same "param IS NULL OR
 -- <condition>" idiom hosts.sql's own ListHosts and rules.sql's own
 -- ListRules already use. Muted has no column to filter on — Service.List
--- applies it in Go, after Mute has run.
-SELECT * FROM alerts
-WHERE org_id = @org_id
+-- applies it in Go, after Mute has run. host_name is joined the same way
+-- GetAlert's own comment explains — composite (org_id, host_id), LEFT
+-- JOIN defensively though the FK makes a miss impossible in practice.
+SELECT a.*, COALESCE(h.name, '')::text AS host_name
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+WHERE a.org_id = @org_id
   AND (sqlc.narg(open)::boolean IS NULL
-       OR (sqlc.narg(open)::boolean AND closed_at IS NULL)
-       OR (NOT sqlc.narg(open)::boolean AND closed_at IS NOT NULL))
-  AND (sqlc.narg(severity)::text IS NULL OR severity = sqlc.narg(severity)::text)
-  AND (sqlc.narg(host_id)::uuid IS NULL OR host_id = sqlc.narg(host_id)::uuid)
-  AND (sqlc.narg(scope)::text IS NULL OR scope = sqlc.narg(scope)::text)
+       OR (sqlc.narg(open)::boolean AND a.closed_at IS NULL)
+       OR (NOT sqlc.narg(open)::boolean AND a.closed_at IS NOT NULL))
+  AND (sqlc.narg(severity)::text IS NULL OR a.severity = sqlc.narg(severity)::text)
+  AND (sqlc.narg(host_id)::uuid IS NULL OR a.host_id = sqlc.narg(host_id)::uuid)
+  AND (sqlc.narg(scope)::text IS NULL OR a.scope = sqlc.narg(scope)::text)
   AND (sqlc.narg(acknowledged)::boolean IS NULL
-       OR (sqlc.narg(acknowledged)::boolean AND acknowledged_at IS NOT NULL)
-       OR (NOT sqlc.narg(acknowledged)::boolean AND acknowledged_at IS NULL))
+       OR (sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NOT NULL)
+       OR (NOT sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NULL))
 -- id breaks a tie between two alerts one Execute call opened at the
 -- identical opened_at (review finding, Minor): without it, two runs of
 -- this same query could disagree on which of the two comes first.
-ORDER BY opened_at DESC, id;
+ORDER BY a.opened_at DESC, a.id;
 
 -- name: ListAlertEvents :many
 -- Get's own timeline, the event half (timeline.go's mergeTimeline merges

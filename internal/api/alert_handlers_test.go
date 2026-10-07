@@ -139,6 +139,7 @@ func (f alertFixture) seedClosedAlert(t *testing.T, host uuid.UUID, sub alerts.S
 type alertOut struct {
 	ID                string     `json:"id"`
 	HostID            string     `json:"host_id"`
+	HostName          string     `json:"host_name"`
 	Scope             string     `json:"scope"`
 	CheckKey          string     `json:"check_key"`
 	Item              string     `json:"item"`
@@ -212,7 +213,7 @@ func TestAlertListAndGet(t *testing.T) {
 		t.Fatalf("list = %+v, want exactly one alert", list.Alerts)
 	}
 	got := list.Alerts[0]
-	if got.ID != id.String() || got.HostID != f.hostA.String() || got.Scope != "tuple" ||
+	if got.ID != id.String() || got.HostID != f.hostA.String() || got.HostName != "web-1" || got.Scope != "tuple" ||
 		got.CheckKey != "cpu" || got.Metric != "used_percent" || got.Severity != "warn" || got.Peak != "warn" {
 		t.Fatalf("list[0] = %+v, want the seeded alert's own fields", got)
 	}
@@ -227,11 +228,47 @@ func TestAlertListAndGet(t *testing.T) {
 	if getResp.StatusCode != http.StatusOK {
 		t.Fatalf("get = %d %s", getResp.StatusCode, mustReadBody(t, getResp))
 	}
-	if detail.ID != id.String() {
-		t.Fatalf("get id = %q, want %q", detail.ID, id.String())
+	if detail.ID != id.String() || detail.HostName != "web-1" {
+		t.Fatalf("get = %+v, want id %q and host_name \"web-1\"", detail, id.String())
 	}
 	if len(detail.Timeline) != 1 || detail.Timeline[0].Kind != "event" || detail.Timeline[0].Event == nil || detail.Timeline[0].Event.Kind != "opened" {
 		t.Fatalf("timeline = %+v, want exactly one 'opened' event", detail.Timeline)
+	}
+}
+
+// TestAlertListNamesEachAlertsOwnHost is the review's own discriminating
+// case at the HTTP layer, mirroring internal/alerts' own
+// TestGetAlertAndListAlertsNameEachAlertsOwnHost one layer up: a test
+// merely asserting host_name is non-empty would still pass against a join
+// that returned the wrong row (e.g. one host's name leaking onto every
+// alert in the organization). hostA is "web-1", hostB is "web-2"
+// (newAlertFixture) — two real, differently-named hosts in the same
+// organization, so a swapped or constant join answer shows up as a wrong
+// string, not merely a missing one.
+func TestAlertListNamesEachAlertsOwnHost(t *testing.T) {
+	f := newAlertFixture(t, "alert-host-names")
+	now := time.Now().UTC()
+	idA := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateWarn, now)
+	idB := f.seedOpenAlert(t, f.hostB, tupleSubject(f.hostB, "disk", "", "used_percent"), rules.StateCrit, now)
+
+	resp := requestJSON(t, f.viewerC, http.MethodGet, f.alertsURL(""), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var list alertListOut
+	decodeInto(t, resp, &list)
+	if len(list.Alerts) != 2 {
+		t.Fatalf("list = %+v, want exactly 2 alerts", list.Alerts)
+	}
+	gotNames := map[string]string{}
+	for _, a := range list.Alerts {
+		gotNames[a.ID] = a.HostName
+	}
+	if gotNames[idA.String()] != "web-1" {
+		t.Fatalf("alert on hostA named %q, want \"web-1\" (got the wrong host's name)", gotNames[idA.String()])
+	}
+	if gotNames[idB.String()] != "web-2" {
+		t.Fatalf("alert on hostB named %q, want \"web-2\" (got the wrong host's name)", gotNames[idB.String()])
 	}
 }
 

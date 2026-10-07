@@ -2413,6 +2413,7 @@ export interface components {
             /** @enum {string} */
             closed_reason?: "resolved" | "stale";
             host_id: string;
+            host_name: string;
             id: string;
             item?: string;
             metric?: string;

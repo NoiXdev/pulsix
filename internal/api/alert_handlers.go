@@ -24,14 +24,20 @@ import (
 // "an ack is arguably a lighter act ... that is a backlog question, not a
 // reason to grow the permission model here".
 
-// alertDTO is one alerts.Alert plus its alerts.Suppression on the wire —
-// the shape alerts.View already carries, flattened rather than nested so
-// the list and the detail route (which embeds this in alertDetailDTO)
-// share one set of field names. Severity is never "ok" (migration 00049's
-// own CHECK; alert.go's doc comment on Alert says why) — hence the enum.
+// alertDTO is one alerts.Alert plus its host's name and its
+// alerts.Suppression on the wire — the shape alerts.View already carries,
+// flattened rather than nested so the list and the detail route (which
+// embeds this in alertDetailDTO) share one set of field names. Severity is
+// never "ok" (migration 00049's own CHECK; alert.go's doc comment on Alert
+// says why) — hence the enum.
 type alertDTO struct {
-	ID       string `json:"id"`
-	HostID   string `json:"host_id"`
+	ID     string `json:"id"`
+	HostID string `json:"host_id"`
+	// HostName is joined in by the store (ListAlerts/GetAlert's own SQL,
+	// internal/alerts/store_sql.go) rather than left for the GUI to
+	// resolve from host_id: the alerts list is the operator's front door,
+	// and "which machine is this" is the first thing it has to answer.
+	HostName string `json:"host_name"`
 	Scope    string `json:"scope" enum:"tuple,host"`
 	CheckKey string `json:"check_key,omitempty"`
 	Item     string `json:"item,omitempty"`
@@ -63,11 +69,15 @@ type alertDTO struct {
 	MuteWindowID string     `json:"mute_window_id,omitempty" doc:"Set only when mute_reason is maintenance or silence"`
 }
 
-// toAlertDTO flattens one alerts.Alert and its alerts.Suppression onto the
-// wire shape every one of the six routes answers with.
-func toAlertDTO(a alerts.Alert, sup alerts.Suppression) alertDTO {
+// toAlertDTO flattens one alerts.Alert, its host's name and its
+// alerts.Suppression onto the wire shape every one of the six routes
+// answers with. hostName is a separate parameter rather than a field read
+// off alerts.Alert itself: the lifecycle's own Alert (Reconcile/Execute)
+// has no concept of a host name, only alerts.View/Detail do, once
+// Service.List/Get attach it from the store's own join.
+func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression) alertDTO {
 	dto := alertDTO{
-		ID: a.ID.String(), HostID: a.Subject.HostID.String(), Scope: string(a.Subject.Scope),
+		ID: a.ID.String(), HostID: a.Subject.HostID.String(), HostName: hostName, Scope: string(a.Subject.Scope),
 		CheckKey: a.Subject.CheckKey, Item: a.Subject.Item, Metric: a.Subject.Metric,
 		OpenedAt: a.OpenedAt, Severity: string(a.Severity), Peak: string(a.Peak),
 		ClosedAt: a.ClosedAt, ClosedReason: string(a.ClosedReason),
@@ -119,7 +129,7 @@ type alertDetailDTO struct {
 }
 
 func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
-	out := alertDetailDTO{alertDTO: toAlertDTO(d.Alert, d.Suppression)}
+	out := alertDetailDTO{alertDTO: toAlertDTO(d.Alert, d.HostName, d.Suppression)}
 	out.Timeline = make([]alertTimelineEntryDTO, len(d.Timeline))
 	for i, e := range d.Timeline {
 		entry := alertTimelineEntryDTO{At: e.At, Kind: string(e.Kind)}
@@ -204,7 +214,7 @@ func registerAlertRoutes(hapi huma.API, deps Deps) {
 		out := &alertListOutput{}
 		out.Body.Alerts = make([]alertDTO, len(list))
 		for i, v := range list {
-			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.Suppression)
+			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.HostName, v.Suppression)
 		}
 		return out, nil
 	})

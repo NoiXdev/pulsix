@@ -65,6 +65,12 @@ type fakeStore struct {
 	alerts  map[uuid.UUID]alerts.Alert
 	getErr  error
 	listErr error
+	// hostNames is keyed by host id, mirroring the store's own join
+	// (GetAlert/ListAlerts's SQL now names hosts.name) — absent from a
+	// test's own setup reads as "", the same default a host without a
+	// name could never actually have in Postgres but which lets most
+	// tests here ignore HostName entirely.
+	hostNames map[uuid.UUID]string
 
 	events    map[uuid.UUID][]alerts.Event
 	eventsErr error
@@ -89,11 +95,12 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		open:    map[uuid.UUID][]alerts.Alert{},
-		alerts:  map[uuid.UUID]alerts.Alert{},
-		events:  map[uuid.UUID][]alerts.Event{},
-		changes: map[alerts.Subject][]alerts.StateChange{},
-		windows: map[uuid.UUID][]maintenance.Occurrence{},
+		open:      map[uuid.UUID][]alerts.Alert{},
+		alerts:    map[uuid.UUID]alerts.Alert{},
+		events:    map[uuid.UUID][]alerts.Event{},
+		changes:   map[alerts.Subject][]alerts.StateChange{},
+		windows:   map[uuid.UUID][]maintenance.Occurrence{},
+		hostNames: map[uuid.UUID]string{},
 	}
 }
 
@@ -116,22 +123,22 @@ func (f *fakeStore) Sweep(_ context.Context, _ time.Time) (int, error) {
 	return f.sweptN, f.sweepErr
 }
 
-func (f *fakeStore) GetAlert(_ context.Context, _, id uuid.UUID) (alerts.Alert, error) {
+func (f *fakeStore) GetAlert(_ context.Context, _, id uuid.UUID) (alerts.AlertWithHost, error) {
 	if f.getErr != nil {
-		return alerts.Alert{}, f.getErr
+		return alerts.AlertWithHost{}, f.getErr
 	}
 	a, ok := f.alerts[id]
 	if !ok {
-		return alerts.Alert{}, alerts.ErrNotFound
+		return alerts.AlertWithHost{}, alerts.ErrNotFound
 	}
-	return a, nil
+	return alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]}, nil
 }
 
-func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Filter) ([]alerts.Alert, error) {
+func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Filter) ([]alerts.AlertWithHost, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	var out []alerts.Alert
+	var out []alerts.AlertWithHost
 	for _, a := range f.alerts {
 		if filter.Open != nil && *filter.Open != (a.ClosedAt == nil) {
 			continue
@@ -148,7 +155,7 @@ func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Fil
 		if filter.Acknowledged != nil && *filter.Acknowledged != (a.AckAt != nil) {
 			continue
 		}
-		out = append(out, a)
+		out = append(out, alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]})
 	}
 	return out, nil
 }

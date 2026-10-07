@@ -26,8 +26,17 @@ import (
 // is currently muted (decision 3's own reason View carries a Suppression
 // at all — "the list must be able to label 'in maintenance'"). In v0.4a
 // Suppression has no effect beyond this label; nothing is notified yet.
+//
+// HostName comes along with the row from the store's own join (ListAlerts'
+// SQL, store_sql.go) rather than a second lookup here: the GUI's own front
+// door is "which machine is this", and resolving it per-row from a
+// paginated hosts list client-side cannot answer that for an arbitrary
+// alert without fetching every page — the same reasoning fleet's own
+// FleetHostDTO already settled by having its one endpoint return names
+// directly instead of ids to resolve.
 type View struct {
 	Alert
+	HostName    string
 	Suppression Suppression
 }
 
@@ -35,6 +44,7 @@ type View struct {
 // mergeTimeline) — what Get returns.
 type Detail struct {
 	Alert
+	HostName    string
 	Suppression Suppression
 	Timeline    []TimelineEntry
 }
@@ -136,14 +146,14 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter) ([]View, 
 	cache := map[uuid.UUID][]maintenance.Occurrence{}
 	out := make([]View, 0, len(rows))
 	for _, a := range rows {
-		sup, err := s.suppression(ctx, orgID, a, now, cache)
+		sup, err := s.suppression(ctx, orgID, a.Alert, now, cache)
 		if err != nil {
 			return nil, err
 		}
 		if f.Muted != nil && *f.Muted != sup.Muted {
 			continue
 		}
-		out = append(out, View{Alert: a, Suppression: sup})
+		out = append(out, View{Alert: a.Alert, HostName: a.HostName, Suppression: sup})
 	}
 	return out, nil
 }
@@ -162,7 +172,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Detail, error) 
 		return Detail{}, err
 	}
 	now := s.clock()
-	sup, err := s.suppression(ctx, orgID, a, now, nil)
+	sup, err := s.suppression(ctx, orgID, a.Alert, now, nil)
 	if err != nil {
 		return Detail{}, err
 	}
@@ -181,7 +191,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Detail, error) 
 			return Detail{}, fmt.Errorf("get alert %s state changes: %w", id, err)
 		}
 	}
-	return Detail{Alert: a, Suppression: sup, Timeline: mergeTimeline(events, changes)}, nil
+	return Detail{Alert: a.Alert, HostName: a.HostName, Suppression: sup, Timeline: mergeTimeline(events, changes)}, nil
 }
 
 // invalidf builds an ErrInvalidInput failure carrying a message an

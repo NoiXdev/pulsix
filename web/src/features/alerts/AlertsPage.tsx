@@ -106,7 +106,7 @@ export function AlertsPage() {
       <Card>
         <GridHeader columns={ALERTS_COLUMNS}>
           <span>Open</span>
-          <span>Subject</span>
+          <span>Host</span>
           <span>Peak</span>
           <span>Current</span>
           <span>Ack</span>

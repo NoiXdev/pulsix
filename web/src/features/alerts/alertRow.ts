@@ -22,6 +22,12 @@ import type { Alert, AlertCloseReason, AlertMuteReason, AlertScope, AlertSeverit
 export interface AlertRowAlert {
   id: string;
   hostId: string;
+  /** The host's name, joined in by the server (ListAlerts/GetAlert's own
+   * SQL, internal/alerts/store_sql.go) — "which machine is this" is the
+   * first question an operator asks of this list, and resolving it from
+   * hostId client-side cannot answer that for an arbitrary alert without
+   * fetching every page of a paginated hosts list. */
+  hostName: string;
   scope: AlertScope;
   checkKey: string;
   item: string;
@@ -57,6 +63,7 @@ export function alertToRowAlert(a: Alert): AlertRowAlert {
   return {
     id: a.id,
     hostId: a.host_id,
+    hostName: a.host_name,
     scope: a.scope,
     checkKey: a.check_key ?? '',
     item: a.item ?? '',

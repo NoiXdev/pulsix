@@ -84,12 +84,14 @@ type Store interface {
 	// many it closed.
 	Sweep(ctx context.Context, now time.Time) (int, error)
 
-	// GetAlert returns one alert by id, org-scoped. ErrNotFound when no
-	// such alert exists in this organization.
-	GetAlert(ctx context.Context, orgID, id uuid.UUID) (Alert, error)
+	// GetAlert returns one alert by id, org-scoped, with its host's name
+	// (query-joined — see the ListAlerts SQL's own doc comment on why the
+	// join names org_id). ErrNotFound when no such alert exists in this
+	// organization.
+	GetAlert(ctx context.Context, orgID, id uuid.UUID) (AlertWithHost, error)
 	// ListAlerts returns the organization's alerts matching f, newest
-	// opened first.
-	ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]Alert, error)
+	// opened first, each with its host's name.
+	ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]AlertWithHost, error)
 	// Events returns alertID's own alert_events, in order — half of
 	// Get's timeline (the other half is StateChanges below).
 	Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Event, error)
@@ -209,6 +211,79 @@ func toAlert(r gen.Alert) Alert {
 		SnoozeUntilChange: r.SnoozeUntilChange,
 
 		WasFlapping: r.WasFlapping,
+	}
+}
+
+// toAlertFromGetRow and toAlertFromListRow mirror toAlert's own field
+// mapping exactly, against the two row shapes GetAlert/ListAlerts gained
+// once their queries joined hosts for host_name (alerts.sql's own doc
+// comment on why that join names org_id): sqlc gives GetAlert/ListAlerts
+// their own named row types the moment a query's result stops matching
+// the bare `alerts` table, so neither converts from — or to — gen.Alert
+// itself; OpenForHost's own toAlert above is untouched because
+// ListOpenAlertsForHost still selects bare `alerts.*` with no join (the
+// evaluator's lifecycle has no use for a host's name). Written out
+// in full rather than factored through toAlert, the same way
+// alert_handlers.go's toAlertDTO already duplicates this package's own
+// field list instead of sharing a helper across layers — three row shapes
+// this small do not earn an abstraction over them.
+func toAlertFromGetRow(r gen.GetAlertRow) AlertWithHost {
+	return AlertWithHost{
+		Alert: Alert{
+			ID:    r.ID,
+			OrgID: r.OrgID,
+			Subject: Subject{
+				HostID: r.HostID, Scope: Scope(r.Scope),
+				CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
+			},
+			OpenedAt: r.OpenedAt,
+			Severity: rules.State(r.Severity),
+			Peak:     rules.State(r.PeakSeverity),
+
+			ClosedAt:     db.TimePtr(r.ClosedAt),
+			ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
+
+			AckAt:       db.TimePtr(r.AcknowledgedAt),
+			AckBy:       db.UUIDPtr(r.AcknowledgedBy),
+			AckSeverity: rules.State(derefOr(r.AcknowledgedSeverity, "")),
+			AckNote:     r.AckNote,
+
+			SnoozedUntil:      db.TimePtr(r.SnoozedUntil),
+			SnoozeUntilChange: r.SnoozeUntilChange,
+
+			WasFlapping: r.WasFlapping,
+		},
+		HostName: r.HostName,
+	}
+}
+
+func toAlertFromListRow(r gen.ListAlertsRow) AlertWithHost {
+	return AlertWithHost{
+		Alert: Alert{
+			ID:    r.ID,
+			OrgID: r.OrgID,
+			Subject: Subject{
+				HostID: r.HostID, Scope: Scope(r.Scope),
+				CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
+			},
+			OpenedAt: r.OpenedAt,
+			Severity: rules.State(r.Severity),
+			Peak:     rules.State(r.PeakSeverity),
+
+			ClosedAt:     db.TimePtr(r.ClosedAt),
+			ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
+
+			AckAt:       db.TimePtr(r.AcknowledgedAt),
+			AckBy:       db.UUIDPtr(r.AcknowledgedBy),
+			AckSeverity: rules.State(derefOr(r.AcknowledgedSeverity, "")),
+			AckNote:     r.AckNote,
+
+			SnoozedUntil:      db.TimePtr(r.SnoozedUntil),
+			SnoozeUntilChange: r.SnoozeUntilChange,
+
+			WasFlapping: r.WasFlapping,
+		},
+		HostName: r.HostName,
 	}
 }
 
@@ -362,15 +437,15 @@ func (s *SQLStore) Sweep(ctx context.Context, now time.Time) (int, error) {
 }
 
 // GetAlert implements Store.
-func (s *SQLStore) GetAlert(ctx context.Context, orgID, id uuid.UUID) (Alert, error) {
+func (s *SQLStore) GetAlert(ctx context.Context, orgID, id uuid.UUID) (AlertWithHost, error) {
 	r, err := gen.New(s.d).GetAlert(ctx, gen.GetAlertParams{OrgID: orgID, ID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Alert{}, ErrNotFound
+		return AlertWithHost{}, ErrNotFound
 	}
 	if err != nil {
-		return Alert{}, fmt.Errorf("get alert: %w", err)
+		return AlertWithHost{}, fmt.Errorf("get alert: %w", err)
 	}
-	return toAlert(r), nil
+	return toAlertFromGetRow(r), nil
 }
 
 // textOrNil turns "" into a nil *string, the narg idiom every optional
@@ -385,7 +460,7 @@ func textOrNil[T ~string](v T) *string {
 }
 
 // ListAlerts implements Store.
-func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]Alert, error) {
+func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([]AlertWithHost, error) {
 	rows, err := gen.New(s.d).ListAlerts(ctx, gen.ListAlertsParams{
 		OrgID: orgID, Open: f.Open, Severity: textOrNil(f.Severity), HostID: db.NullUUID(f.HostID),
 		Scope: textOrNil(f.Scope), Acknowledged: f.Acknowledged,
@@ -393,9 +468,9 @@ func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter) ([
 	if err != nil {
 		return nil, fmt.Errorf("list alerts: %w", err)
 	}
-	out := make([]Alert, len(rows))
+	out := make([]AlertWithHost, len(rows))
 	for i, r := range rows {
-		out[i] = toAlert(r)
+		out[i] = toAlertFromListRow(r)
 	}
 	return out, nil
 }

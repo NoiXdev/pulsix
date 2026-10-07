@@ -62,8 +62,9 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
       <span data-testid="alert-open">
         <Pill tone={open ? 'accent' : 'unknown'}>{open ? 'Open' : `Closed${alert.closedReason ? ` · ${alert.closedReason}` : ''}`}</Pill>
       </span>
-      <span className="truncate text-[13px]" title={alert.hostId}>
-        {subjectLabel(alert)}
+      <span className="flex min-w-0 flex-col" title={alert.hostId} data-testid="alert-host">
+        <span className="truncate text-[13px] font-medium">{alert.hostName}</span>
+        <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert)}</span>
       </span>
       <span data-testid="alert-peak">
         <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{alert.peakSeverity}</Pill>

@@ -205,6 +205,67 @@ func TestListAlertsFiltersBySeverityAndOpen(t *testing.T) {
 	}
 }
 
+// TestGetAlertAndListAlertsNameEachAlertsOwnHost is the test the coordinator
+// asked for explicitly after review: a test asserting a merely non-empty
+// HostName would still pass against a join that silently returned the
+// WRONG host's name (e.g. a join missing its ON host_id condition
+// entirely, which Postgres would happily turn into a cross join picking
+// an arbitrary row) — here, two alerts on two different hosts in the same
+// organization must each get their OWN host's name, never the other's and
+// never both the same. seedHost's own host is named "h1"
+// (schema_test.go); seedAdditionalHost's is "h2" — two different names in
+// the same org is the discriminating case: a bug that joined on org_id
+// alone, with host_id wrong or missing from the ON clause, would make
+// every row in the organization resolve to whichever host happened to
+// come back first, and this test would catch that by finding the two
+// alerts' names swapped or identical instead of "h1"/"h2".
+func TestGetAlertAndListAlertsNameEachAlertsOwnHost(t *testing.T) {
+	d := testdb.Open(t)
+	org, host1 := seedHost(t, d)
+	host2 := seedAdditionalHost(t, d, org)
+	st := alerts.NewSQLStore(d)
+	tx := beginTx(t, d)
+	now := time.Now().UTC()
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: tuple(host1, "cpu", "", "used"), At: now, Severity: rules.StateWarn},
+		{Kind: alerts.ActionOpen, Subject: tuple(host2, "disk", "", "used"), At: now, Severity: rules.StateCrit},
+	}); err != nil {
+		t.Fatalf("execute opens: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	rows, err := st.ListAlerts(context.Background(), org, alerts.Filter{})
+	if err != nil {
+		t.Fatalf("list alerts: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("list alerts = %+v, want exactly 2 rows", rows)
+	}
+	gotNames := map[uuid.UUID]string{}
+	for _, r := range rows {
+		gotNames[r.Subject.HostID] = r.HostName
+	}
+	if gotNames[host1] != "h1" {
+		t.Fatalf("ListAlerts named host1 (%s) as %q, want \"h1\" — got the wrong host's name", host1, gotNames[host1])
+	}
+	if gotNames[host2] != "h2" {
+		t.Fatalf("ListAlerts named host2 (%s) as %q, want \"h2\" — got the wrong host's name", host2, gotNames[host2])
+	}
+
+	// Get must agree with List for the same row, not just List on its own.
+	for _, r := range rows {
+		got, err := st.GetAlert(context.Background(), org, r.ID)
+		if err != nil {
+			t.Fatalf("GetAlert(%s): %v", r.ID, err)
+		}
+		if got.HostName != gotNames[r.Subject.HostID] {
+			t.Fatalf("GetAlert(%s).HostName = %q, want %q (List's own answer for the same host)", r.ID, got.HostName, gotNames[r.Subject.HostID])
+		}
+	}
+}
+
 func TestAcknowledgeWritesRowAndEvent(t *testing.T) {
 	d := testdb.Open(t)
 	org, host := seedHost(t, d)

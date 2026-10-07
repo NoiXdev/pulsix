@@ -8,6 +8,7 @@ import type { Alert } from '../../../api/types.ts';
 const open: AlertRowAlert = {
   id: 'a1',
   hostId: 'h1',
+  hostName: 'web-1',
   scope: 'tuple',
   checkKey: 'disk',
   item: '/var',
@@ -35,6 +36,17 @@ describe('AlertRow', () => {
     expect(screen.getByTestId('alert-open')).toBeInTheDocument();
     expect(screen.getByTestId('alert-peak')).toHaveTextContent(/crit/i);
     expect(screen.getByTestId('alert-current')).toHaveTextContent(/warn/i);
+  });
+
+  it('names the alert\'s own host, not its raw id, as the first thing an operator reads', () => {
+    // "Which machine is this" is the front door's own first question
+    // (review finding after the first draft shipped only a truncated
+    // host_id) — the id stays available (the title attribute) but must
+    // not be the visible text a bare render shows.
+    render(<AlertRow alert={{ ...open, hostId: 'c0ffee00-0000-0000-0000-000000000000', hostName: 'db-primary' }} />);
+    const hostCell = screen.getByTestId('alert-host');
+    expect(hostCell).toHaveTextContent('db-primary');
+    expect(hostCell).not.toHaveTextContent('c0ffee00');
   });
 
   it('reads "Open" for an alert whose tuple currently reads ok but which decision 6 keeps open (still flapping)', () => {
@@ -162,6 +174,7 @@ describe('alertRow pure helpers', () => {
     const dto: Alert = {
       id: 'a1',
       host_id: 'h1',
+      host_name: 'web-1',
       scope: 'tuple',
       check_key: 'disk',
       item: '/var',
@@ -177,6 +190,7 @@ describe('alertRow pure helpers', () => {
     expect(row).toMatchObject({
       id: 'a1',
       hostId: 'h1',
+      hostName: 'web-1',
       checkKey: 'disk',
       peakSeverity: 'crit',
       severity: 'warn',

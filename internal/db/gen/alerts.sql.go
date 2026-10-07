@@ -83,12 +83,38 @@ func (q *Queries) CloseAlert(ctx context.Context, arg CloseAlertParams) error {
 
 const getAlert = `-- name: GetAlert :one
 
-SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping FROM alerts WHERE org_id = $1 AND id = $2
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, COALESCE(h.name, '')::text AS host_name
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+WHERE a.org_id = $1 AND a.id = $2
 `
 
 type GetAlertParams struct {
 	OrgID uuid.UUID `json:"org_id"`
 	ID    uuid.UUID `json:"id"`
+}
+
+type GetAlertRow struct {
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	HostID               uuid.UUID          `json:"host_id"`
+	Scope                string             `json:"scope"`
+	CheckKey             string             `json:"check_key"`
+	Item                 string             `json:"item"`
+	Metric               string             `json:"metric"`
+	OpenedAt             time.Time          `json:"opened_at"`
+	Severity             string             `json:"severity"`
+	PeakSeverity         string             `json:"peak_severity"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason         *string            `json:"closed_reason"`
+	AcknowledgedAt       pgtype.Timestamptz `json:"acknowledged_at"`
+	AcknowledgedBy       pgtype.UUID        `json:"acknowledged_by"`
+	AcknowledgedSeverity *string            `json:"acknowledged_severity"`
+	AckNote              string             `json:"ack_note"`
+	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeUntilChange    bool               `json:"snooze_until_change"`
+	WasFlapping          bool               `json:"was_flapping"`
+	HostName             string             `json:"host_name"`
 }
 
 // Task 6, spec docs/superpowers/specs/2026-10-06-v0.4a-alerts-design.md,
@@ -99,9 +125,22 @@ type GetAlertParams struct {
 // handling, so RLS already does its job; org_id is still named explicitly
 // in every WHERE clause anyway, the convention every other store in this
 // schema keeps regardless (see e.g. maintenance.sql's own GetMaintenanceWindow).
-func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (Alert, error) {
+// Joined to hosts on the composite (org_id, host_id) — never host_id
+// alone — the same guard every other reference in this schema gives a
+// cross-table lookup (GetMaintenanceWindow's own comment above), even
+// though alerts.host_id is already a single table's primary key and could
+// not actually resolve to a different organization's row: the lifecycle's
+// own transaction (store_sql.go's package doc) is unscoped and bypasses
+// RLS by design, so every join here names org_id on principle, not only
+// where a collision could occur. LEFT JOIN, not INNER: the composite FK
+// (migration 00049) with ON DELETE CASCADE means an alert cannot outlive
+// its host, so host_name is never actually missing — the LEFT JOIN plus
+// COALESCE is defensive, not load-bearing, the same posture
+// GetMaintenanceWindow already takes for a target that in its case
+// genuinely can be absent.
+func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow, error) {
 	row := q.db.QueryRow(ctx, getAlert, arg.OrgID, arg.ID)
-	var i Alert
+	var i GetAlertRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -122,6 +161,7 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (Alert, erro
 		&i.SnoozedUntil,
 		&i.SnoozeUntilChange,
 		&i.WasFlapping,
+		&i.HostName,
 	)
 	return i, err
 }
@@ -308,18 +348,20 @@ func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams
 }
 
 const listAlerts = `-- name: ListAlerts :many
-SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping FROM alerts
-WHERE org_id = $1
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, COALESCE(h.name, '')::text AS host_name
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+WHERE a.org_id = $1
   AND ($2::boolean IS NULL
-       OR ($2::boolean AND closed_at IS NULL)
-       OR (NOT $2::boolean AND closed_at IS NOT NULL))
-  AND ($3::text IS NULL OR severity = $3::text)
-  AND ($4::uuid IS NULL OR host_id = $4::uuid)
-  AND ($5::text IS NULL OR scope = $5::text)
+       OR ($2::boolean AND a.closed_at IS NULL)
+       OR (NOT $2::boolean AND a.closed_at IS NOT NULL))
+  AND ($3::text IS NULL OR a.severity = $3::text)
+  AND ($4::uuid IS NULL OR a.host_id = $4::uuid)
+  AND ($5::text IS NULL OR a.scope = $5::text)
   AND ($6::boolean IS NULL
-       OR ($6::boolean AND acknowledged_at IS NOT NULL)
-       OR (NOT $6::boolean AND acknowledged_at IS NULL))
-ORDER BY opened_at DESC, id
+       OR ($6::boolean AND a.acknowledged_at IS NOT NULL)
+       OR (NOT $6::boolean AND a.acknowledged_at IS NULL))
+ORDER BY a.opened_at DESC, a.id
 `
 
 type ListAlertsParams struct {
@@ -331,15 +373,40 @@ type ListAlertsParams struct {
 	Acknowledged *bool       `json:"acknowledged"`
 }
 
+type ListAlertsRow struct {
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	HostID               uuid.UUID          `json:"host_id"`
+	Scope                string             `json:"scope"`
+	CheckKey             string             `json:"check_key"`
+	Item                 string             `json:"item"`
+	Metric               string             `json:"metric"`
+	OpenedAt             time.Time          `json:"opened_at"`
+	Severity             string             `json:"severity"`
+	PeakSeverity         string             `json:"peak_severity"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason         *string            `json:"closed_reason"`
+	AcknowledgedAt       pgtype.Timestamptz `json:"acknowledged_at"`
+	AcknowledgedBy       pgtype.UUID        `json:"acknowledged_by"`
+	AcknowledgedSeverity *string            `json:"acknowledged_severity"`
+	AckNote              string             `json:"ack_note"`
+	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeUntilChange    bool               `json:"snooze_until_change"`
+	WasFlapping          bool               `json:"was_flapping"`
+	HostName             string             `json:"host_name"`
+}
+
 // Service.List's own Filter, forwarded almost verbatim: each optional
 // field matches everything when NULL, the same "param IS NULL OR
 // <condition>" idiom hosts.sql's own ListHosts and rules.sql's own
 // ListRules already use. Muted has no column to filter on — Service.List
-// applies it in Go, after Mute has run.
+// applies it in Go, after Mute has run. host_name is joined the same way
+// GetAlert's own comment explains — composite (org_id, host_id), LEFT
+// JOIN defensively though the FK makes a miss impossible in practice.
 // id breaks a tie between two alerts one Execute call opened at the
 // identical opened_at (review finding, Minor): without it, two runs of
 // this same query could disagree on which of the two comes first.
-func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]Alert, error) {
+func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListAlertsRow, error) {
 	rows, err := q.db.Query(ctx, listAlerts,
 		arg.OrgID,
 		arg.Open,
@@ -352,9 +419,9 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]Alert
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Alert
+	var items []ListAlertsRow
 	for rows.Next() {
-		var i Alert
+		var i ListAlertsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -375,6 +442,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]Alert
 			&i.SnoozedUntil,
 			&i.SnoozeUntilChange,
 			&i.WasFlapping,
+			&i.HostName,
 		); err != nil {
 			return nil, err
 		}
