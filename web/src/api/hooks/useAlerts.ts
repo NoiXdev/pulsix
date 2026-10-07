@@ -53,6 +53,20 @@ export function useAlerts(org: string, filter: AlertFilter = {}, enabled = true)
   });
 }
 
+/**
+ * useAlert reads one alert with its timeline (v0.4a design, "GUI" — "the
+ * full story of one alert"): GET /alerts/{id}, not a second list request
+ * filtered to one id — the detail route is the one place the timeline
+ * comes from at all.
+ */
+export function useAlert(org: string, id: string, enabled = true) {
+  return useQuery({
+    queryKey: ['alert', org, id],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/alerts/{id}', { params: { path: { org, id } } })),
+    enabled: !!org && !!id && enabled,
+  });
+}
+
 /** useAcknowledgeAlert records that the caller knows about an alert — never
  * a mute (Suppression is untouched, design doc's own "acknowledging is not
  * muting"). */

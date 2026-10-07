@@ -1,0 +1,104 @@
+import { useState } from 'react';
+import { Button } from '../../ui/button.tsx';
+import { Card } from '../../ui/table.tsx';
+import { useAlert, useAlerts } from '../../api/hooks/useAlerts.ts';
+import { AlertRow } from './AlertRow.tsx';
+import { alertToRowAlert } from './alertRow.ts';
+import { AlertTimeline } from './AlertTimeline.tsx';
+
+export interface HostAlertsCardProps {
+  org: string;
+  hostId: string;
+  /** `checks.read` — the same bar HostChecksCard and the org-wide Alerts
+   * page both hold for monitoring data; without it nothing is requested. */
+  canRead: boolean;
+}
+
+/**
+ * HostAlertsCard is the host page's own alerts section (v0.4a design doc,
+ * "GUI": "an alerts section on the host page reading the same endpoint
+ * filtered"). It reads GET /orgs/{org}/alerts?host={hostId} — the exact
+ * list route the org-wide Alerts page uses, filtered to this host — never
+ * a host-specific route: alert_handlers.go's own doc comment is explicit
+ * that the host view is a filter on List, not a seventh endpoint, and
+ * there is nothing else to call here.
+ *
+ * Each alert renders through AlertRow unmodified, so this card cannot
+ * drift from the org-wide page's own three-facts rendering (whether the
+ * alert is open, its episode's peak severity, how its tuple reads right
+ * now) or its tense-aware flapping marker by inventing a second, slightly
+ * different presentation of the same row. `canWrite` is never passed
+ * (AlertRow defaults it to false): acknowledging and snoozing stay the
+ * Alerts page's own job — this card only answers "what does this host
+ * currently have" and, per alert, "what is its full story".
+ *
+ * That second question is AlertTimeline, fetched from the detail endpoint
+ * (useAlert) only once an operator actually opens one alert's disclosure
+ * — the same "mount only while asked for" discipline HostChecksCard's own
+ * GraphPanel already uses for a metric's series, so a host with several
+ * alerts costs one list request until something is actually expanded.
+ */
+export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
+  const alerts = useAlerts(org, { host: hostId }, canRead);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const rows = (alerts.data?.alerts ?? []).map(alertToRowAlert);
+
+  return (
+    <Card className="p-4">
+      <h2 className="mb-3 text-[13px] font-semibold">Alerts</h2>
+
+      {!canRead && <p className="text-xs text-muted-foreground">Alerts are visible to members of this organization.</p>}
+      {canRead && alerts.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          {alerts.error instanceof Error ? alerts.error.message : 'Could not read this host’s alerts.'}
+        </p>
+      )}
+      {canRead && !alerts.data && !alerts.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {canRead && alerts.data && rows.length === 0 && (
+        <p className="text-xs text-muted-foreground">No alerts for this host right now — it is healthy.</p>
+      )}
+      {canRead && alerts.data && rows.length > 0 && (
+        <ul className="flex flex-col gap-3">
+          {rows.map((a) => {
+            const isOpen = open === a.id;
+            return (
+              <li key={a.id} className="rounded-md border border-border">
+                <AlertRow alert={a} />
+                <div className="flex justify-end border-t border-border px-4 py-1.5">
+                  <Button type="button" variant="ghost" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : a.id)}>
+                    {isOpen ? 'Hide timeline' : 'Show timeline'}
+                  </Button>
+                </div>
+                {isOpen && <AlertTimelinePanel org={org} alertId={a.id} />}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+/** AlertTimelinePanel is the per-alert disclosure's own body: GET
+ * /alerts/{id} for exactly one alert, the only route that carries a
+ * timeline at all. Split out of HostAlertsCard so useAlert is only ever
+ * mounted (and only ever requests) for an alert whose disclosure is
+ * actually open, mirroring HostChecksCard's own GraphPanel. */
+function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) {
+  const detail = useAlert(org, alertId);
+
+  return (
+    <div className="border-t border-border p-3">
+      {detail.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          {detail.error instanceof Error ? detail.error.message : 'Could not read this alert’s timeline.'}
+        </p>
+      )}
+      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {detail.data && (
+        <AlertTimeline entries={detail.data.alert.timeline ?? []} closedReason={detail.data.alert.closed_reason ?? ''} />
+      )}
+    </div>
+  );
+}

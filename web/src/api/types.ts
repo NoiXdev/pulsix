@@ -129,6 +129,24 @@ export type AlertMuteReason = NonNullable<Alert['mute_reason']>;
 export type AlertAcknowledgeInput = components['schemas']['AlertAcknowledgeInputBody'];
 export type AlertSnoozeInput = components['schemas']['AlertSnoozeInputBody'];
 
+// AlertDetail is Alert plus its timeline (v0.4a design, "GUI" — "the full
+// story of one alert"): GET /alerts/{id}'s own shape, matching
+// alerts.Detail (internal/alerts/service.go). `timeline` interleaves the
+// alert's own alert_events with the check_state_changes rows inside its
+// lifetime, already merged and ordered server-side (mergeTimeline,
+// internal/alerts/timeline.go) — the client renders this order, it does
+// not recompute it.
+export type AlertDetail = components['schemas']['AlertDetailDTO'];
+export type AlertTimelineEntry = components['schemas']['AlertTimelineEntryDTO'];
+export type AlertEvent = components['schemas']['AlertEventDTO'];
+export type AlertEventKind = AlertEvent['kind'];
+export type AlertStateChange = components['schemas']['AlertStateChangeDTO'];
+// The tuple state check_state_changes rows carry — unlike AlertSeverity,
+// this one DOES include "ok": a state change is the tuple's own
+// transition log (internal/rules), which predates alerts and knows
+// nothing about a severity floor.
+export type AlertTupleState = AlertStateChange['from_state'];
+
 /**
  * The windows GET /hosts/{id}/metrics accepts, and nothing else: the route
  * refuses any other value with a 400 naming these three

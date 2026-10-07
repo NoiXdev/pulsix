@@ -13,6 +13,7 @@ import { parseTagChip } from './selectorInput.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { may } from '../../lib/roles.ts';
 import { HostAgentCard } from './HostAgentCard.tsx';
+import { HostAlertsCard } from '../alerts/HostAlertsCard.tsx';
 import { HostChecksCard } from './HostChecksCard.tsx';
 import { EffectiveRulesPanel } from './EffectiveRulesPanel.tsx';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
@@ -196,6 +197,7 @@ export function HostDetailPage() {
 
       <HostAgentCard org={org} hostId={h.id} canWrite={may(role, 'agents.write')} />
       <HostChecksCard org={org} hostId={h.id} canRead={may(role, 'checks.read')} canWrite={may(role, 'checks.write')} />
+      <HostAlertsCard org={org} hostId={h.id} canRead={may(role, 'checks.read')} />
       <EffectiveRulesPanel org={org} hostId={h.id} canRead={may(role, 'checks.read')} />
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
       <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} />
