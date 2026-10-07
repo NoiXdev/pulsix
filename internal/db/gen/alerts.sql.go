@@ -541,7 +541,7 @@ const listStateChangesForTuple = `-- name: ListStateChangesForTuple :many
 SELECT at, org_id, host_id, check_key, item, metric, from_state, to_state, rule_id, value, label FROM check_state_changes
 WHERE org_id = $1 AND host_id = $2 AND check_key = $3 AND item = $4 AND metric = $5
   AND at >= $6 AND at <= $7
-ORDER BY at, ctid
+ORDER BY at, from_state, to_state
 `
 
 type ListStateChangesForTupleParams struct {
@@ -559,14 +559,18 @@ type ListStateChangesForTupleParams struct {
 // inclusive at both ends (the brief's own "[opened_at, closed_at]").
 // Service.Get never calls this for a scope='host' alert — see its own
 // doc comment for why. check_state_changes carries no unique id (it is a
-// hypertable with no single-row PK, 00046's own comment) — ctid breaks a
-// tie between two rows sharing the same `at` for the same tuple, which
-// `at` alone leaves to whatever order Postgres felt like that run,
-// undermining mergeTimeline's own determinism (timeline.go). This is sound
-// specifically because the hypertable chunks by day (00046): two rows
-// that tie on `at` to the microsecond necessarily fall in the same
-// physical chunk, so their ctids are comparable, unlike ctid compared
-// across chunks in general.
+// hypertable with no single-row PK, 00046's own comment), so `at` alone
+// leaves two rows sharing an instant to whatever order Postgres felt like
+// that run, undermining mergeTimeline's own determinism (timeline.go);
+// from_state/to_state break that tie (review correction: not ctid — a
+// system column stable only within one execution, not across a VACUUM or
+// an update, and not worth a project-wide strict_order_by exception for a
+// defensive case this guards against: the evaluator writes at most one
+// change per tuple per tick, so two rows tying on `at` for the very same
+// tuple are already close to impossible). A total order is not needed
+// either — two rows identical in at/from_state/to_state can still differ
+// in value/label, but nothing distinguishes them as a reader, so there is
+// no order left worth specifying.
 func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateChangesForTupleParams) ([]CheckStateChange, error) {
 	rows, err := q.db.Query(ctx, listStateChangesForTuple,
 		arg.OrgID,

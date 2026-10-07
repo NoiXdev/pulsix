@@ -3,18 +3,6 @@ sql:
   - engine: postgresql
     schema: internal/db/migrations
     queries: internal/db/queries
-    # alerts.sql's own ListStateChangesForTuple orders by (at, ctid):
-    # check_state_changes is a hypertable with no single-row id (00046's
-    # own comment), so ctid — the one thing guaranteed to break a tie
-    # between two rows sharing the same `at` for the same tuple, and sound
-    # here specifically because same-`at` rows always share a chunk
-    # (00046 chunks daily) — is the tiebreak mergeTimeline's own
-    # determinism needs (internal/alerts/timeline.go). sqlc's default
-    # strict_order_by rejects ctid as "not a column", since it is a
-    # Postgres system column rather than one it catalogues; this is a
-    # codegen-time validation relaxed, not a runtime behaviour change, and
-    # every other query's ORDER BY is unaffected by it.
-    strict_order_by: false
     gen:
       go:
         package: gen
