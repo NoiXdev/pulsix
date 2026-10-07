@@ -442,6 +442,7 @@ in this milestone", not an oversight left in a commit message. Source:
 | 4.32 | `AlertSink` orchestration tests: `stubTx` embeds a nil `pgx.Tx` | idea | Correct today (nothing in the current tests touches the tx argument), but the first orchestration test that does will nil-panic instead of failing with a readable message |
 | 4.33 | `was_flapping` is wired but never asserted end to end | idea | `seedOpenAlert` (API test helpers) seeds no `check_states` row, so every test alert's `was_flapping` is false by construction — a flipped assignment in `toAlertDTO` would ship silently |
 | 4.34 | `AlertsPage`'s own tests were written after the page, not before | idea | Process note, not a code defect: TDD was not followed at the page level (component-level red was real; the page-level tests came after) |
+| 4.35 | Task 3's migration commit also carries the sqlc-generated `Alert` and `AlertEvent` structs from migration 00049 (Task 1) | idea | Correct but bundled: the generated types landed a commit later than the migration that produced them, in the commit that first needed them, rather than alongside 00049 itself. No functional defect — `internal/db/gen` is regenerated output either way — but worth a look if a future `sqlc generate` diff needs a clean baseline to compare against |
 
 ## v0.5 · Status pages
 
