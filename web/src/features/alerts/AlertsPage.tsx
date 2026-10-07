@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useSearch } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Card, GridHeader } from '../../ui/table.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -33,9 +33,19 @@ import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
  * follows HostsListPage's own `?q=` pattern exactly: adjusting state
  * during render, not in an effect, because navigating here again with a
  * different `?host=` does not remount this component.
+ *
+ * "Show every alert" (clearHostFilter) clears BOTH the local filter and
+ * the URL's own `?host=` (fix round 3's own review finding): clearing
+ * only `filter` left the address bar at `.../alerts?host=h1`, so a
+ * reload, a bookmarked link, or any remount re-ran the render-time sync
+ * above and silently re-imposed the very filter the operator had just
+ * cleared. The URL is this page's own source of truth for `host` —
+ * `filter` is seeded FROM it — so clearing one without the other left
+ * the two disagreeing the moment either one changed independently.
  */
 export function AlertsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const navigate = useNavigate();
   const routeSearch = useSearch({ strict: false }) as { host?: string };
   const toast = useToast();
   const orgInfo = useOrg(org);
@@ -90,10 +100,15 @@ export function AlertsPage() {
   // to see that the list in front of them is narrowed to one host, and
   // get back to the unscoped view — a list that was merely shorter than
   // expected, with no on-screen reason, would read as a bug.
+  function clearHostFilter() {
+    setFilter((f) => ({ ...f, host: undefined }));
+    void navigate({ to: '/o/$org/alerts', params: { org }, search: { host: undefined } });
+  }
+
   const hostNotice = filter.host && (
     <p className="flex items-center gap-2 text-xs text-muted-foreground">
       Showing one host&apos;s alerts only.
-      <button type="button" className="underline hover:text-primary" onClick={() => setFilter((f) => ({ ...f, host: undefined }))}>
+      <button type="button" className="underline hover:text-primary" onClick={clearHostFilter}>
         Show every alert
       </button>
     </p>

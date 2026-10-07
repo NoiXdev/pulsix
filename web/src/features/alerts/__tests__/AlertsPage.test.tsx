@@ -45,13 +45,19 @@ function renderPage(initialPath = '/o/acme/alerts') {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([alertsRoute])]),
     history: createMemoryHistory({ initialEntries: [initialPath] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  // Returned alongside the render result (every existing call site ignores
+  // this and keeps using the global `screen`, same as before) so a test
+  // can read the actual browser-visible location back
+  // (`router.state.location.search`) or unmount this instance to simulate
+  // a reload at wherever navigation actually left the URL (fix round 3).
+  return { ...view, router };
 }
 
 describe('AlertsPage', () => {
@@ -312,7 +318,7 @@ describe('AlertsPage', () => {
   });
 
   it('opens pre-filtered to one host when the URL carries ?host= (HostAlertsCard\'s own link)', async () => {
-    // Fix round 3: this is the other half of HostAlertsCard's link — the
+    // Fix round 2: this is the other half of HostAlertsCard's link — the
     // link carrying `?host=` is worthless if this page does not actually
     // read it back into its own filter and request. A version that kept
     // starting `filter` at a bare `{}` would send no `host` at all here
@@ -346,7 +352,7 @@ describe('AlertsPage', () => {
         return { alerts: [] };
       },
     });
-    renderPage('/o/acme/alerts?host=h1');
+    const { router } = renderPage('/o/acme/alerts?host=h1');
 
     await screen.findByText(/one host's alerts only/i);
     expect(asked.at(-1)?.host).toBe('h1');
@@ -355,5 +361,45 @@ describe('AlertsPage', () => {
 
     await waitFor(() => expect(asked.at(-1)?.host).toBe(''));
     expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
+    // Fix round 3: clearing the in-memory filter is not enough on its own
+    // — a version that called only setFilter, never navigate, would still
+    // pass every assertion above (the request and the notice both read
+    // off `filter`, not off the URL) while leaving `router.state.location`
+    // at `?host=h1`. This is the assertion that tells the two apart: the
+    // browser's own address bar must agree that the host scope is gone.
+    await waitFor(() => expect(router.state.location.search).toEqual({ host: undefined }));
+  });
+
+  it('does not re-impose a cleared host scope on reload, because the URL itself was cleared, not just local state', async () => {
+    // The exact bug the previous test's new assertion alone cannot fully
+    // dramatize: if "Show every alert" left `?host=h1` in the address bar,
+    // a reload — simulated here by unmounting and mounting a fresh
+    // AlertsPage at wherever the URL actually pointed afterwards — runs
+    // the render-time sync that seeds `filter` from the URL from scratch,
+    // silently re-applying the very scope the operator had just cleared.
+    // A correct fix must leave the URL itself clear, not only this one
+    // mount's in-memory state.
+    const user = userEvent.setup();
+    const asked: Array<Record<string, string>> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        asked.push(Object.fromEntries(req.search.entries()));
+        return { alerts: [] };
+      },
+    });
+    const { router, unmount } = renderPage('/o/acme/alerts?host=h1');
+
+    await screen.findByText(/one host's alerts only/i);
+    await user.click(screen.getByRole('button', { name: /show every alert/i }));
+    await waitFor(() => expect(asked.at(-1)?.host).toBe(''));
+
+    const hrefAfterClear = router.history.location.href;
+    unmount();
+    renderPage(hrefAfterClear);
+
+    await screen.findByText(/No alerts match this view/);
+    expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
+    expect(asked.at(-1)?.host).toBe('');
   });
 });
