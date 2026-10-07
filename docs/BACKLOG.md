@@ -11,7 +11,7 @@ of a row ships and part does not, the row says which part (see 1.1b,
 1.12, 1.19): half-truths here cost more than an open row, because the
 next person reads this table instead of the code.
 
-Last updated: 2026-10-05
+Last updated: 2026-10-07
 
 ## Milestones
 
@@ -396,20 +396,20 @@ message.
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 4.1 | Monitoring groups: tag selector (`role=db AND env=prod`) + manual members + exclusions | planned | separate from inventory groups |
+| 4.1 | Monitoring groups: tag selector (`role=db AND env=prod`) + manual members + exclusions | in progress | The selector half shipped in v0.3b-2 (`MonitoringGroupsPage`, `internal/checks/groups.go`'s `HostMatcher` — "which hosts does this selector match" — and `RuleDialog`'s own group-scoped rules), carried along with the rule engine rather than announced as its own row. Manual members and exclusions are genuinely outstanding: group membership today is a tag selector evaluated per request with no reverse index and no override table, which is also why v0.4a could not resolve a monitoring-group silence (4.13) |
 | 4.1a | Nested monitoring groups: optional parent, membership mode within-parent or independent, priority; hosts stay many-to-many | planned | |
 | 4.1b | Inheritance semantics: rules override (deepest wins, priority breaks ties, ambiguous ties flagged), check templates / routes / maintenance add up; effective-rules and route-union view per host | planned | |
-| 4.2 | Check templates attached to monitoring groups | planned | |
-| 4.3 | Alert rules: thresholds, duration, severity, per host / group | planned | Carried forward from v0.3b-1 (Task 2 ruling, execution ledger): the seeded `service` check watching `sshd` **must not ship an alerting rule enabled by default**. The seed stands because every host Pulsix manages is reachable over SSH, so the unit exists on the overwhelming majority — and on a host where it does not, v0.3b-1 shows one visibly odd entry and nothing else, because this cut has no alerting at all. The moment a default rule exists, that same harmless entry becomes a page at 3 a.m. for a host that is working perfectly |
+| 4.2 | Check templates attached to monitoring groups | idea | Probably redundant, not merely unstarted: v0.3b-2's rule engine already binds rules to a monitoring group through its own precedence resolution (org → group → host → item), which is what a "check template attached to a group" would exist to do. A second template mechanism on top would duplicate that rather than add to it. Left as `idea` rather than `planned` until someone identifies a concrete gap the rule engine's own precedence does not already cover; if none turns up, this row should be closed as redundant rather than ever marked `done` |
+| 4.3 | Alert rules: thresholds, duration, severity, per host / group | done | Shipped in v0.3b-2, not v0.4 — this row was stale (`planned`) through two milestones after the fact. Evidence: `internal/rules` (`for_duration`, severity, org/group/host/item precedence, the expression and form-mode editors, the fleet/host pages). The seeded `service` check watching `sshd` **must not ship an alerting rule enabled by default**. The seed stands because every host Pulsix manages is reachable over SSH, so the unit exists on the overwhelming majority — and on a host where it does not, v0.3b-1 shows one visibly odd entry and nothing else, because this cut has no alerting at all. The moment a default rule exists, that same harmless entry becomes a page at 3 a.m. for a host that is working perfectly |
 | 4.4 | Notification schedules: time windows, weekdays, on-call rotation | planned | |
-| 4.5 | Channels: email (SMTP) | planned | |
-| 4.6 | Channels: generic webhook with template | planned | covers n8n, Discord, ... |
-| 4.7 | Channels: Telegram, Slack, Mattermost native | planned | |
-| 4.8 | Channels: ntfy, Pushover, Twilio SMS, PagerDuty | planned | |
-| 4.9 | Escalation chains (after N min unacknowledged → next channel) | planned | |
-| 4.10 | Acknowledge, snooze, silence | planned | |
-| 4.11 | Maintenance windows on host / group / org + central list, visibility internal or public on selected status pages | planned | |
-| 4.12 | Alert history and timeline per host | planned | |
+| 4.5 | Channels: email (SMTP) | done | Shipped in v0.2d (`notify.KindEmail`, `internal/mail`), two milestones before this row was corrected — v0.4a's own design doc caught the drift while surveying what "alerting" already contained |
+| 4.6 | Channels: generic webhook with template | done | Shipped in v0.2d (`notify.KindWebhook`) — covers n8n, Discord, ...; same stale-row correction as 4.5 |
+| 4.7 | Channels: Telegram, Slack, Mattermost native | planned | Additive on the existing `notify.Kind` interface; one bounded task each, no design needed |
+| 4.8 | Channels: ntfy, Pushover, Twilio SMS, PagerDuty | planned | Additive on the existing `notify.Kind` interface; one bounded task each, no design needed |
+| 4.9 | Escalation chains (after N min unacknowledged → next channel) | planned | Needs nothing from v0.4a beyond what it already built: a stable alert identity and an acknowledgement signal (`alerts.Service`, `alert_events`) are both in place for this to hang its steps off without a new table |
+| 4.10 | Acknowledge, snooze, silence | done | v0.4a. Acknowledge and unacknowledge (`alerts.Service.Acknowledge`/`Unacknowledge`, voided by a worsening severity — decision 2); snooze until an instant or until the state next changes (`Service.Snooze`/`Unsnooze`); silence as a maintenance window with `reason = 'silence'` (migration 00050, `Mute`'s total suppression order over snooze/silence/maintenance). GUI: the Alerts page's row actions and dialogs (`AcknowledgeDialog`, `SnoozeDialog`). Silencing a monitoring group specifically is not included — see 4.13 |
+| 4.11 | Maintenance windows on host / group / org + central list, visibility internal or public on selected status pages | in progress | The core (windows on host / inventory group / org, a central list) shipped in v0.2d (`internal/maintenance`); v0.4a added silencing on top (`reason = 'silence'`, 4.10) and the `monitoring_group` target kind at the schema level (not yet reachable — see 4.13). Still outstanding: "visibility internal or public on selected status pages" waits on v0.5's status pages existing at all |
+| 4.12 | Alert history and timeline per host | done | v0.4a. `GET /orgs/{org}/alerts/{id}` returns one alert's timeline — its own `alert_events` interleaved with the `check_state_changes` transitions in `[opened_at, closed_at]` — rendered by `AlertTimeline`/`HostAlertsCard`'s per-alert disclosure on the host page. Scoped to one alert's own episode, by design decision ("Explicitly not in this sub-project"): a host-level timeline spanning every alert a host has ever had is 4.15, not this row |
 
 ## v0.5 · Status pages
 
