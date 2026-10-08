@@ -209,6 +209,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 auth recovery codes */
+        post: operations["regenerateRecoveryCodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/totp": {
         parameters: {
             query?: never;
@@ -3904,6 +3921,8 @@ export interface components {
             readonly $schema?: string;
             mfa_enrolment_required: boolean;
             mfa_required: boolean;
+            /** Format: int64 */
+            recovery_codes_remaining: number;
         };
         MaintenanceListOutputBody: {
             /**
@@ -3985,6 +4004,8 @@ export interface components {
             instance_admin: boolean;
             mfa_complete: boolean;
             mfa_enrolment_required: boolean;
+            /** Format: int64 */
+            recovery_codes_remaining: number;
             totp_confirmed: boolean;
             user: components["schemas"]["UserStruct"];
         };
@@ -5767,6 +5788,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    regenerateRecoveryCodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryOutputBody"];
                 };
             };
             /** @description Error */

@@ -8,7 +8,7 @@ import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useMe } from '../../api/hooks/useMe.ts';
 import { useDeletePasskey, usePasskeys } from '../../api/hooks/usePasskeys.ts';
-import { useConfirmTotp, useEnrolTotp } from '../../api/hooks/useTotp.ts';
+import { useConfirmTotp, useEnrolTotp, useRegenerateRecoveryCodes } from '../../api/hooks/useTotp.ts';
 import { registerPasskey } from '../auth/passkeys.ts';
 import { useStepUp } from './stepUp.tsx';
 
@@ -64,6 +64,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
   const [enrolling, setEnrolling] = useState<{ secret: string; otpauth_url: string } | null>(null);
   const [code, setCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const regenerate = useRegenerateRecoveryCodes();
 
   const hasPasskey = (passkeys.data?.passkeys ?? []).length > 0;
   const hasSecondFactor = me.data?.totp_confirmed === true || hasPasskey;
@@ -207,6 +208,32 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                 </div>
               </form>
             )}
+            {me.data?.totp_confirmed === true && !recoveryCodes && (
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+                <p className="text-[11px] text-muted-foreground">
+                  Recovery codes left:{' '}
+                  <span data-testid="recovery-codes-remaining" className="font-mono text-foreground">
+                    {me.data?.recovery_codes_remaining ?? 0}
+                  </span>
+                  {' — '}each works one time, and they are the way back in if you lose your
+                  authenticator.
+                </p>
+                <Button
+                  variant="ghost"
+                  disabled={regenerate.isPending}
+                  onClick={async () => {
+                    try {
+                      const res = await regenerate.mutateAsync();
+                      setRecoveryCodes(res.recovery_codes);
+                    } catch {
+                      toast.show('Could not regenerate the recovery codes.', 'destructive');
+                    }
+                  }}
+                >
+                  Regenerate recovery codes
+                </Button>
+              </div>
+            )}
             {recoveryCodes && (
               <div className="flex flex-col gap-2">
                 <p className="text-[11px] text-muted-foreground">
@@ -227,6 +254,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                     // this component's own state does not clear
                     // TanStack Query's mutation cache — reset() does.
                     confirmTotp.reset();
+                    regenerate.reset();
                     await onEnrolled?.();
                   }}
                 >

@@ -57,3 +57,63 @@ func TestAuthMeReportsRemainingRecoveryCodes(t *testing.T) {
 		t.Fatalf("after spending one the count is %d, want %d", got, issued-1)
 	}
 }
+
+// Backlog 1.34. The codes are shown exactly once, at enrolment. If that
+// response is lost on the way back — a dropped connection, a closed tab —
+// they are active and unseen, and the only way out is re-enrolling TOTP.
+// Regenerating closes that with no new concepts: prove the factor, get a
+// fresh set, and the old set stops working in the same breath.
+func TestRegenerateRecoveryCodesReplacesTheOldSet(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("regen-codes@example.test", "correct horse battery")
+	s.SeedOrg("regen-codes-org", uid)
+	c := s.LoginAs(uid)
+
+	_, old := enrolTOTP(t, c, s)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/recovery-codes", struct{}{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("regenerating: %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		RecoveryCodes []string `json:"recovery_codes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding the new set: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test
+	if len(out.RecoveryCodes) != len(old) {
+		t.Fatalf("got %d codes, want a full set of %d", len(out.RecoveryCodes), len(old))
+	}
+
+	// The old set must be dead, not merely joined by a new one. A
+	// regenerate that leaves the previous codes redeemable would be worse
+	// than none: the reason to regenerate is usually that the old ones
+	// might be in someone else's hands.
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"recovery_code": old[0]}); resp.StatusCode == http.StatusOK {
+		t.Fatal("a code from the replaced set still works")
+	}
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"recovery_code": out.RecoveryCodes[0]}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a code from the new set: %d, want it to work", resp.StatusCode)
+	}
+}
+
+// Regenerating is an account-security action on a par with removing a
+// factor, so it must sit behind the same freshness gate. A session whose
+// factor proof has gone stale must be sent to step up, not handed a new
+// set of codes.
+func TestRegenerateRecoveryCodesRequiresAFreshFactor(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("regen-stale@example.test", "correct horse battery")
+	s.SeedOrg("regen-stale-org", uid)
+	c := s.LoginAs(uid)
+
+	enrolTOTP(t, c, s)
+	stale(t, s, uid)
+
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/recovery-codes", struct{}{}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("regenerating on a stale session: %d, want 403", resp.StatusCode)
+	}
+}

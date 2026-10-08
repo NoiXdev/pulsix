@@ -90,6 +90,11 @@ type TOTPStore interface {
 	// codes can still be redeemed. Spent codes are kept rather than
 	// deleted, so this is deliberately not "how many rows exist".
 	CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int, error)
+	// ReplaceRecoveryCodesWith swaps the account's recovery codes for the
+	// given hashes in one transaction, leaving the TOTP secret alone.
+	// ConfirmEnrol does the same swap as part of confirming a secret; this
+	// is the swap on its own, for an account whose factor is unchanged.
+	ReplaceRecoveryCodesWith(ctx context.Context, userID uuid.UUID, recoveryCodeHashes [][]byte) error
 }
 
 // TOTP manages time-based one-time passwords and recovery codes.
@@ -162,19 +167,59 @@ func (t *TOTP) ConfirmEnrol(ctx context.Context, userID uuid.UUID, code string) 
 	if !ok {
 		return nil, ErrInvalidTOTPCode
 	}
-	codes := make([]string, 8)
-	hashes := make([][]byte, 8)
+	codes, hashes, err := newRecoveryCodes()
+	if err != nil {
+		return nil, err
+	}
+	if err := t.store.ConfirmEnrol(ctx, userID, hashes); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+// recoveryCodeCount is how many codes a set holds. Eight is enough that
+// losing the authenticator stays survivable for a long while, and few
+// enough that a person will actually write them down.
+const recoveryCodeCount = 8
+
+// newRecoveryCodes mints one full set and returns the codes to show once
+// alongside the hashes to store. Enrolment and regeneration share it, so
+// a set is a set whichever door it came out of — the same count, the same
+// alphabet, the same grouping — and only one place has to be audited.
+func newRecoveryCodes() (codes []string, hashes [][]byte, err error) {
+	codes = make([]string, recoveryCodeCount)
+	hashes = make([][]byte, recoveryCodeCount)
 	for i := range codes {
 		raw := make([]byte, 10)
 		if _, err := rand.Read(raw); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		c := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw))
 		codes[i] = c[:5] + "-" + c[5:10] + "-" + c[10:15]
 		sum := sha256.Sum256([]byte(codes[i]))
 		hashes[i] = sum[:]
 	}
-	if err := t.store.ConfirmEnrol(ctx, userID, hashes); err != nil {
+	return codes, hashes, nil
+}
+
+// RegenerateRecoveryCodes issues a fresh set and makes the previous one
+// unusable in the same transaction (backlog 1.34). Two situations need
+// it and neither has another way out: the set shown once at enrolment
+// was never seen, because the response was lost on the way back; or it
+// was seen by someone it should not have been. Both are answered by the
+// old set ceasing to exist, which is why this replaces rather than tops
+// up — a regenerate that left the previous codes redeemable would be
+// worse than none at all.
+//
+// The caller is responsible for having proven the factor first; this is
+// deliberately not a second verification point, so that the rule about
+// what counts as proof lives in one place.
+func (t *TOTP) RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	codes, hashes, err := newRecoveryCodes()
+	if err != nil {
+		return nil, err
+	}
+	if err := t.store.ReplaceRecoveryCodesWith(ctx, userID, hashes); err != nil {
 		return nil, err
 	}
 	return codes, nil

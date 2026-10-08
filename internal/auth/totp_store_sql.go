@@ -78,6 +78,29 @@ func (s *SQLTOTPStore) UseRecoveryCode(ctx context.Context, userID uuid.UUID, co
 // code) could leave confirmed_at set — MFA now required at login — while a
 // failure partway through the inserts means the caller never receives
 // usable recovery codes: a confirmed factor with no recovery path.
+// ReplaceRecoveryCodesWith implements TOTPStore. One transaction, so an
+// account is never left between sets: either the old codes are gone and
+// the new ones are in, or nothing moved. The TOTP secret is untouched —
+// this swaps the way back in, not the factor itself.
+func (s *SQLTOTPStore) ReplaceRecoveryCodesWith(ctx context.Context, userID uuid.UUID, recoveryCodeHashes [][]byte) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once Commit succeeds; the error path is returned below.
+
+	q := s.q.WithTx(tx)
+	if err := q.ReplaceRecoveryCodes(ctx, userID); err != nil {
+		return err
+	}
+	for _, hash := range recoveryCodeHashes {
+		if err := q.InsertRecoveryCode(ctx, gen.InsertRecoveryCodeParams{UserID: userID, CodeHash: hash}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *SQLTOTPStore) ConfirmEnrol(ctx context.Context, userID uuid.UUID, recoveryCodeHashes [][]byte) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

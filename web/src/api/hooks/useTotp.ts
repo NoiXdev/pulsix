@@ -37,3 +37,20 @@ export function useConfirmTotp() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
   });
 }
+
+/**
+ * useRegenerateRecoveryCodes issues a fresh set and makes the old one
+ * unusable server-side (backlog 1.34). gcTime: 0 for the same reason
+ * useConfirmTotp has it — the response carries the codes in readable form,
+ * the only time they exist that way, and they must not sit in a cache
+ * afterwards. The `me` query is invalidated because the remaining count
+ * shown beside the action comes from it.
+ */
+export function useRegenerateRecoveryCodes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.POST('/api/v1/auth/recovery-codes', {})),
+    gcTime: 0,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+  });
+}

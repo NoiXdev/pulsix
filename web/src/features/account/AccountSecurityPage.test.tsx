@@ -255,3 +255,53 @@ describe('step-up (backlog 1.28)', () => {
     expect(enrolAttempts).toBe(2);
   });
 });
+
+// Backlog 1.34 and the count beside it. The set is shown once, at
+// enrolment; after that nothing told the operator how many were left, and
+// nothing let them get more. The two belong on screen together: the number
+// is what makes the action look worth taking before it is urgent.
+describe('recovery codes', () => {
+  let qc: QueryClient;
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  });
+
+  it('shows how many codes are left', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'a@b.test', display_name: 'A' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        recovery_codes_remaining: 3,
+      },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+    });
+    renderPage(qc);
+    await waitFor(() => {
+      expect(screen.getByTestId('recovery-codes-remaining')).toHaveTextContent('3');
+    });
+  });
+
+  it('replaces the set and shows the new codes exactly once', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'a@b.test', display_name: 'A' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        recovery_codes_remaining: 1,
+      },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/recovery-codes': { recovery_codes: ['aaaaa-bbbbb-ccccc', 'ddddd-eeeee-fffff'] },
+    });
+    renderPage(qc);
+
+    await userEvent.click(await screen.findByRole('button', { name: /regenerate recovery codes/i }));
+
+    // The codes themselves must appear — this response is the only time
+    // they exist in readable form.
+    await waitFor(() => {
+      expect(screen.getByText('aaaaa-bbbbb-ccccc')).toBeInTheDocument();
+    });
+    expect(screen.getByText('ddddd-eeeee-fffff')).toBeInTheDocument();
+  });
+});

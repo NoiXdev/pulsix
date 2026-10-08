@@ -159,6 +159,33 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		return &okOutput{}, nil
 	}, withAuthRateLimit(deps))
 
+	// Backlog 1.34: the set is shown exactly once, at enrolment. A lost
+	// response leaves codes that are active and unseen, and before this the
+	// only way out was re-enrolling TOTP. Behind the same freshness gate as
+	// removing a factor, because it is the same kind of act: it decides who
+	// can get back in.
+	huma.Post(hapi, "/api/v1/auth/recovery-codes", func(ctx context.Context, _ *struct{}) (*recoveryOutput, error) {
+		p, err := requireInteractiveSession(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := requireFreshFactor(ctx, deps, p); err != nil {
+			return nil, err
+		}
+		codes, err := deps.TOTP.RegenerateRecoveryCodes(ctx, p.UserID)
+		if err != nil {
+			return nil, mapAuthErr(ctx, err)
+		}
+		// Instance-level, like disabling a factor: replacing the way back
+		// into an account is a forensic signal worth keeping, and the codes
+		// themselves never go near the trail.
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, p.UserID.String(), "regenerated recovery codes")
+		out := &recoveryOutput{}
+		out.Body.RecoveryCodes = codes
+		return out, nil
+	}, withAudit("regenerateRecoveryCodes", "totp"))
+
 	huma.Delete(hapi, "/api/v1/auth/totp", func(ctx context.Context, in *codeInput) (*okOutput, error) {
 		p, err := requireInteractiveSession(ctx)
 		if err != nil {
