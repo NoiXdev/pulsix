@@ -56,3 +56,72 @@ func TestSQLTOTPStoreConfirmEnrolIsAtomic(t *testing.T) {
 		t.Fatalf("a recovery code from the failed transaction is usable: n=%d, err=%v", n, err)
 	}
 }
+
+// ReplaceRecoveryCodesWith has to be all-or-nothing for the same reason
+// ConfirmEnrol does, and the failure is the dangerous direction: a swap
+// that deleted the old set and then failed to insert the new one would
+// leave an account with no way back in at all — strictly worse than the
+// state it was asked to improve.
+func TestSQLTOTPStoreReplaceRecoveryCodesWithIsAtomic(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateUser(ctx, gen.CreateUserParams{ID: uid, Email: "swap@example.test", DisplayName: "S"}); err != nil {
+		t.Fatal(err)
+	}
+	store := auth.NewSQLTOTPStore(d)
+
+	original := [][]byte{[]byte("first-code"), []byte("second-code")}
+	if err := store.ReplaceRecoveryCodesWith(ctx, uid, original); err != nil {
+		t.Fatalf("seeding the first set: %v", err)
+	}
+	if n, err := store.CountUnusedRecoveryCodes(ctx, uid); err != nil || n != 2 {
+		t.Fatalf("after the first set: n=%d err=%v, want 2", n, err)
+	}
+
+	// A set that cannot be inserted: the duplicate collides on the
+	// primary key halfway through.
+	dup := []byte("same-hash")
+	if err := store.ReplaceRecoveryCodesWith(ctx, uid, [][]byte{dup, dup}); err == nil {
+		t.Fatal("a colliding set was accepted, want a primary-key violation")
+	}
+	if n, err := store.CountUnusedRecoveryCodes(ctx, uid); err != nil || n != 2 {
+		t.Fatalf("after the failed swap: n=%d err=%v — the original set must still stand", n, err)
+	}
+	if n, err := q.UseRecoveryCode(ctx, gen.UseRecoveryCodeParams{UserID: uid, CodeHash: original[0]}); err != nil || n != 1 {
+		t.Fatalf("an original code after the failed swap: n=%d err=%v, want it still redeemable", n, err)
+	}
+
+	// And the successful swap really does retire the old set.
+	if err := store.ReplaceRecoveryCodesWith(ctx, uid, [][]byte{[]byte("third-code")}); err != nil {
+		t.Fatalf("second swap: %v", err)
+	}
+	if n, err := q.UseRecoveryCode(ctx, gen.UseRecoveryCodeParams{UserID: uid, CodeHash: original[1]}); err != nil || n != 0 {
+		t.Fatalf("a code from the replaced set is still redeemable: n=%d err=%v", n, err)
+	}
+}
+
+// CountUnusedRecoveryCodes counts what can still be redeemed, not what
+// rows exist: spending a code stamps used_at rather than deleting it.
+func TestSQLTOTPStoreCountUnusedRecoveryCodesExcludesSpentOnes(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateUser(ctx, gen.CreateUserParams{ID: uid, Email: "count@example.test", DisplayName: "C"}); err != nil {
+		t.Fatal(err)
+	}
+	store := auth.NewSQLTOTPStore(d)
+	codes := [][]byte{[]byte("code-a"), []byte("code-b"), []byte("code-c")}
+	if err := store.ReplaceRecoveryCodesWith(ctx, uid, codes); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := q.UseRecoveryCode(ctx, gen.UseRecoveryCodeParams{UserID: uid, CodeHash: codes[0]}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := store.CountUnusedRecoveryCodes(ctx, uid); err != nil || n != 2 {
+		t.Fatalf("after spending one: n=%d err=%v, want 2 — the spent row still exists", n, err)
+	}
+}
