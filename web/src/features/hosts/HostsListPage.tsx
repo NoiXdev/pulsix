@@ -113,6 +113,25 @@ export function HostsListPage() {
             className="w-40 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
+        {/* Backlog 1.12: the zone filter lives here, on the page whose
+            endpoint supports it, rather than in the shell as a global
+            control that would do nothing on most pages and fight the
+            fleet page's own. */}
+        <label className="flex h-[30px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
+          <select
+            aria-label="Filter by zone"
+            value={filter.zone ?? ''}
+            onChange={(e) => setFilter((f) => ({ ...f, zone: e.target.value || undefined }))}
+            className="bg-transparent text-foreground outline-none"
+          >
+            <option value="">All zones</option>
+            {(zones.data?.zones ?? []).map((z) => (
+              <option key={z.id} value={z.id}>
+                {z.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <FilterChip
           label="Managed"
           on={filter.managed === true}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Activity, Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, Globe, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
+import { Activity, Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Wrench } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { may } from '../lib/roles.ts';
 
@@ -348,11 +348,11 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             />
             <span className="rounded border border-border px-1.5 py-px font-mono text-[11px]">⌘K</span>
           </form>
-          <div className="flex h-[34px] items-center gap-2 rounded-md border border-border bg-card px-3 text-foreground">
-            <Globe size={15} />
-            <span className="text-[13px]">All zones</span>
-            <ChevronDown size={14} className="text-muted-foreground" />
-          </div>
+          {/* Backlog 1.12: the global zone control that used to sit here was
+              a label and a chevron that opened nothing. Only two endpoints
+              take a zone filter, the fleet page already has its own, and the
+              hosts list now has one too — a control on the page it acts on
+              beats a global one that would do nothing on most of them. */}
           <button
             type="button"
             aria-label="Notifications"

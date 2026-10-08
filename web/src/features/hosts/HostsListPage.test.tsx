@@ -209,3 +209,33 @@ describe('HostsListPage', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 });
+
+// Backlog 1.12. The shell carried a global "All zones" control that opened
+// nothing — a promise with no mechanism behind it. Only two endpoints take
+// a zone filter at all, and the fleet page already has its own; this is
+// the other one, where GET /hosts has supported ?zone= all along and the
+// page simply never offered it. A filter that works on the page it belongs
+// to beats a global one that would do nothing on most of them.
+describe('zone filter', () => {
+  it('narrows the host request to the chosen zone', async () => {
+    const asked: Array<string | null> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/zones': ZONES,
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        asked.push(req.search.get('zone'));
+        return HOSTS;
+      },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage(qc);
+
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    expect(asked[0]).toBeFalsy();
+
+    await userEvent.selectOptions(await screen.findByLabelText('Filter by zone'), 'z1');
+
+    await waitFor(() => {
+      expect(asked.at(-1)).toBe('z1');
+    });
+  });
+});
