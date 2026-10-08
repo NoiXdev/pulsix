@@ -173,12 +173,64 @@ func (d *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandT
 		return d.pool.Exec(ctx, sql, args...)
 	}
 	var tag pgconn.CommandTag
-	err := d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+	err := d.runScopedBatch(ctx, orgID, sql, args, func(br pgx.BatchResults) error {
 		var err error
-		tag, err = tx.Exec(ctx, sql, args...)
+		tag, err = br.Exec()
 		return err
 	})
 	return tag, err
+}
+
+// runScopedBatch sends BEGIN, set_config, one statement and COMMIT as a
+// single batch — one round trip where the unbatched path took four
+// (backlog 1.23). The saving is round trips rather than work, so it grows
+// with the latency to Postgres and is invisible on a local socket.
+//
+// BEGIN and COMMIT are queued explicitly rather than left to the
+// pipeline's implicit transaction. set_config's third argument makes the
+// binding transaction-local, and that is the property the whole tenancy
+// story rests on: were the statement not in the same transaction as the
+// set_config, the binding would be gone before it ran and the
+// org_isolation_bypass policy would make every organization visible.
+// Naming the transaction leaves nothing to infer from pipeline semantics.
+//
+// read consumes the statement's own result. Its error is returned exactly
+// as it came — the COMMIT queued behind a failed statement cannot succeed
+// either, and reporting that instead would turn every broken query in the
+// system into "current transaction is aborted" rather than saying what was
+// actually wrong. For the same reason pgx.ErrNoRows reaches the caller
+// unchanged.
+func (d *DB) runScopedBatch(ctx context.Context, orgID uuid.UUID, sql string, args []any, read func(pgx.BatchResults) error) error {
+	b := &pgx.Batch{}
+	b.Queue(`BEGIN`)
+	b.Queue(`SELECT set_config('pulsix.org_id', $1, true)`, orgID.String())
+	b.Queue(sql, args...)
+	b.Queue(`COMMIT`)
+
+	br := d.pool.SendBatch(ctx, b)
+	step := func(what string) error {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		return nil
+	}
+	if err := step("begin org transaction"); err != nil {
+		_ = br.Close()
+		return err
+	}
+	if err := step("bind transaction to organization"); err != nil {
+		_ = br.Close()
+		return err
+	}
+	if err := read(br); err != nil {
+		_ = br.Close()
+		return err
+	}
+	if err := step("commit org transaction"); err != nil {
+		_ = br.Close()
+		return err
+	}
+	return br.Close()
 }
 
 // QueryRow is Exec's single-row counterpart. When ctx carries an org scope,
@@ -272,9 +324,13 @@ type scopedRow struct {
 	args  []any
 }
 
+// Scan runs the statement in a single round trip, the same batched shape
+// execScopedBatch uses and for the same reason (backlog 1.23). Scan's own
+// error — pgx.ErrNoRows included — comes back unchanged, so callers that
+// tell "no row" from "failed" keep working.
 func (r scopedRow) Scan(dest ...any) error {
-	return r.d.WithOrg(r.ctx, r.orgID, func(tx pgx.Tx) error {
-		return tx.QueryRow(r.ctx, r.sql, r.args...).Scan(dest...)
+	return r.d.runScopedBatch(r.ctx, r.orgID, r.sql, r.args, func(br pgx.BatchResults) error {
+		return br.QueryRow().Scan(dest...)
 	})
 }
 

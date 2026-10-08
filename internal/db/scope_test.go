@@ -533,3 +533,39 @@ func TestScopedStatementsFailWhenTheDatabaseIsGone(t *testing.T) {
 		t.Error("QueryRow on a closed pool succeeded")
 	}
 }
+
+// A failing statement must come back as itself. Once it fails the
+// transaction is aborted, so the COMMIT queued behind it in the same batch
+// fails too — and if that follow-on error were the one returned, every
+// broken query in the system would report "current transaction is aborted"
+// instead of what was actually wrong with it.
+func TestScopedExecReportsTheStatementsOwnError(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := db.WithOrgScope(context.Background(), uuid.New())
+
+	_, err := d.Exec(ctx, `UPDATE a_table_that_does_not_exist SET x = 1`)
+	if err == nil {
+		t.Fatal("a statement against a missing table succeeded")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("error %v is not a PgError, so the caller cannot tell what went wrong", err)
+	}
+	if pgErr.Code != "42P01" { // undefined_table
+		t.Fatalf("SQLSTATE %s (%s), want 42P01 — the statement's own failure, not the aborted transaction behind it",
+			pgErr.Code, pgErr.Message)
+	}
+}
+
+// The same for the single-row path, which returns its error through Scan.
+func TestScopedQueryRowReportsTheStatementsOwnError(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := db.WithOrgScope(context.Background(), uuid.New())
+
+	var x int
+	err := d.QueryRow(ctx, `SELECT x FROM a_table_that_does_not_exist`).Scan(&x)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
+		t.Fatalf("Scan error = %v, want the statement's own undefined_table", err)
+	}
+}
