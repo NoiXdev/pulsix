@@ -217,7 +217,20 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("close message: %w", err)
 	}
-	return c.Quit()
+	// The server accepted the message here: w.Close sends the final dot and
+	// reads the reply, so a non-nil error above means it was refused and a
+	// nil one means it is queued and out of our hands.
+	//
+	// Everything after this point is therefore no longer about delivery.
+	// QUIT is a courtesy, and servers routinely skip the 221 — a reset, an
+	// idle reaper, a proxy closing a pooled socket the moment the message
+	// is handed on. Returning that as a send failure makes callers undo
+	// work that did happen: the invitation is deleted while its mail is
+	// already travelling, and the recipient is left holding a link to
+	// something that no longer exists (backlog 1.25). The deferred Close
+	// releases the connection either way.
+	_ = c.Quit()
+	return nil
 }
 
 // buildMessage renders a minimal RFC 5322 plain-text message in UTF-8.

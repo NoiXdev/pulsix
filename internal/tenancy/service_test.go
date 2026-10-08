@@ -1344,3 +1344,50 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		}
 	})
 }
+
+// Backlog 1.25. Whether an invitation reaches its recipient must not
+// depend on whether the person who issued it kept the browser tab open.
+// The request's context ends when the client disconnects; tying the send
+// to it means a cancelled request can tear the SMTP conversation down
+// mid-flight — possibly after the message was already accepted — and the
+// invitation is then deleted for a delivery that happened.
+func TestInviteSendOutlivesTheRequestContext(t *testing.T) {
+	st := newFakeStore()
+	spy := &ctxSpyMailer{}
+	svc := tenancy.NewService(st, spy, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(context.Background(), owner, "acme", "Acme")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the client is already gone
+
+	if _, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer); err != nil {
+		t.Fatalf("Invite: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("the mailer was never called")
+	}
+	if spy.errAtCall != nil {
+		t.Fatalf("the mailer got an already-cancelled context (%v); the send must not be governed by the request", spy.errAtCall)
+	}
+	if !spy.hadDeadline {
+		t.Fatal("the detached context carries no deadline, so a hung server would hold the send forever")
+	}
+}
+
+// ctxSpyMailer records what the context looked like *while* Send ran. The
+// caller cancels its detached context on the way out, so inspecting a
+// stored context afterwards would show that cancellation rather than
+// anything about the request — a test that reads it later proves nothing.
+type ctxSpyMailer struct {
+	called      bool
+	errAtCall   error
+	hadDeadline bool
+}
+
+func (m *ctxSpyMailer) Send(ctx context.Context, _, _, _ string) error {
+	m.called = true
+	m.errAtCall = ctx.Err()
+	_, m.hadDeadline = ctx.Deadline()
+	return nil
+}

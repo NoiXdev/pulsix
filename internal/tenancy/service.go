@@ -66,6 +66,12 @@ func ValidateOrgName(name string) error {
 // InviteTTL is how long an invitation link works.
 const InviteTTL = 7 * 24 * time.Hour
 
+// inviteSendTimeout bounds the detached invitation send. It is the mail
+// package's own session timeout plus a margin: the mailer already gives up
+// on a silent server after 30 s, so this is the backstop for the case
+// where it somehow does not, not the primary limit.
+const inviteSendTimeout = 45 * time.Second
+
 // inviteSecretBytes is the raw entropy carried by an invite token, the same
 // width Sessions.Create and Tokens.Create use for their own secrets.
 const inviteSecretBytes = 24
@@ -325,7 +331,22 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 	link := s.publicURL + "/invite/" + token
 	body := fmt.Sprintf("You have been invited to %s on Pulsix as %s.\n\nAccept: %s\n\nThe link expires in 7 days.",
 		org.Name, role, link)
-	sendErr := s.mailer.Send(ctx, inv.Email, "Invitation to "+org.Name, body)
+	// The send is deliberately not governed by the request (backlog 1.25).
+	// A client that disconnects — a closed tab, a reverse proxy timing the
+	// request out — would otherwise tear the SMTP conversation down
+	// mid-flight, and the default branch below would delete an invitation
+	// whose mail may already have been accepted. Whether someone receives
+	// their invitation must not depend on whether the person who sent it
+	// stayed on the page.
+	//
+	// Detached, not unbounded: the mailer honours whatever context it is
+	// given (which is why this is done here and not inside it — the "send
+	// a test e-mail" button genuinely should die with its request), so it
+	// needs a deadline of its own or a black-holed server would hold this
+	// call forever.
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteSendTimeout)
+	defer cancel()
+	sendErr := s.mailer.Send(sendCtx, inv.Email, "Invitation to "+org.Name, body)
 	switch {
 	case sendErr == nil:
 		inv.Mailed = true
