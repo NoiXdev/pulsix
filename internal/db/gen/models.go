@@ -335,6 +335,7 @@ type Host struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	CreatedAt  time.Time          `json:"created_at"`
 	UpdatedAt  time.Time          `json:"updated_at"`
+	Revision   int64              `json:"revision"`
 }
 
 type HostAgent struct {

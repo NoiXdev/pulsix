@@ -119,15 +119,20 @@ type hostGetInput struct {
 }
 
 type hostGetOutput struct {
+	// ETag carries the host's revision so a client can send it back as
+	// If-Match on the next write (backlog 1.31), the same way the
+	// inventory routes do.
+	ETag string `header:"ETag"`
 	Body struct {
 		Host hostDTO `json:"host"`
 	}
 }
 
 type hostUpdateInput struct {
-	Org  string `path:"org"`
-	ID   string `path:"id"`
-	Body hostInputBody
+	Org     string `path:"org"`
+	ID      string `path:"id"`
+	IfMatch string `header:"If-Match" doc:"The host's ETag; required"`
+	Body    hostInputBody
 }
 
 // hostListInput's Zone/Managed/Monitored are plain strings, not uuid.UUID/
@@ -260,7 +265,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
-		out := &hostGetOutput{}
+		out := &hostGetOutput{ETag: revisionETag(h.Revision)}
 		out.Body.Host = toHostDTO(h)
 		return out, nil
 	})
@@ -274,16 +279,20 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid host id")
 		}
+		rev, err := requireIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
 		hostIn, err := in.Body.toInput()
 		if err != nil {
 			return nil, err
 		}
-		h, err := deps.Hosts.UpdateHost(ctx, scope.OrgID, id, hostIn)
+		h, err := deps.Hosts.UpdateHost(ctx, scope.OrgID, id, rev, hostIn)
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
 		setAuditObject(ctx, h.ID.String(), "updated host "+h.Name)
-		out := &hostGetOutput{}
+		out := &hostGetOutput{ETag: revisionETag(h.Revision)}
 		out.Body.Host = toHostDTO(h)
 		return out, nil
 	}, withAudit("updateHost", "host"))
@@ -318,7 +327,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 			return nil, mapHostsErr(ctx, err)
 		}
 		setAuditObject(ctx, h.ID.String(), "updated capabilities for host "+h.Name)
-		out := &hostGetOutput{}
+		out := &hostGetOutput{ETag: revisionETag(h.Revision)}
 		out.Body.Host = toHostDTO(h)
 		return out, nil
 	}, withAudit("setHostCapabilities", "host"))
@@ -368,6 +377,10 @@ func mapHostsErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, hosts.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
+	case errors.Is(err, hosts.ErrRevisionMismatch):
+		// Someone else saved first. 412, not 404 — the host is there, the
+		// caller's view of it is not current (backlog 1.31).
+		return huma.Error412PreconditionFailed("the host changed since you loaded it; reload and try again")
 	case errors.Is(err, hosts.ErrNotFound):
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, hosts.ErrNameTaken):

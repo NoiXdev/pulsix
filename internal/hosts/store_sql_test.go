@@ -169,7 +169,9 @@ func TestSQLStoreUpdateHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	updated, err := store.UpdateHost(ctx, hosts.Host{ID: h.ID, OrgID: org, ZoneID: zoneB.ID, Name: "web-01-renamed", Address: "10.0.0.2", Managed: true, Monitored: true})
+	// Backlog 1.31: a freshly created host is at revision 1, and the write
+	// only lands while the caller still names the current one.
+	updated, err := store.UpdateHost(ctx, hosts.Host{ID: h.ID, OrgID: org, ZoneID: zoneB.ID, Name: "web-01-renamed", Address: "10.0.0.2", Managed: true, Monitored: true, Revision: 1})
 	if err != nil {
 		t.Fatalf("UpdateHost: %v", err)
 	}
@@ -177,7 +179,7 @@ func TestSQLStoreUpdateHost(t *testing.T) {
 		t.Fatalf("updated = %+v", updated)
 	}
 
-	if _, err := store.UpdateHost(ctx, hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zoneA.ID, Name: "nope"}); !errors.Is(err, hosts.ErrNotFound) {
+	if _, err := store.UpdateHost(ctx, hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zoneA.ID, Name: "nope", Revision: 1}); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("unknown host: %v, want ErrNotFound", err)
 	}
 }
@@ -207,7 +209,7 @@ func TestSQLStoreUpdateHostDuplicateNameUniqueViolation(t *testing.T) {
 	// Renaming web-02 to web-01's already-taken name must be reported as a
 	// conflict, not a generic 500 — the same guarantee CreateHost already
 	// gives, now proven for UpdateHost against the real unique constraint.
-	if _, err := store.UpdateHost(ctx, hosts.Host{ID: h2.ID, OrgID: org, ZoneID: zone.ID, Name: "web-01"}); !errors.Is(err, hosts.ErrNameTaken) {
+	if _, err := store.UpdateHost(ctx, hosts.Host{ID: h2.ID, OrgID: org, ZoneID: zone.ID, Name: "web-01", Revision: 1}); !errors.Is(err, hosts.ErrNameTaken) {
 		t.Fatalf("rename to a taken name: %v, want ErrNameTaken", err)
 	}
 }

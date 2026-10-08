@@ -154,6 +154,11 @@ func (f *fakeHostStore) UpdateHost(_ context.Context, h hosts.Host) (hosts.Host,
 	if !ok || existing.OrgID != h.OrgID {
 		return hosts.Host{}, hosts.ErrNotFound
 	}
+	// Backlog 1.31: the fake honours the revision the way the real store
+	// does, so a service test cannot pass against a store that ignores it.
+	if h.Revision != existing.Revision {
+		return hosts.Host{}, hosts.ErrRevisionMismatch
+	}
 	for id, other := range f.list {
 		if id != h.ID && other.OrgID == h.OrgID && other.Name == h.Name {
 			return hosts.Host{}, hosts.ErrNameTaken
@@ -458,20 +463,20 @@ func TestUpdateHostValidatesNameAndZone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.UpdateHost(ctx, org, h.ID, hosts.HostInput{Name: "Bad Name", ZoneID: zone.ID}); !errors.Is(err, hosts.ErrInvalidInput) {
+	if _, err := svc.UpdateHost(ctx, org, h.ID, 0, hosts.HostInput{Name: "Bad Name", ZoneID: zone.ID}); !errors.Is(err, hosts.ErrInvalidInput) {
 		t.Fatalf("invalid name: %v, want ErrInvalidInput", err)
 	}
-	if _, err := svc.UpdateHost(ctx, org, h.ID, hosts.HostInput{Name: "web-01b", ZoneID: otherOrgZone.ID}); !errors.Is(err, hosts.ErrNotFound) {
+	if _, err := svc.UpdateHost(ctx, org, h.ID, 0, hosts.HostInput{Name: "web-01b", ZoneID: otherOrgZone.ID}); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("foreign zone: %v, want ErrNotFound", err)
 	}
-	if _, err := svc.UpdateHost(ctx, org, h.ID, hosts.HostInput{Name: "web-02", ZoneID: zone.ID}); !errors.Is(err, hosts.ErrNameTaken) {
+	if _, err := svc.UpdateHost(ctx, org, h.ID, 0, hosts.HostInput{Name: "web-02", ZoneID: zone.ID}); !errors.Is(err, hosts.ErrNameTaken) {
 		t.Fatalf("duplicate name: %v, want ErrNameTaken", err)
 	}
-	if _, err := svc.UpdateHost(ctx, org, uuid.Must(uuid.NewV7()), hosts.HostInput{Name: "web-03", ZoneID: zone.ID}); !errors.Is(err, hosts.ErrNotFound) {
+	if _, err := svc.UpdateHost(ctx, org, uuid.Must(uuid.NewV7()), 0, hosts.HostInput{Name: "web-03", ZoneID: zone.ID}); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("unknown host: %v, want ErrNotFound", err)
 	}
 
-	updated, err := svc.UpdateHost(ctx, org, h.ID, hosts.HostInput{Name: "web-01-renamed", Address: "10.0.0.1", ZoneID: zone.ID, Managed: true, Monitored: true})
+	updated, err := svc.UpdateHost(ctx, org, h.ID, 0, hosts.HostInput{Name: "web-01-renamed", Address: "10.0.0.1", ZoneID: zone.ID, Managed: true, Monitored: true})
 	if err != nil {
 		t.Fatal(err)
 	}

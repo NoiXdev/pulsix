@@ -1,12 +1,14 @@
 package hosts_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/hosts"
 )
 
 // Backlog 1.30. Every table built after migration 00014 ties its tenant
@@ -65,5 +67,45 @@ func TestHostTagCannotClaimAnotherOrgThanItsHost(t *testing.T) {
 		host, orgB)
 	if err == nil {
 		t.Fatal("a tag on org A's host claimed org B; row-level security on this table filters by exactly that column")
+	}
+}
+
+// Backlog 1.31. No row came back from the UPDATE means two different
+// things and the caller has to tell them apart: the host is gone, which
+// is a 404, or someone saved first and this view is stale, which is a
+// 412. Conflating them would tell an operator their host had vanished
+// when it was simply edited by a colleague a moment earlier.
+func TestUpdateHostTellsStaleRevisionFromMissingHost(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "revision-split")
+	zone := uuid.Must(uuid.NewV7())
+	if _, err := q.CreateZone(ctx, gen.CreateZoneParams{ID: zone, OrgID: org, Slug: "z", Name: "Z"}); err != nil {
+		t.Fatal(err)
+	}
+	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Name: "web-01"}
+	if err := store.CreateHost(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := hosts.Host{ID: h.ID, OrgID: org, ZoneID: zone, Name: "renamed", Revision: 99}
+	if _, err := store.UpdateHost(ctx, stale); !errors.Is(err, hosts.ErrRevisionMismatch) {
+		t.Fatalf("a stale revision on a host that exists: %v, want ErrRevisionMismatch", err)
+	}
+
+	gone := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Name: "ghost", Revision: 1}
+	if _, err := store.UpdateHost(ctx, gone); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("a host that does not exist: %v, want ErrNotFound", err)
+	}
+
+	// And the accepted write moves the revision, so the same ETag cannot
+	// be spent twice.
+	updated, err := store.UpdateHost(ctx, hosts.Host{ID: h.ID, OrgID: org, ZoneID: zone, Name: "renamed", Revision: 1})
+	if err != nil {
+		t.Fatalf("current revision: %v", err)
+	}
+	if updated.Revision != 2 {
+		t.Fatalf("revision after one update = %d, want 2", updated.Revision)
 	}
 }

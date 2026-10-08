@@ -118,8 +118,17 @@ func (s *SQLStore) GetHost(ctx context.Context, orgID, hostID uuid.UUID) (Host, 
 func (s *SQLStore) UpdateHost(ctx context.Context, h Host) (Host, error) {
 	row, err := s.q.UpdateHost(ctx, gen.UpdateHostParams{
 		ID: h.ID, OrgID: h.OrgID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address,
-		Managed: h.Managed, Monitored: h.Monitored,
+		Managed: h.Managed, Monitored: h.Monitored, Revision: h.Revision,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No row means one of two different answers, and the caller needs
+		// them apart: the host is gone (404), or someone saved first and
+		// this view is stale (412). Only a read can tell.
+		if _, getErr := s.q.GetHost(ctx, gen.GetHostParams{OrgID: h.OrgID, ID: h.ID}); getErr != nil {
+			return Host{}, mapErr(getErr)
+		}
+		return Host{}, ErrRevisionMismatch
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Host{}, ErrNameTaken
@@ -245,6 +254,7 @@ func fromHostRow(r gen.Host) (Host, error) {
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Name: r.Name, Address: r.Address,
 		Managed: r.Managed, Monitored: r.Monitored, Facts: facts,
 		LastSeenAt: fromPgTimestamptz(r.LastSeenAt), CreatedAt: r.CreatedAt,
+		Revision: r.Revision,
 	}, nil
 }
 

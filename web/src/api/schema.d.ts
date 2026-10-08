@@ -7501,6 +7501,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -7553,7 +7554,10 @@ export interface operations {
     updateHost: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The host's ETag; required */
+                "If-Match"?: string;
+            };
             path: {
                 org: string;
                 id: string;
@@ -7569,6 +7573,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -7673,6 +7678,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {

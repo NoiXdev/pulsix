@@ -273,7 +273,7 @@ func (q *Queries) ListHostKeyChanged(ctx context.Context, arg ListHostKeyChanged
 }
 
 const listHostsDueForTest = `-- name: ListHostsDueForTest :many
-SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at FROM hosts h
+SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision FROM hosts h
 WHERE h.org_id = $1 AND h.managed
   AND NOT EXISTS (
     SELECT 1 FROM host_connection_tests t
@@ -319,6 +319,7 @@ func (q *Queries) ListHostsDueForTest(ctx context.Context, arg ListHostsDueForTe
 			&i.LastSeenAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}

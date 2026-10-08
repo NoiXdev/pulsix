@@ -36,9 +36,14 @@ WHERE org_id = $1 AND id = ANY(sqlc.arg(host_ids)::uuid[]);
 -- gives no route to change — an omitted column here is never silently
 -- clobbered, since the caller (hosts.Service) always reads the current row
 -- first and writes back the fields it did not intend to change.
+-- Backlog 1.31: writes only when the caller's revision is still current,
+-- the same optimistic-concurrency shape UpdateInventoryGroup uses. No row
+-- back means either a stale revision or an unknown host; the store tells
+-- the two apart so the API can answer 412 rather than 404 for the first.
 UPDATE hosts
-SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7, updated_at = now()
-WHERE id = $1 AND org_id = $2
+SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7,
+    revision = revision + 1, updated_at = now()
+WHERE id = $1 AND org_id = $2 AND revision = @revision
 RETURNING *;
 
 -- name: PatchHostCapabilities :one

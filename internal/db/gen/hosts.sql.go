@@ -15,7 +15,7 @@ import (
 const createHost = `-- name: CreateHost :one
 INSERT INTO hosts (id, org_id, zone_id, name, address, managed, monitored, facts)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
 `
 
 type CreateHostParams struct {
@@ -53,6 +53,7 @@ func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) (Host, e
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Revision,
 	)
 	return i, err
 }
@@ -105,7 +106,7 @@ func (q *Queries) DeleteHost(ctx context.Context, arg DeleteHostParams) (int64, 
 }
 
 const getHost = `-- name: GetHost :one
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts WHERE id = $1 AND org_id = $2
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts WHERE id = $1 AND org_id = $2
 `
 
 type GetHostParams struct {
@@ -131,6 +132,7 @@ func (q *Queries) GetHost(ctx context.Context, arg GetHostParams) (Host, error) 
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Revision,
 	)
 	return i, err
 }
@@ -203,7 +205,7 @@ func (q *Queries) GetZonesBySlug(ctx context.Context, slug string) ([]GetZonesBy
 }
 
 const listAllHosts = `-- name: ListAllHosts :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts WHERE org_id = $1 ORDER BY name
 `
 
 // Every host of the organization, for the inventory renderer. Unpaginated on
@@ -230,6 +232,7 @@ func (q *Queries) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, er
 			&i.LastSeenAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}
@@ -281,7 +284,7 @@ func (q *Queries) ListHostZones(ctx context.Context, arg ListHostZonesParams) ([
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::boolean IS NULL OR managed = $3::boolean)
@@ -351,6 +354,7 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 			&i.LastSeenAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}
@@ -363,7 +367,7 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 }
 
 const listHostsByIDs = `-- name: ListHostsByIDs :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at FROM hosts WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name
 `
 
 type ListHostsByIDsParams struct {
@@ -398,6 +402,7 @@ func (q *Queries) ListHostsByIDs(ctx context.Context, arg ListHostsByIDsParams) 
 			&i.LastSeenAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}
@@ -482,7 +487,7 @@ SET managed = COALESCE($3::boolean, managed),
     monitored = COALESCE($4::boolean, monitored),
     updated_at = now()
 WHERE id = $1 AND org_id = $2
-RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
 `
 
 type PatchHostCapabilitiesParams struct {
@@ -521,15 +526,17 @@ func (q *Queries) PatchHostCapabilities(ctx context.Context, arg PatchHostCapabi
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Revision,
 	)
 	return i, err
 }
 
 const updateHost = `-- name: UpdateHost :one
 UPDATE hosts
-SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7, updated_at = now()
-WHERE id = $1 AND org_id = $2
-RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at
+SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7,
+    revision = revision + 1, updated_at = now()
+WHERE id = $1 AND org_id = $2 AND revision = $8
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
 `
 
 type UpdateHostParams struct {
@@ -540,12 +547,17 @@ type UpdateHostParams struct {
 	Address   string    `json:"address"`
 	Managed   bool      `json:"managed"`
 	Monitored bool      `json:"monitored"`
+	Revision  int64     `json:"revision"`
 }
 
 // Sets every mutable column except facts and last_seen_at, which this task
 // gives no route to change — an omitted column here is never silently
 // clobbered, since the caller (hosts.Service) always reads the current row
 // first and writes back the fields it did not intend to change.
+// Backlog 1.31: writes only when the caller's revision is still current,
+// the same optimistic-concurrency shape UpdateInventoryGroup uses. No row
+// back means either a stale revision or an unknown host; the store tells
+// the two apart so the API can answer 412 rather than 404 for the first.
 func (q *Queries) UpdateHost(ctx context.Context, arg UpdateHostParams) (Host, error) {
 	row := q.db.QueryRow(ctx, updateHost,
 		arg.ID,
@@ -555,6 +567,7 @@ func (q *Queries) UpdateHost(ctx context.Context, arg UpdateHostParams) (Host, e
 		arg.Address,
 		arg.Managed,
 		arg.Monitored,
+		arg.Revision,
 	)
 	var i Host
 	err := row.Scan(
@@ -569,6 +582,7 @@ func (q *Queries) UpdateHost(ctx context.Context, arg UpdateHostParams) (Host, e
 		&i.LastSeenAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Revision,
 	)
 	return i, err
 }

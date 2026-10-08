@@ -346,9 +346,11 @@ func TestUpdateHostFullReplace(t *testing.T) {
 	}
 	h := decodeHost(t, resp)
 
-	resp = requestJSON(t, c, http.MethodPatch, s.HTTP.URL+"/api/v1/orgs/host-update-org/hosts/"+h.ID, map[string]any{
+	// Backlog 1.31: this route now requires If-Match. A freshly created
+	// host is at revision 1, which is what its ETag renders.
+	resp = requestWithHeaders(t, c, http.MethodPatch, s.HTTP.URL+"/api/v1/orgs/host-update-org/hosts/"+h.ID, map[string]any{
 		"name": "web-01-renamed", "address": "10.0.0.9", "zone_id": newZone.ID, "managed": true, "monitored": true,
-	})
+	}, map[string]string{"If-Match": `"1"`})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("update host: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
@@ -369,9 +371,11 @@ func TestUpdateHostFullReplace(t *testing.T) {
 	cB := s.LoginAs(ownerB)
 	resp = requestJSON(t, cB, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/host-update-org-b/zones", nil)
 	zonesB := decodeZoneList(t, resp)
-	resp = requestJSON(t, c, http.MethodPatch, s.HTTP.URL+"/api/v1/orgs/host-update-org/hosts/"+h.ID, map[string]any{
+	// Revision 2 now: the successful update above moved it. The zone check
+	// must still answer 404 rather than being masked by the precondition.
+	resp = requestWithHeaders(t, c, http.MethodPatch, s.HTTP.URL+"/api/v1/orgs/host-update-org/hosts/"+h.ID, map[string]any{
 		"name": "web-01-moved", "zone_id": zonesB[0].ID,
-	})
+	}, map[string]string{"If-Match": `"2"`})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("update host to a foreign-org zone: status %d, want 404, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
@@ -667,5 +671,52 @@ func TestFirstRunWizardProvisionsDefaultZone(t *testing.T) {
 	}
 	if len(listed.Zones) != 1 || listed.Zones[0].Slug != "default" {
 		t.Fatalf("zones = %+v, want exactly one default zone", listed.Zones)
+	}
+}
+
+// Backlog 1.31. Two operators with the host open at once: without a
+// precondition the second save silently overwrites the first, and neither
+// of them ever learns it happened. The group and schema routes have
+// required If-Match since v0.2a; hosts were the object left out, and they
+// are the one every other object hangs off.
+func TestUpdateHostRequiresIfMatchAndRefusesAStaleOne(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("host-ifmatch-owner@example.test", "correct horse battery")
+	s.SeedOrg("host-ifmatch-org", owner)
+	c := s.LoginAs(owner)
+
+	resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/host-ifmatch-org/zones", nil)
+	zone := decodeZoneList(t, resp)[0].ID
+	resp = postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/host-ifmatch-org/hosts",
+		map[string]any{"name": "web-01", "zone_id": zone})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create host: %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	h := decodeHost(t, resp)
+	url := s.HTTP.URL + "/api/v1/orgs/host-ifmatch-org/hosts/" + h.ID
+	body := map[string]any{"name": "web-01-renamed", "zone_id": zone, "managed": true, "monitored": true}
+
+	if resp := requestJSON(t, c, http.MethodPatch, url, body); resp.StatusCode != http.StatusPreconditionRequired {
+		t.Fatalf("no If-Match: %d, want 428", resp.StatusCode)
+	}
+	if resp := requestWithHeaders(t, c, http.MethodPatch, url, body,
+		map[string]string{"If-Match": `"99"`}); resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("stale If-Match: %d, want 412", resp.StatusCode)
+	}
+
+	// The current ETag works, and spends itself: replaying the same one is
+	// exactly the lost-update this precondition exists to catch.
+	resp = requestJSON(t, c, http.MethodGet, url, nil)
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("GET returned no ETag, so a client has nothing to send back")
+	}
+	if resp := requestWithHeaders(t, c, http.MethodPatch, url, body,
+		map[string]string{"If-Match": etag}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("current If-Match: %d, want 200", resp.StatusCode)
+	}
+	if resp := requestWithHeaders(t, c, http.MethodPatch, url, body,
+		map[string]string{"If-Match": etag}); resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("replaying the spent ETag: %d, want 412 — the revision must have moved", resp.StatusCode)
 	}
 }

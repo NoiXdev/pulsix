@@ -31,6 +31,10 @@ var (
 	// ErrInvalidInput means the caller-supplied value itself is malformed
 	// (a bad host name, an empty zone slug) — never a store failure.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrRevisionMismatch is a write whose If-Match named a revision that
+	// is no longer current — someone else saved first. Named like
+	// inventory.ErrRevisionMismatch, which the API maps the same way.
+	ErrRevisionMismatch = errors.New("revision does not match")
 	// ErrNotFound means no genuine row exists for the given (org, id) pair
 	// — a host or zone that does not exist, or exists in a different
 	// organization. It is deliberately the same error for "does not exist"
@@ -88,6 +92,11 @@ type Host struct {
 	Facts      map[string]any
 	LastSeenAt *time.Time
 	CreatedAt  time.Time
+	// Revision is the optimistic-concurrency counter the API renders as an
+	// ETag and requires back as If-Match (backlog 1.31). Every accepted
+	// update moves it, so a client holding an old one is told its view is
+	// stale rather than silently overwriting whoever moved it.
+	Revision int64
 }
 
 // HostInput is the caller-supplied shape for creating or fully replacing a
@@ -397,15 +406,19 @@ func (s *Service) GetHost(ctx context.Context, orgID, id uuid.UUID) (Host, error
 
 // UpdateHost replaces every mutable field of the host identified by
 // (orgID, id) with in, after the same name and zone-ownership validation
-// CreateHost applies.
-func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, in HostInput) (Host, error) {
+// CreateHost applies. rev is the revision the caller edited (backlog
+// 1.31): the write only lands while it is still current, and
+// ErrRevisionMismatch comes back when someone else saved first, so a
+// second operator with the page open cannot silently overwrite the one
+// who saved before them.
+func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64, in HostInput) (Host, error) {
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
 	}
 	if _, err := s.store.GetZone(ctx, orgID, in.ZoneID); err != nil {
 		return Host{}, err
 	}
-	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored}
+	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored, Revision: rev}
 	return s.store.UpdateHost(ctx, h)
 }
 
