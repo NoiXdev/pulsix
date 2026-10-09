@@ -31,7 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: "1.27" }
+        # 1.27.1 exactly, not "1.27". The floating minor let the runner move to
+        # 1.27.2 overnight, which broke golangci-lint v2.13.2 (it cannot read
+        # that toolchain's export data) and, on the very same unchanged commit,
+        # dropped three helper packages' coverage far enough to fail the gate —
+        # internal/api/apitest from 85.8% to 55.8%. The images have always
+        # pinned golang:1.27.1-alpine by digest; CI floating while they do not
+        # is what let the two drift apart, and what made a green run locally
+        # mean nothing about a red one here.
+        with: { go-version: "1.27.1" }
       # Backlog 2.59: pre-existing deviations (five files from v0.2b) never
       # failed CI. `gofmt -l` listing anything fails here. This runs ahead of
       # golangci-lint, which since backlog 3.25 also carries gofmt, so the
@@ -148,7 +156,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: "1.27" }
+        with: { go-version: "1.27.1" }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
       - run: npm ci
@@ -177,7 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: "1.27" }
+        with: { go-version: "1.27.1" }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
       - run: npm ci
@@ -225,7 +233,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: "1.27" }
+        with: { go-version: "1.27.1" }
       # The same runtime deploy/worker/Dockerfile builds: Python 3.13,
       # ansible-core 2.21.4 + ansible-runner 2.4.3 installed into the
       # interpreter's own site-packages, and sshpass next to the runner's
@@ -312,7 +320,7 @@ jobs:
   #   steps:
   #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-  #       with: { go-version: "1.27" }
+  #       with: { go-version: "1.27.1" }
   #     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
   #       with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
   #     - run: npm ci
