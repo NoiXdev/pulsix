@@ -1,5 +1,15 @@
 name: ci
 on: [push, pull_request]
+
+# Backlog 1.32. Without this block every job here runs with whatever the
+# repository's default token permissions happen to be, which is a setting
+# outside this file and can be widened without anyone touching CI. None of
+# these jobs writes anything: no registry login, no secrets, no artifacts
+# pushed anywhere — so read is all they get, stated here where it is
+# visible next to the jobs it binds.
+permissions:
+  contents: read
+
 jobs:
   go:
     runs-on: ubuntu-latest
@@ -40,7 +50,13 @@ jobs:
       # .golangci.yml is `version: "2"`): an explicit version instead of
       # `latest`, so a new linter release cannot turn main red on its own.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with: { version: v2.13.2 }
+        # v2.14.0, not v2.13.2: the older build cannot read Go 1.27's export
+        # data ("export data version 5 is greater than maximum supported
+        # version 4") and failed every run on main with a typecheck error in
+        # a file nobody had touched. It is also the version developers run
+        # locally, which is the point — a linter that passes on a laptop and
+        # fails in CI is worse than one that is merely strict.
+        with: { version: v2.14.0 }
       # The gate runs the race+coverage suite in the package groups
       # scripts/test-groups.sh defines — internal/api, internal/e2e and
       # everything else, each with its own timeout (backlog 2.83 and
