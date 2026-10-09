@@ -12,7 +12,53 @@ on:
       - "v*"
 
 jobs:
+  # Backlog 1.32. A tag is not evidence. Normally tag.yml creates it, which
+  # can only happen for a green commit on main — but a tag can also be
+  # pushed by hand, and nothing about the tag itself says which it was. So
+  # the thing that publishes checks, rather than trusting the thing that
+  # triggered it.
+  #
+  # Both questions are answered about the tagged commit, not about the tag:
+  # is it on main, and did CI pass for it. The first is pure git and needs
+  # no API; the second reads the workflow runs for exactly that SHA.
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: The tagged commit must be on main
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$SHA is not on main; a release is only ever cut from main" >&2
+            exit 1
+          fi
+
+      - name: CI must have passed for that commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # The newest ci run for this exact commit. No run at all is a
+          # failure, not a pass: "never tested" must not publish either.
+          conclusion=$(gh api \
+            "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // "none"')
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::ci for $SHA concluded '$conclusion'; only a green commit is published" >&2
+            exit 1
+          fi
+
   release:
+    needs: guard
     runs-on: ubuntu-latest
     # A tag push is only ever triggered by someone with write access to
     # this repository creating a tag — GitHub does not fire `push` events

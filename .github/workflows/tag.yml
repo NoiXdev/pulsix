@@ -1,0 +1,39 @@
+name: tag
+run-name: Create Release for ${{ github.event.repository.name }}
+
+# Cuts the release tag, from NoiXdev/github-workflows' shared Go release
+# workflow (blueprints/release-go.yaml there).
+#
+# Triggered by CI finishing on main, not by a push and not by a tag. Both
+# rules backlog 1.32 asks for then hold by construction rather than by
+# checking: only main can reach this, because the trigger filters on it,
+# and only a green commit can, because the job is gated on that run's
+# conclusion.
+#
+# This workflow creates the tag; release.yml builds and pushes the images
+# when that tag appears. They are deliberately separate — the tag is the
+# decision that a commit is a release, the images are the consequence —
+# and release.yml guards itself as well, since a tag can also be pushed
+# by hand and must not be taken on trust just because it exists.
+#
+# A Go product writes no version file: the binaries take their version
+# from the tag at build time (deploy/docker/Dockerfile.manager's
+# -ldflags "-X main.version=..."), and web/package.json is private,
+# unpublished and read by nothing, so its "version" stays the decoration
+# it already is.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+concurrency: release
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    uses: NoiXdev/github-workflows/.github/workflows/create_go_changelog_version_release.yaml@main
+    secrets: inherit
