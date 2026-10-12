@@ -252,7 +252,7 @@ func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batch
 		}
 		return f.store.RecordDecision(ctx, tx, r.orgID, ev.EventID, StateSuppressed, r.now)
 	}
-	b.add(channels, notify.AlertItem{
+	b.add(channels, ev.EventID, notify.AlertItem{
 		AlertID: ev.AlertID, HostID: ev.HostID, HostName: ev.HostName,
 		CheckKey: ev.CheckKey, Item: ev.Item, Metric: ev.Metric,
 		Severity: string(ev.Severity), Event: string(ev.Kind), At: ev.At,
@@ -262,9 +262,10 @@ func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batch
 
 // enqueue hands one message per channel to the outbox — decision 5: a
 // channel hears once per tick, with a list of what happened, not once per
-// event. The key carries the tick's own second, so a retried tick that
-// reaches the same channel again is deduplicated by the outbox's own
-// (org_id, event_key, channel_id) uniqueness.
+// event. The key is built from the batch's own events (batch.key, which
+// documents why it must not be built from the clock), so the outbox's own
+// (org_id, event_key, channel_id) uniqueness deduplicates a retried tick
+// without ever swallowing a different batch.
 func (f *Follower) enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, b batches, now time.Time) error {
 	channels := b.channels()
 	if len(channels) == 0 {
@@ -276,7 +277,7 @@ func (f *Follower) enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, b ba
 	}
 	base := f.publicURL + "/o/" + slug
 	for _, ch := range channels {
-		items := b[ch]
+		items := b[ch].items
 		count := len(items)
 		for i := range items {
 			// The Alerts page filtered to the host, the closest thing the
@@ -293,7 +294,7 @@ func (f *Follower) enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, b ba
 			Alerts: &notify.AlertBatch{Count: count, Items: items},
 			URL:    base + "/alerts",
 		}
-		if err := f.enq.Enqueue(ctx, tx, orgID, fmt.Sprintf("alert.batch:%s:%d", ch, now.Unix()), ev, []uuid.UUID{ch}); err != nil {
+		if err := f.enq.Enqueue(ctx, tx, orgID, b[ch].key(ch), ev, []uuid.UUID{ch}); err != nil {
 			return fmt.Errorf("enqueue alert batch for channel %s: %w", ch, err)
 		}
 	}

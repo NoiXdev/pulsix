@@ -8,8 +8,10 @@ package alertroutes_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -332,6 +334,56 @@ func TestConcurrentTicksSendOnce(t *testing.T) {
 // ticks each of them, and returns when its context is cancelled, which is
 // precisely what internal/app's startLoop relies on to shut the follower
 // down before it closes the pool.
+// deliveries counts the rows the real outbox wrote for the fixture's
+// channel — the end of the line, not the follower's own bookkeeping.
+func (e *followEnv) deliveries() int {
+	e.t.Helper()
+	var n int
+	if err := e.d.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM notification_deliveries WHERE org_id = $1 AND channel_id = $2`,
+		e.org, e.channel).Scan(&n); err != nil {
+		e.t.Fatalf("count deliveries: %v", err)
+	}
+	return n
+}
+
+// TestBatchKeyIsDerivedFromItsEventsNotTheClock is the review's own
+// scenario, with the real outbox behind it rather than the recording
+// fake: two managers' ticks land inside the same wall-clock second — the
+// injected clock is frozen, so "the same second" is exact rather than
+// hoped for — with new events committed in between. A key built from the
+// tick's second would be identical for both, and
+// InsertNotificationDelivery's ON CONFLICT (org_id, event_key,
+// channel_id) DO NOTHING would then swallow the second batch WITHOUT AN
+// ERROR while its events commit as 'sent' in the same transaction: the
+// anti-join never looks at them again and nobody is ever told. The
+// advisory lock cannot help — the two ticks are sequential, not
+// concurrent.
+func TestBatchKeyIsDerivedFromItsEventsNotTheClock(t *testing.T) {
+	env := newFollowEnv(t)
+	env.route(alertroutes.ScopeOrg, nil, []rules.State{rules.StateCrit},
+		[]alerts.EventKind{alerts.EventOpened}, []uuid.UUID{env.channel})
+	outbox := notify.NewOutbox(env.d, "https://pulsix.example", time.Now, rand.Reader, slog.Default())
+	follower := alertroutes.NewFollower(env.d, env.store, noGroups{}, outbox,
+		"https://pulsix.example", env.clock.Now, slog.Default())
+	ctx := context.Background()
+
+	env.openCritAlert()
+	if err := follower.Tick(ctx, env.org); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+	// A second manager's tick, the same second, over events that only
+	// committed after the first tick had already read its working set.
+	env.openCritAlert()
+	if err := follower.Tick(ctx, env.org); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+
+	if got := env.deliveries(); got != 2 {
+		t.Errorf("notification_deliveries = %d, want 2 — the second tick's batch was swallowed by the first tick's key", got)
+	}
+}
+
 func TestRunTicksEveryOrganizationUntilCancelled(t *testing.T) {
 	env := newFollowEnv(t)
 	env.route(alertroutes.ScopeOrg, nil, []rules.State{rules.StateCrit},

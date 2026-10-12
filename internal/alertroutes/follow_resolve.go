@@ -7,6 +7,8 @@ package alertroutes
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"time"
@@ -18,17 +20,67 @@ import (
 	"github.com/noixdev/pulsix/internal/notify"
 )
 
-// batches is one tick's messages: the items each channel is to be told
-// about, keyed by channel id.
-type batches map[uuid.UUID][]notify.AlertItem
+// batch is one channel's share of a tick: the items the message lists,
+// and the ids of the events those items were decided from. The event ids
+// are what the message's idempotency key is built from (key), so they are
+// kept beside the items rather than derived from them — notify.AlertItem
+// names an alert, not the event that moved it.
+type batch struct {
+	items  []notify.AlertItem
+	events []uuid.UUID
+}
 
-// add appends item to every channel's bucket. Each bucket keeps its own
-// copy, so enqueue can fill in a per-message URL without the copies
-// aliasing.
-func (b batches) add(channels []uuid.UUID, item notify.AlertItem) {
+// batches is one tick's messages, keyed by channel id.
+type batches map[uuid.UUID]*batch
+
+// add appends one decided event to every channel's bucket. Each bucket
+// keeps its own copy of the item, so enqueue can fill in a per-message
+// URL without the copies aliasing.
+func (b batches) add(channels []uuid.UUID, eventID uuid.UUID, item notify.AlertItem) {
 	for _, ch := range channels {
-		b[ch] = append(b[ch], item)
+		cur := b[ch]
+		if cur == nil {
+			cur = &batch{}
+			b[ch] = cur
+		}
+		cur.items = append(cur.items, item)
+		cur.events = append(cur.events, eventID)
 	}
+}
+
+// key is the message's idempotency key: the channel, and a hash over the
+// sorted ids of exactly the events this message reports.
+//
+// Derived from the content, never from the clock. A key of the form
+// alert.batch:<channel>:<tick second> collides across two ticks inside
+// the same wall-clock second — two managers on their own 60 s tickers,
+// phased under a second apart, with the second tick picking up events
+// that committed after the first had read its working set. The outbox's
+// own INSERT ... ON CONFLICT (org_id, event_key, channel_id) DO NOTHING
+// would then drop that second batch with no row and NO ERROR, while its
+// events commit as 'sent' in the same transaction — and the forward
+// pass's anti-join never looks at a decided event again, so nobody would
+// ever be told. The per-organization advisory lock does not help: those
+// two ticks are sequential, not concurrent
+// (TestBatchKeyIsDerivedFromItsEventsNotTheClock).
+//
+// Content-derived gives both halves of what the key is for: the same
+// events for the same channel always hash the same, so a retried tick
+// still deduplicates, and any different set of events necessarily hashes
+// differently. The ids are sorted before hashing — by their raw bytes,
+// the same discipline Channels (match.go) applies — so Go's map
+// iteration order can never leak into a key.
+func (c *batch) key(channel uuid.UUID) string {
+	ids := slices.Clone(c.events)
+	slices.SortFunc(ids, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	h := sha256.New()
+	for _, id := range ids {
+		h.Write(id[:])
+	}
+	// 16 bytes of SHA-256: far more than enough to keep two different
+	// event sets apart, and short enough to stay readable in the
+	// delivery log.
+	return fmt.Sprintf("alert.batch:%s:%s", channel, hex.EncodeToString(h.Sum(nil)[:16]))
 }
 
 // channels lists the channels with something to say, sorted by their raw
@@ -37,8 +89,8 @@ func (b batches) add(channels []uuid.UUID, item notify.AlertItem) {
 // for the same reason.
 func (b batches) channels() []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(b))
-	for ch, items := range b {
-		if len(items) > 0 {
+	for ch, bk := range b {
+		if len(bk.items) > 0 {
 			out = append(out, ch)
 		}
 	}
