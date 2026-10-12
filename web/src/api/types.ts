@@ -129,6 +129,21 @@ export type AlertMuteReason = NonNullable<Alert['mute_reason']>;
 export type AlertAcknowledgeInput = components['schemas']['AlertAcknowledgeInputBody'];
 export type AlertSnoozeInput = components['schemas']['AlertSnoozeInputBody'];
 
+// AlertRoute is one alertroutes.Route on the wire (v0.4b design, "API and
+// permissions"): which severities and lifecycle events reach which
+// notification channels, scoped to the organization, one monitoring group
+// or one host. Severities/events/channels carry no enum on the wire
+// (alert_route_dto.go's own comment: an unrecognized value stored by a
+// future version must still round-trip) — AlertRouteSeverity/
+// AlertRouteEventKind below name the closed set the GUI itself offers,
+// mirroring internal/alertroutes.routableSeverities and
+// internal/alerts.EventKind.
+export type AlertRoute = components['schemas']['AlertRouteDTO'];
+export type AlertRouteInput = components['schemas']['AlertRouteBody'];
+export type AlertRouteScope = NonNullable<AlertRoute['scope']>;
+export type AlertRouteSeverity = 'warn' | 'crit' | 'unknown';
+export type AlertRouteEventKind = 'opened' | 'severity_raised' | 'acknowledged' | 'ack_voided' | 'snoozed' | 'unsnoozed' | 'closed';
+
 // AlertDetail is Alert plus its timeline (v0.4a design, "GUI" — "the full
 // story of one alert"): GET /alerts/{id}'s own shape, matching
 // alerts.Detail (internal/alerts/service.go). `timeline` interleaves the

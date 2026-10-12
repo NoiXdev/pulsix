@@ -31,6 +31,7 @@ import { MonitoringGroupsPage } from './features/checks/MonitoringGroupsPage.tsx
 import { RulesPage } from './features/checks/RulesPage.tsx';
 import { ItemsPage } from './features/checks/ItemsPage.tsx';
 import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
+import { AlertRoutesPage } from './features/notifications/AlertRoutesPage.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 
 /**
@@ -220,6 +221,7 @@ const jumpHostsRoute = createRoute({ getParentRoute: () => settingsRoute, path: 
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
 const notificationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/notifications', component: ChannelsPage });
+const alertRoutesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/alert-routes', component: AlertRoutesPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -255,6 +257,7 @@ const routeTree = rootRoute.addChildren([
       jumpHostsRoute,
       mailRoute,
       notificationsRoute,
+      alertRoutesRoute,
     ]),
   ]),
 ]);
