@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
@@ -219,6 +220,10 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// valued for the same reason every sibling on this line is — this
 		// fixture registers every route and drives none.
 		Alerts: &alerts.Service{},
+		// v0.4b's own required dependency (Task 10): the alert-route API.
+		// Zero-valued for the same reason every sibling on this line is —
+		// this fixture registers every route and drives none.
+		AlertRoutes: &alertroutes.Service{},
 	}
 }
 

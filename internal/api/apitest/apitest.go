@@ -2,9 +2,12 @@
 package apitest
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -20,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/app"
@@ -167,6 +171,11 @@ type Server struct {
 	// alerts.NewSQLStore(s.DB) and drives Execute directly on a bare tx,
 	// exactly the shape internal/alerts' own store_sql_test.go uses.
 	Alerts *alerts.Service
+	// AlertRoutes is the bridge between monitoring and delivery (v0.4b
+	// Task 10), the same instance Deps.AlertRoutes carries — exposed here,
+	// exactly like Checks/Rules/Items/Alerts, so a test can seed or inspect
+	// routes directly through the service the routes under test read from.
+	AlertRoutes *alertroutes.Service
 	// Push records every check-configuration push the check routes make
 	// after a write commits (api.Deps.AgentPush). Production wires
 	// *agentapi.Service here; a test has no agent stream to observe, so
@@ -533,6 +542,12 @@ func New(t *testing.T, opts ...Option) *Server {
 	// here, the same way the schedule/notification tickers above are not
 	// started either.
 	s.Alerts = alerts.NewService(alerts.NewSQLStore(d), time.Now)
+	// The alert-route surface (v0.4b Task 10), wired exactly like
+	// production (internal/app.Build): GroupsForHost comes from the same
+	// checksSvc instance through app.NewAlertRouteGroups, the identical
+	// adapter the follower uses for the same lookup — the follower itself
+	// is not started here, like the reaper and the other tickers above.
+	s.AlertRoutes = alertroutes.NewService(alertroutes.NewSQLStore(d), app.NewAlertRouteGroups(s.Checks), time.Now, uuid.New)
 	// A finished scheduled run group queues its notifications, as in
 	// production; the dispatcher is not started here (like the reaper).
 	jobsQueue.SetRunGroupSink(notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil))
@@ -588,6 +603,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
 		Alerts:      s.Alerts,
+		AlertRoutes: s.AlertRoutes,
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},
@@ -719,6 +735,184 @@ func (s *Server) AddMember(orgID, userID uuid.UUID, role tenancy.Role) {
 	if err := s.Q.AddMembership(context.Background(), gen.AddMembershipParams{OrgID: orgID, UserID: userID, Role: gen.OrgRole(role)}); err != nil {
 		s.T.Fatal(err)
 	}
+}
+
+// uniqueSuffix returns a short, collision-safe string for a fixture that
+// does not care about a specific value, only uniqueness — OrgWithToken and
+// SeedChannel use it so a test can call them with no slug/name of its own
+// to invent.
+func uniqueSuffix() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+}
+
+// OrgWithToken seeds a fresh owner user and organization and returns the
+// org id and a bearer token scoped to the owner role — every permission,
+// the default a CRUD happy-path test wants. Pair it with Get/Post/Patch
+// below, which authenticate with the returned token rather than a cookie
+// (bearerRequest's own shape, token_bearer_test.go), and see
+// OrgWithTokenPerms for a token capped to fewer permissions.
+func (s *Server) OrgWithToken(t *testing.T) (uuid.UUID, string) {
+	t.Helper()
+	return s.orgWithTokenRole(t, tenancy.RoleOwner)
+}
+
+// OrgWithTokenPerms is OrgWithToken, except the returned token is capped at
+// the lowest role that grants every one of perms — the same tenancy.Allows
+// matrix requireOrg itself checks against — so a test can prove that a
+// caller holding exactly these permissions, and no more, is refused
+// something that needs a permission not in the list (e.g.
+// TestAlertRouteWriteNeedsTheChannelPermission: checks.read/checks.write
+// but not channels.write).
+func (s *Server) OrgWithTokenPerms(t *testing.T, perms ...tenancy.Permission) (uuid.UUID, string) {
+	t.Helper()
+	role := tenancy.RoleOwner
+	for _, candidate := range []tenancy.Role{tenancy.RoleViewer, tenancy.RoleOperator, tenancy.RoleAdmin, tenancy.RoleOwner} {
+		grantsAll := true
+		for _, p := range perms {
+			if !tenancy.Allows(candidate, p) {
+				grantsAll = false
+				break
+			}
+		}
+		if grantsAll {
+			role = candidate
+			break
+		}
+	}
+	return s.orgWithTokenRole(t, role)
+}
+
+// orgWithTokenRole seeds the user/org/token OrgWithToken and
+// OrgWithTokenPerms both build on. The org's slug is rewritten to its own
+// id (SeedOrg mints a random one) so the returned uuid.UUID can build both
+// a request path (org.String(), since {org} is resolved by slug —
+// orgScopeMiddleware/GetOrgBySlug) and every direct-service fixture call
+// below (SeedChannel, SeedHost) that needs the real org id.
+func (s *Server) orgWithTokenRole(t *testing.T, role tenancy.Role) (uuid.UUID, string) {
+	t.Helper()
+	suffix := uniqueSuffix()
+	uid := s.SeedUser(suffix+"@example.test", "correct horse battery")
+	org := s.SeedOrg("org-"+suffix, uid)
+	if _, err := s.DB.Pool().Exec(context.Background(), `UPDATE organizations SET slug = $1 WHERE id = $2`, org.String(), org); err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := s.Deps.Tokens.Create(context.Background(), uid, org, "ci", string(role), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return org, plain
+}
+
+// SeedChannel creates an enabled webhook notification channel directly
+// through Deps.Notify (bypassing the API, like the Checks/Rules fixtures
+// above) and returns its id — a channel id to name in an alert route.
+func (s *Server) SeedChannel(t *testing.T, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	url := "https://hooks.example.test/" + uuid.NewString()
+	c, err := s.Deps.Notify.CreateChannel(context.Background(), orgID, uuid.Nil, notify.Input{
+		Kind: notify.KindWebhook, Name: "channel-" + uniqueSuffix(), Enabled: true,
+		Webhook: &notify.WebhookInput{URL: &url, BodyTemplate: `{"text": "test"}`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.ID
+}
+
+// SeedHost creates a managed host in org's default zone (EnsureDefaultZone,
+// run by SeedOrg/orgWithTokenRole) and returns its id.
+func (s *Server) SeedHost(t *testing.T, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	scoped := db.WithOrgScope(context.Background(), orgID)
+	zones, err := s.Deps.Hosts.ListZones(scoped, orgID)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones: %v", err)
+	}
+	h, err := s.Deps.Hosts.CreateHost(scoped, orgID, hosts.HostInput{
+		Name: "host-" + uniqueSuffix(), Address: "10.0.0.1", ZoneID: zones[0].ID, Managed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.ID
+}
+
+// Response is one bearer-authenticated HTTP response from Get/Post/Patch/
+// Delete below, shaped like httptest.ResponseRecorder (Code, Body) for
+// assertions that read the same either way — even though these actually
+// round-trip over the httptest server's real listener rather than an
+// in-process ServeHTTP call: a bearer credential is transport-level, unlike
+// the cookie jar Client() hands out, so there is no in-process shortcut
+// here.
+type Response struct {
+	Code int
+	Body *bytes.Buffer
+}
+
+// bearerDo issues a bearer-authenticated request. ifMatch, when non-empty,
+// is sent as If-Match; body, when non-nil, is marshaled as the JSON
+// request body.
+func (s *Server) bearerDo(t *testing.T, method, tok, path, ifMatch string, body any) *Response {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, s.HTTP.URL+path, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Response{Code: resp.StatusCode, Body: bytes.NewBuffer(data)}
+}
+
+// Get issues a bearer-authenticated GET.
+func (s *Server) Get(t *testing.T, tok, path string) *Response {
+	t.Helper()
+	return s.bearerDo(t, http.MethodGet, tok, path, "", nil)
+}
+
+// Post issues a bearer-authenticated POST with a JSON body.
+func (s *Server) Post(t *testing.T, tok, path string, body any) *Response {
+	t.Helper()
+	return s.bearerDo(t, http.MethodPost, tok, path, "", body)
+}
+
+// Patch issues a bearer-authenticated PATCH with a JSON body and, when
+// ifMatch is non-empty, an If-Match header — "" leaves the header off
+// entirely, for a test proving the route refuses a write carrying none
+// (backlog 1.31).
+func (s *Server) Patch(t *testing.T, tok, path, ifMatch string, body any) *Response {
+	t.Helper()
+	return s.bearerDo(t, http.MethodPatch, tok, path, ifMatch, body)
+}
+
+// Delete issues a bearer-authenticated DELETE, If-Match the same way Patch
+// handles it.
+func (s *Server) Delete(t *testing.T, tok, path, ifMatch string) *Response {
+	t.Helper()
+	return s.bearerDo(t, http.MethodDelete, tok, path, ifMatch, nil)
 }
 
 // SeedPasskey attaches a stored passkey row named name to userID, without

@@ -501,6 +501,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/alert-routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org alert routes */
+        get: operations["get-api-v1-orgs-by-org-alert-routes"];
+        put?: never;
+        /** Post API v1 orgs by org alert routes */
+        post: operations["createAlertRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/alert-routes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org alert routes by ID */
+        get: operations["get-api-v1-orgs-by-org-alert-routes-by-id"];
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org alert routes by ID */
+        delete: operations["deleteAlertRoute"];
+        options?: never;
+        head?: never;
+        /** Patch API v1 orgs by org alert routes by ID */
+        patch: operations["updateAlertRoute"];
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/alerts": {
         parameters: {
             query?: never;
@@ -831,6 +868,23 @@ export interface paths {
         };
         /** Get API v1 orgs by org hosts by ID agent */
         get: operations["get-api-v1-orgs-by-org-hosts-by-id-agent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/hosts/{id}/alert-routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org hosts by ID alert routes */
+        get: operations["get-api-v1-orgs-by-org-hosts-by-id-alert-routes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2524,6 +2578,65 @@ export interface components {
             readonly $schema?: string;
             alerts: components["schemas"]["AlertDTO"][] | null;
             next_cursor: string;
+        };
+        AlertRouteBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertRouteBody.json
+             */
+            readonly $schema?: string;
+            /** @description Notification channel ids */
+            channels?: string[] | null;
+            enabled: boolean;
+            /** @description opened, severity_raised, acknowledged, ack_voided, snoozed, unsnoozed or closed */
+            events?: string[] | null;
+            name?: string;
+            /** @enum {string} */
+            scope?: "org" | "monitoring_group" | "host";
+            /** @description The monitoring group or host id this route targets; omit for scope org */
+            scope_id?: string;
+            /** @description warn, crit or unknown */
+            severities?: string[] | null;
+        };
+        AlertRouteDTO: {
+            /** @description Notification channel ids this route delivers to */
+            channels: string[] | null;
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            /** @description Which alert lifecycle events this route fires on: opened, severity_raised, acknowledged, ack_voided, snoozed, unsnoozed or closed */
+            events: string[] | null;
+            id: string;
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            /** @enum {string} */
+            scope: "org" | "monitoring_group" | "host";
+            /** @description The monitoring group or host id this route targets; absent for scope org */
+            scope_id?: string;
+            /** @description Which alert severities this route fires on: warn, crit or unknown */
+            severities: string[] | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AlertRouteListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertRouteListOutputBody.json
+             */
+            readonly $schema?: string;
+            routes: components["schemas"]["AlertRouteDTO"][] | null;
+        };
+        AlertRouteOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AlertRouteOutputBody.json
+             */
+            readonly $schema?: string;
+            route: components["schemas"]["AlertRouteDTO"];
         };
         AlertSnoozeInputBody: {
             /**
@@ -6455,6 +6568,178 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-alert-routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRouteListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createAlertRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertRouteBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRouteOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-alert-routes-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRouteOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteAlertRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateAlertRoute: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The route's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertRouteBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRouteOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-alerts": {
         parameters: {
             query?: {
@@ -7610,6 +7895,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-hosts-by-id-alert-routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRouteListOutputBody"];
                 };
             };
             /** @description Error */

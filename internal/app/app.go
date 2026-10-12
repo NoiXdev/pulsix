@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 
 	"github.com/noixdev/pulsix/internal/agentapi"
@@ -417,6 +418,22 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// required AlertSink below — one wire, not two to keep in sync.
 	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
 
+	// alertroutes.Service (v0.4b Task 10): built here, ahead of api.New, on
+	// the same *alertroutes.Store the follower below drives directly
+	// (NewFollower takes the concrete store, not this Service) — one store,
+	// not two, the same sharing alertsSvc's own doc comment above explains
+	// for alerts. GroupsForHost comes from checksSvc through the adapter
+	// alertroutes_ports.go builds, exactly what the follower uses for the
+	// same lookup.
+	alertRoutesStore := alertroutes.NewSQLStore(appDB)
+	alertRoutesSvc := alertroutes.NewService(alertRoutesStore, NewAlertRouteGroups(checksSvc), time.Now, func() uuid.UUID {
+		id, err := uuid.NewV7FromReader(rand.Reader)
+		if err != nil {
+			panic(err) //nolint:forbidigo // entropy failure is unrecoverable, like uuid.Must
+		}
+		return id
+	})
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
@@ -465,6 +482,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Maintenance: maintenanceSvc,
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
 		Alerts:      alertsSvc,
+		AlertRoutes: alertRoutesSvc,
 	})
 	if err != nil {
 		appDB.Close()
@@ -546,7 +564,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// reports it. Host→group membership comes from the same checksSvc the
 	// rule engine resolves through (alertroutes_ports.go). Stopped in
 	// Close and on every early return below.
-	alertFollower := alertroutes.NewFollower(appDB, alertroutes.NewSQLStore(appDB), NewAlertRouteGroups(checksSvc),
+	alertFollower := alertroutes.NewFollower(appDB, alertRoutesStore, NewAlertRouteGroups(checksSvc),
 		outbox, cfg.PublicURL, time.Now, slog.Default())
 	alertNotifyStop := startLoop(func(ctx context.Context) { alertFollower.Run(ctx, alertroutes.DefaultFollowInterval) })
 
