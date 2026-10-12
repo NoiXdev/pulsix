@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -273,5 +274,41 @@ func TestNewOutboxDefaultsClockAndEntropy(t *testing.T) {
 	})
 	if got := w.queued(t); len(got) != 2 || got[0].key != "run:"+group.String() {
 		t.Fatalf("queued = %+v, want the failure channels reached with defaulted clock and entropy", got)
+	}
+}
+
+// TestEnqueueIsTheExportedDoor: alertroutes cannot reach insert(), and must
+// not write notification_deliveries itself: rendering, payload shape and
+// the idempotency key all live here.
+func TestEnqueueIsTheExportedDoor(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d, "alert-batch-enqueue")
+	ch := seedChannel(t, d, org)
+	o := notify.NewOutbox(d, "https://pulsix.example", time.Now, rand.Reader, slog.Default())
+
+	ev := notify.Event{Kind: notify.EventAlertBatch, At: time.Now(), Org: notify.OrgRef{ID: org, Name: "Acme"},
+		Alerts: &notify.AlertBatch{Count: 1, Items: []notify.AlertItem{{HostName: "db-1", Severity: "crit", Event: "opened"}}}}
+
+	tx, err := d.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := o.Enqueue(ctx, tx, org, "alert.batch:k1", ev, []uuid.UUID{ch.ID}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	// The same key twice is one delivery: the outbox's own idempotency.
+	if err := o.Enqueue(ctx, tx, org, "alert.batch:k1", ev, []uuid.UUID{ch.ID}); err != nil {
+		t.Fatalf("Enqueue twice: %v", err)
+	}
+	var n int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM notification_deliveries WHERE org_id = $1 AND event_key = 'alert.batch:k1'`,
+		org).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("deliveries = %d, want 1", n)
 	}
 }

@@ -192,6 +192,23 @@ func (o *Outbox) EnqueueDigest(ctx context.Context, tx pgx.Tx, d DueDigest, sum 
 	})
 }
 
+// Enqueue is the exported door onto insert, for callers outside this
+// package that have already decided who should be told. It adds no policy
+// of its own: resolution, grouping and deduplication of events belong to
+// the caller (internal/alertroutes), and delivery, retries and the log
+// stay here. Like EnqueueDecision and EnqueueDigest, it runs in its own
+// savepoint nested inside tx, so a notification failure rolls back only
+// the notification, never the caller's own transaction.
+func (o *Outbox) Enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, key string, ev Event, channels []uuid.UUID) error {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin notification savepoint: %w", err)
+	}
+	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
+		return o.insert(ctx, q, orgID, key, ev, channels)
+	})
+}
+
 // insert queues one delivery per channel; the unique event key makes a
 // repeated insert a no-op.
 func (o *Outbox) insert(ctx context.Context, q *gen.Queries, orgID uuid.UUID, key string, ev Event, channels []uuid.UUID) error {

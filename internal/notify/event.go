@@ -42,6 +42,7 @@ const (
 	EventScheduleFailed  EventKind = "schedule.failed"
 	EventDigest          EventKind = "digest.weekly"
 	EventTest            EventKind = "test"
+	EventAlertBatch      EventKind = "alert.batch"
 )
 
 // Event is the fixed structure every message is rendered from — the
@@ -58,6 +59,7 @@ type Event struct {
 	Run        *RunSummary      `json:"run,omitempty"`
 	Decision   *DecisionSummary `json:"decision,omitempty"`
 	Digest     *DigestSummary   `json:"digest,omitempty"`
+	Alerts     *AlertBatch      `json:"alerts,omitempty"`
 	URL        string           `json:"url,omitempty"`
 }
 
@@ -129,6 +131,31 @@ type DigestRun struct {
 	StartedAt       time.Time `json:"started_at"`
 	DurationSeconds int64     `json:"duration_seconds"`
 	URL             string    `json:"url"`
+}
+
+// AlertBatch is one tick's alerts for one channel (spec v0.4b, decision 5:
+// events are coalesced per channel, so one message lists what happened
+// rather than one message per event). Count is the number of items before
+// any truncation, so a reader can tell a complete list from a capped one.
+type AlertBatch struct {
+	Count int         `json:"count"`
+	Items []AlertItem `json:"items"`
+}
+
+// AlertItem is one alert event in a batch. It names what happened and
+// where, and nothing else: no log output, no variables, no secrets, the
+// same promise the rest of this package makes.
+type AlertItem struct {
+	AlertID  uuid.UUID `json:"alert_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	HostName string    `json:"host_name"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item,omitempty"`
+	Metric   string    `json:"metric,omitempty"`
+	Severity string    `json:"severity"`
+	Event    string    `json:"event"`
+	At       time.Time `json:"at"`
+	URL      string    `json:"url,omitempty"`
 }
 
 // runCategories maps a finished run group to the categories it belongs

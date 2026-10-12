@@ -502,3 +502,35 @@ func TestDigestSlowestRunsUseTheOrgZone(t *testing.T) {
 		t.Fatalf("period label changed:\n%s", body)
 	}
 }
+
+// TestRenderEmailAlertBatch: an alert batch names the count in its subject
+// and lists every item as host, check, metric, severity and what happened —
+// and nothing beyond the batch's own fields (the package's own promise:
+// never log output, variables or secrets).
+func TestRenderEmailAlertBatch(t *testing.T) {
+	ev := Event{
+		Kind: EventAlertBatch,
+		At:   time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC),
+		Org:  OrgRef{Name: "Acme"},
+		Alerts: &AlertBatch{
+			Count: 2,
+			Items: []AlertItem{
+				{HostName: "db-1", CheckKey: "disk", Metric: "used_pct", Severity: "crit", Event: "opened"},
+				{HostName: "db-2", CheckKey: "disk", Metric: "used_pct", Severity: "warn", Event: "opened"},
+			},
+		},
+	}
+	subject, body := renderEmail(ev)
+	if !strings.Contains(subject, "2") {
+		t.Errorf("subject = %q, want it to carry the count", subject)
+	}
+	for _, want := range []string{"db-1", "db-2", "crit", "warn"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	// Never log output, variables or secrets — the package's own promise.
+	if strings.Contains(body, "password") {
+		t.Error("body must not carry anything beyond the batch's own fields")
+	}
+}

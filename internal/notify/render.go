@@ -142,6 +142,22 @@ func renderEmail(ev Event) (subject, body string) {
 				}
 			}
 		}
+	case EventAlertBatch:
+		if a := ev.Alerts; a != nil {
+			subject = fmt.Sprintf("[Pulsix] %d alert(s) for %s", a.Count, ev.Org.Name)
+			for _, it := range a.Items {
+				what := it.CheckKey
+				if it.Item != "" {
+					what += "/" + it.Item
+				}
+				if it.Metric != "" {
+					what += " " + it.Metric
+				}
+				fmt.Fprintf(&b, "%-8s %-20s %-8s %s\n", it.Severity, it.HostName, it.Event, what)
+			}
+		} else {
+			subject = fmt.Sprintf("[Pulsix] alerts for %s", ev.Org.Name)
+		}
 	default:
 		subject = fmt.Sprintf("[Pulsix] Test notification from %s", ev.Org.Name)
 		b.WriteString("This is a test message from a Pulsix notification channel. It worked.\n")
