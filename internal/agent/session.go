@@ -62,6 +62,31 @@ func (s *streamSender) send(msg *agentpb.AgentMessage) error {
 	return s.stream.Send(msg)
 }
 
+// closeSend ends the send side under the same mutex every other send-side
+// call takes (backlog 1.37). gRPC permits one goroutine sending and
+// another receiving on a stream, but never two touching the send side at
+// once — and closing is a send-side call. The session loop used to invoke
+// CloseSend straight on the stream while the check scheduler's goroutines
+// were still sending results through this sender, which the race detector
+// caught in CI on an e2e run and not on the two either side of it.
+//
+// Calling it twice is safe and expected: several teardown paths reach for
+// it, and gRPC's own CloseSend is idempotent.
+//
+// The two renewal exits close before cancelling, deliberately — the
+// manager should see a clean half-close, not an aborted stream — so this
+// can wait on a send that is still in flight. That is not a new hazard:
+// the lock is only ever held for one stream.Send, which every other
+// sender already waits on, and the stream's own context bounds it. The
+// alternative, closing without the lock, is the race this exists to
+// remove, and a data race on a gRPC stream is undefined behaviour rather
+// than a slow path.
+func (s *streamSender) closeSend() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.CloseSend()
+}
+
 // sendResults renders one batch of the scheduler's Results into a single
 // CheckResults message — one message per batch, never one per metric, so
 // a host running several checks does not turn into a message per host per
@@ -207,7 +232,7 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 		case <-ctx.Done():
 			cancel()
 			l.drainRecv(recvErr)
-			_ = stream.CloseSend()
+			_ = sender.closeSend()
 			return nil
 		case <-hb.C():
 			if id.NeedsRenewal(l.now()) {
@@ -215,7 +240,7 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 				// cleanly (the manager sees a normal send close) — the
 				// outer loop renews and reconnects with the fresh
 				// certificate.
-				_ = stream.CloseSend()
+				_ = sender.closeSend()
 				cancel()
 				l.drainRecv(recvErr)
 				return nil
@@ -231,7 +256,7 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 			// heartbeat exists purely to keep the manager's convergence
 			// check from waiting out a much longer heartbeat cadence.
 			if id.NeedsRenewal(l.now()) {
-				_ = stream.CloseSend()
+				_ = sender.closeSend()
 				cancel()
 				l.drainRecv(recvErr)
 				return nil
@@ -264,7 +289,7 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 				// how err reached this case), so there is nothing left
 				// to wait for.
 				cancel()
-				_ = stream.CloseSend()
+				_ = sender.closeSend()
 				return nil
 			}
 			// nil is a clean end (the manager closed its side): the
