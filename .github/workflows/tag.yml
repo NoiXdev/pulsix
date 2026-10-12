@@ -21,11 +21,21 @@ run-name: Create Release for ${{ github.event.repository.name }}
 # -ldflags "-X main.version=..."), and web/package.json is private,
 # unpublished and read by nothing, so its "version" stays the decoration
 # it already is.
+# DISARMED. The reusable workflow this calls lives on
+# NoiXdev/github-workflows' chore/pin-actions branch and not on its main,
+# so every automatic run failed — five in a row, including one on a commit
+# whose CI was entirely green. A trigger that is always red stops being
+# read, and this is the one that decides whether a commit ships.
+#
+# Re-arm by restoring the workflow_run block below, once the shared
+# workflow is on that repository's main. Nothing else needs to change: the
+# job's guard already accepts either event.
 on:
-  workflow_run:
-    workflows: [ci]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+  # workflow_run:
+  #   workflows: [ci]
+  #   types: [completed]
+  #   branches: [main]
 
 concurrency: release
 
@@ -34,6 +44,6 @@ permissions:
 
 jobs:
   tag:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     uses: NoiXdev/github-workflows/.github/workflows/create_go_changelog_version_release.yaml@main
     secrets: inherit
