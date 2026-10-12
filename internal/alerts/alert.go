@@ -116,3 +116,40 @@ type Action struct {
 
 	Reason CloseReason // ActionClose only
 }
+
+// EventKind is one row of alert_events.kind. The seven constants below
+// are exactly the CHECK list migration 00049 declares, and
+// EventKindsMatchTheSchema pins them to it: a Go copy of a database enum
+// with no compiler link between them is how internal/api's fleetStateRank
+// drifted from rules.StateRank, which that function's own doc comment
+// records. internal/alertroutes needs these names; the type lives here,
+// with the table it describes.
+type EventKind string
+
+const (
+	EventOpened         EventKind = "opened"
+	EventSeverityRaised EventKind = "severity_raised"
+	EventAcknowledged   EventKind = "acknowledged"
+	EventAckVoided      EventKind = "ack_voided"
+	EventSnoozed        EventKind = "snoozed"
+	EventUnsnoozed      EventKind = "unsnoozed"
+	EventClosed         EventKind = "closed"
+)
+
+// EventKinds lists every kind, in the schema's own order.
+func EventKinds() []EventKind {
+	return []EventKind{
+		EventOpened, EventSeverityRaised, EventAcknowledged,
+		EventAckVoided, EventSnoozed, EventUnsnoozed, EventClosed,
+	}
+}
+
+// ParseEventKind accepts exactly the seven kind names.
+func ParseEventKind(s string) (EventKind, bool) {
+	for _, k := range EventKinds() {
+		if string(k) == s {
+			return k, true
+		}
+	}
+	return "", false
+}
