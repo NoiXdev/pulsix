@@ -107,6 +107,18 @@ func (s *fakeStream) Recv() (*agentpb.ManagerMessage, error) {
 	s.mu.Lock()
 	recvC := s.recvC
 	s.mu.Unlock()
+	// closeRecv closes the channel and then drops it, so that Send's
+	// auto-ack cannot write into a closed one. A Recv that reads the
+	// field after that drop gets nil, and a receive on a nil channel
+	// blocks forever — closeRecv leaves done open, so nothing would ever
+	// wake it. The loop would sit in a session the manager had already
+	// ended rather than reconnect, which is what made
+	// TestLoopReconnectSkipsEnroll fail roughly one run in ten. A dropped
+	// channel means the same thing to the caller as a closed one: the
+	// manager side is gone.
+	if recvC == nil {
+		return nil, io.EOF
+	}
 	if s.ctx != nil {
 		select {
 		case <-s.dead():
