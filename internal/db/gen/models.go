@@ -115,6 +115,44 @@ type AlertEvent struct {
 	Payload []byte      `json:"payload"`
 }
 
+type AlertNotifyState struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	AlertEventID uuid.UUID `json:"alert_event_id"`
+	State        string    `json:"state"`
+	DecidedAt    time.Time `json:"decided_at"`
+}
+
+type AlertRoute struct {
+	ID           uuid.UUID   `json:"id"`
+	OrgID        uuid.UUID   `json:"org_id"`
+	Name         string      `json:"name"`
+	Enabled      bool        `json:"enabled"`
+	Scope        string      `json:"scope"`
+	ScopeGroupID pgtype.UUID `json:"scope_group_id"`
+	ScopeHostID  pgtype.UUID `json:"scope_host_id"`
+	Revision     int64       `json:"revision"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
+type AlertRouteChannel struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	RouteID   uuid.UUID `json:"route_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+}
+
+type AlertRouteEvent struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	RouteID uuid.UUID `json:"route_id"`
+	Kind    string    `json:"kind"`
+}
+
+type AlertRouteSeverity struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	RouteID  uuid.UUID `json:"route_id"`
+	Severity string    `json:"severity"`
+}
+
 type ApiToken struct {
 	ID         uuid.UUID          `json:"id"`
 	UserID     uuid.UUID          `json:"user_id"`
