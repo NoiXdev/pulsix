@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,15 @@ type agentDTO struct {
 // does — the real app, its real gRPC surface on a loopback listener, an
 // operator session with the mandatory second factor — without the SSH and
 // git fixtures, which no agent flow touches.
-func wireAgentManager(t *testing.T, ctx context.Context) agentWorld {
+//
+// notifyAllow re-admits destination ranges notification webhooks may
+// reach (config.Config's own NotifyAllowCIDRs, empty — so every loopback
+// destination is refused — unless a caller passes some), the same
+// ansible_test.go's wiring.notifyAllow exists for. Variadic and almost
+// always omitted: only a scenario whose channel must actually be
+// deliverable, not merely accepted, needs it (alertroutes_test.go's own
+// webhook receiver).
+func wireAgentManager(t *testing.T, ctx context.Context, notifyAllow ...netip.Prefix) agentWorld {
 	t.Helper()
 
 	httpLis, err := net.Listen("tcp", "localhost:0")
@@ -85,11 +94,12 @@ func wireAgentManager(t *testing.T, ctx context.Context) agentWorld {
 		// "localhost" is the CA's SAN and the name the agent's TLS
 		// verification expects; the harness serves on its own listener,
 		// exactly like cmd/manager with PULSIX_GRPC_LISTEN.
-		GRPCListen:     "localhost:0",
-		GRPCPublicAddr: "localhost:" + portOf(grpcLis.Addr().String()),
-		RetestInterval: 24 * time.Hour,
-		JobMaxAttempts: config.DefaultJobMaxAttempts,
-		Version:        "e2e",
+		GRPCListen:       "localhost:0",
+		GRPCPublicAddr:   "localhost:" + portOf(grpcLis.Addr().String()),
+		RetestInterval:   24 * time.Hour,
+		JobMaxAttempts:   config.DefaultJobMaxAttempts,
+		Version:          "e2e",
+		NotifyAllowCIDRs: notifyAllow,
 	}
 	a, err := app.Build(ctx, cfg)
 	if err != nil {

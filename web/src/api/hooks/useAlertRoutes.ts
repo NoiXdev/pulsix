@@ -20,6 +20,22 @@ export function useAlertRoutes(org: string, enabled = true) {
   });
 }
 
+/** useHostAlertRoutes reads the per-host union view, GET
+ * /orgs/{org}/hosts/{id}/alert-routes (alert_route_handlers.go,
+ * Service.ForHost) — every enabled route that covers this host, at
+ * whatever scope, regardless of which severities or events it actually
+ * fires on. Its own query key, keyed on the host rather than
+ * `['alert-routes', org]`, so a route create/update/delete elsewhere
+ * leaves this cache alone; HostAlertRoutesCard is a read-only view with
+ * nothing to invalidate it on its own account. */
+export function useHostAlertRoutes(org: string, hostId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['host-alert-routes', org, hostId],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/hosts/{id}/alert-routes', { params: { path: { org, id: hostId } } })),
+    enabled: !!org && !!hostId && enabled,
+  });
+}
+
 export function useCreateAlertRoute(org: string) {
   const invalidate = useInvalidate(org);
   return useMutation({

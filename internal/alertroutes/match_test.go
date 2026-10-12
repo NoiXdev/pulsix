@@ -70,6 +70,12 @@ func TestMatchRoutes(t *testing.T) {
 			want:    0,
 		},
 		{
+			name:    "a host route matches the host it names",
+			subject: alertroutes.Subject{HostID: host, Severity: rules.StateCrit, Event: alerts.EventOpened},
+			routes:  []alertroutes.Route{route("this one", true, alertroutes.ScopeHost, &host, crit, opened, []uuid.UUID{chA})},
+			want:    1,
+		},
+		{
 			// unknown ranks BELOW warn (rules.StateRank), which is why the
 			// selection is a set: a route that wants crit and unknown but
 			// not warn is expressible, and one that wants crit alone does

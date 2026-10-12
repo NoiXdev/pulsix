@@ -50,6 +50,21 @@ func seedChannel(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
 	return ch.ID
 }
 
+// seedMonitoringGroup creates a bare monitoring group in org — the target
+// alert_routes' own scope_group_id composite FK needs, the same fixture
+// internal/db's own schema_test.go builds for the same table.
+func seedMonitoringGroup(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
+	t.Helper()
+	name := "g-" + uuid.Must(uuid.NewV7()).String()
+	grp, err := gen.New(d.Pool()).CreateMonitoringGroup(context.Background(), gen.CreateMonitoringGroupParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: name, Selector: "role=" + name,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return grp.ID
+}
+
 func TestStoreRoundTrip(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
@@ -139,5 +154,161 @@ func TestStoreRejectsAForeignChannel(t *testing.T) {
 	}, time.Now())
 	if err == nil {
 		t.Fatal("a route must not be able to reference another organization's channel")
+	}
+}
+
+func TestStoreCreateRejectsADuplicateName(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+	in := alertroutes.Input{
+		Name: "dup", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities: []rules.State{rules.StateCrit},
+		Events:     []alerts.EventKind{alerts.EventOpened},
+		Channels:   []uuid.UUID{ch},
+	}
+	if _, err := s.Create(ctx, org, uuid.New(), in, time.Now()); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	if _, err := s.Create(ctx, org, uuid.New(), in, time.Now()); !errors.Is(err, alertroutes.ErrNameTaken) {
+		t.Fatalf("second Create with the same name = %v, want ErrNameTaken", err)
+	}
+}
+
+func TestStoreUpdateSucceedsAndMovesScopeFromOrgToHost(t *testing.T) {
+	// Exercises both Update's own success path (Create's own round trip
+	// only ever drives the stale-revision failure above) and
+	// scopeColumns/scopeIDFromColumns' ScopeHost branch — every other test
+	// in this file stays at ScopeOrg, which touches neither nullable
+	// column at all.
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	chOld, chNew := seedChannel(t, d, org), seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+	now := time.Now()
+
+	created, err := s.Create(ctx, org, uuid.New(), alertroutes.Input{
+		Name: "moves", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities: []rules.State{rules.StateWarn},
+		Events:     []alerts.EventKind{alerts.EventOpened},
+		Channels:   []uuid.UUID{chOld},
+	}, now)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	updated, err := s.Update(ctx, org, created.ID, created.Revision, alertroutes.Input{
+		Name: "moved", Enabled: false, Scope: alertroutes.ScopeHost, ScopeID: &host,
+		Severities: []rules.State{rules.StateCrit, rules.StateUnknown},
+		Events:     []alerts.EventKind{alerts.EventClosed},
+		Channels:   []uuid.UUID{chNew},
+	}, now)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Name != "moved" || updated.Enabled || updated.Scope != alertroutes.ScopeHost {
+		t.Fatalf("Update() = %+v, want the new name, enabled=false and scope host", updated)
+	}
+	if updated.ScopeID == nil || *updated.ScopeID != host {
+		t.Fatalf("Update() scope id = %v, want the host %v", updated.ScopeID, host)
+	}
+	if len(updated.Severities) != 2 || len(updated.Events) != 1 || len(updated.Channels) != 1 || updated.Channels[0] != chNew {
+		t.Fatalf("Update() did not replace the selections: %+v", updated)
+	}
+
+	got, err := s.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get after Update: %v", err)
+	}
+	if got.Scope != alertroutes.ScopeHost || got.ScopeID == nil || *got.ScopeID != host {
+		t.Fatalf("Get() after Update = %+v, want the host scope to have persisted", got)
+	}
+}
+
+func TestStoreScopeMonitoringGroupRoundTrips(t *testing.T) {
+	// The one scope TestStoreRoundTrip and TestStoreUpdateSucceeds... do
+	// not already cover: scopeColumns/scopeIDFromColumns' own
+	// ScopeMonitoringGroup branch.
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	grp := seedMonitoringGroup(t, d, org)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+
+	created, err := s.Create(ctx, org, uuid.New(), alertroutes.Input{
+		Name: "group-scoped", Enabled: true, Scope: alertroutes.ScopeMonitoringGroup, ScopeID: &grp,
+		Severities: []rules.State{rules.StateCrit},
+		Events:     []alerts.EventKind{alerts.EventOpened},
+		Channels:   []uuid.UUID{ch},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.Scope != alertroutes.ScopeMonitoringGroup || created.ScopeID == nil || *created.ScopeID != grp {
+		t.Fatalf("Create() = %+v, want scope monitoring_group targeting %v", created, grp)
+	}
+
+	got, err := s.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Scope != alertroutes.ScopeMonitoringGroup || got.ScopeID == nil || *got.ScopeID != grp {
+		t.Fatalf("Get() = %+v, want the group scope to round-trip", got)
+	}
+}
+
+func TestStoreUpdateOnAMissingRouteIsNotFoundNotRevisionMismatch(t *testing.T) {
+	// Update's own two zero-rows outcomes: a stale revision on a route
+	// that DOES exist (TestStoreRoundTrip) versus an id that never existed
+	// at all — the branch this test is the only one to exercise.
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	s := alertroutes.NewSQLStore(d)
+
+	_, err := s.Update(ctx, org, uuid.New(), 1, alertroutes.Input{
+		Name: "ghost", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities: []rules.State{rules.StateCrit},
+		Events:     []alerts.EventKind{alerts.EventOpened},
+		Channels:   []uuid.UUID{seedChannel(t, d, org)},
+	}, time.Now())
+	if !errors.Is(err, alertroutes.ErrNotFound) {
+		t.Fatalf("Update(missing id) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestStoreDelete(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+
+	created, err := s.Create(ctx, org, uuid.New(), alertroutes.Input{
+		Name: "gone-soon", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities: []rules.State{rules.StateCrit},
+		Events:     []alerts.EventKind{alerts.EventOpened},
+		Channels:   []uuid.UUID{ch},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := s.Delete(ctx, org, created.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(ctx, org, created.ID); !errors.Is(err, alertroutes.ErrNotFound) {
+		t.Fatalf("Get after Delete = %v, want ErrNotFound", err)
+	}
+	if err := s.Delete(ctx, org, created.ID); !errors.Is(err, alertroutes.ErrNotFound) {
+		t.Fatalf("Delete an already-deleted route = %v, want ErrNotFound", err)
+	}
+	if err := s.Delete(ctx, org, uuid.New()); !errors.Is(err, alertroutes.ErrNotFound) {
+		t.Fatalf("Delete a route that never existed = %v, want ErrNotFound", err)
 	}
 }
