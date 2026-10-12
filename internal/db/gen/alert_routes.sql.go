@@ -388,12 +388,34 @@ func (q *Queries) ReplaceRouteSeverities(ctx context.Context, arg ReplaceRouteSe
 }
 
 const suppressedAlertEvents = `-- name: SuppressedAlertEvents :many
-SELECT ae.id, ae.org_id, ae.alert_id, ae.at, ae.kind, ae.actor_id, ae.payload FROM alert_notify_state s
+SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+FROM alert_notify_state s
 JOIN alert_events ae ON ae.id = s.alert_event_id
 JOIN alerts a ON a.id = ae.alert_id
+JOIN hosts h ON h.id = a.host_id
 WHERE s.org_id = $1 AND s.state = 'suppressed' AND a.closed_at IS NULL
 ORDER BY ae.at, ae.id
+LIMIT $2
 `
+
+type SuppressedAlertEventsParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Lim   int32     `json:"lim"`
+}
+
+type SuppressedAlertEventsRow struct {
+	EventID  uuid.UUID `json:"event_id"`
+	AlertID  uuid.UUID `json:"alert_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	HostName string    `json:"host_name"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Severity string    `json:"severity"`
+	Kind     string    `json:"kind"`
+	At       time.Time `json:"at"`
+}
 
 // The follower's catch-up pass: every event still ledgered 'suppressed'
 // whose alert is still open. alert_notify_state_pending_idx (migration
@@ -402,24 +424,28 @@ ORDER BY ae.at, ae.id
 // much decided history has piled up; closed_at IS NULL on alerts is what
 // distinguishes a row this pass should retry from one ExpireClosedSuppressed
 // below should retire instead — the same alert state, read for two
-// different purposes.
-func (q *Queries) SuppressedAlertEvents(ctx context.Context, orgID uuid.UUID) ([]AlertEvent, error) {
-	rows, err := q.db.Query(ctx, suppressedAlertEvents, orgID)
+// different purposes. Same join and the same live-severity reasoning as
+// UndecidedAlertEvents above.
+func (q *Queries) SuppressedAlertEvents(ctx context.Context, arg SuppressedAlertEventsParams) ([]SuppressedAlertEventsRow, error) {
+	rows, err := q.db.Query(ctx, suppressedAlertEvents, arg.OrgID, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AlertEvent
+	var items []SuppressedAlertEventsRow
 	for rows.Next() {
-		var i AlertEvent
+		var i SuppressedAlertEventsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
+			&i.EventID,
 			&i.AlertID,
-			&i.At,
+			&i.HostID,
+			&i.HostName,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.Severity,
 			&i.Kind,
-			&i.ActorID,
-			&i.Payload,
+			&i.At,
 		); err != nil {
 			return nil, err
 		}
@@ -432,11 +458,34 @@ func (q *Queries) SuppressedAlertEvents(ctx context.Context, orgID uuid.UUID) ([
 }
 
 const undecidedAlertEvents = `-- name: UndecidedAlertEvents :many
-SELECT ae.id, ae.org_id, ae.alert_id, ae.at, ae.kind, ae.actor_id, ae.payload FROM alert_events ae
+SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+FROM alert_events ae
+JOIN alerts a ON a.id = ae.alert_id
+JOIN hosts h ON h.id = a.host_id
 WHERE ae.org_id = $1
   AND NOT EXISTS (SELECT 1 FROM alert_notify_state s WHERE s.alert_event_id = ae.id)
 ORDER BY ae.at, ae.id
+LIMIT $2
 `
+
+type UndecidedAlertEventsParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Lim   int32     `json:"lim"`
+}
+
+type UndecidedAlertEventsRow struct {
+	EventID  uuid.UUID `json:"event_id"`
+	AlertID  uuid.UUID `json:"alert_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	HostName string    `json:"host_name"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Severity string    `json:"severity"`
+	Kind     string    `json:"kind"`
+	At       time.Time `json:"at"`
+}
 
 // The follower's forward pass (spec "The follower"): every event in org
 // with no row in alert_notify_state yet. The anti-join is the whole
@@ -445,23 +494,35 @@ ORDER BY ae.at, ae.id
 // watermark over `at` could skip an event whose transaction took its
 // timestamp early and committed late; NOT EXISTS has no such gap, because
 // it asks "was this exact id ever decided", not "has time moved past it".
-func (q *Queries) UndecidedAlertEvents(ctx context.Context, orgID uuid.UUID) ([]AlertEvent, error) {
-	rows, err := q.db.Query(ctx, undecidedAlertEvents, orgID)
+//
+// Joined to alerts and hosts for the subject fields Match (a later task)
+// needs: the design's own "Resolution" section is explicit that severity
+// is "the one on the alerts row at the time the follower processes the
+// event, not a value frozen into the event" — so this reads a.severity
+// live rather than anything carried in ae.payload. Every joined column is
+// NOT NULL in its own table, so there is no UNION-style nullability
+// hazard here (see ListRouteSelections' own doc comment for what that
+// looks like when it does bite).
+func (q *Queries) UndecidedAlertEvents(ctx context.Context, arg UndecidedAlertEventsParams) ([]UndecidedAlertEventsRow, error) {
+	rows, err := q.db.Query(ctx, undecidedAlertEvents, arg.OrgID, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AlertEvent
+	var items []UndecidedAlertEventsRow
 	for rows.Next() {
-		var i AlertEvent
+		var i UndecidedAlertEventsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
+			&i.EventID,
 			&i.AlertID,
-			&i.At,
+			&i.HostID,
+			&i.HostName,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.Severity,
 			&i.Kind,
-			&i.ActorID,
-			&i.Payload,
+			&i.At,
 		); err != nil {
 			return nil, err
 		}

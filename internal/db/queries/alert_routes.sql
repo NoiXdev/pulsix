@@ -151,10 +151,24 @@ ORDER BY route_id;
 -- watermark over `at` could skip an event whose transaction took its
 -- timestamp early and committed late; NOT EXISTS has no such gap, because
 -- it asks "was this exact id ever decided", not "has time moved past it".
-SELECT ae.* FROM alert_events ae
+--
+-- Joined to alerts and hosts for the subject fields Match (a later task)
+-- needs: the design's own "Resolution" section is explicit that severity
+-- is "the one on the alerts row at the time the follower processes the
+-- event, not a value frozen into the event" — so this reads a.severity
+-- live rather than anything carried in ae.payload. Every joined column is
+-- NOT NULL in its own table, so there is no UNION-style nullability
+-- hazard here (see ListRouteSelections' own doc comment for what that
+-- looks like when it does bite).
+SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+FROM alert_events ae
+JOIN alerts a ON a.id = ae.alert_id
+JOIN hosts h ON h.id = a.host_id
 WHERE ae.org_id = @org_id
   AND NOT EXISTS (SELECT 1 FROM alert_notify_state s WHERE s.alert_event_id = ae.id)
-ORDER BY ae.at, ae.id;
+ORDER BY ae.at, ae.id
+LIMIT @lim;
 
 -- name: SuppressedAlertEvents :many
 -- The follower's catch-up pass: every event still ledgered 'suppressed'
@@ -164,12 +178,17 @@ ORDER BY ae.at, ae.id;
 -- much decided history has piled up; closed_at IS NULL on alerts is what
 -- distinguishes a row this pass should retry from one ExpireClosedSuppressed
 -- below should retire instead — the same alert state, read for two
--- different purposes.
-SELECT ae.* FROM alert_notify_state s
+-- different purposes. Same join and the same live-severity reasoning as
+-- UndecidedAlertEvents above.
+SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+FROM alert_notify_state s
 JOIN alert_events ae ON ae.id = s.alert_event_id
 JOIN alerts a ON a.id = ae.alert_id
+JOIN hosts h ON h.id = a.host_id
 WHERE s.org_id = @org_id AND s.state = 'suppressed' AND a.closed_at IS NULL
-ORDER BY ae.at, ae.id;
+ORDER BY ae.at, ae.id
+LIMIT @lim;
 
 -- name: RecordAlertNotifyState :exec
 -- The one write both passes above share (the design's own "This is

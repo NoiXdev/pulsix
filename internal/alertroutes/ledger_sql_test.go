@@ -1,0 +1,302 @@
+// The ledger's own tests exercise UndecidedEvents, CatchUpEvents,
+// RecordDecision and ExpireClosedSuppressed against a real database, the
+// same way store_sql_test.go exercises route CRUD. seedOrg (that file) is
+// reused as-is; everything below that touches alerts or alert_events is
+// new to this package, because the route-CRUD fixtures never needed an
+// alert at all.
+package alertroutes_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/noixdev/pulsix/internal/alertroutes"
+	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/db/testdb"
+)
+
+// beginTx opens a plain, unscoped transaction on d's pool and registers its
+// rollback, the same shape internal/alerts' own store_sql_test.go uses for
+// the same reason: UndecidedEvents and RecordDecision run inside the
+// follower's own tick transaction (a later task), never on their own, so
+// the tests exercise them the same way.
+func beginTx(t *testing.T, d *db.DB) pgx.Tx {
+	t.Helper()
+	tx, err := d.Pool().Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	return tx
+}
+
+// seedHost creates a bare zone and host in org, the minimal fixture an
+// alert's composite FK (org_id, host_id) needs.
+func seedHost(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
+	t.Helper()
+	q := gen.New(d.Pool())
+	z, err := q.CreateZone(context.Background(), gen.CreateZoneParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Slug: "z1", Name: "z1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := q.CreateHost(context.Background(), gen.CreateHostParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: z.ID, Name: "h1", Facts: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.ID
+}
+
+// seedOpenAlert inserts one open, tuple-scoped 'warn' alert on host, the
+// subject every event below hangs off.
+func seedOpenAlert(t *testing.T, d *db.DB, org, host uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := d.Pool().QueryRow(context.Background(), `
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
+		VALUES ($1, $2, 'tuple', 'cpu', '', 'used_percent', now(), 'warn', 'warn')
+		RETURNING id`, org, host).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed open alert: %v", err)
+	}
+	return id
+}
+
+// seedAlertEventAt inserts one alert_events row for alertID at a caller-
+// chosen timestamp, returning its id — the knob
+// TestUndecidedEventsSurvivesOutOfOrderCommits needs to make a "committed
+// late" event carry an earlier `at` than one committed before it.
+func seedAlertEventAt(t *testing.T, d *db.DB, org, alertID uuid.UUID, kind string, at time.Time) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := d.Pool().QueryRow(context.Background(), `
+		INSERT INTO alert_events (org_id, alert_id, at, kind, payload)
+		VALUES ($1, $2, $3, $4, '{}'::jsonb)
+		RETURNING id`, org, alertID, at, kind).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed alert event: %v", err)
+	}
+	return id
+}
+
+// seedAlertEvent is seedAlertEventAt at the current time, for the tests
+// that do not care about ordering.
+func seedAlertEvent(t *testing.T, d *db.DB, org, alertID uuid.UUID, kind string) uuid.UUID {
+	t.Helper()
+	return seedAlertEventAt(t, d, org, alertID, kind, time.Now())
+}
+
+// closeAlert closes alertID inside tx — the same transaction a test's own
+// RecordDecision and ExpireClosedSuppressed calls run on, so the close is
+// visible to them without a second connection or a commit.
+func closeAlert(t *testing.T, tx pgx.Tx, alertID uuid.UUID) {
+	t.Helper()
+	_, err := tx.Exec(context.Background(),
+		`UPDATE alerts SET closed_at = now(), closed_reason = 'resolved' WHERE id = $1`, alertID)
+	if err != nil {
+		t.Fatalf("close alert: %v", err)
+	}
+}
+
+func TestUndecidedEventsIgnoresDecidedOnes(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	first := seedAlertEvent(t, d, org, alert, "opened")
+	second := seedAlertEvent(t, d, org, alert, "severity_raised")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	got, err := s.UndecidedEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("UndecidedEvents: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("UndecidedEvents() = %d, want 2", len(got))
+	}
+	if err := s.RecordDecision(ctx, tx, org, first, alertroutes.StateSent, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	got, err = s.UndecidedEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("UndecidedEvents again: %v", err)
+	}
+	if len(got) != 1 || got[0].EventID != second {
+		t.Errorf("after one decision UndecidedEvents() = %v, want only the second event", got)
+	}
+}
+
+func TestUndecidedEventsSurvivesOutOfOrderCommits(t *testing.T) {
+	// The case a cursor would have lost, and the reason decision 7 has
+	// no watermark: two events whose timestamps run backwards relative to
+	// the order they become visible. Both must be found.
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+
+	late := seedAlertEventAt(t, d, org, alert, "opened", time.Now().Add(-time.Hour))
+	early := seedAlertEventAt(t, d, org, alert, "severity_raised", time.Now())
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	// Decide the NEWER one first, exactly as a tick would if it ran
+	// between the two commits.
+	if err := s.RecordDecision(ctx, tx, org, early, alertroutes.StateSent, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	got, err := s.UndecidedEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("UndecidedEvents: %v", err)
+	}
+	if len(got) != 1 || got[0].EventID != late {
+		t.Fatalf("the older event was lost: got %v, want the one stamped an hour ago", got)
+	}
+}
+
+func TestExpireClosedSuppressed(t *testing.T) {
+	// A suppressed event whose alert closed while still muted can never
+	// be caught up — the catch-up pass requires an open alert — so it is
+	// retired rather than left in that pass's working set forever.
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateSuppressed, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	closeAlert(t, tx, alert)
+
+	n, err := s.ExpireClosedSuppressed(ctx, tx, org, time.Now())
+	if err != nil {
+		t.Fatalf("ExpireClosedSuppressed: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expired %d rows, want 1", n)
+	}
+	pending, err := s.CatchUpEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("CatchUpEvents: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("CatchUpEvents() = %d rows, want 0 once the alert closed", len(pending))
+	}
+}
+
+// TestCatchUpEventsFindsStillSuppressed proves the other half of the
+// catch-up pass ExpireClosedSuppressed's own test does not reach: a
+// suppressed event whose alert is still open stays in the working set,
+// and RecordDecision moving it to StateSent takes it back out exactly the
+// way the forward pass's own idempotency does.
+func TestCatchUpEventsFindsStillSuppressed(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateSuppressed, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	got, err := s.CatchUpEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("CatchUpEvents: %v", err)
+	}
+	if len(got) != 1 || got[0].EventID != ev {
+		t.Fatalf("CatchUpEvents() = %v, want the still-open suppressed event", got)
+	}
+	if got[0].HostID != host || got[0].CheckKey != "cpu" || got[0].Metric != "used_percent" {
+		t.Errorf("CatchUpEvents() subject = %+v, want the seeded alert's own subject", got[0])
+	}
+
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateSent, time.Now()); err != nil {
+		t.Fatalf("RecordDecision (catch-up): %v", err)
+	}
+	got, err = s.CatchUpEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("CatchUpEvents after catch-up: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("CatchUpEvents() = %d rows after catch-up, want 0", len(got))
+	}
+}
+
+// TestRecordDecisionIsIdempotent proves the upsert half of decision 7:
+// recording the same event twice with different states leaves exactly one
+// row, the shape a retried tick relies on.
+func TestRecordDecisionIsIdempotent(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateUnrouted, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateSent, time.Now()); err != nil {
+		t.Fatalf("RecordDecision (again): %v", err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM alert_notify_state WHERE alert_event_id = $1`, ev).Scan(&count); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("alert_notify_state rows for one event = %d, want 1", count)
+	}
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM alert_notify_state WHERE alert_event_id = $1`, ev).Scan(&state); err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if state != string(alertroutes.StateSent) {
+		t.Errorf("state = %q, want %q", state, alertroutes.StateSent)
+	}
+}
+
+// TestUndecidedEventsIsScopedToOrganization is the ledger's own isolation
+// test, the same review focus store_sql_test.go's own
+// TestStoreIsolatesOrganizations pins for route CRUD: an event in one
+// organization must never appear in another's undecided set, and a
+// decision recorded in one organization must not be forgeable against
+// another's event id.
+func TestUndecidedEventsIsScopedToOrganization(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
+	hostA, hostB := seedHost(t, d, orgA), seedHost(t, d, orgB)
+	alertA, alertB := seedOpenAlert(t, d, orgA, hostA), seedOpenAlert(t, d, orgB, hostB)
+	seedAlertEvent(t, d, orgA, alertA, "opened")
+	seedAlertEvent(t, d, orgB, alertB, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	got, err := s.UndecidedEvents(ctx, tx, orgA, 100)
+	if err != nil {
+		t.Fatalf("UndecidedEvents: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("UndecidedEvents(orgA) = %d, want exactly orgA's own event", len(got))
+	}
+}
