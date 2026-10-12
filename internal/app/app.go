@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/agentapi"
 	"github.com/noixdev/pulsix/internal/agentdist"
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
@@ -89,6 +90,12 @@ type App struct {
 	// batch in flight — so Close never closes the pool under an
 	// evaluation that is still writing states.
 	stopEval func()
+	// stopAlertNotify stops the alert follower (v0.4b), waiting for a tick
+	// in flight: that tick holds one transaction carrying both its ledger
+	// decisions and its outbox rows, and closing the pool under it would
+	// roll the pair back together — no alert lost, but none delivered
+	// either, so Close waits for the commit instead.
+	stopAlertNotify func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
@@ -127,6 +134,9 @@ func (a *App) Close() {
 	}
 	if a.stopEval != nil {
 		a.stopEval()
+	}
+	if a.stopAlertNotify != nil {
+		a.stopAlertNotify()
 	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
@@ -525,6 +535,21 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), itemsStore, slog.Default()), alertsSvc)
 	evalStop := startLoop(func(ctx context.Context) { _ = evalTicker.Run(ctx) })
 
+	// The alert follower (v0.4b spec, "The follower"): one tick per
+	// organization per minute, each inside a single transaction under that
+	// organization's own advisory lock — which is what makes several
+	// managers safe here, the way SKIP LOCKED does for the two tickers
+	// above. It walks alert_events, resolves every event against the
+	// organization's routes, and hands the outbox above one batch per
+	// channel; the ledger write and the enqueue share that transaction, so
+	// an event is never recorded as reported without the delivery that
+	// reports it. Host→group membership comes from the same checksSvc the
+	// rule engine resolves through (alertroutes_ports.go). Stopped in
+	// Close and on every early return below.
+	alertFollower := alertroutes.NewFollower(appDB, alertroutes.NewSQLStore(appDB), NewAlertRouteGroups(checksSvc),
+		outbox, cfg.PublicURL, time.Now, slog.Default())
+	alertNotifyStop := startLoop(func(ctx context.Context) { alertFollower.Run(ctx, alertroutes.DefaultFollowInterval) })
+
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
@@ -542,6 +567,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			dispatchStop()
 			digestStop()
 			evalStop()
+			alertNotifyStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -564,6 +590,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				dispatchStop()
 				digestStop()
 				evalStop()
+				alertNotifyStop()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -574,7 +601,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc,
 	}, nil
 }
