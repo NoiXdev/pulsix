@@ -91,11 +91,23 @@ type App struct {
 	// batch in flight — so Close never closes the pool under an
 	// evaluation that is still writing states.
 	stopEval func()
-	// stopAlertNotify stops the alert follower (v0.4b), waiting for a tick
-	// in flight: that tick holds one transaction carrying both its ledger
-	// decisions and its outbox rows, and closing the pool under it would
-	// roll the pair back together — no alert lost, but none delivered
-	// either, so Close waits for the commit instead.
+	// stopAlertNotify stops the alert follower (v0.4b). Like every other
+	// loop here it cancels and then waits for the goroutine to return
+	// (startLoop), but what that wait buys is narrower than it looks: the
+	// tick runs on the very context startLoop cancelled, so a tick in
+	// flight does not get to finish — its tx.Commit(ctx) fails on the
+	// cancelled context and the deferred rollback (on a context without
+	// cancel) undoes the whole tick.
+	//
+	// That is safe, and it is the design's own "Failure ends at the
+	// enqueue": the tick's ledger decisions and its outbox rows share one
+	// transaction, so they roll back together. Nothing was recorded as
+	// decided, so the forward pass's anti-join still finds exactly those
+	// events on the next manager's next tick. The wait is therefore for
+	// the goroutine, not for the commit — it keeps Close from closing the
+	// pool under a transaction that is still being written, which is why
+	// the loop must be stopped before a.db.Close() below, not why no
+	// alert is lost.
 	stopAlertNotify func()
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
