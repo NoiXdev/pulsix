@@ -44,6 +44,7 @@ import (
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 )
 
 // noGroupsReader is the GroupReader this gate's own Follower needs: both
@@ -207,7 +208,8 @@ func TestAlertRoutesEndToEnd(t *testing.T) {
 	d := testdb.Open(t)
 	store := alertroutes.NewSQLStore(d)
 	outbox := notify.NewOutbox(d, "http://e2e-alert-routes.test", time.Now, nil, nil)
-	follower := alertroutes.NewFollower(d, store, noGroupsReader{}, outbox, "http://e2e-alert-routes.test", time.Now, nil)
+	follower := alertroutes.NewFollower(d, store, noGroupsReader{}, oncall.NewSQLStore(d), outbox,
+		"http://e2e-alert-routes.test", time.Now, nil)
 	if err := follower.Tick(ctx, orgID); err != nil {
 		t.Fatalf("follower tick: %v", err)
 	}

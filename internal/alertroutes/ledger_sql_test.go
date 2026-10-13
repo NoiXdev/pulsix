@@ -1,5 +1,5 @@
 // The ledger's own tests exercise UndecidedEvents, CatchUpEvents,
-// RecordDecision and ExpireClosedSuppressed against a real database, the
+// RecordDecision and ExpireClosedHeld against a real database, the
 // same way store_sql_test.go exercises route CRUD. seedOrg (that file) is
 // reused as-is; everything below that touches alerts or alert_events is
 // new to this package, because the route-CRUD fixtures never needed an
@@ -95,7 +95,7 @@ func seedAlertEvent(t *testing.T, d *db.DB, org, alertID uuid.UUID, kind string)
 }
 
 // closeAlert closes alertID inside tx — the same transaction a test's own
-// RecordDecision and ExpireClosedSuppressed calls run on, so the close is
+// RecordDecision and ExpireClosedHeld calls run on, so the close is
 // visible to them without a second connection or a commit.
 func closeAlert(t *testing.T, tx pgx.Tx, alertID uuid.UUID) {
 	t.Helper()
@@ -165,7 +165,7 @@ func TestUndecidedEventsSurvivesOutOfOrderCommits(t *testing.T) {
 	}
 }
 
-func TestExpireClosedSuppressed(t *testing.T) {
+func TestExpireClosedHeld(t *testing.T) {
 	// A suppressed event whose alert closed while still muted can never
 	// be caught up — the catch-up pass requires an open alert — so it is
 	// retired rather than left in that pass's working set forever.
@@ -183,9 +183,9 @@ func TestExpireClosedSuppressed(t *testing.T) {
 	}
 	closeAlert(t, tx, alert)
 
-	n, err := s.ExpireClosedSuppressed(ctx, tx, org, time.Now())
+	n, err := s.ExpireClosedHeld(ctx, tx, org, time.Now())
 	if err != nil {
-		t.Fatalf("ExpireClosedSuppressed: %v", err)
+		t.Fatalf("ExpireClosedHeld: %v", err)
 	}
 	if n != 1 {
 		t.Errorf("expired %d rows, want 1", n)
@@ -212,7 +212,7 @@ func TestExpireClosedSuppressed(t *testing.T) {
 }
 
 // TestCatchUpEventsFindsStillSuppressed proves the other half of the
-// catch-up pass ExpireClosedSuppressed's own test does not reach: a
+// catch-up pass ExpireClosedHeld's own test does not reach: a
 // suppressed event whose alert is still open stays in the working set,
 // and RecordDecision moving it to StateSent takes it back out exactly the
 // way the forward pass's own idempotency does.
@@ -337,5 +337,88 @@ func TestUndecidedEventsIsScopedToOrganization(t *testing.T) {
 	}
 	if len(still) != 1 || still[0].EventID != eventA {
 		t.Fatalf("UndecidedEvents(orgA) = %v after the forgery attempt, want orgA's own event still undecided", still)
+	}
+}
+
+// TestCatchUpEventsFindsBothHeldStates is the widened pass, against rows
+// that already exist rather than against a statement that merely compiles:
+// 'suppressed' and 'deferred' are one working set, each row reports which
+// of the two it was found in, and neither 'sent' nor 'unrouted' leaks into
+// it. The reported state is what lets the follower leave an unchanged
+// verdict unwritten, so a query that returned the right rows with the
+// wrong state would hold decided_at still on an event whose reason had
+// actually changed.
+func TestCatchUpEventsFindsBothHeldStates(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	s := alertroutes.NewSQLStore(d)
+	tx := beginTx(t, d)
+
+	want := map[uuid.UUID]alertroutes.LedgerState{}
+	for _, st := range []alertroutes.LedgerState{
+		alertroutes.StateSuppressed, alertroutes.StateDeferred,
+		alertroutes.StateSent, alertroutes.StateUnrouted,
+	} {
+		ev := seedAlertEvent(t, d, org, alert, "opened")
+		if err := s.RecordDecision(ctx, tx, org, ev, st, time.Now()); err != nil {
+			t.Fatalf("RecordDecision(%s): %v", st, err)
+		}
+		if st == alertroutes.StateSuppressed || st == alertroutes.StateDeferred {
+			want[ev] = st
+		}
+	}
+
+	got, err := s.CatchUpEvents(ctx, tx, org, 100)
+	if err != nil {
+		t.Fatalf("CatchUpEvents: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("CatchUpEvents() = %d rows, want %d — exactly the held ones", len(got), len(want))
+	}
+	for _, ev := range got {
+		if ev.Ledger != want[ev.EventID] {
+			t.Errorf("event %s reported Ledger = %q, want %q", ev.EventID, ev.Ledger, want[ev.EventID])
+		}
+	}
+}
+
+// TestExpireClosedHeldRetiresDeferredToo covers the half of the widened
+// UPDATE ... FROM the suppressed case cannot reach. A 'deferred' row whose
+// alert has closed is invisible to the catch-up pass forever (that pass
+// requires an open alert) while still sitting in
+// alert_notify_state_pending_idx — which is the exact unbounded growth
+// this statement exists to prevent, so leaving 'deferred' out of its
+// predicate would have reintroduced it silently.
+func TestExpireClosedHeldRetiresDeferredToo(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateDeferred, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	closeAlert(t, tx, alert)
+
+	n, err := s.ExpireClosedHeld(ctx, tx, org, time.Now())
+	if err != nil {
+		t.Fatalf("ExpireClosedHeld: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expired %d rows, want 1", n)
+	}
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM alert_notify_state WHERE alert_event_id = $1`, ev).Scan(&state); err != nil {
+		t.Fatalf("read the retired row: %v", err)
+	}
+	if state != string(alertroutes.StateExpired) {
+		t.Errorf("retired state = %q, want %q", state, alertroutes.StateExpired)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 )
 
 const (
@@ -65,6 +67,23 @@ type Enqueuer interface {
 	Enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, key string, ev notify.Event, channels []uuid.UUID) error
 }
 
+// RotationReader is the slice of internal/oncall the follower needs: given
+// a rotation id, the cycle and the stand-ins covering it. The arithmetic
+// that turns those into "who is on call at this instant" stays in that
+// package (oncall.ChannelAt) — this port is only how the rows are read.
+//
+// It takes the caller's transaction for the same reason every other read
+// in a tick does: the rotation's answer, the routes it is resolved
+// against, and the ledger row that records the outcome all belong to one
+// snapshot, so a handover committed halfway through a tick cannot split a
+// batch between two people.
+//
+// Declared here rather than taken as *oncall.Store so a unit test can
+// stand one in, the same shape GroupReader and Enqueuer already take.
+type RotationReader interface {
+	Resolve(ctx context.Context, tx pgx.Tx, orgID, rotationID uuid.UUID) (oncall.Rotation, []oncall.Exception, error)
+}
+
 // muteSource is the slice of internal/alerts the follower needs to answer
 // "is this alert muted right now": the alert itself, for its own snooze
 // fields, and the maintenance windows covering its host. Both halves go
@@ -90,6 +109,7 @@ type Follower struct {
 	d         *db.DB
 	store     *Store
 	groups    GroupReader
+	rotations RotationReader
 	mutes     muteSource
 	enq       Enqueuer
 	publicURL string
@@ -104,8 +124,8 @@ type Follower struct {
 // Service.ForHost, which deliberately ignores a route's severity and
 // event selections (its own doc comment says why) and would therefore
 // route events no route actually asked for.
-func NewFollower(d *db.DB, store *Store, groups GroupReader, enq Enqueuer, publicURL string,
-	now func() time.Time, log *slog.Logger) *Follower {
+func NewFollower(d *db.DB, store *Store, groups GroupReader, rotations RotationReader, enq Enqueuer,
+	publicURL string, now func() time.Time, log *slog.Logger) *Follower {
 	if now == nil {
 		now = time.Now
 	}
@@ -113,7 +133,7 @@ func NewFollower(d *db.DB, store *Store, groups GroupReader, enq Enqueuer, publi
 		log = slog.Default()
 	}
 	return &Follower{
-		d: d, store: store, groups: groups, mutes: alerts.NewSQLStore(d), enq: enq,
+		d: d, store: store, groups: groups, rotations: rotations, mutes: alerts.NewSQLStore(d), enq: enq,
 		publicURL: publicURL, now: now, log: log, batch: DefaultFollowBatch,
 	}
 }
@@ -181,7 +201,7 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	}
 
 	now := f.now()
-	retired, err := f.store.ExpireClosedSuppressed(ctx, tx, orgID, now)
+	retired, err := f.store.ExpireClosedHeld(ctx, tx, orgID, now)
 	if err != nil {
 		return err
 	}
@@ -192,7 +212,7 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 		// a sudden large count is the visible shape of "a maintenance
 		// window swallowed a lot of alerts", which is otherwise a silent
 		// fact about rows nobody will ever look at again.
-		f.log.DebugContext(ctx, "alert follower: retired suppressed rows whose alert closed",
+		f.log.DebugContext(ctx, "alert follower: retired held rows whose alert closed",
 			"org", orgID, "rows", retired)
 	}
 	routes, err := f.store.ListEnabled(ctx, tx, orgID)
@@ -201,10 +221,10 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	}
 
 	// Both working sets are read before a single decision is written, so
-	// they stay disjoint: a forward-pass event recorded 'suppressed' here
-	// must not immediately reappear in this same tick's catch-up set,
-	// where it would be re-resolved against the identical `now` for the
-	// identical verdict.
+	// they stay disjoint: a forward-pass event recorded 'suppressed' or
+	// 'deferred' here must not immediately reappear in this same tick's
+	// catch-up set, where it would be re-resolved against the identical
+	// `now` for the identical verdict.
 	forward, err := f.store.UndecidedEvents(ctx, tx, orgID, f.batch)
 	if err != nil {
 		return err
@@ -214,19 +234,19 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 		return err
 	}
 
-	r := &resolution{f: f, orgID: orgID, now: now, routes: routes,
+	r := &resolution{f: f, tx: tx, orgID: orgID, now: now, routes: routes,
 		groups:  map[uuid.UUID][]uuid.UUID{},
 		windows: map[uuid.UUID][]maintenance.Occurrence{},
 		alerts:  map[uuid.UUID]alerts.Alert{},
+		oncall:  map[uuid.UUID]uuid.UUID{},
 	}
+	// The two passes run through the same decide: a caught-up event is
+	// re-decided from scratch against this tick's instant, exactly as a
+	// fresh one is, and the state it was found in only decides whether the
+	// verdict is worth writing (decide's own record).
 	b := batches{}
-	for _, ev := range forward {
-		if err := f.decide(ctx, tx, r, b, ev, true); err != nil {
-			return err
-		}
-	}
-	for _, ev := range caught {
-		if err := f.decide(ctx, tx, r, b, ev, false); err != nil {
+	for _, ev := range slices.Concat(forward, caught) {
+		if err := f.decide(ctx, tx, r, b, ev); err != nil {
 			return err
 		}
 	}
@@ -239,36 +259,76 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	return nil
 }
 
-// decide resolves one event and records its outcome. firstPass separates
-// the two callers: an event the forward pass finds has no ledger row yet
-// and must get one whatever the outcome — an unrouted or suppressed event
-// left undecided would be re-examined by the anti-join forever — while an
-// event the catch-up pass finds is already ledgered 'suppressed', so
-// "still suppressed" means there is nothing to write.
-func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batches, ev PendingEvent, firstPass bool) error {
-	channels, err := r.channelsFor(ctx, ev)
+// decide resolves one event through four gates, in this order, and records
+// the outcome. The order is the decision, not an implementation detail:
+//
+//  1. ROUTING. No route wants this event, or every route that does names
+//     nobody — a channel-less route, or a rotation that resolves to no
+//     channel. StateUnrouted, and v0.4b's "reaches nobody" indicator says
+//     so. Terminal: nothing about a later instant can change it.
+//  2. SUPPRESSION. The alert is muted — snoozed, silenced, or its host is
+//     in maintenance — through alerts.Mute's own strict order.
+//     StateSuppressed, and the catch-up pass retries it.
+//  3. THE WINDOW. Every route that would have told somebody is outside its
+//     delivery window. StateDeferred, and the catch-up pass retries it.
+//  4. Otherwise it goes out, and StateSent.
+//
+// Suppression is asked BEFORE the window, and that is the whole of why a
+// breakthrough severity cannot cross it: breakthrough is a property of the
+// window gate alone (resolution.windowOpen), so an event that never reaches
+// gate 3 never gets to use it. A maintenance window silences a crit too —
+// that is what a maintenance window is for, and if a severity could cross
+// it, maintenance would stop being a promise and become a request
+// (TestMaintenanceSilencesEvenABreakthroughSeverity).
+//
+// The same ordering settles which reason the ledger records when an event
+// trips both gates: 'suppressed', never 'deferred'. That the host is in
+// maintenance is the first thing an operator needs to know; the time of day
+// is the second.
+func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batches, ev PendingEvent) error {
+	routed, err := r.route(ctx, ev)
 	if err != nil {
 		return err
 	}
-	if len(channels) == 0 {
-		return f.store.RecordDecision(ctx, tx, r.orgID, ev.EventID, StateUnrouted, r.now)
+	if len(routed.channels) == 0 && !routed.held {
+		return f.record(ctx, tx, r, ev, StateUnrouted)
 	}
 	muted, err := r.muted(ctx, ev)
 	if err != nil {
 		return err
 	}
 	if muted {
-		if !firstPass {
-			return nil
-		}
-		return f.store.RecordDecision(ctx, tx, r.orgID, ev.EventID, StateSuppressed, r.now)
+		return f.record(ctx, tx, r, ev, StateSuppressed)
 	}
-	b.add(channels, ev.EventID, notify.AlertItem{
+	if len(routed.channels) == 0 {
+		return f.record(ctx, tx, r, ev, StateDeferred)
+	}
+	b.add(routed.channels, ev.EventID, notify.AlertItem{
 		AlertID: ev.AlertID, HostID: ev.HostID, HostName: ev.HostName,
 		CheckKey: ev.CheckKey, Item: ev.Item, Metric: ev.Metric,
 		Severity: string(ev.Severity), Event: string(ev.Kind), At: ev.At,
 	})
-	return f.store.RecordDecision(ctx, tx, r.orgID, ev.EventID, StateSent, r.now)
+	return f.record(ctx, tx, r, ev, StateSent)
+}
+
+// record writes st unless the ledger already says exactly that. Only the
+// catch-up pass can hit the second case: the forward pass finds events with
+// no ledger row at all, whose PendingEvent.Ledger is empty and therefore
+// differs from every state there is.
+//
+// Skipping the no-op write is not an optimisation. decided_at means "when
+// this state became true" — the reading ExpireClosedHeld's own @now already
+// takes — so rewriting 'suppressed' over 'suppressed' every minute would
+// turn "held since 03:00" into "held since a moment ago" and erase the one
+// fact the column carries. What it must NOT skip is a change of reason: an
+// event held for a shut window the moment a maintenance window opens over
+// it moves from 'deferred' to 'suppressed', which the comparison catches
+// because the two differ.
+func (f *Follower) record(ctx context.Context, tx pgx.Tx, r *resolution, ev PendingEvent, st LedgerState) error {
+	if st == ev.Ledger {
+		return nil
+	}
+	return f.store.RecordDecision(ctx, tx, r.orgID, ev.EventID, st, r.now)
 }
 
 // enqueue hands one message per channel to the outbox — decision 5: a

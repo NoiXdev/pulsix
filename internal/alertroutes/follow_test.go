@@ -7,6 +7,7 @@
 package alertroutes_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -54,13 +56,54 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, _ pgx.Tx, _ uuid.UUID, ke
 	return nil
 }
 
-// fixedClock is the follower's injected clock. It never moves: every test
-// below pins one instant and compares maintenance windows against it, so
-// a clock that advanced on its own would make the suppression tests
-// depend on how long the database took.
-type fixedClock struct{ t time.Time }
+// fixedClock is the follower's injected clock. It never moves on its own:
+// every test below pins one instant and compares maintenance windows
+// against it, so a clock that advanced by itself would make the
+// suppression tests depend on how long the database took. set is how a
+// test moves time deliberately — the delivery-window tests
+// (follow_window_test.go) hold an alert at 03:00 and then deliver it at
+// 09:30 without waiting six hours.
+//
+// The mutex is not decoration: TestRunTicksEveryOrganizationUntilCancelled
+// reads this clock from Run's own goroutine while the test body holds the
+// other end.
+type fixedClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
 
-func (c fixedClock) Now() time.Time { return c.t }
+func (c *fixedClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fixedClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
+}
+
+// logBuffer is the sink behind the follower's injected logger, so a test
+// can assert on what the tick said — the only way to pin decision 9's
+// "an unreadable window must be LOUD". Mutex-guarded for the same reason
+// fixedClock's is.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // noGroups is the GroupReader every test here wires: the fixture's host
 // belongs to no monitoring group, which is all an org-scope route needs.
@@ -79,13 +122,15 @@ func (noGroups) GroupsForHost(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUI
 type followEnv struct {
 	t     *testing.T
 	d     *db.DB
-	clock fixedClock
+	clock *fixedClock
 
 	org, host, channel uuid.UUID
 
-	store    *alertroutes.Store
-	enq      *recordingEnqueuer
-	follower *alertroutes.Follower
+	store     *alertroutes.Store
+	rotations *oncall.Store
+	enq       *recordingEnqueuer
+	log       *logBuffer
+	follower  *alertroutes.Follower
 
 	seq int
 }
@@ -96,15 +141,17 @@ func newFollowEnv(t *testing.T) *followEnv {
 	org := seedOrg(t, d)
 	env := &followEnv{
 		t: t, d: d,
-		clock:   fixedClock{t: time.Now().UTC().Truncate(time.Second)},
-		org:     org,
-		host:    seedHost(t, d, org),
-		channel: seedChannel(t, d, org),
-		store:   alertroutes.NewSQLStore(d),
-		enq:     &recordingEnqueuer{},
+		clock:     &fixedClock{t: time.Now().UTC().Truncate(time.Second)},
+		org:       org,
+		host:      seedHost(t, d, org),
+		channel:   seedChannel(t, d, org),
+		store:     alertroutes.NewSQLStore(d),
+		rotations: oncall.NewSQLStore(d),
+		enq:       &recordingEnqueuer{},
+		log:       &logBuffer{},
 	}
-	env.follower = alertroutes.NewFollower(d, env.store, noGroups{}, env.enq,
-		"https://pulsix.example", env.clock.Now, nil)
+	env.follower = alertroutes.NewFollower(d, env.store, noGroups{}, env.rotations, env.enq,
+		"https://pulsix.example", env.clock.Now, slog.New(slog.NewTextHandler(env.log, nil)))
 	return env
 }
 
@@ -112,11 +159,19 @@ func newFollowEnv(t *testing.T) *followEnv {
 func (e *followEnv) route(scope alertroutes.Scope, scopeID *uuid.UUID, severities []rules.State,
 	events []alerts.EventKind, channels []uuid.UUID) uuid.UUID {
 	e.t.Helper()
-	e.seq++
-	r, err := e.store.Create(context.Background(), e.org, uuid.Must(uuid.NewV7()), alertroutes.Input{
-		Name: fmt.Sprintf("route-%d", e.seq), Enabled: true, Scope: scope, ScopeID: scopeID,
+	return e.createRoute(alertroutes.Input{
+		Enabled: true, Scope: scope, ScopeID: scopeID,
 		Severities: severities, Events: events, Channels: channels,
-	}, e.clock.Now())
+	})
+}
+
+// createRoute is every route helper's one path into the store: it names
+// the route (the only field no caller cares about) and reports its id.
+func (e *followEnv) createRoute(in alertroutes.Input) uuid.UUID {
+	e.t.Helper()
+	e.seq++
+	in.Name = fmt.Sprintf("route-%d", e.seq)
+	r, err := e.store.Create(context.Background(), e.org, uuid.Must(uuid.NewV7()), in, e.clock.Now())
 	if err != nil {
 		e.t.Fatalf("create route: %v", err)
 	}
@@ -396,7 +451,7 @@ func TestBatchKeyIsDerivedFromItsEventsNotTheClock(t *testing.T) {
 	env.route(alertroutes.ScopeOrg, nil, []rules.State{rules.StateCrit},
 		[]alerts.EventKind{alerts.EventOpened}, []uuid.UUID{env.channel})
 	outbox := notify.NewOutbox(env.d, "https://pulsix.example", time.Now, rand.Reader, slog.Default())
-	follower := alertroutes.NewFollower(env.d, env.store, noGroups{}, outbox,
+	follower := alertroutes.NewFollower(env.d, env.store, noGroups{}, env.rotations, outbox,
 		"https://pulsix.example", env.clock.Now, slog.Default())
 	ctx := context.Background()
 

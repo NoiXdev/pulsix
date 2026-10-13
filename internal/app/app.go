@@ -45,6 +45,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
@@ -438,6 +439,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// alertroutes_ports.go builds, exactly what the follower uses for the
 	// same lookup.
 	alertRoutesStore := alertroutes.NewSQLStore(appDB)
+	// The on-call store the follower resolves a route's rotation through
+	// (alertroutes.RotationReader). Built here beside the route store for
+	// the same reason: one store on the shared pool, handed to whoever
+	// needs it, rather than a second instance per consumer.
+	oncallStore := oncall.NewSQLStore(appDB)
 	alertRoutesSvc := alertroutes.NewService(alertRoutesStore, NewAlertRouteGroups(checksSvc), time.Now, func() uuid.UUID {
 		id, err := uuid.NewV7FromReader(rand.Reader)
 		if err != nil {
@@ -577,7 +583,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// rule engine resolves through (alertroutes_ports.go). Stopped in
 	// Close and on every early return below.
 	alertFollower := alertroutes.NewFollower(appDB, alertRoutesStore, NewAlertRouteGroups(checksSvc),
-		outbox, cfg.PublicURL, time.Now, slog.Default())
+		oncallStore, outbox, cfg.PublicURL, time.Now, slog.Default())
 	alertNotifyStop := startLoop(func(ctx context.Context) { alertFollower.Run(ctx, alertroutes.DefaultFollowInterval) })
 
 	var grpcServer *grpc.Server

@@ -39,13 +39,27 @@ const (
 	StateSent       LedgerState = "sent"
 	StateSuppressed LedgerState = "suppressed"
 	StateUnrouted   LedgerState = "unrouted"
-	// StateExpired is the terminal state ExpireClosedSuppressed retires a
+	// StateDeferred is the fifth state migration 00054 added: the event
+	// routes to somebody, nothing is muting it, but every route that
+	// wants it is outside its delivery window. Structurally it is what
+	// StateSuppressed already does — hold, re-check at a later instant,
+	// deliver while the alert is still open — and the catch-up pass reads
+	// both. It is a separate state because the WHY differs, and v0.4b's
+	// decision 8 made "why did nothing arrive" a queryable fact rather
+	// than an absence: an operator shown 'suppressed' goes looking for a
+	// maintenance window that does not exist.
+	//
+	// When an event trips both gates the ledger records StateSuppressed,
+	// never this: that the host is in maintenance is the first thing an
+	// operator needs to know, the time of day is the second.
+	StateDeferred LedgerState = "deferred"
+	// StateExpired is the terminal state ExpireClosedHeld retires a
 	// row to; it reaches the database as that statement's @state
 	// parameter rather than as a literal inside the SQL, so this constant
 	// is the single place the name lives. It is deliberately not produced
 	// by RecordDecision: nothing a tick decides is ever 'expired'
-	// directly — a row only becomes expired by having been 'suppressed'
-	// first and then outliving its alert.
+	// directly — a row only becomes expired by having been held
+	// ('suppressed' or 'deferred') first and then outliving its alert.
 	StateExpired LedgerState = "expired"
 )
 
@@ -53,6 +67,17 @@ const (
 // carrying everything Match (match.go, a later task) needs to resolve it
 // without a second query: the host it is about, the tuple subject, the
 // event kind and the alert's current severity.
+//
+// Ledger is the state the ledger ALREADY holds for this event, and the
+// one field whose meaning depends on which pass produced the row: the
+// forward pass leaves it empty, because an undecided event has no ledger
+// row at all, and the catch-up pass fills it with the held state it found
+// ('suppressed' or 'deferred'). That is not the trap the paragraph below
+// warns about — a field the store cannot fill — it is a fact the store
+// reads straight off the row it is already joining, and "no row yet" is an
+// honest answer rather than a placeholder. The follower compares its
+// verdict against it and writes only when the two differ, which is what
+// keeps decided_at meaning "held since", not "last looked at".
 //
 // There is deliberately no Suppressed field here, even though an earlier
 // draft of this type carried one. The store cannot fill it: suppression
@@ -76,6 +101,8 @@ type PendingEvent struct {
 	Severity rules.State
 	Kind     alerts.EventKind
 	At       time.Time
+
+	Ledger LedgerState
 }
 
 // toPendingEvent converts either ledger query's row shape — the two are
@@ -109,20 +136,23 @@ func (s *Store) UndecidedEvents(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 	return out, nil
 }
 
-// CatchUpEvents is the follower's catch-up pass: every event still
-// ledgered 'suppressed' whose alert is still open (SuppressedAlertEvents'
-// own doc comment). A row whose alert has since closed never appears here
-// — ExpireClosedSuppressed is what retires those instead.
+// CatchUpEvents is the follower's catch-up pass: every event the ledger is
+// still holding — 'suppressed' or 'deferred' — whose alert is still open
+// (HeldAlertEvents' own doc comment). Each row carries the state it was
+// found in, so the follower can leave an unchanged verdict unwritten. A
+// row whose alert has since closed never appears here — ExpireClosedHeld
+// is what retires those instead.
 func (s *Store) CatchUpEvents(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, limit int) ([]PendingEvent, error) {
-	rows, err := gen.New(tx).SuppressedAlertEvents(ctx, gen.SuppressedAlertEventsParams{
+	rows, err := gen.New(tx).HeldAlertEvents(ctx, gen.HeldAlertEventsParams{
 		OrgID: orgID, Lim: int32(limit), //nolint:gosec // the follower's own per-tick batch size, never user input
 	})
 	if err != nil {
-		return nil, fmt.Errorf("suppressed alert events: %w", err)
+		return nil, fmt.Errorf("held alert events: %w", err)
 	}
 	out := make([]PendingEvent, len(rows))
 	for i, r := range rows {
 		out[i] = toPendingEvent(r.EventID, r.AlertID, r.HostID, r.HostName, r.CheckKey, r.Item, r.Metric, r.Severity, r.Kind, r.At)
+		out[i].Ledger = LedgerState(r.LedgerState)
 	}
 	return out, nil
 }
@@ -142,19 +172,19 @@ func (s *Store) RecordDecision(ctx context.Context, tx pgx.Tx, orgID, eventID uu
 	return nil
 }
 
-// ExpireClosedSuppressed retires every 'suppressed' row in org whose alert
-// has since closed to 'expired' (migration 00052's own doc comment on why
-// that state is terminal: the catch-up pass only ever offers an open
-// alert, so a closed one's row would sit in that pass's working set
-// forever otherwise). It returns how many rows were retired, for the
-// follower to log; zero is not an error, it is simply nothing to do this
-// tick.
-func (s *Store) ExpireClosedSuppressed(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, at time.Time) (int64, error) {
-	n, err := gen.New(tx).ExpireClosedSuppressed(ctx, gen.ExpireClosedSuppressedParams{
+// ExpireClosedHeld retires every held row in org — 'suppressed' or
+// 'deferred' — whose alert has since closed to 'expired' (migration
+// 00052's own doc comment on why that state is terminal: the catch-up
+// pass only ever offers an open alert, so a closed one's row would sit in
+// that pass's working set forever otherwise). It returns how many rows
+// were retired, for the follower to log; zero is not an error, it is
+// simply nothing to do this tick.
+func (s *Store) ExpireClosedHeld(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, at time.Time) (int64, error) {
+	n, err := gen.New(tx).ExpireClosedHeld(ctx, gen.ExpireClosedHeldParams{
 		Now: at, OrgID: orgID, State: string(StateExpired),
 	})
 	if err != nil {
-		return 0, fmt.Errorf("expire closed suppressed: %w", err)
+		return 0, fmt.Errorf("expire closed held: %w", err)
 	}
 	return n, nil
 }

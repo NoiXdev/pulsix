@@ -235,23 +235,38 @@ WHERE ae.org_id = @org_id
 ORDER BY ae.at, ae.id
 LIMIT @lim;
 
--- name: SuppressedAlertEvents :many
--- The follower's catch-up pass: every event still ledgered 'suppressed'
--- whose alert is still open. alert_notify_state_pending_idx (migration
--- 00052) is a partial index on exactly (org_id) WHERE state =
--- 'suppressed', so the first join condition is cheap regardless of how
--- much decided history has piled up; closed_at IS NULL on alerts is what
--- distinguishes a row this pass should retry from one ExpireClosedSuppressed
--- below should retire instead — the same alert state, read for two
--- different purposes. Same join and the same live-severity reasoning as
--- UndecidedAlertEvents above.
+-- name: HeldAlertEvents :many
+-- The follower's catch-up pass: every event the ledger is still HOLDING —
+-- 'suppressed' because the host is in maintenance, or 'deferred' because
+-- the route's delivery window was shut (migration 00054's fifth state) —
+-- whose alert is still open. The two are one working set because they are
+-- one behaviour: hold, re-check against a later instant, deliver when the
+-- reason has passed. Only the recorded WHY differs, and v0.4b's decision 8
+-- is why that why is a stored fact rather than an absence.
+--
+-- alert_notify_state_pending_idx (migration 00054) is a partial index on
+-- (org_id) WHERE state IN ('suppressed', 'deferred') — the predicate below
+-- is spelled to match it exactly, because an index whose predicate is
+-- narrower than the query's stops being used at all and this pass then
+-- scans every decided row the organization has ever accumulated.
+-- closed_at IS NULL on alerts is what distinguishes a row this pass should
+-- retry from one ExpireClosedHeld below should retire instead — the same
+-- alert state, read for two different purposes. Same join and the same
+-- live-severity reasoning as UndecidedAlertEvents above.
+--
+-- s.state travels back with the row so the follower can tell "still held
+-- for the same reason, nothing to write" from "held for a DIFFERENT reason
+-- now" — an event moves from 'deferred' to 'suppressed' the moment a
+-- maintenance window opens over it, and a catch-up pass that wrote nothing
+-- whenever the event was still held would leave the stale reason behind.
 SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
-       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at,
+       s.state AS ledger_state
 FROM alert_notify_state s
 JOIN alert_events ae ON ae.id = s.alert_event_id AND ae.org_id = s.org_id
 JOIN alerts a ON a.id = ae.alert_id
 JOIN hosts h ON h.id = a.host_id
-WHERE s.org_id = @org_id AND s.state = 'suppressed' AND a.closed_at IS NULL
+WHERE s.org_id = @org_id AND s.state IN ('suppressed', 'deferred') AND a.closed_at IS NULL
 ORDER BY ae.at, ae.id
 LIMIT @lim;
 
@@ -269,17 +284,22 @@ INSERT INTO alert_notify_state (org_id, alert_event_id, state, decided_at)
 VALUES (@org_id, @alert_event_id, @state, @decided_at)
 ON CONFLICT (alert_event_id) DO UPDATE SET state = excluded.state, decided_at = excluded.decided_at;
 
--- name: ExpireClosedSuppressed :execrows
--- "Retiring suppressed rows" (spec "The follower"): a 'suppressed' row
--- whose alert has since closed can never be caught up, because
--- SuppressedAlertEvents above only ever offers the catch-up pass an open
--- alert. Moving it to 'expired' here is what keeps that pass's own
--- working set bounded by rows genuinely still pending rather than
--- growing with every suppressed event the organization's history ever
--- produced. decided_at is overwritten to @now — the moment of retirement,
--- not the original suppression decision, the same "this column means
--- when this state became true" reading RaiseAlertSeverity's own
--- peak_severity gives its column.
+-- name: ExpireClosedHeld :execrows
+-- "Retiring suppressed rows" (spec "The follower"): a held row whose alert
+-- has since closed can never be caught up, because HeldAlertEvents above
+-- only ever offers the catch-up pass an open alert. Moving it to 'expired'
+-- here is what keeps that pass's own working set bounded by rows genuinely
+-- still pending rather than growing with every held event the
+-- organization's history ever produced. decided_at is overwritten to @now
+-- — the moment of retirement, not the original decision, the same "this
+-- column means when this state became true" reading RaiseAlertSeverity's
+-- own peak_severity gives its column.
+--
+-- The predicate covers BOTH held states, exactly like HeldAlertEvents'
+-- above. A 'deferred' row left behind here would never be read again by
+-- anything — its alert is closed, so the catch-up pass skips it forever —
+-- while still sitting in alert_notify_state_pending_idx, which is the one
+-- thing this statement exists to prevent happening to 'suppressed'.
 --
 -- The terminal state is a parameter rather than the literal 'expired',
 -- for the same reason RecordAlertNotifyState above takes one: the store
@@ -290,4 +310,4 @@ UPDATE alert_notify_state s SET state = @state, decided_at = @now
 FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
 WHERE s.alert_event_id = ae.id AND s.org_id = ae.org_id
-  AND s.org_id = @org_id AND s.state = 'suppressed' AND a.closed_at IS NOT NULL;
+  AND s.org_id = @org_id AND s.state IN ('suppressed', 'deferred') AND a.closed_at IS NOT NULL;
