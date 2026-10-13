@@ -29,6 +29,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -224,6 +225,10 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// Zero-valued for the same reason every sibling on this line is —
 		// this fixture registers every route and drives none.
 		AlertRoutes: &alertroutes.Service{},
+		// v0.4c's own required dependency (Task 8): the on-call rotation
+		// API. Zero-valued for the same reason every sibling on this line
+		// is — this fixture registers every route and drives none.
+		Oncall: &oncall.Service{},
 	}
 }
 

@@ -17,22 +17,27 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
-// decodeID reads {"route": {"id": "..."}} — the shape every create/get/
-// update alert-route response carries its id in (alert_route_dto.go).
+// decodeID reads the id out of a single-object response — {"route": {"id":
+// "..."}}, {"rotation": {"id": "..."}} and so on: every create/get/update
+// response in this package wraps its one object under a name field, never a
+// bare object, so decoding into a map and reading "id" off whichever single
+// value is present works for all of them without a decoder per resource.
 func decodeID(t *testing.T, resp *apitest.Response) string {
 	t.Helper()
-	var body struct {
-		Route struct {
-			ID string `json:"id"`
-		} `json:"route"`
-	}
+	var body map[string]json.RawMessage
 	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode id: %v: %s", err, resp.Body)
 	}
-	if body.Route.ID == "" {
-		t.Fatalf("no id in response: %s", resp.Body)
+	for _, raw := range body {
+		var obj struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &obj); err == nil && obj.ID != "" {
+			return obj.ID
+		}
 	}
-	return body.Route.ID
+	t.Fatalf("no id in response: %s", resp.Body)
+	return ""
 }
 
 func TestAlertRoutesCRUD(t *testing.T) {
@@ -162,6 +167,32 @@ func TestAlertRouteUpdateAndDelete(t *testing.T) {
 	}
 	if resp := s.Get(t, tok, url+"/"+id); resp.Code != http.StatusNotFound {
 		t.Errorf("GET after delete = %d, want 404", resp.Code)
+	}
+}
+
+// TestAlertRouteCarriesItsWindow pins the v0.4c wire shape
+// (alert_route_dto.go): a route's delivery window and breakthrough
+// severities round-trip on create, the same way its pre-existing selections
+// always have.
+func TestAlertRouteCarriesItsWindow(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+
+	created := s.Post(t, tok, "/api/v1/orgs/"+org.String()+"/alert-routes", map[string]any{
+		"name": "business hours", "enabled": true, "scope": "org",
+		"severities": []string{"crit", "warn"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"window": map[string]any{
+			"cron": "0 9 * * 1-5", "duration_seconds": 32400, "timezone": "Europe/Berlin",
+		},
+		"breakthrough_severities": []string{"crit"},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201: %s", created.Code, created.Body)
+	}
+	if !strings.Contains(created.Body.String(), "0 9 * * 1-5") {
+		t.Errorf("the created route does not carry its window back: %s", created.Body)
 	}
 }
 

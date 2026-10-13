@@ -46,6 +46,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
@@ -176,6 +177,12 @@ type Server struct {
 	// exactly like Checks/Rules/Items/Alerts, so a test can seed or inspect
 	// routes directly through the service the routes under test read from.
 	AlertRoutes *alertroutes.Service
+	// Oncall is the on-call rotation service (v0.4c Task 8), the same
+	// instance Deps.Oncall carries — exposed here, exactly like
+	// Checks/Rules/Items/Alerts/AlertRoutes, so a test can seed or inspect
+	// rotations directly through the service the routes under test read
+	// from.
+	Oncall *oncall.Service
 	// Push records every check-configuration push the check routes make
 	// after a write commits (api.Deps.AgentPush). Production wires
 	// *agentapi.Service here; a test has no agent stream to observe, so
@@ -548,6 +555,10 @@ func New(t *testing.T, opts ...Option) *Server {
 	// adapter the follower uses for the same lookup — the follower itself
 	// is not started here, like the reaper and the other tickers above.
 	s.AlertRoutes = alertroutes.NewService(alertroutes.NewSQLStore(d), app.NewAlertRouteGroups(s.Checks), time.Now, uuid.New)
+	// The on-call rotation surface (v0.4c Task 8), wired exactly like
+	// production (internal/app.Build): the same store a real manager's
+	// follower would resolve a route's rotation through.
+	s.Oncall = oncall.NewService(oncall.NewSQLStore(d), time.Now, uuid.New)
 	// A finished scheduled run group queues its notifications, as in
 	// production; the dispatcher is not started here (like the reaper).
 	jobsQueue.SetRunGroupSink(notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil))
@@ -604,6 +615,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
 		Alerts:      s.Alerts,
 		AlertRoutes: s.AlertRoutes,
+		Oncall:      s.Oncall,
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},

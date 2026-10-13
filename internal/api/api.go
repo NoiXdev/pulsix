@@ -30,6 +30,7 @@ import (
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -154,6 +155,12 @@ type Deps struct {
 	// routes registerAlertRouteRoutes wires (CRUD plus the per-host union
 	// view, GET /orgs/{org}/hosts/{id}/alert-routes, backlog 4.1b).
 	AlertRoutes *alertroutes.Service
+	// Oncall is the on-call rotation surface (v0.4c design doc, "API and
+	// permissions"): rotation CRUD and the roster view a rotation's edit
+	// screen needs. The same instance also backs the follower's rotation
+	// lookup in production (internal/app.Build) — nothing here drives that
+	// side, only the six routes registerOncallRoutes wires.
+	Oncall *oncall.Service
 	// AuthRateLimit is how many failed authentication attempts one client
 	// address may make per minute on each rate-limited auth endpoint
 	// (login, TOTP verify, passkey login finish, invite accept) —
@@ -325,6 +332,9 @@ func (d Deps) validate() error {
 	}
 	if d.AlertRoutes == nil {
 		missing = append(missing, "AlertRoutes")
+	}
+	if d.Oncall == nil {
+		missing = append(missing, "Oncall")
 	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
@@ -536,4 +546,5 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerOrgSettingsRoutes(orgScoped, deps)     // /orgs/{org}/settings/jobs
 	registerAlertRoutes(orgScoped, deps)           // /orgs/{org}/alerts..., the host view is List's own ?host= filter
 	registerAlertRouteRoutes(orgScoped, deps)      // /orgs/{org}/alert-routes..., GET /orgs/{org}/hosts/{id}/alert-routes
+	registerOncallRoutes(orgScoped, deps)          // /orgs/{org}/oncall-rotations..., GET .../shifts
 }

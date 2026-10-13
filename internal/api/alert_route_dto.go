@@ -36,12 +36,27 @@ type AlertRouteDTO struct {
 	// member: an unrecognized value stored by a future version must still
 	// round-trip through this DTO rather than fail an OpenAPI consumer's
 	// strict validation on a field this route never writes.
-	Severities []string  `json:"severities" doc:"Which alert severities this route fires on: warn, crit or unknown"`
-	Events     []string  `json:"events" doc:"Which alert lifecycle events this route fires on: opened, severity_raised, acknowledged, ack_voided, snoozed, unsnoozed or closed"`
-	Channels   []string  `json:"channels" doc:"Notification channel ids this route delivers to"`
-	Revision   int64     `json:"revision"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Severities []string `json:"severities" doc:"Which alert severities this route fires on: warn, crit or unknown"`
+	Events     []string `json:"events" doc:"Which alert lifecycle events this route fires on: opened, severity_raised, acknowledged, ack_voided, snoozed, unsnoozed or closed"`
+	Channels   []string `json:"channels" doc:"Notification channel ids this route delivers to"`
+	// Window, BreakthroughSeverities and RotationID are v0.4c's own
+	// additions (design doc "API and permissions"): a route with no window
+	// may deliver at any time, the v0.4b default these three fields extend.
+	Window                 *AlertRouteWindowDTO `json:"window,omitempty" doc:"The route's delivery window; absent means it may deliver at any time"`
+	BreakthroughSeverities []string             `json:"breakthrough_severities,omitempty" doc:"The subset of severities that crosses a closed window anyway; only meaningful alongside window"`
+	RotationID             string               `json:"rotation_id,omitempty" doc:"An on-call rotation whose current channel replaces this route's fixed channel list; absent means channels is used as given"`
+	Revision               int64                `json:"revision"`
+	CreatedAt              time.Time            `json:"created_at"`
+	UpdatedAt              time.Time            `json:"updated_at"`
+}
+
+// AlertRouteWindowDTO is a route's delivery window on the wire
+// (alertroutes.Window): cron for the start instants, a duration in seconds
+// to make each an interval, and a timezone.
+type AlertRouteWindowDTO struct {
+	Cron            string `json:"cron" doc:"A 5-field cron expression naming the window's start instants"`
+	DurationSeconds int64  `json:"duration_seconds" doc:"Length of each occurrence, in seconds"`
+	Timezone        string `json:"timezone" doc:"IANA timezone the cron is evaluated in"`
 }
 
 // toAlertRouteDTO flattens one alertroutes.Route onto the wire shape every
@@ -65,6 +80,20 @@ func toAlertRouteDTO(r alertroutes.Route) AlertRouteDTO {
 	}
 	for i, ch := range r.Channels {
 		dto.Channels[i] = ch.String()
+	}
+	if r.Window != nil {
+		dto.Window = &AlertRouteWindowDTO{
+			Cron: r.Window.Cron, DurationSeconds: int64(r.Window.Duration / time.Second), Timezone: r.Window.Timezone,
+		}
+	}
+	if len(r.Breakthrough) > 0 {
+		dto.BreakthroughSeverities = make([]string, len(r.Breakthrough))
+		for i, s := range r.Breakthrough {
+			dto.BreakthroughSeverities[i] = string(s)
+		}
+	}
+	if r.RotationID != nil {
+		dto.RotationID = r.RotationID.String()
 	}
 	return dto
 }
@@ -97,6 +126,13 @@ type AlertRouteBody struct {
 	Severities []string `json:"severities,omitempty" doc:"warn, crit or unknown"`
 	Events     []string `json:"events,omitempty" doc:"opened, severity_raised, acknowledged, ack_voided, snoozed, unsnoozed or closed"`
 	Channels   []string `json:"channels,omitempty" doc:"Notification channel ids"`
+	// Window, BreakthroughSeverities and RotationID are v0.4c's own
+	// additions; all three are optional the same way the rest of this body
+	// is (see the doc comment above) — omitting window leaves the route
+	// free to deliver at any time, alertroutes.Validate's own default.
+	Window                 *AlertRouteWindowDTO `json:"window,omitempty"`
+	BreakthroughSeverities []string             `json:"breakthrough_severities,omitempty" doc:"Severities that cross a closed window anyway; needs window"`
+	RotationID             string               `json:"rotation_id,omitempty" doc:"An on-call rotation to resolve the delivery channel from instead of channels"`
 }
 
 // input turns the wire body into alertroutes.Input. A malformed scope_id or
@@ -125,8 +161,23 @@ func (b AlertRouteBody) input() (alertroutes.Input, error) {
 		}
 		channels[i] = id
 	}
+	var window *alertroutes.Window
+	if b.Window != nil {
+		window = &alertroutes.Window{
+			Cron: b.Window.Cron, Duration: time.Duration(b.Window.DurationSeconds) * time.Second, Timezone: b.Window.Timezone,
+		}
+	}
+	breakthrough := make([]rules.State, len(b.BreakthroughSeverities))
+	for i, s := range b.BreakthroughSeverities {
+		breakthrough[i] = rules.State(s)
+	}
+	rotationID, err := optionalUUID(b.RotationID, "rotation id")
+	if err != nil {
+		return alertroutes.Input{}, err
+	}
 	return alertroutes.Input{
 		Name: b.Name, Enabled: b.Enabled, Scope: alertroutes.Scope(b.Scope), ScopeID: scopeID,
 		Severities: severities, Events: events, Channels: channels,
+		Window: window, Breakthrough: breakthrough, RotationID: rotationID,
 	}, nil
 }

@@ -1683,6 +1683,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/oncall-rotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org oncall rotations */
+        get: operations["get-api-v1-orgs-by-org-oncall-rotations"];
+        put?: never;
+        /** Post API v1 orgs by org oncall rotations */
+        post: operations["createOncallRotation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/oncall-rotations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org oncall rotations by ID */
+        get: operations["get-api-v1-orgs-by-org-oncall-rotations-by-id"];
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org oncall rotations by ID */
+        delete: operations["deleteOncallRotation"];
+        options?: never;
+        head?: never;
+        /** Patch API v1 orgs by org oncall rotations by ID */
+        patch: operations["updateOncallRotation"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/oncall-rotations/{id}/shifts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org oncall rotations by ID shifts */
+        get: operations["get-api-v1-orgs-by-org-oncall-rotations-by-id-shifts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/playbooks": {
         parameters: {
             query?: never;
@@ -2586,20 +2640,27 @@ export interface components {
              * @example https://example.com/schemas/AlertRouteBody.json
              */
             readonly $schema?: string;
+            /** @description Severities that cross a closed window anyway; needs window */
+            breakthrough_severities?: string[] | null;
             /** @description Notification channel ids */
             channels?: string[] | null;
             enabled: boolean;
             /** @description opened, severity_raised, acknowledged, ack_voided, snoozed, unsnoozed or closed */
             events?: string[] | null;
             name?: string;
+            /** @description An on-call rotation to resolve the delivery channel from instead of channels */
+            rotation_id?: string;
             /** @enum {string} */
             scope?: "org" | "monitoring_group" | "host";
             /** @description The monitoring group or host id this route targets; omit for scope org */
             scope_id?: string;
             /** @description warn, crit or unknown */
             severities?: string[] | null;
+            window?: components["schemas"]["AlertRouteWindowDTO"];
         };
         AlertRouteDTO: {
+            /** @description The subset of severities that crosses a closed window anyway; only meaningful alongside window */
+            breakthrough_severities?: string[] | null;
             /** @description Notification channel ids this route delivers to */
             channels: string[] | null;
             /** Format: date-time */
@@ -2611,6 +2672,8 @@ export interface components {
             name: string;
             /** Format: int64 */
             revision: number;
+            /** @description An on-call rotation whose current channel replaces this route's fixed channel list; absent means channels is used as given */
+            rotation_id?: string;
             /** @enum {string} */
             scope: "org" | "monitoring_group" | "host";
             /** @description The monitoring group or host id this route targets; absent for scope org */
@@ -2619,6 +2682,8 @@ export interface components {
             severities: string[] | null;
             /** Format: date-time */
             updated_at: string;
+            /** @description The route's delivery window; absent means it may deliver at any time */
+            window?: components["schemas"]["AlertRouteWindowDTO"];
         };
         AlertRouteListOutputBody: {
             /**
@@ -2637,6 +2702,17 @@ export interface components {
              */
             readonly $schema?: string;
             route: components["schemas"]["AlertRouteDTO"];
+        };
+        AlertRouteWindowDTO: {
+            /** @description A 5-field cron expression naming the window's start instants */
+            cron: string;
+            /**
+             * Format: int64
+             * @description Length of each occurrence, in seconds
+             */
+            duration_seconds: number;
+            /** @description IANA timezone the cron is evaluated in */
+            timezone: string;
         };
         AlertSnoozeInputBody: {
             /**
@@ -4421,6 +4497,82 @@ export interface components {
              * @example https://example.com/schemas/OkOutputBody.json
              */
             readonly $schema?: string;
+        };
+        OncallRotationBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OncallRotationBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description The first handover; date and time together
+             */
+            anchor?: string;
+            /** @description Notification channel ids, in cycle order */
+            channels?: string[] | null;
+            name?: string;
+            /** Format: int64 */
+            period_days?: number;
+            timezone?: string;
+        };
+        OncallRotationDTO: {
+            /**
+             * Format: date-time
+             * @description The first handover; date and time together
+             */
+            anchor: string;
+            /** @description Notification channel ids, in cycle order */
+            channels: string[] | null;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            name: string;
+            /** Format: int64 */
+            period_days: number;
+            /** Format: int64 */
+            revision: number;
+            timezone: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        OncallRotationListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OncallRotationListOutputBody.json
+             */
+            readonly $schema?: string;
+            rotations: components["schemas"]["OncallRotationDTO"][] | null;
+        };
+        OncallRotationOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OncallRotationOutputBody.json
+             */
+            readonly $schema?: string;
+            rotation: components["schemas"]["OncallRotationDTO"];
+        };
+        OncallShiftDTO: {
+            channel_id: string;
+            channel_name: string;
+            /** Format: date-time */
+            ends_at: string;
+            /** @description True when this segment came from an exception rather than the cycle itself */
+            stand_in: boolean;
+            /** Format: date-time */
+            starts_at: string;
+        };
+        OncallShiftsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OncallShiftsOutputBody.json
+             */
+            readonly $schema?: string;
+            shifts: components["schemas"]["OncallShiftDTO"][] | null;
         };
         OrgCreateInputBody: {
             /**
@@ -10309,6 +10461,215 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotifyDigestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-oncall-rotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OncallRotationListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createOncallRotation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OncallRotationBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OncallRotationOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-oncall-rotations-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OncallRotationOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteOncallRotation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateOncallRotation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The rotation's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OncallRotationBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OncallRotationOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-oncall-rotations-by-id-shifts": {
+        parameters: {
+            query: {
+                /** @description RFC 3339 start of the range */
+                from: string;
+                /** @description RFC 3339 end of the range (exclusive) */
+                to: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OncallShiftsOutputBody"];
                 };
             };
             /** @description Error */

@@ -444,13 +444,20 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// the same reason: one store on the shared pool, handed to whoever
 	// needs it, rather than a second instance per consumer.
 	oncallStore := oncall.NewSQLStore(appDB)
-	alertRoutesSvc := alertroutes.NewService(alertRoutesStore, NewAlertRouteGroups(checksSvc), time.Now, func() uuid.UUID {
+	newUUIDv7 := func() uuid.UUID {
 		id, err := uuid.NewV7FromReader(rand.Reader)
 		if err != nil {
 			panic(err) //nolint:forbidigo // entropy failure is unrecoverable, like uuid.Must
 		}
 		return id
-	})
+	}
+	alertRoutesSvc := alertroutes.NewService(alertRoutesStore, NewAlertRouteGroups(checksSvc), time.Now, newUUIDv7)
+	// oncall.Service (v0.4c Task 8): the API's own rotation CRUD and roster
+	// surface, built on the same store the follower above resolves a
+	// route's rotation through directly (NewFollower takes the concrete
+	// store, not this Service) — one store, not two, alertRoutesSvc's own
+	// doc comment above explains the same sharing for alertRoutesStore.
+	oncallSvc := oncall.NewService(oncallStore, time.Now, newUUIDv7)
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
@@ -501,6 +508,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
 		Alerts:      alertsSvc,
 		AlertRoutes: alertRoutesSvc,
+		Oncall:      oncallSvc,
 	})
 	if err != nil {
 		appDB.Close()
