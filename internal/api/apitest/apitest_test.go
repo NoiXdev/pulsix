@@ -8,9 +8,11 @@ package apitest_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -219,5 +221,96 @@ func TestMailerRecordsSentMessages(t *testing.T) {
 	sent[0].To = "mutated"
 	if again := m.Sent(); again[0].To != "to@example.test" {
 		t.Fatalf("Sent() leaked its internal slice: %+v", again)
+	}
+}
+
+// TestBearerFixtureHelpers exercises the fixture surface v0.4b added for
+// the alert-route API tests — OrgWithToken, OrgWithTokenPerms,
+// SeedChannel, SeedHost and the bearer-authenticated Get/Post/Patch/
+// Delete — for this file's own stated reason: internal/api drives all of
+// them on every alert-route test, but a helper package is credited no
+// coverage for a test file it does not own, and 194 lines of new helpers
+// took this package from 86 % to 78 %, under its floor.
+//
+// It drives a whole route through the real listener rather than asserting
+// on the helpers in isolation, because that is the only thing that proves
+// what they are for: that the token OrgWithToken returns authenticates, is
+// scoped to the organization whose id the path names, and carries enough
+// permission to write.
+func TestBearerFixtureHelpers(t *testing.T) {
+	s := apitest.New(t)
+	if s.AlertRoutes == nil {
+		t.Fatal("New left AlertRoutes unset")
+	}
+	org, tok := s.OrgWithToken(t)
+	channel := s.SeedChannel(t, org)
+	host := s.SeedHost(t, org)
+	if org == uuid.Nil || tok == "" || channel == uuid.Nil || host == uuid.Nil {
+		t.Fatalf("a fixture returned a zero value: org=%s tok=%q channel=%s host=%s", org, tok, channel, host)
+	}
+	base := "/api/v1/orgs/" + org.String() + "/alert-routes"
+
+	created := s.Post(t, tok, base, map[string]any{
+		"name": "fixture", "enabled": true, "scope": "host", "scope_id": host.String(),
+		"severities": []string{"crit"}, "events": []string{"opened"}, "channels": []string{channel.String()},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("Post = %d, want 201: %s", created.Code, created.Body)
+	}
+	var route struct {
+		Route struct {
+			ID       string `json:"id"`
+			Revision int64  `json:"revision"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &route); err != nil {
+		t.Fatalf("decode %s: %v", created.Body, err)
+	}
+
+	if got := s.Get(t, tok, base); got.Code != http.StatusOK {
+		t.Fatalf("Get = %d, want 200: %s", got.Code, got.Body)
+	}
+
+	// Patch with "" sends no If-Match at all, which is the whole reason
+	// that parameter exists rather than always carrying a revision.
+	one := base + "/" + route.Route.ID
+	if got := s.Patch(t, tok, one, "", map[string]any{"enabled": false}); got.Code != http.StatusPreconditionRequired {
+		t.Fatalf("Patch without If-Match = %d, want 428: %s", got.Code, got.Body)
+	}
+	etag := `"` + strconv.FormatInt(route.Route.Revision, 10) + `"`
+	patched := s.Patch(t, tok, one, etag, map[string]any{
+		"name": "fixture", "enabled": false, "scope": "host", "scope_id": host.String(),
+		"severities": []string{"crit"}, "events": []string{"opened"}, "channels": []string{channel.String()},
+	})
+	if patched.Code != http.StatusOK {
+		t.Fatalf("Patch = %d, want 200: %s", patched.Code, patched.Body)
+	}
+
+	// A token capped at channels.read reads the same list and is refused
+	// the write — OrgWithTokenPerms' own purpose, and the proof it really
+	// picks the LOWEST role granting what was asked for rather than an
+	// owner token under another name.
+	readOrg, readTok := s.OrgWithTokenPerms(t, tenancy.PermChannelsRead)
+	readBase := "/api/v1/orgs/" + readOrg.String() + "/alert-routes"
+	if got := s.Get(t, readTok, readBase); got.Code != http.StatusOK {
+		t.Fatalf("Get with channels.read = %d, want 200: %s", got.Code, got.Body)
+	}
+	nope := map[string]any{
+		"name": "nope", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"}, "channels": []string{s.SeedChannel(t, readOrg).String()},
+	}
+	if got := s.Post(t, readTok, readBase, nope); got.Code != http.StatusForbidden {
+		t.Fatalf("Post with channels.read only = %d, want 403: %s", got.Code, got.Body)
+	}
+
+	// DELETE takes no If-Match — the route carries no precondition
+	// (alert_route_handlers.go registers it with the plain id input), so
+	// Delete's ifMatch argument is simply unused here; it exists because
+	// the helper serves every bearer DELETE, not only this one.
+	if got := s.Delete(t, tok, one, ""); got.Code != http.StatusOK {
+		t.Fatalf("Delete = %d, want 200: %s", got.Code, got.Body)
+	}
+	if got := s.Get(t, tok, one); got.Code != http.StatusNotFound {
+		t.Fatalf("Get after Delete = %d, want 404: %s", got.Code, got.Body)
 	}
 }
