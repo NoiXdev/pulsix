@@ -55,6 +55,7 @@ describe('SetupWizardPage — completing the wizard with SMTP off', () => {
     await user.type(await screen.findByLabelText('Name'), 'Root Admin');
     await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
     await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery staple');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     await user.type(await screen.findByLabelText('Organization name'), 'Acme Hosting');
@@ -87,6 +88,7 @@ describe('SetupWizardPage — completing the wizard with SMTP off', () => {
     await user.type(await screen.findByLabelText('Name'), 'Root Admin');
     await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
     await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery staple');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     await user.type(await screen.findByLabelText('Organization name'), 'Acme Hosting');
@@ -109,5 +111,35 @@ describe('SetupWizardPage guard (cheap fix)', () => {
     renderWizard();
 
     await screen.findByText('ROOT');
+  });
+});
+
+describe('the administrator password is typed twice', () => {
+  it('refuses to continue when the two do not match', async () => {
+    mockApi({ 'GET /api/v1/setup/status': { completed: false } });
+    renderWizard();
+    await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
+    await userEvent.type(screen.getByLabelText('Email address'), 'ada@example.test');
+    await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-password');
+    await userEvent.type(screen.getByLabelText('Repeat password'), 'a-long-enough-passwird');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    // Still on the administrator step: a typo in the one field nobody can
+    // read back is the one this wizard cannot let through, because the
+    // instance has no other administrator to undo it with.
+    expect(await screen.findByText(/passwords do not match/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Repeat password')).toBeInTheDocument();
+  });
+
+  it('continues when the two agree', async () => {
+    mockApi({ 'GET /api/v1/setup/status': { completed: false } });
+    renderWizard();
+    await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
+    await userEvent.type(screen.getByLabelText('Email address'), 'ada@example.test');
+    await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-password');
+    await userEvent.type(screen.getByLabelText('Repeat password'), 'a-long-enough-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText('Create the first organization')).toBeInTheDocument();
   });
 });

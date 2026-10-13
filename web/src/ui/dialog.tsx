@@ -43,7 +43,13 @@ export function Dialog({ open, onClose, title, children, size = 'default' }: Dia
       onClose={onClose}
       onCancel={onClose}
       aria-labelledby={titleId}
-      className={`${SIZE_CLASS[size]} max-w-[90vw] rounded-xl border border-border bg-card p-0 text-foreground backdrop:bg-black/60`}
+      // m-auto is not decoration: a native <dialog> centres itself in the
+      // viewport through the user-agent stylesheet's own `margin: auto`,
+      // and Tailwind's preflight resets `margin: 0` on every element —
+      // which drops every dialog in the app into the top-left corner. The
+      // centring assertion in web/e2e/members.spec.ts is what pins it,
+      // because jsdom does no layout and so no unit test can see it.
+      className={`${SIZE_CLASS[size]} m-auto max-w-[90vw] rounded-xl border border-border bg-card p-0 text-foreground backdrop:bg-black/60`}
     >
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 id={titleId} className="text-[15px] font-semibold">

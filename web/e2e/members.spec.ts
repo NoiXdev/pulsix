@@ -18,6 +18,20 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
 
   await page.getByRole('button', { name: 'Invite member' }).click();
   const dialog = page.getByRole('dialog');
+
+  // The dialog sits in the middle of the viewport. A native <dialog>
+  // centres itself through the user-agent stylesheet's `margin: auto`,
+  // and Tailwind's preflight sets `margin: 0` on every element — which
+  // silently dropped it into the top-left corner. Nothing in jsdom can
+  // catch that, because jsdom does no layout; only a real browser can
+  // say where the box actually is.
+  const box = (await dialog.boundingBox())!;
+  const view = page.viewportSize()!;
+  const dx = Math.abs(box.x + box.width / 2 - view.width / 2);
+  const dy = Math.abs(box.y + box.height / 2 - view.height / 2);
+  expect(dx, 'dialog is not horizontally centred').toBeLessThan(24);
+  expect(dy, 'dialog is not vertically centred').toBeLessThan(24);
+
   await dialog.getByLabel('E-mail address').fill(OPERATOR.email);
   await dialog.getByLabel('Role').selectOption('operator');
   await dialog.getByRole('button', { name: 'Send invitation' }).click();

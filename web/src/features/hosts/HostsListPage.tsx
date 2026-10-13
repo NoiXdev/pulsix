@@ -6,6 +6,7 @@ import { Globe, Search, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
+import { SlugField } from '../../ui/SlugField.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -215,7 +216,12 @@ export function HostsListPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="zone_slug">Slug</Label>
-            <Input id="zone_slug" {...zoneForm.register('slug')} />
+            <SlugField
+              id="zone_slug"
+              inputProps={zoneForm.register('slug')}
+              readSource={() => zoneForm.getValues('name') ?? ''}
+              write={(slug) => zoneForm.setValue('slug', slug, { shouldValidate: true })}
+            />
             {zoneForm.formState.errors.slug && (
               <span className="text-[11px] text-destructive">{zoneForm.formState.errors.slug.message}</span>
             )}

@@ -12,6 +12,7 @@ import { completeSetup, refetchSetupStatus, useSetupStatus } from '../../api/hoo
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
 import { useResetSession } from '../../lib/session.ts';
 import { useQueryClient } from '@tanstack/react-query';
+import { SlugField } from '../../ui/SlugField.tsx';
 
 type StepKey = 'admin' | 'org' | 'smtp' | 'mfa';
 const STEPS: Array<{ key: StepKey; label: string; sub: string }> = [
@@ -21,11 +22,25 @@ const STEPS: Array<{ key: StepKey; label: string; sub: string }> = [
   { key: 'mfa', label: 'Second factor', sub: 'authenticator app or passkey' },
 ];
 
-const adminSchema = z.object({
-  admin_email: emailSchema,
-  admin_password: passwordSchema,
-  admin_name: z.string().min(1, 'required'),
-});
+// The repeat is checked here rather than on the field, because a mismatch
+// is a fact about the pair: zod's refine runs once both have a value and
+// reports against the repeat, which is the field the person just left.
+//
+// This is the one password in the product nobody can recover. A typo in
+// it locks the instance out of its own first administrator, and there is
+// no second administrator to undo it with — which is why the wizard asks
+// twice and the login form does not.
+const adminSchema = z
+  .object({
+    admin_email: emailSchema,
+    admin_password: passwordSchema,
+    admin_password_repeat: z.string().min(1, 'required'),
+    admin_name: z.string().min(1, 'required'),
+  })
+  .refine((v) => v.admin_password === v.admin_password_repeat, {
+    message: 'passwords do not match',
+    path: ['admin_password_repeat'],
+  });
 type AdminValues = z.infer<typeof adminSchema>;
 
 const orgSchema = z.object({
@@ -164,6 +179,18 @@ export function SetupWizardPage() {
               <Field id="admin_password" label="Password" error={adminForm.formState.errors.admin_password?.message}>
                 <Input id="admin_password" type="password" {...adminForm.register('admin_password')} />
               </Field>
+              <Field
+                id="admin_password_repeat"
+                label="Repeat password"
+                error={adminForm.formState.errors.admin_password_repeat?.message}
+              >
+                <Input
+                  id="admin_password_repeat"
+                  type="password"
+                  autoComplete="new-password"
+                  {...adminForm.register('admin_password_repeat')}
+                />
+              </Field>
               <div className="flex justify-end">
                 <Button type="submit" variant="primary">
                   Continue
@@ -185,7 +212,12 @@ export function SetupWizardPage() {
                 <Input id="org_name" {...orgForm.register('org_name')} />
               </Field>
               <Field id="org_slug" label="URL slug" error={orgForm.formState.errors.org_slug?.message}>
-                <Input id="org_slug" {...orgForm.register('org_slug')} />
+                <SlugField
+                  id="org_slug"
+                  inputProps={orgForm.register('org_slug')}
+                  readSource={() => orgForm.getValues('org_name') ?? ''}
+                  write={(slug) => orgForm.setValue('org_slug', slug, { shouldValidate: true })}
+                />
               </Field>
               <div className="flex justify-between">
                 <Button type="button" onClick={() => setStep('admin')}>
