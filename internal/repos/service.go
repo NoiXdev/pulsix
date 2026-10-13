@@ -61,6 +61,16 @@ type Repo struct {
 	Subpath string
 	// CredentialID is nil when the checkout fetches without a credential.
 	CredentialID *uuid.UUID
+	// VaultCredentialID names the vault_password credential Ansible needs
+	// to read this repository's encrypted files, nil when it has none.
+	// Deliberately separate from CredentialID beside it: one secret gets
+	// AT the repository, the other at its CONTENTS, and a deploy key that
+	// could also decrypt group_vars would be one secret doing two jobs.
+	//
+	// One repository, one vault password. Ansible supports several vault
+	// ids for several environments; that would make this a list, and the
+	// limit is recorded here, in migration 00055 and in the proto.
+	VaultCredentialID *uuid.UUID
 	// SSHHostKey is the git server's pinned host-key fingerprint
 	// (SHA256:…) and SSHHostPublicKey the full key in authorized-key form —
 	// written by the sync sink from what the FIRST (unpinned) successful
@@ -88,21 +98,23 @@ func (r Repo) PinState() string {
 
 // CreateInput is a new repository. An empty Branch becomes DefaultBranch.
 type CreateInput struct {
-	Name         string
-	URL          string
-	Branch       string
-	Subpath      string
-	CredentialID *uuid.UUID
+	Name              string
+	URL               string
+	Branch            string
+	Subpath           string
+	CredentialID      *uuid.UUID
+	VaultCredentialID *uuid.UUID
 }
 
 // UpdateInput replaces every editable field, name included; a name clash
 // with another repository is ErrNameTaken.
 type UpdateInput struct {
-	Name         string
-	URL          string
-	Branch       string
-	Subpath      string
-	CredentialID *uuid.UUID
+	Name              string
+	URL               string
+	Branch            string
+	Subpath           string
+	CredentialID      *uuid.UUID
+	VaultCredentialID *uuid.UUID
 }
 
 // CredentialSource is the slice of credentials.Service a repo's credential
@@ -147,13 +159,14 @@ func NewService(store Store, creds CredentialSource, jobs JobEnqueuer) *Service 
 
 // Create validates and registers a repository.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Repo, error) {
-	if err := s.validate(ctx, orgID, in.CredentialID, in.Name, in.URL, in.Branch, in.Subpath); err != nil {
+	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath); err != nil {
 		return Repo{}, err
 	}
 	return s.store.Create(ctx, Repo{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
 		Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
-		CredentialID: in.CredentialID,
+		CredentialID:      in.CredentialID,
+		VaultCredentialID: in.VaultCredentialID,
 	})
 }
 
@@ -177,12 +190,12 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err != nil {
 		return Repo{}, err
 	}
-	if err := s.validate(ctx, orgID, in.CredentialID, in.Name, in.URL, in.Branch, in.Subpath); err != nil {
+	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath); err != nil {
 		return Repo{}, err
 	}
 	next := cur
-	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID =
-		in.Name, in.URL, defaultBranch(in.Branch), in.Subpath, in.CredentialID
+	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID, next.VaultCredentialID =
+		in.Name, in.URL, defaultBranch(in.Branch), in.Subpath, in.CredentialID, in.VaultCredentialID
 	if next.URL != cur.URL {
 		next.SSHHostKey, next.SSHHostPublicKey = "", ""
 	}
@@ -224,7 +237,7 @@ func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUI
 // validate checks every editable field, resolving the credential (when
 // referenced) first so a wrong-kind credential fails before anything is
 // stored.
-func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID *uuid.UUID, name, url, branch, subpath string) error {
+func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, vaultCredentialID *uuid.UUID, name, url, branch, subpath string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%w: invalid name: must be lowercase letters, digits, dots, underscores or hyphens (1–63 characters), starting with a letter or digit", ErrInvalidInput)
 	}
@@ -249,6 +262,29 @@ func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID *u
 	}
 	if cred.Kind != credentials.KindGitKey && cred.Kind != credentials.KindGitToken {
 		return fmt.Errorf("%w: the referenced credential must be a git_key or git_token credential", ErrInvalidInput)
+	}
+	return s.validateVaultCredential(ctx, orgID, vaultCredentialID)
+}
+
+// validateVaultCredential refuses anything but a vault_password in the
+// repository's vault slot. The kinds are not interchangeable and the
+// failure of a wrong one is remote from its cause: a git_token accepted
+// here would be written out as a password file, Ansible would try to
+// decrypt with it, and the operator would see "decryption failed" with
+// nothing pointing back at the repository form.
+func (s *Service) validateVaultCredential(ctx context.Context, orgID uuid.UUID, id *uuid.UUID) error {
+	if id == nil {
+		return nil
+	}
+	cred, err := s.creds.Get(ctx, orgID, *id)
+	if err != nil {
+		if errors.Is(err, credentials.ErrNotFound) {
+			return fmt.Errorf("%w: vault credential not found", ErrInvalidInput)
+		}
+		return fmt.Errorf("look up vault credential: %w", err)
+	}
+	if cred.Kind != credentials.KindVaultPassword {
+		return fmt.Errorf("%w: the referenced vault credential must be a vault_password credential", ErrInvalidInput)
 	}
 	return nil
 }

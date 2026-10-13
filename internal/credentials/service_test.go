@@ -439,3 +439,39 @@ func TestOpenSecretRoundTripsAndFailsClosed(t *testing.T) {
 		t.Fatalf("tampered ciphertext: %v", err)
 	}
 }
+
+// A vault_password holds a PASSWORD, and buildSecret's default branch —
+// written when the only non-key kinds were ssh_password and git_token —
+// would have demanded a token for it. The credential would then store
+// Secret{Token: ...} while the worker reads Secret{Password: ...}, and
+// the vault would simply never open, with nothing saying why.
+func TestVaultPasswordCredentialStoresAPassword(t *testing.T) {
+	ctx := context.Background()
+	org := uuid.Must(uuid.NewV7())
+	svc := newService(newFakeStore(), time.Now())
+
+	c, err := svc.Create(ctx, org, credentials.CreateInput{
+		Name: "prod-vault", Kind: credentials.KindVaultPassword,
+		Material: credentials.Material{Password: "the-vault-passphrase"},
+	})
+	if err != nil {
+		t.Fatalf("create vault credential: %v", err)
+	}
+	secret, err := svc.OpenSecret(ctx, org, c.ID)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if secret.Password != "the-vault-passphrase" {
+		t.Errorf("stored secret = %+v, want the passphrase in Password", secret)
+	}
+	if secret.Token != "" {
+		t.Errorf("the passphrase was stored as a token: %+v", secret)
+	}
+
+	if _, err := svc.Create(ctx, org, credentials.CreateInput{
+		Name: "wrong", Kind: credentials.KindVaultPassword,
+		Material: credentials.Material{Token: "not-a-passphrase"},
+	}); err == nil {
+		t.Error("a vault credential given a token instead of a password must be refused")
+	}
+}

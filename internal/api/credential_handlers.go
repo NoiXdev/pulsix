@@ -23,7 +23,7 @@ type credentialUsageDTO struct {
 type credentialDTO struct {
 	ID          string             `json:"id"`
 	Name        string             `json:"name"`
-	Kind        string             `json:"kind" enum:"ssh_key,ssh_password,git_key,git_token"`
+	Kind        string             `json:"kind" enum:"ssh_key,ssh_password,git_key,git_token,vault_password"`
 	Username    string             `json:"username"`
 	PublicKey   string             `json:"public_key,omitempty"`
 	Fingerprint string             `json:"fingerprint,omitempty"`
@@ -132,7 +132,7 @@ type credentialCreateInput struct {
 	Org  string `path:"org"`
 	Body struct {
 		Name       string     `json:"name" minLength:"1" maxLength:"63"`
-		Kind       string     `json:"kind" enum:"ssh_key,ssh_password,git_key,git_token"`
+		Kind       string     `json:"kind" enum:"ssh_key,ssh_password,git_key,git_token,vault_password"`
 		Username   string     `json:"username,omitempty" maxLength:"64"`
 		ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 		Generate   bool       `json:"generate,omitempty" doc:"Key kinds: generate a new ed25519 key"`

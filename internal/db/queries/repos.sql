@@ -1,6 +1,6 @@
 -- name: CreateRepo :one
-INSERT INTO git_repos (id, org_id, name, url, branch, subpath, credential_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO git_repos (id, org_id, name, url, branch, subpath, credential_id, vault_credential_id)
+VALUES (@id, @org_id, @name, @url, @branch, @subpath, @credential_id, @vault_credential_id)
 RETURNING *;
 
 -- name: GetRepo :one
@@ -20,7 +20,8 @@ SELECT * FROM git_repos WHERE org_id = $1 ORDER BY name;
 -- the pin, the pin's own server is gone).
 UPDATE git_repos
 SET name = @name, url = @url, branch = @branch, subpath = @subpath,
-    credential_id = @credential_id, ssh_host_key = @ssh_host_key, ssh_host_public_key = @ssh_host_public_key,
+    credential_id = @credential_id, vault_credential_id = @vault_credential_id,
+    ssh_host_key = @ssh_host_key, ssh_host_public_key = @ssh_host_public_key,
     updated_at = now()
 WHERE org_id = @org_id AND id = @id
 RETURNING *;

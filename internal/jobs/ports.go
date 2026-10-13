@@ -183,11 +183,17 @@ type RepoSource interface {
 // (backlog 2.41) — the fingerprint plus the full key the worker pre-seeds
 // into the fetch's own known_hosts; both empty while unpinned.
 type RepoRef struct {
-	ID               uuid.UUID
-	URL              string
-	Branch           string
-	Subpath          string
-	CredentialID     *uuid.UUID
-	SSHHostKey       string
-	SSHHostPublicKey string
+	ID           uuid.UUID
+	URL          string
+	Branch       string
+	Subpath      string
+	CredentialID *uuid.UUID
+	// VaultCredentialID is the vault_password credential whose passphrase
+	// Ansible needs to read this repository's encrypted files, nil when
+	// it has none. The claim ships its secret under the credential's own
+	// uuid — unlike the git credential's `git:<repo-id>` key, so that the
+	// job's vault_credential_id field names what it says it names.
+	VaultCredentialID *uuid.UUID
+	SSHHostKey        string
+	SSHHostPublicKey  string
 }

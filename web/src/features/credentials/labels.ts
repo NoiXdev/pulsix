@@ -6,6 +6,7 @@ export const KIND_LABEL: Record<string, string> = {
   ssh_password: 'SSH password',
   git_key: 'Git deploy key',
   git_token: 'Git token',
+  vault_password: 'Ansible Vault password',
 };
 
 type CredentialLike = Pick<Credential, 'kind' | 'key_type' | 'used_by' | 'expired' | 'expires_soon' | 'expires_at'>;

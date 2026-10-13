@@ -353,6 +353,10 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	}
 	scope := render.Scope{HostIDs: hostIDs}
 	playbook, limit, sshUser := "", "", ""
+	// vaultCredentialID is the uuid of the repository's vault_password
+	// credential, empty for every claim whose playbook is inline or whose
+	// repository has none — which is almost all of them.
+	vaultCredentialID := ""
 	var extraVars map[string]string
 	var defaultCred *uuid.UUID
 	var redact redactSet
@@ -520,7 +524,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		// the repo's git credential as `git:<repo-id>`: the worker clones
 		// itself, and it needs url, branch and the playbook's file path.
 		var err error
-		if kindPayload, err = q.repoKindPayload(ctx, job, repoID, sub, credentials); err != nil {
+		if kindPayload, vaultCredentialID, err = q.repoKindPayload(ctx, job, repoID, sub, credentials); err != nil {
 			return err
 		}
 	}
@@ -547,6 +551,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		BastionHostKeys:   pins.bastionFPs,
 		BastionKnownHosts: pins.bastionPubs,
 		KindPayload:       kindPayload,
+		VaultCredentialId: vaultCredentialID,
 		Redact:            redact.list,
 	}
 	return nil
@@ -974,13 +979,13 @@ func parsePlaybookRef(ref string) (uuid.UUID, string, bool) {
 // map as `git:<repo-id>`. A missing repo source is a wiring bug and fails
 // closed; an unknown repository is a dangling playbook reference (the
 // playbooks table's foreign key keeps the window narrow).
-func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUID, path string, credentials map[string]string) (string, error) {
+func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUID, path string, credentials map[string]string) (string, string, error) {
 	if q.repos == nil {
-		return "", fmt.Errorf("repo playbook %s: no repo source wired", repoID)
+		return "", "", fmt.Errorf("repo playbook %s: no repo source wired", repoID)
 	}
 	repo, err := q.repos.Get(ctx, job.OrgID, repoID)
 	if err != nil {
-		return "", fmt.Errorf("resolve repo %s: %w", repoID, err)
+		return "", "", fmt.Errorf("resolve repo %s: %w", repoID, err)
 	}
 	sub := repo.Subpath
 	if sub == "" {
@@ -991,13 +996,31 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	if repo.CredentialID != nil {
 		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *repo.CredentialID)
 		if err != nil {
-			return "", fmt.Errorf("open repo credential %s: %w", *repo.CredentialID, err)
+			return "", "", fmt.Errorf("open repo credential %s: %w", *repo.CredentialID, err)
 		}
 		b, err := json.Marshal(secret)
 		if err != nil {
-			return "", fmt.Errorf("encode repo credential %s: %w", *repo.CredentialID, err)
+			return "", "", fmt.Errorf("encode repo credential %s: %w", *repo.CredentialID, err)
 		}
 		credentials["git:"+repoID.String()] = string(b)
+	}
+	// The vault passphrase rides the same map as every other revealed
+	// secret, under the credential's own uuid so the job's
+	// vault_credential_id names it directly. Opening it here, beside the
+	// git credential, is also what puts it through the same redaction:
+	// the caller adds every credentials entry to the redact list.
+	vaultID := ""
+	if repo.VaultCredentialID != nil {
+		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *repo.VaultCredentialID)
+		if err != nil {
+			return "", "", fmt.Errorf("open repo vault credential %s: %w", *repo.VaultCredentialID, err)
+		}
+		b, err := json.Marshal(secret)
+		if err != nil {
+			return "", "", fmt.Errorf("encode repo vault credential %s: %w", *repo.VaultCredentialID, err)
+		}
+		vaultID = repo.VaultCredentialID.String()
+		credentials[vaultID] = string(b)
 	}
 	payload := map[string]any{"repo": map[string]any{
 		"id": repoID.String(), "url": repo.URL, "branch": repo.Branch, "subpath": sub,
@@ -1011,9 +1034,9 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("encode repo kind payload: %w", err)
+		return "", "", fmt.Errorf("encode repo kind payload: %w", err)
 	}
-	return string(b), nil
+	return string(b), vaultID, nil
 }
 
 // claimConnection is the connection JSON one claim ships for a host: the

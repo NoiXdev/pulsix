@@ -23,6 +23,7 @@ func (s *SQLStore) Create(ctx context.Context, r Repo) (Repo, error) {
 	row, err := s.q.CreateRepo(ctx, gen.CreateRepoParams{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, Url: r.URL, Branch: r.Branch,
 		Subpath: r.Subpath, CredentialID: db.NullUUID(r.CredentialID),
+		VaultCredentialID: db.NullUUID(r.VaultCredentialID),
 	})
 	if err != nil {
 		if db.IsUniqueViolation(err) {
@@ -64,7 +65,8 @@ func (s *SQLStore) Update(ctx context.Context, r Repo) (Repo, error) {
 	row, err := s.q.UpdateRepo(ctx, gen.UpdateRepoParams{
 		OrgID: r.OrgID, ID: r.ID, Name: r.Name, Url: r.URL, Branch: r.Branch,
 		Subpath: r.Subpath, CredentialID: db.NullUUID(r.CredentialID),
-		SshHostKey: hostKey, SshHostPublicKey: hostPub,
+		VaultCredentialID: db.NullUUID(r.VaultCredentialID),
+		SshHostKey:        hostKey, SshHostPublicKey: hostPub,
 	})
 	if err != nil {
 		if db.IsUniqueViolation(err) {
@@ -113,8 +115,9 @@ func mapErr(err error) error {
 func toRepo(r gen.GitRepo) Repo {
 	return Repo{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, URL: r.Url, Branch: r.Branch, Subpath: r.Subpath,
-		CredentialID: db.UUIDPtr(r.CredentialID),
-		SSHHostKey:   textOrEmpty(r.SshHostKey), SSHHostPublicKey: textOrEmpty(r.SshHostPublicKey),
+		CredentialID:      db.UUIDPtr(r.CredentialID),
+		VaultCredentialID: db.UUIDPtr(r.VaultCredentialID),
+		SSHHostKey:        textOrEmpty(r.SshHostKey), SSHHostPublicKey: textOrEmpty(r.SshHostPublicKey),
 		LastSync: db.TimePtr(r.LastSync), LastSyncError: textOrEmpty(r.LastSyncError),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}

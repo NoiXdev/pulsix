@@ -3049,7 +3049,7 @@ export interface components {
             /** @description Key kinds: generate a new ed25519 key */
             generate?: boolean;
             /** @enum {string} */
-            kind: "ssh_key" | "ssh_password" | "git_key" | "git_token";
+            kind: "ssh_key" | "ssh_password" | "git_key" | "git_token" | "vault_password";
             name: string;
             /** @description Decrypts private_key once; never stored */
             passphrase?: string;
@@ -3070,7 +3070,7 @@ export interface components {
             id: string;
             key_type?: string;
             /** @enum {string} */
-            kind: "ssh_key" | "ssh_password" | "git_key" | "git_token";
+            kind: "ssh_key" | "ssh_password" | "git_key" | "git_token" | "vault_password";
             name: string;
             public_key?: string;
             /** Format: date-time */
@@ -4930,6 +4930,7 @@ export interface components {
             name: string;
             subpath?: string;
             url: string;
+            vault_credential_id?: string;
         };
         RepoDTO: {
             branch: string;
@@ -4948,6 +4949,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             url: string;
+            vault_credential_id?: string;
         };
         RepoDetailOutputBody: {
             /**
@@ -4988,6 +4990,7 @@ export interface components {
             name: string;
             subpath?: string;
             url: string;
+            vault_credential_id?: string;
         };
         RotationStartOutputBody: {
             /**

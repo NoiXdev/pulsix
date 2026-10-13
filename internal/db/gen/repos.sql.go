@@ -13,19 +13,20 @@ import (
 )
 
 const createRepo = `-- name: CreateRepo :one
-INSERT INTO git_repos (id, org_id, name, url, branch, subpath, credential_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key
+INSERT INTO git_repos (id, org_id, name, url, branch, subpath, credential_id, vault_credential_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id
 `
 
 type CreateRepoParams struct {
-	ID           uuid.UUID   `json:"id"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	Name         string      `json:"name"`
-	Url          string      `json:"url"`
-	Branch       string      `json:"branch"`
-	Subpath      string      `json:"subpath"`
-	CredentialID pgtype.UUID `json:"credential_id"`
+	ID                uuid.UUID   `json:"id"`
+	OrgID             uuid.UUID   `json:"org_id"`
+	Name              string      `json:"name"`
+	Url               string      `json:"url"`
+	Branch            string      `json:"branch"`
+	Subpath           string      `json:"subpath"`
+	CredentialID      pgtype.UUID `json:"credential_id"`
+	VaultCredentialID pgtype.UUID `json:"vault_credential_id"`
 }
 
 func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (GitRepo, error) {
@@ -37,6 +38,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (GitRepo
 		arg.Branch,
 		arg.Subpath,
 		arg.CredentialID,
+		arg.VaultCredentialID,
 	)
 	var i GitRepo
 	err := row.Scan(
@@ -53,6 +55,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (GitRepo
 		&i.UpdatedAt,
 		&i.SshHostKey,
 		&i.SshHostPublicKey,
+		&i.VaultCredentialID,
 	)
 	return i, err
 }
@@ -77,7 +80,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, arg DeleteRepoParams) (int64, 
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM git_repos WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id FROM git_repos WHERE org_id = $1 AND id = $2
 `
 
 type GetRepoParams struct {
@@ -105,12 +108,13 @@ func (q *Queries) GetRepo(ctx context.Context, arg GetRepoParams) (GitRepo, erro
 		&i.UpdatedAt,
 		&i.SshHostKey,
 		&i.SshHostPublicKey,
+		&i.VaultCredentialID,
 	)
 	return i, err
 }
 
 const listRepos = `-- name: ListRepos :many
-SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM git_repos WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id FROM git_repos WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListRepos(ctx context.Context, orgID uuid.UUID) ([]GitRepo, error) {
@@ -136,6 +140,7 @@ func (q *Queries) ListRepos(ctx context.Context, orgID uuid.UUID) ([]GitRepo, er
 			&i.UpdatedAt,
 			&i.SshHostKey,
 			&i.SshHostPublicKey,
+			&i.VaultCredentialID,
 		); err != nil {
 			return nil, err
 		}
@@ -172,22 +177,24 @@ func (q *Queries) UnpinRepoHostKey(ctx context.Context, arg UnpinRepoHostKeyPara
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE git_repos
 SET name = $1, url = $2, branch = $3, subpath = $4,
-    credential_id = $5, ssh_host_key = $6, ssh_host_public_key = $7,
+    credential_id = $5, vault_credential_id = $6,
+    ssh_host_key = $7, ssh_host_public_key = $8,
     updated_at = now()
-WHERE org_id = $8 AND id = $9
-RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key
+WHERE org_id = $9 AND id = $10
+RETURNING id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id
 `
 
 type UpdateRepoParams struct {
-	Name             string      `json:"name"`
-	Url              string      `json:"url"`
-	Branch           string      `json:"branch"`
-	Subpath          string      `json:"subpath"`
-	CredentialID     pgtype.UUID `json:"credential_id"`
-	SshHostKey       *string     `json:"ssh_host_key"`
-	SshHostPublicKey *string     `json:"ssh_host_public_key"`
-	OrgID            uuid.UUID   `json:"org_id"`
-	ID               uuid.UUID   `json:"id"`
+	Name              string      `json:"name"`
+	Url               string      `json:"url"`
+	Branch            string      `json:"branch"`
+	Subpath           string      `json:"subpath"`
+	CredentialID      pgtype.UUID `json:"credential_id"`
+	VaultCredentialID pgtype.UUID `json:"vault_credential_id"`
+	SshHostKey        *string     `json:"ssh_host_key"`
+	SshHostPublicKey  *string     `json:"ssh_host_public_key"`
+	OrgID             uuid.UUID   `json:"org_id"`
+	ID                uuid.UUID   `json:"id"`
 }
 
 // Replaces every editable field, name included; the unique (org_id, name)
@@ -202,6 +209,7 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (GitRepo
 		arg.Branch,
 		arg.Subpath,
 		arg.CredentialID,
+		arg.VaultCredentialID,
 		arg.SshHostKey,
 		arg.SshHostPublicKey,
 		arg.OrgID,
@@ -222,6 +230,7 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (GitRepo
 		&i.UpdatedAt,
 		&i.SshHostKey,
 		&i.SshHostPublicKey,
+		&i.VaultCredentialID,
 	)
 	return i, err
 }

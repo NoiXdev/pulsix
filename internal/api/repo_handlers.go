@@ -21,6 +21,11 @@ type repoDTO struct {
 	Branch       string `json:"branch"`
 	Subpath      string `json:"subpath"`
 	CredentialID string `json:"credential_id,omitempty"`
+	// VaultCredentialID names the vault_password credential Ansible needs
+	// for this repository's encrypted files, absent when it has none. A
+	// second field rather than a second use of CredentialID: one secret
+	// reaches the repository, the other its contents.
+	VaultCredentialID string `json:"vault_credential_id,omitempty"`
 	// SSHHostKey is the git server's pinned host-key fingerprint (backlog
 	// 2.41), absent while the repository is unpinned (trust on first use).
 	SSHHostKey *string `json:"ssh_host_key,omitempty"`
@@ -44,6 +49,9 @@ func toRepoDTO(r repos.Repo) repoDTO {
 	}
 	if r.CredentialID != nil {
 		dto.CredentialID = r.CredentialID.String()
+	}
+	if r.VaultCredentialID != nil {
+		dto.VaultCredentialID = r.VaultCredentialID.String()
 	}
 	if r.SSHHostKey != "" {
 		dto.SSHHostKey = &r.SSHHostKey
@@ -98,11 +106,12 @@ type repoDetailOutput struct {
 type repoCreateInput struct {
 	Org  string `path:"org"`
 	Body struct {
-		Name         string `json:"name" minLength:"1" maxLength:"63"`
-		URL          string `json:"url" minLength:"1" maxLength:"500"`
-		Branch       string `json:"branch,omitempty" maxLength:"100"`
-		Subpath      string `json:"subpath,omitempty" maxLength:"200"`
-		CredentialID string `json:"credential_id,omitempty"`
+		Name              string `json:"name" minLength:"1" maxLength:"63"`
+		URL               string `json:"url" minLength:"1" maxLength:"500"`
+		Branch            string `json:"branch,omitempty" maxLength:"100"`
+		Subpath           string `json:"subpath,omitempty" maxLength:"200"`
+		CredentialID      string `json:"credential_id,omitempty"`
+		VaultCredentialID string `json:"vault_credential_id,omitempty"`
 	}
 }
 
@@ -110,11 +119,12 @@ type repoUpdateInput struct {
 	Org  string `path:"org"`
 	ID   string `path:"id"`
 	Body struct {
-		Name         string `json:"name" minLength:"1" maxLength:"63"`
-		URL          string `json:"url" minLength:"1" maxLength:"500"`
-		Branch       string `json:"branch,omitempty" maxLength:"100"`
-		Subpath      string `json:"subpath,omitempty" maxLength:"200"`
-		CredentialID string `json:"credential_id,omitempty"`
+		Name              string `json:"name" minLength:"1" maxLength:"63"`
+		URL               string `json:"url" minLength:"1" maxLength:"500"`
+		Branch            string `json:"branch,omitempty" maxLength:"100"`
+		Subpath           string `json:"subpath,omitempty" maxLength:"200"`
+		CredentialID      string `json:"credential_id,omitempty"`
+		VaultCredentialID string `json:"vault_credential_id,omitempty"`
 	}
 }
 
@@ -149,9 +159,13 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		vaultCredentialID, err := optionalUUID(in.Body.VaultCredentialID, "vault credential id")
+		if err != nil {
+			return nil, err
+		}
 		r, err := deps.Repos.Create(ctx, scope.OrgID, repos.CreateInput{
 			Name: in.Body.Name, URL: in.Body.URL, Branch: in.Body.Branch,
-			Subpath: in.Body.Subpath, CredentialID: credentialID,
+			Subpath: in.Body.Subpath, CredentialID: credentialID, VaultCredentialID: vaultCredentialID,
 		})
 		if err != nil {
 			return nil, mapReposErr(ctx, err)
@@ -189,9 +203,13 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		vaultCredentialID, err := optionalUUID(in.Body.VaultCredentialID, "vault credential id")
+		if err != nil {
+			return nil, err
+		}
 		r, err := deps.Repos.Update(ctx, scope.OrgID, id, repos.UpdateInput{
 			Name: in.Body.Name, URL: in.Body.URL, Branch: in.Body.Branch,
-			Subpath: in.Body.Subpath, CredentialID: credentialID,
+			Subpath: in.Body.Subpath, CredentialID: credentialID, VaultCredentialID: vaultCredentialID,
 		})
 		if err != nil {
 			return nil, mapReposErr(ctx, err)

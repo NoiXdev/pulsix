@@ -8,7 +8,7 @@ import { useCreateCredential } from '../../api/hooks/useCredentials.ts';
 import { KIND_LABEL } from './labels.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
 
-type Kind = 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token';
+type Kind = 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' | 'vault_password';
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 interface Created {
@@ -55,8 +55,12 @@ export function AddCredentialDialog({ org, open, onClose }: { org: string; open:
       ? mode === 'generate'
         ? { generate: true }
         : { private_key: privateKey, passphrase: passphrase || undefined }
-      : kind === 'ssh_password'
-        ? { password: secret }
+      : kind === 'ssh_password' || kind === 'vault_password'
+        ? // A vault passphrase is a password. Sending it as a token is
+          // refused by the server, and were it not, the worker would
+          // write an empty password file and Ansible would fail to
+          // decrypt with nothing pointing at the cause.
+          { password: secret }
         : { token: secret };
     try {
       const res = await create.mutateAsync({
@@ -133,7 +137,9 @@ export function AddCredentialDialog({ org, open, onClose }: { org: string; open:
         )}
         {!isKey && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="cred-secret">{kind === 'ssh_password' ? 'Password' : 'Token'}</Label>
+            <Label htmlFor="cred-secret">
+              {kind === 'ssh_password' ? 'Password' : kind === 'vault_password' ? 'Vault password' : 'Token'}
+            </Label>
             <Input id="cred-secret" type="password" autoComplete="new-password" required value={secret} onChange={(e) => setSecret(e.target.value)} />
           </div>
         )}

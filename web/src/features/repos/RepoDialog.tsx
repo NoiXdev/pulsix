@@ -15,7 +15,7 @@ export interface RepoDialogProps {
   org: string;
   /** A repo to edit; absent means create. sshHostKey is the git server
    * key pin the last sync observed (SHA256:…), absent while unpinned. */
-  repo?: { id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; ssh_host_key?: string; pin_state?: string };
+  repo?: { id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; vault_credential_id?: string; ssh_host_key?: string; pin_state?: string };
   credentials: readonly Credential[];
   onClose: () => void;
 }
@@ -35,6 +35,7 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
     repo ? { name: repo.name, url: repo.url, branch: repo.branch, subpath: repo.subpath } : { name: '', url: '', branch: '', subpath: '' },
   );
   const [credentialId, setCredentialId] = useState(repo?.credential_id ?? '');
+  const [vaultCredentialId, setVaultCredentialId] = useState(repo?.vault_credential_id ?? '');
   const [pinnedKey, setPinnedKey] = useState(repo?.ssh_host_key ?? '');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
     const body = {
       name: values.name, url: values.url, branch: values.branch || 'main',
       subpath: values.subpath, credential_id: credentialId || undefined,
+      vault_credential_id: vaultCredentialId || undefined,
     };
     try {
       if (repo) await update.mutateAsync(body);
@@ -110,6 +112,32 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
               ))}
           </select>
           <span className="text-[11px] text-muted-foreground">Deploy key or token the checkout authenticates with.</span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="repo-vault-credential">Vault password</Label>
+          <select
+            id="repo-vault-credential"
+            className={SELECT}
+            value={vaultCredentialId}
+            onChange={(e) => setVaultCredentialId(e.target.value)}
+          >
+            <option value="">— none —</option>
+            {credentials
+              .filter((c) => c.kind === 'vault_password')
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+          </select>
+          {/* Two secrets, two fields: one reaches the repository, the
+              other its contents. Only vault_password credentials are
+              offered — the server refuses anything else here, and a
+              deploy key accepted as a vault password would fail far
+              from its cause, as Ansible's own "decryption failed". */}
+          <span className="text-[11px] text-muted-foreground">
+            Passphrase Ansible needs for this repository&apos;s encrypted files.
+          </span>
         </div>
         {repo && (
           <div className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5">

@@ -45,7 +45,11 @@ export function useCredential(org: string, id: string) {
 export function useCreateCredential(org: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
-    mutationFn: (body: CredentialInput & { kind: 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' }) =>
+    // The kind union is written out rather than taken from the schema
+    // because CredentialInput's own kind is optional; keeping it here
+    // means a kind added to the server without being added here is a
+    // type error rather than a request the server quietly refuses.
+    mutationFn: (body: CredentialInput & { kind: 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' | 'vault_password' }) =>
       unwrap(api.POST('/api/v1/orgs/{org}/credentials', { params: { path: { org } }, body })),
     gcTime: 0,
     onSuccess: invalidate,

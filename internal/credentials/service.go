@@ -304,7 +304,7 @@ func (s Secret) fieldFor(k Kind) string {
 	switch k {
 	case KindSSHKey, KindGitKey:
 		return s.PrivateKey
-	case KindSSHPassword:
+	case KindSSHPassword, KindVaultPassword:
 		return s.Password
 	case KindGitToken:
 		return s.Token
@@ -352,7 +352,12 @@ func (s *Service) buildSecret(c *Credential, m Material) (Secret, error) {
 		}
 		c.PublicKey, c.Fingerprint, c.KeyType = k.publicKey, k.fingerprint, k.keyType
 		return Secret{PrivateKey: k.privatePEM}, nil
-	case c.Kind == KindSSHPassword:
+	// A vault password is a password, not a token. Without this case the
+	// default branch below would demand a token for it, store the value
+	// in Secret.Token, and the worker — which writes Secret.Password out
+	// as Ansible's password file — would find nothing. The vault would
+	// never open and no error would say why.
+	case c.Kind == KindSSHPassword, c.Kind == KindVaultPassword:
 		if m.Generate || m.PrivateKey != "" || m.Token != "" {
 			return Secret{}, fmt.Errorf("%w: a password credential takes a password only", ErrInvalidInput)
 		}
