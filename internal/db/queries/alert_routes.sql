@@ -215,7 +215,13 @@ ON CONFLICT (alert_event_id) DO UPDATE SET state = excluded.state, decided_at = 
 -- not the original suppression decision, the same "this column means
 -- when this state became true" reading RaiseAlertSeverity's own
 -- peak_severity gives its column.
-UPDATE alert_notify_state s SET state = 'expired', decided_at = @now
+--
+-- The terminal state is a parameter rather than the literal 'expired',
+-- for the same reason RecordAlertNotifyState above takes one: the store
+-- passes alertroutes.StateExpired, so that Go constant is the single
+-- name for this state rather than a second copy of a string this
+-- statement would otherwise own alone and nothing in Go would ever read.
+UPDATE alert_notify_state s SET state = @state, decided_at = @now
 FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
 WHERE s.alert_event_id = ae.id AND s.org_id = @org_id AND s.state = 'suppressed' AND a.closed_at IS NOT NULL;

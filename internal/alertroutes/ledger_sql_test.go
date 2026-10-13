@@ -190,6 +190,18 @@ func TestExpireClosedSuppressed(t *testing.T) {
 	if n != 1 {
 		t.Errorf("expired %d rows, want 1", n)
 	}
+	// The state written is the one the Go constant names. The statement
+	// takes it as a parameter precisely so there is no second copy of the
+	// string to drift from StateExpired, and this is what holds the two
+	// together — "the catch-up pass no longer offers it" below would pass
+	// just as well if the row had been retired to the wrong state.
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM alert_notify_state WHERE alert_event_id = $1`, ev).Scan(&state); err != nil {
+		t.Fatalf("read the retired row: %v", err)
+	}
+	if state != string(alertroutes.StateExpired) {
+		t.Errorf("retired state = %q, want %q", state, alertroutes.StateExpired)
+	}
 	pending, err := s.CatchUpEvents(ctx, tx, org, 100)
 	if err != nil {
 		t.Fatalf("CatchUpEvents: %v", err)

@@ -39,7 +39,14 @@ const (
 	StateSent       LedgerState = "sent"
 	StateSuppressed LedgerState = "suppressed"
 	StateUnrouted   LedgerState = "unrouted"
-	StateExpired    LedgerState = "expired"
+	// StateExpired is the terminal state ExpireClosedSuppressed retires a
+	// row to; it reaches the database as that statement's @state
+	// parameter rather than as a literal inside the SQL, so this constant
+	// is the single place the name lives. It is deliberately not produced
+	// by RecordDecision: nothing a tick decides is ever 'expired'
+	// directly — a row only becomes expired by having been 'suppressed'
+	// first and then outliving its alert.
+	StateExpired LedgerState = "expired"
 )
 
 // PendingEvent is one alert_events row neither pass has finished with yet,
@@ -144,7 +151,7 @@ func (s *Store) RecordDecision(ctx context.Context, tx pgx.Tx, orgID, eventID uu
 // tick.
 func (s *Store) ExpireClosedSuppressed(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, at time.Time) (int64, error) {
 	n, err := gen.New(tx).ExpireClosedSuppressed(ctx, gen.ExpireClosedSuppressedParams{
-		Now: at, OrgID: orgID,
+		Now: at, OrgID: orgID, State: string(StateExpired),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("expire closed suppressed: %w", err)

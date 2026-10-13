@@ -94,13 +94,14 @@ func (q *Queries) DeleteAlertRoute(ctx context.Context, arg DeleteAlertRoutePara
 }
 
 const expireClosedSuppressed = `-- name: ExpireClosedSuppressed :execrows
-UPDATE alert_notify_state s SET state = 'expired', decided_at = $1
+UPDATE alert_notify_state s SET state = $1, decided_at = $2
 FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
-WHERE s.alert_event_id = ae.id AND s.org_id = $2 AND s.state = 'suppressed' AND a.closed_at IS NOT NULL
+WHERE s.alert_event_id = ae.id AND s.org_id = $3 AND s.state = 'suppressed' AND a.closed_at IS NOT NULL
 `
 
 type ExpireClosedSuppressedParams struct {
+	State string    `json:"state"`
 	Now   time.Time `json:"now"`
 	OrgID uuid.UUID `json:"org_id"`
 }
@@ -115,8 +116,14 @@ type ExpireClosedSuppressedParams struct {
 // not the original suppression decision, the same "this column means
 // when this state became true" reading RaiseAlertSeverity's own
 // peak_severity gives its column.
+//
+// The terminal state is a parameter rather than the literal 'expired',
+// for the same reason RecordAlertNotifyState above takes one: the store
+// passes alertroutes.StateExpired, so that Go constant is the single
+// name for this state rather than a second copy of a string this
+// statement would otherwise own alone and nothing in Go would ever read.
 func (q *Queries) ExpireClosedSuppressed(ctx context.Context, arg ExpireClosedSuppressedParams) (int64, error) {
-	result, err := q.db.Exec(ctx, expireClosedSuppressed, arg.Now, arg.OrgID)
+	result, err := q.db.Exec(ctx, expireClosedSuppressed, arg.State, arg.Now, arg.OrgID)
 	if err != nil {
 		return 0, err
 	}

@@ -181,8 +181,19 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	}
 
 	now := f.now()
-	if _, err := f.store.ExpireClosedSuppressed(ctx, tx, orgID, now); err != nil {
+	retired, err := f.store.ExpireClosedSuppressed(ctx, tx, orgID, now)
+	if err != nil {
 		return err
+	}
+	if retired > 0 {
+		// Debug, not info: retiring rows is routine bookkeeping, and on a
+		// tick that retires nothing — the overwhelming majority — there is
+		// nothing to say at all. It is logged rather than dropped because
+		// a sudden large count is the visible shape of "a maintenance
+		// window swallowed a lot of alerts", which is otherwise a silent
+		// fact about rows nobody will ever look at again.
+		f.log.DebugContext(ctx, "alert follower: retired suppressed rows whose alert closed",
+			"org", orgID, "rows", retired)
 	}
 	routes, err := f.store.ListEnabled(ctx, tx, orgID)
 	if err != nil {
