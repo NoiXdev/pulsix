@@ -266,4 +266,19 @@ describe('AlertRoutesPage', () => {
       }),
     );
   });
+
+  it('says a rotation route reaches nobody once its cycle has been emptied', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/alert-routes': { routes: [route({ channels: [], rotation_id: 'rot1' })] },
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [], mail_available: true },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/oncall-rotations': { rotations: [{ id: 'rot1', name: 'Weekly', period_days: 7, anchor: '', timezone: 'UTC', channels: [], revision: 1, created_at: '', updated_at: '' }] },
+    });
+    renderPage();
+
+    expect(await screen.findByText(/reaches nobody/i)).toBeInTheDocument();
+  });
 });

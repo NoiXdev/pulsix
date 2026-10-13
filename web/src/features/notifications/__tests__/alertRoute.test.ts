@@ -118,6 +118,14 @@ describe('routeReachesNobody', () => {
 
   it('is false for a rotation-sourced route, which carries no fixed channels by design', () => {
     expect(routeReachesNobody({ ...base, channels: [], rotation_id: 'rot1' })).toBe(false);
+    expect(routeReachesNobody({ ...base, channels: [], rotation_id: 'rot1' }, { channels: ['c1', 'c2'] })).toBe(false);
+  });
+
+  it('is true for a rotation whose cycle was emptied, when the caller knows the cycle', () => {
+    // Deleting a channel cascades it out of every rotation naming it, so a
+    // rotation can end up with nobody to hand over to — the case the
+    // indicator exists for and the user docs promise it for.
+    expect(routeReachesNobody({ ...base, channels: [], rotation_id: 'rot1' }, { channels: [] })).toBe(true);
   });
 });
 

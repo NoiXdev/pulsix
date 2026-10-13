@@ -40,10 +40,22 @@ export const EVENT_LABEL: Record<string, string> = {
  * channels by design and the DTO always emits "channels": [] for it.
  * Asking only about that list therefore marked every healthy on-call route
  * broken, which left the indicator carrying no information in either
- * direction — including for the case it exists for, a rotation that really
- * does resolve to nobody (whole-branch review, Important #2). */
-export function routeReachesNobody(route: AlertRoute): boolean {
-  return !route.rotation_id && (route.channels ?? []).length === 0;
+ * direction — including for the case it exists for (whole-branch review,
+ * Important #2).
+ *
+ * That case is an emptied rotation: deleting a channel cascades it out of
+ * every rotation cycle naming it, so a rotation can end up with no channel
+ * to hand over to, and the follower then records `unrouted` for anything
+ * routed through it. A caller that has the route's rotation in hand passes
+ * it, and the indicator says so. A caller that does not — the host page's
+ * card, which lists routes without fetching rotations — gets `false`
+ * rather than a guess: not knowing whether a rotation is empty is not the
+ * same as knowing it is. */
+export function routeReachesNobody(route: AlertRoute, rotation?: { channels?: string[] | null }): boolean {
+  if (route.rotation_id) {
+    return !!rotation && (rotation.channels ?? []).length === 0;
+  }
+  return (route.channels ?? []).length === 0;
 }
 
 /** routeToInput turns a stored route back into the create/update body.

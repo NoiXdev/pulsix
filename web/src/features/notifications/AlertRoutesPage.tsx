@@ -98,13 +98,19 @@ export function AlertRoutesPage() {
   }
 
   // A rotation-sourced route carries no fixed channels at all
-  // (validateChannelSource: exactly one channel source), so the Channels
+  // (validateChannelSource: exactly one channel source), so the Delivers-to
   // cell has to name the rotation or it says nothing about where this
   // route delivers — which is what left a healthy on-call route looking
-  // broken (whole-branch review, Important #2).
+  // broken (whole-branch review, Important #2). This page fetches the
+  // rotations anyway, for the dialog's picker, so it is also the one view
+  // that can tell an emptied cycle — every channel deleted out of it — from
+  // a working one, and hand routeReachesNobody what it needs to say so.
+  function rotationOf(r: AlertRoute) {
+    return rotationList.find((rot) => rot.id === r.rotation_id);
+  }
+
   function rotationName(r: AlertRoute): string {
-    const found = rotationList.find((rot) => rot.id === r.rotation_id);
-    return found ? found.name : `rotation ${(r.rotation_id ?? '').slice(0, 8)}`;
+    return rotationOf(r)?.name ?? `rotation ${(r.rotation_id ?? '').slice(0, 8)}`;
   }
 
   async function onSave(body: AlertRouteInput) {
@@ -167,7 +173,7 @@ export function AlertRoutesPage() {
             </span>
             <span className="truncate text-[13px] text-muted-foreground">{scopeLabel(r)}</span>
             <RouteFiresOn route={r} />
-            {routeReachesNobody(r) ? (
+            {routeReachesNobody(r, rotationOf(r)) ? (
               <ReachesNobody />
             ) : r.rotation_id ? (
               <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
