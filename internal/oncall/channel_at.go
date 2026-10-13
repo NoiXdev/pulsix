@@ -23,6 +23,16 @@ func handoverIndex(r Rotation, at time.Time) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("rotation %s: unknown timezone %q: %w", r.ID, r.Timezone, err)
 	}
+	return handoverIndexAt(r, loc, at), nil
+}
+
+// handoverIndexAt is handoverIndex's arithmetic core against an
+// already-resolved location. It exists so a caller that needs many lookups
+// against the same rotation — Shifts, walking a whole range segment by
+// segment — pays for time.LoadLocation once instead of once per lookup:
+// Go only caches UTC and Local, so every other zone re-reads zoneinfo
+// (tens of microseconds) on every call.
+func handoverIndexAt(r Rotation, loc *time.Location, at time.Time) int {
 	anchor := r.Anchor.In(loc)
 	target := at.In(loc)
 
@@ -39,7 +49,7 @@ func handoverIndex(r Rotation, at time.Time) (int, error) {
 	for !anchor.AddDate(0, 0, (guess+1)*r.PeriodDays).After(target) {
 		guess++
 	}
-	return guess, nil
+	return guess
 }
 
 // ChannelAt reports which channel is on call at at: the cycle's answer,
@@ -70,6 +80,25 @@ func ChannelAt(r Rotation, exc []Exception, at time.Time) (uuid.UUID, error) {
 	// Go's % keeps the sign of the dividend, so a negative index would
 	// address outside the slice. The second modulo folds it back.
 	return r.Channels[((idx%n)+n)%n], nil
+}
+
+// channelAndStandInAt mirrors ChannelAt's decision — a winning stand-in
+// overrides the cycle — against an already-resolved location, and also
+// reports whether the answer came from a stand-in. The caller must have
+// already checked len(r.Channels) and r.PeriodDays, exactly as ChannelAt
+// does, since this skips both to stay a cheap per-segment call for Shifts.
+//
+// StandIn comes from asking winningException directly rather than from
+// comparing the result against the cycle's own answer: a stand-in may
+// legitimately name the same channel the cycle would have picked, and a
+// comparison would then report ordinary cycle time as a stand-in.
+func channelAndStandInAt(r Rotation, exc []Exception, loc *time.Location, at time.Time) (uuid.UUID, bool) {
+	if win, ok := winningException(exc, at); ok {
+		return win.ChannelID, true
+	}
+	idx := handoverIndexAt(r, loc, at)
+	n := len(r.Channels)
+	return r.Channels[((idx%n)+n)%n], false
 }
 
 // winningException picks the stand-in covering at under the strict total
