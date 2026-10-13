@@ -341,3 +341,36 @@ func TestOncallShiftsRefuseAnUnboundedRange(t *testing.T) {
 		t.Fatalf("GET shifts over the whole representable range = %d, want 400: %s", resp.Code, resp.Body)
 	}
 }
+
+// Deleting the last channel a rotation names cascades its cycle rows away
+// — the spec's own "Error handling" section calls this ordinary, and the
+// GUI's own delete confirmation warns about it. The roster then cannot be
+// built, which is a 400 the rotations page can render, not a 500 and an
+// "unmapped oncall error" log line that leaves it loading forever
+// (whole-branch review, Important #4).
+func TestOncallShiftsOnAnEmptiedCycleAreABadRequest(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+
+	created := s.Post(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations", map[string]any{
+		"name": "db team", "period_days": 7,
+		"anchor": "2026-01-05T09:00:00+01:00", "timezone": "Europe/Berlin",
+		"channels": []string{ch.String()},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201: %s", created.Code, created.Body)
+	}
+	id := decodeID(t, created)
+
+	deleted := s.Delete(t, tok, "/api/v1/orgs/"+org.String()+"/notification-channels/"+ch.String(), "")
+	if deleted.Code != http.StatusOK && deleted.Code != http.StatusNoContent {
+		t.Fatalf("DELETE channel = %d: %s", deleted.Code, deleted.Body)
+	}
+
+	resp := s.Get(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations/"+id+
+		"/shifts?from=2026-01-05T00:00:00Z&to=2026-01-12T00:00:00Z")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("GET shifts for a rotation whose channels were deleted = %d, want 400: %s", resp.Code, resp.Body)
+	}
+}

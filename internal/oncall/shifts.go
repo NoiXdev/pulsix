@@ -55,10 +55,10 @@ func Shifts(r Rotation, exc []Exception, from, to time.Time) ([]Shift, error) {
 	// loop below calls channelAndStandInAt directly rather than ChannelAt,
 	// and so does not get them for free.
 	if len(r.Channels) == 0 {
-		return nil, fmt.Errorf("rotation %s has no channels", r.ID)
+		return nil, fmt.Errorf("%w: rotation %s has no channels", ErrInvalidInput, r.ID)
 	}
 	if r.PeriodDays <= 0 {
-		return nil, fmt.Errorf("rotation %s has an invalid period %d", r.ID, r.PeriodDays)
+		return nil, fmt.Errorf("%w: rotation %s has an invalid period %d", ErrInvalidInput, r.ID, r.PeriodDays)
 	}
 
 	// Resolve the rotation's location once. handoverIndex and ChannelAt each

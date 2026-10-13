@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { CalendarClock, Plus, Trash2 } from 'lucide-react';
+import { BellOff, CalendarClock, Plus, Trash2 } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -231,7 +231,28 @@ function StandIns({ org, rotation, channels, canWrite }: { org: string; rotation
           </Button>
         )}
       </div>
-      {shifts.data ? <RosterStrip shifts={shifts.data.shifts ?? []} now={new Date().toISOString()} /> : <p className="text-xs text-muted-foreground">Loading roster…</p>}
+      {/* A roster that cannot be built arrives here as a FAILED REQUEST,
+          never as an empty shift list: oncall.Shifts always tiles the
+          range it is given, so RosterStrip's own empty branch is
+          unreachable from this page. The cases the spec's "Error
+          handling" section calls ordinary — the rotation's last channel
+          deleted, a timezone whose zoneinfo no longer loads — all land in
+          this branch, and before it existed the section printed
+          "Loading roster…" forever (whole-branch review, Important #4).
+          It is said in the same words a channel-less route is said in
+          (ReachesNobody, AlertRouteCells.tsx), because it is the same
+          fact: alerts routed here reach nobody. */}
+      {shifts.isError ? (
+        <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold text-destructive">
+          <BellOff size={13} aria-hidden="true" />
+          The roster could not be built — alerts routed through this rotation reach nobody.
+          {shifts.error instanceof Error ? ` (${shifts.error.message})` : ''}
+        </p>
+      ) : shifts.data ? (
+        <RosterStrip shifts={shifts.data.shifts ?? []} now={new Date().toISOString()} />
+      ) : (
+        <p className="text-xs text-muted-foreground">Loading roster…</p>
+      )}
       {adding && (
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_80px] items-end gap-2 rounded-md border border-border p-2.5">
           <div className="flex flex-col gap-1">

@@ -225,3 +225,34 @@ func TestChannelAtCountsWholeCalendarDaysOverCenturies(t *testing.T) {
 		t.Errorf("ChannelAt 100 000 days past a 17th-century anchor = %v, want %v", got, want)
 	}
 }
+
+// Deleting the last channel a rotation names cascades its cycle rows away
+// (migration 00054's ON DELETE CASCADE), which the spec's own "Error
+// handling" section calls an ordinary thing to happen. Shifts and ChannelAt
+// both guard against the empty cycle, but returned those guards as plain
+// errors while every guard in rotation.go wraps ErrInvalidInput — so
+// Service.Roster's %w carried nothing mapOncallErr recognized, and an
+// everyday case answered 500 and left the rotations page loading forever
+// (whole-branch review, Important #4).
+func TestShiftsAndChannelAtSentinelTheirOwnGuards(t *testing.T) {
+	at := time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
+	ok := oncall.Rotation{PeriodDays: 7, Anchor: at, Timezone: "UTC", Channels: []uuid.UUID{uuid.New()}}
+
+	emptied := ok
+	emptied.Channels = nil
+	if _, err := oncall.Shifts(emptied, nil, at, at.AddDate(0, 0, 7)); !errors.Is(err, oncall.ErrInvalidInput) {
+		t.Errorf("Shifts on a rotation whose channels were deleted = %v, want ErrInvalidInput", err)
+	}
+	if _, err := oncall.ChannelAt(emptied, nil, at); !errors.Is(err, oncall.ErrInvalidInput) {
+		t.Errorf("ChannelAt on a rotation whose channels were deleted = %v, want ErrInvalidInput", err)
+	}
+
+	noPeriod := ok
+	noPeriod.PeriodDays = 0
+	if _, err := oncall.Shifts(noPeriod, nil, at, at.AddDate(0, 0, 7)); !errors.Is(err, oncall.ErrInvalidInput) {
+		t.Errorf("Shifts with an invalid period = %v, want ErrInvalidInput", err)
+	}
+	if _, err := oncall.ChannelAt(noPeriod, nil, at); !errors.Is(err, oncall.ErrInvalidInput) {
+		t.Errorf("ChannelAt with an invalid period = %v, want ErrInvalidInput", err)
+	}
+}

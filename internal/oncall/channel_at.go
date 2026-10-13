@@ -63,7 +63,7 @@ func handoverIndexAt(r Rotation, loc *time.Location, at time.Time) int {
 // overridden by the winning stand-in when one covers that instant.
 func ChannelAt(r Rotation, exc []Exception, at time.Time) (uuid.UUID, error) {
 	if len(r.Channels) == 0 {
-		return uuid.Nil, fmt.Errorf("rotation %s has no channels", r.ID)
+		return uuid.Nil, fmt.Errorf("%w: rotation %s has no channels", ErrInvalidInput, r.ID)
 	}
 	// handoverIndex divides by PeriodDays and its loop direction assumes it
 	// is positive. Zero panics (integer divide by zero); negative reverses
@@ -74,7 +74,7 @@ func ChannelAt(r Rotation, exc []Exception, at time.Time) (uuid.UUID, error) {
 	// invariant above, and defending one half of that pair and not the
 	// other is an asymmetry whose skipped half fails worse.
 	if r.PeriodDays <= 0 {
-		return uuid.Nil, fmt.Errorf("rotation %s has an invalid period %d", r.ID, r.PeriodDays)
+		return uuid.Nil, fmt.Errorf("%w: rotation %s has an invalid period %d", ErrInvalidInput, r.ID, r.PeriodDays)
 	}
 	if win, ok := winningException(exc, at); ok {
 		return win.ChannelID, nil

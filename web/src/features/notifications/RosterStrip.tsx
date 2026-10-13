@@ -18,11 +18,16 @@ function fmt(iso: string): string {
 /**
  * RosterStrip shows a rotation's roster as a horizontal band of shifts:
  * who is on call now, and when stand-ins (exceptions) replace the cycle's
- * own answer. An empty strip is never rendered bare — a rotation with no
- * shifts in range reaches nobody, the same fact ReachesNobody
- * (AlertRouteCells.tsx) states for a channel-less route, and for the same
- * reason: a blank band reads as "not loaded yet", not as "alerts routed
- * here reach no one", so the empty case says so in words instead.
+ * own answer. An empty strip is never rendered bare — a blank band reads
+ * as "not loaded yet", not as "alerts routed here reach no one", so the
+ * empty case says so in words instead, the same fact ReachesNobody
+ * (AlertRouteCells.tsx) states for a channel-less route.
+ *
+ * That empty case is a floor this component holds on its own, not one its
+ * current caller can reach: oncall.Shifts always tiles the range it is
+ * given with at least one segment, so a rotation that cannot answer who
+ * is on call arrives at RotationsPage as a FAILED REQUEST instead, and
+ * that page says so itself (whole-branch review, Important #4).
  */
 export function RosterStrip({ shifts, now }: { shifts: RosterStripShift[]; now: string }) {
   if (shifts.length === 0) {
