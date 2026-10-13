@@ -1,4 +1,4 @@
-import type { AlertRoute } from '../../api/types.ts';
+import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
 
 // AlertRouteWindow is the route's delivery window as the wire gives it
 // (AlertRouteWindowDTO, internal/api/alert_route_dto.go): a 5-field cron
@@ -25,15 +25,59 @@ export const EVENT_LABEL: Record<string, string> = {
   closed: 'closed',
 };
 
-/** A route with no channel left reaches nobody. The API rejects creating
- * one, but deleting a channel removes the link rather than the route
- * (migration 00052's own ON DELETE CASCADE on alert_route_channels), so
- * a route can arrive here channel-less and keep looking configured while
- * being silent — the trap backlog 4.29 records for maintenance windows,
- * and the one decision 8 of the v0.4b design requires be a visible fact
- * rather than a silence. */
+/** A route with no channel source left reaches nobody. The API rejects
+ * creating one, but deleting a channel removes the link rather than the
+ * route (migration 00052's own ON DELETE CASCADE on alert_route_channels),
+ * and deleting a rotation takes the route's rotation_id with it the same
+ * way — so a route can arrive here naming nobody and keep looking
+ * configured while being silent: the trap backlog 4.29 records for
+ * maintenance windows, and the one decision 8 of the v0.4b design requires
+ * be a visible fact rather than a silence.
+ *
+ * A rotation-sourced route is NOT one of those, however empty its channel
+ * list reads: alertroutes.validateChannelSource requires exactly one
+ * channel source, so a route that names a rotation carries no fixed
+ * channels by design and the DTO always emits "channels": [] for it.
+ * Asking only about that list therefore marked every healthy on-call route
+ * broken, which left the indicator carrying no information in either
+ * direction — including for the case it exists for, a rotation that really
+ * does resolve to nobody (whole-branch review, Important #2). */
 export function routeReachesNobody(route: AlertRoute): boolean {
-  return (route.channels ?? []).length === 0;
+  return !route.rotation_id && (route.channels ?? []).length === 0;
+}
+
+/** routeToInput turns a stored route back into the create/update body.
+ *
+ * PATCH is a full replace (AlertRouteBody's own doc comment), so every
+ * field left out of the body is deleted from the route. That makes
+ * assembling the body by hand, at a call site that means to change one
+ * field, a standing trap: the list's enable/disable toggle did exactly
+ * that and silently dropped the delivery window, the breakthrough
+ * severities and the rotation — and 400'd outright on a rotation route,
+ * whose resulting empty channel list named no channel source at all
+ * (whole-branch review, Important #3). One function, beside the route's
+ * own wire types, is what keeps "what a route is" from having to be
+ * remembered in two places the next time the route grows a field.
+ *
+ * RouteDialog deliberately does not use this: it composes its body from
+ * form state, not from a stored route, and its own draft is the authority
+ * on what the user just edited.
+ *
+ * scope_id, window, breakthrough_severities and rotation_id are omitted
+ * rather than sent empty, matching what the dialog sends and what the
+ * server's own Validate accepts. */
+export function routeToInput(route: AlertRoute): AlertRouteInput {
+  return {
+    name: route.name,
+    enabled: route.enabled,
+    scope: route.scope,
+    ...(route.scope !== 'org' && route.scope_id ? { scope_id: route.scope_id } : {}),
+    severities: route.severities ?? [],
+    events: route.events ?? [],
+    ...(route.rotation_id ? { rotation_id: route.rotation_id } : { channels: route.channels ?? [] }),
+    ...(route.window ? { window: route.window } : {}),
+    ...(route.breakthrough_severities?.length ? { breakthrough_severities: route.breakthrough_severities } : {}),
+  };
 }
 
 // Weekday is the dialog's own vocabulary for a delivery window's days,

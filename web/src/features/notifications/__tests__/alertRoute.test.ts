@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { compileWindow, decompileWindow } from '../alertRoute.ts';
+import { compileWindow, decompileWindow, routeReachesNobody, routeToInput } from '../alertRoute.ts';
+import type { AlertRoute } from '../../../api/types.ts';
 
 // compileWindow is the piece most likely to be quietly wrong (task brief):
 // weekday checkboxes plus a from/until pair compiled into the
@@ -90,5 +91,67 @@ describe('decompileWindow', () => {
       'sat',
       'sun',
     ]);
+  });
+});
+
+// routeReachesNobody predates the channel source: it asked only whether
+// the fixed channel list was empty. alertroutes.validateChannelSource now
+// REQUIRES a rotation-sourced route to carry no fixed channels, and the
+// DTO always emits "channels": [] for one — so every healthy on-call route
+// wore the red badge, and the one loud signal the design leans on for a
+// rotation that really does resolve to nothing carried no information in
+// either direction (whole-branch review, Important #2).
+describe('routeReachesNobody', () => {
+  const base: AlertRoute = {
+    id: 'r1', name: 'Critical to ops', enabled: true, scope: 'org',
+    severities: ['crit'], events: ['opened'], channels: ['c1'],
+    revision: 1, created_at: '', updated_at: '',
+  };
+
+  it('is false for a route with a fixed channel', () => {
+    expect(routeReachesNobody(base)).toBe(false);
+  });
+
+  it('is true for a route whose last channel was deleted', () => {
+    expect(routeReachesNobody({ ...base, channels: [] })).toBe(true);
+  });
+
+  it('is false for a rotation-sourced route, which carries no fixed channels by design', () => {
+    expect(routeReachesNobody({ ...base, channels: [], rotation_id: 'rot1' })).toBe(false);
+  });
+});
+
+// The PATCH body is a full replace (AlertRouteBody's own doc comment), so
+// anything left out of it is deleted. routeToInput is the one place that
+// turns a stored route back into that body — the list's enable/disable
+// toggle rebuilt it field by field and silently dropped the window, the
+// breakthrough severities and the rotation (whole-branch review,
+// Important #3).
+describe('routeToInput', () => {
+  it('carries the window, the breakthrough severities and the rotation', () => {
+    expect(
+      routeToInput({
+        id: 'r1', name: 'Quiet hours', enabled: true, scope: 'host', scope_id: 'h1',
+        severities: ['crit', 'warn'], events: ['opened'], channels: [],
+        window: { cron: '0 9 * * 1,2,3,4,5', duration_seconds: 28800, timezone: 'Europe/Berlin' },
+        breakthrough_severities: ['crit'], rotation_id: 'rot1',
+        revision: 4, created_at: '', updated_at: '',
+      }),
+    ).toEqual({
+      name: 'Quiet hours', enabled: true, scope: 'host', scope_id: 'h1',
+      severities: ['crit', 'warn'], events: ['opened'],
+      window: { cron: '0 9 * * 1,2,3,4,5', duration_seconds: 28800, timezone: 'Europe/Berlin' },
+      breakthrough_severities: ['crit'], rotation_id: 'rot1',
+    });
+  });
+
+  it('sends a fixed-channel route its channels and no rotation', () => {
+    expect(
+      routeToInput({
+        id: 'r1', name: 'Critical to ops', enabled: false, scope: 'org',
+        severities: ['crit'], events: ['opened'], channels: ['c1', 'c2'],
+        revision: 1, created_at: '', updated_at: '',
+      }),
+    ).toEqual({ name: 'Critical to ops', enabled: false, scope: 'org', severities: ['crit'], events: ['opened'], channels: ['c1', 'c2'] });
   });
 });

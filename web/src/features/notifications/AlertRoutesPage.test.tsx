@@ -207,4 +207,63 @@ describe('AlertRoutesPage', () => {
     expect(confirmed.mock.calls[0][0]).toContain('Critical to ops');
     confirmed.mockRestore();
   });
+
+  // validateChannelSource (internal/alertroutes/route.go) requires a
+  // rotation-sourced route to carry NO fixed channels, and the DTO always
+  // emits "channels": [] for one — so the Channels cell had nothing to
+  // print and the reaches-nobody predicate, unchanged since before the
+  // channel source existed, called every healthy on-call route broken
+  // (whole-branch review, Important #2).
+  it('names the rotation a route takes its channel from instead of calling it broken', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/alert-routes': { routes: [route({ channels: [], rotation_id: 'rot1' })] },
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [channel], mail_available: true },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/oncall-rotations': { rotations: [{ id: 'rot1', name: 'Weekly', period_days: 7, anchor: '', timezone: 'UTC', channels: ['c1'], revision: 1, created_at: '', updated_at: '' }] },
+    });
+    renderPage();
+
+    const row = (await screen.findByText('Critical to ops')).closest('[data-row]')!.parentElement as HTMLElement;
+    expect(within(row).getByText(/weekly/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reaches nobody/i)).not.toBeInTheDocument();
+  });
+
+  // PATCH is a full replace (AlertRouteBody's own doc comment), so the
+  // toggle's hand-rebuilt body deleted the delivery window, the
+  // breakthrough severities and the rotation without a word — and for a
+  // rotation route it 400'd outright, since channels: [] with no
+  // rotation_id names no channel source at all (whole-branch review,
+  // Important #3).
+  it('keeps the window, the breakthrough severities and the rotation when toggling', async () => {
+    const user = userEvent.setup();
+    let patched: unknown;
+    const window = { cron: '0 9 * * 1,2,3,4,5', duration_seconds: 28800, timezone: 'Europe/Berlin' };
+    const windowed = route({ severities: ['crit', 'warn'], window, breakthrough_severities: ['crit'], channels: [], rotation_id: 'rot1' });
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/alert-routes': { routes: [windowed] },
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [channel], mail_available: true },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/oncall-rotations': { rotations: [{ id: 'rot1', name: 'Weekly', period_days: 7, anchor: '', timezone: 'UTC', channels: ['c1'], revision: 1, created_at: '', updated_at: '' }] },
+      'PATCH /api/v1/orgs/acme/alert-routes/r1': (req: MockRequest) => {
+        patched = req.body;
+        return { route: { ...windowed, enabled: false } };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('switch', { name: 'Disable Critical to ops' }));
+    await waitFor(() =>
+      expect(patched).toEqual({
+        name: 'Critical to ops', enabled: false, scope: 'org',
+        severities: ['crit', 'warn'], events: ['opened', 'severity_raised'],
+        window, breakthrough_severities: ['crit'], rotation_id: 'rot1',
+      }),
+    );
+  });
 });

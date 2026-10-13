@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { Route as RouteIcon } from 'lucide-react';
+import { CalendarClock, Route as RouteIcon } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
@@ -18,7 +18,7 @@ import { may } from '../../lib/roles.ts';
 import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
 import { RouteDialog } from './RouteDialog.tsx';
 import { ReachesNobody, RouteFiresOn } from './AlertRouteCells.tsx';
-import { routeReachesNobody } from './alertRoute.ts';
+import { routeReachesNobody, routeToInput } from './alertRoute.ts';
 
 const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) 90px 220px';
 
@@ -97,6 +97,16 @@ export function AlertRoutesPage() {
     return (r.channels ?? []).map((id) => channelList.find((c) => c.id === id)?.name ?? id.slice(0, 8)).join(', ');
   }
 
+  // A rotation-sourced route carries no fixed channels at all
+  // (validateChannelSource: exactly one channel source), so the Channels
+  // cell has to name the rotation or it says nothing about where this
+  // route delivers — which is what left a healthy on-call route looking
+  // broken (whole-branch review, Important #2).
+  function rotationName(r: AlertRoute): string {
+    const found = rotationList.find((rot) => rot.id === r.rotation_id);
+    return found ? found.name : `rotation ${(r.rotation_id ?? '').slice(0, 8)}`;
+  }
+
   async function onSave(body: AlertRouteInput) {
     if (editing && editing !== 'new') {
       await update.mutateAsync({ ...body, id: editing.id, revision: editing.revision });
@@ -105,19 +115,16 @@ export function AlertRoutesPage() {
     }
   }
 
+  // PATCH is a full replace, so the toggle has to send the whole route
+  // back, not the handful of fields it happens to remember: rebuilt by
+  // hand here, it silently deleted the delivery window, the breakthrough
+  // severities and the rotation, and 400'd outright on a rotation route
+  // (whole-branch review, Important #3). routeToInput is the one place
+  // that knows what a stored route is on the wire, so a field added to
+  // the route in future cannot be forgotten at this call site.
   async function onToggle(r: AlertRoute) {
     try {
-      await update.mutateAsync({
-        id: r.id,
-        revision: r.revision,
-        name: r.name,
-        enabled: !r.enabled,
-        scope: r.scope,
-        ...(r.scope !== 'org' && r.scope_id ? { scope_id: r.scope_id } : {}),
-        severities: r.severities ?? [],
-        events: r.events ?? [],
-        channels: r.channels ?? [],
-      });
+      await update.mutateAsync({ ...routeToInput(r), id: r.id, revision: r.revision, enabled: !r.enabled });
     } catch (err) {
       toast.show(err instanceof Error ? err.message : 'Updating the route failed', 'destructive');
     }
@@ -148,7 +155,8 @@ export function AlertRoutesPage() {
           <span>Route</span>
           <span>Applies to</span>
           <span>Fires on</span>
-          <span>Channels</span>
+          {/* Not "Channels": a rotation-sourced route has none of its own, and this cell names the rotation instead. */}
+          <span>Delivers to</span>
           <span>Status</span>
           <span />
         </GridHeader>
@@ -161,6 +169,11 @@ export function AlertRoutesPage() {
             <RouteFiresOn route={r} />
             {routeReachesNobody(r) ? (
               <ReachesNobody />
+            ) : r.rotation_id ? (
+              <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                <CalendarClock size={12} aria-hidden="true" />
+                <span className="truncate">On call: {rotationName(r)}</span>
+              </span>
             ) : (
               <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
             )}
