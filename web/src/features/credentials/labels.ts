@@ -16,12 +16,17 @@ export function kindLabel(c: CredentialLike): string {
   return c.key_type ? `${kind} · ${c.key_type}` : kind;
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n: number, word: string) => `${n} ${n === 1 ? word : word === 'repository' ? 'repositories' : word + 's'}`;
 
 export function usageLabel(c: CredentialLike): string {
   const parts: string[] = [];
   if (c.used_by.hosts) parts.push(plural(c.used_by.hosts, 'host'));
   if (c.used_by.bastions) parts.push(plural(c.used_by.bastions, 'jump host'));
+  // Repositories count in either slot — as the checkout's credential or
+  // as its vault password. Without this the column said "unused" for a
+  // credential a repository still held, and the delete it invited came
+  // back refused.
+  if (c.used_by.repos) parts.push(plural(c.used_by.repos, 'repository'));
   return parts.join(' · ') || 'unused';
 }
 

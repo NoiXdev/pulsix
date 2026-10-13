@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { expiryState, kindLabel, routeLabel, usageLabel } from './labels.ts';
 
-const base = { id: 'c', name: 'k', kind: 'ssh_key' as const, username: '', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
+const base = { id: 'c', name: 'k', kind: 'ssh_key' as const, username: '', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0, repos: 0 }, created_at: '', updated_at: '' };
 
 describe('credential labels', () => {
   it('names kinds with the key type', () => {
@@ -11,7 +11,11 @@ describe('credential labels', () => {
 
   it('summarises usage', () => {
     expect(usageLabel(base)).toBe('unused');
-    expect(usageLabel({ ...base, used_by: { bastions: 1, hosts: 41 } })).toBe('41 hosts · 1 jump host');
+    expect(usageLabel({ ...base, used_by: { bastions: 1, hosts: 41, repos: 0 } })).toBe('41 hosts · 1 jump host');
+    // A credential only a repository holds read "unused" before the
+    // count included them, and the delete that invited came back refused.
+    expect(usageLabel({ ...base, used_by: { bastions: 0, hosts: 0, repos: 1 } })).toBe('1 repository');
+    expect(usageLabel({ ...base, used_by: { bastions: 0, hosts: 0, repos: 3 } })).toBe('3 repositories');
   });
 
   it('turns expiry into a state', () => {

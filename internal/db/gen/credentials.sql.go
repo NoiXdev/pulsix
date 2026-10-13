@@ -248,7 +248,9 @@ func (q *Queries) ListCredentialHosts(ctx context.Context, arg ListCredentialHos
 const listCredentialUsage = `-- name: ListCredentialUsage :many
 SELECT c.id,
   (SELECT count(*) FROM bastions b WHERE b.org_id = c.org_id AND b.credential_id = c.id)::int AS bastions,
-  (SELECT count(*) FROM host_ssh h WHERE h.org_id = c.org_id AND h.credential_id = c.id)::int AS hosts
+  (SELECT count(*) FROM host_ssh h WHERE h.org_id = c.org_id AND h.credential_id = c.id)::int AS hosts,
+  (SELECT count(*) FROM git_repos r WHERE r.org_id = c.org_id
+     AND (r.credential_id = c.id OR r.vault_credential_id = c.id))::int AS repos
 FROM credentials c
 WHERE c.org_id = $1
 `
@@ -257,10 +259,20 @@ type ListCredentialUsageRow struct {
 	ID       uuid.UUID `json:"id"`
 	Bastions int32     `json:"bastions"`
 	Hosts    int32     `json:"hosts"`
+	Repos    int32     `json:"repos"`
 }
 
-// How many jump hosts and hosts reference each credential, for the "used by"
-// column. Inventory groups never reference credentials directly.
+// How many jump hosts, hosts and repositories reference each credential,
+// for the "used by" column. Inventory groups never reference credentials
+// directly.
+//
+// Repositories were missing here while git_repos.credential_id already
+// carried a foreign key, so deleting a credential a repository still used
+// failed with the database's own constraint error instead of the service's
+// ErrInUse, and the column said "unused" right up to the attempt. The
+// vault column added the second such reference and made the gap worth
+// closing: both are counted, because for this column what matters is
+// whether anything at all still points at the credential.
 func (q *Queries) ListCredentialUsage(ctx context.Context, orgID uuid.UUID) ([]ListCredentialUsageRow, error) {
 	rows, err := q.db.Query(ctx, listCredentialUsage, orgID)
 	if err != nil {
@@ -270,7 +282,12 @@ func (q *Queries) ListCredentialUsage(ctx context.Context, orgID uuid.UUID) ([]L
 	var items []ListCredentialUsageRow
 	for rows.Next() {
 		var i ListCredentialUsageRow
-		if err := rows.Scan(&i.ID, &i.Bastions, &i.Hosts); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Bastions,
+			&i.Hosts,
+			&i.Repos,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

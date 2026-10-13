@@ -18,6 +18,11 @@ import (
 type credentialUsageDTO struct {
 	Bastions int `json:"bastions"`
 	Hosts    int `json:"hosts"`
+	// Repos counts repositories naming the credential in either slot —
+	// as the checkout's credential or as its vault password. Without it
+	// the column said "unused" for a credential a repository still held,
+	// right up to a delete that failed on the foreign key instead.
+	Repos int `json:"repos"`
 }
 
 type credentialDTO struct {
@@ -48,7 +53,7 @@ func toCredentialDTO(deps Deps, c credentials.Credential, usage credentials.Usag
 		ID: c.ID.String(), Name: c.Name, Kind: string(c.Kind), Username: c.Username,
 		PublicKey: credentials.AuthorizedKey(c, orgSlug), Fingerprint: c.Fingerprint, KeyType: c.KeyType,
 		ExpiresAt: c.ExpiresAt, Expired: expired, ExpiresSoon: soon,
-		UsedBy:    credentialUsageDTO{Bastions: usage.Bastions, Hosts: usage.Hosts},
+		UsedBy:    credentialUsageDTO{Bastions: usage.Bastions, Hosts: usage.Hosts, Repos: usage.Repos},
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }

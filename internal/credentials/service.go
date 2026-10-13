@@ -150,6 +150,11 @@ type Sealer interface {
 type Usage struct {
 	Bastions int
 	Hosts    int
+	// Repos counts repositories naming the credential in EITHER slot —
+	// as the checkout's own credential or as its vault password. The
+	// column answers "is anything still pointing at this", and for a
+	// delete that is one question, not two.
+	Repos int
 }
 
 // Store persists credentials. Every lookup that finds nothing returns

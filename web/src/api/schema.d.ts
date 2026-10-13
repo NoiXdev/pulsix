@@ -3127,6 +3127,8 @@ export interface components {
             bastions: number;
             /** Format: int64 */
             hosts: number;
+            /** Format: int64 */
+            repos: number;
         };
         EffectiveRuleDTO: {
             check_key: string;

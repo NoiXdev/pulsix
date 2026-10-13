@@ -95,7 +95,7 @@ func (s *SQLStore) Usage(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Us
 	}
 	out := make(map[uuid.UUID]Usage, len(rows))
 	for _, r := range rows {
-		out[r.ID] = Usage{Bastions: int(r.Bastions), Hosts: int(r.Hosts)}
+		out[r.ID] = Usage{Bastions: int(r.Bastions), Hosts: int(r.Hosts), Repos: int(r.Repos)}
 	}
 	return out, nil
 }
