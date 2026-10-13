@@ -40,20 +40,38 @@ WHERE org_id = @org_id AND id = @id AND revision = @revision;
 -- statement a rotation deletion ever needs.
 DELETE FROM oncall_rotations WHERE org_id = @org_id AND id = @id;
 
--- name: ReplaceRotationChannels :exec
--- ReplaceRouteChannels' own shape (alert_routes.sql), for the ordered
--- channel cycle: the whole list in one round trip, DELETE as a CTE ahead of
--- the INSERT so nothing else can observe the cycle half-replaced between
--- them. WITH ORDINALITY is what turns the caller's array order into the
--- position column — the array's own index IS the cycle order, so there is
--- nothing else position could mean. Ordinality starts at 1; the schema's
--- own position starts at 0 (CHECK (position >= 0), the same base ChannelAt's
+-- name: DeleteRotationChannels :exec
+-- The first half of replacing the ordered channel cycle; InsertRotationChannels
+-- is the second. ReplaceRouteChannels' own shape (alert_routes.sql) combines
+-- both halves into one WITH statement — a DELETE CTE the INSERT does not
+-- itself read from, ahead of the INSERT. That shape is unsafe here and was
+-- the original design: oncall_rotation_channels' primary key is
+-- (rotation_id, position), and a cycle's new list almost always reuses
+-- position 0, the same key the old list's position 0 row already holds, so
+-- the replacement overlaps the very key it means to change. Postgres
+-- documents that sub-statements inside one WITH run against the same
+-- snapshot with their relative order unspecified
+-- (https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-MODIFYING)
+-- — not merely a visibility caveat, since TestStoreUpdateReplacesChannelsAndRotationFields
+-- hit exactly this as a reproducible "duplicate key value violates unique
+-- constraint oncall_rotation_channels_pkey" on every update that kept any
+-- channel at the same position, which for a rotation already holding
+-- channels is every update. Two statements sent in sequence on the same
+-- transaction (the store calls this, then InsertRotationChannels, inside
+-- its own Begin/Commit) is what removes the ambiguity: the DELETE commits
+-- its index change before the INSERT ever runs, the same ordering the
+-- CTE's comment intended but could not actually guarantee.
+DELETE FROM oncall_rotation_channels WHERE org_id = @org_id AND rotation_id = @rotation_id;
+
+-- name: InsertRotationChannels :exec
+-- WITH ORDINALITY is what turns the caller's array order into the position
+-- column — the array's own index IS the cycle order, so there is nothing
+-- else position could mean. Ordinality starts at 1; the schema's own
+-- position starts at 0 (CHECK (position >= 0), the same base ChannelAt's
 -- arithmetic wants), hence "ord - 1". An empty array is a legal no-op that
--- clears the cycle to nothing, the same reading ReplaceRouteChannels' own
--- comment gives an empty channel selection.
-WITH deleted AS (
-  DELETE FROM oncall_rotation_channels WHERE org_id = @org_id AND rotation_id = @rotation_id
-)
+-- adds nothing, leaving the cycle cleared by the DELETE above — the same
+-- reading ReplaceRouteChannels' own comment gives an empty channel
+-- selection.
 INSERT INTO oncall_rotation_channels (org_id, rotation_id, position, channel_id)
 SELECT @org_id, @rotation_id, ord - 1, channel_id
 FROM unnest(@channel_ids::uuid[]) WITH ORDINALITY AS t(channel_id, ord);
