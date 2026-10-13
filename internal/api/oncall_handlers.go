@@ -266,7 +266,7 @@ func registerOncallRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Delete(hapi, "/api/v1/orgs/{org}/oncall-rotations/{id}/exceptions/{exceptionID}", func(ctx context.Context, in *oncallExceptionDeleteInput) (*okOutput, error) {
-		scope, _, err := oncallRotationScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsWrite)
+		scope, rotationID, err := oncallRotationScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsWrite)
 		if err != nil {
 			return nil, err
 		}
@@ -274,7 +274,14 @@ func registerOncallRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Oncall.DeleteException(ctx, scope.OrgID, exceptionID); err != nil {
+		// rotationID is passed through, not discarded: an exception id that
+		// exists in this organization but under a DIFFERENT rotation must
+		// answer 404 here — the path names a rotation, and that id is
+		// load-bearing (review finding, v0.4c Task 8 fix round 2).
+		// DeleteException's own predicate (store_sql.go) is what actually
+		// enforces this; it cannot be bypassed by a future caller the way a
+		// Go-side check ahead of a looser query could be.
+		if err := deps.Oncall.DeleteException(ctx, scope.OrgID, rotationID, exceptionID); err != nil {
 			return nil, mapOncallErr(ctx, err)
 		}
 		setAuditObject(ctx, exceptionID.String(), "deleted on-call stand-in")

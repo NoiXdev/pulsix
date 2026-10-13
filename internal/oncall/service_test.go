@@ -50,7 +50,7 @@ func (f *fakeStore) ListExceptions(context.Context, uuid.UUID, uuid.UUID) ([]onc
 	return f.exc, nil
 }
 
-func (f *fakeStore) DeleteException(context.Context, uuid.UUID, uuid.UUID) error {
+func (f *fakeStore) DeleteException(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
 	return nil
 }
 
@@ -188,9 +188,9 @@ type spyRotationStore struct {
 	listExcOut                 []oncall.Exception
 	listExcErr                 error
 
-	deleteExcCalled             bool
-	deleteExcOrgID, deleteExcID uuid.UUID
-	deleteExcErr                error
+	deleteExcCalled                             bool
+	deleteExcOrgID, deleteExcRotID, deleteExcID uuid.UUID
+	deleteExcErr                                error
 
 	channelNamesCalled bool
 	channelNamesOrgID  uuid.UUID
@@ -241,9 +241,9 @@ func (s *spyRotationStore) ListExceptions(_ context.Context, orgID, rotationID u
 	return s.listExcOut, s.listExcErr
 }
 
-func (s *spyRotationStore) DeleteException(_ context.Context, orgID, id uuid.UUID) error {
+func (s *spyRotationStore) DeleteException(_ context.Context, orgID, rotationID, id uuid.UUID) error {
 	s.deleteExcCalled = true
-	s.deleteExcOrgID, s.deleteExcID = orgID, id
+	s.deleteExcOrgID, s.deleteExcRotID, s.deleteExcID = orgID, rotationID, id
 	return s.deleteExcErr
 }
 
@@ -415,8 +415,9 @@ func TestServiceListAndDeleteExceptionDelegateToTheStore(t *testing.T) {
 			gotList, err, store.listExcCalled, store.listExcOrgID, store.listExcRotID)
 	}
 
-	if err := svc.DeleteException(context.Background(), orgID, id); err != nil || !store.deleteExcCalled ||
-		store.deleteExcOrgID != orgID || store.deleteExcID != id {
-		t.Fatalf("DeleteException() = %v; store called=%v org=%v id=%v", err, store.deleteExcCalled, store.deleteExcOrgID, store.deleteExcID)
+	if err := svc.DeleteException(context.Background(), orgID, rotationID, id); err != nil || !store.deleteExcCalled ||
+		store.deleteExcOrgID != orgID || store.deleteExcRotID != rotationID || store.deleteExcID != id {
+		t.Fatalf("DeleteException() = %v; store called=%v org=%v rotation=%v id=%v",
+			err, store.deleteExcCalled, store.deleteExcOrgID, store.deleteExcRotID, store.deleteExcID)
 	}
 }

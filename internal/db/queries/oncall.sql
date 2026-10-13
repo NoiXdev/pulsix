@@ -92,7 +92,13 @@ WHERE org_id = @org_id AND rotation_id = @rotation_id
 ORDER BY starts_at;
 
 -- name: DeleteException :execrows
-DELETE FROM oncall_exceptions WHERE org_id = @org_id AND id = @id;
+-- rotation_id is part of the predicate, not just org_id/id: the caller's
+-- path names a rotation (.../oncall-rotations/{id}/exceptions/{exceptionID}),
+-- and that id must be load-bearing — an exception id that exists in this
+-- organization but under a DIFFERENT rotation must read as "not found" here,
+-- not be deleted anyway, the same way ListExceptions already scopes its own
+-- read by rotation_id rather than id alone.
+DELETE FROM oncall_exceptions WHERE org_id = @org_id AND rotation_id = @rotation_id AND id = @id;
 
 -- name: ListChannelNames :many
 -- Resolves a batch of channel ids to their current display name, scoped to

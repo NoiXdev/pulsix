@@ -109,16 +109,23 @@ func (q *Queries) CreateRotation(ctx context.Context, arg CreateRotationParams) 
 }
 
 const deleteException = `-- name: DeleteException :execrows
-DELETE FROM oncall_exceptions WHERE org_id = $1 AND id = $2
+DELETE FROM oncall_exceptions WHERE org_id = $1 AND rotation_id = $2 AND id = $3
 `
 
 type DeleteExceptionParams struct {
-	OrgID uuid.UUID `json:"org_id"`
-	ID    uuid.UUID `json:"id"`
+	OrgID      uuid.UUID `json:"org_id"`
+	RotationID uuid.UUID `json:"rotation_id"`
+	ID         uuid.UUID `json:"id"`
 }
 
+// rotation_id is part of the predicate, not just org_id/id: the caller's
+// path names a rotation (.../oncall-rotations/{id}/exceptions/{exceptionID}),
+// and that id must be load-bearing — an exception id that exists in this
+// organization but under a DIFFERENT rotation must read as "not found" here,
+// not be deleted anyway, the same way ListExceptions already scopes its own
+// read by rotation_id rather than id alone.
 func (q *Queries) DeleteException(ctx context.Context, arg DeleteExceptionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteException, arg.OrgID, arg.ID)
+	result, err := q.db.Exec(ctx, deleteException, arg.OrgID, arg.RotationID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

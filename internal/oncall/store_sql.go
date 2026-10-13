@@ -317,10 +317,15 @@ func (s *Store) ListExceptions(ctx context.Context, orgID, rotationID uuid.UUID)
 	return out, nil
 }
 
-// DeleteException removes one stand-in by id. ErrNotFound when org_id/id
-// matches nothing.
-func (s *Store) DeleteException(ctx context.Context, orgID, id uuid.UUID) error {
-	n, err := gen.New(s.d).DeleteException(ctx, gen.DeleteExceptionParams{OrgID: orgID, ID: id})
+// DeleteException removes one stand-in by id, scoped to rotationID as well
+// as orgID — review finding (v0.4c Task 8, fix round 2): an exception id
+// that exists in this organization but belongs to a DIFFERENT rotation must
+// answer ErrNotFound, the same as one that does not exist at all, rather
+// than being deleted anyway. The API's path names a rotation
+// (.../oncall-rotations/{id}/exceptions/{exceptionID}), and this predicate
+// is what makes that id load-bearing instead of decorative.
+func (s *Store) DeleteException(ctx context.Context, orgID, rotationID, id uuid.UUID) error {
+	n, err := gen.New(s.d).DeleteException(ctx, gen.DeleteExceptionParams{OrgID: orgID, RotationID: rotationID, ID: id})
 	if err != nil {
 		return fmt.Errorf("delete exception: %w", err)
 	}

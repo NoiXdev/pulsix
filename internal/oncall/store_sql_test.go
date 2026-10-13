@@ -306,7 +306,7 @@ func TestStoreExceptionRoundTrip(t *testing.T) {
 		t.Fatalf("ListExceptions() = %+v, want exactly the one exception created above", list)
 	}
 
-	if err := s.DeleteException(ctx, org, exc.ID); err != nil {
+	if err := s.DeleteException(ctx, org, rot.ID, exc.ID); err != nil {
 		t.Fatalf("DeleteException: %v", err)
 	}
 	list, err = s.ListExceptions(ctx, org, rot.ID)
@@ -315,6 +315,52 @@ func TestStoreExceptionRoundTrip(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("ListExceptions() after Delete = %+v, want none", list)
+	}
+}
+
+// TestStoreDeleteExceptionRejectsAWrongRotation pins the review finding
+// (v0.4c Task 8, fix round 2) at the store layer, beneath the API-level
+// proof (TestOncallExceptionDeleteRejectsAWrongRotation,
+// internal/api/oncall_handlers_test.go): an exception id that exists in this
+// organization but under a DIFFERENT rotation must answer ErrNotFound, not
+// be deleted anyway, and the row must still be there afterward.
+func TestStoreDeleteExceptionRejectsAWrongRotation(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	chA, chB := seedChannel(t, d, org), seedChannel(t, d, org)
+	s := oncall.NewSQLStore(d)
+	now := time.Now()
+
+	rotA, err := s.Create(ctx, org, uuid.New(), oncall.Input{
+		Name: "rotation-a", PeriodDays: 7, Anchor: now, Timezone: "UTC", Channels: []uuid.UUID{chA},
+	}, now)
+	if err != nil {
+		t.Fatalf("Create rotA: %v", err)
+	}
+	rotB, err := s.Create(ctx, org, uuid.New(), oncall.Input{
+		Name: "rotation-b", PeriodDays: 7, Anchor: now, Timezone: "UTC", Channels: []uuid.UUID{chB},
+	}, now)
+	if err != nil {
+		t.Fatalf("Create rotB: %v", err)
+	}
+
+	exc, err := s.CreateException(ctx, org, rotA.ID, uuid.New(), oncall.ExceptionInput{
+		StartsAt: now, EndsAt: now.Add(24 * time.Hour), ChannelID: chA,
+	}, now)
+	if err != nil {
+		t.Fatalf("CreateException: %v", err)
+	}
+
+	if err := s.DeleteException(ctx, org, rotB.ID, exc.ID); !errors.Is(err, oncall.ErrNotFound) {
+		t.Errorf("DeleteException through a different rotation = %v, want ErrNotFound", err)
+	}
+	list, err := s.ListExceptions(ctx, org, rotA.ID)
+	if err != nil {
+		t.Fatalf("ListExceptions: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != exc.ID {
+		t.Fatalf("the exception must still exist under its own rotation after the wrong-rotation delete: %+v", list)
 	}
 }
 

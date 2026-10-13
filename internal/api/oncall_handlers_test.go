@@ -148,11 +148,14 @@ func TestOncallReadNeedsTheChannelPermission(t *testing.T) {
 }
 
 // seedOncallRotation creates a rotation through the API and returns its id —
-// the fixture every exception test below starts from.
-func seedOncallRotation(t *testing.T, s *apitest.Server, org, tok, ch string) string {
+// the fixture every exception test below starts from. name must be unique
+// within org: oncall_rotations enforces UNIQUE (org_id, name), so a test
+// that seeds two rotations in the same organization (e.g.
+// TestOncallExceptionDeleteRejectsAWrongRotation) needs two distinct names.
+func seedOncallRotation(t *testing.T, s *apitest.Server, org, tok, name, ch string) string {
 	t.Helper()
 	created := s.Post(t, tok, "/api/v1/orgs/"+org+"/oncall-rotations", map[string]any{
-		"name": "db team", "period_days": 7,
+		"name": name, "period_days": 7,
 		"anchor": "2026-01-05T09:00:00+01:00", "timezone": "Europe/Berlin",
 		"channels": []string{ch},
 	})
@@ -171,7 +174,7 @@ func TestOncallExceptionsRoundTrip(t *testing.T) {
 	org, tok := s.OrgWithToken(t)
 	ch := s.SeedChannel(t, org)
 	standIn := s.SeedChannel(t, org)
-	rotationID := seedOncallRotation(t, s, org.String(), tok, ch.String())
+	rotationID := seedOncallRotation(t, s, org.String(), tok, "db team", ch.String())
 
 	url := "/api/v1/orgs/" + org.String() + "/oncall-rotations/" + rotationID + "/exceptions"
 	created := s.Post(t, tok, url, map[string]any{
@@ -214,7 +217,7 @@ func TestOncallExceptionRejectsAForeignChannel(t *testing.T) {
 	s := apitest.New(t)
 	org, tok := s.OrgWithToken(t)
 	ch := s.SeedChannel(t, org)
-	rotationID := seedOncallRotation(t, s, org.String(), tok, ch.String())
+	rotationID := seedOncallRotation(t, s, org.String(), tok, "db team", ch.String())
 
 	foreignOrg, _ := s.OrgWithToken(t)
 	foreignCh := s.SeedChannel(t, foreignOrg)
@@ -228,6 +231,69 @@ func TestOncallExceptionRejectsAForeignChannel(t *testing.T) {
 	}
 }
 
+// TestOncallExceptionDeleteSucceedsThroughItsOwnRotation pins the plain
+// success case DeleteException's own rotation_id predicate must still allow:
+// the path's rotation, the exception's rotation and the request all agree.
+func TestOncallExceptionDeleteSucceedsThroughItsOwnRotation(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+	standIn := s.SeedChannel(t, org)
+	rotationID := seedOncallRotation(t, s, org.String(), tok, "db team", ch.String())
+
+	url := "/api/v1/orgs/" + org.String() + "/oncall-rotations/" + rotationID + "/exceptions"
+	created := s.Post(t, tok, url, map[string]any{
+		"starts_at": "2026-01-10T00:00:00Z", "ends_at": "2026-01-11T00:00:00Z",
+		"channel_id": standIn.String(),
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST exception = %d, want 201: %s", created.Code, created.Body)
+	}
+	exceptionID := decodeID(t, created)
+
+	if resp := s.Delete(t, tok, url+"/"+exceptionID, ""); resp.Code != http.StatusOK {
+		t.Fatalf("DELETE through its own rotation = %d, want 200: %s", resp.Code, resp.Body)
+	}
+}
+
+// TestOncallExceptionDeleteRejectsAWrongRotation pins review finding 3 (v0.4c
+// Task 8, fix round 2): the path's rotation id is load-bearing, not
+// decorative. An exception created under rotationA must not be deletable by
+// naming rotationB in the path, even though both rotations and the token
+// belong to the same organization — a path that names a parent must mean
+// it, the same invariant the exception-list route already holds through its
+// own existence check (TestOncallExceptionListRejectsAForeignRotation).
+func TestOncallExceptionDeleteRejectsAWrongRotation(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	chA, chB := s.SeedChannel(t, org), s.SeedChannel(t, org)
+	standIn := s.SeedChannel(t, org)
+	rotationA := seedOncallRotation(t, s, org.String(), tok, "rotation a", chA.String())
+	rotationB := seedOncallRotation(t, s, org.String(), tok, "rotation b", chB.String())
+
+	urlA := "/api/v1/orgs/" + org.String() + "/oncall-rotations/" + rotationA + "/exceptions"
+	created := s.Post(t, tok, urlA, map[string]any{
+		"starts_at": "2026-01-10T00:00:00Z", "ends_at": "2026-01-11T00:00:00Z",
+		"channel_id": standIn.String(),
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST exception = %d, want 201: %s", created.Code, created.Body)
+	}
+	exceptionID := decodeID(t, created)
+
+	wrongURL := "/api/v1/orgs/" + org.String() + "/oncall-rotations/" + rotationB + "/exceptions/" + exceptionID
+	if resp := s.Delete(t, tok, wrongURL, ""); resp.Code != http.StatusNotFound {
+		t.Errorf("DELETE through a different rotation in the same organization = %d, want 404: %s", resp.Code, resp.Body)
+	}
+
+	// Still there — the wrong attempt must not have deleted it regardless of
+	// the status it answered with.
+	rightURL := urlA + "/" + exceptionID
+	if resp := s.Delete(t, tok, rightURL, ""); resp.Code != http.StatusOK {
+		t.Errorf("DELETE through its own rotation after the wrong attempt = %d, want 200: %s", resp.Code, resp.Body)
+	}
+}
+
 // TestOncallExceptionListRejectsAForeignRotation pins the existence check
 // registerOncallRoutes' exception-list handler runs before ListExceptions:
 // a rotation id from another organization must read as "no such rotation"
@@ -238,7 +304,7 @@ func TestOncallExceptionListRejectsAForeignRotation(t *testing.T) {
 	s := apitest.New(t)
 	orgA, tokA := s.OrgWithToken(t)
 	chA := s.SeedChannel(t, orgA)
-	rotationID := seedOncallRotation(t, s, orgA.String(), tokA, chA.String())
+	rotationID := seedOncallRotation(t, s, orgA.String(), tokA, "db team", chA.String())
 
 	orgB, tokB := s.OrgWithToken(t)
 	resp := s.Get(t, tokB, "/api/v1/orgs/"+orgB.String()+"/oncall-rotations/"+rotationID+"/exceptions")

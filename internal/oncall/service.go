@@ -31,7 +31,12 @@ type RotationStore interface {
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	CreateException(ctx context.Context, orgID, rotationID, id uuid.UUID, in ExceptionInput, now time.Time) (Exception, error)
 	ListExceptions(ctx context.Context, orgID, rotationID uuid.UUID) ([]Exception, error)
-	DeleteException(ctx context.Context, orgID, id uuid.UUID) error
+	// DeleteException is scoped to rotationID as well as orgID and id: an
+	// exception id that exists in this organization but under a different
+	// rotation must answer ErrNotFound rather than be deleted anyway (review
+	// finding, v0.4c Task 8 fix round 2) — the caller's own path names a
+	// rotation, and that id must be load-bearing.
+	DeleteException(ctx context.Context, orgID, rotationID, id uuid.UUID) error
 	// ChannelNames resolves ids to their current display name, scoped to
 	// orgID — Roster's own join (see Roster's doc comment), so the API's
 	// GET .../shifts handler never has to join foreign data itself.
@@ -115,9 +120,12 @@ func (s *Service) ListExceptions(ctx context.Context, orgID, rotationID uuid.UUI
 	return s.store.ListExceptions(ctx, orgID, rotationID)
 }
 
-// DeleteException removes one stand-in.
-func (s *Service) DeleteException(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.DeleteException(ctx, orgID, id)
+// DeleteException removes one stand-in, scoped to rotationID as well as
+// orgID: an id belonging to a different rotation answers ErrNotFound, the
+// same as one that does not exist at all (RotationStore.DeleteException's
+// own doc comment).
+func (s *Service) DeleteException(ctx context.Context, orgID, rotationID, id uuid.UUID) error {
+	return s.store.DeleteException(ctx, orgID, rotationID, id)
 }
 
 // RosterShift is one Shift (shifts.go, pure — it knows only which channel
