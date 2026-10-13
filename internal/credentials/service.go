@@ -35,12 +35,23 @@ const (
 	KindSSHPassword Kind = "ssh_password"
 	KindGitKey      Kind = "git_key"
 	KindGitToken    Kind = "git_token"
+	// KindVaultPassword is the passphrase Ansible needs to read a
+	// vault-encrypted file in a repository. It is held here rather than
+	// in a store of its own because sealing, rotation, the expiry
+	// warning and the usage count already live here — and because this
+	// list was always meant to grow, as the comment above says.
+	//
+	// It is the only kind that is neither an SSH login nor a Git
+	// credential: it reaches the repository's CONTENTS, not the
+	// repository. That is why IsSSH and IsKey both exclude it, and why a
+	// repository names it in a field of its own beside credential_id.
+	KindVaultPassword Kind = "vault_password"
 )
 
 // Valid reports whether k is a known kind.
 func (k Kind) Valid() bool {
 	switch k {
-	case KindSSHKey, KindSSHPassword, KindGitKey, KindGitToken:
+	case KindSSHKey, KindSSHPassword, KindGitKey, KindGitToken, KindVaultPassword:
 		return true
 	}
 	return false

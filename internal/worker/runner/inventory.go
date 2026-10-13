@@ -235,7 +235,11 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 // -e @env/extravars, so the values never pass through the command line)
 // and the scratch directories.
 func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) error {
-	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir), 0o600); err != nil {
+	vaultFile, err := r.materializeVaultPassword(job, env)
+	if err != nil {
+		return err
+	}
+	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFile), 0o600); err != nil {
 		return err
 	}
 	extraVars := job.GetExtraVars()
@@ -454,4 +458,43 @@ func pinHosts(doc map[string]any, connections, hostKeys, knownHosts map[string]s
 		fmt.Fprintf(&b, "%s %s\n", alias, key)
 	}
 	return b.String(), nil
+}
+
+// materializeVaultPassword writes the run's Ansible Vault password file
+// and returns its path, or "" when the job's repository names no vault
+// credential — which is almost every run.
+//
+// The passphrase arrives like every other revealed secret, in the job's
+// own credentials map; VaultCredentialId is only the pointer saying
+// which of them it is. That keeps one channel for secrets and one
+// redaction list covering all of them.
+//
+// A pointer naming a credential the claim did not reveal fails the run.
+// Carrying on would hand Ansible an encrypted file and no key, and its
+// own "decryption failed" is exactly the confusing symptom this whole
+// path exists to remove.
+func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) (string, error) {
+	id := job.GetVaultCredentialId()
+	if id == "" {
+		return "", nil
+	}
+	raw, ok := job.GetCredentials()[id]
+	if !ok {
+		return "", fmt.Errorf("vault credential %s named by the claim but not revealed in it", id)
+	}
+	var secret credentials.Secret
+	if err := json.Unmarshal([]byte(raw), &secret); err != nil {
+		return "", fmt.Errorf("vault credential %s: %w", id, err)
+	}
+	if secret.Password == "" {
+		return "", fmt.Errorf("vault credential %s carries no password", id)
+	}
+	path := filepath.Join(env.WorkDir, vaultPasswordName)
+	// A trailing newline is what a hand-written password file has and
+	// what Ansible reads past; writing the bare string would be fine too,
+	// but this matches what an operator would produce by hand.
+	if err := writeTextFile(path, secret.Password+"\n", 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }

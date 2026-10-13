@@ -358,3 +358,61 @@ func TestDeferredLedgerState(t *testing.T) {
 		t.Fatalf("the ledger must accept 'deferred': %v", err)
 	}
 }
+
+func TestVaultPasswordCredentialAndRepoReference(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+
+	// The fifth kind. Ansible Vault is the one secret Pulsix could not
+	// hold: the worker writes its own ansible.cfg and sets ANSIBLE_CONFIG
+	// to it, so a vault_password_file in the repository's own config is
+	// ignored, and nothing ever passed --vault-password-file. A vault
+	// marker therefore reached Ansible and Ansible could not decrypt it.
+	var cred uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO credentials (id, org_id, name, kind, secret, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'prod vault', 'vault_password', '\x00'::bytea, now(), now())
+		RETURNING id`, org).Scan(&cred); err != nil {
+		t.Fatalf("insert vault_password credential: %v", err)
+	}
+
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO credentials (id, org_id, name, kind, secret, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'nonsense', 'vault_key', '\x00'::bytea, now(), now())`, org); err == nil {
+		t.Error("an unknown credential kind must still be rejected")
+	}
+
+	// A repository names its vault password separately from the
+	// credential that reaches the repository itself: one gets at the
+	// repository, the other at its contents.
+	var repo uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO git_repos (id, org_id, name, url, vault_credential_id)
+		VALUES (gen_random_uuid(), $1, 'infra', 'https://example.test/infra.git', $2)
+		RETURNING id`, org, cred).Scan(&repo); err != nil {
+		t.Fatalf("insert repo with a vault credential: %v", err)
+	}
+
+	// Another organization's credential cannot be named, the same way the
+	// access credential already cannot be.
+	other := seedOrg(t, d)
+	var foreign uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO credentials (id, org_id, name, kind, secret, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'their vault', 'vault_password', '\x00'::bytea, now(), now())
+		RETURNING id`, other).Scan(&foreign); err != nil {
+		t.Fatalf("insert foreign credential: %v", err)
+	}
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO git_repos (id, org_id, name, url, vault_credential_id)
+		VALUES (gen_random_uuid(), $1, 'leak', 'https://example.test/x.git', $2)`, org, foreign); err == nil {
+		t.Error("a repository must not name another organization's vault credential")
+	}
+
+	// A credential a repository still points at cannot be deleted out
+	// from under it — the same guarantee the access credential has.
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM credentials WHERE id = $1`, cred); err == nil {
+		t.Error("deleting a vault credential a repository still names must be refused")
+	}
+}

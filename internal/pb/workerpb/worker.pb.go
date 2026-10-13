@@ -168,6 +168,19 @@ type Job struct {
 	// into the run's known_hosts under the hop aliases; a bastion in
 	// bastion_host_keys without an entry here fails the job closed.
 	BastionKnownHosts map[string]string `protobuf:"bytes,19,rep,name=bastion_known_hosts,json=bastionKnownHosts,proto3" json:"bastion_known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// vault_credential_id names the entry in `credentials` above holding
+	// the Ansible Vault passphrase for this job's repository, empty when
+	// the repository has none. The passphrase itself travels in that map
+	// like every other revealed secret and is redacted like every other;
+	// this field is only the pointer, so the worker knows which of them
+	// to write as a password file and name in the run's ansible.cfg.
+	//
+	// It is per REPOSITORY, not per template: the encrypted files live in
+	// the repository, so ten templates over one repository share one
+	// passphrase rather than repeating the assignment ten times. The known
+	// limit, recorded where it will be read: one repository, one vault
+	// password. Ansible's several-vault-ids case would need a list here.
+	VaultCredentialId string `protobuf:"bytes,20,opt,name=vault_credential_id,json=vaultCredentialId,proto3" json:"vault_credential_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -333,6 +346,13 @@ func (x *Job) GetBastionKnownHosts() map[string]string {
 		return x.BastionKnownHosts
 	}
 	return nil
+}
+
+func (x *Job) GetVaultCredentialId() string {
+	if x != nil {
+		return x.VaultCredentialId
+	}
+	return ""
 }
 
 type RunEvent struct {
@@ -800,7 +820,7 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xaf\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xdf\n" +
 	"\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -825,7 +845,8 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"knownHosts\x12\x16\n" +
 	"\x06redact\x18\x11 \x03(\tR\x06redact\x12V\n" +
 	"\x11bastion_host_keys\x18\x12 \x03(\v2*.pulsix.worker.v1.Job.BastionHostKeysEntryR\x0fbastionHostKeys\x12\\\n" +
-	"\x13bastion_known_hosts\x18\x13 \x03(\v2,.pulsix.worker.v1.Job.BastionKnownHostsEntryR\x11bastionKnownHosts\x1a<\n" +
+	"\x13bastion_known_hosts\x18\x13 \x03(\v2,.pulsix.worker.v1.Job.BastionKnownHostsEntryR\x11bastionKnownHosts\x12.\n" +
+	"\x13vault_credential_id\x18\x14 \x01(\tR\x11vaultCredentialId\x1a<\n" +
 	"\x0eExtraVarsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

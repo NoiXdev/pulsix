@@ -87,6 +87,19 @@ message Job {
   // into the run's known_hosts under the hop aliases; a bastion in
   // bastion_host_keys without an entry here fails the job closed.
   map<string, string> bastion_known_hosts = 19;
+  // vault_credential_id names the entry in `credentials` above holding
+  // the Ansible Vault passphrase for this job's repository, empty when
+  // the repository has none. The passphrase itself travels in that map
+  // like every other revealed secret and is redacted like every other;
+  // this field is only the pointer, so the worker knows which of them
+  // to write as a password file and name in the run's ansible.cfg.
+  //
+  // It is per REPOSITORY, not per template: the encrypted files live in
+  // the repository, so ten templates over one repository share one
+  // passphrase rather than repeating the assignment ten times. The known
+  // limit, recorded where it will be read: one repository, one vault
+  // password. Ansible's several-vault-ids case would need a list here.
+  string vault_credential_id = 20;
 }
 
 message RunEvent {

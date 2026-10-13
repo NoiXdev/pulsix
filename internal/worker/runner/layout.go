@@ -31,6 +31,11 @@ const (
 	ansibleCfgName = "ansible.cfg"
 	// keysDirName holds the run's per-credential private key files.
 	keysDirName = "keys"
+	// vaultPasswordName is the run's Ansible Vault password file, written
+	// only when the job's repository names a vault credential. It lives
+	// in the work directory the runner already creates and removes, so
+	// the passphrase's lifetime is the run's.
+	vaultPasswordName = "vault-password"
 	// gitKeysDir / gitTokensDir hold the repo fetch's credential files.
 	gitKeysDir   = "gitkeys"
 	gitTokensDir = "gittokens"
@@ -85,15 +90,23 @@ func sshArgs(workDir string) string {
 }
 
 // ansibleCfgText renders the run's ansible.cfg.
-func ansibleCfgText(workDir string) string {
+func ansibleCfgText(workDir, vaultPasswordFile string) string {
+	// vault_password_file is written only when there is one. An empty
+	// setting is not the same as an absent one: Ansible would try to run
+	// it and fail on the empty path, which is a worse error than having
+	// no vault configured at all.
+	vault := ""
+	if vaultPasswordFile != "" {
+		vault = "vault_password_file = " + vaultPasswordFile + "\n"
+	}
 	return fmt.Sprintf(`[defaults]
 host_key_checking = True
 retry_files_enabled = False
 local_tmp = %s
-
+%s
 [ssh_connection]
 ssh_args = %s
-`, filepath.Join(workDir, localTmpName), sshArgs(workDir))
+`, filepath.Join(workDir, localTmpName), vault, sshArgs(workDir))
 }
 
 // inventoryWrapperText renders the executable dynamic-inventory wrapper:
