@@ -239,6 +239,7 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 		windows: map[uuid.UUID][]maintenance.Occurrence{},
 		alerts:  map[uuid.UUID]alerts.Alert{},
 		oncall:  map[uuid.UUID]uuid.UUID{},
+		gates:   map[uuid.UUID]bool{},
 	}
 	// The two passes run through the same decide: a caught-up event is
 	// re-decided from scratch against this tick's instant, exactly as a
@@ -325,10 +326,27 @@ func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batch
 // it moves from 'deferred' to 'suppressed', which the comparison catches
 // because the two differ.
 func (f *Follower) record(ctx context.Context, tx pgx.Tx, r *resolution, ev PendingEvent, st LedgerState) error {
-	if st == ev.Ledger {
+	if !writeNeeded(st, ev.Ledger) {
 		return nil
 	}
 	return f.store.RecordDecision(ctx, tx, r.orgID, ev.EventID, st, r.now)
+}
+
+// writeNeeded reports whether a verdict of st is worth writing when the
+// ledger already holds found.
+//
+// The second clause is a guard, not a case: StateSent is never skipped,
+// whatever the ledger says. It is unreachable today — HeldAlertEvents
+// returns only 'suppressed' and 'deferred', so found can never be 'sent'
+// — and that is precisely the problem it answers. Without it, the safety
+// of this function rests on a WHERE clause in another file: widen that
+// clause by one state and an event is enqueued with no ledger write,
+// which is 'sent' without the delivery that reports it, in the one place
+// the whole feature exists to keep that from happening. Three words here
+// make the guarantee local to the code that depends on it
+// (TestWriteNeededNeverSkipsSent).
+func writeNeeded(st, found LedgerState) bool {
+	return st != found || st == StateSent
 }
 
 // enqueue hands one message per channel to the outbox — decision 5: a

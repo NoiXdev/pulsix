@@ -3,7 +3,7 @@
 // docs/superpowers/specs/2026-10-13-v0.4c-notification-schedules-
 // design.md, decisions 2, 3, 4, 8 and 9). Split out of follow_test.go so
 // that file stays about the tick's own transaction discipline; the
-// fixture (followEnv, fixedClock, logBuffer) is shared and lives there.
+// fixture these share with it lives in follow_fixture_test.go.
 //
 // Every test here moves the clock deliberately. That is the whole point:
 // three of the four gates depend only on which routes match, but the
@@ -24,78 +24,6 @@ import (
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/rules"
 )
-
-// routeWithWindow creates one enabled route carrying a delivery window
-// and, optionally, the severities that cross it when it is closed.
-func (e *followEnv) routeWithWindow(scope alertroutes.Scope, scopeID *uuid.UUID, severities []rules.State,
-	events []alerts.EventKind, channels []uuid.UUID, window *alertroutes.Window,
-	breakthrough []rules.State) uuid.UUID {
-	e.t.Helper()
-	return e.createRoute(alertroutes.Input{
-		Enabled: true, Scope: scope, ScopeID: scopeID,
-		Severities: severities, Events: events, Channels: channels,
-		Window: window, Breakthrough: breakthrough,
-	})
-}
-
-// routeWithRotation creates one enabled route whose channel comes from a
-// rotation. It still carries the fixture's own channel as its fixed list —
-// Validate requires one, and more usefully it makes the rotation's answer
-// provable: a test that sees a DIFFERENT channel delivered has watched the
-// rotation override the list rather than merely agree with it.
-func (e *followEnv) routeWithRotation(scope alertroutes.Scope, scopeID *uuid.UUID, severities []rules.State,
-	events []alerts.EventKind, rotationID uuid.UUID, window *alertroutes.Window,
-	breakthrough []rules.State) uuid.UUID {
-	e.t.Helper()
-	return e.createRoute(alertroutes.Input{
-		Enabled: true, Scope: scope, ScopeID: scopeID,
-		Severities: severities, Events: events, Channels: []uuid.UUID{e.channel},
-		Window: window, Breakthrough: breakthrough, RotationID: &rotationID,
-	})
-}
-
-// secondChannel adds another notification channel to the fixture's
-// organization, for the tests that have to tell two of them apart.
-func (e *followEnv) secondChannel() uuid.UUID {
-	e.t.Helper()
-	return seedChannel(e.t, e.d, e.org)
-}
-
-// rotation creates an on-call rotation cycling channels every periodDays,
-// first handover at anchor.
-func (e *followEnv) rotation(periodDays int, anchor time.Time, timezone string, channels []uuid.UUID) uuid.UUID {
-	e.t.Helper()
-	e.seq++
-	r, err := e.rotations.Create(context.Background(), e.org, uuid.Must(uuid.NewV7()), oncall.Input{
-		Name: "rotation-" + uuid.Must(uuid.NewV7()).String(), PeriodDays: periodDays,
-		Anchor: anchor, Timezone: timezone, Channels: channels,
-	}, e.clock.Now())
-	if err != nil {
-		e.t.Fatalf("create rotation: %v", err)
-	}
-	return r.ID
-}
-
-// breakWindowTimezone writes a timezone no zoneinfo knows straight onto
-// the route's row, past Validate. That is not a contrived state: a hand
-// edited row, a restore from an export, or a zone a future tzdata drops
-// all reach it, and the database has no CHECK that could catch it.
-func (e *followEnv) breakWindowTimezone(route uuid.UUID, timezone string) {
-	e.t.Helper()
-	if _, err := e.d.Pool().Exec(context.Background(),
-		`UPDATE alert_routes SET window_timezone = $2 WHERE id = $1`, route, timezone); err != nil {
-		e.t.Fatalf("break the window timezone: %v", err)
-	}
-}
-
-// logs is everything the follower has said so far.
-func (e *followEnv) logs() string { return e.log.String() }
-
-// businessHours is the window every test below reuses: deliver from 09:00
-// for nine hours, so 03:00 is unambiguously outside it and 09:30 inside.
-func businessHours() *alertroutes.Window {
-	return &alertroutes.Window{Cron: "0 9 * * *", Duration: 9 * time.Hour, Timezone: "UTC"}
-}
 
 func TestEventOutsideTheWindowIsDeferred(t *testing.T) {
 	env := newFollowEnv(t)
@@ -395,5 +323,74 @@ func TestAnUnreadableWindowDelivers(t *testing.T) {
 	}
 	if !strings.Contains(env.logs(), "window") {
 		t.Error("an unreadable window must be logged, or nobody learns it is broken")
+	}
+}
+
+// TestAnUnreadableWindowIsLoggedOncePerTick is the other half of decision
+// 9, and the half that decides whether "be loud" works at all. The gate is
+// asked once per event per matching route, so without a per-tick cache one
+// broken window emits a warn line for every event in the batch — up to
+// DefaultFollowBatch of them, every minute, forever. That is not loud, it
+// is a flood that buries itself and everything around it, and an operator
+// scrolling past it learns nothing. One line per route per tick, and the
+// cron and the zoneinfo lookup paid for once.
+func TestAnUnreadableWindowIsLoggedOncePerTick(t *testing.T) {
+	env := newFollowEnv(t)
+	route := env.routeWithWindow(alertroutes.ScopeOrg, nil,
+		[]rules.State{rules.StateCrit}, []alerts.EventKind{alerts.EventOpened},
+		[]uuid.UUID{env.channel}, businessHours(), nil)
+	env.breakWindowTimezone(route, "Mars/Olympus")
+	env.clock.set(time.Date(2026, 1, 5, 3, 0, 0, 0, time.UTC))
+	const events = 5
+	for range events {
+		env.openCritAlert()
+	}
+
+	if err := env.follower.Tick(context.Background(), env.org); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(env.enq.calls) != 1 || env.enq.calls[0].count != events {
+		t.Fatalf("delivered %d messages carrying %d alerts, want 1 carrying %d",
+			len(env.enq.calls), env.enq.calls[0].count, events)
+	}
+	if got := strings.Count(env.logs(), "window cannot be evaluated"); got != 1 {
+		t.Errorf("an unreadable window logged %d times for %d events, want exactly 1 — "+
+			"a line per event is a flood, not a warning", got, events)
+	}
+}
+
+// TestAShutRouteSaysSoAtDebug covers the cost
+// TestAnOpenRouteDeliversWhileAClosedOneWaitsForNobody names: when another
+// route delivers, the shut one is dropped and the ledger — one row per
+// event — records only 'sent'. Without a line naming it, nobody at 03:00
+// can tell a route that was asleep from one that never matched at all, and
+// the difference is the whole of whether the window is configured right.
+// Debug, not info: this is ordinary operation, and on a tick where nothing
+// is shut there is nothing to say.
+func TestAShutRouteSaysSoAtDebug(t *testing.T) {
+	env := newFollowEnv(t)
+	night := env.secondChannel()
+	day := env.routeWithWindow(alertroutes.ScopeOrg, nil,
+		[]rules.State{rules.StateCrit}, []alerts.EventKind{alerts.EventOpened},
+		[]uuid.UUID{env.channel}, businessHours(), nil)
+	env.routeWithWindow(alertroutes.ScopeOrg, nil,
+		[]rules.State{rules.StateCrit}, []alerts.EventKind{alerts.EventOpened},
+		[]uuid.UUID{night},
+		&alertroutes.Window{Cron: "0 18 * * *", Duration: 15 * time.Hour, Timezone: "UTC"}, nil)
+	env.clock.set(time.Date(2026, 1, 5, 3, 0, 0, 0, time.UTC))
+	alert := env.openCritAlert()
+
+	if err := env.follower.Tick(context.Background(), env.org); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(env.enq.calls) != 1 {
+		t.Fatalf("Enqueue called %d times, want 1", len(env.enq.calls))
+	}
+	logs := env.logs()
+	if !strings.Contains(logs, day.String()) {
+		t.Errorf("the shut route %s left no trace in the log:\n%s", day, logs)
+	}
+	if !strings.Contains(logs, alert.String()) {
+		t.Errorf("the log does not name the alert the shut route missed:\n%s", logs)
 	}
 }

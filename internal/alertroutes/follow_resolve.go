@@ -123,6 +123,7 @@ type resolution struct {
 	windows map[uuid.UUID][]maintenance.Occurrence
 	alerts  map[uuid.UUID]alerts.Alert
 	oncall  map[uuid.UUID]uuid.UUID
+	gates   map[uuid.UUID]bool
 }
 
 // routing is one event's resolved audience, already past the window gate:
@@ -170,6 +171,18 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 			continue
 		}
 		if !r.windowOpen(ctx, rt, ev.Severity) {
+			// Debug, because this is ordinary operation and on a tick where
+			// nothing is shut there is nothing to say. It is said at all
+			// because of the asymmetric case: when ANOTHER route delivers,
+			// the event is recorded 'sent' and this route's silence leaves
+			// no trace in the ledger, which has one row and therefore one
+			// reason per event. Without this line nobody can tell a route
+			// that was asleep at 03:00 from one that never matched, and
+			// that difference is the whole of whether the window is
+			// configured the way its operator thinks it is.
+			r.f.log.DebugContext(ctx, "alert follower: route is outside its delivery window",
+				"org", r.orgID, "route", rt.ID, "alert", ev.AlertID, "event", ev.EventID,
+				"severity", ev.Severity)
 			held = true
 			continue
 		}
@@ -243,6 +256,18 @@ func (r *resolution) channelsOf(ctx context.Context, rt Route) []uuid.UUID {
 // also why this returns no error — there is no failure here a caller could
 // do anything useful with, and handing one upwards would only invite a
 // future caller to treat it as "do not deliver".
+// A window's own verdict is cached per route for the tick (r.gates),
+// exactly as a rotation's answer is: it depends on the route and on r.now
+// and on nothing else, so asking it once per event per matching route
+// would re-parse the cron and reload the zoneinfo up to DefaultFollowBatch
+// times a minute — and, far worse, would emit the warn line below once per
+// EVENT rather than once per route. Five hundred identical lines a minute
+// is not loud, it is a flood that buries itself and everything around it,
+// which would defeat the only thing decision 9 relies on.
+//
+// The breakthrough check sits outside the cache because it is the one part
+// that varies with the event: the cached verdict is the window's, and a
+// breakthrough severity overrides it.
 func (r *resolution) windowOpen(ctx context.Context, rt Route, severity rules.State) bool {
 	if rt.Window == nil {
 		return true
@@ -250,13 +275,18 @@ func (r *resolution) windowOpen(ctx context.Context, rt Route, severity rules.St
 	if slices.Contains(rt.Breakthrough, severity) {
 		return true
 	}
-	active, err := maintenance.ActiveAt(rt.Window.ToMaintenance(rt.ID), r.now)
-	if err != nil {
-		r.f.log.WarnContext(ctx, "alert follower: delivery window cannot be evaluated, delivering anyway",
-			"org", r.orgID, "route", rt.ID, "cron", rt.Window.Cron, "timezone", rt.Window.Timezone, "err", err)
-		return true
+	open, ok := r.gates[rt.ID]
+	if !ok {
+		active, err := maintenance.ActiveAt(rt.Window.ToMaintenance(rt.ID), r.now)
+		if err != nil {
+			r.f.log.WarnContext(ctx, "alert follower: delivery window cannot be evaluated, delivering anyway",
+				"org", r.orgID, "route", rt.ID, "cron", rt.Window.Cron, "timezone", rt.Window.Timezone, "err", err)
+			active = true
+		}
+		open = active
+		r.gates[rt.ID] = open
 	}
-	return active
+	return open
 }
 
 // muted answers whether the event's alert is muted at this tick's instant,
