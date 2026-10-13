@@ -172,3 +172,23 @@ export type AlertTupleState = AlertStateChange['from_state'];
  * silently get wrong.
  */
 export type MetricRange = '1h' | '24h' | '7d';
+
+// OncallRotation is one oncall.Rotation on the wire (v0.4c design, "API and
+// permissions"): an ordered channel cycle, a period and an anchor (the
+// first handover) — see internal/api/oncall_dto.go's own OncallRotationDTO
+// comment for why `channels` carries ids rather than names here (the
+// rotation's edit screen already has the channel list loaded to resolve
+// them against).
+export type OncallRotation = components['schemas']['OncallRotationDTO'];
+export type OncallRotationInput = components['schemas']['OncallRotationBody'];
+
+// OncallShift is one segment of a rotation's roster (GET .../shifts);
+// `channel_name` arrives already resolved (oncall_dto.go's own comment),
+// so the roster strip never needs its own channel list to show who is on
+// call for an arbitrary shift.
+export type OncallShift = components['schemas']['OncallShiftDTO'];
+
+// OncallException is a stand-in: for this span, this channel instead of
+// whatever the cycle says.
+export type OncallException = components['schemas']['OncallExceptionDTO'];
+export type OncallExceptionInput = components['schemas']['OncallExceptionBody'];

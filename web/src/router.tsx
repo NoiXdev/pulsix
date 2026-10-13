@@ -32,6 +32,7 @@ import { RulesPage } from './features/checks/RulesPage.tsx';
 import { ItemsPage } from './features/checks/ItemsPage.tsx';
 import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
 import { AlertRoutesPage } from './features/notifications/AlertRoutesPage.tsx';
+import { RotationsPage } from './features/notifications/RotationsPage.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 
 /**
@@ -222,6 +223,7 @@ const jumpHostsRoute = createRoute({ getParentRoute: () => settingsRoute, path: 
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
 const notificationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/notifications', component: ChannelsPage });
 const alertRoutesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/alert-routes', component: AlertRoutesPage });
+const rotationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/rotations', component: RotationsPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -258,6 +260,7 @@ const routeTree = rootRoute.addChildren([
       mailRoute,
       notificationsRoute,
       alertRoutesRoute,
+      rotationsRoute,
     ]),
   ]),
 ]);

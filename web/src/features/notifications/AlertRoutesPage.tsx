@@ -12,6 +12,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useChannels } from '../../api/hooks/useNotifications.ts';
+import { useOncallRotations } from '../../api/hooks/useOncall.ts';
 import { useAlertRoutes, useCreateAlertRoute, useDeleteAlertRoute, useUpdateAlertRoute } from '../../api/hooks/useAlertRoutes.ts';
 import { may } from '../../lib/roles.ts';
 import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
@@ -40,6 +41,11 @@ export function AlertRoutesPage() {
   const channels = useChannels(org, !!orgInfo.data && canRead);
   const hosts = useHosts(org, {});
   const groups = useMonitoringGroups(org, !!orgInfo.data && canRead);
+  // Feeds RouteDialog's rotation picker (the "On-call rotation" channel
+  // source) — without this, that radio option renders with nothing to
+  // choose, the gap task-10-brief.md's own context calls out: the dialog
+  // existed before anything fetched rotations for it.
+  const rotations = useOncallRotations(org, !!orgInfo.data && canRead);
   const create = useCreateAlertRoute(org);
   const update = useUpdateAlertRoute(org);
   const remove = useDeleteAlertRoute(org);
@@ -69,9 +75,11 @@ export function AlertRoutesPage() {
   const channelList = channels.data?.channels ?? [];
   const hostList = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
   const groupList = groups.data?.groups ?? [];
+  const rotationList = rotations.data?.rotations ?? [];
   const channelOptions = channelList.map((c) => ({ id: c.id, name: c.name }));
   const hostOptions = hostList.map((h) => ({ id: h.id, name: h.name }));
   const groupOptions = groupList.map((g) => ({ id: g.id, name: g.name }));
+  const rotationOptions = rotationList.map((r) => ({ id: r.id, name: r.name }));
 
   function scopeLabel(r: AlertRoute): string {
     if (r.scope === 'host') {
@@ -197,6 +205,7 @@ export function AlertRoutesPage() {
           channels={channelOptions}
           hosts={hostOptions}
           groups={groupOptions}
+          rotations={rotationOptions}
           onClose={() => setEditing(null)}
           onSave={onSave}
         />

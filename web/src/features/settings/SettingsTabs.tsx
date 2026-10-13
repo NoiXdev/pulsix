@@ -23,11 +23,12 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  *
  * "Outgoing mail" is instance-wide and shown only to instance
  * administrators — the only callers GET /admin/settings/smtp admits.
- * "Notifications" and "Alert routes" are shown to the roles that may read
- * channels (channels.read, operator and above) — alert_route_handlers.go
- * gates its own reads on that same permission, not checks.read, since a
- * route decides where alert data leaves the system (the same weight a
- * channel itself carries).
+ * "Notifications", "Alert routes" and "On-call rotations" are shown to
+ * the roles that may read channels (channels.read, operator and above) —
+ * alert_route_handlers.go and oncall_handlers.go both gate their own
+ * reads on that same permission, not checks.read, since either decides
+ * where alert data leaves the system (the same weight a channel itself
+ * carries).
  */
 export function SettingsTabs({ org }: { org: string }) {
   const me = useMe({ enabled: true });
@@ -99,6 +100,17 @@ export function SettingsTabs({ org }: { org: string }) {
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
           Alert routes
+        </Link>
+      )}
+      {may(orgInfo.data?.org.role, 'channels.read') && (
+        <Link
+          to="/o/$org/settings/rotations"
+          params={{ org }}
+          role="tab"
+          activeProps={{ className: ACTIVE, 'aria-selected': true }}
+          inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+        >
+          On-call rotations
         </Link>
       )}
       {me.data?.instance_admin && (
