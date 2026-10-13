@@ -293,13 +293,22 @@ func TestRecordDecisionIsIdempotent(t *testing.T) {
 // organization must never appear in another's undecided set, and a
 // decision recorded in one organization must not be forgeable against
 // another's event id.
+//
+// The second half is the one that needed a schema to stand on. Until
+// migration 00053, alert_notify_state's foreign key named alert_event_id
+// alone, so a row pairing orgB's org_id with orgA's event id was
+// perfectly legal — and the forward pass's anti-join, which carried no
+// organization predicate either, would have read it as "orgA's event is
+// already decided" and never offered that event again. The composite
+// foreign key is what makes the forgery fail at the write, and the
+// predicate is what keeps the read correct even if one ever appeared.
 func TestUndecidedEventsIsScopedToOrganization(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
 	hostA, hostB := seedHost(t, d, orgA), seedHost(t, d, orgB)
 	alertA, alertB := seedOpenAlert(t, d, orgA, hostA), seedOpenAlert(t, d, orgB, hostB)
-	seedAlertEvent(t, d, orgA, alertA, "opened")
+	eventA := seedAlertEvent(t, d, orgA, alertA, "opened")
 	seedAlertEvent(t, d, orgB, alertB, "opened")
 	s := alertroutes.NewSQLStore(d)
 
@@ -308,7 +317,25 @@ func TestUndecidedEventsIsScopedToOrganization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UndecidedEvents: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("UndecidedEvents(orgA) = %d, want exactly orgA's own event", len(got))
+	if len(got) != 1 || got[0].EventID != eventA {
+		t.Fatalf("UndecidedEvents(orgA) = %v, want exactly orgA's own event", got)
+	}
+
+	// Forge orgB's decision against orgA's event. Its own transaction,
+	// because the failure aborts whichever one it runs in.
+	forging := beginTx(t, d)
+	if err := s.RecordDecision(ctx, forging, orgB, eventA, alertroutes.StateSent, time.Now()); err == nil {
+		t.Error("recording orgB's decision against orgA's event succeeded; the ledger's foreign key does not name the organization")
+	}
+	_ = forging.Rollback(ctx)
+
+	// And orgA's event is still waiting to be decided, by orgA.
+	after := beginTx(t, d)
+	still, err := s.UndecidedEvents(ctx, after, orgA, 100)
+	if err != nil {
+		t.Fatalf("UndecidedEvents after the forgery attempt: %v", err)
+	}
+	if len(still) != 1 || still[0].EventID != eventA {
+		t.Fatalf("UndecidedEvents(orgA) = %v after the forgery attempt, want orgA's own event still undecided", still)
 	}
 }

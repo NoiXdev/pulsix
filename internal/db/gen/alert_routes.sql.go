@@ -97,7 +97,8 @@ const expireClosedSuppressed = `-- name: ExpireClosedSuppressed :execrows
 UPDATE alert_notify_state s SET state = $1, decided_at = $2
 FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
-WHERE s.alert_event_id = ae.id AND s.org_id = $3 AND s.state = 'suppressed' AND a.closed_at IS NOT NULL
+WHERE s.alert_event_id = ae.id AND s.org_id = ae.org_id
+  AND s.org_id = $3 AND s.state = 'suppressed' AND a.closed_at IS NOT NULL
 `
 
 type ExpireClosedSuppressedParams struct {
@@ -398,7 +399,7 @@ const suppressedAlertEvents = `-- name: SuppressedAlertEvents :many
 SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
        a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
 FROM alert_notify_state s
-JOIN alert_events ae ON ae.id = s.alert_event_id
+JOIN alert_events ae ON ae.id = s.alert_event_id AND ae.org_id = s.org_id
 JOIN alerts a ON a.id = ae.alert_id
 JOIN hosts h ON h.id = a.host_id
 WHERE s.org_id = $1 AND s.state = 'suppressed' AND a.closed_at IS NULL
@@ -471,7 +472,10 @@ FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
 JOIN hosts h ON h.id = a.host_id
 WHERE ae.org_id = $1
-  AND NOT EXISTS (SELECT 1 FROM alert_notify_state s WHERE s.alert_event_id = ae.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM alert_notify_state s
+    WHERE s.alert_event_id = ae.id AND s.org_id = ae.org_id
+  )
 ORDER BY ae.at, ae.id
 LIMIT $2
 `
@@ -510,6 +514,16 @@ type UndecidedAlertEventsRow struct {
 // NOT NULL in its own table, so there is no UNION-style nullability
 // hazard here (see ListRouteSelections' own doc comment for what that
 // looks like when it does bite).
+//
+// The anti-join names the organization on BOTH sides. Migration 00053
+// made a ledger row whose org_id disagrees with its event's impossible —
+// alert_notify_state (org_id, alert_event_id) is a composite foreign key
+// into alert_events (org_id, id) — but a query that decides whether an
+// alert reaches anybody should not need that constraint to be read
+// correctly: without the predicate, one mismatched row would hide another
+// organization's event from its own forward pass, and the anti-join never
+// offers a decided event again. The same predicate appears on the two
+// statements below, which read the same pairing from the other side.
 func (q *Queries) UndecidedAlertEvents(ctx context.Context, arg UndecidedAlertEventsParams) ([]UndecidedAlertEventsRow, error) {
 	rows, err := q.db.Query(ctx, undecidedAlertEvents, arg.OrgID, arg.Lim)
 	if err != nil {
