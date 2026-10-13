@@ -15,21 +15,28 @@ import (
 
 const createAlertRoute = `-- name: CreateAlertRoute :one
 
-INSERT INTO alert_routes (id, org_id, name, enabled, scope, scope_group_id, scope_host_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, org_id, name, enabled, scope, scope_group_id, scope_host_id, revision, created_at, updated_at
+INSERT INTO alert_routes (id, org_id, name, enabled, scope, scope_group_id, scope_host_id,
+  window_cron, window_duration_seconds, window_timezone, rotation_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10,
+  $11, $12, $13)
+RETURNING id, org_id, name, enabled, scope, scope_group_id, scope_host_id, revision, created_at, updated_at, window_cron, window_duration_seconds, window_timezone, rotation_id
 `
 
 type CreateAlertRouteParams struct {
-	ID           uuid.UUID   `json:"id"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	Name         string      `json:"name"`
-	Enabled      bool        `json:"enabled"`
-	Scope        string      `json:"scope"`
-	ScopeGroupID pgtype.UUID `json:"scope_group_id"`
-	ScopeHostID  pgtype.UUID `json:"scope_host_id"`
-	CreatedAt    time.Time   `json:"created_at"`
-	UpdatedAt    time.Time   `json:"updated_at"`
+	ID                    uuid.UUID   `json:"id"`
+	OrgID                 uuid.UUID   `json:"org_id"`
+	Name                  string      `json:"name"`
+	Enabled               bool        `json:"enabled"`
+	Scope                 string      `json:"scope"`
+	ScopeGroupID          pgtype.UUID `json:"scope_group_id"`
+	ScopeHostID           pgtype.UUID `json:"scope_host_id"`
+	WindowCron            *string     `json:"window_cron"`
+	WindowDurationSeconds *int32      `json:"window_duration_seconds"`
+	WindowTimezone        *string     `json:"window_timezone"`
+	RotationID            pgtype.UUID `json:"rotation_id"`
+	CreatedAt             time.Time   `json:"created_at"`
+	UpdatedAt             time.Time   `json:"updated_at"`
 }
 
 // Task 1, spec docs/superpowers/specs/2026-10-12-v0.4b-alert-routes-
@@ -45,6 +52,12 @@ type CreateAlertRouteParams struct {
 // created_at/updated_at, by contrast, have no DEFAULT on this table (unlike
 // notification_channels' own now()), so the caller's own clock supplies
 // both — the same posture InsertAlert already takes for opened_at.
+//
+// window_cron/window_duration_seconds/window_timezone and rotation_id
+// (migration 00054) are all sqlc.narg: a route with no window at all stays
+// legal (TestAlertRouteScheduleColumns' own "always" case), and a route's
+// channel source may still be the fixed alert_route_channels list rather
+// than a rotation.
 func (q *Queries) CreateAlertRoute(ctx context.Context, arg CreateAlertRouteParams) (AlertRoute, error) {
 	row := q.db.QueryRow(ctx, createAlertRoute,
 		arg.ID,
@@ -54,6 +67,10 @@ func (q *Queries) CreateAlertRoute(ctx context.Context, arg CreateAlertRoutePara
 		arg.Scope,
 		arg.ScopeGroupID,
 		arg.ScopeHostID,
+		arg.WindowCron,
+		arg.WindowDurationSeconds,
+		arg.WindowTimezone,
+		arg.RotationID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -69,6 +86,10 @@ func (q *Queries) CreateAlertRoute(ctx context.Context, arg CreateAlertRoutePara
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WindowCron,
+		&i.WindowDurationSeconds,
+		&i.WindowTimezone,
+		&i.RotationID,
 	)
 	return i, err
 }
@@ -132,7 +153,7 @@ func (q *Queries) ExpireClosedSuppressed(ctx context.Context, arg ExpireClosedSu
 }
 
 const getAlertRoute = `-- name: GetAlertRoute :one
-SELECT id, org_id, name, enabled, scope, scope_group_id, scope_host_id, revision, created_at, updated_at FROM alert_routes WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, enabled, scope, scope_group_id, scope_host_id, revision, created_at, updated_at, window_cron, window_duration_seconds, window_timezone, rotation_id FROM alert_routes WHERE org_id = $1 AND id = $2
 `
 
 type GetAlertRouteParams struct {
@@ -154,12 +175,16 @@ func (q *Queries) GetAlertRoute(ctx context.Context, arg GetAlertRouteParams) (A
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WindowCron,
+		&i.WindowDurationSeconds,
+		&i.WindowTimezone,
+		&i.RotationID,
 	)
 	return i, err
 }
 
 const listAlertRoutes = `-- name: ListAlertRoutes :many
-SELECT id, org_id, name, enabled, scope, scope_group_id, scope_host_id, revision, created_at, updated_at FROM alert_routes WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, enabled, scope, scope_group_id, scope_host_id, revision, created_at, updated_at, window_cron, window_duration_seconds, window_timezone, rotation_id FROM alert_routes WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListAlertRoutes(ctx context.Context, orgID uuid.UUID) ([]AlertRoute, error) {
@@ -182,7 +207,47 @@ func (q *Queries) ListAlertRoutes(ctx context.Context, orgID uuid.UUID) ([]Alert
 			&i.Revision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WindowCron,
+			&i.WindowDurationSeconds,
+			&i.WindowTimezone,
+			&i.RotationID,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRouteBreakthroughSeverities = `-- name: ListRouteBreakthroughSeverities :many
+SELECT route_id, severity FROM alert_route_breakthrough_severities
+WHERE org_id = $1
+ORDER BY route_id
+`
+
+type ListRouteBreakthroughSeveritiesRow struct {
+	RouteID  uuid.UUID `json:"route_id"`
+	Severity string    `json:"severity"`
+}
+
+// The read ReplaceRouteBreakthroughSeverities' own comment promises: every
+// route's breakthrough severities in org, in one round trip, the same
+// N+1-avoiding reasoning ListRouteSelections already gives for the other
+// three selection tables. A dedicated query rather than a fourth UNION arm
+// there, for that query's own stated reason.
+func (q *Queries) ListRouteBreakthroughSeverities(ctx context.Context, orgID uuid.UUID) ([]ListRouteBreakthroughSeveritiesRow, error) {
+	rows, err := q.db.Query(ctx, listRouteBreakthroughSeverities, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRouteBreakthroughSeveritiesRow
+	for rows.Next() {
+		var i ListRouteBreakthroughSeveritiesRow
+		if err := rows.Scan(&i.RouteID, &i.Severity); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -303,6 +368,35 @@ func (q *Queries) RecordAlertNotifyState(ctx context.Context, arg RecordAlertNot
 		arg.State,
 		arg.DecidedAt,
 	)
+	return err
+}
+
+const replaceRouteBreakthroughSeverities = `-- name: ReplaceRouteBreakthroughSeverities :exec
+WITH deleted AS (
+  DELETE FROM alert_route_breakthrough_severities WHERE org_id = $1 AND route_id = $2
+)
+INSERT INTO alert_route_breakthrough_severities (org_id, route_id, severity)
+SELECT $1, $2, unnest($3::text[])
+ON CONFLICT (route_id, severity) DO NOTHING
+`
+
+type ReplaceRouteBreakthroughSeveritiesParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	RouteID    uuid.UUID `json:"route_id"`
+	Severities []string  `json:"severities"`
+}
+
+// ReplaceRouteSeverities' own shape, for the fourth selection table
+// (migration 00054): severities that cross a closed delivery window. Kept
+// as its own statement and its own read below rather than folded into
+// ListRouteSelections' existing UNION — that query's own comment already
+// explains the price of a compound SELECT whose nullability sqlc infers
+// from the first arm only, and a fourth arm is not worth re-litigating
+// that fragility for a column the two call sites (the route editor, the
+// follower's window check) never need alongside the other three selections
+// in one round trip.
+func (q *Queries) ReplaceRouteBreakthroughSeverities(ctx context.Context, arg ReplaceRouteBreakthroughSeveritiesParams) error {
+	_, err := q.db.Exec(ctx, replaceRouteBreakthroughSeverities, arg.OrgID, arg.RouteID, arg.Severities)
 	return err
 }
 
@@ -559,20 +653,26 @@ const updateAlertRoute = `-- name: UpdateAlertRoute :execrows
 UPDATE alert_routes SET
   name = $1, enabled = $2, scope = $3,
   scope_group_id = $4, scope_host_id = $5,
-  revision = revision + 1, updated_at = $6
-WHERE org_id = $7 AND id = $8 AND revision = $9
+  window_cron = $6, window_duration_seconds = $7,
+  window_timezone = $8, rotation_id = $9,
+  revision = revision + 1, updated_at = $10
+WHERE org_id = $11 AND id = $12 AND revision = $13
 `
 
 type UpdateAlertRouteParams struct {
-	Name         string      `json:"name"`
-	Enabled      bool        `json:"enabled"`
-	Scope        string      `json:"scope"`
-	ScopeGroupID pgtype.UUID `json:"scope_group_id"`
-	ScopeHostID  pgtype.UUID `json:"scope_host_id"`
-	UpdatedAt    time.Time   `json:"updated_at"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	ID           uuid.UUID   `json:"id"`
-	Revision     int64       `json:"revision"`
+	Name                  string      `json:"name"`
+	Enabled               bool        `json:"enabled"`
+	Scope                 string      `json:"scope"`
+	ScopeGroupID          pgtype.UUID `json:"scope_group_id"`
+	ScopeHostID           pgtype.UUID `json:"scope_host_id"`
+	WindowCron            *string     `json:"window_cron"`
+	WindowDurationSeconds *int32      `json:"window_duration_seconds"`
+	WindowTimezone        *string     `json:"window_timezone"`
+	RotationID            pgtype.UUID `json:"rotation_id"`
+	UpdatedAt             time.Time   `json:"updated_at"`
+	OrgID                 uuid.UUID   `json:"org_id"`
+	ID                    uuid.UUID   `json:"id"`
+	Revision              int64       `json:"revision"`
 }
 
 // :execrows, not :one with RETURNING, the same choice UpdateCheckRule and
@@ -588,6 +688,10 @@ func (q *Queries) UpdateAlertRoute(ctx context.Context, arg UpdateAlertRoutePara
 		arg.Scope,
 		arg.ScopeGroupID,
 		arg.ScopeHostID,
+		arg.WindowCron,
+		arg.WindowDurationSeconds,
+		arg.WindowTimezone,
+		arg.RotationID,
 		arg.UpdatedAt,
 		arg.OrgID,
 		arg.ID,

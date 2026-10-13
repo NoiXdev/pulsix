@@ -232,3 +232,129 @@ func TestAlertNotifyStateSchema(t *testing.T) {
 		t.Errorf("ledger rows after event delete = %d, want 0", n)
 	}
 }
+
+func TestOncallSchema(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	chA, chB := seedChannel(t, d, org), seedChannel(t, d, org)
+
+	var rot uuid.UUID
+	err := d.Pool().QueryRow(ctx, `
+		INSERT INTO oncall_rotations (id, org_id, name, period_days, anchor, timezone, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'db team', 7, '2026-01-05 09:00:00+01', 'Europe/Berlin', 1, now(), now())
+		RETURNING id`, org).Scan(&rot)
+	if err != nil {
+		t.Fatalf("insert rotation: %v", err)
+	}
+
+	// The period is whole days and must be positive: a zero or negative
+	// cycle has no meaning and would divide by zero in ChannelAt.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO oncall_rotations (id, org_id, name, period_days, anchor, timezone, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'bad', 0, now(), 'UTC', 1, now(), now())`, org); err == nil {
+		t.Error("a period of zero days must be rejected")
+	}
+
+	// Channels are ordered, and the position is unique within a rotation.
+	for i, ch := range []uuid.UUID{chA, chB} {
+		if _, err := d.Pool().Exec(ctx, `
+			INSERT INTO oncall_rotation_channels (org_id, rotation_id, position, channel_id)
+			VALUES ($1, $2, $3, $4)`, org, rot, i, ch); err != nil {
+			t.Fatalf("insert rotation channel %d: %v", i, err)
+		}
+	}
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO oncall_rotation_channels (org_id, rotation_id, position, channel_id)
+		VALUES ($1, $2, 0, $3)`, org, rot, chB); err == nil {
+		t.Error("two channels at one position must be rejected")
+	}
+
+	// An exception's span must be a real interval.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO oncall_exceptions (id, org_id, rotation_id, starts_at, ends_at, channel_id, created_at)
+		VALUES (gen_random_uuid(), $1, $2, now(), now(), $3, now())`, org, rot, chA); err == nil {
+		t.Error("a zero-length exception span must be rejected")
+	}
+
+	// Deleting a channel takes it out of the rotation and out of any
+	// exception naming it, rather than orphaning either.
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM notification_channels WHERE id = $1`, chB); err != nil {
+		t.Fatalf("delete channel: %v", err)
+	}
+	var n int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM oncall_rotation_channels WHERE rotation_id = $1`, rot).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("rotation channels after one was deleted = %d, want 1", n)
+	}
+
+	// A deleted rotation must leave its routes standing with no channel
+	// source, not take them with it: the route still names a scope and a
+	// severity set someone configured, and the GUI's "reaches nobody"
+	// indicator is how they find out it needs a new source.
+	var route uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO alert_routes (id, org_id, name, enabled, scope, rotation_id, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'via rotation', true, 'org', $2, 1, now(), now())
+		RETURNING id`, org, rot).Scan(&route); err != nil {
+		t.Fatalf("insert route with a rotation: %v", err)
+	}
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM oncall_rotations WHERE id = $1`, rot); err != nil {
+		t.Fatalf("delete rotation: %v", err)
+	}
+	var stillThere bool
+	var src *uuid.UUID
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT true, rotation_id FROM alert_routes WHERE id = $1`, route).Scan(&stillThere, &src); err != nil {
+		t.Fatalf("the route must survive its rotation: %v", err)
+	}
+	if src != nil {
+		t.Errorf("rotation_id after the rotation was deleted = %v, want NULL", src)
+	}
+}
+
+func TestAlertRouteScheduleColumns(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+
+	var route uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO alert_routes (id, org_id, name, enabled, scope, window_cron, window_duration_seconds, window_timezone, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'business hours', true, 'org', '0 9 * * 1-5', 32400, 'Europe/Berlin', 1, now(), now())
+		RETURNING id`, org).Scan(&route); err != nil {
+		t.Fatalf("insert route with a window: %v", err)
+	}
+
+	// The three window columns are one fact: either all set or none.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO alert_routes (id, org_id, name, enabled, scope, window_cron, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'half a window', true, 'org', '0 9 * * *', 1, now(), now())`, org); err == nil {
+		t.Error("a window with a cron but no duration or timezone must be rejected")
+	}
+
+	// A route with no window at all is still legal — that is the default.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO alert_routes (id, org_id, name, enabled, scope, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, 'always', true, 'org', 1, now(), now())`, org); err != nil {
+		t.Fatalf("a route without a window must stay legal: %v", err)
+	}
+}
+
+func TestDeferredLedgerState(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO alert_notify_state (org_id, alert_event_id, state, decided_at)
+		VALUES ($1, $2, 'deferred', now())`, org, ev); err != nil {
+		t.Fatalf("the ledger must accept 'deferred': %v", err)
+	}
+}

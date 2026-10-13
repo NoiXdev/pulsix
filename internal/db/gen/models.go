@@ -123,16 +123,26 @@ type AlertNotifyState struct {
 }
 
 type AlertRoute struct {
-	ID           uuid.UUID   `json:"id"`
-	OrgID        uuid.UUID   `json:"org_id"`
-	Name         string      `json:"name"`
-	Enabled      bool        `json:"enabled"`
-	Scope        string      `json:"scope"`
-	ScopeGroupID pgtype.UUID `json:"scope_group_id"`
-	ScopeHostID  pgtype.UUID `json:"scope_host_id"`
-	Revision     int64       `json:"revision"`
-	CreatedAt    time.Time   `json:"created_at"`
-	UpdatedAt    time.Time   `json:"updated_at"`
+	ID                    uuid.UUID   `json:"id"`
+	OrgID                 uuid.UUID   `json:"org_id"`
+	Name                  string      `json:"name"`
+	Enabled               bool        `json:"enabled"`
+	Scope                 string      `json:"scope"`
+	ScopeGroupID          pgtype.UUID `json:"scope_group_id"`
+	ScopeHostID           pgtype.UUID `json:"scope_host_id"`
+	Revision              int64       `json:"revision"`
+	CreatedAt             time.Time   `json:"created_at"`
+	UpdatedAt             time.Time   `json:"updated_at"`
+	WindowCron            *string     `json:"window_cron"`
+	WindowDurationSeconds *int32      `json:"window_duration_seconds"`
+	WindowTimezone        *string     `json:"window_timezone"`
+	RotationID            pgtype.UUID `json:"rotation_id"`
+}
+
+type AlertRouteBreakthroughSeverity struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	RouteID  uuid.UUID `json:"route_id"`
+	Severity string    `json:"severity"`
 }
 
 type AlertRouteChannel struct {
@@ -618,6 +628,36 @@ type NotificationDigest struct {
 type NotificationDigestChannel struct {
 	OrgID     uuid.UUID `json:"org_id"`
 	ChannelID uuid.UUID `json:"channel_id"`
+}
+
+type OncallException struct {
+	ID         uuid.UUID `json:"id"`
+	OrgID      uuid.UUID `json:"org_id"`
+	RotationID uuid.UUID `json:"rotation_id"`
+	StartsAt   time.Time `json:"starts_at"`
+	EndsAt     time.Time `json:"ends_at"`
+	ChannelID  uuid.UUID `json:"channel_id"`
+	Note       string    `json:"note"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type OncallRotation struct {
+	ID         uuid.UUID `json:"id"`
+	OrgID      uuid.UUID `json:"org_id"`
+	Name       string    `json:"name"`
+	PeriodDays int32     `json:"period_days"`
+	Anchor     time.Time `json:"anchor"`
+	Timezone   string    `json:"timezone"`
+	Revision   int64     `json:"revision"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type OncallRotationChannel struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	RotationID uuid.UUID `json:"rotation_id"`
+	Position   int32     `json:"position"`
+	ChannelID  uuid.UUID `json:"channel_id"`
 }
 
 type OrgJobSetting struct {

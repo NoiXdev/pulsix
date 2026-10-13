@@ -13,8 +13,17 @@
 -- created_at/updated_at, by contrast, have no DEFAULT on this table (unlike
 -- notification_channels' own now()), so the caller's own clock supplies
 -- both — the same posture InsertAlert already takes for opened_at.
-INSERT INTO alert_routes (id, org_id, name, enabled, scope, scope_group_id, scope_host_id, created_at, updated_at)
-VALUES (@id, @org_id, @name, @enabled, @scope, sqlc.narg(scope_group_id), sqlc.narg(scope_host_id), @created_at, @updated_at)
+--
+-- window_cron/window_duration_seconds/window_timezone and rotation_id
+-- (migration 00054) are all sqlc.narg: a route with no window at all stays
+-- legal (TestAlertRouteScheduleColumns' own "always" case), and a route's
+-- channel source may still be the fixed alert_route_channels list rather
+-- than a rotation.
+INSERT INTO alert_routes (id, org_id, name, enabled, scope, scope_group_id, scope_host_id,
+  window_cron, window_duration_seconds, window_timezone, rotation_id, created_at, updated_at)
+VALUES (@id, @org_id, @name, @enabled, @scope, sqlc.narg(scope_group_id), sqlc.narg(scope_host_id),
+  sqlc.narg(window_cron), sqlc.narg(window_duration_seconds), sqlc.narg(window_timezone),
+  sqlc.narg(rotation_id), @created_at, @updated_at)
 RETURNING *;
 
 -- name: GetAlertRoute :one
@@ -33,6 +42,8 @@ SELECT * FROM alert_routes WHERE org_id = @org_id ORDER BY name;
 UPDATE alert_routes SET
   name = @name, enabled = @enabled, scope = @scope,
   scope_group_id = sqlc.narg(scope_group_id), scope_host_id = sqlc.narg(scope_host_id),
+  window_cron = sqlc.narg(window_cron), window_duration_seconds = sqlc.narg(window_duration_seconds),
+  window_timezone = sqlc.narg(window_timezone), rotation_id = sqlc.narg(rotation_id),
   revision = revision + 1, updated_at = @updated_at
 WHERE org_id = @org_id AND id = @id AND revision = @revision;
 
@@ -70,6 +81,33 @@ WITH deleted AS (
 INSERT INTO alert_route_severities (org_id, route_id, severity)
 SELECT @org_id, @route_id, unnest(@severities::text[])
 ON CONFLICT (route_id, severity) DO NOTHING;
+
+-- name: ReplaceRouteBreakthroughSeverities :exec
+-- ReplaceRouteSeverities' own shape, for the fourth selection table
+-- (migration 00054): severities that cross a closed delivery window. Kept
+-- as its own statement and its own read below rather than folded into
+-- ListRouteSelections' existing UNION — that query's own comment already
+-- explains the price of a compound SELECT whose nullability sqlc infers
+-- from the first arm only, and a fourth arm is not worth re-litigating
+-- that fragility for a column the two call sites (the route editor, the
+-- follower's window check) never need alongside the other three selections
+-- in one round trip.
+WITH deleted AS (
+  DELETE FROM alert_route_breakthrough_severities WHERE org_id = @org_id AND route_id = @route_id
+)
+INSERT INTO alert_route_breakthrough_severities (org_id, route_id, severity)
+SELECT @org_id, @route_id, unnest(@severities::text[])
+ON CONFLICT (route_id, severity) DO NOTHING;
+
+-- name: ListRouteBreakthroughSeverities :many
+-- The read ReplaceRouteBreakthroughSeverities' own comment promises: every
+-- route's breakthrough severities in org, in one round trip, the same
+-- N+1-avoiding reasoning ListRouteSelections already gives for the other
+-- three selection tables. A dedicated query rather than a fourth UNION arm
+-- there, for that query's own stated reason.
+SELECT route_id, severity FROM alert_route_breakthrough_severities
+WHERE org_id = @org_id
+ORDER BY route_id;
 
 -- name: ReplaceRouteEvents :exec
 -- ReplaceRouteSeverities' own shape, for the event-kind selection.
