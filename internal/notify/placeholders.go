@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -140,7 +141,11 @@ func escapedText(val any, ok bool) string {
 	return string(b[1 : len(b)-1])
 }
 
-// fieldText is a field's plain text form, before JSON-escaping.
+// fieldText is a field's plain text form, before JSON-escaping. The
+// []AlertItem case is what keeps "{{ alerts.items }}" from rendering
+// Go's own %v of a slice of structs into somebody's chat message: a list
+// field's text form is the same one line per alert the e-mail body
+// prints, and its structured form is what "| json" is for.
 func fieldText(val any) string {
 	switch v := val.(type) {
 	case string:
@@ -149,6 +154,8 @@ func fieldText(val any) string {
 		return strconv.Itoa(v)
 	case int64:
 		return strconv.FormatInt(v, 10)
+	case []AlertItem:
+		return alertItemsText(v)
 	default:
 		return fmt.Sprint(v)
 	}
@@ -280,6 +287,19 @@ var placeholderFields = map[string]func(Event) (any, bool){
 	"digest.schedules_note": func(ev Event) (any, bool) {
 		return digestField(ev.Digest, func(d DigestSummary) any { return digestTruncationNote(d) })
 	},
+
+	// The alert batch (spec v0.4b, decision 5). Without these a channel
+	// with a custom body template that a route then names received an
+	// alert.batch event whose every section resolved empty: valid JSON,
+	// delivered, logged as sent, and silent about the alert. A template
+	// is the Discord/n8n shape (backlog 4.6), so both forms are offered —
+	// alerts.items as human text for a chat message, and the same field
+	// through "| json" as the structured list for a workflow runner.
+	"alerts.count": func(ev Event) (any, bool) { return alertField(ev.Alerts, func(a AlertBatch) any { return a.Count }) },
+	"alerts.items": func(ev Event) (any, bool) { return alertField(ev.Alerts, func(a AlertBatch) any { return a.Items }) },
+	"alerts.items_note": func(ev Event) (any, bool) {
+		return alertField(ev.Alerts, func(a AlertBatch) any { return alertTruncationNote(a) })
+	},
 }
 
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -316,9 +336,25 @@ func digestField(d *DigestSummary, get func(DigestSummary) any) (any, bool) {
 	return get(*d), true
 }
 
+// alertField resolves an alert-batch field: nil (the event kind is not an
+// alert batch) reports ok=false, so a template mentioning alerts.* still
+// renders — empty, or null under "| json" — for a run or a digest.
+func alertField(a *AlertBatch, get func(AlertBatch) any) (any, bool) {
+	if a == nil {
+		return nil, false
+	}
+	return get(*a), true
+}
+
 // sampleEventKinds lists every EventKind, for save-time JSON validation.
+// Every kind, not most of them: a kind missing here is a kind no body
+// template is ever rendered against at save time, so a template that
+// produces invalid JSON for it is accepted and only fails at delivery —
+// or, worse, succeeds and says nothing. EventAlertBatch was missing for
+// exactly as long as it took a route to name a templated channel.
 func sampleEventKinds() []EventKind {
-	return []EventKind{EventRunFinished, EventScheduleSkipped, EventScheduleFailed, EventDigest, EventTest}
+	return []EventKind{EventRunFinished, EventScheduleSkipped, EventScheduleFailed,
+		EventDigest, EventAlertBatch, EventTest}
 }
 
 // sampleEventForKind is sampleEvent() cut down to the sections a real
@@ -329,14 +365,21 @@ func sampleEventForKind(kind EventKind) Event {
 	ev.Kind = kind
 	switch kind {
 	case EventRunFinished:
-		ev.Decision, ev.Digest = nil, nil
+		ev.Decision, ev.Digest, ev.Alerts = nil, nil, nil
 	case EventScheduleSkipped, EventScheduleFailed:
-		ev.Run, ev.Digest = nil, nil
+		ev.Run, ev.Digest, ev.Alerts = nil, nil, nil
 	case EventDigest:
-		ev.Schedule, ev.Template, ev.Run, ev.Decision = nil, nil, nil, nil
+		ev.Schedule, ev.Template, ev.Run, ev.Decision, ev.Alerts = nil, nil, nil, nil, nil
+	case EventAlertBatch:
+		// An alert batch carries no schedule, template, run or decision —
+		// the follower builds it from alert events and the organization,
+		// and nothing else (alertroutes.Follower.enqueue). Categories are
+		// run outcomes, so they are absent too.
+		ev.Schedule, ev.Template, ev.Run, ev.Decision, ev.Digest = nil, nil, nil, nil, nil
+		ev.Categories = nil
 	case EventTest:
 		ev.Schedule, ev.Template, ev.Run, ev.Decision, ev.Digest = nil, nil, nil, nil, nil
-		ev.Categories, ev.URL = nil, ""
+		ev.Alerts, ev.Categories, ev.URL = nil, nil, ""
 	}
 	return ev
 }
@@ -363,6 +406,14 @@ func hostileSampleEventForKind(kind EventKind) Event {
 	}
 	if ev.Digest != nil {
 		ev.Digest.Timezone = hostile
+	}
+	if ev.Alerts != nil {
+		items := slices.Clone(ev.Alerts.Items)
+		for i := range items {
+			items[i].HostName, items[i].CheckKey, items[i].Item = hostile, hostile, hostile
+			items[i].Metric, items[i].Severity, items[i].Event = hostile, hostile, hostile
+		}
+		ev.Alerts = &AlertBatch{Count: ev.Alerts.Count, Items: items}
 	}
 	return ev
 }
