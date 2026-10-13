@@ -53,48 +53,58 @@ WHERE org_id = @org_id AND id = @id AND revision = @revision;
 -- the only statement a route deletion ever needs.
 DELETE FROM alert_routes WHERE org_id = @org_id AND id = @id;
 
--- name: ReplaceRouteSeverities :exec
--- The whole selection in one round trip, the same shape
--- ReplaceRecoveryCodes/InsertRecoveryCode split across two statements for
--- recovery codes — collapsed here into one, because unlike a recovery
--- code's hash a severity carries no identity worth preserving across the
--- replace: the caller always has the complete new set in hand (the
--- editor's own multi-select), never a single value to add or remove.
---
--- The DELETE runs as a CTE ahead of the INSERT rather than as a separate
--- statement for the same reason SweepStaleAlerts' own WITH swept AS
--- (UPDATE ...) is one statement rather than two: one round trip, and
--- nothing else can observe the selection half-replaced between them.
--- "deleted" is never selected from — Postgres still executes a
--- data-modifying CTE even when nothing references its output, the same
--- as SweepStaleAlerts' own swept would if nothing read it either.
---
+-- name: DeleteRouteSeverities :exec
+-- The first half of replacing the severity selection; InsertRouteSeverities
+-- is the second. The two used to be one WITH-based statement — a DELETE CTE
+-- the INSERT never read from, ahead of the INSERT — which Postgres documents
+-- as running against one shared snapshot with the two statements' relative
+-- order unspecified
+-- (https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-MODIFYING).
+-- DeleteRotationChannels' own comment (queries/oncall.sql) already paid for
+-- that lesson once, where the shared key made it a reproducible "duplicate
+-- key" failure; here the table's own composite PRIMARY KEY (route_id,
+-- severity) made it a quieter one instead — TestStoreUpdateReplacesBreakthroughOverAnExistingRow
+-- caught the sibling table (alert_route_breakthrough_severities) silently
+-- losing a severity that should have survived an update unchanged, because
+-- the INSERT's ON CONFLICT DO NOTHING skipped re-adding it while the DELETE,
+-- running after rather than before, removed it anyway. Two statements sent
+-- in sequence on the caller's own transaction (replaceSelections,
+-- store_sql.go) remove the ambiguity: the DELETE commits before the INSERT
+-- ever runs.
+DELETE FROM alert_route_severities WHERE org_id = @org_id AND route_id = @route_id;
+
+-- name: InsertRouteSeverities :exec
 -- unnest(@severities::text[]) is InsertCheckItems' own one-statement-not-
--- one-per-row shape; ON CONFLICT DO NOTHING absorbs a value repeated
--- twice in the same call, the same defensive reason InsertCheckItems'
--- own comment gives. An empty array is a legal no-op that clears the
--- selection to nothing, which is exactly what "replace with zero
--- severities" means.
-WITH deleted AS (
-  DELETE FROM alert_route_severities WHERE org_id = @org_id AND route_id = @route_id
-)
+-- one-per-row shape; ON CONFLICT DO NOTHING absorbs a value repeated twice
+-- in the same call, the same defensive reason InsertCheckItems' own comment
+-- gives — it is no longer asked to also absorb a row DeleteRouteSeverities
+-- has not gotten to yet, since that statement already ran and committed its
+-- own effect by the time this one starts. An empty array is a legal no-op
+-- that leaves the selection cleared to nothing, which is exactly what
+-- "replace with zero severities" means.
 INSERT INTO alert_route_severities (org_id, route_id, severity)
 SELECT @org_id, @route_id, unnest(@severities::text[])
 ON CONFLICT (route_id, severity) DO NOTHING;
 
--- name: ReplaceRouteBreakthroughSeverities :exec
--- ReplaceRouteSeverities' own shape, for the fourth selection table
--- (migration 00054): severities that cross a closed delivery window. Kept
--- as its own statement and its own read below rather than folded into
--- ListRouteSelections' existing UNION — that query's own comment already
--- explains the price of a compound SELECT whose nullability sqlc infers
--- from the first arm only, and a fourth arm is not worth re-litigating
--- that fragility for a column the two call sites (the route editor, the
--- follower's window check) never need alongside the other three selections
--- in one round trip.
-WITH deleted AS (
-  DELETE FROM alert_route_breakthrough_severities WHERE org_id = @org_id AND route_id = @route_id
-)
+-- name: DeleteRouteBreakthroughSeverities :exec
+-- DeleteRouteSeverities' own shape and its own reason (this file, above),
+-- for the fourth selection table (migration 00054): severities that cross a
+-- closed delivery window. The WITH-based single-statement version of this
+-- pair was the one TestStoreUpdateReplacesBreakthroughOverAnExistingRow
+-- actually caught losing data against a real database — a severity present
+-- before and after an update vanished because the INSERT's ON CONFLICT DO
+-- NOTHING left the old row in place while the DELETE, running second
+-- instead of first, removed it anyway. Kept as its own pair of statements
+-- and its own read below rather than folded into ListRouteSelections'
+-- existing UNION — that query's own comment already explains the price of a
+-- compound SELECT whose nullability sqlc infers from the first arm only,
+-- and a fourth arm is not worth re-litigating that fragility for a column
+-- the two call sites (the route editor, the follower's window check) never
+-- need alongside the other three selections in one round trip.
+DELETE FROM alert_route_breakthrough_severities WHERE org_id = @org_id AND route_id = @route_id;
+
+-- name: InsertRouteBreakthroughSeverities :exec
+-- InsertRouteSeverities' own shape, for the breakthrough selection.
 INSERT INTO alert_route_breakthrough_severities (org_id, route_id, severity)
 SELECT @org_id, @route_id, unnest(@severities::text[])
 ON CONFLICT (route_id, severity) DO NOTHING;
@@ -109,26 +119,30 @@ SELECT route_id, severity FROM alert_route_breakthrough_severities
 WHERE org_id = @org_id
 ORDER BY route_id;
 
--- name: ReplaceRouteEvents :exec
--- ReplaceRouteSeverities' own shape, for the event-kind selection.
-WITH deleted AS (
-  DELETE FROM alert_route_events WHERE org_id = @org_id AND route_id = @route_id
-)
+-- name: DeleteRouteEvents :exec
+-- DeleteRouteSeverities' own shape and its own reason (this file, above),
+-- for the event-kind selection.
+DELETE FROM alert_route_events WHERE org_id = @org_id AND route_id = @route_id;
+
+-- name: InsertRouteEvents :exec
+-- InsertRouteSeverities' own shape, for the event-kind selection.
 INSERT INTO alert_route_events (org_id, route_id, kind)
 SELECT @org_id, @route_id, unnest(@kinds::text[])
 ON CONFLICT (route_id, kind) DO NOTHING;
 
--- name: ReplaceRouteChannels :exec
--- ReplaceRouteSeverities' own shape, for the channel selection. A route
+-- name: DeleteRouteChannels :exec
+-- DeleteRouteSeverities' own shape and its own reason (this file, above),
+-- for the channel selection.
+DELETE FROM alert_route_channels WHERE org_id = @org_id AND route_id = @route_id;
+
+-- name: InsertRouteChannels :exec
+-- InsertRouteSeverities' own shape, for the channel selection. A route
 -- with no channels is rejected by the Service before this is ever called
 -- (the design's own "A route with no channels is rejected at creation"),
 -- not by anything in this statement or the schema — an empty array is
 -- still accepted here so that a channel deleted out from under an
 -- otherwise-valid route (the design's "reported ineffective" case) can
 -- still be replaced down to zero without a special case.
-WITH deleted AS (
-  DELETE FROM alert_route_channels WHERE org_id = @org_id AND route_id = @route_id
-)
 INSERT INTO alert_route_channels (org_id, route_id, channel_id)
 SELECT @org_id, @route_id, unnest(@channel_ids::uuid[])
 ON CONFLICT (route_id, channel_id) DO NOTHING;

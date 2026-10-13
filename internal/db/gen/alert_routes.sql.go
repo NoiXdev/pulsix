@@ -114,6 +114,97 @@ func (q *Queries) DeleteAlertRoute(ctx context.Context, arg DeleteAlertRoutePara
 	return result.RowsAffected(), nil
 }
 
+const deleteRouteBreakthroughSeverities = `-- name: DeleteRouteBreakthroughSeverities :exec
+DELETE FROM alert_route_breakthrough_severities WHERE org_id = $1 AND route_id = $2
+`
+
+type DeleteRouteBreakthroughSeveritiesParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	RouteID uuid.UUID `json:"route_id"`
+}
+
+// DeleteRouteSeverities' own shape and its own reason (this file, above),
+// for the fourth selection table (migration 00054): severities that cross a
+// closed delivery window. The WITH-based single-statement version of this
+// pair was the one TestStoreUpdateReplacesBreakthroughOverAnExistingRow
+// actually caught losing data against a real database — a severity present
+// before and after an update vanished because the INSERT's ON CONFLICT DO
+// NOTHING left the old row in place while the DELETE, running second
+// instead of first, removed it anyway. Kept as its own pair of statements
+// and its own read below rather than folded into ListRouteSelections'
+// existing UNION — that query's own comment already explains the price of a
+// compound SELECT whose nullability sqlc infers from the first arm only,
+// and a fourth arm is not worth re-litigating that fragility for a column
+// the two call sites (the route editor, the follower's window check) never
+// need alongside the other three selections in one round trip.
+func (q *Queries) DeleteRouteBreakthroughSeverities(ctx context.Context, arg DeleteRouteBreakthroughSeveritiesParams) error {
+	_, err := q.db.Exec(ctx, deleteRouteBreakthroughSeverities, arg.OrgID, arg.RouteID)
+	return err
+}
+
+const deleteRouteChannels = `-- name: DeleteRouteChannels :exec
+DELETE FROM alert_route_channels WHERE org_id = $1 AND route_id = $2
+`
+
+type DeleteRouteChannelsParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	RouteID uuid.UUID `json:"route_id"`
+}
+
+// DeleteRouteSeverities' own shape and its own reason (this file, above),
+// for the channel selection.
+func (q *Queries) DeleteRouteChannels(ctx context.Context, arg DeleteRouteChannelsParams) error {
+	_, err := q.db.Exec(ctx, deleteRouteChannels, arg.OrgID, arg.RouteID)
+	return err
+}
+
+const deleteRouteEvents = `-- name: DeleteRouteEvents :exec
+DELETE FROM alert_route_events WHERE org_id = $1 AND route_id = $2
+`
+
+type DeleteRouteEventsParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	RouteID uuid.UUID `json:"route_id"`
+}
+
+// DeleteRouteSeverities' own shape and its own reason (this file, above),
+// for the event-kind selection.
+func (q *Queries) DeleteRouteEvents(ctx context.Context, arg DeleteRouteEventsParams) error {
+	_, err := q.db.Exec(ctx, deleteRouteEvents, arg.OrgID, arg.RouteID)
+	return err
+}
+
+const deleteRouteSeverities = `-- name: DeleteRouteSeverities :exec
+DELETE FROM alert_route_severities WHERE org_id = $1 AND route_id = $2
+`
+
+type DeleteRouteSeveritiesParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	RouteID uuid.UUID `json:"route_id"`
+}
+
+// The first half of replacing the severity selection; InsertRouteSeverities
+// is the second. The two used to be one WITH-based statement — a DELETE CTE
+// the INSERT never read from, ahead of the INSERT — which Postgres documents
+// as running against one shared snapshot with the two statements' relative
+// order unspecified
+// (https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-MODIFYING).
+// DeleteRotationChannels' own comment (queries/oncall.sql) already paid for
+// that lesson once, where the shared key made it a reproducible "duplicate
+// key" failure; here the table's own composite PRIMARY KEY (route_id,
+// severity) made it a quieter one instead — TestStoreUpdateReplacesBreakthroughOverAnExistingRow
+// caught the sibling table (alert_route_breakthrough_severities) silently
+// losing a severity that should have survived an update unchanged, because
+// the INSERT's ON CONFLICT DO NOTHING skipped re-adding it while the DELETE,
+// running after rather than before, removed it anyway. Two statements sent
+// in sequence on the caller's own transaction (replaceSelections,
+// store_sql.go) remove the ambiguity: the DELETE commits before the INSERT
+// ever runs.
+func (q *Queries) DeleteRouteSeverities(ctx context.Context, arg DeleteRouteSeveritiesParams) error {
+	_, err := q.db.Exec(ctx, deleteRouteSeverities, arg.OrgID, arg.RouteID)
+	return err
+}
+
 const expireClosedSuppressed = `-- name: ExpireClosedSuppressed :execrows
 UPDATE alert_notify_state s SET state = $1, decided_at = $2
 FROM alert_events ae
@@ -181,6 +272,91 @@ func (q *Queries) GetAlertRoute(ctx context.Context, arg GetAlertRouteParams) (A
 		&i.RotationID,
 	)
 	return i, err
+}
+
+const insertRouteBreakthroughSeverities = `-- name: InsertRouteBreakthroughSeverities :exec
+INSERT INTO alert_route_breakthrough_severities (org_id, route_id, severity)
+SELECT $1, $2, unnest($3::text[])
+ON CONFLICT (route_id, severity) DO NOTHING
+`
+
+type InsertRouteBreakthroughSeveritiesParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	RouteID    uuid.UUID `json:"route_id"`
+	Severities []string  `json:"severities"`
+}
+
+// InsertRouteSeverities' own shape, for the breakthrough selection.
+func (q *Queries) InsertRouteBreakthroughSeverities(ctx context.Context, arg InsertRouteBreakthroughSeveritiesParams) error {
+	_, err := q.db.Exec(ctx, insertRouteBreakthroughSeverities, arg.OrgID, arg.RouteID, arg.Severities)
+	return err
+}
+
+const insertRouteChannels = `-- name: InsertRouteChannels :exec
+INSERT INTO alert_route_channels (org_id, route_id, channel_id)
+SELECT $1, $2, unnest($3::uuid[])
+ON CONFLICT (route_id, channel_id) DO NOTHING
+`
+
+type InsertRouteChannelsParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	RouteID    uuid.UUID   `json:"route_id"`
+	ChannelIds []uuid.UUID `json:"channel_ids"`
+}
+
+// InsertRouteSeverities' own shape, for the channel selection. A route
+// with no channels is rejected by the Service before this is ever called
+// (the design's own "A route with no channels is rejected at creation"),
+// not by anything in this statement or the schema — an empty array is
+// still accepted here so that a channel deleted out from under an
+// otherwise-valid route (the design's "reported ineffective" case) can
+// still be replaced down to zero without a special case.
+func (q *Queries) InsertRouteChannels(ctx context.Context, arg InsertRouteChannelsParams) error {
+	_, err := q.db.Exec(ctx, insertRouteChannels, arg.OrgID, arg.RouteID, arg.ChannelIds)
+	return err
+}
+
+const insertRouteEvents = `-- name: InsertRouteEvents :exec
+INSERT INTO alert_route_events (org_id, route_id, kind)
+SELECT $1, $2, unnest($3::text[])
+ON CONFLICT (route_id, kind) DO NOTHING
+`
+
+type InsertRouteEventsParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	RouteID uuid.UUID `json:"route_id"`
+	Kinds   []string  `json:"kinds"`
+}
+
+// InsertRouteSeverities' own shape, for the event-kind selection.
+func (q *Queries) InsertRouteEvents(ctx context.Context, arg InsertRouteEventsParams) error {
+	_, err := q.db.Exec(ctx, insertRouteEvents, arg.OrgID, arg.RouteID, arg.Kinds)
+	return err
+}
+
+const insertRouteSeverities = `-- name: InsertRouteSeverities :exec
+INSERT INTO alert_route_severities (org_id, route_id, severity)
+SELECT $1, $2, unnest($3::text[])
+ON CONFLICT (route_id, severity) DO NOTHING
+`
+
+type InsertRouteSeveritiesParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	RouteID    uuid.UUID `json:"route_id"`
+	Severities []string  `json:"severities"`
+}
+
+// unnest(@severities::text[]) is InsertCheckItems' own one-statement-not-
+// one-per-row shape; ON CONFLICT DO NOTHING absorbs a value repeated twice
+// in the same call, the same defensive reason InsertCheckItems' own comment
+// gives — it is no longer asked to also absorb a row DeleteRouteSeverities
+// has not gotten to yet, since that statement already ran and committed its
+// own effect by the time this one starts. An empty array is a legal no-op
+// that leaves the selection cleared to nothing, which is exactly what
+// "replace with zero severities" means.
+func (q *Queries) InsertRouteSeverities(ctx context.Context, arg InsertRouteSeveritiesParams) error {
+	_, err := q.db.Exec(ctx, insertRouteSeverities, arg.OrgID, arg.RouteID, arg.Severities)
+	return err
 }
 
 const listAlertRoutes = `-- name: ListAlertRoutes :many
@@ -368,124 +544,6 @@ func (q *Queries) RecordAlertNotifyState(ctx context.Context, arg RecordAlertNot
 		arg.State,
 		arg.DecidedAt,
 	)
-	return err
-}
-
-const replaceRouteBreakthroughSeverities = `-- name: ReplaceRouteBreakthroughSeverities :exec
-WITH deleted AS (
-  DELETE FROM alert_route_breakthrough_severities WHERE org_id = $1 AND route_id = $2
-)
-INSERT INTO alert_route_breakthrough_severities (org_id, route_id, severity)
-SELECT $1, $2, unnest($3::text[])
-ON CONFLICT (route_id, severity) DO NOTHING
-`
-
-type ReplaceRouteBreakthroughSeveritiesParams struct {
-	OrgID      uuid.UUID `json:"org_id"`
-	RouteID    uuid.UUID `json:"route_id"`
-	Severities []string  `json:"severities"`
-}
-
-// ReplaceRouteSeverities' own shape, for the fourth selection table
-// (migration 00054): severities that cross a closed delivery window. Kept
-// as its own statement and its own read below rather than folded into
-// ListRouteSelections' existing UNION — that query's own comment already
-// explains the price of a compound SELECT whose nullability sqlc infers
-// from the first arm only, and a fourth arm is not worth re-litigating
-// that fragility for a column the two call sites (the route editor, the
-// follower's window check) never need alongside the other three selections
-// in one round trip.
-func (q *Queries) ReplaceRouteBreakthroughSeverities(ctx context.Context, arg ReplaceRouteBreakthroughSeveritiesParams) error {
-	_, err := q.db.Exec(ctx, replaceRouteBreakthroughSeverities, arg.OrgID, arg.RouteID, arg.Severities)
-	return err
-}
-
-const replaceRouteChannels = `-- name: ReplaceRouteChannels :exec
-WITH deleted AS (
-  DELETE FROM alert_route_channels WHERE org_id = $1 AND route_id = $2
-)
-INSERT INTO alert_route_channels (org_id, route_id, channel_id)
-SELECT $1, $2, unnest($3::uuid[])
-ON CONFLICT (route_id, channel_id) DO NOTHING
-`
-
-type ReplaceRouteChannelsParams struct {
-	OrgID      uuid.UUID   `json:"org_id"`
-	RouteID    uuid.UUID   `json:"route_id"`
-	ChannelIds []uuid.UUID `json:"channel_ids"`
-}
-
-// ReplaceRouteSeverities' own shape, for the channel selection. A route
-// with no channels is rejected by the Service before this is ever called
-// (the design's own "A route with no channels is rejected at creation"),
-// not by anything in this statement or the schema — an empty array is
-// still accepted here so that a channel deleted out from under an
-// otherwise-valid route (the design's "reported ineffective" case) can
-// still be replaced down to zero without a special case.
-func (q *Queries) ReplaceRouteChannels(ctx context.Context, arg ReplaceRouteChannelsParams) error {
-	_, err := q.db.Exec(ctx, replaceRouteChannels, arg.OrgID, arg.RouteID, arg.ChannelIds)
-	return err
-}
-
-const replaceRouteEvents = `-- name: ReplaceRouteEvents :exec
-WITH deleted AS (
-  DELETE FROM alert_route_events WHERE org_id = $1 AND route_id = $2
-)
-INSERT INTO alert_route_events (org_id, route_id, kind)
-SELECT $1, $2, unnest($3::text[])
-ON CONFLICT (route_id, kind) DO NOTHING
-`
-
-type ReplaceRouteEventsParams struct {
-	OrgID   uuid.UUID `json:"org_id"`
-	RouteID uuid.UUID `json:"route_id"`
-	Kinds   []string  `json:"kinds"`
-}
-
-// ReplaceRouteSeverities' own shape, for the event-kind selection.
-func (q *Queries) ReplaceRouteEvents(ctx context.Context, arg ReplaceRouteEventsParams) error {
-	_, err := q.db.Exec(ctx, replaceRouteEvents, arg.OrgID, arg.RouteID, arg.Kinds)
-	return err
-}
-
-const replaceRouteSeverities = `-- name: ReplaceRouteSeverities :exec
-WITH deleted AS (
-  DELETE FROM alert_route_severities WHERE org_id = $1 AND route_id = $2
-)
-INSERT INTO alert_route_severities (org_id, route_id, severity)
-SELECT $1, $2, unnest($3::text[])
-ON CONFLICT (route_id, severity) DO NOTHING
-`
-
-type ReplaceRouteSeveritiesParams struct {
-	OrgID      uuid.UUID `json:"org_id"`
-	RouteID    uuid.UUID `json:"route_id"`
-	Severities []string  `json:"severities"`
-}
-
-// The whole selection in one round trip, the same shape
-// ReplaceRecoveryCodes/InsertRecoveryCode split across two statements for
-// recovery codes — collapsed here into one, because unlike a recovery
-// code's hash a severity carries no identity worth preserving across the
-// replace: the caller always has the complete new set in hand (the
-// editor's own multi-select), never a single value to add or remove.
-//
-// The DELETE runs as a CTE ahead of the INSERT rather than as a separate
-// statement for the same reason SweepStaleAlerts' own WITH swept AS
-// (UPDATE ...) is one statement rather than two: one round trip, and
-// nothing else can observe the selection half-replaced between them.
-// "deleted" is never selected from — Postgres still executes a
-// data-modifying CTE even when nothing references its output, the same
-// as SweepStaleAlerts' own swept would if nothing read it either.
-//
-// unnest(@severities::text[]) is InsertCheckItems' own one-statement-not-
-// one-per-row shape; ON CONFLICT DO NOTHING absorbs a value repeated
-// twice in the same call, the same defensive reason InsertCheckItems'
-// own comment gives. An empty array is a legal no-op that clears the
-// selection to nothing, which is exactly what "replace with zero
-// severities" means.
-func (q *Queries) ReplaceRouteSeverities(ctx context.Context, arg ReplaceRouteSeveritiesParams) error {
-	_, err := q.db.Exec(ctx, replaceRouteSeverities, arg.OrgID, arg.RouteID, arg.Severities)
 	return err
 }
 
