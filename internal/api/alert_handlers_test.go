@@ -282,6 +282,31 @@ func TestAlertGetNotFound(t *testing.T) {
 	}
 }
 
+// TestAlertDetailReportsAHeldNotification is v0.4c Task 11's own test: an
+// alert whose "opened" event the ledger is holding 'deferred' (the route
+// wanting it is outside its delivery window) must say so on its own
+// detail — "why did nothing arrive" has to be a fact on the page an
+// operator is already looking at, not a SQL query only an engineer can
+// run. Uses apitest.Server's own bearer-token helpers (OrgWithToken, Get)
+// rather than alertFixture above: SeedOpenAlertWithDeferredNotification
+// lives on the server, the same shape SeedChannel/SeedHost already take.
+func TestAlertDetailReportsAHeldNotification(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	alert := s.SeedOpenAlertWithDeferredNotification(t, org)
+
+	resp := s.Get(t, tok, "/api/v1/orgs/"+org.String()+"/alerts/"+alert.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", resp.Code, resp.Body)
+	}
+	if !strings.Contains(resp.Body.String(), "notification_hold") {
+		t.Errorf("the detail does not say the notification is held: %s", resp.Body)
+	}
+	if !strings.Contains(resp.Body.String(), `"notification_hold":"deferred"`) {
+		t.Errorf(`the detail's own notification_hold is not "deferred": %s`, resp.Body)
+	}
+}
+
 // TestAlertsAreScopedToTheOrganization is the brief's own test: org B's
 // token (here, a session in org B — this package tests the same
 // org-scoping requireOrg gives every other resource) gets 404, not 403,

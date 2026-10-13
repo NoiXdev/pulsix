@@ -1,4 +1,4 @@
-import type { AlertCloseReason, AlertEventKind, AlertTimelineEntry, AlertTupleState } from '../../api/types.ts';
+import type { AlertCloseReason, AlertEventKind, AlertNotificationHold, AlertTimelineEntry, AlertTupleState } from '../../api/types.ts';
 import type { Tone } from '../../ui/badge.tsx';
 
 /**
@@ -82,6 +82,25 @@ export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: Aler
   // is exactly one of event/change set, named by kind — unreachable
   // against a server that honours it, not a case worth a silent crash.
   return { label: 'Unknown event', tone: 'unknown' };
+}
+
+/**
+ * notificationHoldLabel answers "why did nothing arrive" in the one
+ * sentence AlertTimeline shows above the timeline itself (v0.4c Task 11):
+ * `null` renders nothing at all, for the common case nothing is held.
+ * The two wordings deliberately name two different things an operator
+ * would otherwise have to guess at — a shut delivery window ('deferred')
+ * versus an open maintenance window ('suppressed') — never a shared
+ * "notification delayed" that would leave which one to a follow-up
+ * question. When an alert's events carry both, the server has already
+ * resolved which one this prop is (internal/alerts.Detail.NotificationHold's
+ * own doc comment: suppressed outranks deferred), so this function never
+ * has to choose between them itself.
+ */
+export function notificationHoldLabel(hold: AlertNotificationHold | ''): string | null {
+  if (hold === 'deferred') return 'Notification held until the delivery window opens.';
+  if (hold === 'suppressed') return 'Notification held until the maintenance window ends.';
+  return null;
 }
 
 /** timelineEntryAt formats one entry's own timestamp for the timeline —

@@ -554,7 +554,13 @@ func New(t *testing.T, opts ...Option) *Server {
 	// checksSvc instance through app.NewAlertRouteGroups, the identical
 	// adapter the follower uses for the same lookup — the follower itself
 	// is not started here, like the reaper and the other tickers above.
-	s.AlertRoutes = alertroutes.NewService(alertroutes.NewSQLStore(d), app.NewAlertRouteGroups(s.Checks), time.Now, uuid.New)
+	alertRoutesStore := alertroutes.NewSQLStore(d)
+	s.AlertRoutes = alertroutes.NewService(alertRoutesStore, app.NewAlertRouteGroups(s.Checks), time.Now, uuid.New)
+	// s.Alerts' own notification-hold port (v0.4c Task 11,
+	// alerts.NotifyLedger), wired exactly like production
+	// (internal/app.Build): the same store above, since *alertroutes.Store
+	// already satisfies the interface.
+	s.Alerts.SetNotifyLedger(alertRoutesStore)
 	// The on-call rotation surface (v0.4c Task 8), wired exactly like
 	// production (internal/app.Build): the same store a real manager's
 	// follower would resolve a route's rotation through.
@@ -847,6 +853,74 @@ func (s *Server) SeedHost(t *testing.T, orgID uuid.UUID) uuid.UUID {
 		t.Fatal(err)
 	}
 	return h.ID
+}
+
+// SeedOpenAlertWithDeferredNotification opens one tuple-scope alert on a
+// fresh host in org and records its own "opened" event as held in
+// alertroutes' ledger (migration 00052/00054's alert_notify_state) in
+// state 'deferred' — the fixture TestAlertDetailReportsAHeldNotification
+// needs for "the alert has been open since three, why did nobody wake me"
+// to have an answer to check against. Seeded directly through
+// alerts.NewSQLStore and alertroutes.NewSQLStore on the server's own *db.DB
+// — the same shape alert_handlers_test.go's own seedOpenAlert uses to open
+// an alert (opening one is not exposed on alerts.Service at all, only
+// Apply, driven by a rules evaluation, does that) — rather than through
+// the follower itself: the follower's own tick is a later concern this
+// fixture has no need to run.
+func (s *Server) SeedOpenAlertWithDeferredNotification(t *testing.T, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	host := s.SeedHost(t, orgID)
+	sub := alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "disk", Item: "/", Metric: "used_pct"}
+	now := time.Now().UTC()
+	ctx := context.Background()
+
+	alertStore := alerts.NewSQLStore(s.DB)
+	tx, err := s.DB.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := alertStore.Execute(ctx, tx, orgID, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateCrit},
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("seed open alert: %v", err)
+	}
+	open, err := alertStore.OpenForHost(ctx, tx, orgID, host)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("open for host: %v", err)
+	}
+	var alertID uuid.UUID
+	for _, a := range open {
+		if a.Subject == sub {
+			alertID = a.ID
+		}
+	}
+	if alertID == uuid.Nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("no seeded alert found for subject %+v among %+v", sub, open)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	events, err := alertStore.Events(ctx, orgID, alertID)
+	if err != nil || len(events) == 0 {
+		t.Fatalf("events: %v, %v", events, err)
+	}
+
+	ledgerTx, err := s.DB.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin ledger tx: %v", err)
+	}
+	if err := alertroutes.NewSQLStore(s.DB).RecordDecision(ctx, ledgerTx, orgID, events[0].ID, alertroutes.StateDeferred, now); err != nil {
+		_ = ledgerTx.Rollback(ctx)
+		t.Fatalf("seed deferred ledger row: %v", err)
+	}
+	if err := ledgerTx.Commit(ctx); err != nil {
+		t.Fatalf("commit ledger tx: %v", err)
+	}
+	return alertID
 }
 
 // Response is one bearer-authenticated HTTP response from Get/Post/Patch/

@@ -311,3 +311,35 @@ FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
 WHERE s.alert_event_id = ae.id AND s.org_id = ae.org_id
   AND s.org_id = @org_id AND s.state IN ('suppressed', 'deferred') AND a.closed_at IS NOT NULL;
+
+-- name: AlertNotifyHoldState :one
+-- v0.4c Task 11 ("Why nothing arrived — the hold indicator on an alert"):
+-- the worst held state among alert_id's own events, for the alert detail
+-- page's own "notification_hold" field — the one place in the GUI that
+-- has to answer "why did nothing arrive" without a SQL query, the same
+-- fact the ledger has held as a queryable row since v0.4b's decision 8.
+--
+-- 'suppressed' outranks 'deferred', the same precedence StateDeferred's
+-- own doc comment gives the follower itself: a maintenance window is the
+-- first thing an operator needs to know, the delivery window second. The
+-- CASE/ORDER BY/LIMIT 1 picks it when both are present among the alert's
+-- events; COALESCE turns "no held row at all" (nothing suppressed or
+-- deferred, or no ledger row yet) into '', never NULL, so this is always
+-- exactly one row and the Go side never has to branch on pgx.ErrNoRows
+-- the way a bare SELECT ... LIMIT 1 without the aggregate-shaped subquery
+-- would require.
+--
+-- org_id is checked on both the ledger row and, through alert_events'
+-- own composite foreign key (migration 00053), implicitly on the event —
+-- the same belt-and-suspenders predicate UndecidedAlertEvents/
+-- HeldAlertEvents above give their own anti-join, so a caller cannot read
+-- another organization's hold state by guessing an alert id.
+SELECT COALESCE(
+  (SELECT s.state
+   FROM alert_notify_state s
+   JOIN alert_events ae ON ae.id = s.alert_event_id AND ae.org_id = s.org_id
+   WHERE s.org_id = @org_id AND ae.alert_id = @alert_id AND s.state IN ('suppressed', 'deferred')
+   ORDER BY CASE s.state WHEN 'suppressed' THEN 0 ELSE 1 END
+   LIMIT 1),
+  ''
+)::text AS hold_state;

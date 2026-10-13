@@ -172,6 +172,27 @@ func (s *Store) RecordDecision(ctx context.Context, tx pgx.Tx, orgID, eventID uu
 	return nil
 }
 
+// NotifyStatusForAlert answers "why did nothing arrive" for one alert, on
+// its own detail page (v0.4c Task 11): the worst held state among
+// alertID's own events — "", 'deferred' or 'suppressed' — the same three
+// answers AlertNotifyHoldState's own query can produce. It reads through
+// s.d directly, like Get and List in store_sql.go, rather than taking a
+// caller-owned tx: the detail page's GET is not part of the follower's
+// own per-org tick, so there is no shared transaction to join, unlike
+// every other method in this file.
+//
+// 'suppressed' outranks 'deferred' when an alert's events carry both —
+// StateDeferred's own doc comment gives the reason, and
+// AlertNotifyHoldState's own ORDER BY is where that precedence actually
+// lives; this method only unwraps what the query already decided.
+func (s *Store) NotifyStatusForAlert(ctx context.Context, orgID, alertID uuid.UUID) (string, error) {
+	state, err := gen.New(s.d).AlertNotifyHoldState(ctx, gen.AlertNotifyHoldStateParams{OrgID: orgID, AlertID: alertID})
+	if err != nil {
+		return "", fmt.Errorf("alert notify hold state: %w", err)
+	}
+	return state, nil
+}
+
 // ExpireClosedHeld retires every held row in org — 'suppressed' or
 // 'deferred' — whose alert has since closed to 'expired' (migration
 // 00052's own doc comment on why that state is terminal: the catch-up

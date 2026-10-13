@@ -519,6 +519,78 @@ func TestGetOnAHostAlertReturnsEventsOnly(t *testing.T) {
 	}
 }
 
+// fakeLedger is an in-memory alerts.NotifyLedger, recording every call so a
+// test can pin which (orgID, alertID) Get asked for, not merely the
+// stubbed answer it got back.
+type fakeLedger struct {
+	hold  string
+	err   error
+	calls []struct{ orgID, alertID uuid.UUID }
+}
+
+func (f *fakeLedger) NotifyStatusForAlert(_ context.Context, orgID, alertID uuid.UUID) (string, error) {
+	f.calls = append(f.calls, struct{ orgID, alertID uuid.UUID }{orgID, alertID})
+	return f.hold, f.err
+}
+
+// TestGetReportsTheLedgersHoldState is the whole point of Task 11: Get
+// asks the wired ledger for this exact alert, in this exact organization,
+// and carries its answer straight onto Detail.NotificationHold.
+func TestGetReportsTheLedgersHoldState(t *testing.T) {
+	store := newFakeStore()
+	a := openAlert(tupleSubject("disk", "", "used"), rules.StateCrit, t0)
+	store.alerts[a.ID] = a
+	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
+	ledger := &fakeLedger{hold: "deferred"}
+	svc.SetNotifyLedger(ledger)
+
+	detail, err := svc.Get(ctx, orgID, a.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.NotificationHold != "deferred" {
+		t.Errorf("NotificationHold = %q, want %q", detail.NotificationHold, "deferred")
+	}
+	if len(ledger.calls) != 1 || ledger.calls[0].orgID != orgID || ledger.calls[0].alertID != a.ID {
+		t.Errorf("NotifyStatusForAlert called with %+v, want exactly one call for (org=%s, alert=%s)", ledger.calls, orgID, a.ID)
+	}
+}
+
+// TestGetWithNoLedgerWiredLeavesNotificationHoldEmpty is SetNotifyLedger's
+// own doc comment, proven: every test above this one builds a Service with
+// NewService alone, and none of them can have been asserting on a
+// NotificationHold field that did not exist yet — a nil ledger must leave
+// Get working exactly as it always has, reporting "" rather than erroring.
+func TestGetWithNoLedgerWiredLeavesNotificationHoldEmpty(t *testing.T) {
+	store := newFakeStore()
+	a := openAlert(tupleSubject("disk", "", "used"), rules.StateCrit, t0)
+	store.alerts[a.ID] = a
+	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
+
+	detail, err := svc.Get(ctx, orgID, a.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.NotificationHold != "" {
+		t.Errorf("NotificationHold = %q, want empty with no ledger wired", detail.NotificationHold)
+	}
+}
+
+// TestGetSurfacesTheLedgersError proves the ledger's own failure is not
+// swallowed: Get must fail loudly rather than silently report an alert as
+// not-held when the real answer could not be read.
+func TestGetSurfacesTheLedgersError(t *testing.T) {
+	store := newFakeStore()
+	a := openAlert(tupleSubject("disk", "", "used"), rules.StateCrit, t0)
+	store.alerts[a.ID] = a
+	svc := alerts.NewService(store, clockAt(t0.Add(time.Hour)))
+	svc.SetNotifyLedger(&fakeLedger{err: errors.New("boom")})
+
+	if _, err := svc.Get(ctx, orgID, a.ID); err == nil {
+		t.Error("Get() with a failing ledger = nil error, want one")
+	}
+}
+
 // TestApplyComposesOpenReconcileExecute pins Apply's own job description:
 // load what's open, hand it to Reconcile, execute whatever comes back —
 // and nothing at all when Reconcile has no actions, so a quiet tick does

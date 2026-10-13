@@ -2627,6 +2627,8 @@ export interface components {
              * @description Absent for an unbounded snooze-until-change
              */
             muted_until?: string;
+            /** @enum {string} */
+            notification_hold?: "deferred" | "suppressed";
             /** Format: date-time */
             opened_at: string;
             /** @enum {string} */

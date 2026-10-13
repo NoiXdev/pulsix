@@ -225,7 +225,11 @@ function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) 
       )}
       {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
       {detail.data && (
-        <AlertTimeline entries={detail.data.alert.timeline ?? []} closedReason={detail.data.alert.closed_reason ?? ''} />
+        <AlertTimeline
+          entries={detail.data.alert.timeline ?? []}
+          closedReason={detail.data.alert.closed_reason ?? ''}
+          notificationHold={detail.data.alert.notification_hold ?? ''}
+        />
       )}
     </div>
   );

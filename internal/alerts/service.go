@@ -41,12 +41,41 @@ type View struct {
 }
 
 // Detail is View plus the alert's own timeline (timeline.go's
-// mergeTimeline) — what Get returns.
+// mergeTimeline) and its notification hold — what Get returns.
 type Detail struct {
 	Alert
 	HostName    string
 	Suppression Suppression
 	Timeline    []TimelineEntry
+	// NotificationHold answers "why did nothing arrive" (v0.4c Task 11):
+	// "" when nothing is held, "deferred" when every route that wants this
+	// alert is outside its delivery window, "suppressed" when the host is
+	// in maintenance — ledger's own precedence when an alert's events
+	// carry both (NotifyLedger's own doc comment). It is read from
+	// internal/alertroutes' ledger, not from anything on Alert itself:
+	// the lifecycle (this package) decides whether an alert is open,
+	// acknowledged or snoozed, but has no opinion of its own on whether a
+	// notification about it was ever sent — that fact belongs entirely to
+	// the follower and its ledger, a different package, which is exactly
+	// why this is a value fetched through an interface rather than a
+	// field this package could ever compute itself.
+	NotificationHold string
+}
+
+// NotifyLedger is the one read this package needs from internal/alertroutes'
+// ledger (migration 00052/00054's alert_notify_state, the follower's own
+// decisions) to answer Detail.NotificationHold. Declared here rather than
+// this package depending on alertroutes directly — alertroutes already
+// depends on this package (its Match reads alerts.EventKind), so the
+// reverse import would be a cycle, and even without that, Service needs
+// exactly this one method, not alertroutes.Store's whole surface. The
+// concrete *alertroutes.Store satisfies it without changes; SetNotifyLedger
+// below is where app wiring hands it over, the same
+// declared-next-to-the-service shape every Store in this codebase takes
+// (CLAUDE.md's own "Services depend on interfaces declared next to the
+// service").
+type NotifyLedger interface {
+	NotifyStatusForAlert(ctx context.Context, orgID, alertID uuid.UUID) (string, error)
 }
 
 // Service composes Store, Reconcile and Mute. It carries a clock because,
@@ -57,9 +86,20 @@ type Detail struct {
 // reject the past, and Get needs it as the open end of a still-open
 // alert's own timeline window.
 type Service struct {
-	store Store
-	clock func() time.Time
+	store  Store
+	clock  func() time.Time
+	ledger NotifyLedger
 }
+
+// SetNotifyLedger wires the ledger port Get reads Detail.NotificationHold
+// through (post-construction, the same shape schedules.Service.SetMaintenance
+// and agents.Service.SetRevokeHook already take for a dependency built
+// after the service itself, or simply optional in a test): nil — the zero
+// value, and every Service a test builds with NewService alone — leaves
+// Get reporting "" for every alert rather than erroring, which is the
+// right default for the many tests of this package that have nothing to
+// do with notification routing at all.
+func (s *Service) SetNotifyLedger(l NotifyLedger) { s.ledger = l }
 
 // NewService wires store and clock. clock is a required positional
 // argument, not an Option — the same ruling internal/items' checkKeys and
@@ -217,7 +257,17 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Detail, error) 
 			return Detail{}, fmt.Errorf("get alert %s state changes: %w", id, err)
 		}
 	}
-	return Detail{Alert: a.Alert, HostName: a.HostName, Suppression: sup, Timeline: mergeTimeline(events, changes)}, nil
+	var hold string
+	if s.ledger != nil {
+		hold, err = s.ledger.NotifyStatusForAlert(ctx, orgID, a.ID)
+		if err != nil {
+			return Detail{}, fmt.Errorf("get alert %s notify hold: %w", id, err)
+		}
+	}
+	return Detail{
+		Alert: a.Alert, HostName: a.HostName, Suppression: sup,
+		Timeline: mergeTimeline(events, changes), NotificationHold: hold,
+	}, nil
 }
 
 // invalidf builds an ErrInvalidInput failure carrying a message an

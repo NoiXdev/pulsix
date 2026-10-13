@@ -439,6 +439,16 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// alertroutes_ports.go builds, exactly what the follower uses for the
 	// same lookup.
 	alertRoutesStore := alertroutes.NewSQLStore(appDB)
+	// alertsSvc's own notification-hold port (v0.4c Task 11, alerts.NotifyLedger):
+	// *alertroutes.Store already satisfies it (NotifyStatusForAlert,
+	// ledger_sql.go) without an adapter, since both packages agree on the
+	// signature. Wired here, right after the store exists, rather than
+	// passed into alerts.NewService above — alertsSvc is built before this
+	// store exists at all, and SetNotifyLedger (the same post-construction
+	// shape schedulesSvc.SetMaintenance takes a few lines up) is what lets
+	// construction order stay "alerts first, routes second" without a
+	// forward reference.
+	alertsSvc.SetNotifyLedger(alertRoutesStore)
 	// The on-call store the follower resolves a route's rotation through
 	// (alertroutes.RotationReader). Built here beside the route store for
 	// the same reason: one store on the shared pool, handed to whoever

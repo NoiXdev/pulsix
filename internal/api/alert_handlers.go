@@ -121,15 +121,29 @@ type alertTimelineEntryDTO struct {
 	Change *alertStateChangeDTO `json:"change,omitempty"`
 }
 
-// alertDetailDTO is AlertDTO plus its timeline — GET /alerts/{id}'s own
-// shape, matching alerts.Detail.
+// alertDetailDTO is AlertDTO plus its timeline and notification hold — GET
+// /alerts/{id}'s own shape, matching alerts.Detail.
 type alertDetailDTO struct {
 	AlertDTO
 	Timeline []alertTimelineEntryDTO `json:"timeline"`
+	// NotificationHold answers "why did nothing arrive" (v0.4c Task 11,
+	// "The hold indicator on an alert"): absent/"" when nothing is held,
+	// "deferred" when every route wanting this alert is outside its
+	// delivery window, "suppressed" when the host is in maintenance —
+	// alerts.Detail.NotificationHold's own doc comment on why 'suppressed'
+	// outranks 'deferred' when both are true of the same alert. Only on
+	// the detail, not AlertDTO's own list shape: the list's job is "what
+	// is open", not "why did nobody hear about it" — that question is
+	// asked one alert at a time, on the page where its full story already
+	// lives.
+	NotificationHold string `json:"notification_hold,omitempty" enum:"deferred,suppressed"`
 }
 
 func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
-	out := alertDetailDTO{AlertDTO: toAlertDTO(d.Alert, d.HostName, d.Suppression)}
+	out := alertDetailDTO{
+		AlertDTO:         toAlertDTO(d.Alert, d.HostName, d.Suppression),
+		NotificationHold: d.NotificationHold,
+	}
 	out.Timeline = make([]alertTimelineEntryDTO, len(d.Timeline))
 	for i, e := range d.Timeline {
 		entry := alertTimelineEntryDTO{At: e.At, Kind: string(e.Kind)}

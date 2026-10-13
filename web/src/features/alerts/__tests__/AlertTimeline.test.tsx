@@ -93,6 +93,36 @@ describe('AlertTimeline', () => {
   });
 });
 
+describe('AlertTimeline notification hold', () => {
+  // v0.4c Task 11 ("Why nothing arrived"): the ledger holds a fact no GUI
+  // surfaced before — notification_hold on the alert detail. These three
+  // cases are the whole contract: deferred reads as the delivery window,
+  // suppressed reads as the maintenance window (the follower's own
+  // precedence when both are true at once — StateDeferred's own doc
+  // comment, internal/alertroutes/ledger_sql.go), and nothing is shown at
+  // all once the hold clears.
+  it('says a notification is held for a shut delivery window', () => {
+    render(<AlertTimeline entries={[]} closedReason="" notificationHold="deferred" />);
+    expect(screen.getByText(/held until the delivery window/i)).toBeInTheDocument();
+  });
+
+  it('says a notification is held for an open maintenance window', () => {
+    render(<AlertTimeline entries={[]} closedReason="" notificationHold="suppressed" />);
+    expect(screen.getByText(/held until the maintenance window/i)).toBeInTheDocument();
+  });
+
+  it('says nothing when no notification is held', () => {
+    render(<AlertTimeline entries={[]} closedReason="" notificationHold="" />);
+    expect(screen.queryByText(/held until/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the hold line above a non-empty timeline too', () => {
+    render(<AlertTimeline entries={[opened('2026-10-05T09:00:00Z')]} closedReason="" notificationHold="deferred" />);
+    expect(screen.getByText(/held until the delivery window/i)).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-entry')).toBeInTheDocument();
+  });
+});
+
 describe('timelineEntryLabel', () => {
   it('names a state change by its own transition', () => {
     const entry = change('t', 'ok', 'warn');

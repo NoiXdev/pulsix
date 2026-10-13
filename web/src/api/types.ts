@@ -152,6 +152,13 @@ export type AlertRouteEventKind = 'opened' | 'severity_raised' | 'acknowledged' 
 // internal/alerts/timeline.go) — the client renders this order, it does
 // not recompute it.
 export type AlertDetail = components['schemas']['AlertDetailDTO'];
+// AlertNotificationHold is "why did nothing arrive" (v0.4c Task 11): absent
+// from the wire (`notification_hold` is omitempty) means nothing is held,
+// which is why every call site normalizes with `?? ''` rather than passing
+// `undefined` through — AlertTimeline's own prop takes the closed set
+// including `''`, the same shape closedReason already takes for the same
+// reason (AlertCloseReason's own comment, above).
+export type AlertNotificationHold = NonNullable<AlertDetail['notification_hold']>;
 export type AlertTimelineEntry = components['schemas']['AlertTimelineEntryDTO'];
 export type AlertEvent = components['schemas']['AlertEventDTO'];
 export type AlertEventKind = AlertEvent['kind'];

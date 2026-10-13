@@ -385,6 +385,133 @@ func TestCatchUpEventsFindsBothHeldStates(t *testing.T) {
 	}
 }
 
+// TestNotifyStatusForAlertPrefersSuppressedOverDeferred is the detail
+// page's own precedence question (v0.4c Task 11): an alert whose events
+// carry both held states must report 'suppressed', never 'deferred' —
+// StateDeferred's own doc comment gives the reason an operator needs
+// "host in maintenance" before "outside the delivery window".
+func TestNotifyStatusForAlertPrefersSuppressedOverDeferred(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	deferredEv := seedAlertEvent(t, d, org, alert, "opened")
+	suppressedEv := seedAlertEvent(t, d, org, alert, "severity_raised")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, deferredEv, alertroutes.StateDeferred, time.Now()); err != nil {
+		t.Fatalf("RecordDecision(deferred): %v", err)
+	}
+	if err := s.RecordDecision(ctx, tx, org, suppressedEv, alertroutes.StateSuppressed, time.Now()); err != nil {
+		t.Fatalf("RecordDecision(suppressed): %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	got, err := s.NotifyStatusForAlert(ctx, org, alert)
+	if err != nil {
+		t.Fatalf("NotifyStatusForAlert: %v", err)
+	}
+	if got != string(alertroutes.StateSuppressed) {
+		t.Errorf("NotifyStatusForAlert() = %q, want %q", got, alertroutes.StateSuppressed)
+	}
+}
+
+// TestNotifyStatusForAlertDeferredAlone proves the other half: a
+// deferred-only alert reports 'deferred', not "" — the row is still held,
+// even with no suppressed row to outrank it.
+func TestNotifyStatusForAlertDeferredAlone(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateDeferred, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	got, err := s.NotifyStatusForAlert(ctx, org, alert)
+	if err != nil {
+		t.Fatalf("NotifyStatusForAlert: %v", err)
+	}
+	if got != string(alertroutes.StateDeferred) {
+		t.Errorf("NotifyStatusForAlert() = %q, want %q", got, alertroutes.StateDeferred)
+	}
+}
+
+// TestNotifyStatusForAlertEmptyWhenNothingIsHeld proves neither 'sent' nor
+// 'unrouted' — nor an alert with no ledger row at all — ever reads as a
+// hold: only 'suppressed'/'deferred' are "why did nothing arrive" answers.
+func TestNotifyStatusForAlertEmptyWhenNothingIsHeld(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	ev := seedAlertEvent(t, d, org, alert, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	if got, err := s.NotifyStatusForAlert(ctx, org, alert); err != nil || got != "" {
+		t.Errorf("NotifyStatusForAlert() with no ledger row = (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, org, ev, alertroutes.StateSent, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	got, err := s.NotifyStatusForAlert(ctx, org, alert)
+	if err != nil {
+		t.Fatalf("NotifyStatusForAlert: %v", err)
+	}
+	if got != "" {
+		t.Errorf("NotifyStatusForAlert() = %q, want empty for a sent event", got)
+	}
+}
+
+// TestNotifyStatusForAlertScopedToOrganization is this method's own
+// isolation test, the same focus TestUndecidedEventsIsScopedToOrganization
+// pins for the follower's forward pass: orgB must not be able to read
+// orgA's hold state by guessing orgA's alert id.
+func TestNotifyStatusForAlertScopedToOrganization(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
+	hostA := seedHost(t, d, orgA)
+	alertA := seedOpenAlert(t, d, orgA, hostA)
+	evA := seedAlertEvent(t, d, orgA, alertA, "opened")
+	s := alertroutes.NewSQLStore(d)
+
+	tx := beginTx(t, d)
+	if err := s.RecordDecision(ctx, tx, orgA, evA, alertroutes.StateSuppressed, time.Now()); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	got, err := s.NotifyStatusForAlert(ctx, orgB, alertA)
+	if err != nil {
+		t.Fatalf("NotifyStatusForAlert: %v", err)
+	}
+	if got != "" {
+		t.Errorf("NotifyStatusForAlert() across organizations = %q, want empty", got)
+	}
+}
+
 // TestExpireClosedHeldRetiresDeferredToo covers the half of the widened
 // UPDATE ... FROM the suppressed case cannot reach. A 'deferred' row whose
 // alert has closed is invisible to the catch-up pass forever (that pass
