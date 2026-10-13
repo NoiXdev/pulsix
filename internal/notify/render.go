@@ -70,6 +70,20 @@ func sampleEvent() Event {
 			Schedules: []DigestSchedule{{ID: id, Name: "Nightly OS patching", Runs: 2, Failures: 1, Skipped: 1}},
 			Slowest:   []DigestRun{{Schedule: "Nightly OS patching", RunID: id, StartedAt: started, DurationSeconds: 252, URL: "https://pulsix.example/o/example/runs/" + id.String()}},
 		},
+		// Two items against a count of three, so the sample is a
+		// TRUNCATED batch: that is the only shape in which
+		// alerts.items_note renders anything at all, and the save-time
+		// JSON check is worth nothing on a field that is always empty in
+		// the sample (the note carries a non-ASCII ellipsis, which is
+		// exactly the kind of character that check exists to catch).
+		Alerts: &AlertBatch{Count: 3, Items: []AlertItem{
+			{AlertID: id, HostID: id, HostName: "db-1", CheckKey: "disk", Item: "/var", Metric: "used_percent",
+				Severity: "crit", Event: "opened", At: finished,
+				URL: "https://pulsix.example/o/example/alerts?host=" + id.String()},
+			{AlertID: id, HostID: id, HostName: "web-2", CheckKey: "cpu", Metric: "used_percent",
+				Severity: "warn", Event: "severity_raised", At: finished,
+				URL: "https://pulsix.example/o/example/alerts?host=" + id.String()},
+		}},
 		URL: "https://pulsix.example/o/example/runs/" + id.String(),
 	}
 }
@@ -145,15 +159,12 @@ func renderEmail(ev Event) (subject, body string) {
 	case EventAlertBatch:
 		if a := ev.Alerts; a != nil {
 			subject = fmt.Sprintf("[Pulsix] %d alert(s) for %s", a.Count, ev.Org.Name)
-			for _, it := range a.Items {
-				what := it.CheckKey
-				if it.Item != "" {
-					what += "/" + it.Item
-				}
-				if it.Metric != "" {
-					what += " " + it.Metric
-				}
-				fmt.Fprintf(&b, "%-8s %-20s %-8s %s\n", it.Severity, it.HostName, it.Event, what)
+			b.WriteString(alertItemsText(a.Items))
+			if len(a.Items) > 0 {
+				b.WriteString("\n")
+			}
+			if note := alertTruncationNote(*a); note != "" {
+				b.WriteString(note + "\n")
 			}
 		} else {
 			subject = fmt.Sprintf("[Pulsix] alerts for %s", ev.Org.Name)
@@ -181,6 +192,47 @@ func digestTruncationNote(d DigestSummary) string {
 		return ""
 	}
 	return fmt.Sprintf("+%d schedules without activity", omitted)
+}
+
+// alertItemsText is a batch's item list as plain text, one alert per
+// line: severity, host, what happened, and the subject it happened to.
+// The e-mail body and the alerts.items placeholder share it, so a webhook
+// template and a mail about the same batch cannot describe it
+// differently. No trailing newline — the callers decide what follows.
+func alertItemsText(items []AlertItem) string {
+	lines := make([]string, len(items))
+	for i, it := range items {
+		what := it.CheckKey
+		if it.Item != "" {
+			what += "/" + it.Item
+		}
+		if it.Metric != "" {
+			what += " " + it.Metric
+		}
+		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", it.Severity, it.HostName, it.Event, what)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// alertTruncationNote is what an alert batch's message says when its item
+// list was capped: how many alerts the list does not name. Empty when the
+// list is complete.
+//
+// The cap itself belongs to the follower (alertroutes.MaxBatchItems) —
+// this package knows nothing of routing and must not — which is exactly
+// why AlertBatch.Count is the number BEFORE the cut: the difference
+// between Count and the items actually carried is the only evidence here
+// that anything was left out. Without this note a capped batch would be
+// indistinguishable from a complete one, and decision 5's own motivating
+// example ("fifty hosts filling their disks") sits right at the cap, so
+// the first message that needs the note is also the most urgent one. The
+// same promise digestTruncationNote already keeps for the weekly digest.
+func alertTruncationNote(a AlertBatch) string {
+	omitted := a.Count - len(a.Items)
+	if omitted <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("… and %d more", omitted)
 }
 
 // digestLocation is the zone every time in a digest message prints in: the

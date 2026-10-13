@@ -33,6 +33,7 @@ type recordingEnqueuer struct {
 		key      string
 		channels []uuid.UUID
 		count    int
+		items    int
 	}
 	fail error
 }
@@ -48,7 +49,8 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, _ pgx.Tx, _ uuid.UUID, ke
 		key      string
 		channels []uuid.UUID
 		count    int
-	}{key, channels, ev.Alerts.Count})
+		items    int
+	}{key, channels, ev.Alerts.Count, len(ev.Alerts.Items)})
 	return nil
 }
 
@@ -218,6 +220,36 @@ func TestTickCoalescesPerChannel(t *testing.T) {
 	}
 	if env.enq.calls[0].count != 3 {
 		t.Errorf("batch carried %d alerts, want 3", env.enq.calls[0].count)
+	}
+}
+
+// TestTickCapsTheItemListButNotTheCount is the storm case decision 5
+// names outright — "fifty hosts filling their disks" — and the cap sits
+// exactly there, so the first batch that trips it is the worst possible
+// one to get wrong. The message carries at most MaxBatchItems items, but
+// Count stays the number of alerts the batch actually decided: that
+// difference is the only thing telling a renderer the list was cut
+// (notify.alertTruncationNote turns it into "… and N more").
+func TestTickCapsTheItemListButNotTheCount(t *testing.T) {
+	env := newFollowEnv(t)
+	env.route(alertroutes.ScopeOrg, nil, []rules.State{rules.StateCrit},
+		[]alerts.EventKind{alerts.EventOpened}, []uuid.UUID{env.channel})
+	const over = alertroutes.MaxBatchItems + 7
+	for range over {
+		env.openCritAlert()
+	}
+
+	if err := env.follower.Tick(context.Background(), env.org); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(env.enq.calls) != 1 {
+		t.Fatalf("Enqueue called %d times, want 1", len(env.enq.calls))
+	}
+	if got := env.enq.calls[0].items; got != alertroutes.MaxBatchItems {
+		t.Errorf("message listed %d items, want the cap of %d", got, alertroutes.MaxBatchItems)
+	}
+	if got := env.enq.calls[0].count; got != over {
+		t.Errorf("batch count = %d, want %d — the number before the cut, not after it", got, over)
 	}
 }
 

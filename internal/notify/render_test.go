@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -532,5 +533,99 @@ func TestRenderEmailAlertBatch(t *testing.T) {
 	// Never log output, variables or secrets — the package's own promise.
 	if strings.Contains(body, "password") {
 		t.Error("body must not carry anything beyond the batch's own fields")
+	}
+}
+
+// TestRenderEmailAlertBatchSaysWhatItLeftOut: the batch's item list is
+// capped by the follower (alertroutes.MaxBatchItems), and Count is the
+// number before that cut precisely so a reader can tell a complete list
+// from a capped one. A message that printed only the items would be
+// silently wrong exactly when it matters most — decision 5's own
+// motivating example is "fifty hosts filling their disks", which is
+// where the cap sits.
+func TestRenderEmailAlertBatchSaysWhatItLeftOut(t *testing.T) {
+	items := make([]AlertItem, 50)
+	for i := range items {
+		items[i] = AlertItem{HostName: fmt.Sprintf("web-%02d", i), CheckKey: "disk", Severity: "crit", Event: "opened"}
+	}
+	_, body := renderEmail(Event{
+		Kind: EventAlertBatch, At: time.Now(), Org: OrgRef{Name: "Acme"},
+		Alerts: &AlertBatch{Count: 73, Items: items},
+	})
+	if !strings.Contains(body, "23 more") {
+		t.Errorf("body does not say the list was cut:\n%s", body)
+	}
+
+	// An uncapped batch says nothing of the sort.
+	_, full := renderEmail(Event{
+		Kind: EventAlertBatch, At: time.Now(), Org: OrgRef{Name: "Acme"},
+		Alerts: &AlertBatch{Count: len(items), Items: items},
+	})
+	if strings.Contains(full, "more") {
+		t.Errorf("a complete list must not claim anything was left out:\n%s", full)
+	}
+}
+
+// TestAlertBatchPlaceholders: a channel with a custom body template — the
+// Discord/n8n case (backlog 4.6) — that a route then names receives an
+// alert.batch event. Before these fields existed every placeholder in
+// such a template resolved empty, the result was still valid JSON, the
+// delivery was logged as sent, and the message said nothing whatever
+// about the alert. The template must be able to name the batch.
+func TestAlertBatchPlaceholders(t *testing.T) {
+	tmpl := `{"n": {{ alerts.count | json }}, "note": "{{ alerts.items_note }}", "text": "{{ alerts.items }}", "items": {{ alerts.items | json }}}`
+	if err := checkBodyTemplate(tmpl, true); err != nil {
+		t.Fatalf("checkBodyTemplate(%q) = %v, want it to validate", tmpl, err)
+	}
+
+	ev := Event{
+		Kind: EventAlertBatch, At: time.Now(), Org: OrgRef{Name: "Acme"},
+		Alerts: &AlertBatch{Count: 3, Items: []AlertItem{
+			{HostName: "db-1", CheckKey: "disk", Metric: "used_pct", Severity: "crit", Event: "opened"},
+		}},
+	}
+	body, err := renderWebhookBody(tmpl, ev)
+	if err != nil {
+		t.Fatalf("renderWebhookBody: %v", err)
+	}
+	if !json.Valid(body) {
+		t.Fatalf("rendered body is not valid JSON: %s", body)
+	}
+	var got struct {
+		N     int         `json:"n"`
+		Note  string      `json:"note"`
+		Text  string      `json:"text"`
+		Items []AlertItem `json:"items"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if got.N != 3 {
+		t.Errorf("alerts.count = %d, want 3", got.N)
+	}
+	if !strings.Contains(got.Note, "2 more") {
+		t.Errorf("alerts.items_note = %q, want it to name the two alerts the list left out", got.Note)
+	}
+	if !strings.Contains(got.Text, "db-1") || !strings.Contains(got.Text, "crit") {
+		t.Errorf("alerts.items = %q, want the alert named in plain text", got.Text)
+	}
+	if len(got.Items) != 1 || got.Items[0].HostName != "db-1" {
+		t.Errorf("alerts.items | json = %v, want the batch's own item list", got.Items)
+	}
+}
+
+// TestAlertBatchIsValidatedLikeEveryOtherKind: sampleEventKinds is what
+// checkBodyTemplate iterates, so a kind missing from it is a kind no
+// template is ever JSON-validated against. alert.batch was missing.
+func TestAlertBatchIsValidatedLikeEveryOtherKind(t *testing.T) {
+	if !slices.Contains(sampleEventKinds(), EventAlertBatch) {
+		t.Fatal("sampleEventKinds() does not list EventAlertBatch")
+	}
+	// A template that is valid JSON for every other kind but not for an
+	// alert batch must be refused — which can only happen if the batch is
+	// actually rendered during validation.
+	bad := `{"only_alerts": {{ alerts.count }}}`
+	if err := checkBodyTemplate(bad, true); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("checkBodyTemplate(%q, true) = %v, want ErrInvalidInput — alerts.count renders empty for every other kind", err, bad)
 	}
 }
