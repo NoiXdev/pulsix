@@ -1,6 +1,7 @@
 package oncall_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -137,5 +138,90 @@ func TestShiftsMarksStandInEvenWhenItEchoesTheCycleChannel(t *testing.T) {
 	}
 	if got[0].StandIn || got[2].StandIn {
 		t.Errorf("the segments either side of the stand-in must not be marked as one: got[0]=%+v got[2]=%+v", got[0], got[2])
+	}
+}
+
+// The roster range is bounded. GET /orgs/{org}/oncall-rotations/{id}/shifts
+// parses from/to straight out of the query string and hands them here, so
+// without a cap "from=0001-01-01&to=9999-12-31&period_days=1" walks roughly
+// 3.6 million handovers, sorts them, and builds as many segments and DTOs —
+// a gigabyte and tens of seconds for one request from anyone holding
+// channels.read, against the process that is also the alert follower
+// (whole-branch review, Critical #1). internal/calendar's own MaxRange is
+// the precedent this follows, down to the ErrInvalidRange-style sentinel so
+// the API answers 400 rather than 500.
+func TestShiftsRejectsARangeLongerThanMaxRange(t *testing.T) {
+	a := uuid.New()
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rot := oncall.Rotation{PeriodDays: 1, Anchor: from, Timezone: "UTC", Channels: []uuid.UUID{a}}
+
+	if _, err := oncall.Shifts(rot, nil, from, from.Add(oncall.MaxRange+time.Hour)); !errors.Is(err, oncall.ErrInvalidInput) {
+		t.Errorf("one hour past MaxRange = %v, want ErrInvalidInput", err)
+	}
+	// The extreme the review names, the one an unbounded walk answers with
+	// a gigabyte: it must cost nothing at all.
+	ancient := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+	distant := time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
+	if _, err := oncall.Shifts(rot, nil, ancient, distant); !errors.Is(err, oncall.ErrInvalidInput) {
+		t.Errorf("the whole representable range = %v, want ErrInvalidInput", err)
+	}
+	if _, err := oncall.Shifts(rot, nil, from, from.Add(oncall.MaxRange)); err != nil {
+		t.Errorf("exactly MaxRange = %v, want it accepted", err)
+	}
+}
+
+// An anchor far from the range asked about must cost no more than a near
+// one. handoverIndexAt seeds its search with target.Sub(anchor), and a
+// Duration saturates at ±292 years: past that the seed stops tracking the
+// real distance at all and the correction loop walks the remainder a single
+// period at a time — millions of AddDate calls for an anchor in year 1,
+// 3.7 s for the fourteen-day roster the GUI itself asks for (whole-branch
+// review, Critical #1). Counting whole calendar days instead is exact for
+// any pair of instants, so the loop only ever corrects the rounding.
+func TestShiftsWithAFarAnchorCostsNoMoreThanANearOne(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	rot := oncall.Rotation{
+		PeriodDays: 1,
+		Anchor:     time.Date(1, 1, 1, 9, 0, 0, 0, time.UTC),
+		Timezone:   "Europe/Berlin",
+		Channels:   []uuid.UUID{a, b},
+	}
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	start := time.Now()
+	got, err := oncall.Shifts(rot, nil, from, from.AddDate(0, 0, 14))
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Shifts: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("Shifts() returned nothing for a fourteen-day range")
+	}
+	// Generous by three orders of magnitude against the arithmetic this
+	// pins (microseconds), and still far under the seconds the saturating
+	// seed costs.
+	if elapsed > time.Second {
+		t.Errorf("a fourteen-day roster off an anchor in year 1 took %s, want well under a second", elapsed)
+	}
+}
+
+// The calendar-day count the search is seeded with has to be right, not
+// merely bounded: a rotation anchored centuries back must still name the
+// channel the cycle actually reaches at an instant exactly N handovers
+// later.
+func TestChannelAtCountsWholeCalendarDaysOverCenturies(t *testing.T) {
+	a, b, c := uuid.New(), uuid.New(), uuid.New()
+	anchor := time.Date(1600, 1, 1, 9, 0, 0, 0, time.UTC)
+	rot := oncall.Rotation{PeriodDays: 1, Anchor: anchor, Timezone: "UTC", Channels: []uuid.UUID{a, b, c}}
+
+	// 100 000 days past the anchor, plus an hour so the instant sits
+	// inside that turn rather than exactly on its handover.
+	at := anchor.AddDate(0, 0, 100_000).Add(time.Hour)
+	got, err := oncall.ChannelAt(rot, nil, at)
+	if err != nil {
+		t.Fatalf("ChannelAt: %v", err)
+	}
+	if want := []uuid.UUID{a, b, c}[100_000%3]; got != want {
+		t.Errorf("ChannelAt 100 000 days past a 17th-century anchor = %v, want %v", got, want)
 	}
 }

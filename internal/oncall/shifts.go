@@ -8,6 +8,22 @@ import (
 	"github.com/google/uuid"
 )
 
+// MaxRange bounds what one Shifts call may be asked for. Without it the
+// range is whatever a query string says: from=0001-01-01 to=9999-12-31 with
+// a one-day period walks roughly 3.6 million handovers, sorts them, and
+// builds as many segments — about a gigabyte and tens of seconds for one
+// request, from anyone holding channels.read, inside the process that is
+// also the alert follower. internal/calendar.MaxRange is the precedent;
+// this is the same guard on this package's own range-taking verb.
+//
+// A year is far more than any caller needs — the roster strip asks for
+// fourteen days (web/src/features/notifications/RotationsPage.tsx) — and is
+// the longest span over which a rotation's answer is worth drawing at all.
+// It also bounds the work exactly: the shortest period this package accepts
+// is one day, so a year's range yields at most 366 handovers and, with the
+// stand-ins covering it, a few hundred segments.
+const MaxRange = 366 * 24 * time.Hour
+
 // Shift is one segment of the roster: from its start up to (not including)
 // its end, this channel is on call. StandIn marks a segment that came from
 // an Exception rather than the cycle itself.
@@ -28,6 +44,12 @@ type Shift struct {
 func Shifts(r Rotation, exc []Exception, from, to time.Time) ([]Shift, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("%w: a shift range must start before it ends", ErrInvalidInput)
+	}
+	// to.Sub(from) saturates at the largest representable Duration rather
+	// than wrapping, so the widest range RFC 3339 can express compares
+	// above MaxRange and is refused here like any other overlong one.
+	if to.Sub(from) > MaxRange {
+		return nil, fmt.Errorf("%w: a shift range may cover at most %s, got %s", ErrInvalidInput, MaxRange, to.Sub(from))
 	}
 	// Same guards ChannelAt applies, repeated here because the per-segment
 	// loop below calls channelAndStandInAt directly rather than ChannelAt,

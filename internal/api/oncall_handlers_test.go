@@ -312,3 +312,32 @@ func TestOncallExceptionListRejectsAForeignRotation(t *testing.T) {
 		t.Errorf("GET exceptions for another organization's rotation = %d, want 404: %s", resp.Code, resp.Body)
 	}
 }
+
+// GET .../shifts takes its range straight off the query string, so the
+// range is attacker-chosen. Without oncall.MaxRange the widest one RFC 3339
+// can express walks roughly 3.6 million handovers and builds as many
+// segments and DTOs — about a gigabyte and tens of seconds, inside the
+// process that is also the alert follower, for anyone holding channels.read
+// (whole-branch review, Critical #1). It has to be a 400 the caller can
+// read, not a 500 and a log line.
+func TestOncallShiftsRefuseAnUnboundedRange(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+
+	created := s.Post(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations", map[string]any{
+		"name": "db team", "period_days": 1,
+		"anchor": "2026-01-05T09:00:00+01:00", "timezone": "Europe/Berlin",
+		"channels": []string{ch.String()},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201: %s", created.Code, created.Body)
+	}
+	id := decodeID(t, created)
+
+	resp := s.Get(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations/"+id+
+		"/shifts?from=0001-01-01T00:00:00Z&to=9999-12-31T00:00:00Z")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("GET shifts over the whole representable range = %d, want 400: %s", resp.Code, resp.Body)
+	}
+}

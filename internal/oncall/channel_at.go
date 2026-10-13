@@ -36,10 +36,17 @@ func handoverIndexAt(r Rotation, loc *time.Location, at time.Time) int {
 	anchor := r.Anchor.In(loc)
 	target := at.In(loc)
 
-	// Step forward or backward a period at a time. The loop is bounded by
-	// the distance in days divided by the period, so it is linear in the
-	// number of periods rather than in time.
-	days := int(target.Sub(anchor).Hours() / 24)
+	// Seed the search with the whole calendar days between the two dates,
+	// then correct. The count is taken from the dates themselves, never
+	// from target.Sub(anchor): a Duration saturates at ±292 years, so for
+	// an anchor further out than that the seed stops tracking the real
+	// distance and the correction loop below walks the remainder one
+	// period at a time — millions of AddDate calls, seconds of CPU, for a
+	// roster the GUI asks fourteen days of (whole-branch review,
+	// Critical #1). daysSinceCivilEpoch is exact for every instant
+	// time.Time can hold, so the loops only ever correct the rounding and
+	// the time of day: at most a couple of steps, whatever the anchor.
+	days := daysSinceCivilEpoch(target) - daysSinceCivilEpoch(anchor)
 	guess := days / r.PeriodDays
 	// AddDate normalizes a date that does not exist locally (02:30 on a
 	// spring-forward day), which is the defined behaviour this relies on.
@@ -132,4 +139,37 @@ func beatsException(a, b Exception) bool {
 		return a.EndsAt.After(b.EndsAt)
 	}
 	return bytes.Compare(a.ID[:], b.ID[:]) < 0
+}
+
+// daysSinceCivilEpoch counts whole days from 1970-01-01 to t's own calendar
+// date, read in whatever location t already carries. It is Howard
+// Hinnant's days_from_civil, the standard closed form for the proleptic
+// Gregorian calendar Go's own time package uses, and it exists so
+// handoverIndexAt can measure the distance between two dates without going
+// through a Duration — the one arithmetic in this file that cannot
+// represent the distances a stored anchor may actually sit at.
+//
+// The time of day is deliberately dropped: the caller wants a whole-day
+// count to divide by a whole-day period, and its correction loop is what
+// settles which side of a handover an instant falls on.
+func daysSinceCivilEpoch(t time.Time) int {
+	year, month, day := t.Date()
+	y, m, d := int64(year), int64(month), int64(day)
+	// March-based years, so a leap day lands at the end and needs no case
+	// of its own.
+	if m <= 2 {
+		y--
+	}
+	era := y / 400
+	if y < 0 {
+		era = (y - 399) / 400 // floor division, not truncation toward zero
+	}
+	yoe := y - era*400 // [0, 399]
+	mp := m - 3        // March is 0
+	if m <= 2 {
+		mp = m + 9
+	}
+	doy := (153*mp+2)/5 + d - 1            // [0, 365]
+	doe := yoe*365 + yoe/4 - yoe/100 + doy // [0, 146096]
+	return int(era*146097 + doe - 719468)
 }
