@@ -35,18 +35,72 @@ func (w Window) ToMaintenance(id uuid.UUID) maintenance.Window {
 	return maintenance.Window{ID: id, Cron: w.Cron, Duration: w.Duration, Timezone: w.Timezone}
 }
 
-// windowEpoch is the fixed reference instant validateWindow walks forward
-// from to find two consecutive occurrences. Any instant would do — Next
-// only uses it to seed the search — a fixed one keeps Validate's answer
-// independent of when it happens to run, rather than drifting with
-// time.Now() the way a window straddling a boundary condition could.
+// windowEpoch is the fixed reference instant minOccurrenceGap walks forward
+// from. Any instant would do — Next only uses it to seed the search — a
+// fixed one keeps Validate's answer independent of when it happens to run,
+// rather than drifting with time.Now() the way a window straddling a
+// boundary condition could.
 var windowEpoch = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// minGapHorizon bounds how far minOccurrenceGap walks to find a cron's own
+// smallest gap between consecutive occurrences. None of a 5-field cron's
+// fields (minute, hour, day-of-month, month, day-of-week) has a period
+// longer than a year, so the complete repeating pattern of gaps —
+// including an unevenly spaced one like "Mondays and Fridays", whose two
+// distinct gaps (72h, 96h) both have to be seen before the smaller of them
+// can be trusted — is guaranteed to recur within one full year of any
+// starting point. The extra day past 365 is headroom for a pattern whose
+// cycle depends on a leap-year Feb 29, so that cycle is not clipped a day
+// short of repeating.
+const minGapHorizon = 366 * 24 * time.Hour
+
+// minOccurrenceGap returns the smallest gap between any two of expr's own
+// consecutive occurrences within minGapHorizon after the first one at or
+// after start. Looking at only the FIRST pair from an arbitrary anchor —
+// this function's own predecessor's bug, caught by a reviewer — answers a
+// different question: for "0 9 * * 1,5" anchored at 2000-01-01 (a
+// Saturday), the first pair is Monday->Friday (96h), but the real minimum
+// is Friday->Monday (72h), which that anchor never happens to land on
+// first. Walking a full horizon's worth of occurrences instead of one pair
+// is what guarantees every distinct gap the cycle produces gets compared,
+// not just whichever one the anchor's own position happened to surface
+// first. An error return means expr produced no occurrence at all, which
+// callers treat as "this cron does not actually recur."
+func minOccurrenceGap(expr cronexpr.Expr, loc *time.Location, start time.Time) (time.Duration, error) {
+	first := expr.Next(start, loc)
+	if first.IsZero() {
+		return 0, fmt.Errorf("cron has no occurrence after %s", start)
+	}
+	deadline := first.Add(minGapHorizon)
+	var minGap time.Duration
+	prev := first
+	for {
+		next := expr.Next(prev, loc)
+		if next.IsZero() || next.After(deadline) {
+			break
+		}
+		if gap := next.Sub(prev); minGap == 0 || gap < minGap {
+			minGap = gap
+		}
+		prev = next
+	}
+	if minGap == 0 {
+		// Only one occurrence fell inside the horizon (an annual-or-rarer
+		// cron, e.g. "0 0 29 2 *"): there is no gap between two of its own
+		// occurrences to compare a duration against within a year, so a
+		// window this infrequent cannot overlap itself in practice. The
+		// horizon's own length stands in as the effective minimum.
+		return minGapHorizon, nil
+	}
+	return minGap, nil
+}
 
 // validateWindow rejects a window whose cron does not parse, whose
 // timezone is not a known IANA zone, whose duration is not positive, or
-// whose duration exceeds the gap between two consecutive occurrences — a
-// longer duration would make the window's own occurrences overlap, which
-// describes something nobody meant (spec decision 2's own boundary).
+// whose duration exceeds the smallest gap between any two of its own
+// consecutive occurrences — a longer duration would make the window's own
+// occurrences overlap, which describes something nobody meant (spec
+// decision 2's own boundary).
 func validateWindow(w *Window) error {
 	if w == nil {
 		return nil
@@ -62,12 +116,12 @@ func validateWindow(w *Window) error {
 	if w.Duration <= 0 {
 		return fmt.Errorf("%w: window duration must be positive", ErrInvalidInput)
 	}
-	occ := expr.NextN(windowEpoch, loc, 2)
-	if len(occ) < 2 {
+	gap, err := minOccurrenceGap(expr, loc, windowEpoch)
+	if err != nil {
 		return fmt.Errorf("%w: window cron %q has no recurring occurrences", ErrInvalidInput, w.Cron)
 	}
-	if gap := occ[1].Sub(occ[0]); w.Duration > gap {
-		return fmt.Errorf("%w: window duration %s exceeds the gap between its own occurrences (%s)", ErrInvalidInput, w.Duration, gap)
+	if w.Duration > gap {
+		return fmt.Errorf("%w: window duration %s exceeds the smallest gap between its own occurrences (%s)", ErrInvalidInput, w.Duration, gap)
 	}
 	return nil
 }
