@@ -321,6 +321,22 @@ func TestUndecidedEventsIsScopedToOrganization(t *testing.T) {
 		t.Fatalf("UndecidedEvents(orgA) = %v, want exactly orgA's own event", got)
 	}
 
+	// Forge orgB's decision against orgA's event while orgA has ALREADY
+	// decided it. This is the half the composite foreign key does not
+	// cover: the row exists, so the write takes ON CONFLICT's DO UPDATE
+	// path, and that path never names org_id — the existing row keeps its
+	// own, so the foreign key stays satisfied and the state flips anyway.
+	// A tenant could mark another tenant's event sent, and the anti-join
+	// would never offer it again: an alert nobody is ever told about.
+	decided := beginTx(t, d)
+	if err := s.RecordDecision(ctx, decided, orgA, eventA, alertroutes.StateSuppressed, time.Now()); err != nil {
+		t.Fatalf("orgA recording its own decision: %v", err)
+	}
+	if err := s.RecordDecision(ctx, decided, orgB, eventA, alertroutes.StateSent, time.Now()); err == nil {
+		t.Error("orgB overwrote orgA's existing decision through ON CONFLICT; the upsert does not name the organization")
+	}
+	_ = decided.Rollback(ctx)
+
 	// Forge orgB's decision against orgA's event. Its own transaction,
 	// because the failure aborts whichever one it runs in.
 	forging := beginTx(t, d)

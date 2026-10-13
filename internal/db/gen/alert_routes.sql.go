@@ -652,10 +652,11 @@ func (q *Queries) ListRouteSelections(ctx context.Context, orgID uuid.UUID) ([]L
 	return items, nil
 }
 
-const recordAlertNotifyState = `-- name: RecordAlertNotifyState :exec
+const recordAlertNotifyState = `-- name: RecordAlertNotifyState :execrows
 INSERT INTO alert_notify_state (org_id, alert_event_id, state, decided_at)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (alert_event_id) DO UPDATE SET state = excluded.state, decided_at = excluded.decided_at
+  WHERE alert_notify_state.org_id = excluded.org_id
 `
 
 type RecordAlertNotifyStateParams struct {
@@ -671,17 +672,31 @@ type RecordAlertNotifyStateParams struct {
 // 'suppressed' row into 'sent'. ON CONFLICT DO UPDATE is what lets one
 // statement serve both — alert_event_id is the table's own primary key,
 // so a conflict can only mean "this event was already decided once",
-// which is exactly the catch-up pass's own case. decided_at is the
+// which is exactly the catch-up pass's own case.
+//
+// The DO UPDATE names org_id because migration 00053's composite foreign
+// key cannot reach this path: on a conflict the existing row keeps its
+// own org_id, so the key stays satisfied however wrong the caller's is,
+// and the state flips. One tenant could mark another tenant's event sent
+// and the forward pass's anti-join would never offer it again — an alert
+// nobody is ever told about, which is the one outcome this whole design
+// exists to prevent. The statement counts its rows so a write that names
+// the wrong organization fails loudly instead of doing nothing.
+//
+// decided_at is the
 // caller's own clock, not now(), the same posture CloseAlert and
 // SweepStaleAlerts already take for their own @now/@closed_at.
-func (q *Queries) RecordAlertNotifyState(ctx context.Context, arg RecordAlertNotifyStateParams) error {
-	_, err := q.db.Exec(ctx, recordAlertNotifyState,
+func (q *Queries) RecordAlertNotifyState(ctx context.Context, arg RecordAlertNotifyStateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordAlertNotifyState,
 		arg.OrgID,
 		arg.AlertEventID,
 		arg.State,
 		arg.DecidedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const undecidedAlertEvents = `-- name: UndecidedAlertEvents :many

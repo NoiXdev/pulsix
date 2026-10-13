@@ -164,10 +164,21 @@ func (s *Store) CatchUpEvents(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, l
 // alert_event_id is the table's primary key, so a second call for the
 // same event only ever overwrites, never duplicates.
 func (s *Store) RecordDecision(ctx context.Context, tx pgx.Tx, orgID, eventID uuid.UUID, st LedgerState, at time.Time) error {
-	if err := gen.New(tx).RecordAlertNotifyState(ctx, gen.RecordAlertNotifyStateParams{
+	n, err := gen.New(tx).RecordAlertNotifyState(ctx, gen.RecordAlertNotifyStateParams{
 		OrgID: orgID, AlertEventID: eventID, State: string(st), DecidedAt: at,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("record alert notify state: %w", err)
+	}
+	// Zero rows means the statement's own ON CONFLICT guard refused the
+	// write: a row for this event exists under a different organization.
+	// Migration 00053's composite foreign key cannot catch that on the
+	// update path, because the existing row keeps its own org_id and the
+	// key stays satisfied. Silence here would let one tenant mark
+	// another's event decided, and the forward pass's anti-join would
+	// never offer that event again — an alert nobody is ever told about.
+	if n == 0 {
+		return fmt.Errorf("record alert notify state: event %s is not %s's to decide", eventID, orgID)
 	}
 	return nil
 }

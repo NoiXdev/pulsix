@@ -3,6 +3,7 @@ import { Card } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { useHostAlertRoutes } from '../../api/hooks/useAlertRoutes.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
+import { useOncallRotations } from '../../api/hooks/useOncall.ts';
 import { ReachesNobody, RouteFiresOn } from '../notifications/AlertRouteCells.tsx';
 import { routeReachesNobody } from '../notifications/alertRoute.ts';
 import type { AlertRoute, MonitoringGroup } from '../../api/types.ts';
@@ -55,6 +56,15 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
   const routes = useHostAlertRoutes(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
   const groupList = groups.data?.groups ?? [];
+  // The rotations are fetched for one reason: routeReachesNobody cannot
+  // judge a rotation-sourced route without the rotation's own channel
+  // list. Called without it, it answers "reaches somebody" for every such
+  // route — including one whose cycle has been emptied, which is exactly
+  // the case the indicator and the user documentation exist for. The
+  // routes page already pays this cost for the same reason.
+  const rotations = useOncallRotations(org, canRead);
+  const rotationOf = (r: AlertRoute) =>
+    r.rotation_id ? (rotations.data?.rotations ?? []).find((x) => x.id === r.rotation_id) : undefined;
   const list = routes.data?.routes ?? [];
 
   return (
@@ -93,7 +103,7 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
                 <Pill tone="accent">{scopeLabel(r, groupList)}</Pill>
               </div>
               <RouteFiresOn route={r} />
-              {routeReachesNobody(r) && <ReachesNobody />}
+              {routeReachesNobody(r, rotationOf(r)) && <ReachesNobody />}
             </li>
           ))}
         </ul>

@@ -10836,7 +10836,7 @@ export interface operations {
             query: {
                 /** @description RFC 3339 start of the range */
                 from: string;
-                /** @description RFC 3339 end of the range (exclusive) */
+                /** @description RFC 3339 end of the range (exclusive), at most 366 days after from */
                 to: string;
             };
             header?: never;

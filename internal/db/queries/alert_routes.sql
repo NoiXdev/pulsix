@@ -270,19 +270,31 @@ WHERE s.org_id = @org_id AND s.state IN ('suppressed', 'deferred') AND a.closed_
 ORDER BY ae.at, ae.id
 LIMIT @lim;
 
--- name: RecordAlertNotifyState :exec
+-- name: RecordAlertNotifyState :execrows
 -- The one write both passes above share (the design's own "This is
 -- decision 4, in the same table rather than as a second mechanism"): the
 -- forward pass inserts a fresh row, the catch-up pass turns an existing
 -- 'suppressed' row into 'sent'. ON CONFLICT DO UPDATE is what lets one
 -- statement serve both — alert_event_id is the table's own primary key,
 -- so a conflict can only mean "this event was already decided once",
--- which is exactly the catch-up pass's own case. decided_at is the
+-- which is exactly the catch-up pass's own case.
+--
+-- The DO UPDATE names org_id because migration 00053's composite foreign
+-- key cannot reach this path: on a conflict the existing row keeps its
+-- own org_id, so the key stays satisfied however wrong the caller's is,
+-- and the state flips. One tenant could mark another tenant's event sent
+-- and the forward pass's anti-join would never offer it again — an alert
+-- nobody is ever told about, which is the one outcome this whole design
+-- exists to prevent. The statement counts its rows so a write that names
+-- the wrong organization fails loudly instead of doing nothing.
+--
+-- decided_at is the
 -- caller's own clock, not now(), the same posture CloseAlert and
 -- SweepStaleAlerts already take for their own @now/@closed_at.
 INSERT INTO alert_notify_state (org_id, alert_event_id, state, decided_at)
 VALUES (@org_id, @alert_event_id, @state, @decided_at)
-ON CONFLICT (alert_event_id) DO UPDATE SET state = excluded.state, decided_at = excluded.decided_at;
+ON CONFLICT (alert_event_id) DO UPDATE SET state = excluded.state, decided_at = excluded.decided_at
+  WHERE alert_notify_state.org_id = excluded.org_id;
 
 -- name: ExpireClosedHeld :execrows
 -- "Retiring suppressed rows" (spec "The follower"): a held row whose alert

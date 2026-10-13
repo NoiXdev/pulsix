@@ -63,7 +63,7 @@ type oncallShiftsInput struct {
 	Org  string `path:"org"`
 	ID   string `path:"id"`
 	From string `query:"from" required:"true" doc:"RFC 3339 start of the range"`
-	To   string `query:"to" required:"true" doc:"RFC 3339 end of the range (exclusive)"`
+	To   string `query:"to" required:"true" doc:"RFC 3339 end of the range (exclusive), at most 366 days after from"`
 }
 
 type oncallShiftsOutput struct {
