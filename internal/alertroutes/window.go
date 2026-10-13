@@ -54,8 +54,27 @@ var windowEpoch = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 // short of repeating.
 const minGapHorizon = 366 * 24 * time.Hour
 
+// maxGapProbes bounds how many occurrences minOccurrenceGap compares, on
+// top of the horizon. "* * * * *" has 527 040 occurrences inside a year,
+// and walking every one of them costs about 235 ms — over 3 s under -race —
+// on every single route create or update, for a question whose answer was
+// settled in the first two of them (whole-branch review, Critical #1).
+//
+// The cap cannot change an answer. For it to bite at all a cron must fire
+// more than 5 000 times a year, i.e. more than thirteen times a day on
+// average, and a cron that dense has intra-day gaps of at most a couple of
+// hours — necessarily smaller than any gap at a day, month or year
+// boundary, which are the only gaps a clipped walk can miss. A cron sparse
+// enough for a long gap to BE its minimum (one occurrence a day at most,
+// 366 a year) never reaches the cap in the first place. 5 000 probes also
+// always span at least three full occurrence-bearing days, so every gap the
+// minute and hour fields produce, and every day-to-day boundary, is
+// compared before the walk stops.
+const maxGapProbes = 5000
+
 // minOccurrenceGap returns the smallest gap between any two of expr's own
-// consecutive occurrences within minGapHorizon after the first one at or
+// consecutive occurrences within minGapHorizon — and within maxGapProbes
+// occurrences, whichever comes first — after the first one at or
 // after start. Looking at only the FIRST pair from an arbitrary anchor —
 // this function's own predecessor's bug, caught by a reviewer — answers a
 // different question: for "0 9 * * 1,5" anchored at 2000-01-01 (a
@@ -74,7 +93,7 @@ func minOccurrenceGap(expr cronexpr.Expr, loc *time.Location, start time.Time) (
 	deadline := first.Add(minGapHorizon)
 	var minGap time.Duration
 	prev := first
-	for {
+	for probes := 0; probes < maxGapProbes; probes++ {
 		next := expr.Next(prev, loc)
 		if next.IsZero() || next.After(deadline) {
 			break
