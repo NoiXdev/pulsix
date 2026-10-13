@@ -103,6 +103,36 @@ func TestStoreIsolatesOrganizations(t *testing.T) {
 	}
 }
 
+// TestStoreChannelNames pins ChannelNames' own org scope (review finding 1,
+// v0.4c Task 8): it resolves a name for a channel belonging to the caller's
+// organization, and silently drops an id naming another organization's
+// channel rather than leaking its name across the boundary.
+func TestStoreChannelNames(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org, foreignOrg := seedOrg(t, d), seedOrg(t, d)
+	own, err := gen.New(d.Pool()).CreateNotificationChannel(ctx, gen.CreateNotificationChannelParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: "webhook", Name: "primary",
+		Config: []byte(`{}`), BodyJson: true, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := seedChannel(t, d, foreignOrg)
+	s := oncall.NewSQLStore(d)
+
+	names, err := s.ChannelNames(ctx, org, []uuid.UUID{own.ID, foreign})
+	if err != nil {
+		t.Fatalf("ChannelNames: %v", err)
+	}
+	if names[own.ID] != "primary" {
+		t.Errorf("ChannelNames[own] = %q, want %q", names[own.ID], "primary")
+	}
+	if _, ok := names[foreign]; ok {
+		t.Error("ChannelNames must not resolve another organization's channel")
+	}
+}
+
 func TestStoreRejectsAForeignChannel(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()

@@ -12,13 +12,14 @@ import (
 	"github.com/noixdev/pulsix/internal/oncall"
 )
 
-// fakeStore implements oncall.RotationStore for TestRosterReturnsShifts,
-// which only exercises Get and ListExceptions (through Service.Roster); the
-// remaining RotationStore methods return zero values since no other test
-// here calls them.
+// fakeStore implements oncall.RotationStore for TestRosterReturnsShifts and
+// its siblings, which only exercise Get, ListExceptions and ChannelNames
+// (through Service.Roster); the remaining RotationStore methods return zero
+// values since no other test here calls them.
 type fakeStore struct {
-	rot oncall.Rotation
-	exc []oncall.Exception
+	rot   oncall.Rotation
+	exc   []oncall.Exception
+	names map[uuid.UUID]string
 }
 
 func (f *fakeStore) Create(context.Context, uuid.UUID, uuid.UUID, oncall.Input, time.Time) (oncall.Rotation, error) {
@@ -53,6 +54,10 @@ func (f *fakeStore) DeleteException(context.Context, uuid.UUID, uuid.UUID) error
 	return nil
 }
 
+func (f *fakeStore) ChannelNames(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]string, error) {
+	return f.names, nil
+}
+
 func TestRosterReturnsShifts(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
 	berlin, _ := time.LoadLocation("Europe/Berlin")
@@ -70,6 +75,39 @@ func TestRosterReturnsShifts(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Errorf("Roster over three periods = %d shifts, want 3", len(got))
+	}
+}
+
+// TestRosterResolvesChannelNames pins the v0.4c Task 8 review finding: the
+// store resolves each shift's channel name (RotationStore.ChannelNames), and
+// Service.Roster attaches it to the RosterShift it returns — the handler
+// gets a name on every segment without joining anything itself.
+func TestRosterResolvesChannelNames(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	berlin, _ := time.LoadLocation("Europe/Berlin")
+	anchor := time.Date(2026, 1, 5, 9, 0, 0, 0, berlin)
+	store := &fakeStore{
+		rot: oncall.Rotation{
+			ID: uuid.New(), PeriodDays: 7, Anchor: anchor, Timezone: "Europe/Berlin",
+			Channels: []uuid.UUID{a, b},
+		},
+		names: map[uuid.UUID]string{a: "primary", b: "secondary"},
+	}
+	svc := oncall.NewService(store, time.Now, uuid.New)
+
+	got, err := svc.Roster(context.Background(), uuid.New(), store.rot.ID,
+		anchor, anchor.AddDate(0, 0, 14))
+	if err != nil {
+		t.Fatalf("Roster: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("Roster returned no shifts")
+	}
+	want := map[uuid.UUID]string{a: "primary", b: "secondary"}
+	for _, sh := range got {
+		if sh.ChannelName != want[sh.ChannelID] {
+			t.Errorf("shift for channel %s has name %q, want %q", sh.ChannelID, sh.ChannelName, want[sh.ChannelID])
+		}
 	}
 }
 
@@ -91,6 +129,18 @@ func TestRosterWrapsAListExceptionsError(t *testing.T) {
 
 	if _, err := svc.Roster(context.Background(), uuid.New(), uuid.New(), time.Now(), time.Now().Add(time.Hour)); err == nil || !strings.Contains(err.Error(), "list exceptions boom") {
 		t.Fatalf("Roster() error = %v, want it to carry the store's own list-exceptions error", err)
+	}
+}
+
+func TestRosterWrapsAChannelNamesError(t *testing.T) {
+	store := &spyRotationStore{
+		getOut:          oncall.Rotation{PeriodDays: 7, Anchor: time.Now(), Timezone: "UTC", Channels: []uuid.UUID{uuid.New()}},
+		channelNamesErr: errors.New("channel names boom"),
+	}
+	svc := oncall.NewService(store, time.Now, uuid.New)
+
+	if _, err := svc.Roster(context.Background(), uuid.New(), uuid.New(), time.Now(), time.Now().Add(time.Hour)); err == nil || !strings.Contains(err.Error(), "channel names boom") {
+		t.Fatalf("Roster() error = %v, want it to carry the store's own channel-names error", err)
 	}
 }
 
@@ -141,6 +191,12 @@ type spyRotationStore struct {
 	deleteExcCalled             bool
 	deleteExcOrgID, deleteExcID uuid.UUID
 	deleteExcErr                error
+
+	channelNamesCalled bool
+	channelNamesOrgID  uuid.UUID
+	channelNamesIDs    []uuid.UUID
+	channelNamesOut    map[uuid.UUID]string
+	channelNamesErr    error
 }
 
 func (s *spyRotationStore) Create(_ context.Context, orgID, id uuid.UUID, _ oncall.Input, now time.Time) (oncall.Rotation, error) {
@@ -189,6 +245,12 @@ func (s *spyRotationStore) DeleteException(_ context.Context, orgID, id uuid.UUI
 	s.deleteExcCalled = true
 	s.deleteExcOrgID, s.deleteExcID = orgID, id
 	return s.deleteExcErr
+}
+
+func (s *spyRotationStore) ChannelNames(_ context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	s.channelNamesCalled = true
+	s.channelNamesOrgID, s.channelNamesIDs = orgID, ids
+	return s.channelNamesOut, s.channelNamesErr
 }
 
 // validInput is the minimal Input Validate accepts — every test below that

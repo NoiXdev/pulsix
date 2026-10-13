@@ -8,6 +8,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
@@ -143,5 +144,105 @@ func TestOncallReadNeedsTheChannelPermission(t *testing.T) {
 	resp := s.Get(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations")
 	if resp.Code != http.StatusForbidden {
 		t.Errorf("GET with hosts.read but not channels.read = %d, want 403", resp.Code)
+	}
+}
+
+// seedOncallRotation creates a rotation through the API and returns its id —
+// the fixture every exception test below starts from.
+func seedOncallRotation(t *testing.T, s *apitest.Server, org, tok, ch string) string {
+	t.Helper()
+	created := s.Post(t, tok, "/api/v1/orgs/"+org+"/oncall-rotations", map[string]any{
+		"name": "db team", "period_days": 7,
+		"anchor": "2026-01-05T09:00:00+01:00", "timezone": "Europe/Berlin",
+		"channels": []string{ch},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST rotation = %d, want 201: %s", created.Code, created.Body)
+	}
+	return decodeID(t, created)
+}
+
+// TestOncallExceptionsRoundTrip pins the review's "missing" finding (v0.4c
+// Task 8, fix round 1): a stand-in can be created, read back in its
+// rotation's list, and deleted — the three routes the next GUI task's
+// stand-ins section needs and the original brief never asked for.
+func TestOncallExceptionsRoundTrip(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+	standIn := s.SeedChannel(t, org)
+	rotationID := seedOncallRotation(t, s, org.String(), tok, ch.String())
+
+	url := "/api/v1/orgs/" + org.String() + "/oncall-rotations/" + rotationID + "/exceptions"
+	created := s.Post(t, tok, url, map[string]any{
+		"starts_at": "2026-01-10T00:00:00Z", "ends_at": "2026-01-11T00:00:00Z",
+		"channel_id": standIn.String(), "note": "vacation cover",
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST exception = %d, want 201: %s", created.Code, created.Body)
+	}
+	exceptionID := decodeID(t, created)
+
+	list := s.Get(t, tok, url)
+	if list.Code != http.StatusOK {
+		t.Fatalf("GET exceptions = %d, want 200: %s", list.Code, list.Body)
+	}
+	if !strings.Contains(list.Body.String(), exceptionID) {
+		t.Errorf("the created exception is missing from its rotation's list: %s", list.Body)
+	}
+
+	if resp := s.Delete(t, tok, url+"/"+exceptionID, ""); resp.Code != http.StatusOK {
+		t.Fatalf("DELETE exception = %d, want 200: %s", resp.Code, resp.Body)
+	}
+
+	after := s.Get(t, tok, url)
+	if after.Code != http.StatusOK {
+		t.Fatalf("GET exceptions after delete = %d, want 200: %s", after.Code, after.Body)
+	}
+	if strings.Contains(after.Body.String(), exceptionID) {
+		t.Errorf("deleted exception is still listed: %s", after.Body)
+	}
+}
+
+// TestOncallExceptionRejectsAForeignChannel pins the review's own example of
+// the scope guarantee it asked for: a stand-in can never name another
+// organization's channel. oncall_exceptions' composite foreign key
+// (org_id, channel_id) onto notification_channels is what actually refuses
+// it (CreateException's own doc comment, store_sql.go); this pins that the
+// API surfaces that refusal as a client error.
+func TestOncallExceptionRejectsAForeignChannel(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+	rotationID := seedOncallRotation(t, s, org.String(), tok, ch.String())
+
+	foreignOrg, _ := s.OrgWithToken(t)
+	foreignCh := s.SeedChannel(t, foreignOrg)
+
+	resp := s.Post(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations/"+rotationID+"/exceptions", map[string]any{
+		"starts_at": "2026-01-10T00:00:00Z", "ends_at": "2026-01-11T00:00:00Z",
+		"channel_id": foreignCh.String(),
+	})
+	if resp.Code != http.StatusBadRequest {
+		t.Errorf("POST exception naming another organization's channel = %d, want 400: %s", resp.Code, resp.Body)
+	}
+}
+
+// TestOncallExceptionListRejectsAForeignRotation pins the existence check
+// registerOncallRoutes' exception-list handler runs before ListExceptions:
+// a rotation id from another organization must read as "no such rotation"
+// rather than confirming (via an empty list) that it exists somewhere, the
+// same ordering the per-host alert-route union view gives its own host
+// lookup.
+func TestOncallExceptionListRejectsAForeignRotation(t *testing.T) {
+	s := apitest.New(t)
+	orgA, tokA := s.OrgWithToken(t)
+	chA := s.SeedChannel(t, orgA)
+	rotationID := seedOncallRotation(t, s, orgA.String(), tokA, chA.String())
+
+	orgB, tokB := s.OrgWithToken(t)
+	resp := s.Get(t, tokB, "/api/v1/orgs/"+orgB.String()+"/oncall-rotations/"+rotationID+"/exceptions")
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("GET exceptions for another organization's rotation = %d, want 404: %s", resp.Code, resp.Body)
 	}
 }

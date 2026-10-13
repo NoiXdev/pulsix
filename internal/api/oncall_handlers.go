@@ -15,11 +15,12 @@ import (
 )
 
 // The on-call rotation API (v0.4c design doc, "API and permissions"): CRUD
-// over an organization's rotations, plus the roster view a rotation's edit
-// screen needs (GET .../shifts). Six routes in all, modelled on
-// registerAlertRouteRoutes (alert_route_handlers.go) throughout — the same
-// requireOrg scope resolution, the same If-Match contract on PATCH, the same
-// one-mapXErr-per-package sentinel mapping.
+// over an organization's rotations, the roster view a rotation's edit
+// screen needs (GET .../shifts), and the stand-in routes nested under a
+// rotation (.../exceptions) the GUI's stand-ins section reads and writes.
+// Modelled on registerAlertRouteRoutes (alert_route_handlers.go) throughout
+// — the same requireOrg scope resolution, the same If-Match contract on
+// PATCH, the same one-mapXErr-per-package sentinel mapping.
 //
 // Reads use channels.read and writes use channels.write — the *channel*
 // permission, not checks.read/checks.write that guard alerts. This is
@@ -71,9 +72,42 @@ type oncallShiftsOutput struct {
 	}
 }
 
-// registerOncallRoutes wires six routes: list/create/get/update/delete over
-// /orgs/{org}/oncall-rotations, and the roster view,
-// GET /orgs/{org}/oncall-rotations/{id}/shifts.
+type oncallExceptionListInput struct {
+	Org string `path:"org"`
+	ID  string `path:"id" doc:"The rotation id"`
+}
+
+type oncallExceptionCreateInput struct {
+	Org  string `path:"org"`
+	ID   string `path:"id" doc:"The rotation id"`
+	Body OncallExceptionBody
+}
+
+type oncallExceptionDeleteInput struct {
+	Org         string `path:"org"`
+	ID          string `path:"id" doc:"The rotation id"`
+	ExceptionID string `path:"exceptionID"`
+}
+
+type oncallExceptionListOutput struct {
+	Body struct {
+		Exceptions []OncallExceptionDTO `json:"exceptions"`
+	}
+}
+
+type oncallExceptionOutput struct {
+	Body struct {
+		Exception OncallExceptionDTO `json:"exception"`
+	}
+}
+
+// registerOncallRoutes wires five rotation routes
+// (list/create/get/update/delete over /orgs/{org}/oncall-rotations), the
+// roster view (GET .../shifts) and the three stand-in routes nested under a
+// rotation (create/list/delete over .../exceptions) — nine routes in all,
+// modelled on registerAlertRouteRoutes (alert_route_handlers.go) throughout:
+// the same requireOrg scope resolution, the same If-Match contract on
+// PATCH, the same one-mapXErr-per-package sentinel mapping.
 func registerOncallRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}/oncall-rotations", func(ctx context.Context, in *struct {
 		Org string `path:"org"`
@@ -169,34 +203,83 @@ func registerOncallRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("to must be an RFC 3339 time")
 		}
+		// deps.Oncall.Roster already resolves each shift's channel name
+		// (RotationStore.ChannelNames, joined in the store alongside the
+		// rotation's channels and exceptions — oncall.Service.Roster's own
+		// doc comment) — one service call, nothing left for this handler to
+		// join itself.
 		shifts, err := deps.Oncall.Roster(ctx, scope.OrgID, id, from, to)
 		if err != nil {
 			return nil, mapOncallErr(ctx, err)
 		}
-		// The roster strip this endpoint backs has to print who is on call
-		// for an arbitrary shift; resolving a name per segment client-side
-		// from a paginated channel list cannot answer that, so the name is
-		// joined in here — the same reasoning alert_handlers.go's own
-		// AlertDTO.HostName doc comment gives for the alert list's host
-		// name. An organization's channel count is small enough (the
-		// notification-channels page lists them all in one page) that one
-		// ListChannels call per request costs nothing worth a dedicated
-		// batch-by-id query over.
-		channels, err := deps.Notify.ListChannels(ctx, scope.OrgID)
-		if err != nil {
-			return nil, mapNotifyErr(ctx, err)
-		}
-		names := make(map[uuid.UUID]string, len(channels))
-		for _, c := range channels {
-			names[c.ID] = c.Name
-		}
 		out := &oncallShiftsOutput{}
 		out.Body.Shifts = make([]OncallShiftDTO, len(shifts))
 		for i, sh := range shifts {
-			out.Body.Shifts[i] = toOncallShiftDTO(sh, names[sh.ChannelID])
+			out.Body.Shifts[i] = toOncallShiftDTO(sh)
 		}
 		return out, nil
 	})
+
+	huma.Post(hapi, "/api/v1/orgs/{org}/oncall-rotations/{id}/exceptions", func(ctx context.Context, in *oncallExceptionCreateInput) (*oncallExceptionOutput, error) {
+		scope, rotationID, err := oncallRotationScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsWrite)
+		if err != nil {
+			return nil, err
+		}
+		input, err := in.Body.input()
+		if err != nil {
+			return nil, err
+		}
+		e, err := deps.Oncall.CreateException(ctx, scope.OrgID, rotationID, input)
+		if err != nil {
+			return nil, mapOncallErr(ctx, err)
+		}
+		setAuditObject(ctx, e.ID.String(), "created on-call stand-in")
+		out := &oncallExceptionOutput{}
+		out.Body.Exception = toOncallExceptionDTO(e)
+		return out, nil
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createOncallException", "oncall_exception"))
+
+	huma.Get(hapi, "/api/v1/orgs/{org}/oncall-rotations/{id}/exceptions", func(ctx context.Context, in *oncallExceptionListInput) (*oncallExceptionListOutput, error) {
+		scope, rotationID, err := oncallRotationScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsRead)
+		if err != nil {
+			return nil, err
+		}
+		// The rotation itself, first: an id from another organization must
+		// read as "no such rotation" rather than confirming (via an empty
+		// or populated exception list) that it exists somewhere — the same
+		// ordering registerAlertRouteRoutes' GET /hosts/{id}/alert-routes
+		// gives its own host lookup, and registerOncallRoutes' own
+		// GET .../shifts gives through Roster's Get.
+		if _, err := deps.Oncall.Get(ctx, scope.OrgID, rotationID); err != nil {
+			return nil, mapOncallErr(ctx, err)
+		}
+		list, err := deps.Oncall.ListExceptions(ctx, scope.OrgID, rotationID)
+		if err != nil {
+			return nil, mapOncallErr(ctx, err)
+		}
+		out := &oncallExceptionListOutput{}
+		out.Body.Exceptions = make([]OncallExceptionDTO, len(list))
+		for i, e := range list {
+			out.Body.Exceptions[i] = toOncallExceptionDTO(e)
+		}
+		return out, nil
+	})
+
+	huma.Delete(hapi, "/api/v1/orgs/{org}/oncall-rotations/{id}/exceptions/{exceptionID}", func(ctx context.Context, in *oncallExceptionDeleteInput) (*okOutput, error) {
+		scope, _, err := oncallRotationScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsWrite)
+		if err != nil {
+			return nil, err
+		}
+		exceptionID, err := parseUUID(in.ExceptionID, "exception id")
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Oncall.DeleteException(ctx, scope.OrgID, exceptionID); err != nil {
+			return nil, mapOncallErr(ctx, err)
+		}
+		setAuditObject(ctx, exceptionID.String(), "deleted on-call stand-in")
+		return &okOutput{}, nil
+	}, withAudit("deleteOncallException", "oncall_exception"))
 }
 
 // oncallRotationScope resolves both the caller's authorization and the

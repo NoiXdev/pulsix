@@ -330,6 +330,30 @@ func (s *Store) DeleteException(ctx context.Context, orgID, id uuid.UUID) error 
 	return nil
 }
 
+// ChannelNames resolves ids to their current display name, scoped to orgID
+// — Service.Roster's own join, composed with Get and ListExceptions so the
+// API's GET .../shifts handler never has to stitch a channel's name onto a
+// shift itself (ListChannelNames' own doc comment, oncall.sql). An empty
+// ids is answered with an empty map and no round trip: Roster always calls
+// this with the distinct channel ids its own shifts actually carry, which
+// is only ever empty for a range Shifts itself already refuses (from must
+// be before to), but a future caller doing the same is not left issuing a
+// query that would return nothing anyway.
+func (s *Store) ChannelNames(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	if len(ids) == 0 {
+		return map[uuid.UUID]string{}, nil
+	}
+	rows, err := gen.New(s.d).ListChannelNames(ctx, gen.ListChannelNamesParams{OrgID: orgID, ChannelIds: ids})
+	if err != nil {
+		return nil, fmt.Errorf("list channel names: %w", err)
+	}
+	out := make(map[uuid.UUID]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Name
+	}
+	return out, nil
+}
+
 // Resolve reads rotationID and its exceptions on the caller's own
 // transaction tx, for the follower: a background ticker deciding who is on
 // call right now composes this with its other per-tick reads so the whole

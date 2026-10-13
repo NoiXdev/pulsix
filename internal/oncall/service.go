@@ -32,6 +32,10 @@ type RotationStore interface {
 	CreateException(ctx context.Context, orgID, rotationID, id uuid.UUID, in ExceptionInput, now time.Time) (Exception, error)
 	ListExceptions(ctx context.Context, orgID, rotationID uuid.UUID) ([]Exception, error)
 	DeleteException(ctx context.Context, orgID, id uuid.UUID) error
+	// ChannelNames resolves ids to their current display name, scoped to
+	// orgID — Roster's own join (see Roster's doc comment), so the API's
+	// GET .../shifts handler never has to join foreign data itself.
+	ChannelNames(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
 // Service composes a RotationStore. now and newID are both injected — never
@@ -116,13 +120,27 @@ func (s *Service) DeleteException(ctx context.Context, orgID, id uuid.UUID) erro
 	return s.store.DeleteException(ctx, orgID, id)
 }
 
+// RosterShift is one Shift (shifts.go, pure — it knows only which channel
+// is on call, never its name) plus that channel's current display name:
+// Roster's own return type, the way alerts.View carries HostName beside its
+// row (internal/alerts/service.go) rather than Alert growing a field it
+// cannot fill on its own. The name is resolved by the store
+// (RotationStore.ChannelNames) in the same call Roster already composes
+// Get and ListExceptions with, so the API's GET .../shifts handler is left
+// with exactly one service call and no foreign data to join itself.
+type RosterShift struct {
+	Shift
+	ChannelName string
+}
+
 // Roster answers who is on call over [from, to) for one rotation — the
 // stored cycle and its stand-ins read once, then handed to Shifts
-// (shifts.go) for the segment arithmetic. It is the only verb this service
-// adds beyond plain CRUD: a rotation's edit screen needs to show the roster
-// it configures, and Shifts itself takes no store at all, so something has
-// to compose the two reads with it.
-func (s *Service) Roster(ctx context.Context, orgID, rotationID uuid.UUID, from, to time.Time) ([]Shift, error) {
+// (shifts.go) for the segment arithmetic, then each segment's channel name
+// resolved in one more batched read. It is the only verb this service adds
+// beyond plain CRUD: a rotation's edit screen (and the roster strip it
+// feeds) needs to show who is on call BY NAME, and Shifts itself takes no
+// store at all, so something has to compose the three reads with it.
+func (s *Service) Roster(ctx context.Context, orgID, rotationID uuid.UUID, from, to time.Time) ([]RosterShift, error) {
 	rot, err := s.store.Get(ctx, orgID, rotationID)
 	if err != nil {
 		return nil, fmt.Errorf("roster: get rotation: %w", err)
@@ -135,5 +153,29 @@ func (s *Service) Roster(ctx context.Context, orgID, rotationID uuid.UUID, from,
 	if err != nil {
 		return nil, fmt.Errorf("roster: %w", err)
 	}
-	return shifts, nil
+	names, err := s.store.ChannelNames(ctx, orgID, distinctChannelIDs(shifts))
+	if err != nil {
+		return nil, fmt.Errorf("roster: channel names: %w", err)
+	}
+	out := make([]RosterShift, len(shifts))
+	for i, sh := range shifts {
+		out[i] = RosterShift{Shift: sh, ChannelName: names[sh.ChannelID]}
+	}
+	return out, nil
+}
+
+// distinctChannelIDs collects each shift's channel id once, in first-seen
+// order — the batch ChannelNames is asked to resolve, never larger than the
+// roster itself needs.
+func distinctChannelIDs(shifts []Shift) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(shifts))
+	ids := make([]uuid.UUID, 0, len(shifts))
+	for _, sh := range shifts {
+		if _, ok := seen[sh.ChannelID]; ok {
+			continue
+		}
+		seen[sh.ChannelID] = struct{}{}
+		ids = append(ids, sh.ChannelID)
+	}
+	return ids
 }

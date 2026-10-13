@@ -93,3 +93,19 @@ ORDER BY starts_at;
 
 -- name: DeleteException :execrows
 DELETE FROM oncall_exceptions WHERE org_id = @org_id AND id = @id;
+
+-- name: ListChannelNames :many
+-- Resolves a batch of channel ids to their current display name, scoped to
+-- the caller's own organization. This is Service.Roster's own join
+-- (internal/oncall/service.go), composed there with Get and ListExceptions
+-- so the API's GET .../shifts handler never has to stitch a channel's name
+-- onto a shift itself — the same reasoning ListAlerts (alert_routes.sql's
+-- own sibling file, queries/alerts.sql) already gives for joining a host's
+-- name into the alert list rather than leaving the handler to resolve it.
+-- Every id this is ever called with already belongs to org_id (the
+-- composite foreign keys on oncall_rotation_channels/oncall_exceptions
+-- guarantee that), but the predicate is applied anyway, the same posture
+-- every other query in this file takes rather than trusting a caller's
+-- id list on its own.
+SELECT id, name FROM notification_channels
+WHERE org_id = @org_id AND id = ANY(@channel_ids::uuid[]);

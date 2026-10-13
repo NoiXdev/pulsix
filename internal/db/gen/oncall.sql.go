@@ -233,6 +233,53 @@ func (q *Queries) InsertRotationChannels(ctx context.Context, arg InsertRotation
 	return err
 }
 
+const listChannelNames = `-- name: ListChannelNames :many
+SELECT id, name FROM notification_channels
+WHERE org_id = $1 AND id = ANY($2::uuid[])
+`
+
+type ListChannelNamesParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ChannelIds []uuid.UUID `json:"channel_ids"`
+}
+
+type ListChannelNamesRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// Resolves a batch of channel ids to their current display name, scoped to
+// the caller's own organization. This is Service.Roster's own join
+// (internal/oncall/service.go), composed there with Get and ListExceptions
+// so the API's GET .../shifts handler never has to stitch a channel's name
+// onto a shift itself — the same reasoning ListAlerts (alert_routes.sql's
+// own sibling file, queries/alerts.sql) already gives for joining a host's
+// name into the alert list rather than leaving the handler to resolve it.
+// Every id this is ever called with already belongs to org_id (the
+// composite foreign keys on oncall_rotation_channels/oncall_exceptions
+// guarantee that), but the predicate is applied anyway, the same posture
+// every other query in this file takes rather than trusting a caller's
+// id list on its own.
+func (q *Queries) ListChannelNames(ctx context.Context, arg ListChannelNamesParams) ([]ListChannelNamesRow, error) {
+	rows, err := q.db.Query(ctx, listChannelNames, arg.OrgID, arg.ChannelIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelNamesRow
+	for rows.Next() {
+		var i ListChannelNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExceptions = `-- name: ListExceptions :many
 SELECT id, org_id, rotation_id, starts_at, ends_at, channel_id, note, created_at FROM oncall_exceptions
 WHERE org_id = $1 AND rotation_id = $2
