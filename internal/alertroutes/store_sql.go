@@ -1,9 +1,11 @@
 // SQLStore is the only part of this package that touches a database: route
-// CRUD against migration 00052's alert_routes table and its three selection
-// tables (alert_route_severities, alert_route_events, alert_route_channels).
-// Modelled on internal/alerts/store_sql.go throughout — how it reaches
-// *db.DB, how it maps "no rows" to ErrNotFound and "zero rows updated after
-// a successful read" to ErrRevisionMismatch.
+// CRUD against migration 00052's alert_routes table. Its four selection
+// tables (alert_route_severities, alert_route_events, alert_route_channels,
+// alert_route_breakthrough_severities, migration 00054) have their own read
+// and write side in selections_sql.go. Modelled on
+// internal/alerts/store_sql.go throughout — how it reaches *db.DB, how it
+// maps "no rows" to ErrNotFound and "zero rows updated after a successful
+// read" to ErrRevisionMismatch.
 //
 // Every read and write below goes through gen.New(s.d) (or gen.New(tx) for
 // the caller-owned transaction ListEnabled takes), never s.d.Pool()
@@ -31,7 +33,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -44,42 +45,6 @@ type Store struct{ d *db.DB }
 
 // NewSQLStore builds the store on d.
 func NewSQLStore(d *db.DB) *Store { return &Store{d: d} }
-
-// selection is one route's three selections, grouped out of
-// ListRouteSelections' own flat, three-nullable-column row shape (that
-// query's own doc comment explains why the columns are split rather than
-// a single discriminated one).
-type selection struct {
-	Severities []rules.State
-	Events     []alerts.EventKind
-	Channels   []uuid.UUID
-}
-
-// selectionsByRoute groups every one of org's selections by route id in a
-// single round trip — List's own N+1 concern (ListRouteSelections' doc
-// comment) — and Get reuses it rather than a second, route-scoped query,
-// since no such query exists and one organization's full selection set is
-// the same cost ListAlertRoutes already pays for the route rows themselves.
-func (s *Store) selectionsByRoute(ctx context.Context, q *gen.Queries, orgID uuid.UUID) (map[uuid.UUID]selection, error) {
-	rows, err := q.ListRouteSelections(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list route selections: %w", err)
-	}
-	out := make(map[uuid.UUID]selection, len(rows))
-	for _, r := range rows {
-		sel := out[r.RouteID]
-		switch {
-		case r.Severity != nil:
-			sel.Severities = append(sel.Severities, rules.State(*r.Severity))
-		case r.EventKind != nil:
-			sel.Events = append(sel.Events, alerts.EventKind(*r.EventKind))
-		case r.ChannelID.Valid:
-			sel.Channels = append(sel.Channels, uuid.UUID(r.ChannelID.Bytes))
-		}
-		out[r.RouteID] = sel
-	}
-	return out, nil
-}
 
 // scopeColumns maps Input's single optional ScopeID onto the two typed
 // columns migration 00052 actually carries, picking the one the scope
@@ -114,80 +79,35 @@ func scopeIDFromColumns(scope string, groupID, hostID pgtype.UUID) *uuid.UUID {
 	}
 }
 
-// statesToStrings and eventsToStrings convert Input's typed selections to
-// the text[] the three ReplaceRoute* queries take — unnest(@x::text[]) on
-// the SQL side (queries/alert_routes.sql's own comment on
-// ReplaceRouteSeverities).
-func statesToStrings(in []rules.State) []string {
-	out := make([]string, len(in))
-	for i, v := range in {
-		out[i] = string(v)
-	}
-	return out
-}
-
-func eventsToStrings(in []alerts.EventKind) []string {
-	out := make([]string, len(in))
-	for i, v := range in {
-		out[i] = string(v)
-	}
-	return out
-}
-
-// toRoute assembles the package's own Route from one gen.AlertRoute row and
-// its already-grouped selections.
-func toRoute(r gen.AlertRoute, sel selection) Route {
+// toRoute assembles the package's own Route from one gen.AlertRoute row,
+// its already-grouped selections and its breakthrough severities.
+func toRoute(r gen.AlertRoute, sel selection, breakthrough []rules.State) Route {
 	return Route{
-		ID:         r.ID,
-		OrgID:      r.OrgID,
-		Name:       r.Name,
-		Enabled:    r.Enabled,
-		Scope:      Scope(r.Scope),
-		ScopeID:    scopeIDFromColumns(r.Scope, r.ScopeGroupID, r.ScopeHostID),
-		Severities: sel.Severities,
-		Events:     sel.Events,
-		Channels:   sel.Channels,
-		Revision:   r.Revision,
-		CreatedAt:  r.CreatedAt,
-		UpdatedAt:  r.UpdatedAt,
+		ID:           r.ID,
+		OrgID:        r.OrgID,
+		Name:         r.Name,
+		Enabled:      r.Enabled,
+		Scope:        Scope(r.Scope),
+		ScopeID:      scopeIDFromColumns(r.Scope, r.ScopeGroupID, r.ScopeHostID),
+		Severities:   sel.Severities,
+		Events:       sel.Events,
+		Channels:     sel.Channels,
+		Window:       windowFromColumns(r.WindowCron, r.WindowDurationSeconds, r.WindowTimezone),
+		Breakthrough: breakthrough,
+		RotationID:   db.UUIDPtr(r.RotationID),
+		Revision:     r.Revision,
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
 	}
 }
 
-// replaceSelections replaces all three of routeID's selection tables inside
-// the caller's own transaction q runs on. A foreign-key violation can only
-// be ReplaceRouteChannels' own composite key onto notification_channels
-// (severities and events reference nothing outside this table's own CHECK
-// constraints), so it is reported as ErrInvalidInput naming the channel —
-// the same mapping notify.ReplaceScheduleRules gives its own "unknown
-// channel" case.
-func (s *Store) replaceSelections(ctx context.Context, q *gen.Queries, orgID, routeID uuid.UUID, in Input) error {
-	if err := q.ReplaceRouteSeverities(ctx, gen.ReplaceRouteSeveritiesParams{
-		OrgID: orgID, RouteID: routeID, Severities: statesToStrings(in.Severities),
-	}); err != nil {
-		return fmt.Errorf("replace route severities: %w", err)
-	}
-	if err := q.ReplaceRouteEvents(ctx, gen.ReplaceRouteEventsParams{
-		OrgID: orgID, RouteID: routeID, Kinds: eventsToStrings(in.Events),
-	}); err != nil {
-		return fmt.Errorf("replace route events: %w", err)
-	}
-	if err := q.ReplaceRouteChannels(ctx, gen.ReplaceRouteChannelsParams{
-		OrgID: orgID, RouteID: routeID, ChannelIds: in.Channels,
-	}); err != nil {
-		if db.IsForeignKeyViolation(err) {
-			return fmt.Errorf("%w: a channel does not belong to this organization", ErrInvalidInput)
-		}
-		return fmt.Errorf("replace route channels: %w", err)
-	}
-	return nil
-}
-
-// Create inserts id's row and all three selections in one transaction: a
+// Create inserts id's row and all four selections in one transaction: a
 // route that exists with no channels because the second statement failed
 // is exactly the silently-ineffective state this feature exists to
 // prevent, so the whole thing commits together or not at all.
 func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now time.Time) (Route, error) {
 	groupID, hostID := scopeColumns(in.Scope, in.ScopeID)
+	cron, durationSeconds, timezone := windowColumns(in.Window)
 
 	tx, err := s.d.Begin(ctx)
 	if err != nil {
@@ -198,7 +118,9 @@ func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now t
 
 	row, err := q.CreateAlertRoute(ctx, gen.CreateAlertRouteParams{
 		ID: id, OrgID: orgID, Name: in.Name, Enabled: in.Enabled, Scope: string(in.Scope),
-		ScopeGroupID: groupID, ScopeHostID: hostID, CreatedAt: now, UpdatedAt: now,
+		ScopeGroupID: groupID, ScopeHostID: hostID,
+		WindowCron: cron, WindowDurationSeconds: durationSeconds, WindowTimezone: timezone,
+		RotationID: db.NullUUID(in.RotationID), CreatedAt: now, UpdatedAt: now,
 	})
 	if db.IsUniqueViolation(err) {
 		return Route{}, fmt.Errorf("%w: %s", ErrNameTaken, in.Name)
@@ -215,14 +137,18 @@ func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now t
 	if err != nil {
 		return Route{}, err
 	}
+	breakthrough, err := s.breakthroughByRoute(ctx, q, orgID)
+	if err != nil {
+		return Route{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Route{}, fmt.Errorf("commit create route: %w", err)
 	}
-	return toRoute(row, sel[id]), nil
+	return toRoute(row, sel[id], breakthrough[id]), nil
 }
 
-// Update replaces id's row and all three selections in one transaction, the
+// Update replaces id's row and all four selections in one transaction, the
 // same all-or-nothing posture Create takes. revision is the If-Match style
 // optimistic lock (backlog 1.31): UpdateAlertRoute is :execrows, not :one
 // with RETURNING, the same choice maintenance.SQLStore.Update already makes
@@ -233,6 +159,7 @@ func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now t
 // itself.
 func (s *Store) Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in Input, now time.Time) (Route, error) {
 	groupID, hostID := scopeColumns(in.Scope, in.ScopeID)
+	cron, durationSeconds, timezone := windowColumns(in.Window)
 
 	tx, err := s.d.Begin(ctx)
 	if err != nil {
@@ -243,7 +170,9 @@ func (s *Store) Update(ctx context.Context, orgID, id uuid.UUID, revision int64,
 
 	n, err := q.UpdateAlertRoute(ctx, gen.UpdateAlertRouteParams{
 		Name: in.Name, Enabled: in.Enabled, Scope: string(in.Scope),
-		ScopeGroupID: groupID, ScopeHostID: hostID, UpdatedAt: now,
+		ScopeGroupID: groupID, ScopeHostID: hostID,
+		WindowCron: cron, WindowDurationSeconds: durationSeconds, WindowTimezone: timezone,
+		RotationID: db.NullUUID(in.RotationID), UpdatedAt: now,
 		OrgID: orgID, ID: id, Revision: revision,
 	})
 	if db.IsUniqueViolation(err) {
@@ -274,11 +203,15 @@ func (s *Store) Update(ctx context.Context, orgID, id uuid.UUID, revision int64,
 	if err != nil {
 		return Route{}, err
 	}
+	breakthrough, err := s.breakthroughByRoute(ctx, q, orgID)
+	if err != nil {
+		return Route{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Route{}, fmt.Errorf("commit update route: %w", err)
 	}
-	return toRoute(row, sel[id]), nil
+	return toRoute(row, sel[id], breakthrough[id]), nil
 }
 
 // Get implements the Store's single-route read. ErrNotFound covers both a
@@ -299,7 +232,11 @@ func (s *Store) Get(ctx context.Context, orgID, id uuid.UUID) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	return toRoute(row, sel[id]), nil
+	breakthrough, err := s.breakthroughByRoute(ctx, q, orgID)
+	if err != nil {
+		return Route{}, err
+	}
+	return toRoute(row, sel[id], breakthrough[id]), nil
 }
 
 // List returns every one of org's routes, by name (ListAlertRoutes' own
@@ -315,9 +252,13 @@ func (s *Store) List(ctx context.Context, orgID uuid.UUID) ([]Route, error) {
 	if err != nil {
 		return nil, err
 	}
+	breakthrough, err := s.breakthroughByRoute(ctx, q, orgID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Route, len(rows))
 	for i, r := range rows {
-		out[i] = toRoute(r, sel[r.ID])
+		out[i] = toRoute(r, sel[r.ID], breakthrough[r.ID])
 	}
 	return out, nil
 }
@@ -354,12 +295,16 @@ func (s *Store) ListEnabled(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) ([]
 	if err != nil {
 		return nil, err
 	}
+	breakthrough, err := s.breakthroughByRoute(ctx, q, orgID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Route, 0, len(rows))
 	for _, r := range rows {
 		if !r.Enabled {
 			continue
 		}
-		out = append(out, toRoute(r, sel[r.ID]))
+		out = append(out, toRoute(r, sel[r.ID], breakthrough[r.ID]))
 	}
 	return out, nil
 }

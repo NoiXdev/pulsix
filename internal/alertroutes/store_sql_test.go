@@ -312,3 +312,112 @@ func TestStoreDelete(t *testing.T) {
 		t.Fatalf("Delete a route that never existed = %v, want ErrNotFound", err)
 	}
 }
+
+func TestStoreRoundTripsTheWindow(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+	now := time.Now()
+
+	in := alertroutes.Input{
+		Name: "business hours", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities:   []rules.State{rules.StateCrit, rules.StateWarn},
+		Events:       []alerts.EventKind{alerts.EventOpened},
+		Channels:     []uuid.UUID{ch},
+		Window:       &alertroutes.Window{Cron: "0 9 * * 1-5", Duration: 9 * time.Hour, Timezone: "Europe/Berlin"},
+		Breakthrough: []rules.State{rules.StateCrit},
+	}
+	created, err := s.Create(ctx, org, uuid.New(), in, now)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Window == nil || got.Window.Cron != in.Window.Cron ||
+		got.Window.Duration != in.Window.Duration || got.Window.Timezone != in.Window.Timezone {
+		t.Errorf("window lost in the round trip: %+v", got.Window)
+	}
+	if len(got.Breakthrough) != 1 || got.Breakthrough[0] != rules.StateCrit {
+		t.Errorf("breakthrough lost in the round trip: %v", got.Breakthrough)
+	}
+}
+
+// TestStoreUpdateReplacesBreakthroughOverAnExistingRow exercises
+// ReplaceRouteBreakthroughSeverities' WITH-based DELETE-then-INSERT CTE
+// against a route whose breakthrough table already has a row — the shape
+// this repo's own CHANGELOG records biting twice before: a data-modifying
+// CTE's DELETE and the main INSERT have no specified execution order
+// against each other when nothing selects from the CTE's output, which
+// this query (its own doc comment says so) deliberately does not. The
+// first Update below keeps "crit" in both the old and the new set, so the
+// value is already present in the table when the CTE runs; the second
+// drops it to nothing, exercising the table going fully empty the same
+// way ReplaceRouteChannels' own comment calls out for an emptied channel
+// list. A real database is the only thing that can prove the statement's
+// actual behaviour, not just that it compiles (ReplaceRouteSeverities and
+// ReplaceRouteEvents share the exact same shape and already round-trip
+// through TestStoreUpdateSucceedsAndMovesScopeFromOrgToHost, but that test
+// never re-uses a value across the replace the way this one does).
+func TestStoreUpdateReplacesBreakthroughOverAnExistingRow(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+	now := time.Now()
+	win := &alertroutes.Window{Cron: "0 9 * * *", Duration: time.Hour, Timezone: "UTC"}
+
+	in := alertroutes.Input{
+		Name: "overlap", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities:   []rules.State{rules.StateCrit, rules.StateWarn},
+		Events:       []alerts.EventKind{alerts.EventOpened},
+		Channels:     []uuid.UUID{ch},
+		Window:       win,
+		Breakthrough: []rules.State{rules.StateCrit, rules.StateWarn},
+	}
+	created, err := s.Create(ctx, org, uuid.New(), in, now)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// "crit" survives the replace unchanged; "warn" is dropped. If the
+	// CTE's DELETE ran after the INSERT instead of before it, the surviving
+	// "crit" row would either vanish (deleted after being re-inserted) or
+	// the stale "warn" row would linger (never deleted because the INSERT
+	// raced ahead of it) — either way Get below would catch it.
+	in.Breakthrough = []rules.State{rules.StateCrit}
+	updated, err := s.Update(ctx, org, created.ID, created.Revision, in, now)
+	if err != nil {
+		t.Fatalf("Update (overlap): %v", err)
+	}
+	if len(updated.Breakthrough) != 1 || updated.Breakthrough[0] != rules.StateCrit {
+		t.Fatalf("Update() breakthrough = %v, want exactly [crit]", updated.Breakthrough)
+	}
+
+	// Then empty it out entirely — the table must end up with no rows for
+	// this route at all, not a leftover "crit" the DELETE failed to reach.
+	in.Breakthrough = nil
+	in.Window = nil
+	emptied, err := s.Update(ctx, org, created.ID, updated.Revision, in, now)
+	if err != nil {
+		t.Fatalf("Update (empty): %v", err)
+	}
+	if len(emptied.Breakthrough) != 0 {
+		t.Fatalf("Update() breakthrough = %v, want none left", emptied.Breakthrough)
+	}
+	if emptied.Window != nil {
+		t.Fatalf("Update() window = %+v, want nil after clearing it", emptied.Window)
+	}
+
+	got, err := s.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Breakthrough) != 0 || got.Window != nil {
+		t.Fatalf("Get() after Update = breakthrough %v window %+v, want both cleared", got.Breakthrough, got.Window)
+	}
+}

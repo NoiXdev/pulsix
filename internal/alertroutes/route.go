@@ -46,22 +46,34 @@ type Input struct {
 	Severities []rules.State
 	Events     []alerts.EventKind
 	Channels   []uuid.UUID
+	// Window is the route's delivery window: nil means the route may
+	// deliver at any time, the v0.4b default this feature extends.
+	Window *Window
+	// Breakthrough is the subset of Severities that crosses a closed
+	// Window anyway. Non-empty only when Window is set.
+	Breakthrough []rules.State
+	// RotationID, when set, makes the on-call rotation it names the
+	// route's channel source instead of the fixed Channels list.
+	RotationID *uuid.UUID
 }
 
-// Route is a stored route with its three selections attached.
+// Route is a stored route with its four selections attached.
 type Route struct {
-	ID         uuid.UUID
-	OrgID      uuid.UUID
-	Name       string
-	Enabled    bool
-	Scope      Scope
-	ScopeID    *uuid.UUID
-	Severities []rules.State
-	Events     []alerts.EventKind
-	Channels   []uuid.UUID
-	Revision   int64
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID           uuid.UUID
+	OrgID        uuid.UUID
+	Name         string
+	Enabled      bool
+	Scope        Scope
+	ScopeID      *uuid.UUID
+	Severities   []rules.State
+	Events       []alerts.EventKind
+	Channels     []uuid.UUID
+	Window       *Window
+	Breakthrough []rules.State
+	RotationID   *uuid.UUID
+	Revision     int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // routableSeverities is the set an alert can actually carry: ok is not
@@ -96,7 +108,13 @@ func Validate(in Input) error {
 	}); err != nil {
 		return err
 	}
-	return checkSet("channel", in.Channels, func(uuid.UUID) bool { return true })
+	if err := checkSet("channel", in.Channels, func(uuid.UUID) bool { return true }); err != nil {
+		return err
+	}
+	if err := validateWindow(in.Window); err != nil {
+		return err
+	}
+	return validateBreakthrough(in.Breakthrough, in.Window, in.Severities)
 }
 
 // checkSet enforces non-empty, no duplicates and every member known.
