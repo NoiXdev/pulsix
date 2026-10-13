@@ -36,6 +36,9 @@ func TestValidate(t *testing.T) {
 		{"zero period", func(in *Input) { in.PeriodDays = 0 }, false},
 		{"negative period", func(in *Input) { in.PeriodDays = -7 }, false},
 		{"unknown timezone", func(in *Input) { in.Timezone = "Mars/Olympus" }, false},
+		// Finding 3: time.LoadLocation("") returns UTC with no error, so
+		// without this check an unset timezone would be accepted silently.
+		{"blank timezone", func(in *Input) { in.Timezone = "" }, false},
 		{"zero anchor", func(in *Input) { in.Anchor = time.Time{} }, false},
 	}
 	for _, tc := range tests {

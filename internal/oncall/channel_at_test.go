@@ -106,6 +106,37 @@ func TestChannelAtHandoverInASkippedHour(t *testing.T) {
 	}
 }
 
+func TestChannelAtRejectsNonPositivePeriod(t *testing.T) {
+	// Finding 2. handoverIndex divides by PeriodDays and its loop assumes
+	// the period is positive: zero panics (integer divide by zero) and
+	// negative reverses the loop's monotonicity, so guess-- never stops —
+	// a wedged goroutine with no error and no timeout, inside a function a
+	// ticker calls. Validate and the column's CHECK block this at the
+	// door today, but ChannelAt must not trust that and hang or panic if
+	// a caller ever hands it a rotation that skipped those gates.
+	berlin, _ := time.LoadLocation("Europe/Berlin")
+	anchor := time.Date(2026, 1, 5, 9, 0, 0, 0, berlin)
+	base := oncall.Rotation{Anchor: anchor, Timezone: "Europe/Berlin",
+		Channels: []uuid.UUID{uuid.New()}}
+
+	tests := []struct {
+		name       string
+		periodDays int
+	}{
+		{"zero period", 0},
+		{"negative period", -7},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rot := base
+			rot.PeriodDays = tc.periodDays
+			if _, err := oncall.ChannelAt(rot, nil, anchor); err == nil {
+				t.Errorf("ChannelAt with PeriodDays=%d: got nil error, want one", tc.periodDays)
+			}
+		})
+	}
+}
+
 func TestChannelAtAppliesExceptions(t *testing.T) {
 	a, b, stand := uuid.New(), uuid.New(), uuid.New()
 	berlin, _ := time.LoadLocation("Europe/Berlin")
@@ -170,5 +201,40 @@ func TestOverlappingExceptionsHaveAStrictTotalOrder(t *testing.T) {
 	// Later start wins, even though its id sorts lower.
 	if forward != late.ChannelID {
 		t.Errorf("overlap resolved to %v, want the later-starting stand-in", forward)
+	}
+
+	// Finding 1. early and late above only differ in StartsAt, so they
+	// exercise just the first leg of beatsException — a comparator that
+	// only ever compares StartsAt would pass everything above. Two
+	// stand-ins sharing BOTH StartsAt and EndsAt, differing only in id,
+	// are what the determinism claim actually rests on: without this
+	// case, a comparator that regresses to slice-order-dependent behaviour
+	// for ties would pass this test and still violate decision 7.
+	tiedLow := oncall.Exception{
+		ID:        uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		StartsAt:  time.Date(2026, 1, 6, 0, 0, 0, 0, berlin),
+		EndsAt:    time.Date(2026, 1, 8, 0, 0, 0, 0, berlin),
+		ChannelID: uuid.New(),
+	}
+	tiedHigh := oncall.Exception{
+		ID:        uuid.MustParse("00000000-0000-0000-0000-0000000000ff"),
+		StartsAt:  time.Date(2026, 1, 6, 0, 0, 0, 0, berlin),
+		EndsAt:    time.Date(2026, 1, 8, 0, 0, 0, 0, berlin),
+		ChannelID: uuid.New(),
+	}
+	tiedForward, err := oncall.ChannelAt(rot, []oncall.Exception{tiedLow, tiedHigh}, at)
+	if err != nil {
+		t.Fatalf("ChannelAt tied: %v", err)
+	}
+	tiedBackward, err := oncall.ChannelAt(rot, []oncall.Exception{tiedHigh, tiedLow}, at)
+	if err != nil {
+		t.Fatalf("ChannelAt tied reversed: %v", err)
+	}
+	if tiedForward != tiedBackward {
+		t.Fatalf("tied start and end: the answer depends on slice order: %v vs %v", tiedForward, tiedBackward)
+	}
+	// Same start, same end: the smaller id wins.
+	if tiedForward != tiedLow.ChannelID {
+		t.Errorf("tied overlap resolved to %v, want the smaller id's stand-in", tiedForward)
 	}
 }

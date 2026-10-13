@@ -80,6 +80,12 @@ func Validate(in Input) error {
 	if in.Anchor.IsZero() {
 		return fmt.Errorf("%w: a rotation needs an anchor — the first handover", ErrInvalidInput)
 	}
+	// time.LoadLocation("") succeeds and returns UTC, so an unset timezone
+	// would otherwise pass silently and answer in UTC instead of being
+	// refused at the door.
+	if strings.TrimSpace(in.Timezone) == "" {
+		return fmt.Errorf("%w: a rotation needs a timezone", ErrInvalidInput)
+	}
 	if _, err := time.LoadLocation(in.Timezone); err != nil {
 		return fmt.Errorf("%w: unknown timezone %q", ErrInvalidInput, in.Timezone)
 	}

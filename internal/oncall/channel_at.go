@@ -48,6 +48,17 @@ func ChannelAt(r Rotation, exc []Exception, at time.Time) (uuid.UUID, error) {
 	if len(r.Channels) == 0 {
 		return uuid.Nil, fmt.Errorf("rotation %s has no channels", r.ID)
 	}
+	// handoverIndex divides by PeriodDays and its loop direction assumes it
+	// is positive. Zero panics (integer divide by zero); negative reverses
+	// the loop's monotonicity and never terminates — a wedged goroutine,
+	// with no error and no timeout, inside a function a ticker calls.
+	// Validate and the column's CHECK both block this today, but that is
+	// the same pair of layers that already covers the channel-count
+	// invariant above, and defending one half of that pair and not the
+	// other is an asymmetry whose skipped half fails worse.
+	if r.PeriodDays <= 0 {
+		return uuid.Nil, fmt.Errorf("rotation %s has an invalid period %d", r.ID, r.PeriodDays)
+	}
 	if win, ok := winningException(exc, at); ok {
 		return win.ChannelID, nil
 	}
