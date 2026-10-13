@@ -421,3 +421,62 @@ func TestStoreUpdateReplacesBreakthroughOverAnExistingRow(t *testing.T) {
 		t.Fatalf("Get() after Update = breakthrough %v window %+v, want both cleared", got.Breakthrough, got.Window)
 	}
 }
+
+// Create and Update mapped a unique violation but not a foreign-key one,
+// so alert_routes_rotation_fkey, alert_routes_scope_group_fkey and
+// alert_routes_scope_host_fkey all surfaced unmapped and the API answered
+// 500. Easy to reach without doing anything wrong: delete a rotation in
+// one tab, save a route still naming it in another (whole-branch review,
+// Minor #5). replaceSelections and oncall.CreateException already map it;
+// the route row itself did not.
+func TestStoreRejectsAnUnknownRotationOrScopeTarget(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+
+	base := func() alertroutes.Input {
+		return alertroutes.Input{
+			Name: "route-" + uuid.NewString(), Enabled: true, Scope: alertroutes.ScopeOrg,
+			Severities: []rules.State{rules.StateCrit},
+			Events:     []alerts.EventKind{alerts.EventOpened},
+			Channels:   []uuid.UUID{ch},
+		}
+	}
+
+	gone := uuid.New()
+	withRotation := base()
+	withRotation.Channels = nil
+	withRotation.RotationID = &gone
+	if _, err := s.Create(ctx, org, uuid.New(), withRotation, time.Now()); !errors.Is(err, alertroutes.ErrInvalidInput) {
+		t.Errorf("Create naming a rotation that no longer exists = %v, want ErrInvalidInput", err)
+	}
+
+	withHost := base()
+	withHost.Scope, withHost.ScopeID = alertroutes.ScopeHost, &gone
+	if _, err := s.Create(ctx, org, uuid.New(), withHost, time.Now()); !errors.Is(err, alertroutes.ErrInvalidInput) {
+		t.Errorf("Create naming a host that does not exist = %v, want ErrInvalidInput", err)
+	}
+
+	withGroup := base()
+	withGroup.Scope, withGroup.ScopeID = alertroutes.ScopeMonitoringGroup, &gone
+	if _, err := s.Create(ctx, org, uuid.New(), withGroup, time.Now()); !errors.Is(err, alertroutes.ErrInvalidInput) {
+		t.Errorf("Create naming a monitoring group that does not exist = %v, want ErrInvalidInput", err)
+	}
+
+	// The same hole on the update path, which is the one an operator
+	// actually walks into: the route was saved while its rotation still
+	// existed.
+	saved := base()
+	created, err := s.Create(ctx, org, uuid.New(), saved, time.Now())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	stale := saved
+	stale.Channels = nil
+	stale.RotationID = &gone
+	if _, err := s.Update(ctx, org, created.ID, created.Revision, stale, time.Now()); !errors.Is(err, alertroutes.ErrInvalidInput) {
+		t.Errorf("Update naming a rotation that no longer exists = %v, want ErrInvalidInput", err)
+	}
+}

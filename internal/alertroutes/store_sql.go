@@ -101,6 +101,36 @@ func toRoute(r gen.AlertRoute, sel selection, breakthrough []rules.State) Route 
 	}
 }
 
+// routeRowError maps the row-level constraint failures CreateAlertRoute and
+// UpdateAlertRoute can raise. The unique one is the route's own name; the
+// three foreign keys are the things a route POINTS AT — its rotation, and
+// the host or monitoring group its scope names — any of which may have been
+// deleted since the editor loaded them (delete a rotation in one tab, save
+// a route still naming it in another). Unmapped, those surfaced as a bare
+// wrapped database error and the API answered 500 for an ordinary race;
+// replaceSelections (selections_sql.go) and oncall.CreateException already
+// map the same class on their own tables. ConstraintName is what tells the
+// three apart, since alert_routes carries more than one.
+func routeRowError(err error, name string) error {
+	switch {
+	case db.IsUniqueViolation(err):
+		return fmt.Errorf("%w: %s", ErrNameTaken, name)
+	case db.IsForeignKeyViolation(err):
+		switch db.ConstraintName(err) {
+		case "alert_routes_org_id_scope_group_id_fkey":
+			return fmt.Errorf("%w: no such monitoring group in this organization", ErrInvalidInput)
+		case "alert_routes_org_id_scope_host_id_fkey":
+			return fmt.Errorf("%w: no such host in this organization", ErrInvalidInput)
+		case "alert_routes_rotation_fkey":
+			return fmt.Errorf("%w: no such on-call rotation in this organization", ErrInvalidInput)
+		default:
+			return fmt.Errorf("%w: this route references something that does not exist in this organization", ErrInvalidInput)
+		}
+	default:
+		return nil
+	}
+}
+
 // Create inserts id's row and all four selections in one transaction: a
 // route that exists with no channels because the second statement failed
 // is exactly the silently-ineffective state this feature exists to
@@ -122,8 +152,8 @@ func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now t
 		WindowCron: cron, WindowDurationSeconds: durationSeconds, WindowTimezone: timezone,
 		RotationID: db.NullUUID(in.RotationID), CreatedAt: now, UpdatedAt: now,
 	})
-	if db.IsUniqueViolation(err) {
-		return Route{}, fmt.Errorf("%w: %s", ErrNameTaken, in.Name)
+	if mapped := routeRowError(err, in.Name); mapped != nil {
+		return Route{}, mapped
 	}
 	if err != nil {
 		return Route{}, fmt.Errorf("create route: %w", err)
@@ -175,8 +205,8 @@ func (s *Store) Update(ctx context.Context, orgID, id uuid.UUID, revision int64,
 		RotationID: db.NullUUID(in.RotationID), UpdatedAt: now,
 		OrgID: orgID, ID: id, Revision: revision,
 	})
-	if db.IsUniqueViolation(err) {
-		return Route{}, fmt.Errorf("%w: %s", ErrNameTaken, in.Name)
+	if mapped := routeRowError(err, in.Name); mapped != nil {
+		return Route{}, mapped
 	}
 	if err != nil {
 		return Route{}, fmt.Errorf("update route: %w", err)
