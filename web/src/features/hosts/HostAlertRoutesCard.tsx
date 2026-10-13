@@ -3,6 +3,8 @@ import { Card } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { useHostAlertRoutes } from '../../api/hooks/useAlertRoutes.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
+import { ReachesNobody, RouteFiresOn } from '../notifications/AlertRouteCells.tsx';
+import { routeReachesNobody } from '../notifications/alertRoute.ts';
 import type { AlertRoute, MonitoringGroup } from '../../api/types.ts';
 
 export interface HostAlertRoutesCardProps {
@@ -34,10 +36,20 @@ export interface HostAlertRoutesCardProps {
  * own name / This host — the same provenance EffectiveRulesPanel's
  * originChip gives a rule's own scope, so an operator can tell a route
  * that reaches this host because it targets the whole organization apart
- * from one that targets this host by name. The name itself links to
- * Settings → Alert routes, where severities, events and channels — this
- * view's own DTO carries them, but editing is that page's job, not this
- * card's — are the next click away.
+ * from one that targets this host by name.
+ *
+ * Beneath it, what the route fires on. ForHost deliberately returns every
+ * route whose scope covers the host whatever its severity and event
+ * selections are (its own doc comment says why), so "a route covers this
+ * host" and "this alert would have reached a channel" are different
+ * statements, and the second is the one the operator asked about: without
+ * the selections here the card can say "three routes cover this host" and
+ * still leave "why did no mail arrive?" unanswered. A route with no
+ * channel left says so outright (decision 8) — it is the one case that
+ * looks like coverage and delivers nothing.
+ *
+ * Editing stays on Settings → Alert routes, one click away through the
+ * route's name.
  */
 export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCardProps) {
   const routes = useHostAlertRoutes(org, hostId, canRead);
@@ -69,15 +81,19 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
       {canRead && routes.data && list.length > 0 && (
         <ul className="flex flex-col gap-2">
           {list.map((r) => (
-            <li key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
-              <Link
-                to="/o/$org/settings/alert-routes"
-                params={{ org }}
-                className="truncate text-[13px] font-medium text-foreground hover:text-primary"
-              >
-                {r.name}
-              </Link>
-              <Pill tone="accent">{scopeLabel(r, groupList)}</Pill>
+            <li key={r.id} className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <Link
+                  to="/o/$org/settings/alert-routes"
+                  params={{ org }}
+                  className="truncate text-[13px] font-medium text-foreground hover:text-primary"
+                >
+                  {r.name}
+                </Link>
+                <Pill tone="accent">{scopeLabel(r, groupList)}</Pill>
+              </div>
+              <RouteFiresOn route={r} />
+              {routeReachesNobody(r) && <ReachesNobody />}
             </li>
           ))}
         </ul>

@@ -88,6 +88,40 @@ describe('HostAlertRoutesCard', () => {
     expect(screen.getByText('Web tier')).toBeInTheDocument();
   });
 
+  it('shows what each covering route fires on, so a silent route is explicable', async () => {
+    // The union view's whole reason to exist is "why did no mail
+    // arrive?" (Service.ForHost's own doc comment, backlog 4.1b). ForHost
+    // deliberately returns a route that covers this host whatever its
+    // severity and event selections are, so the answer is usually "it
+    // only fires on crit" — which the card has to show for the question
+    // to be answerable here at all.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/alert-routes': {
+        routes: [route({ name: 'crit only', severities: ['crit'], events: ['opened', 'closed'] })],
+      },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderCard();
+
+    expect(await screen.findByText('crit only')).toBeInTheDocument();
+    expect(screen.getByText('Critical')).toBeInTheDocument();
+    expect(screen.getByText('opened, closed')).toBeInTheDocument();
+  });
+
+  it('says a covering route whose last channel was deleted reaches nobody', async () => {
+    // Decision 8, in the union view: a route that covers this host and
+    // has no channel left is the worst case the card exists to catch —
+    // it looks like coverage and delivers nothing.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/alert-routes': { routes: [route({ name: 'orphaned', channels: [] })] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderCard();
+
+    expect(await screen.findByText('orphaned')).toBeInTheDocument();
+    expect(screen.getByText(/reaches nobody/i)).toBeInTheDocument();
+  });
+
   it('links to Settings → Alert routes', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/alert-routes': { routes: [route()] },

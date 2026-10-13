@@ -16,19 +16,10 @@ import { useAlertRoutes, useCreateAlertRoute, useDeleteAlertRoute, useUpdateAler
 import { may } from '../../lib/roles.ts';
 import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
 import { RouteDialog } from './RouteDialog.tsx';
+import { ReachesNobody, RouteFiresOn } from './AlertRouteCells.tsx';
+import { routeReachesNobody } from './alertRoute.ts';
 
 const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) 90px 220px';
-
-const SEVERITY_LABEL: Record<string, string> = { warn: 'Warning', crit: 'Critical', unknown: 'Unknown' };
-const EVENT_LABEL: Record<string, string> = {
-  opened: 'opened',
-  severity_raised: 'worsened',
-  acknowledged: 'acknowledged',
-  ack_voided: 'ack voided',
-  snoozed: 'snoozed',
-  unsnoozed: 'unsnoozed',
-  closed: 'closed',
-};
 
 /** AlertRoutesPage is Settings → Alert routes (v0.4b design, "GUI"): which
  * of the organization's notification channels hear about which alerts —
@@ -159,17 +150,12 @@ export function AlertRoutesPage() {
               {r.name}
             </span>
             <span className="truncate text-[13px] text-muted-foreground">{scopeLabel(r)}</span>
-            <span className="flex flex-col gap-1 text-xs">
-              <span className="flex flex-wrap gap-1">
-                {(r.severities ?? []).map((s) => (
-                  <Pill key={s} tone={s === 'crit' ? 'crit' : s === 'warn' ? 'warn' : 'unknown'}>
-                    {SEVERITY_LABEL[s] ?? s}
-                  </Pill>
-                ))}
-              </span>
-              <span className="truncate text-muted-foreground">{(r.events ?? []).map((e) => EVENT_LABEL[e] ?? e).join(', ')}</span>
-            </span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
+            <RouteFiresOn route={r} />
+            {routeReachesNobody(r) ? (
+              <ReachesNobody />
+            ) : (
+              <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
+            )}
             <span>
               {canWrite ? (
                 <button

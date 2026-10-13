@@ -151,6 +151,39 @@ describe('AlertRoutesPage', () => {
     });
   });
 
+  it('says a route whose last channel was deleted reaches nobody', async () => {
+    // Decision 8: a route that stops working says so. Deleting a channel
+    // removes the link, not the route, so the route survives with an
+    // empty channel set — which rendered as an empty Channels cell, the
+    // one thing indistinguishable from "not loaded".
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/alert-routes': { routes: [route({ channels: [] })] },
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [], mail_available: true },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderPage();
+
+    expect(await screen.findByText(/reaches nobody/i)).toBeInTheDocument();
+  });
+
+  it('does not call a route with channels ineffective', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/alert-routes': { routes: [route()] },
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [channel], mail_available: true },
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Ops mail')).toBeInTheDocument();
+    expect(screen.queryByText(/reaches nobody/i)).not.toBeInTheDocument();
+  });
+
   it('deletes a route once confirmed', async () => {
     const user = userEvent.setup();
     const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
