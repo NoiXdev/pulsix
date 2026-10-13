@@ -82,7 +82,7 @@ var routableSeverities = []rules.State{rules.StateWarn, rules.StateCrit, rules.S
 
 // Validate rejects a route that cannot do anything. Each of the three
 // selections must be non-empty and free of duplicates: a route with no
-// channel tells nobody, and one with no severity or no event kind
+// channel source tells nobody, and one with no severity or no event kind
 // matches nothing — states that would otherwise sit in the list looking
 // configured while being silent, which is the trap backlog 4.29 records.
 func Validate(in Input) error {
@@ -108,13 +108,37 @@ func Validate(in Input) error {
 	}); err != nil {
 		return err
 	}
-	if err := checkSet("channel", in.Channels, func(uuid.UUID) bool { return true }); err != nil {
+	if err := validateChannelSource(in.Channels, in.RotationID); err != nil {
 		return err
 	}
 	if err := validateWindow(in.Window); err != nil {
 		return err
 	}
 	return validateBreakthrough(in.Breakthrough, in.Window, in.Severities)
+}
+
+// validateChannelSource enforces decision 1 of the v0.4c design
+// (docs/superpowers/specs/2026-10-13-v0.4c-notification-schedules-design.md):
+// a route's channel source is the fixed Channels list OR RotationID, never
+// neither and never both. Neither reaches nobody — the same defect
+// checkSet already exists to catch for severities and events, reused here
+// through the empty-RotationID branch so "a route needs at least one
+// channel" keeps the exact wording and duplicate/unknown-member checks it
+// already had. Both is ambiguous rather than merely redundant:
+// channelsOf (follow_resolve.go) reads the rotation's own current channel
+// whenever RotationID is set and never falls back to Channels, so a fixed
+// list saved alongside a rotation is a list that silently does nothing —
+// worth refusing up front rather than leaving an operator to discover it
+// only once the rotation breaks and the "fallback" they thought they had
+// turns out never to have been read at all.
+func validateChannelSource(channels []uuid.UUID, rotationID *uuid.UUID) error {
+	if rotationID != nil {
+		if len(channels) > 0 {
+			return fmt.Errorf("%w: a route needs exactly one channel source: channels and a rotation cannot both be set", ErrInvalidInput)
+		}
+		return nil
+	}
+	return checkSet("channel", channels, func(uuid.UUID) bool { return true })
 }
 
 // checkSet enforces non-empty, no duplicates and every member known.

@@ -73,6 +73,68 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestValidateChannelSource pins decision 1 of the v0.4c design
+// (docs/superpowers/specs/2026-10-13-v0.4c-notification-schedules-design.md):
+// a route's channel source is the fixed Channels list OR RotationID,
+// exactly one, never neither and never both. A reviewer's own finding
+// against the first submission of this milestone's GUI task: Validate
+// required Channels unconditionally, which made a rotation-only route —
+// precisely what the GUI's channel-source toggle composes when "on-call
+// rotation" is picked — refused by the server regardless of RotationID,
+// leaving the entire on-call half of the feature unreachable through the
+// API.
+func TestValidateChannelSource(t *testing.T) {
+	rotID := uuid.New()
+	base := func() Input {
+		return Input{
+			Name:       "ops",
+			Enabled:    true,
+			Scope:      ScopeOrg,
+			Severities: []rules.State{rules.StateCrit},
+			Events:     []alerts.EventKind{alerts.EventOpened},
+		}
+	}
+	tests := []struct {
+		name string
+		mut  func(*Input)
+		want bool // true = valid
+	}{
+		{"channels only", func(in *Input) {
+			in.Channels = []uuid.UUID{uuid.New()}
+		}, true},
+		{"rotation only", func(in *Input) {
+			in.RotationID = &rotID
+		}, true},
+		{"neither", func(*Input) {}, false},
+		// channelsOf (follow_resolve.go) reads the rotation's own current
+		// channel whenever RotationID is set and never falls back to
+		// Channels — a fixed list saved alongside a rotation is a list
+		// that silently does nothing, which is ambiguous enough to refuse
+		// rather than guess which one the operator meant to be live.
+		{"both", func(in *Input) {
+			in.Channels = []uuid.UUID{uuid.New()}
+			in.RotationID = &rotID
+		}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			in := base()
+			tc.mut(&in)
+			err := Validate(in)
+			if tc.want && err != nil {
+				t.Errorf("Validate() = %v, want nil", err)
+			}
+			if !tc.want {
+				if err == nil {
+					t.Error("Validate() = nil, want an error")
+				} else if !errors.Is(err, ErrInvalidInput) {
+					t.Errorf("Validate() = %v, want it to wrap ErrInvalidInput", err)
+				}
+			}
+		})
+	}
+}
+
 // TestValidateWindowAndBreakthrough is this package's own version of the
 // brief's test: it is written in-package (unqualified names) rather than as
 // alertroutes_test, matching TestValidate right above it in this same file —
