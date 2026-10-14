@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Select, type SelectOption } from './Select.tsx';
+import { Dialog } from './dialog.tsx';
 
 const OPTS: SelectOption[] = [
   { value: 'c1', label: 'acme-deploy', hint: 'SSH key' },
@@ -147,5 +148,93 @@ describe('Select', () => {
     renderSelect();
     await user.click(screen.getByRole('combobox', { name: 'Credential' }));
     expect(screen.getAllByRole('option')[0]).toHaveAttribute('data-value', 'c1');
+  });
+
+  it('closes only the list on Escape, leaving a surrounding dialog alone', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Add repository">
+        <Select aria-label="Credential" options={OPTS} value="" onChange={vi.fn()} />
+      </Dialog>,
+    );
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    await user.keyboard('{Escape}');
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
+    await user.keyboard('{Escape}');
+    // Not toHaveBeenCalledOnce(): dialog.tsx wires both onCancel and onClose
+    // to this same callback, and a native dialog's unprevented Escape fires
+    // cancel, then — because nothing called preventDefault — the close that
+    // follows it, so the one Escape press that reaches the dialog invokes
+    // it twice. That is real browser behaviour, not a test artifact (see
+    // web/src/test/setup.ts's Escape-cancels-the-topmost-dialog polyfill,
+    // added for this test); asserting an exact count here would be asserting
+    // a dialog.tsx wiring detail Select has no business pinning.
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe('Select with a create row', () => {
+  const create = (onSelect = vi.fn()) => ({ label: 'New credential', onSelect });
+
+  it('offers the row last, after every option', async () => {
+    const user = userEvent.setup();
+    render(<Select aria-label="Credential" options={OPTS} value="" onChange={vi.fn()} create={create()} />);
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    const rows = screen.getAllByRole('option');
+    expect(rows).toHaveLength(4);
+    expect(rows[3]).toHaveTextContent('New credential');
+  });
+
+  it('hands the typed text to the callback, so the new object arrives named', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<Select aria-label="Credential" options={OPTS} value="" onChange={vi.fn()} create={create(onSelect)} />);
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    await user.keyboard('zeta-deploy');
+    await user.click(screen.getByRole('option', { name: /New credential/ }));
+    expect(onSelect).toHaveBeenCalledWith('zeta-deploy');
+  });
+
+  it('never commits a creation on Enter after filtering', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onChange = vi.fn();
+    render(<Select aria-label="Credential" options={OPTS} value="" onChange={onChange} create={create(onSelect)} />);
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    // "zzz" leaves the create row as the only thing in the list.
+    await user.keyboard('zzz{Enter}');
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('commits the first match on Enter, not the create row', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onChange = vi.fn();
+    render(<Select aria-label="Credential" options={OPTS} value="" onChange={onChange} create={create(onSelect)} />);
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    await user.keyboard('acme{Enter}');
+    expect(onChange).toHaveBeenCalledWith('c1');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('is still reachable by keyboard, at the end of the list', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<Select aria-label="Credential" options={[OPTS[0]]} value="" onChange={vi.fn()} create={create(onSelect)} />);
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+    expect(onSelect).toHaveBeenCalledWith('');
+  });
+
+  it('still says "No match" when only the create row is left', async () => {
+    const user = userEvent.setup();
+    render(<Select aria-label="Credential" options={OPTS} value="" onChange={vi.fn()} create={create()} />);
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    await user.keyboard('zzz');
+    expect(screen.getByText('No match')).toBeInTheDocument();
   });
 });

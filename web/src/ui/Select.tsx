@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useCombobox } from 'downshift';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Plus } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 
 export interface SelectOption {
@@ -29,6 +29,11 @@ export interface SelectProps {
  *  an item, and null already means "nothing is selected". */
 const NONE = ' none';
 
+/** Stands in for the create row, the same way NONE stands in for "no
+ *  value": downshift needs a real item to select, and the row has no
+ *  SelectOption of its own in `options`. */
+const CREATE = ' create';
+
 /**
  * Select is the one picker Pulsix is standardising on (v0.4g, backlog 1.43):
  * it will replace the SPA's 76 native select elements over the tasks that
@@ -49,12 +54,6 @@ export function Select({
   options, value, onChange, placeholder, id, disabled, invalid, create,
   'aria-label': ariaLabel,
 }: SelectProps) {
-  // `create` is unread until Task 2 adds the "+ Create…" row. Declaring it
-  // in the props now (per the Task 1 interface) without touching it here
-  // trips noUnusedParameters; `void` is this codebase's existing way to
-  // park a deliberately-unused binding (see RunDetailPage.test.tsx).
-  void create;
-
   const [filter, setFilter] = useState('');
 
   // Shared by the rendered rows and by the stateReducer below, which needs
@@ -72,7 +71,16 @@ export function Select({
     [options, placeholder],
   );
 
-  const rows = useMemo<SelectOption[]>(() => toRows(filter), [toRows, filter]);
+  // The create row is appended here, after toRows, rather than folded into
+  // toRows itself: toRows is also what the stateReducer below recomputes
+  // from a keystroke's own value to find the highlighted match, and the
+  // create row must never be a candidate for that (spec decision 5) — kept
+  // out of toRows, there is nothing to exclude there, see that case's
+  // comment.
+  const rows = useMemo<SelectOption[]>(() => {
+    const matched = toRows(filter);
+    return create ? [...matched, { value: CREATE, label: create.label }] : matched;
+  }, [toRows, filter, create]);
 
   const selected = options.find((o) => o.value === value) ?? null;
   // Review Focus 2: a value whose option is gone (a deleted credential a
@@ -87,6 +95,11 @@ export function Select({
     selectedItem: selected,
     onSelectedItemChange: ({ selectedItem }) => {
       if (!selectedItem || selectedItem.disabled) return;
+      if (selectedItem.value === CREATE) {
+        create?.onSelect(filter.trim());
+        setFilter('');
+        return;
+      }
       onChange(selectedItem.value === NONE ? '' : selectedItem.value);
       setFilter('');
     },
@@ -100,6 +113,14 @@ export function Select({
         // rather than the `rows` memo: downshift dispatches against the
         // props it captured on the previous render, so `rows` would still be
         // the one from before this character was typed.
+        //
+        // This doubles as the create-row guard (spec decision 5): toRows
+        // never includes the create row (see the `rows` memo above), so a
+        // query that matches nothing yields an empty `fresh` here and
+        // findIndex falls through to -1 — never the create row, which would
+        // otherwise be the only item left for Enter to land on. Arrowing
+        // onto it by hand still works, since that goes through downshift's
+        // own ItemHighlighted handling, not this case.
         case useCombobox.stateChangeTypes.InputChange: {
           const fresh = toRows(changes.inputValue ?? '');
           return { ...changes, highlightedIndex: fresh.findIndex((o) => !o.disabled) };
@@ -126,6 +147,14 @@ export function Select({
           'aria-label': ariaLabel,
           disabled,
           onChange: (e) => setFilter((e.target as HTMLInputElement).value),
+          // A surrounding Dialog's Escape-to-close listens on the document
+          // (the native dialog element has no handler of its own — see
+          // ui/dialog.tsx), so closing just this list on Escape has to stop
+          // the keydown here, or the same press that closes the list would
+          // also close the dialog underneath it.
+          onKeyDown: (e) => {
+            if (cb.isOpen) e.stopPropagation();
+          },
         })}
         value={open ? filter : selectedLabel}
         placeholder={placeholder}
@@ -150,7 +179,11 @@ export function Select({
           !open && 'hidden',
         )}
       >
-        {open && rows.length === 0 && (
+        {/* The create row is never filtered away (see the `rows` memo
+            above), so a query that matches nothing still leaves it in
+            `rows` — counting it out here keeps "No match" honest about the
+            real options, not about the row that is always there. */}
+        {open && rows.length === (create ? 1 : 0) && (
           <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
             {options.length === 0 ? 'No options' : 'No match'}
           </li>
@@ -165,8 +198,10 @@ export function Select({
                 'flex cursor-pointer items-baseline gap-2 px-2.5 py-1.5 text-xs',
                 cb.highlightedIndex === i && 'bg-background text-foreground',
                 o.disabled && 'cursor-not-allowed opacity-50',
+                o.value === CREATE && 'border-t border-border text-primary',
               )}
             >
+              {o.value === CREATE && <Plus size={13} className="shrink-0" />}
               <span className="flex-1 truncate">{o.label}</span>
               {o.hint && <span className="shrink-0 text-[11px] text-muted-foreground">{o.hint}</span>}
             </li>

@@ -45,13 +45,39 @@ globalThis.Request = TestRequest as unknown as typeof Request;
 // Radix dependency needed). A minimal polyfill: showModal sets the `open`
 // attribute the same way the browser does, and close does the reverse
 // plus fires the native "close" event ui/dialog.tsx's onClose listens for.
+// openModalDialogs tracks them in the order they were made modal, same as
+// the HTML living standard's own "list of modal dialogs" — needed below.
+const openModalDialogs: HTMLDialogElement[] = [];
 HTMLDialogElement.prototype.showModal = function () {
   this.setAttribute('open', '');
+  openModalDialogs.push(this);
 };
 HTMLDialogElement.prototype.close = function () {
   this.removeAttribute('open');
+  const i = openModalDialogs.indexOf(this);
+  if (i !== -1) openModalDialogs.splice(i, 1);
   this.dispatchEvent(new Event('close'));
 };
+
+// The second half of the native behaviour the polyfill above stands in for:
+// a browser also cancels the *topmost* modal dialog on Escape — a
+// cancelable "cancel" event, then, unless prevented, the same close() as
+// above — entirely through its own key handling, never through a keydown
+// listener in app code. That is why ui/dialog.tsx has no Escape handling of
+// its own, and why a Select nested in a Dialog (v0.4g Task 2,
+// dialog.nesting.test.tsx's sibling in Select.test.tsx) relies on this
+// exact mechanic to let a second Escape close the dialog once the first one
+// has only closed Select's own list: Select stops the keydown from
+// reaching here while its list is open (ui/Select.tsx's getInputProps), so
+// this only ever sees the Escape presses Select has already decided are not
+// its own to handle.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const topmost = openModalDialogs[openModalDialogs.length - 1];
+  if (!topmost) return;
+  const notPrevented = topmost.dispatchEvent(new Event('cancel', { cancelable: true }));
+  if (notPrevented) topmost.close();
+});
 
 // ---------------------------------------------------------------------------
 // uPlot (ui/MetricChart.tsx) needs three browser APIs jsdom does not ship.
