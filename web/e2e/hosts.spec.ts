@@ -8,8 +8,11 @@ const ZONE = { name: 'Primary', slug: 'primary' };
 async function addZone(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Add zone' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Name').fill(ZONE.name);
-  await dialog.getByLabel('Slug').fill(ZONE.slug);
+  // Exact: the zone dialog's slug field carries a "Generate slug from
+  // the name" button, whose accessible name substring-matches both
+  // "Name" and "Slug" (v0.4f found this red on main).
+  await dialog.getByLabel('Name', { exact: true }).fill(ZONE.name);
+  await dialog.getByLabel('Slug', { exact: true }).fill(ZONE.slug);
   await dialog.getByRole('button', { name: 'Create zone' }).click();
   await expect(page.getByText(`Zone ${ZONE.name} created`)).toBeVisible();
 }

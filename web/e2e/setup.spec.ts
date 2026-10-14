@@ -29,6 +29,10 @@ test('a fresh instance redirects to /setup, the wizard creates the instance, and
   await page.getByLabel('Name', { exact: true }).fill(ADMIN.name);
   await page.getByLabel('Email address', { exact: true }).fill(ADMIN.email);
   await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  // The wizard asks for the administrator password twice: it is the one
+  // field nobody can read back, and a fresh instance has no second
+  // administrator to undo a typo with.
+  await page.getByLabel('Repeat password', { exact: true }).fill(ADMIN.password);
   await page.getByRole('button', { name: 'Continue' }).click();
 
   // Step 2: first organization. The slug is asserted against directly

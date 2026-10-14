@@ -14,8 +14,10 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await page.goto(`${base}/hosts`);
   await page.getByRole('button', { name: 'Add zone' }).click();
   let dialog = page.getByRole('dialog', { name: 'Add zone' });
-  await dialog.getByLabel('Name').fill('Inventory');
-  await dialog.getByLabel('Slug').fill('inv');
+  // Exact, for the slug field's "Generate slug from the name" button —
+  // see addZone in hosts.spec.ts.
+  await dialog.getByLabel('Name', { exact: true }).fill('Inventory');
+  await dialog.getByLabel('Slug', { exact: true }).fill('inv');
   await dialog.getByRole('button', { name: 'Create zone' }).click();
   await toast(page, 'Zone Inventory created');
   await page.getByRole('button', { name: 'Add host' }).click();
