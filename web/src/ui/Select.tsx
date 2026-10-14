@@ -21,6 +21,12 @@ export interface SelectProps {
   id?: string;
   'aria-label'?: string;
   disabled?: boolean;
+  /** Sets `aria-invalid` on the input and colours its border, mirroring a
+   *  server-side validation problem shown at this field — the same signal
+   *  `SchemaForm`'s text and number fields already give through their own
+   *  `aria-invalid`, so an enum field is not the one control in a form that
+   *  tells a screen reader nothing is wrong. */
+  invalid?: boolean;
   /** Forwarded to the underlying input so native constraint validation can
    *  block a form's submit while this field is empty — see the empty-value
    *  fix on `selectedLabel` below, which this depends on: a `required`
@@ -67,7 +73,7 @@ const CREATE = ' create';
  * rule on src/ui/**).
  */
 export function Select({
-  options, value, onChange, placeholder, id, disabled, required, create,
+  options, value, onChange, placeholder, id, disabled, invalid, required, create,
   'aria-label': ariaLabel,
 }: SelectProps) {
   const [filter, setFilter] = useState('');
@@ -198,6 +204,7 @@ export function Select({
           // `.labels` (found migrating features/checks, v0.4g Task 4 —
           // every picker there uses an external <Label>, not aria-label).
           'aria-labelledby': undefined,
+          'aria-invalid': invalid ? true : undefined,
           disabled,
           onChange: (e) => setFilter((e.target as HTMLInputElement).value),
           // A native <dialog>'s Escape-to-close is not a bubbling DOM
@@ -237,6 +244,7 @@ export function Select({
         className={cn(
           'flex h-8 w-full rounded-md border border-border bg-background px-2.5 pr-7 text-xs text-foreground',
           'placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
+          invalid && 'border-destructive',
         )}
       />
       {/* The button's own accessible name is "Open" plus the input's —

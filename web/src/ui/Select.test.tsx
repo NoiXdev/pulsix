@@ -169,6 +169,19 @@ describe('Select', () => {
     expect(screen.queryAllByRole('option')).toHaveLength(0);
   });
 
+  // `invalid` restored (v0.4g final fix round, second pass): it was briefly
+  // deleted as dead API, but SchemaForm's ScalarInput does pass it through
+  // for every field type including the enum Select — the reviewer's real
+  // complaint was that it only ever coloured a border, with no signal for a
+  // screen reader. aria-invalid is that signal.
+  it('sets aria-invalid when invalid, and leaves it off otherwise', () => {
+    render(<Select aria-label="Valid" options={OPTS} value="" onChange={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: 'Valid' })).not.toHaveAttribute('aria-invalid');
+
+    render(<Select aria-label="Invalid" options={OPTS} value="" onChange={vi.fn()} invalid />);
+    expect(screen.getByRole('combobox', { name: 'Invalid' })).toHaveAttribute('aria-invalid', 'true');
+  });
+
   it('skips a disabled option', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
