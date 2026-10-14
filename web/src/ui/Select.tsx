@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type KeyboardEvent } from 'react';
 import { useCombobox } from 'downshift';
 import { ChevronDown, Plus } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
@@ -23,6 +23,18 @@ export interface SelectProps {
   disabled?: boolean;
   invalid?: boolean;
   create?: { label: string; onSelect: (filterText: string) => void };
+}
+
+/**
+ * downshift's callAllEventHandlers() — used internally by getInputProps —
+ * runs the onKeyDown handed to it before downshift's own, and skips its own
+ * entirely when this flag turns up set on the event afterwards. That is
+ * downshift's own documented escape hatch, not something private being
+ * reached into; there is just no exported type for the flag, so this
+ * declares only enough of the shape to set it without `any`.
+ */
+interface DownshiftEscapeHatchEvent extends KeyboardEvent<Element> {
+  preventDownshiftDefault?: boolean;
 }
 
 /** Stands in for "no value" when a placeholder is given: downshift wants
@@ -157,8 +169,25 @@ export function Select({
           // open — once it's closed, Escape must reach the surrounding
           // dialog (ui/dialog.tsx has no Escape handling of its own) so a
           // second press can close that instead.
-          onKeyDown: (e) => {
-            if (cb.isOpen && e.key === 'Escape') e.preventDefault();
+          onKeyDown: (e: KeyboardEvent<Element>) => {
+            if (e.key !== 'Escape') return;
+            if (cb.isOpen) {
+              e.preventDefault();
+              return;
+            }
+            // downshift's useCombobox prevents Escape's default whenever
+            // *anything* is selected, open or not (its own Escape handler
+            // ORs isOpen with selectedItem/inputValue/highlightedIndex) —
+            // so a Select holding a value swallows every Escape keystroke
+            // with the list already closed, including ones meant for a
+            // surrounding Dialog. That is every edit dialog with a value
+            // already chosen (RepoDialog, HostSshCard, WindowDialog): Escape
+            // would do nothing, and nothing would explain why. Opt just
+            // this closed-list case out of downshift's own handling so the
+            // key reaches the dialog instead — a dialog that closes a touch
+            // too eagerly is a smaller problem than one Escape cannot touch
+            // at all.
+            (e as DownshiftEscapeHatchEvent).preventDownshiftDefault = true;
           },
         })}
         value={open ? filter : selectedLabel}

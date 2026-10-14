@@ -174,6 +174,23 @@ describe('Select', () => {
     // a dialog.tsx wiring detail Select has no business pinning.
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('lets Escape close a surrounding dialog when the field already holds a value', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Edit repository">
+        <Select aria-label="Credential" options={OPTS} value="c1" onChange={vi.fn()} />
+      </Dialog>,
+    );
+    // Focused, list closed — never opened. downshift prevents Escape's
+    // default whenever an item is selected, open or not (see the fix
+    // below), so this is the case Select has to carve an exception for.
+    await user.tab();
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+  });
 });
 
 describe('Select with a create row', () => {
