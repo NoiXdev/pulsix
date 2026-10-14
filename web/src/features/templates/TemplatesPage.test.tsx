@@ -101,6 +101,63 @@ describe('TemplatesPage', () => {
     });
   });
 
+  // v0.4g Task 7 addendum: the Default SSH credential picker's create row
+  // was added after Task 5 converted this file's own select — Task 5 left
+  // it a plain picker since AddCredentialDialog had no onCreated/initialName
+  // yet (see that task's report, Deviation 4).
+  it('creates a credential from the Default SSH credential picker and selects it', async () => {
+    const user = userEvent.setup();
+    let templatePosted: unknown;
+    let credPosted: unknown;
+    const edgeLogin = {
+      id: 'c9', name: 'edge-login', kind: 'ssh_password', username: '', expired: false, expires_soon: false,
+      used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '',
+    };
+    let created = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [groupRow] },
+      // A function, not a fixed value — see ReposPage.test.tsx's own
+      // comment on why a static list would read "c9 (unavailable)".
+      'GET /api/v1/orgs/acme/credentials': () => ({ credentials: created ? [edgeLogin] : [] }),
+      'POST /api/v1/orgs/acme/credentials': (req: MockRequest) => {
+        credPosted = req.body;
+        created = true;
+        return { credential: edgeLogin };
+      },
+      'POST /api/v1/orgs/acme/job-templates': (req: MockRequest) => {
+        templatePosted = req.body;
+        return { template: template({ name: 'deploy-site', credential_id: 'c9' }) };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add template' }));
+    await user.type(screen.getByLabelText('Name'), 'deploy-site');
+    await pickOption(screen, 'Playbook', { value: 'pb1' });
+
+    await user.click(screen.getByLabelText('Default SSH credential'));
+    await user.keyboard('edge-login');
+    await user.click(screen.getByRole('option', { name: /New credential/ }));
+
+    const addDialog = await screen.findByRole('dialog', { name: 'Add credential' });
+    expect(within(addDialog).getByLabelText('Name')).toHaveValue('edge-login');
+    // Default SSH credential only offers ssh_key/ssh_password — the
+    // dialog's own default (ssh_key) would also work, but ssh_password
+    // skips the one-time key panel, keeping this test to the one thing
+    // it's for.
+    await pickOption(within(addDialog), 'Kind', { value: 'ssh_password' });
+    await user.type(within(addDialog).getByLabelText('Password'), 'hunter2');
+    await user.click(within(addDialog).getByRole('button', { name: 'Create credential' }));
+
+    expect(credPosted).toEqual({ name: 'edge-login', kind: 'ssh_password', password: 'hunter2' });
+    expect(screen.getByLabelText('Default SSH credential')).toHaveValue('edge-login');
+
+    await user.click(screen.getByRole('button', { name: 'Create template' }));
+    expect(templatePosted).toMatchObject({ credential_id: 'c9' });
+  });
+
   it('runs a template and lands on the run view', async () => {
     const user = userEvent.setup();
     mockApi({

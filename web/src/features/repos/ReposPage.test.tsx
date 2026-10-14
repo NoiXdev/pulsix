@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { ReposPage } from './ReposPage.tsx';
 
 const ORG = { org: { id: 'org-1', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
@@ -91,16 +92,82 @@ describe('ReposPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Add repository' }));
     await user.type(screen.getByLabelText('Name'), 'new-repo');
     await user.type(screen.getByLabelText('URL'), 'https://git.example/acme/new.git');
-    await user.selectOptions(screen.getByLabelText('Credential'), 'c1');
 
-    // The credential select offered the git key, not the SSH key.
-    const select = screen.getByLabelText('Credential') as HTMLSelectElement;
-    const options = [...select.options].filter((o) => o.value !== '').map((o) => o.value);
-    expect(options).toEqual(['c1']);
+    // The credential picker offered the git key, not the SSH key — opened
+    // by hand (rather than through pickOption) so the full row list can be
+    // read before committing to one.
+    await user.click(screen.getByLabelText('Credential'));
+    const rows = screen
+      .getAllByRole('option')
+      .filter((o) => o.getAttribute('data-value') !== '' && o.getAttribute('data-label') !== 'New credential');
+    expect(rows.map((o) => o.getAttribute('data-value'))).toEqual(['c1']);
+    await user.click(rows[0]);
 
     await user.click(screen.getByRole('button', { name: 'Create repository' }));
     expect(await screen.findByText('new-repo')).toBeInTheDocument();
     expect(posted).toEqual({ name: 'new-repo', url: 'https://git.example/acme/new.git', branch: 'main', subpath: '', credential_id: 'c1' });
+  });
+
+  // v0.4g Task 7: the Credential picker's create row opens AddCredentialDialog,
+  // seeded with whatever was typed before the row was taken, and reports the
+  // new id back to the picker as soon as the credential exists — not only
+  // once the one-time public-key panel (shown here, since a generated key
+  // credential always returns one) is dismissed. That timing choice is the
+  // point of this test: the panel is still open when the assertion against
+  // the picker's own value runs.
+  it('creates a credential from the picker and selects it, before the one-time key panel is dismissed', async () => {
+    const user = userEvent.setup();
+    let repoPosted: unknown;
+    let credPosted: unknown;
+    const zetaDeploy = {
+      id: 'c9', name: 'zeta-deploy', kind: 'git_key', username: '', expired: false, expires_soon: false,
+      used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '', public_key: 'ssh-ed25519 AAAA pulsix:acme:zeta-deploy',
+    };
+    let created = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [] },
+      // A function, not a fixed value: the Credential picker's options
+      // come from this query's own refetch after the credential's create
+      // invalidates it, not from onCreated's id alone (v0.4g Task 5 hit the
+      // same thing with a fixed bastions list — "b9 (unavailable)").
+      'GET /api/v1/orgs/acme/credentials': () => ({ credentials: created ? [gitKey, zetaDeploy] : [gitKey] }),
+      'POST /api/v1/orgs/acme/credentials': (req: MockRequest) => {
+        credPosted = req.body;
+        created = true;
+        return {
+          credential: zetaDeploy,
+          snippets: { authorized_keys_command: 'echo', cloud_init: '#cloud-config', terraform: 'locals {}' },
+        };
+      },
+      'POST /api/v1/orgs/acme/repos': (req: MockRequest) => {
+        repoPosted = req.body;
+        return { repo: repo({ id: 'r9', name: 'new-repo', credential_id: 'c9' }) };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+    await user.type(screen.getByLabelText('Name'), 'new-repo');
+    await user.type(screen.getByLabelText('URL'), 'https://git.example/acme/new.git');
+
+    await user.click(screen.getByLabelText('Credential'));
+    await user.keyboard('zeta-deploy');
+    await user.click(screen.getByRole('option', { name: /New credential/ }));
+
+    const addDialog = await screen.findByRole('dialog', { name: 'Add credential' });
+    expect(within(addDialog).getByLabelText('Name')).toHaveValue('zeta-deploy');
+    // RepoDialog's own Credential field only offers git_key/git_token —
+    // AddCredentialDialog defaults to ssh_key, which would not match.
+    await pickOption(within(addDialog), 'Kind', { value: 'git_key' });
+    await user.click(within(addDialog).getByRole('button', { name: 'Create credential' }));
+
+    expect(credPosted).toMatchObject({ name: 'zeta-deploy', kind: 'git_key', generate: true });
+    expect(await screen.findByRole('dialog', { name: 'Install the public key' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Credential')).toHaveValue('zeta-deploy');
+
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await user.click(screen.getByRole('button', { name: 'Create repository' }));
+    expect(repoPosted).toMatchObject({ credential_id: 'c9' });
   });
 
   it('shows the server-mirror validation message at the field without a round trip', async () => {

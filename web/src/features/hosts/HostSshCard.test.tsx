@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { HostSshCard } from './HostSshCard.tsx';
 
 const KEY = { id: 'c1', name: 'inv-deploy', kind: 'ssh_key', username: 'ansible', public_key: 'ssh-ed25519 AAAA pulsix:acme:inv-deploy', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
@@ -56,12 +57,12 @@ describe('HostSshCard', () => {
     renderCard(true);
     expect(await screen.findByLabelText('Effective route')).toHaveTextContent('Route: inherited from group production · bastion-a → bastion-b → host');
 
-    await user.selectOptions(screen.getByLabelText('Credential'), 'c1');
+    await pickOption(screen, 'Credential', { value: 'c1' });
     expect(await screen.findByText('Install this key on the host')).toBeInTheDocument();
     expect(screen.getByLabelText('Public key')).toHaveTextContent('pulsix:acme:inv-deploy');
 
     await user.click(screen.getByLabelText(/This jump host/));
-    await user.selectOptions(screen.getByLabelText('Jump host for this host'), 'b1');
+    await pickOption(screen, 'Jump host for this host', { value: 'b1' });
     await user.click(screen.getByRole('button', { name: 'Save SSH settings' }));
     expect(await screen.findByText('SSH settings saved')).toBeInTheDocument();
     expect(put).toEqual({ port: 22, credential_id: 'c1', bastion_mode: 'explicit', bastion_id: 'b1' });

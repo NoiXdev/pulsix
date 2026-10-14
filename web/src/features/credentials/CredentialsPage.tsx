@@ -64,7 +64,14 @@ export function CredentialsPage() {
         })}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No credentials yet.</p>}
       </Card>
-      <AddCredentialDialog org={org} open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddCredentialDialog
+        org={org}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        // This page's own list refetches via useCreateCredential's own
+        // invalidation; nothing here needs the new id for itself.
+        onCreated={() => undefined}
+      />
       {openId && <CredentialDialog org={org} id={openId} canRotate={canRotate} onClose={() => setOpenId(null)} />}
     </>
   );

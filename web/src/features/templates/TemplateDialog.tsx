@@ -15,6 +15,7 @@ import { SchemaBuilder } from '../inventory/schema/SchemaBuilder.tsx';
 import { problemsFromError } from '../inventory/schema/paths.ts';
 import type { Problem, VarSchema, Vars } from '../inventory/schema/types.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
+import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { KIND_LABEL } from '../credentials/labels.ts';
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { toEditableVars, varsForPut } from './vars.ts';
@@ -130,6 +131,9 @@ function TemplateForm({
     return existing ? (loaded.length > 0 ? toEditableVars(loaded, existing.vars) : existing.vars) : {};
   });
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
+  // null = closed; a string is the name typed into the picker before it
+  // opened this.
+  const [newCredentialName, setNewCredentialName] = useState<string | null>(null);
   const [varProblems, setVarProblems] = useState<Problem[]>([]);
   const [schemaProblems, setSchemaProblems] = useState<Problem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +215,7 @@ function TemplateForm({
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
+            create={{ label: 'New credential', onSelect: setNewCredentialName }}
           />
           <span className="text-[11px] text-muted-foreground">SSH key or password credential for hosts without one of their own.</span>
         </div>
@@ -228,6 +233,17 @@ function TemplateForm({
           </Button>
         </div>
       </form>
+      {/* Sibling of the <form> above, not inside it — see HostSshCard.tsx's
+          own comment on why a nested <dialog> here would double-submit. */}
+      {newCredentialName !== null && (
+        <AddCredentialDialog
+          org={org}
+          open
+          initialName={newCredentialName}
+          onClose={() => setNewCredentialName(null)}
+          onCreated={setCredentialId}
+        />
+      )}
     </Dialog>
   );
 }

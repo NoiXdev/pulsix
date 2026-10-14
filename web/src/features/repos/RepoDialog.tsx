@@ -3,13 +3,14 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
 import { useCreateRepo, useClearRepoKey, useDeleteRepo, useUpdateRepo } from '../../api/hooks/useRepos.ts';
 import type { Credential } from '../../api/types.ts';
+import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
+import { KIND_LABEL } from '../credentials/labels.ts';
 import { repoErrorsFromServer, validateRepoInput, type RepoFormValues } from './validate.ts';
-
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 export interface RepoDialogProps {
   org: string;
@@ -39,6 +40,11 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
   const [pinnedKey, setPinnedKey] = useState(repo?.ssh_host_key ?? '');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // Which field asked for a new credential, and what was typed into it
+  // before it did — null means the create dialog is closed. One mount
+  // point for both Credential and Vault password, since only one can be
+  // open at a time.
+  const [addingCredential, setAddingCredential] = useState<{ field: 'credential' | 'vault'; name: string } | null>(null);
 
   function setValue(key: keyof RepoFormValues) {
     return (e: ChangeEvent<HTMLInputElement>) => setValues((v) => ({ ...v, [key]: e.target.value }));
@@ -101,35 +107,32 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
         {field('subpath', 'ansible/ (optional)')}
         <div className="flex flex-col gap-1">
           <Label htmlFor="repo-credential">Credential</Label>
-          <select id="repo-credential" className={SELECT} value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
-            <option value="">— none —</option>
-            {credentials
+          <Select
+            id="repo-credential"
+            options={credentials
               .filter((c) => c.kind === 'git_key' || c.kind === 'git_token')
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
+              .map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+            value={credentialId}
+            onChange={setCredentialId}
+            placeholder="— none —"
+            create={{ label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'credential', name: text }) }}
+          />
           <span className="text-[11px] text-muted-foreground">Deploy key or token the checkout authenticates with.</span>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="repo-vault-credential">Vault password</Label>
-          <select
+          {/* No hint here: every row is a vault_password credential (the
+              server refuses any other kind for this field), so a kind hint
+              would only ever repeat "Ansible Vault password" — decoration,
+              not disambiguation (Move 2). */}
+          <Select
             id="repo-vault-credential"
-            className={SELECT}
+            options={credentials.filter((c) => c.kind === 'vault_password').map((c) => ({ value: c.id, label: c.name }))}
             value={vaultCredentialId}
-            onChange={(e) => setVaultCredentialId(e.target.value)}
-          >
-            <option value="">— none —</option>
-            {credentials
-              .filter((c) => c.kind === 'vault_password')
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
+            onChange={setVaultCredentialId}
+            placeholder="— none —"
+            create={{ label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }}
+          />
           {/* Two secrets, two fields: one reaches the repository, the
               other its contents. Only vault_password credentials are
               offered — the server refuses anything else here, and a
@@ -209,6 +212,20 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
           </div>
         </div>
       </form>
+      {/* Sibling of the <form> above, not inside it — see HostSshCard.tsx's
+          own comment on why a nested <dialog> here would double-submit. */}
+      {addingCredential && (
+        <AddCredentialDialog
+          org={org}
+          open
+          initialName={addingCredential.name}
+          onClose={() => setAddingCredential(null)}
+          onCreated={(id) => {
+            if (addingCredential.field === 'credential') setCredentialId(id);
+            else setVaultCredentialId(id);
+          }}
+        />
+      )}
     </Dialog>
   );
 }

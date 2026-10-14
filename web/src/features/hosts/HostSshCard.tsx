@@ -3,16 +3,17 @@ import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useBastions, useHostSSH, useSetHostSSH } from '../../api/hooks/useSsh.ts';
 import { useCredential, useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useHostInventoryPreview } from '../../api/hooks/useInventory.ts';
 import type { Bastion, Credential, HostSSH } from '../../api/types.ts';
+import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
+import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { PublicKeyPanel } from '../credentials/PublicKeyPanel.tsx';
-import { routeLabel } from '../credentials/labels.ts';
+import { KIND_LABEL, routeLabel } from '../credentials/labels.ts';
 import { PinStateBadge } from './PinStateBadge.tsx';
-
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 /** HostSshCard is the SSH access step of the enrollment mockup for a
  * managed host: how Pulsix logs in, which jump host it goes through (and
@@ -52,6 +53,10 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
   const [credentialId, setCredentialId] = useState(current.credential_id ?? '');
   const [mode, setMode] = useState(current.bastion_mode);
   const [bastionId, setBastionId] = useState(current.bastion_id ?? '');
+  // null = closed; a string is the name typed into the picker before it
+  // opened this, as BastionDialog/AddCredentialDialog's initialName expects.
+  const [newCredentialName, setNewCredentialName] = useState<string | null>(null);
+  const [newBastionName, setNewBastionName] = useState<string | null>(null);
   const selected = credentials.find((c) => c.id === credentialId);
   const keyDetail = useCredential(org, selected?.kind === 'ssh_key' ? selected.id : '');
   const connection = preview.data?.connection;
@@ -90,14 +95,15 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="ssh-credential">Credential</Label>
-          <select id="ssh-credential" className={SELECT} value={credentialId} onChange={(e) => setCredentialId(e.target.value)} disabled={!canWrite}>
-            <option value="">— none —</option>
-            {credentials.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="ssh-credential"
+            options={credentials.map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+            value={credentialId}
+            onChange={setCredentialId}
+            placeholder="— none —"
+            disabled={!canWrite}
+            create={{ label: 'New credential', onSelect: setNewCredentialName }}
+          />
         </div>
         <fieldset className="flex flex-col gap-1">
           <legend className="text-[11px] font-medium text-muted-foreground">Jump host</legend>
@@ -111,14 +117,15 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
             <input type="radio" name="ssh-mode" checked={mode === 'explicit'} onChange={() => setMode('explicit')} disabled={!canWrite} /> This jump host
           </label>
           {mode === 'explicit' && (
-            <select aria-label="Jump host for this host" className={SELECT} value={bastionId} onChange={(e) => setBastionId(e.target.value)} disabled={!canWrite}>
-              <option value="">Choose…</option>
-              {bastions.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              aria-label="Jump host for this host"
+              options={bastions.map((b) => ({ value: b.id, label: b.name }))}
+              value={bastionId}
+              onChange={setBastionId}
+              placeholder="Choose…"
+              disabled={!canWrite}
+              create={{ label: 'New jump host', onSelect: setNewBastionName }}
+            />
           )}
         </fieldset>
         {connection && (
@@ -140,6 +147,28 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
           <h3 className="mb-2 text-xs font-semibold">Install this key on the host</h3>
           <PublicKeyPanel publicKey={keyDetail.data.credential.public_key} snippets={keyDetail.data.snippets} />
         </div>
+      )}
+      {/* Siblings of the <form> above, not inside it: ui/dialog.tsx does not
+          portal, so a <dialog> nested inside this card's own <form> would
+          have its own submit bubble up into this form's onSubmit too. */}
+      {newCredentialName !== null && (
+        <AddCredentialDialog
+          org={org}
+          open
+          initialName={newCredentialName}
+          onClose={() => setNewCredentialName(null)}
+          onCreated={setCredentialId}
+        />
+      )}
+      {newBastionName !== null && (
+        <BastionDialog
+          org={org}
+          bastions={bastions}
+          credentials={credentials}
+          initialName={newBastionName}
+          onClose={() => setNewBastionName(null)}
+          onCreated={setBastionId}
+        />
       )}
     </Card>
   );

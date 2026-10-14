@@ -3,11 +3,12 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCreateBastion, useUpdateBastion } from '../../api/hooks/useSsh.ts';
 import type { Bastion, Credential } from '../../api/types.ts';
-
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
+import { AddCredentialDialog } from './AddCredentialDialog.tsx';
+import { KIND_LABEL } from './labels.ts';
 
 export function BastionDialog({
   org, bastion, bastions, credentials, onClose, onCreated, initialName,
@@ -32,6 +33,9 @@ export function BastionDialog({
   const [credentialId, setCredentialId] = useState(bastion?.credential_id ?? '');
   const [via, setVia] = useState(bastion?.via_bastion_id ?? '');
   const [error, setError] = useState<string | null>(null);
+  // null = closed; a string is the name typed into the Credential picker
+  // before it opened this.
+  const [newCredentialName, setNewCredentialName] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -74,25 +78,30 @@ export function BastionDialog({
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="bastion-credential">Credential</Label>
-          <select id="bastion-credential" className={SELECT} value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
-            <option value="">— none —</option>
-            {credentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password').map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="bastion-credential"
+            options={credentials
+              .filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')
+              .map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+            value={credentialId}
+            onChange={setCredentialId}
+            placeholder="— none —"
+            create={{ label: 'New credential', onSelect: setNewCredentialName }}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="bastion-via">Reached through</Label>
-          <select id="bastion-via" className={SELECT} value={via} onChange={(e) => setVia(e.target.value)}>
-            <option value="">— directly —</option>
-            {bastions.filter((b) => b.id !== bastion?.id).map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
+          {/* No create row here: it would open a second BastionDialog on
+              top of this one, mid-creation of the jump host it's trying
+              to chain through — the same self-nesting the CreateGroupDialog
+              Parent picker was refused for (v0.4g Task 5). */}
+          <Select
+            id="bastion-via"
+            options={bastions.filter((b) => b.id !== bastion?.id).map((b) => ({ value: b.id, label: b.name }))}
+            value={via}
+            onChange={setVia}
+            placeholder="— directly —"
+          />
         </div>
         {error && (
           <p role="alert" className="text-xs text-destructive">
@@ -108,6 +117,18 @@ export function BastionDialog({
           </Button>
         </div>
       </form>
+      {/* Sibling of the <form> above, not inside it (see HostSshCard.tsx's
+          own comment on why): a nested <dialog> here would have its own
+          submit bubble up into this one's onSubmit too. */}
+      {newCredentialName !== null && (
+        <AddCredentialDialog
+          org={org}
+          open
+          initialName={newCredentialName}
+          onClose={() => setNewCredentialName(null)}
+          onCreated={setCredentialId}
+        />
+      )}
     </Dialog>
   );
 }

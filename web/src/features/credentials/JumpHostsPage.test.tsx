@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { JumpHostsPage } from './JumpHostsPage.tsx';
 
 const ME = { id: 'u', email: 'a@b', display_name: 'A', instance_admin: false };
@@ -69,15 +70,14 @@ describe('JumpHostsPage', () => {
     await user.clear(within(dialog).getByLabelText('Port'));
     await user.type(within(dialog).getByLabelText('Port'), '2222');
     await user.type(within(dialog).getByLabelText('Username'), 'ops');
-    await user.selectOptions(within(dialog).getByLabelText('Credential'), 'c1');
-    await user.selectOptions(within(dialog).getByLabelText('Reached through'), 'b1');
+    await pickOption(within(dialog), 'Credential', { value: 'c1' });
+    await pickOption(within(dialog), 'Reached through', { value: 'b1' });
     await user.click(within(dialog).getByRole('button', { name: 'Create jump host' }));
     expect(await screen.findByText('Jump host edge saved')).toBeInTheDocument();
     expect(posted).toEqual({ name: 'edge', address: 'edge.example', port: 2222, username: 'ops', credential_id: 'c1', via_bastion_id: 'b1' });
   });
 
   it('sets and clears a zone default', async () => {
-    const user = userEvent.setup();
     const bodies: unknown[] = [];
     let zoneBastion: string | undefined;
     mockApi({
@@ -91,10 +91,10 @@ describe('JumpHostsPage', () => {
       },
     });
     renderPage();
-    const select = await screen.findByLabelText(/Primary/);
-    await user.selectOptions(select, 'b1');
-    await waitFor(() => expect(select).toHaveValue('b1'));
-    await user.selectOptions(select, '');
+    const select = await screen.findByLabelText('Primary primary');
+    await pickOption(screen, 'Primary primary', { value: 'b1' });
+    await waitFor(() => expect(select).toHaveValue('bastion-a'));
+    await pickOption(screen, 'Primary primary', { value: '' });
     await waitFor(() => expect(select).toHaveValue(''));
     expect(bodies).toEqual([{ bastion_id: 'b1' }, {}]);
   });
@@ -115,7 +115,6 @@ describe('JumpHostsPage', () => {
   });
 
   it('reports a failed zone default save as a toast', async () => {
-    const user = userEvent.setup();
     mockApi({
       ...base,
       'PUT /api/v1/orgs/acme/zones/z1/bastion': () =>
@@ -124,8 +123,8 @@ describe('JumpHostsPage', () => {
         }),
     });
     renderPage();
-    const select = await screen.findByLabelText(/Primary/);
-    await user.selectOptions(select, 'b1');
+    await screen.findByLabelText('Primary primary');
+    await pickOption(screen, 'Primary primary', { value: 'b1' });
     expect(await screen.findByText('the zone could not be updated')).toBeInTheDocument();
   });
 

@@ -3,25 +3,40 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCreateCredential } from '../../api/hooks/useCredentials.ts';
 import { KIND_LABEL } from './labels.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
 
 type Kind = 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' | 'vault_password';
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 interface Created {
   publicKey: string;
   snippets?: { authorized_keys_command: string; cloud_init: string; terraform: string } | null;
 }
 
-export function AddCredentialDialog({ org, open, onClose }: { org: string; open: boolean; onClose: () => void }) {
+export function AddCredentialDialog({
+  org, open, onClose, onCreated, initialName,
+}: {
+  org: string;
+  open: boolean;
+  onClose: () => void;
+  /** Called with the new credential's id as soon as it exists on the
+   * server — not when the one-time public-key panel below is dismissed.
+   * The id is a real reference the moment the object exists; gating it
+   * behind "Done" would conflate "can this be picked" with "has the
+   * secret been acknowledged", two different concerns this dialog happens
+   * to show in sequence for a key-kind credential. */
+  onCreated: (id: string) => void;
+  /** Prefills the name, from what had been typed into the picker. Same prop shape BastionDialog and ZoneDialog give. */
+  initialName?: string;
+}) {
   const toast = useToast();
   const create = useCreateCredential(org);
   const [kind, setKind] = useState<Kind>('ssh_key');
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName ?? '');
   const [username, setUsername] = useState('');
   const [expires, setExpires] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -69,6 +84,7 @@ export function AddCredentialDialog({ org, open, onClose }: { org: string; open:
       clearSecrets();
       create.reset();
       toast.show(`Credential ${res.credential.name} created`);
+      onCreated(res.credential.id);
       if (res.credential.public_key) setCreated({ publicKey: res.credential.public_key, snippets: res.snippets });
       else close();
     } catch (err) {
@@ -97,13 +113,12 @@ export function AddCredentialDialog({ org, open, onClose }: { org: string; open:
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <Label htmlFor="cred-kind">Kind</Label>
-          <select id="cred-kind" className={SELECT} value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-            {Object.entries(KIND_LABEL).map(([k, label]) => (
-              <option key={k} value={k}>
-                {label}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="cred-kind"
+            options={Object.entries(KIND_LABEL).map(([k, label]) => ({ value: k, label }))}
+            value={kind}
+            onChange={(value) => setKind(value as Kind)}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="cred-name">Name</Label>

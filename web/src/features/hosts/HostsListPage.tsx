@@ -1,22 +1,23 @@
 import { useState, type FormEvent } from 'react';
 import { useParams, useSearch } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { Globe, Search, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
-import { SlugField } from '../../ui/SlugField.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
-import { useCreateHost, useCreateZone, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
+import { useCreateHost, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
-import { hostFormSchema, zoneFormSchema, type HostFormValues, type ZoneFormValues } from '../../lib/schemas.ts';
+import { hostFormSchema, type HostFormValues } from '../../lib/schemas.ts';
 import { useAgents } from '../../api/hooks/useAgents.ts';
 import { HostRow } from './HostRow.tsx';
+import { ZoneDialog } from './ZoneDialog.tsx';
 
 const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 210px 210px 70px 24px';
 
@@ -41,7 +42,11 @@ export function HostsListPage() {
     setFilter((f) => ({ ...f, q: routeSearch.q ?? '' }));
   }
   const [addOpen, setAddOpen] = useState(false);
-  const [addZoneOpen, setAddZoneOpen] = useState(false);
+  // Two entry points open ZoneDialog: the page's own "Add zone" button, and
+  // the Add host form's Zone picker create row — tracked as one state (not
+  // two) so there is exactly one mounted ZoneDialog, and onCreated only
+  // reaches into the host form when the picker is what asked for it.
+  const [zoneDialog, setZoneDialog] = useState<{ from: 'button' } | { from: 'picker'; name: string } | null>(null);
   const [selectorText, setSelectorText] = useState('');
   const [selectorActive, setSelectorActive] = useState(false);
 
@@ -49,14 +54,12 @@ export function HostsListPage() {
   const zones = useZones(org);
   const agents = useAgents(org);
   const createHost = useCreateHost(org);
-  const createZone = useCreateZone(org);
   const hostQuery = useHostQuery(org);
 
   const hostForm = useForm<HostFormValues>({
     resolver: zodResolver(hostFormSchema),
     defaultValues: { name: '', zone_id: '', address: '', managed: false, monitored: false },
   });
-  const zoneForm = useForm<ZoneFormValues>({ resolver: zodResolver(zoneFormSchema), defaultValues: { slug: '', name: '' } });
 
   async function runSelector(e: FormEvent) {
     e.preventDefault();
@@ -95,7 +98,7 @@ export function HostsListPage() {
           </span>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => setAddZoneOpen(true)}>
+          <Button onClick={() => setZoneDialog({ from: 'button' })}>
             <Globe size={15} /> Add zone
           </Button>
           <Button variant="primary" onClick={() => setAddOpen(true)}>
@@ -117,22 +120,15 @@ export function HostsListPage() {
         {/* Backlog 1.12: the zone filter lives here, on the page whose
             endpoint supports it, rather than in the shell as a global
             control that would do nothing on most pages and fight the
-            fleet page's own. */}
-        <label className="flex h-[30px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
-          <select
-            aria-label="Filter by zone"
-            value={filter.zone ?? ''}
-            onChange={(e) => setFilter((f) => ({ ...f, zone: e.target.value || undefined }))}
-            className="bg-transparent text-foreground outline-none"
-          >
-            <option value="">All zones</option>
-            {(zones.data?.zones ?? []).map((z) => (
-              <option key={z.id} value={z.id}>
-                {z.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            fleet page's own. A plain filter never offers to create —
+            narrowing a view is not building one (v0.4g Move 3). */}
+        <Select
+          aria-label="Filter by zone"
+          options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
+          value={filter.zone ?? ''}
+          onChange={(value) => setFilter((f) => ({ ...f, zone: value || undefined }))}
+          placeholder="All zones"
+        />
         <FilterChip
           label="Managed"
           on={filter.managed === true}
@@ -193,49 +189,21 @@ export function HostsListPage() {
         <LoadMoreButton onClick={() => void hosts.fetchNextPage()} loading={hosts.isFetchingNextPage} />
       )}
 
-      <Dialog open={addZoneOpen} onClose={() => setAddZoneOpen(false)} title="Add zone">
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={zoneForm.handleSubmit(async (values) => {
-            try {
-              await createZone.mutateAsync(values);
-              toast.show(`Zone ${values.name} created`);
-              setAddZoneOpen(false);
-              zoneForm.reset();
-            } catch (err) {
-              toast.show(err instanceof Error ? err.message : 'failed to create zone', 'destructive');
-            }
-          })}
-        >
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="zone_name">Name</Label>
-            <Input id="zone_name" {...zoneForm.register('name')} />
-            {zoneForm.formState.errors.name && (
-              <span className="text-[11px] text-destructive">{zoneForm.formState.errors.name.message}</span>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="zone_slug">Slug</Label>
-            <SlugField
-              id="zone_slug"
-              inputProps={zoneForm.register('slug')}
-              readSource={() => zoneForm.getValues('name') ?? ''}
-              write={(slug) => zoneForm.setValue('slug', slug, { shouldValidate: true })}
-            />
-            {zoneForm.formState.errors.slug && (
-              <span className="text-[11px] text-destructive">{zoneForm.formState.errors.slug.message}</span>
-            )}
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" onClick={() => setAddZoneOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={createZone.isPending}>
-              Create zone
-            </Button>
-          </div>
-        </form>
-      </Dialog>
+      {zoneDialog && (
+        <ZoneDialog
+          org={org}
+          open
+          onClose={() => setZoneDialog(null)}
+          initialName={zoneDialog.from === 'picker' ? zoneDialog.name : undefined}
+          onCreated={(id) => {
+            // Only the picker-originated open wants the new zone selected —
+            // the page's own "Add zone" button has nothing of its own to
+            // put it into; the page's own list refetches via the mutation's
+            // invalidation.
+            if (zoneDialog.from === 'picker') hostForm.setValue('zone_id', id, { shouldValidate: true });
+          }}
+        />
+      )}
 
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="Add host">
         <form
@@ -260,18 +228,20 @@ export function HostsListPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="host_zone">Zone</Label>
-            <select
-              id="host_zone"
-              {...hostForm.register('zone_id')}
-              className="h-8 rounded-md border border-border bg-background px-2.5 text-xs text-foreground"
-            >
-              <option value="">Select a zone…</option>
-              {(zones.data?.zones ?? []).map((z) => (
-                <option key={z.id} value={z.id}>
-                  {z.name}
-                </option>
-              ))}
-            </select>
+            <Controller
+              control={hostForm.control}
+              name="zone_id"
+              render={({ field }) => (
+                <Select
+                  id="host_zone"
+                  options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
+                  value={field.value}
+                  onChange={field.onChange}
+                  placeholder="Select a zone…"
+                  create={{ label: 'New zone', onSelect: (text) => setZoneDialog({ from: 'picker', name: text }) }}
+                />
+              )}
+            />
             {hostForm.formState.errors.zone_id && (
               <span className="text-[11px] text-destructive">{hostForm.formState.errors.zone_id.message}</span>
             )}

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { HostsListPage } from './HostsListPage.tsx';
 
 const ZONES = { zones: [{ id: 'z1', slug: 'fra', name: 'Frankfurt' }] };
@@ -91,7 +92,7 @@ describe('HostsListPage', () => {
 
     await user.click(await screen.findByRole('button', { name: /Add host/ }));
     await user.type(screen.getByPlaceholderText('web-04.fra'), 'web-09.fra');
-    await user.selectOptions(screen.getByLabelText('Zone'), 'z1');
+    await pickOption(screen, 'Zone', { value: 'z1' });
     await user.click(screen.getByRole('button', { name: 'Create host' }));
 
     expect(await screen.findByText('Host web-09.fra created')).toBeInTheDocument();
@@ -232,7 +233,8 @@ describe('zone filter', () => {
     await waitFor(() => expect(asked.length).toBeGreaterThan(0));
     expect(asked[0]).toBeFalsy();
 
-    await userEvent.selectOptions(await screen.findByLabelText('Filter by zone'), 'z1');
+    await screen.findByLabelText('Filter by zone');
+    await pickOption(screen, 'Filter by zone', { value: 'z1' });
 
     await waitFor(() => {
       expect(asked.at(-1)).toBe('z1');

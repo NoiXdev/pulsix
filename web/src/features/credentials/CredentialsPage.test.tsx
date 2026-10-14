@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { CredentialsPage } from './CredentialsPage.tsx';
 
 const cred = (over: Record<string, unknown>) => ({
@@ -85,7 +86,7 @@ describe('CredentialsPage', () => {
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-    await user.selectOptions(screen.getByLabelText('Kind'), 'ssh_password');
+    await pickOption(screen, 'Kind', { value: 'ssh_password' });
     await user.type(screen.getByLabelText('Name'), 'fs-admin');
     await user.type(screen.getByLabelText('Password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create credential' }));

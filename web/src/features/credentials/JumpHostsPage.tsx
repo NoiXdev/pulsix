@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { Lock, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -19,7 +20,6 @@ import { PinStateBadge } from '../hosts/PinStateBadge.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 
 const COLUMNS = 'minmax(0, 1fr) minmax(0, 1.2fr) 130px 130px minmax(0, 1.6fr) 120px';
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 const KEY_STATE_TONE: Record<string, Tone> = { pinned: 'ok', changed: 'crit', unpinned: 'warn' };
 
@@ -101,26 +101,23 @@ export function JumpHostsPage() {
             <label htmlFor={`zone-${z.id}`} className="text-[13px]">
               {z.name} <span className="font-mono text-xs text-muted-foreground">{z.slug}</span>
             </label>
-            <select
+            {/* No create row: this page's own "Add jump host" button sits
+                right above this table — a second way to create one here
+                would just duplicate it (v0.4g Move 3). */}
+            <Select
               id={`zone-${z.id}`}
-              className={SELECT}
+              options={list.map((b) => ({ value: b.id, label: b.name }))}
               value={z.bastion_id ?? ''}
-              onChange={async (e) => {
+              onChange={async (value) => {
                 try {
-                  await setZone.mutateAsync({ zoneId: z.id, bastionId: e.target.value || undefined });
+                  await setZone.mutateAsync({ zoneId: z.id, bastionId: value || undefined });
                   toast.show(`Default jump host of ${z.name} saved`);
                 } catch (err) {
                   toast.show(err instanceof Error ? err.message : 'Saving failed', 'destructive');
                 }
               }}
-            >
-              <option value="">— direct connection —</option>
-              {list.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+              placeholder="— direct connection —"
+            />
           </GridRow>
         ))}
       </Card>
