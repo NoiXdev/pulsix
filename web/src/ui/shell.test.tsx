@@ -109,9 +109,15 @@ describe('AppShell', () => {
   });
 
   it('shows the org switcher with the current org selected', async () => {
+    const user = userEvent.setup();
     renderShellAt('/o/acme/hosts');
-    const select = (await screen.findByRole('combobox', { name: 'Organization' })) as HTMLSelectElement;
-    expect(select.value).toBe('acme');
+    const combo = await screen.findByRole('combobox', { name: 'Organization' });
+    // The displayed value is the matching ORGS entry's label, not
+    // org.name — the fixture's "Current Org" is deliberately a different
+    // string, the same way the native select ignored org.name too (it
+    // only ever rendered <option> text from the orgs list).
+    expect(combo).toHaveValue('Acme Hosting');
+    await user.click(combo);
     expect(screen.getByRole('option', { name: 'Acme Hosting' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Hosts Inc' })).toBeInTheDocument();
   });

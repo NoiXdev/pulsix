@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { Copy, UserPlus } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -145,15 +146,22 @@ export function MembersPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="invite_role">Role</Label>
-            <select
-              id="invite_role"
-              {...inviteForm.register('role')}
-              className="h-8 rounded-md border border-border bg-background px-2.5 text-xs"
-            >
-              <option value="viewer">viewer</option>
-              <option value="operator">operator</option>
-              <option value="admin">admin</option>
-            </select>
+            <Controller
+              control={inviteForm.control}
+              name="role"
+              render={({ field }) => (
+                <Select
+                  id="invite_role"
+                  options={[
+                    { value: 'viewer', label: 'viewer' },
+                    { value: 'operator', label: 'operator' },
+                    { value: 'admin', label: 'admin' },
+                  ]}
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+              )}
+            />
           </div>
           <p className="text-[11px] text-muted-foreground">
             Owner role cannot be granted by invitation; promote after joining. The invitee sets a password and must

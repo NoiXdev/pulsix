@@ -47,6 +47,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-setup (see web/e2e/agent.ts)');
@@ -91,13 +92,11 @@ async function openHost(page: Page, hostName: string): Promise<void> {
 
 /** selectHost is fleet.spec.ts's own helper, verbatim: CheckDialog's
  * HostPicker and ItemDecisionDialog's DecisionHostPicker are the same
- * shape (a search box over a paginated host list, then a <select> the
+ * shape (a search box over a paginated host list, then a ui/Select the
  * search result fills), so one function drives both. */
 async function selectHost(dialog: Locator, hostName: string): Promise<void> {
   await dialog.getByLabel('Search monitored hosts').fill(hostName);
-  const hostSelect = dialog.getByLabel('Host', { exact: true });
-  await expect(hostSelect.getByRole('option', { name: hostName, exact: true })).toBeAttached({ timeout: 10_000 });
-  await hostSelect.selectOption({ label: hostName });
+  await pickOption(dialog, 'Host', hostName);
 }
 
 /** addMountCheck overrides hostName's disk check to the two explicit
@@ -109,9 +108,9 @@ async function addMountCheck(page: Page, hostName: string): Promise<void> {
   await page.goto(`${base}/checks`);
   await page.getByRole('button', { name: 'New check' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Plugin').selectOption({ label: 'Disk' });
+  await pickOption(dialog, 'Plugin', 'Disk');
   await dialog.getByLabel('Mounts (one per line, empty means every mount)').fill(`${MOUNT}\n${ITEMS_TAB_MOUNT}`);
-  await dialog.getByLabel('Binds to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Binds to', 'One host');
   await selectHost(dialog, hostName);
   await dialog.getByLabel('Interval (seconds)').fill('10');
   await dialog.getByRole('button', { name: 'Save' }).click();
@@ -251,13 +250,13 @@ async function waitForDiscoveredInPreview(page: Page, hostName: string, pattern:
   for (;;) {
     await page.getByRole('button', { name: 'New decision' }).click();
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Applies to').selectOption({ label: 'One host' });
+    await pickOption(dialog, 'Applies to', 'One host');
     await selectHost(dialog, hostName);
-    await dialog.getByLabel('Check').selectOption({ value: CHECK_KEY });
+    await pickOption(dialog, 'Check', { value: CHECK_KEY });
     // Match kind defaults to "exact" already (ItemDecisionDialog's own
     // initial state) — selected by value here anyway, so a future change
     // to that default cannot silently turn this into a glob match.
-    await dialog.getByLabel('Match kind').selectOption({ value: 'exact' });
+    await pickOption(dialog, 'Match kind', { value: 'exact' });
     await dialog.getByLabel('Pattern').fill(pattern);
 
     const matched = dialog.getByText(/^Matches \d+ item/);

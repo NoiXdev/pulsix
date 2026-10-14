@@ -58,7 +58,7 @@ export default tseslint.config(
   },
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/**/*.test.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/ui/Select.tsx'],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -66,6 +66,11 @@ export default tseslint.config(
           selector: 'ImportDeclaration[source.value=/ui\\u002fMetricChart/]',
           message:
             'Load MetricChart through React.lazy(() => import(...)) only: a static import pulls uPlot into the entry bundle (backlog 3.24).',
+        },
+        {
+          selector: 'JSXOpeningElement[name.name="select"]',
+          message:
+            'Use ui/Select (v0.4g, backlog 1.43): a native select cannot be searched and cannot offer to create what is missing.',
         },
       ],
     },

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG, TENANT_TOTP_STATE_PATH, TENANT_TOTP_STEP_STATE_PATH } from './env.ts';
 import { extractInviteLink, waitForMessageTo } from './mailpit.ts';
 import { enrolTotp } from './enrol.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -56,7 +57,12 @@ test('a second organization\'s user cannot see the first organization\'s hosts, 
     await expect(tenantPage.getByRole('heading', { name: 'Hosts' })).toBeVisible();
 
     // The org switcher (and GET /orgs behind it) must only ever list the
-    // organizations this account actually belongs to.
+    // organizations this account actually belongs to. ui/Select (v0.4g)
+    // only renders its options while open, unlike the native select this
+    // replaced, so the picker has to be opened first. Exact: the toggle
+    // button beside it carries aria-label="Open Organization", a substring
+    // match on plain "Organization".
+    await tenantPage.getByLabel('Organization', { exact: true }).click();
     await expect(tenantPage.getByRole('option', { name: SECOND_ORG.name })).toHaveCount(1);
     await expect(tenantPage.getByRole('option', { name: ORG.name })).toHaveCount(0);
 
@@ -82,7 +88,7 @@ test('a second organization\'s user cannot see the first organization\'s hosts, 
     await tenantPage.getByRole('button', { name: 'Add host' }).click();
     const dialog = tenantPage.getByRole('dialog');
     await dialog.getByLabel('Name').fill('beta-01.example');
-    await dialog.getByLabel('Zone').selectOption({ label: 'Default' });
+    await pickOption(dialog, 'Zone', 'Default');
     await dialog.getByRole('button', { name: 'Create host' }).click();
     await expect(tenantPage.getByText('Host beta-01.example created')).toBeVisible();
     await expect(tenantPage.getByRole('link', { name: 'beta-01.example', exact: true })).toBeVisible();

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -23,7 +24,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await page.getByRole('button', { name: 'Add host' }).click();
   dialog = page.getByRole('dialog', { name: 'Add host' });
   await dialog.getByLabel('Name').fill('inv-web-01');
-  await dialog.getByLabel('Zone').selectOption({ label: 'Inventory' });
+  await pickOption(dialog, 'Zone', 'Inventory');
   await dialog.getByLabel('Managed (Ansible via SSH)').check();
   await dialog.getByRole('button', { name: 'Create host' }).click();
   await toast(page, 'Host inv-web-01 created');
@@ -53,8 +54,12 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await dialog.getByLabel('Address').fill('bastion.inv.example');
   await dialog.getByLabel('Port').fill('2222');
   await dialog.getByLabel('Username').fill('ops');
-  await dialog.getByLabel('Credential').selectOption({ label: 'inv-deploy' });
-  await dialog.getByRole('button', { name: 'Save jump host' }).click();
+  await pickOption(dialog, 'Credential', 'inv-deploy');
+  // "Create jump host", not "Save": BastionDialog's own button text is
+  // conditional on editing vs. creating (v0.4g Task 7) and this dialog has
+  // no `bastion` prop — a pre-existing mismatch this spec never caught
+  // until Task 9 first ran it against that change.
+  await dialog.getByRole('button', { name: 'Create jump host' }).click();
   await toast(page, 'Jump host inv-bastion saved');
 
   // Parent group with a required group field and the jump host.
@@ -75,7 +80,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await page.getByRole('button', { name: 'Save values' }).click();
   await toast(page, 'Group values saved');
   await page.getByRole('tab', { name: 'Settings' }).click();
-  await page.getByLabel('Jump host').selectOption({ label: 'inv-bastion' });
+  await pickOption(page, 'Jump host', 'inv-bastion');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'Group saved');
 
@@ -89,7 +94,11 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   editor = page.getByRole('group', { name: 'Field field_1' });
   await editor.getByLabel('Name').fill('vhosts');
   editor = page.getByRole('group', { name: 'Field vhosts' });
-  await editor.getByLabel('Type').first().selectOption('repeater');
+  // Not .first() any more: pickOption's exact label match (unlike
+  // selectOption's bare getByLabel, a case-insensitive substring match)
+  // cannot also land on "Item type", so the ambiguity .first() guarded
+  // against cannot arise here.
+  await pickOption(editor, 'Type', { value: 'repeater' });
   await editor.getByLabel(/Host \(asked/).check();
   await editor.getByLabel('Required').first().check();
   const sub = page.getByRole('group', { name: 'Field value' });
@@ -98,7 +107,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await editor.getByRole('button', { name: 'Add sub-field' }).click();
   const pw = page.getByRole('group', { name: 'Field field_2' });
   await pw.getByLabel('Name').fill('password');
-  await page.getByRole('group', { name: 'Field password' }).getByLabel('Type').selectOption('secret');
+  await pickOption(page.getByRole('group', { name: 'Field password' }), 'Type', { value: 'secret' });
   await page.getByRole('button', { name: 'Save schema' }).click();
   await toast(page, 'Schema saved');
 
@@ -106,9 +115,10 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await page.getByRole('tab', { name: 'Members' }).click();
   await page.getByRole('button', { name: 'Assign host' }).click();
   dialog = page.getByRole('dialog', { name: 'Assign host to inv_web' });
-  // Not exact: the "vhosts" repeater's aria-labelledby group also carries
-  // "Host" as a substring of its own accessible name.
-  await dialog.getByLabel('Host', { exact: true }).selectOption({ label: 'inv-web-01' });
+  // pickOption's getByLabel is always exact, same reason this call used to
+  // pass { exact: true } itself: the "vhosts" repeater's aria-labelledby
+  // group also carries "Host" as a substring of its own accessible name.
+  await pickOption(dialog, 'Host', 'inv-web-01');
   await dialog.getByRole('button', { name: 'Assign to inv_web' }).click();
   await expect(dialog.getByRole('alert').first()).toContainText('is required');
   await dialog.getByRole('button', { name: 'Add vhosts' }).click();
@@ -130,7 +140,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await page.goto(`${base}/hosts`);
   await page.getByRole('link', { name: 'inv-web-01', exact: true }).click();
   await expect(page.getByRole('link', { name: 'inv_web' })).toBeVisible();
-  await page.getByLabel('Credential').selectOption({ label: 'inv-deploy' });
+  await pickOption(page, 'Credential', 'inv-deploy');
   await page.getByRole('button', { name: 'Save SSH settings' }).click();
   await toast(page, 'SSH settings saved');
   await expect(page.getByLabel('Effective route')).toContainText('inherited from group inv_production');

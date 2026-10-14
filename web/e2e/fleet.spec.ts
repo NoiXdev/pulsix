@@ -24,6 +24,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-setup (see web/e2e/agent.ts)');
@@ -102,18 +103,12 @@ async function waitForCpuState(page: Page, want: string, timeout: number): Promi
 /** selectHost searches for hostName in a host picker (RuleDialog's and
  * CheckDialog's are the same shape) and selects it. The search box's
  * result list is its own query (`useHosts`), a round trip behind the
- * keystroke that fills it, so this waits for hostName's own <option> to
- * actually exist before selecting it — `selectOption` matches against
- * whatever the DOM already holds and does not itself wait for one to
- * arrive. */
+ * keystroke that fills it — pickOption's own toBeVisible() wait
+ * (playwright.config.ts's default expect timeout, 10s) is what now waits
+ * for hostName's own option to actually arrive before clicking it. */
 async function selectHost(dialog: Locator, hostName: string): Promise<void> {
   await dialog.getByLabel('Search monitored hosts').fill(hostName);
-  // exact: true, because "Host" alone (Playwright's default label match is
-  // a case-insensitive substring) also matches the "Search monitored
-  // hosts" search box above it.
-  const hostSelect = dialog.getByLabel('Host', { exact: true });
-  await expect(hostSelect.getByRole('option', { name: hostName, exact: true })).toBeAttached({ timeout: 10_000 });
-  await hostSelect.selectOption({ label: hostName });
+  await pickOption(dialog, 'Host', hostName);
 }
 
 /** createHostRule adds a host-scoped, form-mode cpu.used_pct rule from the
@@ -125,11 +120,11 @@ async function createHostRule(page: Page, hostName: string, severity: 'warn' | '
   await page.getByRole('button', { name: 'New rule' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(`e2e-fleet-${severity}`);
-  await dialog.getByLabel('Metric').selectOption({ label: 'cpu.used_pct' });
-  await dialog.getByLabel('Severity').selectOption({ label: severity === 'warn' ? 'Warning' : 'Critical' });
-  await dialog.getByLabel('Applies to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Metric', 'cpu.used_pct');
+  await pickOption(dialog, 'Severity', severity === 'warn' ? 'Warning' : 'Critical');
+  await pickOption(dialog, 'Applies to', 'One host');
   await selectHost(dialog, hostName);
-  await dialog.getByLabel('Operator').selectOption('>');
+  await pickOption(dialog, 'Operator', { value: '>' });
   await dialog.getByLabel('Value').fill('-1');
   await dialog.getByLabel('For (seconds)').fill('0');
   await dialog.getByRole('button', { name: 'Save' }).click();
@@ -158,13 +153,13 @@ async function disableSeedCheck(page: Page, hostName: string, pluginLabel: 'Disk
   await page.goto(`${base}/checks`);
   await page.getByRole('button', { name: 'New check' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Plugin').selectOption({ label: pluginLabel });
+  await pickOption(dialog, 'Plugin', pluginLabel);
   if (pluginLabel === 'Service units') {
     // required, and otherwise blank for a check this test means to disable
     // outright — its own unit list is never read.
     await dialog.getByLabel('Units (one per line)').fill('sshd');
   }
-  await dialog.getByLabel('Binds to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Binds to', 'One host');
   await selectHost(dialog, hostName);
   await dialog.getByLabel('Enabled').uncheck();
   await dialog.getByRole('button', { name: 'Save' }).click();
@@ -187,8 +182,8 @@ async function addFastCheck(page: Page, hostName: string): Promise<void> {
   await page.goto(`${base}/checks`);
   await page.getByRole('button', { name: 'New check' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Plugin').selectOption({ label: 'CPU' });
-  await dialog.getByLabel('Binds to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Plugin', 'CPU');
+  await pickOption(dialog, 'Binds to', 'One host');
   await selectHost(dialog, hostName);
   await dialog.getByLabel('Interval (seconds)').fill('10');
   await dialog.getByRole('button', { name: 'Save' }).click();

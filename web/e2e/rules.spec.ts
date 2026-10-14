@@ -14,6 +14,7 @@
  */
 import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -28,13 +29,13 @@ test('an operator creates a form rule, sees it listed, edits its threshold, and 
   await page.getByRole('button', { name: 'New rule' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(RULE_NAME);
-  await dialog.getByLabel('Metric').selectOption({ label: 'swap.used_pct' });
-  await dialog.getByLabel('Severity').selectOption({ label: 'Warning' });
+  await pickOption(dialog, 'Metric', 'swap.used_pct');
+  await pickOption(dialog, 'Severity', 'Warning');
   // "Applies to" defaults to "The whole organization" — no host to pick,
   // which is the whole point of testing the editor here rather than in
   // fleet.spec.ts.
-  await expect(dialog.getByLabel('Applies to')).toHaveValue('org');
-  await dialog.getByLabel('Operator').selectOption('>');
+  await expect(dialog.getByLabel('Applies to')).toHaveValue('The whole organization');
+  await pickOption(dialog, 'Operator', { value: '>' });
   await dialog.getByLabel('Value').fill('50');
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toHaveCount(0);

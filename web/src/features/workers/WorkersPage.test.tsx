@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -102,6 +102,61 @@ describe('WorkersPage', () => {
     await user.type(screen.getByLabelText('Name'), 'Bad Name');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
     expect(await screen.findByText(/lowercase letters/)).toBeInTheDocument();
+  });
+
+  // v0.4g Task 9: the Zone picker's create row. workers.write is admin,
+  // stricter than hosts.write (operator, zone creation's own permission) —
+  // but an admin already satisfies the lower bar, so condition 1 holds and
+  // nothing needs gating here, unlike credentials (admin-only, reached from
+  // operator-level forms in Task 7).
+  it('creates a zone from the picker and uses it for the enrollment', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    let zonePosted: unknown;
+    let created = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+      // A function, not a fixed list: the picker's options must include
+      // the new zone after creation invalidates this query.
+      'GET /api/v1/orgs/acme/zones': () => ({ zones: created ? [{ id: 'z9', org_id: 'o', slug: 'frankfurt', name: 'Frankfurt' }] : [] }),
+      'POST /api/v1/orgs/acme/zones': (req: MockRequest) => {
+        zonePosted = req.body;
+        created = true;
+        return { zone: { id: 'z9', slug: 'frankfurt', name: 'Frankfurt' } };
+      },
+      'POST /api/v1/orgs/acme/worker-enrollments': (req: MockRequest) => {
+        posted = req.body;
+        return {
+          enrollment: { id: 'e1', name: 'hel-1', zone_id: 'z9', expires_at: inDays(0.04), created_at: '' },
+          token: 'pxw1.aaa.bbb.ccc',
+          docker_snippet: 'docker run',
+          compose_snippet: 'services:',
+        };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add worker' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add worker' });
+    await user.type(within(dialog).getByLabelText('Name'), 'hel-1');
+    await user.click(within(dialog).getByLabelText('Zone'));
+    await user.keyboard('frankfurt');
+    await user.click(within(dialog).getByRole('option', { name: /New zone/ }));
+
+    const zoneDialog = await screen.findByRole('dialog', { name: 'Add zone' });
+    expect(within(zoneDialog).getByLabelText('Name')).toHaveValue('frankfurt');
+    await user.type(within(zoneDialog).getByLabelText('Slug'), 'frankfurt');
+    await user.click(within(zoneDialog).getByRole('button', { name: 'Create zone' }));
+
+    expect(zonePosted).toMatchObject({ name: 'frankfurt' });
+    // Not findByLabelText: the field is already in the DOM before the
+    // zones list refetch (triggered by the mutation's own invalidation)
+    // completes, so the assertion itself has to retry, not just the lookup.
+    await waitFor(() => expect(within(dialog).getByLabelText('Zone')).toHaveValue('Frankfurt (frankfurt)'));
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create token' }));
+    expect(posted).toMatchObject({ zone_id: 'z9', name: 'hel-1' });
   });
 
   it('revokes after confirmation and withdraws a pending token', async () => {

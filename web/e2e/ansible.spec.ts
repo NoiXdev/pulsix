@@ -23,6 +23,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { SSH_FIXTURE_HOST, BASTION_FIXTURE_HOST, GIT_FIXTURE_URL, FIXTURE_REPO_BRANCH } from './ansible-env.ts';
 import { workerServiceAvailable } from './worker.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -63,7 +64,7 @@ async function addGeneratedCredential(page: Page, name: string, kindLabel: strin
   await page.goto(`${base}/credentials`);
   await page.getByRole('button', { name: 'Add credential' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add credential' });
-  await dialog.getByLabel('Kind').selectOption({ label: kindLabel });
+  await pickOption(dialog, 'Kind', kindLabel);
   await dialog.getByLabel('Name', { exact: true }).fill(name);
   await dialog.getByLabel('Username').fill(username);
   await dialog.getByRole('button', { name: 'Create credential' }).click();
@@ -87,14 +88,21 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await dialog.getByLabel('Name', { exact: true }).fill('ansible-e2e-edge');
   await dialog.getByLabel('Address').fill(BASTION_FIXTURE_HOST);
   await dialog.getByLabel('Username').fill('ops');
-  await dialog.getByLabel('Credential').selectOption({ label: 'ansible-e2e-bastion' });
-  await dialog.getByRole('button', { name: 'Save jump host' }).click();
+  await pickOption(dialog, 'Credential', 'ansible-e2e-bastion');
+  // "Create jump host", not "Save": BastionDialog's own button text is
+  // conditional on editing vs. creating (v0.4g Task 7) and this dialog has
+  // no `bastion` prop — a pre-existing mismatch this spec never caught
+  // until Task 9 first ran it (this journey also skips itself, see the
+  // worker-service guard above, so it had not run even then).
+  await dialog.getByRole('button', { name: 'Create jump host' }).click();
   await toast(page, 'Jump host ansible-e2e-edge saved');
 
   // The default zone's default jump host: every host in it routes through
-  // the bastion unless something nearer overrides.
-  const zoneRow = page.getByLabel('default', { exact: false });
-  await zoneRow.selectOption({ label: 'ansible-e2e-edge' });
+  // the bastion unless something nearer overrides. JumpHostsPage.tsx labels
+  // this row's picker "<zone name> <zone slug>" — "Default default" for the
+  // seeded zone — so pickOption's exact match needs the whole thing, not
+  // the substring match the pre-Select version used.
+  await pickOption(page, 'Default default', 'ansible-e2e-edge');
   await toast(page, 'Default jump host of Default saved');
 
   // --- The managed host, its SSH settings and the connection test ------
@@ -103,14 +111,14 @@ test('run a playbook against a managed host through the bastion, then retry the 
   dialog = page.getByRole('dialog', { name: 'Add host' });
   await dialog.getByLabel('Name').fill(HOST_NAME);
   await dialog.getByLabel('Address').fill(SSH_FIXTURE_HOST);
-  await dialog.getByLabel('Zone').selectOption({ label: 'Default' });
+  await pickOption(dialog, 'Zone', 'Default');
   await dialog.getByLabel('Managed (Ansible via SSH)').check();
   await dialog.getByRole('button', { name: 'Create host' }).click();
   await toast(page, `Host ${HOST_NAME} created`);
 
   await page.getByRole('link', { name: HOST_NAME, exact: true }).click();
   await page.getByLabel('User').fill('ansible');
-  await page.getByLabel('Credential').selectOption({ label: 'ansible-e2e-login' });
+  await pickOption(page, 'Credential', 'ansible-e2e-login');
   await page.getByRole('button', { name: 'Save SSH settings' }).click();
   await toast(page, 'SSH settings saved');
 
@@ -133,7 +141,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await dialog.getByLabel('Name', { exact: true }).fill('ansible-e2e-repo');
   await dialog.getByLabel('URL').fill(GIT_FIXTURE_URL);
   await dialog.getByLabel('Branch').fill(FIXTURE_REPO_BRANCH);
-  await dialog.getByLabel('Credential').selectOption({ label: 'ansible-e2e-deploy' });
+  await pickOption(dialog, 'Credential', 'ansible-e2e-deploy');
   await dialog.getByRole('button', { name: 'Create repository' }).click();
   await toast(page, 'Repository ansible-e2e-repo created');
 
@@ -153,7 +161,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await page.getByRole('button', { name: 'Add template' }).click();
   dialog = page.getByRole('dialog', { name: 'New job template' });
   await dialog.getByLabel('Name').fill('ansible-e2e-hello');
-  await dialog.getByLabel('Playbook').selectOption({ label: 'Pulsix greeting' });
+  await pickOption(dialog, 'Playbook', 'Pulsix greeting');
   await dialog.getByRole('checkbox', { name: `Include ${HOST_NAME}` }).check();
   // The typed extra var: a schema field makes the value form appear.
   await dialog.getByRole('button', { name: 'Add field' }).click();
@@ -188,7 +196,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await page.getByRole('button', { name: 'Add template' }).click();
   dialog = page.getByRole('dialog', { name: 'New job template' });
   await dialog.getByLabel('Name').fill('ansible-e2e-fail');
-  await dialog.getByLabel('Playbook').selectOption({ label: 'Pulsix deliberate failure' });
+  await pickOption(dialog, 'Playbook', 'Pulsix deliberate failure');
   await dialog.getByRole('checkbox', { name: `Include ${HOST_NAME}` }).check();
   await dialog.getByRole('button', { name: 'Add field' }).click();
   editor = page.getByRole('group', { name: 'Field field_1' });

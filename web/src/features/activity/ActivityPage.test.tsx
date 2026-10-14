@@ -40,12 +40,14 @@ describe('ActivityPage actor names', () => {
 
     renderPage(qc);
 
-    // "Tim R." appears twice: once as the actor-filter <option>, once as
-    // the feed row's actor label — the row label is what this finding is
+    // "Tim R." used to also appear as the native actor-filter <option>,
+    // always present in the DOM regardless of the picker's open state; a
+    // ui/Select (v0.4g) renders its options only while open, so the feed
+    // row's own label is what remains — and is what this finding is
     // actually about.
     expect(await screen.findByText('created host web-04')).toBeInTheDocument();
     const actorLabels = screen.getAllByText('Tim R.');
-    expect(actorLabels.length).toBeGreaterThanOrEqual(2);
+    expect(actorLabels.length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/actor_kind/)).not.toBeInTheDocument();
   });
 
@@ -82,10 +84,18 @@ describe('ActivityPage actor names', () => {
 
     renderPage(qc);
 
-    await screen.findByRole('option', { name: 'Tim R.' });
-    await user.selectOptions(screen.getByLabelText('Filter by actor'), 'u1');
-
+    // The page itself is behind useQueryGuard(activity) — wait past that
+    // before reaching for the picker, or getByLabelText finds nothing.
     await screen.findByText('No activity recorded yet.');
+
+    // Not pickOption: it reads its options synchronously, which would run
+    // ahead of the members fetch (same reasoning as
+    // GroupDetailPage.test.tsx's own Host picker). Open first, then wait
+    // for the async-loaded row before clicking it.
+    await user.click(screen.getByLabelText('Filter by actor'));
+    await user.click(await screen.findByRole('option', { name: 'Tim R.' }));
+
+    await waitFor(() => expect(lastActorParam).toBe('u1'));
     expect(lastActorParam).toBe('u1');
   });
 });

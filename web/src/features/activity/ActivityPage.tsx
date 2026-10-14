@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { User } from 'lucide-react';
 import { useOrgActivity } from '../../api/hooks/useActivity.ts';
 import { useMembers } from '../../api/hooks/useMembers.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 
@@ -65,22 +65,16 @@ export function ActivityPage() {
       </span>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex h-[30px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
-          <User size={13} />
-          <select
-            aria-label="Filter by actor"
-            value={actorId}
-            onChange={(e) => setActorId(e.target.value)}
-            className="bg-transparent text-foreground outline-none"
-          >
-            <option value="">Actor: anyone</option>
-            {(members.data?.members ?? []).map((m) => (
-              <option key={m.user_id} value={m.user_id}>
-                {m.display_name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* A plain filter never offers to create — narrowing a view is not
+            building one (v0.4g Move 3, same reasoning as HostsListPage's
+            Filter by zone). */}
+        <Select
+          aria-label="Filter by actor"
+          options={(members.data?.members ?? []).map((m) => ({ value: m.user_id, label: m.display_name }))}
+          value={actorId}
+          onChange={setActorId}
+          placeholder="Actor: anyone"
+        />
         <Chip label="all" on={objectType === ''} onClick={() => setObjectType('')} />
         {OBJECT_TYPES.map((t) => (
           <Chip key={t} label={t} on={objectType === t} onClick={() => setObjectType(t)} />

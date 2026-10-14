@@ -4,6 +4,7 @@ import { ADMIN_STORAGE_STATE, ORG, OPERATOR_TOTP_STATE_PATH, OPERATOR_TOTP_STEP_
 import { extractInviteLink, waitForMessageTo } from './mailpit.ts';
 import { enrolTotp } from './enrol.ts';
 import { nextTotpCode } from './otp.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -33,7 +34,7 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
   expect(dy, 'dialog is not vertically centred').toBeLessThan(24);
 
   await dialog.getByLabel('E-mail address').fill(OPERATOR.email);
-  await dialog.getByLabel('Role').selectOption('operator');
+  await pickOption(dialog, 'Role', { value: 'operator' });
   await dialog.getByRole('button', { name: 'Send invitation' }).click();
   await expect(page.getByText(`Invitation sent to ${OPERATOR.email}`)).toBeVisible();
 

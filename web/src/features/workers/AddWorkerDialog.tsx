@@ -4,10 +4,11 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import { useCreateWorkerEnrollment } from '../../api/hooks/useWorkers.ts';
+import { ZoneDialog } from '../hosts/ZoneDialog.tsx';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 interface Created {
@@ -27,6 +28,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
   const [tab, setTab] = useState<'docker' | 'compose'>('docker');
+  const [zoneDialogName, setZoneDialogName] = useState<string | null>(null);
   const zoneList = zones.data?.zones ?? [];
   const zone = zoneId || zoneList[0]?.id || '';
 
@@ -95,13 +97,13 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
     <Dialog open onClose={onClose} title="Add worker">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <Label htmlFor="worker-zone">Zone</Label>
-        <select id="worker-zone" className={SELECT} value={zone} onChange={(e) => setZoneId(e.target.value)}>
-          {zoneList.map((z) => (
-            <option key={z.id} value={z.id}>
-              {z.name} ({z.slug})
-            </option>
-          ))}
-        </select>
+        <Select
+          id="worker-zone"
+          options={zoneList.map((z) => ({ value: z.id, label: `${z.name} (${z.slug})` }))}
+          value={zone}
+          onChange={setZoneId}
+          create={{ label: 'New zone', onSelect: setZoneDialogName }}
+        />
         <Label htmlFor="worker-name">Name</Label>
         <Input id="worker-name" className="font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="hel-1" />
         {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
@@ -114,6 +116,15 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
           </Button>
         </div>
       </form>
+      {zoneDialogName !== null && (
+        <ZoneDialog
+          org={org}
+          open
+          onClose={() => setZoneDialogName(null)}
+          initialName={zoneDialogName}
+          onCreated={(id) => setZoneId(id)}
+        />
+      )}
     </Dialog>
   );
 }

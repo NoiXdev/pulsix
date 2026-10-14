@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -24,7 +25,7 @@ async function addHost(
   await page.getByRole('button', { name: 'Add host' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(opts.name);
-  await dialog.getByLabel('Zone').selectOption({ label: ZONE.name });
+  await pickOption(dialog, 'Zone', ZONE.name);
   if (opts.managed) await dialog.getByLabel('Managed (Ansible via SSH)').check();
   if (opts.monitored) await dialog.getByLabel('Monitored', { exact: true }).check();
   await dialog.getByRole('button', { name: 'Create host' }).click();

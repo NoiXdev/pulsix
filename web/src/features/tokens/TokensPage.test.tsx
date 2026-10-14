@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
-import { mockApi } from '../../test/mockApi.ts';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { TokensPage } from './TokensPage.tsx';
 
 function renderPage(qc: QueryClient) {
@@ -75,6 +76,35 @@ describe('TokensPage token plaintext handling (Critical fix)', () => {
       );
     });
     expect(screen.queryByText('pxe_super-secret-plaintext-token')).not.toBeInTheDocument();
+  });
+});
+
+describe('TokensPage role picker', () => {
+  // v0.4g Task 9: Role is a fixed enum (RHF-registered), converted from a
+  // native select to ui/Select via Controller — this is the first test that
+  // actually changes the value, rather than relying on the 'viewer' default.
+  it('creates a token with the picked role, not the default', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let posted: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'POST /api/v1/orgs/acme/tokens': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return { id: 'tok1', name: 'ci-deploy', role: 'admin', token: 'pxe_x', created_at: '2026-01-01T00:00:00Z' };
+      },
+    });
+
+    renderPage(qc);
+
+    await user.click(await screen.findByRole('button', { name: 'Create token' }));
+    await user.type(screen.getByLabelText('Name'), 'ci-deploy');
+    await pickOption(screen, 'Role', 'admin');
+    const submitButtons = screen.getAllByRole('button', { name: 'Create token' });
+    await user.click(submitButtons[submitButtons.length - 1]);
+
+    expect(await screen.findByText('pxe_x')).toBeInTheDocument();
+    expect(posted).toMatchObject({ name: 'ci-deploy', role: 'admin' });
   });
 });
 

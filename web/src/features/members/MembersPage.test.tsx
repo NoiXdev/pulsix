@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { MembersPage } from './MembersPage.tsx';
 
 const MEMBERS = {
@@ -55,6 +56,32 @@ describe('MembersPage', () => {
 
     expect(await screen.findByText('Invitation sent to ops@acme.io')).toBeInTheDocument();
     expect(invited).toMatchObject({ email: 'ops@acme.io', role: 'operator' });
+  });
+
+  // v0.4g Task 9: Role is a fixed enum (RHF-registered), converted from a
+  // native select to ui/Select via Controller — this is the first test that
+  // actually changes the value, rather than relying on the 'operator' default.
+  it('sends an invitation with the picked role, not the default', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let invited: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'POST /api/v1/orgs/acme/invites': (req: MockRequest) => {
+        invited = req.body;
+        return { email: 'view@acme.io', role: 'viewer', expires_at: '2026-01-08T00:00:00Z', mail_sent: true };
+      },
+    });
+
+    renderPage(qc);
+
+    await user.click(await screen.findByRole('button', { name: 'Invite member' }));
+    await user.type(screen.getByLabelText('E-mail address'), 'view@acme.io');
+    await pickOption(screen, 'Role', 'viewer');
+    await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+
+    expect(await screen.findByText('Invitation sent to view@acme.io')).toBeInTheDocument();
+    expect(invited).toMatchObject({ email: 'view@acme.io', role: 'viewer' });
   });
 
   // I4: on an instance without outgoing mail the invitation is still

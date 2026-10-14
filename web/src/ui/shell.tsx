@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Activity, Bell, CalendarClock, ChevronDown, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, KeyRound, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Waypoints, Wrench } from 'lucide-react';
+import { Activity, Bell, CalendarClock, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, KeyRound, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Waypoints, Wrench } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { NavGroup } from './NavGroup.tsx';
+import { Select } from './Select.tsx';
 import { may } from '../lib/roles.ts';
 
 export interface ShellOrg {
@@ -115,25 +116,20 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
           </span>
         </div>
 
-        <label className="mx-3 mt-3 mb-1 flex items-center justify-between rounded-md border border-border bg-background px-2.5 py-2 text-left">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-              Organization
-            </span>
-            <select
-              aria-label="Organization"
-              value={org.slug}
-              onChange={(e) => onSelectOrg(e.target.value)}
-              className="appearance-none bg-transparent text-[13px] font-semibold text-foreground outline-none"
-            >
-              {(orgs.length > 0 ? orgs : [org]).map((o) => (
-                <option key={o.slug} value={o.slug} className="bg-card text-foreground">
-                  {o.name}
-                </option>
-              ))}
-            </select>
+        {/* No create row (v0.4g Move 3): an organization is the most
+            deliberate object in the product, and this switcher is only
+            ever handed the organizations the signed-in user already
+            belongs to. */}
+        <label className="mx-3 mt-3 mb-1 flex flex-col gap-0.5 text-left">
+          <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+            Organization
           </span>
-          <ChevronDown size={14} className="text-muted-foreground" />
+          <Select
+            aria-label="Organization"
+            options={(orgs.length > 0 ? orgs : [org]).map((o) => ({ value: o.slug, label: o.name }))}
+            value={org.slug}
+            onChange={onSelectOrg}
+          />
         </label>
 
         {/* The three headings and their spacing add about 100px to a

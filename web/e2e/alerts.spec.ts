@@ -32,6 +32,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts';
+import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-setup (see web/e2e/agent.ts)');
@@ -77,12 +78,13 @@ async function openHost(page: Page, hostName: string): Promise<string> {
 
 /** selectHost is fleet.spec.ts's own helper, verbatim: CheckDialog's
  * HostPicker and RuleDialog's host picker are the same shape (a search box
- * over a paginated host list, then a <select> the search result fills). */
+ * over a paginated host list, then a ui/Select the search result fills). */
 async function selectHost(dialog: Locator, hostName: string): Promise<void> {
   await dialog.getByLabel('Search monitored hosts').fill(hostName);
-  const hostSelect = dialog.getByLabel('Host', { exact: true });
-  await expect(hostSelect.getByRole('option', { name: hostName, exact: true })).toBeAttached({ timeout: 10_000 });
-  await hostSelect.selectOption({ label: hostName });
+  // pickOption's own toBeVisible() wait (playwright.config.ts's default
+  // expect timeout, 10s) replaces the old toBeAttached guard here: the
+  // Host picker's options still only arrive once the search narrows them.
+  await pickOption(dialog, 'Host', hostName);
 }
 
 /** createCritRule adds a host-scoped, form-mode cpu.used_pct rule with a
@@ -93,11 +95,11 @@ async function createCritRule(page: Page, hostName: string): Promise<void> {
   await page.getByRole('button', { name: 'New rule' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(RULE_NAME);
-  await dialog.getByLabel('Metric').selectOption({ label: 'cpu.used_pct' });
-  await dialog.getByLabel('Severity').selectOption({ label: 'Critical' });
-  await dialog.getByLabel('Applies to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Metric', 'cpu.used_pct');
+  await pickOption(dialog, 'Severity', 'Critical');
+  await pickOption(dialog, 'Applies to', 'One host');
   await selectHost(dialog, hostName);
-  await dialog.getByLabel('Operator').selectOption('>');
+  await pickOption(dialog, 'Operator', { value: '>' });
   await dialog.getByLabel('Value').fill('-1');
   await dialog.getByLabel('For (seconds)').fill('0');
   await dialog.getByRole('button', { name: 'Save' }).click();
@@ -127,11 +129,11 @@ async function disableSeedCheck(page: Page, hostName: string, pluginLabel: 'Disk
   await page.goto(`${base}/checks`);
   await page.getByRole('button', { name: 'New check' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Plugin').selectOption({ label: pluginLabel });
+  await pickOption(dialog, 'Plugin', pluginLabel);
   if (pluginLabel === 'Service units') {
     await dialog.getByLabel('Units (one per line)').fill('sshd');
   }
-  await dialog.getByLabel('Binds to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Binds to', 'One host');
   await selectHost(dialog, hostName);
   await dialog.getByLabel('Enabled').uncheck();
   await dialog.getByRole('button', { name: 'Save' }).click();
@@ -146,8 +148,8 @@ async function addFastCheck(page: Page, hostName: string): Promise<void> {
   await page.goto(`${base}/checks`);
   await page.getByRole('button', { name: 'New check' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Plugin').selectOption({ label: 'CPU' });
-  await dialog.getByLabel('Binds to').selectOption({ label: 'One host' });
+  await pickOption(dialog, 'Plugin', 'CPU');
+  await pickOption(dialog, 'Binds to', 'One host');
   await selectHost(dialog, hostName);
   await dialog.getByLabel('Interval (seconds)').fill('10');
   await dialog.getByRole('button', { name: 'Save' }).click();
@@ -256,7 +258,7 @@ test('one alert episode: a host goes crit, the alert is acknowledged, and it clo
 
     // Leaves the open list: the same host-scoped page, narrowed further by
     // its own State filter, now shows no rows at all.
-    await page.getByLabel('State').selectOption({ label: 'Open' });
+    await pickOption(page, 'State', 'Open');
     await expect(page.getByTestId('alert-open')).toHaveCount(0);
     await expect(page.getByText('No alerts match this view.')).toBeVisible();
   } finally {

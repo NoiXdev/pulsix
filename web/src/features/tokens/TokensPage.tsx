@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { KeyRound } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
@@ -9,6 +9,7 @@ import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -152,16 +153,23 @@ export function TokensPage() {
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="token_role">Role</Label>
-              <select
-                id="token_role"
-                {...form.register('role')}
-                className="h-8 rounded-md border border-border bg-background px-2.5 text-xs"
-              >
-                <option value="viewer">viewer</option>
-                <option value="operator">operator</option>
-                <option value="admin">admin</option>
-                <option value="owner">owner</option>
-              </select>
+              <Controller
+                control={form.control}
+                name="role"
+                render={({ field }) => (
+                  <Select
+                    id="token_role"
+                    options={[
+                      { value: 'viewer', label: 'viewer' },
+                      { value: 'operator', label: 'operator' },
+                      { value: 'admin', label: 'admin' },
+                      { value: 'owner', label: 'owner' },
+                    ]}
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
               <span className="text-[11px] text-muted-foreground">
                 Capped at your own role — the server never mints a token more privileged than you.
               </span>

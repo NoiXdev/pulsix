@@ -22,9 +22,10 @@ test('earlier actions appear in the feed with the actor\'s name, and filtering b
   // is finding "Important 6" from task-15a-report.md, and the assertion
   // that would fail if the resolution regressed to `user · <uuid>`. Not
   // exact/unique: the admin performed most of the actions in this run, so
-  // the name legitimately appears many times (feed rows, the actor
-  // filter's own <select>, the shell footer) — `.first()` only asserts it
-  // is resolved at all, which is what this line exists to check.
+  // the name legitimately appears many times (feed rows, the shell
+  // footer, and the actor filter's own picker once it is opened) —
+  // `.first()` only asserts it is resolved at all, which is what this
+  // line exists to check.
   await expect(page.getByText(ADMIN.name).first()).toBeVisible();
 
   // Filtering by object type "host" must hide the member-kind events and
