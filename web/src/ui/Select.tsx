@@ -30,8 +30,10 @@ export interface SelectProps {
 const NONE = ' none';
 
 /**
- * Select is the one picker in Pulsix (v0.4g, backlog 1.43). It replaced 76
- * native select elements, and ESLint now fails the build on a new one.
+ * Select is the one picker Pulsix is standardising on (v0.4g, backlog 1.43):
+ * it will replace the SPA's 76 native select elements over the tasks that
+ * follow this one, and Task 9 adds the ESLint rule that bans a new native
+ * <select> once that migration lands.
  *
  * Always a combobox, never a plain listbox, and with no threshold that
  * switches between the two: options arrive from queries, so a threshold
@@ -40,7 +42,8 @@ const NONE = ' none';
  *
  * Presentational, like everything in src/ui: it is handed its options and
  * fetches nothing, and `create` is a callback into the feature that owns
- * the dialog (backlog 3.23, and the ESLint rule that enforces it).
+ * the dialog (backlog 3.23, already enforced by the no-restricted-imports
+ * rule on src/ui/**).
  */
 export function Select({
   options, value, onChange, placeholder, id, disabled, invalid, create,
