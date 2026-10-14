@@ -227,6 +227,15 @@ export function Select({
             <li
               key={o.value}
               data-value={o.value === NONE ? '' : o.value}
+              // The <li>'s own textContent is the label and the hint
+              // concatenated (see the hint <span> below), so a helper that
+              // needs the bare label — pickOption, matching a row whose
+              // label repeats across zones or credential kinds, the exact
+              // case the hint exists for — cannot read it off the node's
+              // text without also matching the hint. This exposes it
+              // directly instead of making every caller strip the hint
+              // back out by hand.
+              data-label={o.label}
               {...cb.getItemProps({ item: o, index: i, disabled: o.disabled })}
               className={cn(
                 'flex cursor-pointer items-baseline gap-2 px-2.5 py-1.5 text-xs',

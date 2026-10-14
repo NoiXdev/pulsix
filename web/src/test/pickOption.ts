@@ -30,12 +30,23 @@ export async function pickOption(scope: Scope, label: string, option: string | {
   const user = userEvent.setup();
   await user.click(scope.getByLabelText(label));
   const rows: HTMLElement[] = scope.getAllByRole('option');
+  // Matching against the label has to read `data-label`, not the row's own
+  // textContent: Select.tsx renders a row's hint as a second <span> inside
+  // the same <li>, so textContent is the label and the hint concatenated.
+  // A substring match there finds whichever row's hint happens to contain
+  // the search term, or whichever row's *label* happens to contain it as a
+  // substring of a longer one ("acme-deploy" contains "deploy") — exactly
+  // backwards for hints, which exist specifically to disambiguate two rows
+  // that share a label. `data-label` is compared exactly, for the same
+  // reason: it is what the 38 existing `selectOption({ label })` call sites
+  // already assume (Playwright's own label matching is exact), so a value
+  // and a label search behave the same way here as there.
   const wanted =
     typeof option === 'string'
-      ? rows.find((r) => r.textContent?.includes(option))
+      ? rows.find((r) => r.getAttribute('data-label') === option)
       : rows.find((r) => r.getAttribute('data-value') === option.value);
   if (!wanted) {
-    const seen = rows.map((r) => `${r.getAttribute('data-value')}=${r.textContent}`).join(', ');
+    const seen = rows.map((r) => `${r.getAttribute('data-value')}=${r.getAttribute('data-label')}`).join(', ');
     throw new Error(
       `pickOption: no option ${JSON.stringify(option)} in "${label}". The list held: ${seen || '(nothing)'}`,
     );

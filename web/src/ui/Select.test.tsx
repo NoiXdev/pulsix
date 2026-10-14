@@ -150,6 +150,15 @@ describe('Select', () => {
     expect(screen.getAllByRole('option')[0]).toHaveAttribute('data-value', 'c1');
   });
 
+  it('carries a data-label on every row, separate from the hint in its textContent', async () => {
+    const user = userEvent.setup();
+    renderSelect();
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    // c1's accessible text is "acme-deploy" + "SSH key" concatenated — a
+    // bare `data-label` is what lets a caller address the label alone.
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('data-label', 'acme-deploy');
+  });
+
   it('closes only the list on Escape, leaving a surrounding dialog alone', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
