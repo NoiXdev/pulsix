@@ -227,6 +227,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
             <Label htmlFor="decision-check">Check</Label>
             <Select
               id="decision-check"
+              required
               value={checkKey}
               onChange={setCheckKey}
               placeholder={checkKeys.length === 0 ? 'No checks yet' : undefined}
@@ -449,6 +450,7 @@ function DecisionHostPicker({ org, value, onChange }: { org: string; value: stri
       <Select
         id="decision-host"
         placeholder="Choose a monitored host…"
+        required
         value={value}
         onChange={onChange}
         options={[

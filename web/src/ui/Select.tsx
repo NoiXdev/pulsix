@@ -22,6 +22,12 @@ export interface SelectProps {
   'aria-label'?: string;
   disabled?: boolean;
   invalid?: boolean;
+  /** Forwarded to the underlying input so native constraint validation can
+   *  block a form's submit while this field is empty — see the empty-value
+   *  fix on `selectedLabel` below, which this depends on: a `required`
+   *  input the browser considers non-empty (because it displays the
+   *  placeholder text as a real value) can never fire. */
+  required?: boolean;
   create?: { label: string; onSelect: (filterText: string) => void };
 }
 
@@ -63,7 +69,7 @@ const CREATE = ' create';
  * rule on src/ui/**).
  */
 export function Select({
-  options, value, onChange, placeholder, id, disabled, invalid, create,
+  options, value, onChange, placeholder, id, disabled, invalid, required, create,
   'aria-label': ariaLabel,
 }: SelectProps) {
   const [filter, setFilter] = useState('');
@@ -98,7 +104,16 @@ export function Select({
   // Review Focus 2: a value whose option is gone (a deleted credential a
   // host still points at). Showing it is the honest answer; clearing it
   // would write a change nobody asked for on the next save.
-  const selectedLabel = selected?.label ?? (value === '' ? (placeholder ?? '') : `${value} (unavailable)`);
+  //
+  // An empty value renders as an empty string here, not `placeholder` text:
+  // the `placeholder` HTML attribute on the input below already shows that
+  // same text, greyed out, the way every other empty text input in this app
+  // reads. Putting it in `value` as well (a prior version of this component
+  // did) made an empty field look like it held real text and, worse, made
+  // it non-empty as far as the browser's own constraint validation could
+  // tell — a `required` Select could never be caught empty, because it
+  // never was one.
+  const selectedLabel = selected ? selected.label : value === '' ? '' : `${value} (unavailable)`;
 
   const cb = useCombobox<SelectOption>({
     items: rows,
@@ -204,6 +219,7 @@ export function Select({
         })}
         value={open ? filter : selectedLabel}
         placeholder={placeholder}
+        required={required}
         className={cn(
           'flex h-8 w-full rounded-md border border-border bg-background px-2.5 pr-7 text-xs text-foreground',
           'placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',

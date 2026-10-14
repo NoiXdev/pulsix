@@ -288,6 +288,7 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
             <Select
               id="rule-group"
               placeholder="Choose a monitoring group…"
+              required
               value={groupId}
               onChange={setGroupId}
               options={[
@@ -398,6 +399,7 @@ function RuleHostPicker({ org, value, onChange }: { org: string; value: string; 
       <Select
         id="rule-host"
         placeholder="Choose a monitored host…"
+        required
         value={value}
         onChange={onChange}
         options={[

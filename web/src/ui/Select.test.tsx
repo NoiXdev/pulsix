@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Select, type SelectOption } from './Select.tsx';
 import { Dialog } from './dialog.tsx';
+import { Label } from './label.tsx';
 
 const OPTS: SelectOption[] = [
   { value: 'c1', label: 'acme-deploy', hint: 'SSH key' },
@@ -112,6 +114,46 @@ describe('Select', () => {
     expect(box).toHaveValue('acme-deploy');
   });
 
+  // v0.4g Task 4 fix round: a prior version put the placeholder text in the
+  // input's own `value`, so an empty field looked like it held real text —
+  // not greyed out — and was never actually empty as far as the browser's
+  // constraint validation could tell (see the `required` test below, which
+  // depends on this one).
+  it('shows an empty value as empty text, with the placeholder only as a placeholder', () => {
+    renderSelect({ value: '', placeholder: 'Choose a credential…' });
+    const box = screen.getByRole('combobox', { name: 'Credential' });
+    expect(box).toHaveValue('');
+    expect(box).toHaveAttribute('placeholder', 'Choose a credential…');
+  });
+
+  // v0.4g Task 4 fix round: every native <select> this component replaces
+  // could be `required`; Select itself could not reproduce that at all
+  // until this round, both because it had no `required` prop and because
+  // an empty field never actually read as empty (see the test above).
+  it('blocks a form submit while required and empty, and allows it once a value is chosen', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+
+    function Harness() {
+      const [value, setValue] = useState('');
+      return (
+        <form onSubmit={onSubmit}>
+          <Select aria-label="Credential" options={OPTS} value={value} onChange={setValue} required />
+          <button type="submit">Save</button>
+        </form>
+      );
+    }
+    render(<Harness />);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('combobox', { name: 'Credential' }));
+    await user.click(screen.getAllByRole('option')[0]);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it('offers the placeholder as a way back to no value', async () => {
     const user = userEvent.setup();
     const { onChange } = renderSelect({ value: 'c1', placeholder: 'none' });
@@ -182,6 +224,26 @@ describe('Select', () => {
     // added for this test); asserting an exact count here would be asserting
     // a dialog.tsx wiring detail Select has no business pinning.
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // v0.4g Task 4: every call site in features/checks pairs an external
+  // <Label htmlFor> with Select's own `id`, never `aria-label` — the
+  // existing convention for every other labelled field in the app. downshift's
+  // own getInputProps defaults aria-labelledby to an internal id
+  // (`${id}-label`) whenever no aria-label is given; Select never renders an
+  // element at that id (getLabelProps is never called), so the attribute
+  // dangles. testing-library's getByLabelText stops at a present
+  // aria-labelledby before ever falling back to the native <label for>
+  // association — and a real screen reader does the same, reading an empty
+  // accessible name instead of the <label>'s text.
+  it('is found by getByLabelText when paired with an external <Label htmlFor>, not aria-label', () => {
+    render(
+      <>
+        <Label htmlFor="credential-field">Credential</Label>
+        <Select id="credential-field" options={OPTS} value="" onChange={vi.fn()} />
+      </>,
+    );
+    expect(screen.getByLabelText('Credential')).toBeInTheDocument();
   });
 
   it('lets Escape close a surrounding dialog when the field already holds a value', async () => {

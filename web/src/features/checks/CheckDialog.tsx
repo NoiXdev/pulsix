@@ -230,6 +230,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             <Select
               id="check-group"
               placeholder="Choose a monitoring group…"
+              required
               value={groupId}
               onChange={setGroupId}
               options={[
@@ -324,6 +325,7 @@ function HostPicker({
       <Select
         id="check-host"
         placeholder="Choose a monitored host…"
+        required
         value={value}
         onChange={onChange}
         options={[
