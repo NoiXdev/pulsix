@@ -147,13 +147,18 @@ export function Select({
           'aria-label': ariaLabel,
           disabled,
           onChange: (e) => setFilter((e.target as HTMLInputElement).value),
-          // A surrounding Dialog's Escape-to-close listens on the document
-          // (the native dialog element has no handler of its own — see
-          // ui/dialog.tsx), so closing just this list on Escape has to stop
-          // the keydown here, or the same press that closes the list would
-          // also close the dialog underneath it.
+          // A native <dialog>'s Escape-to-close is not a bubbling DOM
+          // listener but a user-agent-level close request — stopPropagation
+          // here would do nothing to it in a real browser. What the HTML
+          // close-request steps actually honour is preventDefault() on the
+          // keydown: cancelling it suppresses the dialog's close request
+          // (every current browser implements this). So closing just this
+          // list on Escape has to preventDefault, and only while the list is
+          // open — once it's closed, Escape must reach the surrounding
+          // dialog (ui/dialog.tsx has no Escape handling of its own) so a
+          // second press can close that instead.
           onKeyDown: (e) => {
-            if (cb.isOpen) e.stopPropagation();
+            if (cb.isOpen && e.key === 'Escape') e.preventDefault();
           },
         })}
         value={open ? filter : selectedLabel}
