@@ -28,8 +28,10 @@ export function SettingsTab({ org, group, groups }: { org: string; group: Invent
   const [parent, setParent] = useState(group.parent_id ?? '');
   const [bastion, setBastion] = useState(group.bastion_id ?? '');
   const [stale, setStale] = useState(false);
-  // True while the "New jump host…" row's dialog is open.
-  const [addingBastion, setAddingBastion] = useState(false);
+  // Non-null while the "New jump host…" row's dialog is open; its value is
+  // whatever had been typed into the picker, so BastionDialog can prefill
+  // the Name field with it (null, not '', is "closed").
+  const [newBastionName, setNewBastionName] = useState<string | null>(null);
   const excluded = descendantIds(groups, group.id).add(group.id);
 
   async function save(e: FormEvent) {
@@ -98,7 +100,7 @@ export function SettingsTab({ org, group, groups }: { org: string; group: Invent
               value={bastion}
               onChange={setBastion}
               placeholder="— none (inherit from parent groups or the zone) —"
-              create={{ label: 'New jump host…', onSelect: () => setAddingBastion(true) }}
+              create={{ label: 'New jump host…', onSelect: setNewBastionName }}
             />
           ) : (
             // No id here on purpose: the select above (and its options) is
@@ -119,15 +121,16 @@ export function SettingsTab({ org, group, groups }: { org: string; group: Invent
           </Button>
         </div>
       </form>
-      {addingBastion && (
+      {newBastionName !== null && (
         <BastionDialog
           org={org}
           bastions={bastions.data?.bastions ?? []}
           credentials={credentials.data?.credentials ?? []}
-          onClose={() => setAddingBastion(false)}
+          initialName={newBastionName}
+          onClose={() => setNewBastionName(null)}
           onCreated={(id) => {
             setBastion(id);
-            setAddingBastion(false);
+            setNewBastionName(null);
           }}
         />
       )}

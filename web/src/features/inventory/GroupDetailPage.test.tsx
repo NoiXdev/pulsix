@@ -303,9 +303,12 @@ describe('GroupDetailPage', () => {
     });
     renderAt('/o/acme/groups/g1?tab=settings');
     await user.click(await screen.findByLabelText('Jump host'));
+    // Typed before taking the create row: the point of the row is arriving
+    // at the dialog with this already filled in, not retyping it.
+    await user.keyboard('edge-01');
     await user.click(screen.getByRole('option', { name: /New jump host/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Add jump host' });
-    await user.type(within(dialog).getByLabelText('Name'), 'edge-01');
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('edge-01');
     await user.type(within(dialog).getByLabelText('Address'), 'edge.example');
     await user.type(within(dialog).getByLabelText('Username'), 'ops');
     await user.click(within(dialog).getByRole('button', { name: 'Create jump host' }));

@@ -10,7 +10,7 @@ import type { Bastion, Credential } from '../../api/types.ts';
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 export function BastionDialog({
-  org, bastion, bastions, credentials, onClose, onCreated,
+  org, bastion, bastions, credentials, onClose, onCreated, initialName,
 }: {
   org: string;
   bastion?: Bastion;
@@ -19,11 +19,13 @@ export function BastionDialog({
   onClose: () => void;
   /** Called with the new jump host's id, only on a create (never an edit) — the quick-create row (v0.4g) uses it to select what it just made. */
   onCreated: (id: string) => void;
+  /** Prefills the name, from what had been typed into the picker. Same prop shape Task 7 gives AddCredentialDialog and ZoneDialog. */
+  initialName?: string;
 }) {
   const toast = useToast();
   const create = useCreateBastion(org);
   const update = useUpdateBastion(org, bastion?.id ?? '');
-  const [name, setName] = useState(bastion?.name ?? '');
+  const [name, setName] = useState(bastion?.name ?? initialName ?? '');
   const [address, setAddress] = useState(bastion?.address ?? '');
   const [port, setPort] = useState(String(bastion?.port ?? 22));
   const [username, setUsername] = useState(bastion?.username ?? '');
