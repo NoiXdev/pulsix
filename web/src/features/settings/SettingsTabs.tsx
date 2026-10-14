@@ -21,6 +21,10 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  * and fetches nothing (CLAUDE.md, backlog 3.23). features/checks/ChecksTabs
  * is the same strip for the Checks section, without the gating.
  *
+ * Credentials and Jump hosts were tabs here until v0.4f; they are
+ * sidebar entries under Infrastructure now, and their routes left
+ * /settings with them (router.tsx).
+ *
  * "Outgoing mail" is instance-wide and shown only to instance
  * administrators — the only callers GET /admin/settings/smtp admits.
  * "Notifications", "Alert routes" and "On-call rotations" are shown to
@@ -61,24 +65,6 @@ export function SettingsTabs({ org }: { org: string }) {
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
         API tokens
-      </Link>
-      <Link
-        to="/o/$org/settings/credentials"
-        params={{ org }}
-        role="tab"
-        activeProps={{ className: ACTIVE, 'aria-selected': true }}
-        inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
-      >
-        Credentials
-      </Link>
-      <Link
-        to="/o/$org/settings/jump-hosts"
-        params={{ org }}
-        role="tab"
-        activeProps={{ className: ACTIVE, 'aria-selected': true }}
-        inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
-      >
-        Jump hosts
       </Link>
       {may(orgInfo.data?.org.role, 'channels.read') && (
         <Link

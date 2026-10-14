@@ -29,7 +29,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await toast(page, 'Host inv-web-01 created');
 
   // A generated SSH key: the public key is shown once with snippets; no private key ever.
-  await page.goto(`${base}/settings/credentials`);
+  await page.goto(`${base}/credentials`);
   await page.getByRole('button', { name: 'Add credential' }).click();
   dialog = page.getByRole('dialog', { name: 'Add credential' });
   // Not exact: AddCredentialDialog also has a "Username" field, whose
@@ -45,7 +45,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await keyDialog.getByRole('button', { name: 'Done' }).click();
 
   // A jump host that uses the key.
-  await page.goto(`${base}/settings/jump-hosts`);
+  await page.goto(`${base}/jump-hosts`);
   await page.getByRole('button', { name: 'Add jump host' }).click();
   dialog = page.getByRole('dialog', { name: 'Add jump host' });
   // Not exact: BastionDialog also has a "Username" field.

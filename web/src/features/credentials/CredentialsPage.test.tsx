@@ -12,7 +12,6 @@ const cred = (over: Record<string, unknown>) => ({
   fingerprint: 'SHA256:abc', key_type: 'ed25519', expired: false, expires_soon: false, used_by: { bastions: 1, hosts: 41 },
   created_at: '2026-06-01T00:00:00Z', updated_at: '2026-06-01T00:00:00Z', ...over,
 });
-// SettingsTabs asks who is signed in (to decide on the instance-admin tab).
 const ME = { id: 'u', email: 'a@b', display_name: 'A', instance_admin: false };
 const SNIPPETS = { authorized_keys_command: "echo 'ssh-ed25519 AAAA pulsix:acme:acme-deploy' >> ~/.ssh/authorized_keys", cloud_init: '#cloud-config', terraform: 'locals {}' };
 
@@ -20,11 +19,10 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const settings = createRoute({ getParentRoute: () => orgRoute, path: '/settings' });
-  const page = createRoute({ getParentRoute: () => settings, path: '/credentials', component: CredentialsPage });
+  const page = createRoute({ getParentRoute: () => orgRoute, path: '/credentials', component: CredentialsPage });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([settings.addChildren([page])])]),
-    history: createMemoryHistory({ initialEntries: ['/o/acme/settings/credentials'] }),
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([page])]),
+    history: createMemoryHistory({ initialEntries: ['/o/acme/credentials'] }),
   });
   return render(
     <QueryClientProvider client={qc}>

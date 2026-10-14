@@ -170,6 +170,20 @@ const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents
 const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
 
 /**
+ * Credentials and Jump hosts are top-level pages (v0.4f), in the
+ * sidebar's Infrastructure group: they are how a run reaches a host, not
+ * a property of the installation, and a page that no longer appears in
+ * the Settings tab strip must not keep living underneath /settings —
+ * landing there would show a strip with no tab for the page you are on.
+ *
+ * The paths they vacated redirect here rather than 404: they are in
+ * bookmarks, in older plan documents, and in anything anyone pasted to a
+ * colleague.
+ */
+const credentialsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/credentials', component: CredentialsPage });
+const jumpHostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/jump-hosts', component: JumpHostsPage });
+
+/**
  * checksRoute is the layout route for the monitoring check pipeline
  * (v0.3b-1, joined by v0.3b-2's rules and v0.3b-3's items): the
  * definitions themselves at its index, the monitoring groups they bind to,
@@ -192,11 +206,13 @@ const rulesRoute = createRoute({ getParentRoute: () => checksRoute, path: '/rule
 const itemsRoute = createRoute({ getParentRoute: () => checksRoute, path: '/items', component: ItemsPage });
 
 /**
- * settingsRoute is the layout route for Members, Activity and API tokens —
- * finding "Important 6": the mockup (Members.dc.html, Activity.dc.html)
- * files all three under one "Settings" section (gear icon, single nav
- * entry) with breadcrumbs like "Settings › Members", not as separate
- * top-level nav items. Nesting them under one real route both matches
+ * settingsRoute is the layout route for Members, Activity, API tokens,
+ * outgoing mail and the notification pages (channels, alert routes,
+ * on-call rotations) — finding "Important 6": the mockup
+ * (Members.dc.html, Activity.dc.html) files them under one "Settings"
+ * section (gear icon, single nav entry) with breadcrumbs like
+ * "Settings › Members", not as separate top-level nav items. Credentials
+ * and Jump hosts were here too until v0.4f; see their own comment above. Nesting them under one real route both matches
  * that IA and lets the shell's Settings nav link mark itself active via
  * the router's own activeProps (matching any descendant of /settings)
  * instead of hand-rolled pathname string matching.
@@ -216,8 +232,20 @@ const activityRoute = createRoute({
   component: ActivityPage,
 });
 const tokensRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/tokens', component: TokensPage });
-const credentialsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/credentials', component: CredentialsPage });
-const jumpHostsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/jump-hosts', component: JumpHostsPage });
+const legacyCredentialsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/credentials',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$org/credentials', params: { org: params.org } });
+  },
+});
+const legacyJumpHostsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/jump-hosts',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$org/jump-hosts', params: { org: params.org } });
+  },
+});
 // Instance-wide outgoing mail settings, for instance administrators; filed
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
@@ -249,14 +277,16 @@ const routeTree = rootRoute.addChildren([
     workersRoute,
     agentsRoute,
     maintenanceRoute,
+    credentialsRoute,
+    jumpHostsRoute,
     checksRoute.addChildren([checksIndexRoute, monitoringGroupsRoute, rulesRoute, itemsRoute]),
     settingsRoute.addChildren([
       settingsIndexRoute,
       membersRoute,
       activityRoute,
       tokensRoute,
-      credentialsRoute,
-      jumpHostsRoute,
+      legacyCredentialsRoute,
+      legacyJumpHostsRoute,
       mailRoute,
       notificationsRoute,
       alertRoutesRoute,

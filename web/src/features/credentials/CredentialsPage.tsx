@@ -4,7 +4,6 @@ import { KeyRound } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
@@ -32,10 +31,7 @@ export function CredentialsPage() {
   return (
     <>
       <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Credentials &amp; secrets</h1>
-          <SettingsTabs org={org} />
-        </div>
+        <h1 className="text-xl font-semibold">Credentials</h1>
         <Button variant="primary" onClick={() => setAddOpen(true)}>
           <KeyRound size={15} /> Add credential
         </Button>

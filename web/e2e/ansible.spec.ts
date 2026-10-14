@@ -60,7 +60,7 @@ async function toast(page: Page, text: string | RegExp): Promise<void> {
 /** addGeneratedCredential creates a key credential in generate mode and
  * dismisses the one-time public-key panel; the private key never shows. */
 async function addGeneratedCredential(page: Page, name: string, kindLabel: string, username: string): Promise<void> {
-  await page.goto(`${base}/settings/credentials`);
+  await page.goto(`${base}/credentials`);
   await page.getByRole('button', { name: 'Add credential' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add credential' });
   await dialog.getByLabel('Kind').selectOption({ label: kindLabel });
@@ -80,7 +80,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await addGeneratedCredential(page, 'ansible-e2e-deploy', 'Git deploy key', 'git');
 
   // --- The jump host and the zone default -----------------------------
-  await page.goto(`${base}/settings/jump-hosts`);
+  await page.goto(`${base}/jump-hosts`);
   await page.getByRole('button', { name: 'Add jump host' }).click();
   let dialog = page.getByRole('dialog', { name: 'Add jump host' });
   // Not exact: BastionDialog also has a "Username" field.

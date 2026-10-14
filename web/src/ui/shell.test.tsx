@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   createRootRoute,
@@ -49,6 +49,8 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
     leaf('/o/$org/groups'),
     leaf('/o/$org/checks'),
     leaf('/o/$org/checks/monitoring-groups'),
+    leaf('/o/$org/credentials'),
+    leaf('/o/$org/jump-hosts'),
     leaf('/o/$org/settings/members'),
     leaf('/o/$org/settings/activity'),
     leaf('/o/$org/settings/tokens'),
@@ -179,5 +181,50 @@ describe('AppShell', () => {
 
     await user.click(screen.getByRole('button', { name: 'Log out' }));
     expect(onLogout).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * The sidebar groups its fourteen entries under three headings rather
+ * than listing them flat (v0.4f): Infrastructure, Monitoring,
+ * Automation, with Settings left as a single ungrouped entry at the
+ * bottom. The headings are separators, not disclosure controls —
+ * nothing collapses, so no entry ever costs a second click.
+ */
+describe('AppShell nav grouping', () => {
+  it.each(['Infrastructure', 'Monitoring', 'Automation'])('groups its entries under %s', async (label) => {
+    renderShellAt('/o/acme/hosts');
+    await screen.findByText('page content');
+    expect(screen.getByRole('group', { name: label })).toBeInTheDocument();
+  });
+
+  it('puts each entry in the group it belongs to', async () => {
+    renderShellAt('/o/acme/hosts');
+    await screen.findByText('page content');
+    const inGroup = (label: string, link: string) =>
+      within(screen.getByRole('group', { name: label })).getByRole('link', { name: link });
+
+    expect(inGroup('Infrastructure', 'Hosts')).toBeInTheDocument();
+    expect(inGroup('Infrastructure', 'Jump hosts')).toBeInTheDocument();
+    expect(inGroup('Infrastructure', 'Credentials')).toBeInTheDocument();
+    expect(inGroup('Monitoring', 'Maintenance')).toBeInTheDocument();
+    expect(inGroup('Automation', 'Runs')).toBeInTheDocument();
+  });
+
+  // Credentials and Jump hosts left the Settings tab strip for the
+  // Infrastructure group, and their URLs moved with them — a page that no
+  // longer appears in that strip must not keep living underneath it.
+  it('links Credentials and Jump hosts at their own top-level paths', async () => {
+    renderShellAt('/o/acme/hosts');
+    await screen.findByText('page content');
+    expect(screen.getByRole('link', { name: 'Credentials' })).toHaveAttribute('href', '/o/acme/credentials');
+    expect(screen.getByRole('link', { name: 'Jump hosts' })).toHaveAttribute('href', '/o/acme/jump-hosts');
+  });
+
+  it('leaves Settings ungrouped', async () => {
+    renderShellAt('/o/acme/hosts');
+    await screen.findByText('page content');
+    expect(screen.queryByRole('group', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
   });
 });

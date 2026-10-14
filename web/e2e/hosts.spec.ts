@@ -88,7 +88,8 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
   await page.getByRole('button', { name: 'Add tag' }).click();
   await expect(page.getByText('env=prod')).toBeVisible();
 
-  await page.getByRole('link', { name: 'Hosts' }).click();
+  // Exact: the sidebar's Infrastructure group also holds "Jump hosts".
+  await page.getByRole('link', { name: 'Hosts', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/hosts$`));
 
   // Filter chips: "Managed" narrows the three hosts down to just the one

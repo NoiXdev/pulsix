@@ -21,11 +21,10 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const settings = createRoute({ getParentRoute: () => orgRoute, path: '/settings' });
-  const page = createRoute({ getParentRoute: () => settings, path: '/jump-hosts', component: JumpHostsPage });
+  const page = createRoute({ getParentRoute: () => orgRoute, path: '/jump-hosts', component: JumpHostsPage });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([settings.addChildren([page])])]),
-    history: createMemoryHistory({ initialEntries: ['/o/acme/settings/jump-hosts'] }),
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([page])]),
+    history: createMemoryHistory({ initialEntries: ['/o/acme/jump-hosts'] }),
   });
   return render(
     <QueryClientProvider client={qc}>

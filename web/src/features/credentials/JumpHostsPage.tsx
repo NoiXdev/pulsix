@@ -3,7 +3,6 @@ import { useParams } from '@tanstack/react-router';
 import { Lock, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -48,10 +47,7 @@ export function JumpHostsPage() {
   return (
     <>
       <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Credentials &amp; secrets</h1>
-          <SettingsTabs org={org} />
-        </div>
+        <h1 className="text-xl font-semibold">Jump hosts</h1>
         <Button variant="primary" onClick={() => setDialog({})}>
           <Server size={15} /> Add jump host
         </Button>

@@ -39,11 +39,17 @@ describe('SettingsTabs', () => {
     expect(await screen.findByRole('tab', { name: 'Outgoing mail' })).toBeInTheDocument();
   });
 
-  it('links to the Credentials and Jump hosts tabs', async () => {
+  // Credentials and Jump hosts are sidebar entries under Infrastructure
+  // now (v0.4f) — they are reached from there, not from this strip, and
+  // a tab left behind here would be a second route to a page that no
+  // longer lives under /settings.
+  it('no longer offers Credentials or Jump hosts as tabs', async () => {
     mockApi({ 'GET /api/v1/auth/me': me(false) });
     renderTabs();
-    expect(await screen.findByRole('tab', { name: 'Credentials' })).toHaveAttribute('href', '/o/acme/settings/credentials');
-    expect(screen.getByRole('tab', { name: 'Jump hosts' })).toHaveAttribute('href', '/o/acme/settings/jump-hosts');
+    expect(await screen.findByRole('tab', { name: 'Members' })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('tab', { name: 'Credentials' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Jump hosts' })).not.toBeInTheDocument();
   });
 
   it('hides it from everyone else', async () => {

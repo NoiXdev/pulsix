@@ -45,6 +45,12 @@ export default defineConfig({
       //     standalone routers around each one rather than importing
       //     this file, so this file's own statements would otherwise
       //     read 0% for having nothing to do with what was tested).
+      //     Still excluded since v0.4f gave it two beforeLoad redirects
+      //     (the Settings paths Credentials and Jump hosts vacated):
+      //     those are logic, and router.test.tsx navigates the real
+      //     router to pin them — the exclusion is about the file's
+      //     coverage percentage being meaningless, not about leaving
+      //     its behaviour untested.
       //   - api/schema.d.ts, vite-env.d.ts: type-only, no runtime
       //     statements (openapi-typescript-generated and the Vite
       //     ambient-types file respectively).
