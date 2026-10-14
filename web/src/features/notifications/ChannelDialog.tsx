@@ -4,10 +4,10 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useCreateChannel, useUpdateChannel } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel, NotifyChannelInput } from '../../api/types.ts';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
 interface HeaderRow {
@@ -22,17 +22,23 @@ export interface ChannelDialogProps {
   channel?: NotifyChannel;
   mailAvailable: boolean;
   onClose: () => void;
+  /** Called with the new channel's id, only on a create (never an edit) —
+   * the quick-create row (v0.4g) uses it to select what it just made. */
+  onCreated: (id: string) => void;
+  /** Prefills the name, from what had been typed into the picker. Same
+   * prop shape BastionDialog already has (v0.4g Task 5). */
+  initialName?: string;
 }
 
 /** ChannelDialog creates or edits a notification channel. Stored secrets
  * (the webhook URL, header values, the signing secret) are never shown:
  * leaving their fields empty while editing keeps them. */
-export function ChannelDialog({ org, channel, mailAvailable, onClose }: ChannelDialogProps) {
+export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated, initialName }: ChannelDialogProps) {
   const editing = !!channel;
   const create = useCreateChannel(org);
   const update = useUpdateChannel(org, channel?.id ?? '');
   const [kind, setKind] = useState<'email' | 'webhook'>(channel?.kind ?? (mailAvailable ? 'email' : 'webhook'));
-  const [name, setName] = useState(channel?.name ?? '');
+  const [name, setName] = useState(channel?.name ?? initialName ?? '');
   const [enabled, setEnabled] = useState(channel?.enabled ?? true);
   const [recipients, setRecipients] = useState((channel?.email?.recipients ?? []).join('\n'));
   const [method, setMethod] = useState<'POST' | 'PUT'>(channel?.webhook?.method ?? 'POST');
@@ -69,7 +75,8 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose }: ChannelD
       if (channel) {
         await update.mutateAsync({ ...body(), revision: channel.revision });
       } else {
-        await create.mutateAsync(body());
+        const res = await create.mutateAsync(body());
+        onCreated(res.channel.id);
       }
       onClose();
     } catch (err) {
@@ -82,12 +89,20 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose }: ChannelD
     <Dialog open onClose={onClose} title={editing ? `Edit ${channel.name}` : 'Add channel'} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <Label htmlFor="ch-kind">Kind</Label>
-        <select id="ch-kind" className={SELECT} value={kind} disabled={editing} onChange={(e) => setKind(e.target.value as 'email' | 'webhook')}>
-          <option value="email" disabled={!mailAvailable && !editing}>
-            E-mail{!mailAvailable ? ' (needs outgoing mail settings)' : ''}
-          </option>
-          <option value="webhook">Webhook</option>
-        </select>
+        <Select
+          id="ch-kind"
+          options={[
+            {
+              value: 'email',
+              label: `E-mail${!mailAvailable ? ' (needs outgoing mail settings)' : ''}`,
+              disabled: !mailAvailable && !editing,
+            },
+            { value: 'webhook', label: 'Webhook' },
+          ]}
+          value={kind}
+          onChange={(v) => setKind(v as 'email' | 'webhook')}
+          disabled={editing}
+        />
         <Label htmlFor="ch-name">Name</Label>
         <Input id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
         <label className="flex items-center gap-2 text-xs">
@@ -104,10 +119,15 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose }: ChannelD
             <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2">
               <div className="flex flex-col gap-1">
                 <Label htmlFor="ch-method">Method</Label>
-                <select id="ch-method" className={SELECT} value={method} onChange={(e) => setMethod(e.target.value as 'POST' | 'PUT')}>
-                  <option value="POST">POST</option>
-                  <option value="PUT">PUT</option>
-                </select>
+                <Select
+                  id="ch-method"
+                  options={[
+                    { value: 'POST', label: 'POST' },
+                    { value: 'PUT', label: 'PUT' },
+                  ]}
+                  value={method}
+                  onChange={(v) => setMethod(v as 'POST' | 'PUT')}
+                />
               </div>
               <div className="flex flex-col gap-1">
                 <Label htmlFor="ch-url">URL{editing ? ` (now ${channel.webhook?.url})` : ''}</Label>
@@ -157,7 +177,7 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose }: ChannelD
             Cancel
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
-            Save
+            {editing ? 'Save' : 'Create channel'}
           </Button>
         </div>
       </form>

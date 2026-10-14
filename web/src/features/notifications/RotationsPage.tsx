@@ -5,6 +5,7 @@ import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -26,9 +27,9 @@ import { fromLocalInput, toLocalInput } from '../maintenance/time.ts';
 import type { OncallRotation, OncallRotationInput } from '../../api/types.ts';
 import { RotationDialog } from './RotationDialog.tsx';
 import { RosterStrip } from './RosterStrip.tsx';
+import { ChannelDialog } from './ChannelDialog.tsx';
 
 const COLUMNS = 'minmax(0, 0.9fr) 90px minmax(0, 1.4fr) 160px';
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 // The roster strip only needs a near-term window to answer "who is on
 // call now, and next" — two weeks is comfortably past any period this
@@ -155,7 +156,7 @@ export function RotationsPage() {
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No on-call rotations yet.</p>}
       </Card>
       {list.map((r) => (
-        <StandIns key={r.id} org={org} rotation={r} channels={channelOptions} canWrite={canWrite} />
+        <StandIns key={r.id} org={org} rotation={r} channels={channelOptions} mailAvailable={!!channels.data?.mail_available} canWrite={canWrite} />
       ))}
       {editing && (
         <RotationDialog
@@ -183,7 +184,9 @@ interface StandInsChannel {
  * comment: no update, no revision) — so there is nothing here to edit,
  * only to add or remove.
  */
-function StandIns({ org, rotation, channels, canWrite }: { org: string; rotation: OncallRotation; channels: StandInsChannel[]; canWrite: boolean }) {
+function StandIns({
+  org, rotation, channels, mailAvailable, canWrite,
+}: { org: string; rotation: OncallRotation; channels: StandInsChannel[]; mailAvailable: boolean; canWrite: boolean }) {
   const toast = useToast();
   const [range] = useState(rosterRange);
   const shifts = useOncallShifts(org, rotation.id, range.from, range.to);
@@ -195,6 +198,11 @@ function StandIns({ org, rotation, channels, canWrite }: { org: string; rotation
   const [startsAt, setStartsAt] = useState(toLocalInput(new Date().toISOString()));
   const [endsAt, setEndsAt] = useState(toLocalInput(new Date(new Date().getTime() + 86_400_000).toISOString()));
   const [note, setNote] = useState('');
+  // Non-null while the "New channel…" row's dialog is open; its value is
+  // whatever had been typed into the picker, so ChannelDialog can prefill
+  // the Name field with it (null, not '', is "closed") — same pattern as
+  // SettingsTab's own newBastionName (v0.4g Task 5).
+  const [newChannelName, setNewChannelName] = useState<string | null>(null);
 
   async function onAdd() {
     try {
@@ -222,84 +230,107 @@ function StandIns({ org, rotation, channels, canWrite }: { org: string; rotation
   const exceptionList = exceptions.data?.exceptions ?? [];
 
   return (
-    <section aria-label={`${rotation.name} roster`} className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold">{rotation.name} — roster &amp; stand-ins</h2>
-        {canWrite && (
-          <Button type="button" variant="ghost" onClick={() => setAdding(!adding)}>
-            <Plus size={13} /> Add stand-in
-          </Button>
-        )}
-      </div>
-      {/* A roster that cannot be built arrives here as a FAILED REQUEST,
-          never as an empty shift list: oncall.Shifts always tiles the
-          range it is given, so RosterStrip's own empty branch is
-          unreachable from this page. The cases the spec's "Error
-          handling" section calls ordinary — the rotation's last channel
-          deleted, a timezone whose zoneinfo no longer loads — all land in
-          this branch, and before it existed the section printed
-          "Loading roster…" forever (whole-branch review, Important #4).
-          It is said in the same words a channel-less route is said in
-          (ReachesNobody, AlertRouteCells.tsx), because it is the same
-          fact: alerts routed here reach nobody. */}
-      {shifts.isError ? (
-        <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold text-destructive">
-          <BellOff size={13} aria-hidden="true" />
-          The roster could not be built — alerts routed through this rotation reach nobody.
-          {shifts.error instanceof Error ? ` (${shifts.error.message})` : ''}
-        </p>
-      ) : shifts.data ? (
-        <RosterStrip shifts={shifts.data.shifts ?? []} now={new Date().toISOString()} />
-      ) : (
-        <p className="text-xs text-muted-foreground">Loading roster…</p>
-      )}
-      {adding && (
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_80px] items-end gap-2 rounded-md border border-border p-2.5">
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`exc-channel-${rotation.id}`}>Channel</Label>
-            <select id={`exc-channel-${rotation.id}`} className={SELECT} value={channelId} onChange={(e) => setChannelId(e.target.value)}>
-              {channels.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`exc-start-${rotation.id}`}>From</Label>
-            <Input id={`exc-start-${rotation.id}`} type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`exc-end-${rotation.id}`}>Until</Label>
-            <Input id={`exc-end-${rotation.id}`} type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`exc-note-${rotation.id}`}>Note</Label>
-            <Input id={`exc-note-${rotation.id}`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
-          </div>
-          <Button type="button" variant="primary" onClick={() => void onAdd()} disabled={!channelId || createException.isPending}>
-            Add
-          </Button>
+    // The create-row dialog renders outside this <section>, as its own
+    // sibling, not nested inside: a submit inside it is a native "submit"
+    // event, and ui/dialog.tsx does not portal, so nesting it inside any
+    // ancestor <form> would let that submit bubble into the wrong handler
+    // (the same reasoning SettingsTab.tsx already documents for
+    // BastionDialog). StandIns' own "Add" button isn't a form submit, so
+    // this isn't that bug today — but keeping the same shape as every
+    // other quick-create call site means it stays correct if that ever
+    // changes.
+    <>
+      <section aria-label={`${rotation.name} roster`} className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold">{rotation.name} — roster &amp; stand-ins</h2>
+          {canWrite && (
+            <Button type="button" variant="ghost" onClick={() => setAdding(!adding)}>
+              <Plus size={13} /> Add stand-in
+            </Button>
+          )}
         </div>
+        {/* A roster that cannot be built arrives here as a FAILED REQUEST,
+            never as an empty shift list: oncall.Shifts always tiles the
+            range it is given, so RosterStrip's own empty branch is
+            unreachable from this page. The cases the spec's "Error
+            handling" section calls ordinary — the rotation's last channel
+            deleted, a timezone whose zoneinfo no longer loads — all land in
+            this branch, and before it existed the section printed
+            "Loading roster…" forever (whole-branch review, Important #4).
+            It is said in the same words a channel-less route is said in
+            (ReachesNobody, AlertRouteCells.tsx), because it is the same
+            fact: alerts routed here reach nobody. */}
+        {shifts.isError ? (
+          <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold text-destructive">
+            <BellOff size={13} aria-hidden="true" />
+            The roster could not be built — alerts routed through this rotation reach nobody.
+            {shifts.error instanceof Error ? ` (${shifts.error.message})` : ''}
+          </p>
+        ) : shifts.data ? (
+          <RosterStrip shifts={shifts.data.shifts ?? []} now={new Date().toISOString()} />
+        ) : (
+          <p className="text-xs text-muted-foreground">Loading roster…</p>
+        )}
+        {adding && (
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_80px] items-end gap-2 rounded-md border border-border p-2.5">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`exc-channel-${rotation.id}`}>Channel</Label>
+              <Select
+                id={`exc-channel-${rotation.id}`}
+                options={channels.map((c) => ({ value: c.id, label: c.name }))}
+                value={channelId}
+                onChange={setChannelId}
+                create={{ label: 'New channel…', onSelect: setNewChannelName }}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`exc-start-${rotation.id}`}>From</Label>
+              <Input id={`exc-start-${rotation.id}`} type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`exc-end-${rotation.id}`}>Until</Label>
+              <Input id={`exc-end-${rotation.id}`} type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`exc-note-${rotation.id}`}>Note</Label>
+              <Input id={`exc-note-${rotation.id}`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
+            </div>
+            <Button type="button" variant="primary" onClick={() => void onAdd()} disabled={!channelId || createException.isPending}>
+              Add
+            </Button>
+          </div>
+        )}
+        {exceptionList.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {exceptionList.map((e) => (
+              <li key={e.id} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span className="truncate">
+                  {channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8)} stands in {new Date(e.starts_at).toLocaleString()} –{' '}
+                  {new Date(e.ends_at).toLocaleString()}
+                  {e.note ? ` — ${e.note}` : ''}
+                </span>
+                {canWrite && (
+                  <Button type="button" variant="ghost" aria-label={`Remove stand-in for ${channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8)}`} onClick={() => void onRemove(e.id)}>
+                    <Trash2 size={13} />
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {newChannelName !== null && (
+        <ChannelDialog
+          org={org}
+          mailAvailable={mailAvailable}
+          initialName={newChannelName}
+          onClose={() => setNewChannelName(null)}
+          onCreated={(id) => {
+            setChannelId(id);
+            setNewChannelName(null);
+          }}
+        />
       )}
-      {exceptionList.length > 0 && (
-        <ul className="flex flex-col gap-1">
-          {exceptionList.map((e) => (
-            <li key={e.id} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span className="truncate">
-                {channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8)} stands in {new Date(e.starts_at).toLocaleString()} –{' '}
-                {new Date(e.ends_at).toLocaleString()}
-                {e.note ? ` — ${e.note}` : ''}
-              </span>
-              {canWrite && (
-                <Button type="button" variant="ghost" aria-label={`Remove stand-in for ${channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8)}`} onClick={() => void onRemove(e.id)}>
-                  <Trash2 size={13} />
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    </>
   );
 }

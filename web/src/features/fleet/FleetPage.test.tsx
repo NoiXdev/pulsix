@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { FleetPage } from './FleetPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -122,7 +123,6 @@ describe('FleetPage', () => {
   });
 
   it('applies the zone filter to the fleet request', async () => {
-    const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
@@ -136,13 +136,12 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByText('web-1');
-    await user.selectOptions(screen.getByLabelText('Zone'), 'z2');
+    await pickOption(screen, 'Zone', { value: 'z2' });
 
     await waitFor(() => expect(asked.at(-1)?.zone).toBe('z2'));
   });
 
   it('applies the monitoring group filter to the fleet request', async () => {
-    const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
@@ -156,7 +155,7 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByText('web-1');
-    await user.selectOptions(screen.getByLabelText('Monitoring group'), 'g1');
+    await pickOption(screen, 'Monitoring group', { value: 'g1' });
 
     await waitFor(() => expect(asked.at(-1)?.group).toBe('g1'));
   });

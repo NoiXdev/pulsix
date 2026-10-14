@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { ChannelsPage } from './ChannelsPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -95,7 +96,18 @@ describe('ChannelsPage', () => {
     expect(await screen.findByRole('note')).toHaveTextContent('outgoing mail settings');
     await user.click(screen.getByRole('button', { name: 'Add channel' }));
     const dialog = screen.getByRole('dialog', { name: 'Add channel' });
-    expect(within(dialog).getByRole('option', { name: /E-mail \(needs outgoing mail settings\)/ })).toBeDisabled();
+    // Picking the disabled E-mail row must be a no-op (Select.test.tsx's
+    // own "skips a disabled option" idiom, which proves it via onChange —
+    // there is no `disabled` HTML attribute a custom combobox row carries
+    // for toBeDisabled() to find). The combobox stays open with nothing
+    // chosen (Select.tsx's onSelectedItemChange returns early on a
+    // disabled item before closing), so the proof is that kind never
+    // flipped to email: the URL field, shown only for a webhook, is still
+    // there once the list is closed again.
+    await user.click(within(dialog).getByLabelText('Kind'));
+    await user.click(within(dialog).getByRole('option', { name: /E-mail \(needs outgoing mail settings\)/ }));
+    await user.keyboard('{Escape}');
+    expect(within(dialog).getByLabelText('URL')).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('Name'), 'ops hook');
     await user.type(within(dialog).getByLabelText('URL'), 'https://hooks.example.test/T0/B0/x');
     await user.click(within(dialog).getByRole('button', { name: 'Add header' }));
@@ -103,7 +115,7 @@ describe('ChannelsPage', () => {
     await user.type(within(dialog).getByLabelText('Header 1 value'), 'Bearer t0ken');
     await user.click(within(dialog).getByLabelText('Sign requests (X-Pulsix-Signature-256)'));
     await user.type(within(dialog).getByLabelText('Signing secret (16–256 characters)'), '0123456789abcdef0123');
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Create channel' }));
     await waitFor(() =>
       expect(posted).toEqual({
         kind: 'webhook', name: 'ops hook', enabled: true,
@@ -167,7 +179,7 @@ describe('ChannelsPage', () => {
     renderPage();
     const card = await screen.findByRole('region', { name: 'Weekly digest' });
     await user.click(within(card).getByLabelText('Send the weekly digest'));
-    await user.selectOptions(within(card).getByLabelText('Day'), 'fri');
+    await pickOption(within(card), 'Day', { value: 'fri' });
     await user.click(within(card).getByLabelText('ops hook'));
     await user.click(within(card).getByRole('button', { name: 'Save digest' }));
     await waitFor(() => expect(put).toEqual({ enabled: true, weekday: 'fri', time: '08:00', timezone: 'UTC', channels: ['c1'] }));

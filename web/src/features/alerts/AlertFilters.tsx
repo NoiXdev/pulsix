@@ -1,3 +1,4 @@
+import { Select } from '../../ui/Select.tsx';
 import type { AlertFilter } from '../../api/hooks/useAlerts.ts';
 
 export interface AlertFiltersProps {
@@ -5,13 +6,10 @@ export interface AlertFiltersProps {
   onChange: (value: AlertFilter) => void;
 }
 
-const FIELD =
-  'h-[30px] rounded-md border border-border bg-card px-2.5 text-xs text-foreground outline-none placeholder:text-muted-foreground';
-
 /** toTriBool/fromTriBool round-trip a three-way filter (any/true/false)
- * through a <select>, which has no native concept of "unset" beyond its
- * own empty-string option — the same shape FleetFilters' own zone/group
- * selects already use for "All". */
+ * through a Select, which has no native concept of "unset" beyond its own
+ * empty-string placeholder row — the same shape FleetFilters' own
+ * zone/group pickers already use for "All". */
 function toTriBool(v: boolean | undefined): string {
   return v === undefined ? '' : String(v);
 }
@@ -31,69 +29,69 @@ export function AlertFilters({ value, onChange }: AlertFiltersProps) {
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         State
-        <select
+        <Select
           aria-label="State"
-          className={FIELD}
+          options={[
+            { value: 'open', label: 'Open' },
+            { value: 'closed', label: 'Closed' },
+          ]}
           value={value.state ?? ''}
-          onChange={(e) => onChange({ ...value, state: (e.target.value || undefined) as AlertFilter['state'] })}
-        >
-          <option value="">All</option>
-          <option value="open">Open</option>
-          <option value="closed">Closed</option>
-        </select>
+          onChange={(v) => onChange({ ...value, state: (v || undefined) as AlertFilter['state'] })}
+          placeholder="All"
+        />
       </label>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Severity
-        <select
+        <Select
           aria-label="Severity"
-          className={FIELD}
+          options={[
+            { value: 'warn', label: 'Warn' },
+            { value: 'crit', label: 'Crit' },
+            { value: 'unknown', label: 'Unknown' },
+          ]}
           value={value.severity ?? ''}
-          onChange={(e) => onChange({ ...value, severity: (e.target.value || undefined) as AlertFilter['severity'] })}
-        >
-          <option value="">All</option>
-          <option value="warn">Warn</option>
-          <option value="crit">Crit</option>
-          <option value="unknown">Unknown</option>
-        </select>
+          onChange={(v) => onChange({ ...value, severity: (v || undefined) as AlertFilter['severity'] })}
+          placeholder="All"
+        />
       </label>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Scope
-        <select
+        <Select
           aria-label="Scope"
-          className={FIELD}
+          options={[
+            { value: 'tuple', label: 'Tuple' },
+            { value: 'host', label: 'Host' },
+          ]}
           value={value.scope ?? ''}
-          onChange={(e) => onChange({ ...value, scope: (e.target.value || undefined) as AlertFilter['scope'] })}
-        >
-          <option value="">All</option>
-          <option value="tuple">Tuple</option>
-          <option value="host">Host</option>
-        </select>
+          onChange={(v) => onChange({ ...value, scope: (v || undefined) as AlertFilter['scope'] })}
+          placeholder="All"
+        />
       </label>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Acknowledged
-        <select
+        <Select
           aria-label="Acknowledged"
-          className={FIELD}
+          options={[
+            { value: 'true', label: 'Acknowledged' },
+            { value: 'false', label: 'Unacknowledged' },
+          ]}
           value={toTriBool(value.acknowledged)}
-          onChange={(e) => onChange({ ...value, acknowledged: fromTriBool(e.target.value) })}
-        >
-          <option value="">Any</option>
-          <option value="true">Acknowledged</option>
-          <option value="false">Unacknowledged</option>
-        </select>
+          onChange={(v) => onChange({ ...value, acknowledged: fromTriBool(v) })}
+          placeholder="Any"
+        />
       </label>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Muted
-        <select
+        <Select
           aria-label="Muted"
-          className={FIELD}
+          options={[
+            { value: 'true', label: 'Muted' },
+            { value: 'false', label: 'Not muted' },
+          ]}
           value={toTriBool(value.muted)}
-          onChange={(e) => onChange({ ...value, muted: fromTriBool(e.target.value) })}
-        >
-          <option value="">Any</option>
-          <option value="true">Muted</option>
-          <option value="false">Not muted</option>
-        </select>
+          onChange={(v) => onChange({ ...value, muted: fromTriBool(v) })}
+          placeholder="Any"
+        />
       </label>
     </div>
   );

@@ -1,3 +1,4 @@
+import { Select } from '../../ui/Select.tsx';
 import type { MonitoringGroup, Zone } from '../../api/types.ts';
 import type { FleetFilter } from '../../api/hooks/useFleet.ts';
 
@@ -35,35 +36,23 @@ export function FleetFilters({ zones, groups, value, onChange, tagError }: Fleet
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Zone
-        <select
+        <Select
           aria-label="Zone"
-          className={FIELD}
+          options={zones.map((z) => ({ value: z.id, label: z.name }))}
           value={value.zone ?? ''}
-          onChange={(e) => onChange({ ...value, zone: e.target.value || undefined })}
-        >
-          <option value="">All zones</option>
-          {zones.map((z) => (
-            <option key={z.id} value={z.id}>
-              {z.name}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange({ ...value, zone: v || undefined })}
+          placeholder="All zones"
+        />
       </label>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Monitoring group
-        <select
+        <Select
           aria-label="Monitoring group"
-          className={FIELD}
+          options={groups.map((g) => ({ value: g.id, label: g.name }))}
           value={value.group ?? ''}
-          onChange={(e) => onChange({ ...value, group: e.target.value || undefined })}
-        >
-          <option value="">All groups</option>
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange({ ...value, group: v || undefined })}
+          placeholder="All groups"
+        />
       </label>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Tag

@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { type DigestInput, useDigest, useSetDigest } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel } from '../../api/types.ts';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 const DAYS: DigestInput['weekday'][] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABEL: Record<DigestInput['weekday'], string> = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
 
@@ -67,13 +67,13 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
       <div className="grid grid-cols-3 gap-2">
         <div className="flex flex-col gap-1">
           <Label htmlFor="digest-day">Day</Label>
-          <select id="digest-day" className={SELECT} value={weekday} onChange={(e) => setWeekday(e.target.value as DigestInput['weekday'])} disabled={!canWrite}>
-            {DAYS.map((d) => (
-              <option key={d} value={d}>
-                {DAY_LABEL[d]}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="digest-day"
+            options={DAYS.map((d) => ({ value: d, label: DAY_LABEL[d] }))}
+            value={weekday}
+            onChange={(v) => setWeekday(v as DigestInput['weekday'])}
+            disabled={!canWrite}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="digest-time">Time</Label>

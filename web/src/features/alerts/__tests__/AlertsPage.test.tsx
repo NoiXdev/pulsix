@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
+import { pickOption } from '../../../test/pickOption.ts';
 import { AlertsPage } from '../AlertsPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -123,12 +124,15 @@ describe('AlertsPage', () => {
     renderPage();
 
     await screen.findByText('disk · /var · use_pct');
-    expect(screen.queryByRole('button', { name: /acknowledge/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /snooze/i })).not.toBeInTheDocument();
+    // Anchored, not a bare /acknowledge/i: AlertFilters' own "Acknowledged"
+    // picker now renders a toggle button labelled "Open Acknowledged"
+    // (ui/Select.tsx, v0.4g) on every render regardless of role, and an
+    // unanchored match against "Acknowledged" finds it too.
+    expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^snooze$/i })).not.toBeInTheDocument();
   });
 
   it('applies the state filter to the alerts request', async () => {
-    const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -140,13 +144,12 @@ describe('AlertsPage', () => {
     renderPage();
 
     await screen.findByText(/No alerts match this view/);
-    await user.selectOptions(screen.getByLabelText('State'), 'open');
+    await pickOption(screen, 'State', { value: 'open' });
 
     await waitFor(() => expect(asked.at(-1)?.state).toBe('open'));
   });
 
   it('applies the severity, scope, acknowledged and muted filters to the alerts request', async () => {
-    const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -158,13 +161,13 @@ describe('AlertsPage', () => {
     renderPage();
 
     await screen.findByText(/No alerts match this view/);
-    await user.selectOptions(screen.getByLabelText('Severity'), 'crit');
+    await pickOption(screen, 'Severity', { value: 'crit' });
     await waitFor(() => expect(asked.at(-1)?.severity).toBe('crit'));
-    await user.selectOptions(screen.getByLabelText('Scope'), 'host');
+    await pickOption(screen, 'Scope', { value: 'host' });
     await waitFor(() => expect(asked.at(-1)?.scope).toBe('host'));
-    await user.selectOptions(screen.getByLabelText('Acknowledged'), 'true');
+    await pickOption(screen, 'Acknowledged', { value: 'true' });
     await waitFor(() => expect(asked.at(-1)?.acknowledged).toBe('true'));
-    await user.selectOptions(screen.getByLabelText('Muted'), 'false');
+    await pickOption(screen, 'Muted', { value: 'false' });
     await waitFor(() => expect(asked.at(-1)?.muted).toBe('false'));
   });
 

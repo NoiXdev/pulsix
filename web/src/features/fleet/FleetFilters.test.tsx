@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { pickOption } from '../../test/pickOption.ts';
 import { FleetFilters } from './FleetFilters.tsx';
 
 const ZONES = [
@@ -11,31 +11,34 @@ const GROUPS = [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 0,
 
 describe('FleetFilters', () => {
   it('reports a zone selection', async () => {
-    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<FleetFilters zones={ZONES} groups={GROUPS} value={{}} onChange={onChange} />);
 
-    await user.selectOptions(screen.getByLabelText('Zone'), 'z2');
+    await pickOption(screen, 'Zone', { value: 'z2' });
     expect(onChange).toHaveBeenCalledWith({ zone: 'z2' });
   });
 
   it('clears the zone filter when "All zones" is chosen again', async () => {
-    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<FleetFilters zones={ZONES} groups={GROUPS} value={{ zone: 'z1' }} onChange={onChange} />);
 
-    await user.selectOptions(screen.getByLabelText('Zone'), '');
+    await pickOption(screen, 'Zone', { value: '' });
     expect(onChange).toHaveBeenCalledWith({ zone: undefined });
   });
 
   it('reports a monitoring group selection by name', async () => {
-    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<FleetFilters zones={ZONES} groups={GROUPS} value={{}} onChange={onChange} />);
 
-    await user.selectOptions(screen.getByLabelText('Monitoring group'), 'g1');
+    // pickOption itself only finds a row by its exact label, so reaching
+    // "Web tier" here already proves the option exists under that name —
+    // the separate getByRole('option') the native-<select> version of
+    // this test ran afterwards doesn't carry over: Select's rows exist in
+    // the DOM only while the list is open (Select.tsx), and picking one
+    // closes it, unlike a native <select>'s <option>s, which stay queryable
+    // whether the control is open or not.
+    await pickOption(screen, 'Monitoring group', 'Web tier');
     expect(onChange).toHaveBeenCalledWith({ group: 'g1' });
-    expect(screen.getByRole('option', { name: 'Web tier' })).toBeInTheDocument();
   });
 
   it('reports a tag as a single key or key=value token, never building a selector', () => {

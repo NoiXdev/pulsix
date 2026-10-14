@@ -3,10 +3,9 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import type { AlertRoute, AlertRouteEventKind, AlertRouteInput, AlertRouteScope, AlertRouteSeverity } from '../../api/types.ts';
 import { WEEKDAY_OPTIONS, compileWindow, decompileWindow, type Weekday, type WindowDraft } from './alertRoute.ts';
-
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 /** A route's channel, trimmed to what the picker needs — never the full
  * NotifyChannel DTO, so a caller does not have to thread webhook secrets
@@ -163,38 +162,38 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
           Enabled
         </label>
         <Label htmlFor="rt-scope">Applies to</Label>
-        <select
+        <Select
           id="rt-scope"
-          className={SELECT}
+          options={[
+            { value: 'org', label: 'The whole organization' },
+            { value: 'monitoring_group', label: 'A monitoring group' },
+            { value: 'host', label: 'One host' },
+          ]}
           value={scope}
-          onChange={(e) => {
-            setScope(e.target.value as AlertRouteScope);
+          onChange={(v) => {
+            setScope(v as AlertRouteScope);
             setScopeId('');
           }}
-        >
-          <option value="org">The whole organization</option>
-          <option value="monitoring_group">A monitoring group</option>
-          <option value="host">One host</option>
-        </select>
+        />
         {scope === 'monitoring_group' && (
-          <select aria-label="Monitoring group" className={SELECT} value={scopeId} onChange={(e) => setScopeId(e.target.value)} required>
-            <option value="">Choose a group…</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            aria-label="Monitoring group"
+            options={groups.map((g) => ({ value: g.id, label: g.name }))}
+            value={scopeId}
+            onChange={setScopeId}
+            placeholder="Choose a group…"
+            required
+          />
         )}
         {scope === 'host' && (
-          <select aria-label="Host" className={SELECT} value={scopeId} onChange={(e) => setScopeId(e.target.value)} required>
-            <option value="">Choose a host…</option>
-            {hosts.map((h) => (
-              <option key={h.id} value={h.id}>
-                {h.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            aria-label="Host"
+            options={hosts.map((h) => ({ value: h.id, label: h.name }))}
+            value={scopeId}
+            onChange={setScopeId}
+            placeholder="Choose a host…"
+            required
+          />
         )}
         <fieldset className="flex flex-col gap-1.5 rounded-md border border-border p-2.5">
           <legend className="px-1 text-[11px] font-medium text-muted-foreground">Severity</legend>
@@ -253,14 +252,14 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
             </div>
           ) : (
             <>
-              <select aria-label="Rotation" className={SELECT} value={rotationId} onChange={(e) => setRotationId(e.target.value)} required>
-                <option value="">Choose a rotation…</option>
-                {rotations.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
+              <Select
+                aria-label="Rotation"
+                options={rotations.map((r) => ({ value: r.id, label: r.name }))}
+                value={rotationId}
+                onChange={setRotationId}
+                placeholder="Choose a rotation…"
+                required
+              />
               {rotations.length === 0 && <span className="text-xs text-muted-foreground">Set up an on-call rotation first.</span>}
             </>
           )}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
@@ -80,5 +81,40 @@ describe('RotationsPage', () => {
 
     expect(await screen.findByText(/roster could not be built/i)).toBeInTheDocument();
     expect(screen.queryByText(/loading roster/i)).not.toBeInTheDocument();
+  });
+
+  it('creates a channel from the stand-in picker and selects it', async () => {
+    const user = userEvent.setup();
+    // GET notification-channels has to be a function returning a list that
+    // grows to include the new channel, not a one-shot static value:
+    // creating a channel invalidates ['notification-channels', org], and
+    // the Channel picker's options come from that query's refetch, not
+    // from onCreated's id alone (v0.4g Task 5's own Deviation 3 — the same
+    // fix applies here).
+    const newChannel = { id: 'ch9', kind: 'webhook' as const, name: 'ops-pager', enabled: true, revision: 1, created_at: '', updated_at: '' };
+    let channels: Array<typeof newChannel> = [];
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/oncall-rotations': { rotations: [rotation] },
+      'GET /api/v1/orgs/acme/notification-channels': () => ({ channels, mail_available: true }),
+      'GET /api/v1/orgs/acme/oncall-rotations/rot1/shifts': { shifts: [] },
+      'GET /api/v1/orgs/acme/oncall-rotations/rot1/exceptions': { exceptions: [] },
+      'POST /api/v1/orgs/acme/notification-channels': () => {
+        channels = [...channels, newChannel];
+        return { channel: newChannel };
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Weekly')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add stand-in' }));
+    await user.click(await screen.findByLabelText('Channel'));
+    await user.keyboard('ops-pager');
+    await user.click(screen.getByRole('option', { name: /New channel/ }));
+    // The filter text arrives as the new channel's name (spec decision 5).
+    expect(screen.getByLabelText('Name')).toHaveValue('ops-pager');
+    await user.click(screen.getByRole('button', { name: 'Create channel' }));
+    expect(await screen.findByLabelText('Channel')).toHaveValue('ops-pager');
   });
 });

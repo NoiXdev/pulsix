@@ -141,7 +141,19 @@ export function ChannelsPage() {
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No channels yet.</p>}
       </Card>
       <DigestCard org={org} channels={list} canWrite={canWrite} />
-      {editing && <ChannelDialog org={org} channel={editing === 'new' ? undefined : editing} mailAvailable={mailAvailable} onClose={() => setEditing(null)} />}
+      {editing && (
+        <ChannelDialog
+          org={org}
+          channel={editing === 'new' ? undefined : editing}
+          mailAvailable={mailAvailable}
+          onClose={() => setEditing(null)}
+          // This page's own list already refreshes via useCreateChannel's
+          // invalidation, and nothing here needs the new id for itself (it
+          // isn't selecting a channel into another field) — unlike
+          // RotationsPage's stand-in picker, which is why onCreated exists.
+          onCreated={() => undefined}
+        />
+      )}
       {logOf && <DeliveryLog org={org} channel={logOf} onClose={() => setLogOf(null)} />}
     </>
   );
