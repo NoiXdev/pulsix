@@ -43,6 +43,10 @@ export function JumpHostsPage() {
   const bastionName = (id?: string | null) => list.find((b) => b.id === id)?.name ?? 'directly';
   // Pinning is inventory.write, the same gate the host card mirrors.
   const canWrite = may(orgInfo.data?.org.role, 'inventory.write');
+  // Gates BastionDialog's own Credential create row: credentials.write is
+  // admin, stricter than the inventory.write that gates jump host writes
+  // on this page itself (v0.4g Task 7 fix round).
+  const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
 
   return (
     <>
@@ -127,6 +131,7 @@ export function JumpHostsPage() {
           bastion={dialog.bastion}
           bastions={list}
           credentials={creds}
+          canCreateCredential={canCreateCredential}
           onClose={() => setDialog(null)}
           // This page's own list refetches from useCreateBastion's own
           // invalidation; nothing here needs the new id for itself.

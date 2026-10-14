@@ -25,6 +25,10 @@ export interface TemplateDialogProps {
   /** The template to edit; absent means create. */
   template?: { id: string; name: string };
   canReadCredentials: boolean;
+  /** Gates the Default SSH credential picker's own create row:
+   * credentials.write is admin, stricter than templates.write (v0.4g
+   * Task 7 fix round). */
+  canCreateCredential: boolean;
   onClose: () => void;
 }
 
@@ -37,7 +41,7 @@ export interface TemplateDialogProps {
  * display-only and rides the PUT as a keep marker (the server keeps the
  * sealed value); replacing it sends the new plaintext (templates/vars.ts).
  */
-export function TemplateDialog({ org, template, canReadCredentials, onClose }: TemplateDialogProps) {
+export function TemplateDialog({ org, template, canReadCredentials, canCreateCredential, onClose }: TemplateDialogProps) {
   const detail = useTemplate(org, template?.id ?? '');
   const playbooks = usePlaybooks(org);
   const credentials = useCredentials(org, { enabled: canReadCredentials });
@@ -74,6 +78,7 @@ export function TemplateDialog({ org, template, canReadCredentials, onClose }: T
         }}
         playbooks={playbooks.data?.playbooks ?? []}
         credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+        canCreateCredential={canCreateCredential}
         onClose={onClose}
       />
     );
@@ -83,6 +88,7 @@ export function TemplateDialog({ org, template, canReadCredentials, onClose }: T
       org={org}
       playbooks={playbooks.data?.playbooks ?? []}
       credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+      canCreateCredential={canCreateCredential}
       onClose={onClose}
     />
   );
@@ -100,12 +106,13 @@ interface Existing {
 }
 
 function TemplateForm({
-  org, existing, playbooks, credentials, onClose,
+  org, existing, playbooks, credentials, canCreateCredential, onClose,
 }: {
   org: string;
   existing?: Existing;
   playbooks: readonly { id: string; source: string; summary: string; path?: string }[];
   credentials: readonly { id: string; name: string; kind: string }[];
+  canCreateCredential: boolean;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -215,7 +222,7 @@ function TemplateForm({
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
-            create={{ label: 'New credential', onSelect: setNewCredentialName }}
+            create={canCreateCredential ? { label: 'New credential', onSelect: setNewCredentialName } : undefined}
           />
           <span className="text-[11px] text-muted-foreground">SSH key or password credential for hosts without one of their own.</span>
         </div>

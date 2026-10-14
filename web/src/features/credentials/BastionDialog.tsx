@@ -11,12 +11,17 @@ import { AddCredentialDialog } from './AddCredentialDialog.tsx';
 import { KIND_LABEL } from './labels.ts';
 
 export function BastionDialog({
-  org, bastion, bastions, credentials, onClose, onCreated, initialName,
+  org, bastion, bastions, credentials, canCreateCredential, onClose, onCreated, initialName,
 }: {
   org: string;
   bastion?: Bastion;
   bastions: readonly Bastion[];
   credentials: readonly Credential[];
+  /** Gates the Credential field's own create row: credentials.write is
+   * admin, stricter than whatever permission let the caller open this
+   * dialog in the first place (v0.4g Task 7 fix round — the create prop
+   * must not offer an action the signed-in role would get a 403 for). */
+  canCreateCredential: boolean;
   onClose: () => void;
   /** Called with the new jump host's id, only on a create (never an edit) — the quick-create row (v0.4g) uses it to select what it just made. */
   onCreated: (id: string) => void;
@@ -86,7 +91,7 @@ export function BastionDialog({
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
-            create={{ label: 'New credential', onSelect: setNewCredentialName }}
+            create={canCreateCredential ? { label: 'New credential', onSelect: setNewCredentialName } : undefined}
           />
         </div>
         <div className="flex flex-col gap-1">

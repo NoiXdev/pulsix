@@ -16,7 +16,17 @@ import { BastionDialog } from '../../credentials/BastionDialog.tsx';
 
 const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
-export function SettingsTab({ org, group, groups }: { org: string; group: InventoryGroup; groups: readonly InventoryGroupSummary[] }) {
+export function SettingsTab({
+  org, group, groups, canCreateCredential,
+}: {
+  org: string;
+  group: InventoryGroup;
+  groups: readonly InventoryGroupSummary[];
+  /** Gates BastionDialog's own Credential create row (v0.4g Task 7 fix
+   * round): credentials.write is admin, stricter than the inventory.write
+   * this tab's own save needs. */
+  canCreateCredential: boolean;
+}) {
   const toast = useToast();
   const navigate = useNavigate();
   const bastions = useBastions(org);
@@ -126,6 +136,7 @@ export function SettingsTab({ org, group, groups }: { org: string; group: Invent
           org={org}
           bastions={bastions.data?.bastions ?? []}
           credentials={credentials.data?.credentials ?? []}
+          canCreateCredential={canCreateCredential}
           initialName={newBastionName}
           onClose={() => setNewBastionName(null)}
           onCreated={(id) => {

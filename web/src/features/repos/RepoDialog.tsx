@@ -18,6 +18,10 @@ export interface RepoDialogProps {
    * key pin the last sync observed (SHA256:…), absent while unpinned. */
   repo?: { id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; vault_credential_id?: string; ssh_host_key?: string; pin_state?: string };
   credentials: readonly Credential[];
+  /** Gates both credential pickers' create rows: credentials.write is
+   * admin, stricter than the repos.write that gates this whole dialog
+   * (v0.4g Task 7 fix round). */
+  canCreateCredential: boolean;
   onClose: () => void;
 }
 
@@ -26,7 +30,7 @@ type FieldErrors = Partial<Record<keyof RepoFormValues, string>>;
 /** RepoDialog creates or edits one git repository. Its validation mirrors
  * the server (repos/validate.ts — the same messages) and a rejected save
  * surfaces the server's detail at the field it names. */
-export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps) {
+export function RepoDialog({ org, repo, credentials, canCreateCredential, onClose }: RepoDialogProps) {
   const toast = useToast();
   const create = useCreateRepo(org);
   const update = useUpdateRepo(org, repo?.id ?? '');
@@ -115,7 +119,11 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
-            create={{ label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'credential', name: text }) }}
+            create={
+              canCreateCredential
+                ? { label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'credential', name: text }) }
+                : undefined
+            }
           />
           <span className="text-[11px] text-muted-foreground">Deploy key or token the checkout authenticates with.</span>
         </div>
@@ -131,7 +139,11 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
             value={vaultCredentialId}
             onChange={setVaultCredentialId}
             placeholder="— none —"
-            create={{ label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }}
+            create={
+              canCreateCredential
+                ? { label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }
+                : undefined
+            }
           />
           {/* Two secrets, two fields: one reaches the repository, the
               other its contents. Only vault_password credentials are
@@ -219,6 +231,11 @@ export function RepoDialog({ org, repo, credentials, onClose }: RepoDialogProps)
           org={org}
           open
           initialName={addingCredential.name}
+          // The Credential field filters to git_key/git_token, Vault
+          // password to vault_password — neither matches the dialog's own
+          // ssh_key default, so without this the new credential would not
+          // appear as an option in the very field that created it.
+          initialKind={addingCredential.field === 'credential' ? 'git_key' : 'vault_password'}
           onClose={() => setAddingCredential(null)}
           onCreated={(id) => {
             if (addingCredential.field === 'credential') setCredentialId(id);

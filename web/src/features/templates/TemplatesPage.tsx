@@ -33,6 +33,10 @@ export function TemplatesPage() {
   const canWrite = may(orgInfo.data?.org.role, 'templates.write');
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const canReadCredentials = may(orgInfo.data?.org.role, 'credentials.read');
+  // Gates the Default SSH credential picker's own create row:
+  // credentials.write is admin, stricter than templates.write (v0.4g
+  // Task 7 fix round).
+  const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
   const credentials = useCredentials(org, { enabled: canReadCredentials });
   const runTemplate = useRunTemplateById(org);
 
@@ -131,12 +135,18 @@ export function TemplatesPage() {
         />
       )}
       {dialog === 'new' ? (
-        <TemplateDialog org={org} canReadCredentials={canReadCredentials} onClose={() => setDialog(null)} />
+        <TemplateDialog
+          org={org}
+          canReadCredentials={canReadCredentials}
+          canCreateCredential={canCreateCredential}
+          onClose={() => setDialog(null)}
+        />
       ) : dialog ? (
         <TemplateDialog
           org={org}
           template={{ id: dialog.id, name: dialog.name }}
           canReadCredentials={canReadCredentials}
+          canCreateCredential={canCreateCredential}
           onClose={() => setDialog(null)}
         />
       ) : null}

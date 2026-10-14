@@ -25,7 +25,19 @@ import { PinStateBadge } from './PinStateBadge.tsx';
  * role, not a permission list (see lib/roles.ts's doc comment), so this
  * mirrors the role→permission matrix client-side rather than reading a
  * permission list that does not exist. */
-export function HostSshCard({ org, hostId, managed, canWrite }: { org: string; hostId: string; managed: boolean; canWrite: boolean }) {
+export function HostSshCard({
+  org, hostId, managed, canWrite, canCreateCredential,
+}: {
+  org: string;
+  hostId: string;
+  managed: boolean;
+  canWrite: boolean;
+  /** Gates this card's own Credential create row and (forwarded) the one
+   * nested inside the Jump host create row's own BastionDialog:
+   * credentials.write is admin, stricter than the inventory.write that
+   * gates `canWrite` itself (v0.4g Task 7 fix round). */
+  canCreateCredential: boolean;
+}) {
   const ssh = useHostSSH(org, managed ? hostId : '');
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
@@ -40,11 +52,22 @@ export function HostSshCard({ org, hostId, managed, canWrite }: { org: string; h
       bastions={bastions.data?.bastions ?? []}
       credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
       canWrite={canWrite}
+      canCreateCredential={canCreateCredential}
     />
   );
 }
 
-function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: { org: string; hostId: string; current: HostSSH; bastions: readonly Bastion[]; credentials: readonly Credential[]; canWrite: boolean }) {
+function HostSshForm({
+  org, hostId, current, bastions, credentials, canWrite, canCreateCredential,
+}: {
+  org: string;
+  hostId: string;
+  current: HostSSH;
+  bastions: readonly Bastion[];
+  credentials: readonly Credential[];
+  canWrite: boolean;
+  canCreateCredential: boolean;
+}) {
   const toast = useToast();
   const save = useSetHostSSH(org, hostId);
   const preview = useHostInventoryPreview(org, hostId);
@@ -102,7 +125,7 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
             onChange={setCredentialId}
             placeholder="— none —"
             disabled={!canWrite}
-            create={{ label: 'New credential', onSelect: setNewCredentialName }}
+            create={canCreateCredential ? { label: 'New credential', onSelect: setNewCredentialName } : undefined}
           />
         </div>
         <fieldset className="flex flex-col gap-1">
@@ -165,6 +188,7 @@ function HostSshForm({ org, hostId, current, bastions, credentials, canWrite }: 
           org={org}
           bastions={bastions}
           credentials={credentials}
+          canCreateCredential={canCreateCredential}
           initialName={newBastionName}
           onClose={() => setNewBastionName(null)}
           onCreated={setBastionId}

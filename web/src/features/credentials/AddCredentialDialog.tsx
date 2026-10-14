@@ -9,7 +9,7 @@ import { useCreateCredential } from '../../api/hooks/useCredentials.ts';
 import { KIND_LABEL } from './labels.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
 
-type Kind = 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' | 'vault_password';
+export type CredentialKind = 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' | 'vault_password';
 
 interface Created {
   publicKey: string;
@@ -17,7 +17,7 @@ interface Created {
 }
 
 export function AddCredentialDialog({
-  org, open, onClose, onCreated, initialName,
+  org, open, onClose, onCreated, initialName, initialKind,
 }: {
   org: string;
   open: boolean;
@@ -31,10 +31,18 @@ export function AddCredentialDialog({
   onCreated: (id: string) => void;
   /** Prefills the name, from what had been typed into the picker. Same prop shape BastionDialog and ZoneDialog give. */
   initialName?: string;
+  /** Prefills the Kind field, for a create row opened from a picker that
+   * only accepts certain kinds (RepoDialog's Credential wants
+   * git_key/git_token, its Vault password wants vault_password) — without
+   * it the dialog's own ssh_key default produces a credential the
+   * triggering field's own filter excludes, which then renders as
+   * "(unavailable)" in the very picker that just created it (v0.4g Task 7
+   * fix round). Read only once, at mount, same as `initialName`. */
+  initialKind?: CredentialKind;
 }) {
   const toast = useToast();
   const create = useCreateCredential(org);
-  const [kind, setKind] = useState<Kind>('ssh_key');
+  const [kind, setKind] = useState<CredentialKind>(initialKind ?? 'ssh_key');
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
   const [name, setName] = useState(initialName ?? '');
   const [username, setUsername] = useState('');
@@ -117,7 +125,7 @@ export function AddCredentialDialog({
             id="cred-kind"
             options={Object.entries(KIND_LABEL).map(([k, label]) => ({ value: k, label }))}
             value={kind}
-            onChange={(value) => setKind(value as Kind)}
+            onChange={(value) => setKind(value as CredentialKind)}
           />
         </div>
         <div className="flex flex-col gap-1">

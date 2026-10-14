@@ -9,6 +9,10 @@ import { pickOption } from '../../test/pickOption.ts';
 import { ReposPage } from './ReposPage.tsx';
 
 const ORG = { org: { id: 'org-1', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
+// credentials.write is admin-only (lib/roles.ts), stricter than the
+// repos.write an operator already has — the credential create rows'
+// own permission gate (v0.4g Task 7 fix round) needs this role, not ORG's.
+const ADMIN_ORG = { org: { ...ORG.org, role: 'admin' } };
 const gitKey = { id: 'c1', name: 'deploy-key', kind: 'git_key', username: 'git', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
 const sshKey = { id: 'c2', name: 'host-login', kind: 'ssh_key', username: 'ansible', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 3 }, created_at: '', updated_at: '' };
 
@@ -125,7 +129,9 @@ describe('ReposPage', () => {
     };
     let created = false;
     mockApi({
-      'GET /api/v1/orgs/acme': ORG,
+      // Admin: credentials.write is required for the create row to appear
+      // at all (v0.4g Task 7 fix round) — an operator would not see it.
+      'GET /api/v1/orgs/acme': ADMIN_ORG,
       'GET /api/v1/orgs/acme/repos': { repos: [] },
       // A function, not a fixed value: the Credential picker's options
       // come from this query's own refetch after the credential's create
@@ -168,6 +174,60 @@ describe('ReposPage', () => {
     await user.click(screen.getByRole('button', { name: 'Done' }));
     await user.click(screen.getByRole('button', { name: 'Create repository' }));
     expect(repoPosted).toMatchObject({ credential_id: 'c9' });
+  });
+
+  // v0.4g Task 7 fix round, Important 1: credentials.write is admin
+  // (lib/roles.ts), stricter than the repos.write that already lets an
+  // operator open this whole dialog. Offering a create row an operator
+  // cannot actually use (the POST 403s) violates the spec's own condition
+  // 1 for a create row existing at all — so the row itself must not
+  // render, not merely appear disabled.
+  it('offers the Credential create row to an admin but not an operator', async () => {
+    const user = userEvent.setup();
+
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+    });
+    const { unmount } = renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+    await user.click(screen.getByLabelText('Credential'));
+    expect(screen.queryByRole('option', { name: /New credential/ })).not.toBeInTheDocument();
+    unmount();
+
+    mockApi({
+      'GET /api/v1/orgs/acme': ADMIN_ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+    await user.click(screen.getByLabelText('Credential'));
+    expect(screen.getByRole('option', { name: /New credential/ })).toBeInTheDocument();
+  });
+
+  // v0.4g Task 7 fix round, Important 2: AddCredentialDialog defaults Kind
+  // to ssh_key, which Vault password's own filter (vault_password only)
+  // excludes — without initialKind, a credential created from this row
+  // would show as "(unavailable)" in the very field that just made it.
+  it('opens the credential dialog with Vault password already chosen from that create row', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ADMIN_ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+
+    await user.click(screen.getByLabelText('Vault password'));
+    await user.keyboard('prod-vault');
+    await user.click(screen.getByRole('option', { name: /New credential/ }));
+
+    const addDialog = await screen.findByRole('dialog', { name: 'Add credential' });
+    expect(within(addDialog).getByLabelText('Name')).toHaveValue('prod-vault');
+    expect(within(addDialog).getByLabelText('Kind')).toHaveValue('Ansible Vault password');
   });
 
   it('shows the server-mirror validation message at the field without a round trip', async () => {

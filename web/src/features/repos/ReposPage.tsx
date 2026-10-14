@@ -28,6 +28,10 @@ export function ReposPage() {
   const repos = useRepos(org);
   const canWrite = may(orgInfo.data?.org.role, 'repos.write');
   const canReadCredentials = may(orgInfo.data?.org.role, 'credentials.read');
+  // Gates RepoDialog's two credential pickers' own create rows:
+  // credentials.write is admin, stricter than repos.write (v0.4g Task 7
+  // fix round).
+  const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
   const credentials = useCredentials(org, { enabled: !!orgInfo.data && canReadCredentials });
 
   const [dialog, setDialog] = useState<'new' | Repo | null>(null);
@@ -102,7 +106,7 @@ export function ReposPage() {
         />
       )}
       {dialog === 'new' ? (
-        <RepoDialog org={org} credentials={names} onClose={() => setDialog(null)} />
+        <RepoDialog org={org} credentials={names} canCreateCredential={canCreateCredential} onClose={() => setDialog(null)} />
       ) : dialog ? (
         <RepoDialog
           org={org}
@@ -112,6 +116,7 @@ export function ReposPage() {
             ssh_host_key: dialog.ssh_host_key, pin_state: dialog.pin_state,
           }}
           credentials={names}
+          canCreateCredential={canCreateCredential}
           onClose={() => setDialog(null)}
         />
       ) : null}

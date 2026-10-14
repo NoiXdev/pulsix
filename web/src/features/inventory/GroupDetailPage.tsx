@@ -3,6 +3,8 @@ import { Tag } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useGroup, useGroups } from '../../api/hooks/useInventory.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { may } from '../../lib/roles.ts';
 import { SchemaTab } from './tabs/SchemaTab.tsx';
 import { ValuesTab } from './tabs/ValuesTab.tsx';
 import { MembersTab } from './tabs/MembersTab.tsx';
@@ -35,6 +37,11 @@ export function GroupDetailPage() {
   const tab: TabKey = isTab(search.tab) ? search.tab : 'schema';
   const group = useGroup(org, id);
   const groups = useGroups(org);
+  const orgInfo = useOrg(org);
+  // Gates SettingsTab's own Jump host picker's nested Credential create
+  // row (BastionDialog) — credentials.write is admin, stricter than the
+  // inventory.write this page's own writes need (v0.4g Task 7 fix round).
+  const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
 
   const guard = useQueryGuard(group);
   if (guard) return guard;
@@ -77,7 +84,9 @@ export function GroupDetailPage() {
         {tab === 'members' && <MembersTab org={org} group={g} />}
         {tab === 'children' && <ChildrenTab org={org} group={g} groups={all} />}
         {tab === 'preview' && <PreviewTab org={org} group={g} />}
-        {tab === 'settings' && <SettingsTab key={`settings-${g.revision}`} org={org} group={g} groups={all} />}
+        {tab === 'settings' && (
+          <SettingsTab key={`settings-${g.revision}`} org={org} group={g} groups={all} canCreateCredential={canCreateCredential} />
+        )}
       </div>
     </>
   );

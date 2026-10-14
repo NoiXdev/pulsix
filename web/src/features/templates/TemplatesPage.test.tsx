@@ -9,6 +9,10 @@ import { pickOption } from '../../test/pickOption.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
+// credentials.write is admin-only (lib/roles.ts), stricter than the
+// templates.write an operator already has — the credential create row's
+// own permission gate (v0.4g Task 7 fix round) needs this role, not ORG's.
+const ADMIN_ORG = { org: { ...ORG.org, role: 'admin' } };
 const playbookRow = { id: 'pb1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' };
 const sshKey = { id: 'c1', name: 'host-login', kind: 'ssh_key', username: 'ansible', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
 const groupRow = { id: 'g1', name: 'webserver', description: '', parent_id: null, members: 0, group_fields: 0, host_fields: 0, complete: true, revision: 1 };
@@ -115,7 +119,9 @@ describe('TemplatesPage', () => {
     };
     let created = false;
     mockApi({
-      'GET /api/v1/orgs/acme': ORG,
+      // Admin: credentials.write is required for the create row to appear
+      // at all (v0.4g Task 7 fix round) — an operator would not see it.
+      'GET /api/v1/orgs/acme': ADMIN_ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [] },
       'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
       'GET /api/v1/orgs/acme/inventory/groups': { groups: [groupRow] },

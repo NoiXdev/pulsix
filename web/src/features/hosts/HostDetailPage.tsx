@@ -202,7 +202,7 @@ export function HostDetailPage() {
       <HostAlertRoutesCard org={org} hostId={h.id} canRead={may(role, 'channels.read')} />
       <EffectiveRulesPanel org={org} hostId={h.id} canRead={may(role, 'checks.read')} />
       <HostInventoryCard org={org} hostId={h.id} managed={h.managed} />
-      <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} />
+      <HostSshCard org={org} hostId={h.id} managed={h.managed} canWrite={canWrite} canCreateCredential={may(role, 'credentials.write')} />
       {h.managed && <ConnectionTestCard org={org} hostId={h.id} canWrite={canWrite} />}
       {bootstrapOpen && <BootstrapDialog org={org} hostId={h.id} hostName={h.name} onClose={() => setBootstrapOpen(false)} />}
 
