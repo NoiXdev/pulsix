@@ -4,10 +4,13 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Tag } from '../../ui/badge.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useCreateItemDecision, useItemDecisionPreview, useUpdateItemDecision } from '../../api/hooks/useItems.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import type { ItemDecision, ItemDecisionInput, ItemDecisionMatchKind, ItemDecisionPreviewInput, ItemDecisionScope, ItemDecisionVerdict } from '../../api/types.ts';
 
+// Still used by DecisionHostPicker's own search <input> below, which stays
+// a plain text field rather than becoming a Select.
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 const TEXTAREA =
   'min-h-24 w-full rounded-md border border-border bg-background p-2 text-xs text-foreground placeholder:text-muted-foreground';
@@ -159,11 +162,12 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   // through a row written before that rule existed, or by hand, never
   // through this dialog's own write path (onScopeChange above already
   // clamps it on every live scope change). Surfaced truthfully rather
-  // than silently coerced to "ignore": a <select> whose bound value
-  // matches no rendered <option> shows its sole remaining option as
-  // selected while leaving the real value untouched, which previously
-  // meant the screen read "Ignore" while Save would have re-persisted
-  // "Watch" underneath it — showing the stored value truthfully and
+  // than silently coerced to "ignore": without the disabled "watch" row
+  // below, Select would find no option matching the stored value "watch"
+  // and fall back to "watch (unavailable)" (its own selectedLabel) — a
+  // value this editor could never have written itself, read as broken
+  // rather than as the stored, still-honest verdict. Showing the stored
+  // value truthfully and
   // refusing to save beats showing one thing and submitting another.
   const orgWatchMismatch = scope === 'org' && verdict === 'watch';
   // Measured on the trimmed pattern, because that is exactly what body()
@@ -209,44 +213,45 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="decision-scope">Applies to</Label>
-            <select
+            <Select
               id="decision-scope"
-              className={SELECT}
               value={scope}
-              onChange={(e) => onScopeChange(e.target.value as ItemDecisionScope)}
-            >
-              <option value="org">The whole organization</option>
-              <option value="host">One host</option>
-            </select>
+              onChange={(v) => onScopeChange(v as ItemDecisionScope)}
+              options={[
+                { value: 'org', label: 'The whole organization' },
+                { value: 'host', label: 'One host' },
+              ]}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="decision-check">Check</Label>
-            <select id="decision-check" className={SELECT} required value={checkKey} onChange={(e) => setCheckKey(e.target.value)}>
-              {checkKeys.length === 0 && <option value="">No checks yet</option>}
-              {/* An edited decision's own check key, when the catalogue this
-                  dialog was given does not happen to contain it — the same
-                  fix RuleDialog's own group select carries: a select whose
-                  value matches no option falls back silently to the empty
-                  placeholder and swallows Save with no message. */}
-              {checkKey !== '' && !checkKeys.includes(checkKey) && <option value={checkKey}>{`${checkKey} (current binding)`}</option>}
-              {checkKeys.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="decision-check"
+              value={checkKey}
+              onChange={setCheckKey}
+              placeholder={checkKeys.length === 0 ? 'No checks yet' : undefined}
+              options={[
+                // An edited decision's own check key, when the catalogue
+                // this dialog was given does not happen to contain it — the
+                // same fix RuleDialog's own group select carries: a value
+                // Select cannot match falls back to "<id> (unavailable)"
+                // rather than the honest binding.
+                ...(checkKey !== '' && !checkKeys.includes(checkKey) ? [{ value: checkKey, label: `${checkKey} (current binding)` }] : []),
+                ...checkKeys.map((k) => ({ value: k, label: k })),
+              ]}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="decision-match-kind">Match kind</Label>
-            <select
+            <Select
               id="decision-match-kind"
-              className={SELECT}
               value={matchKind}
-              onChange={(e) => setMatchKind(e.target.value as ItemDecisionMatchKind)}
-            >
-              <option value="exact">Exact — one literal item name</option>
-              <option value="glob">Glob — a &apos;*&apos; pattern</option>
-            </select>
+              onChange={(v) => setMatchKind(v as ItemDecisionMatchKind)}
+              options={[
+                { value: 'exact', label: "Exact — one literal item name" },
+                { value: 'glob', label: "Glob — a '*' pattern" },
+              ]}
+            />
           </div>
         </div>
         {scope === 'host' && <DecisionHostPicker org={org} value={hostId} onChange={setHostId} />}
@@ -271,20 +276,23 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
         <PatternPreview body={debouncedBody} query={preview} />
         <div className="flex flex-col gap-1">
           <Label htmlFor="decision-verdict">Verdict</Label>
-          <select id="decision-verdict" className={SELECT} value={verdict} onChange={(e) => setVerdict(e.target.value as ItemDecisionVerdict)}>
-            <option value="ignore">Ignore — stop judging this item</option>
-            {scope === 'host' && <option value="watch">Watch — judge it even though a wider decision ignores it</option>}
-            {/* Renders the true stored value for the org+watch mismatch
-                case (see orgWatchMismatch's own comment) instead of letting
-                the select silently show "Ignore" for a "Watch" it still
-                holds — disabled, since this combination is not something
-                choosing it again from here could ever produce. */}
-            {orgWatchMismatch && (
-              <option value="watch" disabled>
-                Watch (stored outside this editor — has no effect at organization scope)
-              </option>
-            )}
-          </select>
+          <Select
+            id="decision-verdict"
+            value={verdict}
+            onChange={(v) => setVerdict(v as ItemDecisionVerdict)}
+            options={[
+              { value: 'ignore', label: 'Ignore — stop judging this item' },
+              ...(scope === 'host' ? [{ value: 'watch', label: 'Watch — judge it even though a wider decision ignores it' }] : []),
+              // Renders the true stored value for the org+watch mismatch
+              // case (see orgWatchMismatch's own comment) instead of letting
+              // the field silently show "Ignore" for a "Watch" it still
+              // holds — disabled, since this combination is not something
+              // choosing it again from here could ever produce.
+              ...(orgWatchMismatch
+                ? [{ value: 'watch', label: 'Watch (stored outside this editor — has no effect at organization scope)', disabled: true }]
+                : []),
+            ]}
+          />
           {scope === 'org' && !orgWatchMismatch && (
             <p className="text-[11px] text-muted-foreground">
               Watch is not offered at organization scope: watching is already what happens by default, so an organization-wide watch
@@ -438,15 +446,16 @@ function DecisionHostPicker({ org, value, onChange }: { org: string; value: stri
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
-      <select id="decision-host" className={SELECT} required value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Choose a monitored host…</option>
-        {currentMissing && <option value={value}>{`${value.slice(0, 8)} (current binding)`}</option>}
-        {listed.map((h) => (
-          <option key={h.id} value={h.id}>
-            {h.name}
-          </option>
-        ))}
-      </select>
+      <Select
+        id="decision-host"
+        placeholder="Choose a monitored host…"
+        value={value}
+        onChange={onChange}
+        options={[
+          ...(currentMissing ? [{ value, label: `${value.slice(0, 8)} (current binding)` }] : []),
+          ...listed.map((h) => ({ value: h.id, label: h.name })),
+        ]}
+      />
       {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
     </div>
   );

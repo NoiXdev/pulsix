@@ -3,6 +3,7 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useCheckRule, useCreateRule, useUpdateRule } from '../../api/hooks/useRules.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useHostItems } from '../../api/hooks/useItems.ts';
@@ -10,6 +11,8 @@ import { RuleForm } from './RuleForm.tsx';
 import { RuleExpression } from './RuleExpression.tsx';
 import type { MonitoringGroup, Rule, RuleFormValue, RuleInput, RuleMetric, RuleScope } from '../../api/types.ts';
 
+// Still used by RuleHostPicker's own search <input> below, which stays a
+// plain text field rather than becoming a Select.
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 
 /** lines turns a textarea's content into the string list the API takes,
@@ -226,26 +229,32 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="rule-metric">Metric</Label>
-            <select id="rule-metric" className={SELECT} value={metric} disabled={seeded} onChange={(e) => onMetricChange(e.target.value)}>
-              {metrics.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="rule-metric"
+              value={metric}
+              disabled={seeded}
+              onChange={onMetricChange}
+              // No hint here: the metric catalogue has no name besides this
+              // one (RuleMetricDTO carries only `name` and `check_key`), and
+              // check_key is always a prefix of name ("cpu" of
+              // "cpu.used_pct") — decoration, not disambiguation, since no
+              // two rows ever read the same (Move 2 only adds a hint where
+              // they could).
+              options={metrics.map((m) => ({ value: m.name, label: m.name }))}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="rule-severity">Severity</Label>
-            <select
+            <Select
               id="rule-severity"
-              className={SELECT}
               value={severity}
               disabled={seeded}
-              onChange={(e) => setSeverity(e.target.value as Rule['severity'])}
-            >
-              <option value="warn">Warning</option>
-              <option value="crit">Critical</option>
-            </select>
+              onChange={(v) => setSeverity(v as Rule['severity'])}
+              options={[
+                { value: 'warn', label: 'Warning' },
+                { value: 'crit', label: 'Critical' },
+              ]}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="rule-for">For (seconds)</Label>
@@ -260,33 +269,37 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
         )}
         <div className="flex flex-col gap-1">
           <Label htmlFor="rule-scope">Applies to</Label>
-          <select id="rule-scope" className={SELECT} value={scope} disabled={seeded} onChange={(e) => setScope(e.target.value as RuleScope)}>
-            <option value="org">The whole organization</option>
-            <option value="group" disabled={groups.length === 0}>
-              A monitoring group{groups.length === 0 ? ' (none yet)' : ''}
-            </option>
-            <option value="host">One host</option>
-            <option value="item">One item on a host</option>
-          </select>
+          <Select
+            id="rule-scope"
+            value={scope}
+            disabled={seeded}
+            onChange={(v) => setScope(v as RuleScope)}
+            options={[
+              { value: 'org', label: 'The whole organization' },
+              { value: 'group', label: `A monitoring group${groups.length === 0 ? ' (none yet)' : ''}`, disabled: groups.length === 0 },
+              { value: 'host', label: 'One host' },
+              { value: 'item', label: 'One item on a host' },
+            ]}
+          />
         </div>
         {scope === 'group' && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="rule-group">Monitoring group</Label>
-            <select id="rule-group" className={SELECT} required value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-              <option value="">Choose a monitoring group…</option>
-              {/* The rule's own binding, when the loaded list does not
-                  contain it — a failed GET /monitoring-groups is enough to
-                  empty that list, and without this option the select would
-                  fall back to the empty placeholder and refuse to submit
-                  (the same review finding CheckDialog's own group select
-                  fixed). */}
-              {currentGroupMissing && <option value={groupId}>{`group ${groupId} (current binding)`}</option>}
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="rule-group"
+              placeholder="Choose a monitoring group…"
+              value={groupId}
+              onChange={setGroupId}
+              options={[
+                // The rule's own binding, when the loaded list does not
+                // contain it — a failed GET /monitoring-groups is enough to
+                // empty that list, and without this option Select would
+                // fall back to "<id> (unavailable)" (the same review finding
+                // CheckDialog's own group select fixed).
+                ...(currentGroupMissing ? [{ value: groupId, label: `group ${groupId} (current binding)` }] : []),
+                ...groups.map((g) => ({ value: g.id, label: g.name })),
+              ]}
+            />
           </div>
         )}
         {(scope === 'host' || scope === 'item') && <RuleHostPicker org={org} value={hostId} onChange={setHostId} />}
@@ -382,15 +395,16 @@ function RuleHostPicker({ org, value, onChange }: { org: string; value: string; 
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
-      <select id="rule-host" className={SELECT} required value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Choose a monitored host…</option>
-        {currentMissing && <option value={value}>{`${value.slice(0, 8)} (current binding)`}</option>}
-        {listed.map((h) => (
-          <option key={h.id} value={h.id}>
-            {h.name}
-          </option>
-        ))}
-      </select>
+      <Select
+        id="rule-host"
+        placeholder="Choose a monitored host…"
+        value={value}
+        onChange={onChange}
+        options={[
+          ...(currentMissing ? [{ value, label: `${value.slice(0, 8)} (current binding)` }] : []),
+          ...listed.map((h) => ({ value: h.id, label: h.name })),
+        ]}
+      />
       {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
       {!hosts.data && hosts.isError && (
         <span role="alert" className="text-[11px] text-destructive">

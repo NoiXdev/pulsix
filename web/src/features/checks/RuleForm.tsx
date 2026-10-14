@@ -1,7 +1,7 @@
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 const TEXTAREA = 'min-h-16 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
 const NUMERIC_OPS = ['>', '>=', '<', '<=', '==', '!='];
@@ -52,13 +52,7 @@ export function RuleForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1">
           <Label htmlFor="rule-op">Operator</Label>
-          <select id="rule-op" className={SELECT} value={op} onChange={(e) => onOpChange(e.target.value)}>
-            {ops.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </select>
+          <Select id="rule-op" value={op} onChange={onOpChange} options={ops.map((o) => ({ value: o, label: o }))} />
         </div>
         {kind === 'numeric' && (
           <div className="flex flex-col gap-1">
@@ -83,14 +77,13 @@ export function RuleForm({
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="rule-clear-op">Clear condition</Label>
-            <select id="rule-clear-op" className={SELECT} value={clearOp} onChange={(e) => onClearOpChange(e.target.value)}>
-              <option value="">No clear condition</option>
-              {NUMERIC_OPS.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="rule-clear-op"
+              placeholder="No clear condition"
+              value={clearOp}
+              onChange={onClearOpChange}
+              options={NUMERIC_OPS.map((o) => ({ value: o, label: o }))}
+            />
           </div>
           {clearOp !== '' && (
             <div className="flex flex-col gap-1">

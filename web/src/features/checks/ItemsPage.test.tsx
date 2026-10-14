@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { ItemsPage } from './ItemsPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -113,8 +114,8 @@ describe('ItemsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'New decision' }));
-    await user.selectOptions(screen.getByLabelText('Check'), 'disk');
-    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    await pickOption(screen, 'Check', { value: 'disk' });
+    await pickOption(screen, 'Match kind', { value: 'glob' });
     await user.type(screen.getByLabelText('Pattern'), '/mnt/backup*');
     await user.type(screen.getByLabelText('Note'), 'Backup volume runs hot on purpose.');
     // Save stays disabled until the preview for the pattern just typed has

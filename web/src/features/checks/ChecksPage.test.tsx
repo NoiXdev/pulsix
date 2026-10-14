@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { ChecksPage } from './ChecksPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -107,7 +108,7 @@ describe('ChecksPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'New check' }));
-    await user.selectOptions(screen.getByLabelText('Plugin'), 'service');
+    await pickOption(screen, 'Plugin', { value: 'service' });
     await user.type(screen.getByLabelText('Key'), 'nginx');
     await user.clear(screen.getByLabelText('Interval (seconds)'));
     await user.type(screen.getByLabelText('Interval (seconds)'), '30');
@@ -170,8 +171,8 @@ describe('ChecksPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'New check' }));
-    await user.selectOptions(screen.getByLabelText('Binds to'), 'host');
-    await user.selectOptions(await screen.findByLabelText('Host'), 'h1');
+    await pickOption(screen, 'Binds to', { value: 'host' });
+    await pickOption(screen, 'Host', { value: 'h1' });
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(posted).toMatchObject({ binding_kind: 'host', host_id: 'h1', plugin: 'cpu' }));
@@ -199,10 +200,12 @@ describe('ChecksPage', () => {
     confirmed.mockRestore();
   });
 
-  // Review finding 1: a select whose value matches no option silently
-  // falls back to the empty placeholder, so the dialog claims the binding
-  // is unset and native constraint validation then swallows Save — no
-  // request, no message, a dead button. Both triggers are pinned here.
+  // Review finding 1: a value whose option is not in the loaded list must
+  // still render as itself rather than fall back silently — a Select
+  // finding no matching option shows "<id> (unavailable)" instead
+  // (Select.tsx's own selectedLabel comment), which here would misstate a
+  // real binding as something broken. Both the fallback option and the
+  // rendered value are pinned here.
   it('edits a host-bound definition whose host is past the first page of the picker', async () => {
     const user = userEvent.setup();
     let put: Record<string, unknown> | undefined;
@@ -222,11 +225,13 @@ describe('ChecksPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
-    const select = (await screen.findByLabelText('Host')) as HTMLSelectElement;
-    // The binding is stated as the binding, by name, and the form is valid.
-    expect(select.value).toBe('h9');
+    const select = (await screen.findByLabelText('Host')) as HTMLInputElement;
+    // The binding is stated as the binding, by name: the closed field shows
+    // the fallback option's own label, not "h9 (unavailable)".
+    expect(select.value).toBe('db-7 (current binding)');
+    await user.click(select);
     expect(screen.getByRole('option', { name: 'db-7 (current binding)' })).toBeInTheDocument();
-    expect(select.validity.valueMissing).toBe(false);
+    await user.keyboard('{Escape}');
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put).toMatchObject({ binding_kind: 'host', host_id: 'h9' }));
@@ -249,9 +254,8 @@ describe('ChecksPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
-    const select = (await screen.findByLabelText('Monitoring group')) as HTMLSelectElement;
-    expect(select.value).toBe('g1');
-    expect(select.validity.valueMissing).toBe(false);
+    const select = (await screen.findByLabelText('Monitoring group')) as HTMLInputElement;
+    expect(select.value).toBe('group g1 (current binding)');
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put).toMatchObject({ binding_kind: 'group', group_id: 'g1' }));

@@ -157,6 +157,18 @@ export function Select({
         {...cb.getInputProps({
           id,
           'aria-label': ariaLabel,
+          // downshift's own default, when no aria-label is given, points
+          // this at an internal label id (`${id}-label`) that Select never
+          // renders an element for — getLabelProps is never called, since
+          // every call site that wants a visible label renders its own
+          // <Label htmlFor> instead. A dangling aria-labelledby is worse
+          // than none: it both gives real assistive tech an empty
+          // accessible name instead of falling through to the <label for>
+          // association, and derails testing-library's getByLabelText,
+          // which stops at aria-labelledby before ever considering
+          // `.labels` (found migrating features/checks, v0.4g Task 4 —
+          // every picker there uses an external <Label>, not aria-label).
+          'aria-labelledby': undefined,
           disabled,
           onChange: (e) => setFilter((e.target as HTMLInputElement).value),
           // A native <dialog>'s Escape-to-close is not a bubbling DOM

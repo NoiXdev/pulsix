@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { RuleDialog } from './RuleDialog.tsx';
 import type { Rule, RuleMetric } from '../../api/types.ts';
 
@@ -149,7 +150,7 @@ describe('RuleDialog', () => {
 
     await user.type(screen.getByLabelText('Name'), 'High CPU');
     await user.type(screen.getByLabelText('Value'), '85');
-    await user.selectOptions(screen.getByLabelText('Clear condition'), '<');
+    await pickOption(screen, 'Clear condition', { value: '<' });
     await user.type(screen.getByLabelText('Clear value'), '80');
 
     // The one-way-door warning is accepted; the clear-condition one is not.
@@ -271,8 +272,8 @@ describe('RuleDialog', () => {
     });
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText('Applies to'), 'item');
-    await user.selectOptions(await screen.findByLabelText('Host'), 'h1');
+    await pickOption(screen, 'Applies to', { value: 'item' });
+    await pickOption(screen, 'Host', { value: 'h1' });
 
     const itemInput = (await screen.findByLabelText('Item')) as HTMLInputElement;
     const listId = itemInput.getAttribute('list');

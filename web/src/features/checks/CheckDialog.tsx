@@ -3,10 +3,13 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useCreateCheck, useUpdateCheck } from '../../api/hooks/useChecks.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlugin, MonitoringGroup } from '../../api/types.ts';
 
+// Still used by HostPicker's own search <input> below, which stays a plain
+// text field rather than becoming a Select.
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
@@ -130,19 +133,13 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-plugin">Plugin</Label>
-            <select
+            <Select
               id="check-plugin"
-              className={SELECT}
+              options={PLUGINS.map(([value, label]) => ({ value, label }))}
               value={plugin}
               disabled={seeded}
-              onChange={(e) => setPlugin(e.target.value as CheckPlugin)}
-            >
-              {PLUGINS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setPlugin(v as CheckPlugin)}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-key">Key</Label>
@@ -203,13 +200,16 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-binding">Binds to</Label>
-            <select id="check-binding" className={SELECT} value={bindingKind} onChange={(e) => setBindingKind(e.target.value as CheckBindingKind)}>
-              <option value="org">The whole organization</option>
-              <option value="group" disabled={groups.length === 0}>
-                A monitoring group{groups.length === 0 ? ' (none yet)' : ''}
-              </option>
-              <option value="host">One host</option>
-            </select>
+            <Select
+              id="check-binding"
+              options={[
+                { value: 'org', label: 'The whole organization' },
+                { value: 'group', label: `A monitoring group${groups.length === 0 ? ' (none yet)' : ''}`, disabled: groups.length === 0 },
+                { value: 'host', label: 'One host' },
+              ]}
+              value={bindingKind}
+              onChange={(v) => setBindingKind(v as CheckBindingKind)}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-interval">Interval (seconds)</Label>
@@ -227,21 +227,23 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         {bindingKind === 'group' && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-group">Monitoring group</Label>
-            <select id="check-group" className={SELECT} required value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-              <option value="">Choose a monitoring group…</option>
-              {/* The binding this definition already has, whenever the
-                  list does not contain it — a failed GET
-                  /monitoring-groups is enough to empty that list, and
-                  without this option the select would show the empty
-                  placeholder, claim the binding was unset and then refuse
-                  to submit at all (review finding 1). */}
-              {currentGroupMissing && <option value={groupId}>{`group ${groupId} (current binding)`}</option>}
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="check-group"
+              placeholder="Choose a monitoring group…"
+              value={groupId}
+              onChange={setGroupId}
+              options={[
+                // The binding this definition already has, whenever the
+                // list does not contain it — a failed GET
+                // /monitoring-groups is enough to empty that list, and
+                // without this option Select has nothing to match groupId
+                // against and falls back to "<id> (unavailable)" (its own
+                // selectedLabel), reading as broken for a binding that is
+                // perfectly valid (review finding 1).
+                ...(currentGroupMissing ? [{ value: groupId, label: `group ${groupId} (current binding)` }] : []),
+                ...groups.map((g) => ({ value: g.id, label: g.name })),
+              ]}
+            />
           </div>
         )}
         {bindingKind === 'host' && (
@@ -319,15 +321,16 @@ function HostPicker({
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
-      <select id="check-host" className={SELECT} required value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Choose a monitored host…</option>
-        {currentMissing && <option value={value}>{`${currentName ?? value} (current binding)`}</option>}
-        {listed.map((h) => (
-          <option key={h.id} value={h.id}>
-            {h.name}
-          </option>
-        ))}
-      </select>
+      <Select
+        id="check-host"
+        placeholder="Choose a monitored host…"
+        value={value}
+        onChange={onChange}
+        options={[
+          ...(currentMissing ? [{ value, label: `${currentName ?? value} (current binding)` }] : []),
+          ...listed.map((h) => ({ value: h.id, label: h.name })),
+        ]}
+      />
       {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
       {!hosts.data && hosts.isError && (
         <span role="alert" className="text-[11px] text-destructive">

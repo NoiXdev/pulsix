@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { ItemDecisionDialog } from './ItemDecisionDialog.tsx';
 
 const CHECK_KEYS = ['disk', 'service'];
@@ -32,7 +33,7 @@ describe('ItemDecisionDialog', () => {
     });
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    await pickOption(screen, 'Match kind', { value: 'glob' });
     await user.type(screen.getByLabelText('Pattern'), '/mnt/*');
 
     // The preview debounces (300ms) rather than firing per keystroke, and
@@ -54,15 +55,21 @@ describe('ItemDecisionDialog', () => {
 
     // Organization scope is the default: no watch option, and a line
     // saying why it is absent rather than leaving it to be puzzled over.
-    const verdictAtOrg = screen.getByLabelText('Verdict') as HTMLSelectElement;
-    expect([...verdictAtOrg.options].map((o) => o.value)).toEqual(['ignore']);
+    // Select only renders its rows while open, unlike a native <select>'s
+    // always-present <option> list, so the picker is opened first; data-value
+    // is read rather than the accessible name, the same reason pickOption
+    // reads it instead of textContent (a hinted row's name would include it).
+    await user.click(screen.getByLabelText('Verdict'));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-value'))).toEqual(['ignore']);
+    await user.keyboard('{Escape}');
     expect(screen.getByText(/watch is not offered at organization scope/i)).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText('Applies to'), 'host');
-    await user.selectOptions(await screen.findByLabelText('Host'), 'h1');
+    await pickOption(screen, 'Applies to', { value: 'host' });
+    await pickOption(screen, 'Host', { value: 'h1' });
 
-    const verdictAtHost = screen.getByLabelText('Verdict') as HTMLSelectElement;
-    expect([...verdictAtHost.options].map((o) => o.value)).toEqual(['ignore', 'watch']);
+    await user.click(screen.getByLabelText('Verdict'));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-value'))).toEqual(['ignore', 'watch']);
+    await user.keyboard('{Escape}');
     expect(screen.queryByText(/watch is not offered at organization scope/i)).not.toBeInTheDocument();
   });
 
@@ -83,7 +90,7 @@ describe('ItemDecisionDialog', () => {
     });
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    await pickOption(screen, 'Match kind', { value: 'glob' });
     await user.type(screen.getByLabelText('Pattern'), '/mnt/*');
     await screen.findByText('Matches 350 items');
 
@@ -188,7 +195,7 @@ describe('ItemDecisionDialog', () => {
     });
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    await pickOption(screen, 'Match kind', { value: 'glob' });
     // Clicked immediately after typing: well inside the 300ms debounce
     // window, before a preview for "*" has even been asked for, let alone
     // answered with its real (huge) total. Save must already be disabled
@@ -230,7 +237,7 @@ describe('ItemDecisionDialog', () => {
     });
     renderDialog();
 
-    await user.selectOptions(screen.getByLabelText('Match kind'), 'glob');
+    await pickOption(screen, 'Match kind', { value: 'glob' });
     await user.type(screen.getByLabelText('Pattern'), '*');
 
     // The failure is surfaced — it is not silent — and Save stays
@@ -263,9 +270,12 @@ describe('ItemDecisionDialog', () => {
 
     // The true stored value is shown — "Watch", not a silent "Ignore" —
     // and Save is disabled until the operator resolves the mismatch
-    // themselves (by picking Ignore, or by scoping it to a host).
-    const verdict = screen.getByLabelText('Verdict') as HTMLSelectElement;
-    expect(verdict.value).toBe('watch');
+    // themselves (by picking Ignore, or by scoping it to a host). Select
+    // shows a row's label rather than its raw value once closed (there is
+    // no native .value to read any more), so the assertion reads the
+    // rendered text instead of the option value.
+    const verdict = screen.getByLabelText('Verdict') as HTMLInputElement;
+    expect(verdict.value).toMatch(/^Watch/);
     expect(await screen.findByRole('alert')).toHaveTextContent(/stored as an organization-wide watch/i);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });

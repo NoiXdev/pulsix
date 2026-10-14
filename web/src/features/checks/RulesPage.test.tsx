@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { RulesPage } from './RulesPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -168,12 +169,12 @@ describe('RulesPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New rule' }));
     await user.type(screen.getByLabelText('Name'), 'High CPU');
-    await user.selectOptions(screen.getByLabelText('Metric'), 'cpu.used_pct');
-    await user.selectOptions(screen.getByLabelText('Operator'), '>');
+    await pickOption(screen, 'Metric', { value: 'cpu.used_pct' });
+    await pickOption(screen, 'Operator', { value: '>' });
     await user.type(screen.getByLabelText('Value'), '90');
     // A numeric metric's optional clear condition, for the hysteresis pair
     // internal/rules' Form.Compile builds.
-    await user.selectOptions(screen.getByLabelText('Clear condition'), '<');
+    await pickOption(screen, 'Clear condition', { value: '<' });
     await user.type(screen.getByLabelText('Clear value'), '80');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -208,8 +209,8 @@ describe('RulesPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New rule' }));
     await user.type(screen.getByLabelText('Name'), 'Service down');
-    await user.selectOptions(screen.getByLabelText('Metric'), 'service.state');
-    await user.selectOptions(screen.getByLabelText('Operator'), '!=');
+    await pickOption(screen, 'Metric', { value: 'service.state' });
+    await pickOption(screen, 'Operator', { value: '!=' });
     await user.type(screen.getByLabelText('Label'), 'running');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -236,8 +237,8 @@ describe('RulesPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New rule' }));
     await user.type(screen.getByLabelText('Name'), 'Service unhealthy');
-    await user.selectOptions(screen.getByLabelText('Metric'), 'service.state');
-    await user.selectOptions(screen.getByLabelText('Operator'), 'in');
+    await pickOption(screen, 'Metric', { value: 'service.state' });
+    await pickOption(screen, 'Operator', { value: 'in' });
     await user.type(screen.getByLabelText('Labels (one per line)'), 'failed\ndead');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -264,8 +265,8 @@ describe('RulesPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New rule' }));
     await user.type(screen.getByLabelText('Name'), 'Host CPU');
-    await user.selectOptions(screen.getByLabelText('Applies to'), 'host');
-    await user.selectOptions(await screen.findByLabelText('Host'), 'h1');
+    await pickOption(screen, 'Applies to', { value: 'host' });
+    await pickOption(screen, 'Host', { value: 'h1' });
     await user.type(screen.getByLabelText('Value'), '90');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
