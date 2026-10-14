@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { pickOption } from '../../../test/pickOption.ts';
 import { SchemaForm } from './SchemaForm.tsx';
 import { keepMarker } from './secrets.ts';
 import type { Problem, SchemaField, Vars } from './types.ts';
@@ -45,7 +46,7 @@ describe('SchemaForm', () => {
     await user.type(screen.getByLabelText('env'), 'prod');
     await user.type(screen.getByLabelText('workers'), '8');
     await user.type(screen.getByLabelText('ratio'), '0.5');
-    await user.selectOptions(screen.getByLabelText('php'), '8.4');
+    await pickOption(screen, 'php', { value: '8.4' });
     await user.click(screen.getByLabelText('debug'));
     expect(current()).toEqual({ env: 'prod', workers: 8, ratio: 0.5, php: '8.4', debug: true });
     await user.clear(screen.getByLabelText('env'));

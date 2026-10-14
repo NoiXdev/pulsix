@@ -3,6 +3,7 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -14,10 +15,9 @@ import { SchemaBuilder } from '../inventory/schema/SchemaBuilder.tsx';
 import { problemsFromError } from '../inventory/schema/paths.ts';
 import type { Problem, VarSchema, Vars } from '../inventory/schema/types.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
+import { KIND_LABEL } from '../credentials/labels.ts';
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { toEditableVars, varsForPut } from './vars.ts';
-
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 export interface TemplateDialogProps {
   org: string;
@@ -172,16 +172,14 @@ function TemplateForm({
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="template-playbook">Playbook</Label>
-            <select id="template-playbook" className={SELECT} required value={playbookId} onChange={(e) => setPlaybookId(e.target.value)}>
-              <option value="" disabled>
-                Choose a playbook…
-              </option>
-              {playbooks.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.source === 'repo' ? `repo: ${p.path ?? ''}` : p.summary || 'editor playbook'}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="template-playbook"
+              required
+              options={playbooks.map((p) => ({ value: p.id, label: p.source === 'repo' ? `repo: ${p.path ?? ''}` : p.summary || 'editor playbook' }))}
+              value={playbookId}
+              onChange={setPlaybookId}
+              placeholder="Choose a playbook…"
+            />
           </div>
         </div>
         <ScopePicker org={org} value={scope} onChange={setScope} />
@@ -204,14 +202,16 @@ function TemplateForm({
         )}
         <div className="flex flex-col gap-1">
           <Label htmlFor="template-credential">Default SSH credential</Label>
-          <select id="template-credential" className={SELECT} value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
-            <option value="">— none —</option>
-            {credentials.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="template-credential"
+            // This list mixes SSH keys and SSH passwords (see the filter in
+            // TemplateDialog above), and nothing stops two of either kind
+            // sharing a name.
+            options={credentials.map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+            value={credentialId}
+            onChange={setCredentialId}
+            placeholder="— none —"
+          />
           <span className="text-[11px] text-muted-foreground">SSH key or password credential for hosts without one of their own.</span>
         </div>
         {error && (

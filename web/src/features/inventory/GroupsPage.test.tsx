@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { GroupsPage } from './GroupsPage.tsx';
 
 const summary = (id: string, name: string, parent_id: string | null, extra = {}) => ({
@@ -62,7 +63,7 @@ describe('GroupsPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Add group' }));
     await user.type(screen.getByLabelText('Name'), 'dbserver');
-    await user.selectOptions(screen.getByLabelText('Parent'), 'p');
+    await pickOption(screen, 'Parent', { value: 'p' });
     await user.click(screen.getByRole('button', { name: 'Create group' }));
     expect(await screen.findByText('GROUP DETAIL')).toBeInTheDocument();
     expect(posted).toEqual({ name: 'dbserver', parent_id: 'p' });

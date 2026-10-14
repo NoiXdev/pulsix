@@ -3,12 +3,11 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCreateGroup } from '../../api/hooks/useInventory.ts';
 import type { InventoryGroupSummary } from '../../api/types.ts';
 import { orderTree } from './tree.ts';
-
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 export function CreateGroupDialog({
   org, open, onClose, groups, fixedParent, onCreated,
@@ -52,15 +51,22 @@ export function CreateGroupDialog({
         {!fixedParent && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="group-parent">Parent</Label>
-            <select id="group-parent" className={SELECT} value={parent} onChange={(e) => setParent(e.target.value)}>
-              <option value="">— none (top level) —</option>
-              {orderTree(groups).map(({ group, depth }) => (
-                <option key={group.id} value={group.id}>
-                  {'  '.repeat(depth)}
-                  {group.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              id="group-parent"
+              // The hint names each row's own parent, so two groups sharing
+              // a name in different branches of the tree stay tellable
+              // apart; the indentation (inside the label, not a separate
+              // column) is what still reads as a tree once the combobox
+              // collapses the list to one line.
+              options={orderTree(groups).map(({ group, depth }) => ({
+                value: group.id,
+                label: `${'  '.repeat(depth)}${group.name}`,
+                hint: groups.find((g) => g.id === group.parent_id)?.name,
+              }))}
+              value={parent}
+              onChange={setParent}
+              placeholder="— none (top level) —"
+            />
           </div>
         )}
         <div className="flex flex-col gap-1">

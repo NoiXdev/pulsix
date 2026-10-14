@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../../ui/button.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
+import { Select } from '../../../ui/Select.tsx';
 import { childPath, indexPath, inputId, problemAt } from './paths.ts';
 import { isKeepMarker, isRecord, type KeepMarker } from './secrets.ts';
 import type { FieldType, Problem, SchemaField, Vars } from './types.ts';
@@ -19,9 +20,6 @@ export interface SchemaFormProps {
   /** Path of this (nested) form inside the document. */
   pathPrefix?: string;
 }
-
-const SELECT =
-  'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50';
 
 /**
  * SchemaForm renders a form for any variable schema (spec §6) as a
@@ -148,19 +146,16 @@ export function ScalarInput({ id, field, value, onChange, disabled, invalid, ari
   switch (field.type) {
     case 'enum':
       return (
-        <select
-          {...common}
-          className={SELECT}
+        <Select
+          id={id}
+          disabled={disabled}
+          invalid={invalid}
+          aria-label={ariaLabel}
+          options={(field.options ?? []).map((o) => ({ value: o, label: o }))}
           value={typeof value === 'string' ? value : ''}
-          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
-        >
-          <option value="">{field.default !== undefined ? `default (${String(field.default)})` : '—'}</option>
-          {(field.options ?? []).map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange(v === '' ? undefined : v)}
+          placeholder={field.default !== undefined ? `default (${String(field.default)})` : '—'}
+        />
       );
     case 'int':
     case 'float':

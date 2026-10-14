@@ -3,20 +3,24 @@ import { useNavigate } from '@tanstack/react-router';
 import { Button } from '../../../ui/button.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
+import { Select } from '../../../ui/Select.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { useDeleteGroup, useUpdateGroup } from '../../../api/hooks/useInventory.ts';
 import { useBastions } from '../../../api/hooks/useSsh.ts';
+import { useCredentials } from '../../../api/hooks/useCredentials.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
 import { descendantIds, orderTree } from '../tree.ts';
 import { StaleNotice } from './StaleNotice.tsx';
+import { BastionDialog } from '../../credentials/BastionDialog.tsx';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
+const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 export function SettingsTab({ org, group, groups }: { org: string; group: InventoryGroup; groups: readonly InventoryGroupSummary[] }) {
   const toast = useToast();
   const navigate = useNavigate();
   const bastions = useBastions(org);
+  const credentials = useCredentials(org);
   const update = useUpdateGroup(org, group.id);
   const remove = useDeleteGroup(org);
   const [name, setName] = useState(group.name);
@@ -24,6 +28,8 @@ export function SettingsTab({ org, group, groups }: { org: string; group: Invent
   const [parent, setParent] = useState(group.parent_id ?? '');
   const [bastion, setBastion] = useState(group.bastion_id ?? '');
   const [stale, setStale] = useState(false);
+  // True while the "New jump host…" row's dialog is open.
+  const [addingBastion, setAddingBastion] = useState(false);
   const excluded = descendantIds(groups, group.id).add(group.id);
 
   async function save(e: FormEvent) {
@@ -49,59 +55,82 @@ export function SettingsTab({ org, group, groups }: { org: string; group: Invent
   }
 
   return (
-    <form onSubmit={save} className="flex max-w-[560px] flex-col gap-4">
-      {stale && <StaleNotice org={org} />}
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="settings-name">Name</Label>
-        <Input id="settings-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="settings-description">Description</Label>
-        <Input id="settings-description" value={description} onChange={(e) => setDescription(e.target.value)} />
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="settings-parent">Parent</Label>
-        <select id="settings-parent" className={SELECT} value={parent} onChange={(e) => setParent(e.target.value)}>
-          <option value="">— none (top level) —</option>
-          {orderTree(groups)
-            .filter(({ group: g }) => !excluded.has(g.id))
-            .map(({ group: g, depth }) => (
-              <option key={g.id} value={g.id}>
-                {'  '.repeat(depth)}
-                {g.name}
-              </option>
-            ))}
-        </select>
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="settings-bastion">Jump host</Label>
-        {bastions.data ? (
-          <select id="settings-bastion" className={SELECT} value={bastion} onChange={(e) => setBastion(e.target.value)}>
-            <option value="">— none (inherit from parent groups or the zone) —</option>
-            {(bastions.data.bastions ?? []).map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          // No id here on purpose: the select above (and its options) is
-          // what <Label htmlFor="settings-bastion"> names, so a caller
-          // finding this field by label (getByLabelText) reliably waits
-          // for the bastions list to be loaded rather than matching a
-          // control whose options are not there yet.
-          <div className={`${SELECT} flex items-center text-muted-foreground`}>Loading…</div>
-        )}
-        <span className="text-[11px] text-muted-foreground">Resolution: host → inventory group → zone default. Chains are rendered as ProxyJump.</span>
-      </div>
-      <div className="flex justify-between">
-        <Button type="button" variant="destructive" onClick={() => void onDelete()}>
-          Delete group
-        </Button>
-        <Button type="submit" variant="primary" disabled={update.isPending}>
-          Save
-        </Button>
-      </div>
-    </form>
+    // The create-row dialog renders outside this <form>, not inside it:
+    // BastionDialog's own <form> would otherwise be a DOM descendant of
+    // this one, and a native "submit" event bubbles through <dialog> just
+    // like anything else — clicking "Create jump host" would fire this
+    // form's own onSubmit too.
+    <>
+      <form onSubmit={save} className="flex max-w-[560px] flex-col gap-4">
+        {stale && <StaleNotice org={org} />}
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="settings-name">Name</Label>
+          <Input id="settings-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="settings-description">Description</Label>
+          <Input id="settings-description" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="settings-parent">Parent</Label>
+          <Select
+            id="settings-parent"
+            // The hint names each row's own parent, so two groups sharing a
+            // name in different branches of the tree stay tellable apart.
+            options={orderTree(groups)
+              .filter(({ group: g }) => !excluded.has(g.id))
+              .map(({ group: g, depth }) => ({
+                value: g.id,
+                label: `${'  '.repeat(depth)}${g.name}`,
+                hint: groups.find((p) => p.id === g.parent_id)?.name,
+              }))}
+            value={parent}
+            onChange={setParent}
+            placeholder="— none (top level) —"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="settings-bastion">Jump host</Label>
+          {bastions.data ? (
+            <Select
+              id="settings-bastion"
+              options={(bastions.data.bastions ?? []).map((b) => ({ value: b.id, label: b.name }))}
+              value={bastion}
+              onChange={setBastion}
+              placeholder="— none (inherit from parent groups or the zone) —"
+              create={{ label: 'New jump host…', onSelect: () => setAddingBastion(true) }}
+            />
+          ) : (
+            // No id here on purpose: the select above (and its options) is
+            // what <Label htmlFor="settings-bastion"> names, so a caller
+            // finding this field by label (getByLabelText) reliably waits
+            // for the bastions list to be loaded rather than matching a
+            // control whose options are not there yet.
+            <div className={`${LOADING_FIELD} flex items-center text-muted-foreground`}>Loading…</div>
+          )}
+          <span className="text-[11px] text-muted-foreground">Resolution: host → inventory group → zone default. Chains are rendered as ProxyJump.</span>
+        </div>
+        <div className="flex justify-between">
+          <Button type="button" variant="destructive" onClick={() => void onDelete()}>
+            Delete group
+          </Button>
+          <Button type="submit" variant="primary" disabled={update.isPending}>
+            Save
+          </Button>
+        </div>
+      </form>
+      {addingBastion && (
+        <BastionDialog
+          org={org}
+          bastions={bastions.data?.bastions ?? []}
+          credentials={credentials.data?.credentials ?? []}
+          onClose={() => setAddingBastion(false)}
+          onCreated={(id) => {
+            setBastion(id);
+            setAddingBastion(false);
+          }}
+        />
+      )}
+    </>
   );
 }

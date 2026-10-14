@@ -10,13 +10,15 @@ import type { Bastion, Credential } from '../../api/types.ts';
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
 export function BastionDialog({
-  org, bastion, bastions, credentials, onClose,
+  org, bastion, bastions, credentials, onClose, onCreated,
 }: {
   org: string;
   bastion?: Bastion;
   bastions: readonly Bastion[];
   credentials: readonly Credential[];
   onClose: () => void;
+  /** Called with the new jump host's id, only on a create (never an edit) — the quick-create row (v0.4g) uses it to select what it just made. */
+  onCreated: (id: string) => void;
 }) {
   const toast = useToast();
   const create = useCreateBastion(org);
@@ -34,8 +36,12 @@ export function BastionDialog({
     setError(null);
     const body = { name, address, port: Number(port) || 22, username, credential_id: credentialId || undefined, via_bastion_id: via || undefined };
     try {
-      if (bastion) await update.mutateAsync(body);
-      else await create.mutateAsync(body);
+      if (bastion) {
+        await update.mutateAsync(body);
+      } else {
+        const res = await create.mutateAsync(body);
+        onCreated(res.bastion.id);
+      }
       toast.show(`Jump host ${name} saved`);
       onClose();
     } catch (err) {
@@ -96,7 +102,7 @@ export function BastionDialog({
             Cancel
           </Button>
           <Button type="submit" variant="primary">
-            Save jump host
+            {bastion ? 'Save jump host' : 'Create jump host'}
           </Button>
         </div>
       </form>

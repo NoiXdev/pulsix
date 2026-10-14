@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
 
 const SCHEMA = {
@@ -84,7 +85,8 @@ describe('GroupDetailPage', () => {
       },
     });
     renderAt('/o/acme/groups/g1?tab=values');
-    await user.selectOptions(await screen.findByLabelText('env'), 'staging');
+    await screen.findByLabelText('env');
+    await pickOption(screen, 'env', { value: 'staging' });
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(seen?.headers.get('If-Match')).toBe('"3"');
@@ -142,12 +144,21 @@ describe('GroupDetailPage', () => {
     expect(await screen.findByText('1 to fill in')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Assign host' }));
     const dialog = screen.getByRole('dialog');
-    const hostSelect = within(dialog).getByLabelText('Host');
-    expect(within(hostSelect).queryByRole('option', { name: 'web-01' })).not.toBeInTheDocument();
-    await user.selectOptions(hostSelect, 'h2');
+    // Opened by hand, not through pickOption: pickOption's own click would
+    // toggle this already-open combobox shut again (downshift's InputClick
+    // flips isOpen unconditionally), so the row is clicked directly instead.
+    await user.click(within(dialog).getByLabelText('Host'));
+    expect(within(dialog).queryByRole('option', { name: 'web-01' })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('option', { name: 'web-02' }));
     await user.type(within(dialog).getByLabelText('domain'), 'shop.acme.io');
-    // The read-only group values below the form also have a php_default; the override comes first.
-    await user.selectOptions(within(dialog).getAllByLabelText('php_default')[0], '8.4');
+    // The read-only group values below the form also have a php_default,
+    // sharing that label with the editable override — pickOption's
+    // getByLabelText needs exactly one match, so this one is opened and
+    // picked directly instead. Its own dropdown only renders rows while
+    // open, so there is no ambiguity with the other (closed) one.
+    const phpOverride = within(dialog).getAllByLabelText('php_default')[0];
+    await user.click(phpOverride);
+    await user.click(within(dialog).getByRole('option', { name: '8.4' }));
     await user.click(within(dialog).getByRole('button', { name: 'Assign to webserver' }));
     await screen.findByText('Host assigned to webserver');
     expect(put?.body).toEqual({ vars: { domain: 'shop.acme.io', php_default: '8.4' } });
@@ -177,12 +188,18 @@ describe('GroupDetailPage', () => {
     renderAt('/o/acme/groups/g1?tab=members');
     await user.click(await screen.findByRole('button', { name: 'Assign host' }));
     const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByLabelText('Host'));
     expect(await within(dialog).findByRole('option', { name: 'web-02' })).toBeInTheDocument();
     expect(within(dialog).getByText(/More managed hosts match/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/already a member/)).not.toBeInTheDocument();
 
+    // Typing into the search box blurs (and so closes) the Host combobox;
+    // it is reopened once the narrowed list has loaded, rather than through
+    // pickOption, which queries its options synchronously and would run
+    // ahead of this fetch.
     await user.type(within(dialog).getByRole('searchbox', { name: 'Search managed hosts' }), 'web-77');
-    await user.selectOptions(within(dialog).getByLabelText('Host'), await within(dialog).findByRole('option', { name: 'web-77' }));
+    await user.click(within(dialog).getByLabelText('Host'));
+    await user.click(await within(dialog).findByRole('option', { name: 'web-77' }));
     expect(within(dialog).queryByText(/More managed hosts match/)).not.toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('domain'), 'far.acme.io');
     await user.click(within(dialog).getByRole('button', { name: 'Assign to webserver' }));
@@ -206,6 +223,7 @@ describe('GroupDetailPage', () => {
     const { unmount } = renderAt('/o/acme/groups/g1?tab=members');
     await user.click(await screen.findByRole('button', { name: 'Assign host' }));
     let dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByLabelText('Host'));
     // The first page holds only the member; the second page is fetched for the next candidate.
     expect(await within(dialog).findByRole('option', { name: 'web-02' })).toBeInTheDocument();
     expect(within(dialog).queryByText(/already a member/)).not.toBeInTheDocument();
@@ -252,13 +270,48 @@ describe('GroupDetailPage', () => {
         }),
     });
     renderAt('/o/acme/groups/g1?tab=settings');
-    await user.selectOptions(await screen.findByLabelText('Jump host'), 'b1');
+    await screen.findByLabelText('Jump host');
+    await pickOption(screen, 'Jump host', { value: 'b1' });
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByText('Group saved');
     expect(patched?.headers.get('If-Match')).toBe('"3"');
     expect(patched?.body).toEqual({ name: 'webserver', bastion_id: 'b1' });
     await user.click(screen.getByRole('button', { name: 'Delete group' }));
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
+  });
+
+  // v0.4g Task 5: the Jump host picker's quick-create row. This belongs
+  // with the rest of SettingsTab's own coverage above (there is no
+  // separate SettingsTab.test.tsx — the component is exercised entirely
+  // through GroupDetailPage's settings tab).
+  it('creates a jump host from the picker and selects it, without losing the rest of the form', async () => {
+    const user = userEvent.setup();
+    // The new bastion has to come back from a refetch of the list too, not
+    // just the POST response: creating it invalidates ['ssh', org], and the
+    // Jump host picker's own options come from that query, not from
+    // onCreated's id alone.
+    const created: Record<string, unknown>[] = [];
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/credentials': { credentials: [{ id: 'c1', name: 'ops', kind: 'ssh_key' }] },
+      'GET /api/v1/orgs/acme/bastions': () => ({ bastions: created }),
+      'POST /api/v1/orgs/acme/bastions': () => {
+        const bastion = { id: 'b9', name: 'edge-01', address: 'edge.example', port: 22, username: 'ops' };
+        created.push(bastion);
+        return { bastion };
+      },
+    });
+    renderAt('/o/acme/groups/g1?tab=settings');
+    await user.click(await screen.findByLabelText('Jump host'));
+    await user.click(screen.getByRole('option', { name: /New jump host/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add jump host' });
+    await user.type(within(dialog).getByLabelText('Name'), 'edge-01');
+    await user.type(within(dialog).getByLabelText('Address'), 'edge.example');
+    await user.type(within(dialog).getByLabelText('Username'), 'ops');
+    await user.click(within(dialog).getByRole('button', { name: 'Create jump host' }));
+    expect(await screen.findByLabelText('Jump host')).toHaveValue('edge-01');
+    // The rest of the settings form (still unsaved) kept what was already there.
+    expect(screen.getByLabelText('Name')).toHaveValue('webserver');
   });
 
   it('opens the edit dialog prefilled and sends If-Match with the member revision on save', async () => {

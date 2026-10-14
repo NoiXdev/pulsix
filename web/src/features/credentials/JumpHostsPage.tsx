@@ -124,7 +124,18 @@ export function JumpHostsPage() {
           </GridRow>
         ))}
       </Card>
-      {dialog && <BastionDialog org={org} bastion={dialog.bastion} bastions={list} credentials={creds} onClose={() => setDialog(null)} />}
+      {dialog && (
+        <BastionDialog
+          org={org}
+          bastion={dialog.bastion}
+          bastions={list}
+          credentials={creds}
+          onClose={() => setDialog(null)}
+          // This page's own list refetches from useCreateBastion's own
+          // invalidation; nothing here needs the new id for itself.
+          onCreated={() => undefined}
+        />
+      )}
     </>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { orderTree } from '../inventory/tree.ts';
@@ -37,20 +38,20 @@ export function ScopePicker({ org, value, onChange }: { org: string; value: Scop
         <label htmlFor="scope-group" className="text-[11px] font-medium text-muted-foreground">
           Group
         </label>
-        <select
+        <Select
           id="scope-group"
-          className={SELECT}
+          // Same disambiguation as the inventory group pickers: the hint
+          // names each row's own parent, so two groups sharing a name in
+          // different branches of the tree stay tellable apart.
+          options={orderTree(groups.data?.groups ?? []).map(({ group, depth }) => ({
+            value: group.id,
+            label: `${'\u00A0'.repeat(depth * 2)}${group.name}`,
+            hint: (groups.data?.groups ?? []).find((g) => g.id === group.parent_id)?.name,
+          }))}
           value={value.group_id}
-          onChange={(e) => onChange({ ...value, group_id: e.target.value })}
-        >
-          <option value="">Whole organization</option>
-          {orderTree(groups.data?.groups ?? []).map(({ group, depth }) => (
-            <option key={group.id} value={group.id}>
-              {'\u00A0'.repeat(depth * 2)}
-              {group.name}
-            </option>
-          ))}
-        </select>
+          onChange={(group_id) => onChange({ ...value, group_id })}
+          placeholder="Whole organization"
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="scope-hosts" className="text-[11px] font-medium text-muted-foreground">

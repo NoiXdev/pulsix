@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
@@ -85,10 +86,10 @@ describe('TemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Add template' }));
     await user.type(screen.getByLabelText('Name'), 'deploy-site');
-    await user.selectOptions(screen.getByLabelText('Playbook'), 'pb1');
-    await user.selectOptions(screen.getByLabelText('Group'), 'g1');
+    await pickOption(screen, 'Playbook', { value: 'pb1' });
+    await pickOption(screen, 'Group', { value: 'g1' });
     await user.click(screen.getByLabelText('Include web-01'));
-    await user.selectOptions(screen.getByLabelText('Default SSH credential'), 'c1');
+    await pickOption(screen, 'Default SSH credential', { value: 'c1' });
     await user.click(screen.getByRole('button', { name: 'Create template' }));
     expect(await screen.findByText('deploy-site')).toBeInTheDocument();
     expect(posted).toEqual({
@@ -217,7 +218,7 @@ describe('TemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Add template' }));
     await user.type(screen.getByLabelText('Name'), 'deploy-site');
-    await user.selectOptions(screen.getByLabelText('Playbook'), 'pb1');
+    await pickOption(screen, 'Playbook', { value: 'pb1' });
 
     // Build a schema in the dialog itself: expand it, add a field, rename
     // it, mark it required.
@@ -256,7 +257,7 @@ describe('TemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Add template' }));
     await user.type(screen.getByLabelText('Name'), 'deploy-site');
-    await user.selectOptions(screen.getByLabelText('Playbook'), 'pb1');
+    await pickOption(screen, 'Playbook', { value: 'pb1' });
     await user.click(screen.getByText('Extra vars schema'));
     await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
     const fieldGroup = screen.getByRole('group', { name: 'Field field_1' });

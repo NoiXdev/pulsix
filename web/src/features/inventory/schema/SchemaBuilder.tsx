@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { Button } from '../../../ui/button.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
+import { Select } from '../../../ui/Select.tsx';
 import { Tag } from '../../../ui/badge.tsx';
 import { SchemaForm, ScalarInput } from './SchemaForm.tsx';
 import { membershipFields, problemAt, scopeOf } from './paths.ts';
@@ -19,9 +20,6 @@ export interface SchemaBuilderProps {
   /** A sub-schema: no scope, no overridable, no preview. */
   nested?: boolean;
 }
-
-const SELECT =
-  'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:border-primary focus-visible:outline-none';
 
 function newKey(): string {
   return Math.random().toString(36).slice(2);
@@ -211,13 +209,12 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
         <TextField id={id('name')} label="Name" mono value={field.name} error={problem('name')} onChange={(v) => set({ name: v })} />
         <div className="flex flex-col gap-1">
           <Label htmlFor={id('type')}>Type</Label>
-          <select id={id('type')} className={SELECT} value={field.type} onChange={(e) => onChange(changeType(field, e.target.value as FieldType))}>
-            {FIELD_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t === 'object' ? 'sub-schema (object)' : t}
-              </option>
-            ))}
-          </select>
+          <Select
+            id={id('type')}
+            options={FIELD_TYPES.map((t) => ({ value: t, label: t === 'object' ? 'sub-schema (object)' : t }))}
+            value={field.type}
+            onChange={(v) => onChange(changeType(field, v as FieldType))}
+          />
           {problem('type') && (
             <span role="alert" className="text-[11px] text-destructive">
               {problem('type')}
@@ -277,21 +274,15 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
       {field.type === 'list' && (
         <div className="flex flex-col gap-1">
           <Label htmlFor={id('item')}>Item type</Label>
-          <select
+          <Select
             id={id('item')}
-            className={SELECT}
+            options={SCALAR_TYPES.map((t) => ({ value: t, label: t }))}
             value={field.item?.type ?? 'string'}
-            onChange={(e) => {
-              const t = e.target.value as FieldType;
+            onChange={(v) => {
+              const t = v as FieldType;
               set({ item: t === 'enum' ? { name: '', type: t, options: field.item?.options ?? ['option_1'] } : { name: '', type: t } });
             }}
-          >
-            {SCALAR_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       )}
       {hasItemOptions && field.item && (

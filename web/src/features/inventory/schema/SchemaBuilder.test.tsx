@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { pickOption } from '../../../test/pickOption.ts';
 import { SchemaBuilder } from './SchemaBuilder.tsx';
 import type { Problem, VarSchema } from './types.ts';
 
@@ -27,7 +28,7 @@ describe('SchemaBuilder', () => {
     const name = within(ed).getByLabelText('Name');
     await user.clear(name);
     await user.type(name, 'vhosts');
-    await user.selectOptions(within(editor('vhosts')).getByLabelText('Type'), 'repeater');
+    await pickOption(within(editor('vhosts')), 'Type', { value: 'repeater' });
     await user.click(within(editor('vhosts')).getByLabelText(/Host \(asked/));
     // The sub-schema's own editor sits inside this one, so take the first "Required".
     await user.click(within(editor('vhosts')).getAllByLabelText('Required')[0]);
@@ -43,7 +44,7 @@ describe('SchemaBuilder', () => {
     const outer = editor('vhosts');
     await user.click(within(outer).getByRole('button', { name: 'Add sub-field' }));
     const inner = editor('field_2');
-    await user.selectOptions(within(inner).getByLabelText('Type'), 'secret');
+    await pickOption(within(inner), 'Type', { value: 'secret' });
     expect(within(inner).queryByLabelText(/Host \(asked/)).not.toBeInTheDocument();
     expect(schemaNow().fields[0].fields).toEqual([{ name: 'value', type: 'string' }, { name: 'field_2', type: 'secret' }]);
   });
@@ -54,7 +55,7 @@ describe('SchemaBuilder', () => {
     const options = within(editor('php')).getByLabelText('Options (one per line)');
     await user.clear(options);
     await user.type(options, '8.3{enter}8.4');
-    await user.selectOptions(within(editor('php')).getByLabelText('Default'), '8.4');
+    await pickOption(within(editor('php')), 'Default', { value: '8.4' });
     expect(schemaNow().fields[0]).toEqual({ name: 'php', type: 'enum', options: ['8.3', '8.4'], default: '8.4' });
 
     await user.click(screen.getByRole('button', { name: /^domain/ }));

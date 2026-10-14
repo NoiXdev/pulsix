@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Label } from '../../../ui/label.tsx';
+import { Select } from '../../../ui/Select.tsx';
 import { LoadMoreButton } from '../../../ui/LoadMoreButton.tsx';
 import { useHosts } from '../../../api/hooks/useHosts.ts';
 
@@ -50,14 +51,14 @@ export function ManagedHostPicker({
           onChange('');
         }}
       />
-      <select id="assign-host" className={FIELD} required value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Choose a managed host…</option>
-        {assignable.map((h) => (
-          <option key={h.id} value={h.id}>
-            {h.name}
-          </option>
-        ))}
-      </select>
+      <Select
+        id="assign-host"
+        required
+        options={assignable.map((h) => ({ value: h.id, label: h.name }))}
+        value={value}
+        onChange={onChange}
+        placeholder="Choose a managed host…"
+      />
       {!hosts.data && hosts.isError && (
         <span role="alert" className="text-[11px] text-destructive">
           Could not load managed hosts. {hosts.error instanceof Error ? hosts.error.message : ''}

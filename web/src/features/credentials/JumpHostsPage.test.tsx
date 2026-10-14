@@ -71,7 +71,7 @@ describe('JumpHostsPage', () => {
     await user.type(within(dialog).getByLabelText('Username'), 'ops');
     await user.selectOptions(within(dialog).getByLabelText('Credential'), 'c1');
     await user.selectOptions(within(dialog).getByLabelText('Reached through'), 'b1');
-    await user.click(within(dialog).getByRole('button', { name: 'Save jump host' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Create jump host' }));
     expect(await screen.findByText('Jump host edge saved')).toBeInTheDocument();
     expect(posted).toEqual({ name: 'edge', address: 'edge.example', port: 2222, username: 'ops', credential_id: 'c1', via_bastion_id: 'b1' });
   });
