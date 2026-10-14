@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { SchedulesPage } from './SchedulesPage.tsx';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
@@ -79,8 +80,8 @@ describe('SchedulesPage', () => {
     await user.click(await screen.findByRole('button', { name: 'New schedule' }));
     const panel = screen.getByRole('region', { name: 'Schedule editor' });
     await user.type(within(panel).getByLabelText('Name'), 'Nightly OS patching');
-    await user.selectOptions(within(panel).getByLabelText('Job template'), 't1');
-    await user.selectOptions(within(panel).getByLabelText('Repeat'), 'weekly');
+    await pickOption(within(panel), 'Job template', { value: 't1' });
+    await pickOption(within(panel), 'Repeat', { value: 'weekly' });
     await user.click(within(panel).getByRole('checkbox', { name: 'Tue' }));
     await user.click(within(panel).getByRole('checkbox', { name: 'Thu' }));
     await user.click(within(panel).getByRole('checkbox', { name: 'Mon' })); // default day off again
@@ -201,8 +202,8 @@ describe('SchedulesPage', () => {
     const panel = await screen.findByRole('region', { name: 'Schedule editor' });
     expect(await within(panel).findByText('skipped_maintenance')).toBeInTheDocument();
     const select = within(panel).getByLabelText('When a targeted host is in a maintenance window');
-    expect(select).toHaveValue('skip');
-    await user.selectOptions(select, 'exclude_hosts');
+    expect(select).toHaveValue('Skip the run');
+    await pickOption(within(panel), 'When a targeted host is in a maintenance window', { value: 'exclude_hosts' });
     await user.click(within(panel).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put).toMatchObject({ guards: { maintenance: 'exclude_hosts' } }));
   });

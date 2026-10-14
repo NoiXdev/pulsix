@@ -5,6 +5,7 @@ import { Terminal } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { Button } from '../../ui/button.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -65,31 +66,35 @@ export function RunsPage() {
           <span className="text-[13px] text-muted-foreground">{rows.length} runs · every job the workers executed for this organization</span>
         </div>
         <div className="flex gap-2">
-          <select aria-label="Filter by status" className="h-[34px] rounded-md border border-border bg-card px-2 text-xs" value={search.status ?? ''} onChange={(e) => filter({ status: e.target.value })}>
-            <option value="">All statuses</option>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          <select aria-label="Filter by kind" className="h-[34px] rounded-md border border-border bg-card px-2 text-xs" value={search.kind ?? ''} onChange={(e) => filter({ kind: e.target.value })}>
-            <option value="">All kinds</option>
-            {KINDS.map((k) => (
-              <option key={k} value={k}>{kindLabel(k)}</option>
-            ))}
-          </select>
-          <select aria-label="Filter by trigger" className="h-[34px] rounded-md border border-border bg-card px-2 text-xs" value={search.trigger ?? ''} onChange={(e) => filter({ trigger: e.target.value })}>
-            <option value="">All triggers</option>
-            {Object.entries(TRIGGER_LABEL).map(([k, label]) => (
-              <option key={k} value={k}>{label}</option>
-            ))}
-          </select>
+          <Select
+            aria-label="Filter by status"
+            options={STATUSES.map((s) => ({ value: s, label: s }))}
+            value={search.status ?? ''}
+            onChange={(value) => filter({ status: value })}
+            placeholder="All statuses"
+          />
+          <Select
+            aria-label="Filter by kind"
+            options={KINDS.map((k) => ({ value: k, label: kindLabel(k) }))}
+            value={search.kind ?? ''}
+            onChange={(value) => filter({ kind: value })}
+            placeholder="All kinds"
+          />
+          <Select
+            aria-label="Filter by trigger"
+            options={Object.entries(TRIGGER_LABEL).map(([k, label]) => ({ value: k, label }))}
+            value={search.trigger ?? ''}
+            onChange={(value) => filter({ trigger: value })}
+            placeholder="All triggers"
+          />
           {search.trigger === 'schedule' && (
-            <select aria-label="Filter by schedule" className="h-[34px] rounded-md border border-border bg-card px-2 text-xs" value={search.schedule ?? ''} onChange={(e) => filter({ schedule: e.target.value })}>
-              <option value="">All schedules</option>
-              {(schedules.data?.schedules ?? []).map((sc) => (
-                <option key={sc.id} value={sc.id}>{sc.name}</option>
-              ))}
-            </select>
+            <Select
+              aria-label="Filter by schedule"
+              options={(schedules.data?.schedules ?? []).map((sc) => ({ value: sc.id, label: sc.name }))}
+              value={search.schedule ?? ''}
+              onChange={(value) => filter({ schedule: value })}
+              placeholder="All schedules"
+            />
           )}
           {canRun && (
             <Button variant="primary" onClick={() => setAdhocOpen(true)}>

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { RunsPage } from './RunsPage.tsx';
 
 const job = (over: Record<string, unknown> = {}) => ({
@@ -68,7 +69,6 @@ describe('RunsPage', () => {
   });
 
   it('filters by status through the URL', async () => {
-    const user = userEvent.setup();
     const seen: string[] = [];
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
@@ -78,7 +78,8 @@ describe('RunsPage', () => {
       },
     });
     renderPage();
-    await user.selectOptions(await screen.findByLabelText('Filter by status'), 'failed');
+    await screen.findByLabelText('Filter by status');
+    await pickOption(screen, 'Filter by status', { value: 'failed' });
     expect(await screen.findByText('No runs match.')).toBeInTheDocument();
     expect(seen.some((q) => q.includes('status=failed'))).toBe(true);
   });
@@ -120,7 +121,6 @@ describe('RunsPage', () => {
   });
 
   it('filters by trigger and, for scheduled runs, by schedule', async () => {
-    const user = userEvent.setup();
     const seen: string[] = [];
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
@@ -132,11 +132,11 @@ describe('RunsPage', () => {
     });
     renderPage();
     expect(await screen.findByText('Schedule', { selector: 'span' })).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText('Filter by trigger'), 'schedule');
-    await user.selectOptions(await screen.findByLabelText('Filter by schedule'), 's1');
+    await pickOption(screen, 'Filter by trigger', { value: 'schedule' });
     await screen.findByLabelText('Filter by schedule');
+    await pickOption(screen, 'Filter by schedule', { value: 's1' });
     expect(seen.some((q) => q.includes('trigger=schedule') && q.includes('trigger_ref=s1'))).toBe(true);
-    await user.selectOptions(screen.getByLabelText('Filter by trigger'), 'webhook');
+    await pickOption(screen, 'Filter by trigger', { value: 'webhook' });
     expect(screen.queryByLabelText('Filter by schedule')).not.toBeInTheDocument();
   });
 });

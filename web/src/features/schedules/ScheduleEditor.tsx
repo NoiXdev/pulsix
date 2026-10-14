@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { ApiError } from '../../api/client.ts';
@@ -21,7 +22,6 @@ import { HOUR_STEPS, MINUTE_STEPS, WEEKDAYS, fromSimpleBody, toSimpleBody, type 
 import { ScheduleNotifications } from './ScheduleNotifications.tsx';
 import { ScheduleRuns } from './ScheduleRuns.tsx';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 const WINDOWS = ['15m', '30m', '1h', '2h', '6h', '12h', '24h'];
 type MaintenanceGuard = 'ignore' | 'skip' | 'exclude_hosts';
 const MAINTENANCE_LABEL: Record<MaintenanceGuard, string> = {
@@ -192,13 +192,13 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       <Label htmlFor="sched-name">Name</Label>
       <Input id="sched-name" value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
       <Label htmlFor="sched-template">Job template</Label>
-      <select id="sched-template" className={SELECT} value={templateId} onChange={(e) => setTemplateId(e.target.value)} disabled={!canWrite}>
-        {templates.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </select>
+      <Select
+        id="sched-template"
+        options={templates.map((t) => ({ value: t.id, label: t.name }))}
+        value={templateId}
+        onChange={setTemplateId}
+        disabled={!canWrite}
+      />
       <Label htmlFor="sched-tz">Timezone</Label>
       <Input id="sched-tz" className="font-mono" value={timezone} onChange={(e) => setTimezone(e.target.value)} disabled={!canWrite} />
       <div role="radiogroup" aria-label="When" className="flex gap-1">
@@ -218,23 +218,21 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       {mode === 'simple' ? (
         <div className="flex flex-col gap-2">
           <Label htmlFor="sched-kind">Repeat</Label>
-          <select id="sched-kind" className={SELECT} value={simple.kind} onChange={(e) => setKind(e.target.value as SimpleKind)}>
-            {(Object.keys(KIND_LABEL) as SimpleKind[]).map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABEL[k]}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="sched-kind"
+            options={(Object.keys(KIND_LABEL) as SimpleKind[]).map((k) => ({ value: k, label: KIND_LABEL[k] }))}
+            value={simple.kind}
+            onChange={(value) => setKind(value as SimpleKind)}
+          />
           {(simple.kind === 'every_minutes' || simple.kind === 'every_hours') && (
             <>
               <Label htmlFor="sched-every">Every</Label>
-              <select id="sched-every" className={SELECT} value={simple.every} onChange={(e) => setSimple({ ...simple, every: Number(e.target.value) })}>
-                {(simple.kind === 'every_minutes' ? MINUTE_STEPS : HOUR_STEPS).map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
+              <Select
+                id="sched-every"
+                options={(simple.kind === 'every_minutes' ? MINUTE_STEPS : HOUR_STEPS).map((n) => ({ value: String(n), label: String(n) }))}
+                value={String(simple.every)}
+                onChange={(value) => setSimple({ ...simple, every: Number(value) })}
+              />
             </>
           )}
           {simple.kind === 'weekly' && (
@@ -293,31 +291,19 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       {catchUp ? (
         <>
           <Label htmlFor="sched-window">Catch-up window</Label>
-          <select id="sched-window" className={SELECT} value={catchUpWindow} onChange={(e) => setCatchUpWindow(e.target.value)}>
-            {WINDOWS.map((w) => (
-              <option key={w} value={w}>
-                {w}
-              </option>
-            ))}
-          </select>
+          <Select id="sched-window" options={WINDOWS.map((w) => ({ value: w, label: w }))} value={catchUpWindow} onChange={setCatchUpWindow} />
         </>
       ) : (
         <p className="text-[11px] text-muted-foreground">otherwise the next regular run happens</p>
       )}
       <Label htmlFor="sched-maintenance">When a targeted host is in a maintenance window</Label>
-      <select
+      <Select
         id="sched-maintenance"
-        className={SELECT}
+        options={(Object.keys(MAINTENANCE_LABEL) as MaintenanceGuard[]).map((m) => ({ value: m, label: MAINTENANCE_LABEL[m] }))}
         value={maintenance}
-        onChange={(e) => setMaintenance(e.target.value as MaintenanceGuard)}
+        onChange={(value) => setMaintenance(value as MaintenanceGuard)}
         disabled={!canWrite}
-      >
-        {(Object.keys(MAINTENANCE_LABEL) as MaintenanceGuard[]).map((m) => (
-          <option key={m} value={m}>
-            {MAINTENANCE_LABEL[m]}
-          </option>
-        ))}
-      </select>
+      />
       <Label htmlFor="sched-limit">Limit</Label>
       <Input id="sched-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="the template's limit" disabled={!canWrite} />
       <Label htmlFor="sched-vars">Extra vars</Label>

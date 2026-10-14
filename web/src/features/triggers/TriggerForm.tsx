@@ -2,11 +2,13 @@ import { useState, type FormEvent } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import type { Trigger, TriggerInput } from '../../api/types.ts';
 import type { TriggerTarget } from '../../api/hooks/useTriggers.ts';
 import { PRESET_LABEL } from './presets.ts';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
+const ON_ACTIVE_LABEL: Record<'queue' | 'skip', string> = { queue: 'queue another run', skip: 'skip' };
+const RATE_WINDOWS = ['1m', '5m', '1h'];
 
 interface Row {
   name: string;
@@ -58,13 +60,12 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
       <Label htmlFor="trigger-name">Name</Label>
       <Input id="trigger-name" value={name} onChange={(e) => setName(e.target.value)} />
       <Label htmlFor="trigger-preset">Sender</Label>
-      <select id="trigger-preset" className={SELECT} value={preset} onChange={(e) => setPreset(e.target.value as TriggerInput['preset'])}>
-        {Object.entries(PRESET_LABEL).map(([k, v]) => (
-          <option key={k} value={k}>
-            {v}
-          </option>
-        ))}
-      </select>
+      <Select
+        id="trigger-preset"
+        options={Object.entries(PRESET_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+        value={preset}
+        onChange={(value) => setPreset(value as TriggerInput['preset'])}
+      />
       {(preset === 'pulsix' || preset === 'github' || preset === 'gitea') && (
         <>
           <Label htmlFor="trigger-ts">Replay protection header</Label>
@@ -74,10 +75,12 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
       <Label htmlFor="trigger-sources">Allowed sources</Label>
       <Input id="trigger-sources" className="font-mono" value={sources} onChange={(e) => setSources(e.target.value)} placeholder="any source; or CIDRs, comma separated" />
       <Label htmlFor="trigger-active">If a run is active</Label>
-      <select id="trigger-active" className={SELECT} value={onActive} onChange={(e) => setOnActive(e.target.value as 'queue' | 'skip')}>
-        <option value="queue">queue another run</option>
-        <option value="skip">skip</option>
-      </select>
+      <Select
+        id="trigger-active"
+        options={(Object.keys(ON_ACTIVE_LABEL) as Array<'queue' | 'skip'>).map((k) => ({ value: k, label: ON_ACTIVE_LABEL[k] }))}
+        value={onActive}
+        onChange={(value) => setOnActive(value as 'queue' | 'skip')}
+      />
       <div className="flex gap-2">
         <div className="flex flex-1 flex-col gap-1">
           <Label htmlFor="trigger-count">Calls</Label>
@@ -85,13 +88,7 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
         </div>
         <div className="flex flex-1 flex-col gap-1">
           <Label htmlFor="trigger-per">Per</Label>
-          <select id="trigger-per" className={SELECT} value={per} onChange={(e) => setPer(e.target.value)}>
-            {['1m', '5m', '1h'].map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <Select id="trigger-per" options={RATE_WINDOWS.map((p) => ({ value: p, label: p }))} value={per} onChange={setPer} />
         </div>
       </div>
       {target.kind === 'template_run' && (

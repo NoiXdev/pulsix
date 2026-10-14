@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { TriggersDialog } from './TriggersDialog.tsx';
 
 const trigger = (over: Record<string, unknown> = {}) => ({
@@ -53,7 +54,7 @@ describe('TriggersDialog', () => {
     renderDialog();
     await user.click(await screen.findByRole('button', { name: 'New trigger' }));
     await user.type(screen.getByLabelText('Name'), 'deploy on push');
-    await user.selectOptions(screen.getByLabelText('Sender'), 'github');
+    await pickOption(screen, 'Sender', { value: 'github' });
     await user.type(screen.getByLabelText('Allowed sources'), '140.82.112.0/20');
     await user.click(screen.getByRole('button', { name: 'Create trigger' }));
     expect(await screen.findByText('whsec-shown-once')).toBeInTheDocument();

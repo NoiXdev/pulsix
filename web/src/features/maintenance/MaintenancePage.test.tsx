@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { MaintenancePage } from './MaintenancePage.tsx';
 import { fromLocalInput, targetLabel, toLocalInput, whenLabel } from './time.ts';
 import type { MaintenanceWindow } from '../../api/types.ts';
@@ -68,8 +69,9 @@ describe('MaintenancePage', () => {
     await user.click(await screen.findByRole('button', { name: 'New window' }));
     const dialog = screen.getByRole('dialog', { name: 'New window' });
     await user.type(within(dialog).getByLabelText('Name'), 'db patching');
-    await user.selectOptions(within(dialog).getByLabelText('Applies to'), 'inventory_group');
-    await user.selectOptions(await within(dialog).findByRole('combobox', { name: 'Group' }), 'g1');
+    await pickOption(within(dialog), 'Applies to', { value: 'inventory_group' });
+    await within(dialog).findByLabelText('Group');
+    await pickOption(within(dialog), 'Group', { value: 'g1' });
     await user.click(within(dialog).getByRole('radio', { name: 'Recurring' }));
     await user.clear(within(dialog).getByLabelText('Timezone'));
     await user.type(within(dialog).getByLabelText('Timezone'), 'UTC');
@@ -126,7 +128,7 @@ describe('MaintenancePage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Edit mute disk' }));
     const dialog = screen.getByRole('dialog', { name: 'Edit mute disk' });
-    expect(within(dialog).getByLabelText('Why')).toHaveValue('silence');
+    expect(within(dialog).getByLabelText('Why')).toHaveValue('Silence — do not raise alerts; scheduled runs are unaffected');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put?.body.reason).toBe('silence'));
   });
@@ -157,7 +159,7 @@ describe('MaintenancePage', () => {
     await user.click(screen.getByRole('button', { name: 'New window' }));
     const dialog = screen.getByRole('dialog', { name: 'New window' });
     await user.type(within(dialog).getByLabelText('Name'), 'mute it');
-    await user.selectOptions(within(dialog).getByLabelText('Why'), 'silence');
+    await pickOption(within(dialog), 'Why', { value: 'silence' });
     await user.type(within(dialog).getByLabelText('From'), '2026-09-22T10:00');
     await user.type(within(dialog).getByLabelText('Until'), '2026-09-22T12:00');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));

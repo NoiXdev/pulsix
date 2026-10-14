@@ -3,16 +3,25 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { useCreateMaintenanceWindow, useUpdateMaintenanceWindow } from '../../api/hooks/useMaintenance.ts';
 import type { MaintenanceWindow, MaintenanceWindowInput } from '../../api/types.ts';
 import { fromLocalInput, toLocalInput } from './time.ts';
 
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
-
 type TargetKind = 'org' | 'host' | 'inventory_group';
 type WindowReason = 'maintenance' | 'silence';
+
+const REASON_LABEL: Record<WindowReason, string> = {
+  maintenance: 'Maintenance — work is happening; scheduled runs can skip these hosts',
+  silence: 'Silence — do not raise alerts; scheduled runs are unaffected',
+};
+const TARGET_KIND_LABEL: Record<TargetKind, string> = {
+  org: 'The whole organization',
+  host: 'One host',
+  inventory_group: 'An inventory group (and its subgroups)',
+};
 
 /** WindowDialog creates or edits a maintenance window: its reason, its
  * target (the organization, a host or an inventory group) and either a
@@ -74,38 +83,41 @@ export function WindowDialog({ org, window: w, onClose }: { org: string; window?
         <Label htmlFor="mw-name">Name</Label>
         <Input id="mw-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
         <Label htmlFor="mw-reason">Why</Label>
-        <select id="mw-reason" className={SELECT} value={reason} onChange={(e) => setReason(e.target.value as WindowReason)}>
-          <option value="maintenance">Maintenance — work is happening; scheduled runs can skip these hosts</option>
-          <option value="silence">Silence — do not raise alerts; scheduled runs are unaffected</option>
-        </select>
+        <Select
+          id="mw-reason"
+          options={(Object.keys(REASON_LABEL) as WindowReason[]).map((r) => ({ value: r, label: REASON_LABEL[r] }))}
+          value={reason}
+          onChange={(value) => setReason(value as WindowReason)}
+        />
         <Label htmlFor="mw-kind">Applies to</Label>
-        <select id="mw-kind" className={SELECT} value={kind} onChange={(e) => { setKind(e.target.value as TargetKind); setTargetId(''); }}>
-          <option value="org">The whole organization</option>
-          <option value="host">One host</option>
-          <option value="inventory_group">An inventory group (and its subgroups)</option>
-        </select>
+        <Select
+          id="mw-kind"
+          options={(Object.keys(TARGET_KIND_LABEL) as TargetKind[]).map((k) => ({ value: k, label: TARGET_KIND_LABEL[k] }))}
+          value={kind}
+          onChange={(value) => { setKind(value as TargetKind); setTargetId(''); }}
+        />
         {kind === 'host' && (
           <>
             <Input aria-label="Find host" placeholder="Filter hosts by name" value={hostQuery} onChange={(e) => setHostQuery(e.target.value)} />
-            <select aria-label="Host" className={SELECT} value={targetId} onChange={(e) => setTargetId(e.target.value)} required>
-              <option value="">Choose a host…</option>
-              {hostList.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              aria-label="Host"
+              options={hostList.map((h) => ({ value: h.id, label: h.name }))}
+              value={targetId}
+              onChange={setTargetId}
+              placeholder="Choose a host…"
+              required
+            />
           </>
         )}
         {kind === 'inventory_group' && (
-          <select aria-label="Group" className={SELECT} value={targetId} onChange={(e) => setTargetId(e.target.value)} required>
-            <option value="">Choose a group…</option>
-            {groupList.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            aria-label="Group"
+            options={groupList.map((g) => ({ value: g.id, label: g.name }))}
+            value={targetId}
+            onChange={setTargetId}
+            placeholder="Choose a group…"
+            required
+          />
         )}
         <div role="radiogroup" aria-label="When" className="flex gap-1">
           {([false, true] as const).map((r) => (
