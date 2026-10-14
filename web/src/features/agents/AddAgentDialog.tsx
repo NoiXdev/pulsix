@@ -94,7 +94,7 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
           options={zoneList.map((z) => ({ value: z.id, label: `${z.name} (${z.slug})` }))}
           value={zone}
           onChange={setZoneId}
-          create={{ label: 'New zone', onSelect: setZoneDialogName }}
+          create={{ label: 'New zone…', onSelect: setZoneDialogName }}
         />
         <Label htmlFor="agent-name">Host name (optional)</Label>
         <Input

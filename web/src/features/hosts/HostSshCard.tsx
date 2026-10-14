@@ -32,10 +32,12 @@ export function HostSshCard({
   hostId: string;
   managed: boolean;
   canWrite: boolean;
-  /** Gates this card's own Credential create row and (forwarded) the one
-   * nested inside the Jump host create row's own BastionDialog:
+  /** Gates this card's own Credential create row, its Jump host create row
+   * (POST /bastions is credentials.write too — a jump host is a credential
+   * holder, see sshconf_handlers.go), and — forwarded — the Credential
+   * create row nested inside the Jump host row's own BastionDialog:
    * credentials.write is admin, stricter than the inventory.write that
-   * gates `canWrite` itself (v0.4g Task 7 fix round). */
+   * gates `canWrite` itself (v0.4g Task 7 and 10 fix rounds). */
   canCreateCredential: boolean;
 }) {
   const ssh = useHostSSH(org, managed ? hostId : '');
@@ -125,7 +127,7 @@ function HostSshForm({
             onChange={setCredentialId}
             placeholder="— none —"
             disabled={!canWrite}
-            create={canCreateCredential ? { label: 'New credential', onSelect: setNewCredentialName } : undefined}
+            create={canCreateCredential ? { label: 'New credential…', onSelect: setNewCredentialName } : undefined}
           />
         </div>
         <fieldset className="flex flex-col gap-1">
@@ -147,7 +149,7 @@ function HostSshForm({
               onChange={setBastionId}
               placeholder="Choose…"
               disabled={!canWrite}
-              create={{ label: 'New jump host', onSelect: setNewBastionName }}
+              create={canCreateCredential ? { label: 'New jump host…', onSelect: setNewBastionName } : undefined}
             />
           )}
         </fieldset>

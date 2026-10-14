@@ -91,7 +91,7 @@ export function BastionDialog({
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
-            create={canCreateCredential ? { label: 'New credential', onSelect: setNewCredentialName } : undefined}
+            create={canCreateCredential ? { label: 'New credential…', onSelect: setNewCredentialName } : undefined}
           />
         </div>
         <div className="flex flex-col gap-1">

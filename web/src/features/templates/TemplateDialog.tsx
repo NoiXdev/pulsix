@@ -222,7 +222,7 @@ function TemplateForm({
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
-            create={canCreateCredential ? { label: 'New credential', onSelect: setNewCredentialName } : undefined}
+            create={canCreateCredential ? { label: 'New credential…', onSelect: setNewCredentialName } : undefined}
           />
           <span className="text-[11px] text-muted-foreground">SSH key or password credential for hosts without one of their own.</span>
         </div>

@@ -149,7 +149,6 @@ export function ScalarInput({ id, field, value, onChange, disabled, invalid, ari
         <Select
           id={id}
           disabled={disabled}
-          invalid={invalid}
           aria-label={ariaLabel}
           options={(field.options ?? []).map((o) => ({ value: o, label: o }))}
           value={typeof value === 'string' ? value : ''}

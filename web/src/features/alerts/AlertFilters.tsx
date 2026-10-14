@@ -27,10 +27,18 @@ function fromTriBool(v: string): boolean | undefined {
 export function AlertFilters({ value, onChange }: AlertFiltersProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        State
+      {/* Each label is a sibling of its Select, not a wrapper around it, with
+          htmlFor carrying the association instead: an <li role="option"> in
+          Select's own dropdown is not interactive content, so wrapping it
+          inside the label would make clicking a row trigger the label's own
+          activation behaviour — a synthetic click at the input that reopens
+          the list downshift just closed (its InputClick reducer toggles
+          isOpen unconditionally). A native <select> was interactive content,
+          so this never showed up there. */}
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="alert-filter-state">State</label>
         <Select
-          aria-label="State"
+          id="alert-filter-state"
           options={[
             { value: 'open', label: 'Open' },
             { value: 'closed', label: 'Closed' },
@@ -39,11 +47,11 @@ export function AlertFilters({ value, onChange }: AlertFiltersProps) {
           onChange={(v) => onChange({ ...value, state: (v || undefined) as AlertFilter['state'] })}
           placeholder="All"
         />
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Severity
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="alert-filter-severity">Severity</label>
         <Select
-          aria-label="Severity"
+          id="alert-filter-severity"
           options={[
             { value: 'warn', label: 'Warn' },
             { value: 'crit', label: 'Crit' },
@@ -53,11 +61,11 @@ export function AlertFilters({ value, onChange }: AlertFiltersProps) {
           onChange={(v) => onChange({ ...value, severity: (v || undefined) as AlertFilter['severity'] })}
           placeholder="All"
         />
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Scope
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="alert-filter-scope">Scope</label>
         <Select
-          aria-label="Scope"
+          id="alert-filter-scope"
           options={[
             { value: 'tuple', label: 'Tuple' },
             { value: 'host', label: 'Host' },
@@ -66,11 +74,11 @@ export function AlertFilters({ value, onChange }: AlertFiltersProps) {
           onChange={(v) => onChange({ ...value, scope: (v || undefined) as AlertFilter['scope'] })}
           placeholder="All"
         />
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Acknowledged
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="alert-filter-acknowledged">Acknowledged</label>
         <Select
-          aria-label="Acknowledged"
+          id="alert-filter-acknowledged"
           options={[
             { value: 'true', label: 'Acknowledged' },
             { value: 'false', label: 'Unacknowledged' },
@@ -79,11 +87,11 @@ export function AlertFilters({ value, onChange }: AlertFiltersProps) {
           onChange={(v) => onChange({ ...value, acknowledged: fromTriBool(v) })}
           placeholder="Any"
         />
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Muted
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="alert-filter-muted">Muted</label>
         <Select
-          aria-label="Muted"
+          id="alert-filter-muted"
           options={[
             { value: 'true', label: 'Muted' },
             { value: 'false', label: 'Not muted' },
@@ -92,7 +100,7 @@ export function AlertFilters({ value, onChange }: AlertFiltersProps) {
           onChange={(v) => onChange({ ...value, muted: fromTriBool(v) })}
           placeholder="Any"
         />
-      </label>
+      </div>
     </div>
   );
 }

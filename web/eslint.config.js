@@ -58,7 +58,7 @@ export default tseslint.config(
   },
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/**/*.test.{ts,tsx}', 'src/ui/Select.tsx'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -67,6 +67,22 @@ export default tseslint.config(
           message:
             'Load MetricChart through React.lazy(() => import(...)) only: a static import pulls uPlot into the entry bundle (backlog 3.24).',
         },
+      ],
+    },
+  },
+  // The native-<select> ban gets its own block, not folded into the one
+  // above: that one exempts test files (MetricChart's lazy-load rule has no
+  // business in a test, which imports components directly rather than
+  // through the bundle this guards), but a native <select> slipping into a
+  // test is exactly the regression this rule exists to catch — Select has
+  // 73 call sites it is standing in for, and a test is as able to reach for
+  // a bare <select> as any other file.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/ui/Select.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
         {
           selector: 'JSXOpeningElement[name.name="select"]',
           message:

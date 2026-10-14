@@ -121,7 +121,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
             placeholder="— none —"
             create={
               canCreateCredential
-                ? { label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'credential', name: text }) }
+                ? { label: 'New credential…', onSelect: (text) => setAddingCredential({ field: 'credential', name: text }) }
                 : undefined
             }
           />
@@ -141,7 +141,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
             placeholder="— none —"
             create={
               canCreateCredential
-                ? { label: 'New credential', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }
+                ? { label: 'New credential…', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }
                 : undefined
             }
           />

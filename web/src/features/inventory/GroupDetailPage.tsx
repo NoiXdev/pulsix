@@ -38,9 +38,11 @@ export function GroupDetailPage() {
   const group = useGroup(org, id);
   const groups = useGroups(org);
   const orgInfo = useOrg(org);
-  // Gates SettingsTab's own Jump host picker's nested Credential create
-  // row (BastionDialog) — credentials.write is admin, stricter than the
-  // inventory.write this page's own writes need (v0.4g Task 7 fix round).
+  // Gates SettingsTab's own Jump host create row (POST /bastions is
+  // credentials.write too, see sshconf_handlers.go) and, forwarded, its
+  // nested Credential create row inside BastionDialog — credentials.write
+  // is admin, stricter than the inventory.write this page's own writes
+  // need (v0.4g Task 7 and 10 fix rounds).
   const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
 
   const guard = useQueryGuard(group);

@@ -120,17 +120,28 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             deliberate object in the product, and this switcher is only
             ever handed the organizations the signed-in user already
             belongs to. */}
-        <label className="mx-3 mt-3 mb-1 flex flex-col gap-0.5 text-left">
-          <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+        {/* The <label> is a sibling of Select, not a wrapper around it, with
+            htmlFor carrying the association instead: an <li role="option">
+            in the dropdown below is not interactive content, so wrapping it
+            inside the label would make clicking a row trigger the label's
+            own activation behaviour — a synthetic click at the input that
+            reopens the list downshift just closed (its InputClick reducer
+            toggles isOpen unconditionally). A native <select> was
+            interactive content, so this never showed up there. Nesting also
+            pollutes the label's own computed text with whatever text content
+            Select renders inside itself (its toggle button's sr-only "Open"
+            label, for one), which a sibling avoids outright. */}
+        <div className="mx-3 mt-3 mb-1 flex flex-col gap-0.5 text-left">
+          <label htmlFor="org-switcher" className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
             Organization
-          </span>
+          </label>
           <Select
-            aria-label="Organization"
+            id="org-switcher"
             options={(orgs.length > 0 ? orgs : [org]).map((o) => ({ value: o.slug, label: o.name }))}
             value={org.slug}
             onChange={onSelectOrg}
           />
-        </label>
+        </div>
 
         {/* The three headings and their spacing add about 100px to a
             sidebar that already ran to roughly 700px on fourteen

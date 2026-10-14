@@ -22,9 +22,10 @@ export function SettingsTab({
   org: string;
   group: InventoryGroup;
   groups: readonly InventoryGroupSummary[];
-  /** Gates BastionDialog's own Credential create row (v0.4g Task 7 fix
-   * round): credentials.write is admin, stricter than the inventory.write
-   * this tab's own save needs. */
+  /** Gates this tab's own Jump host create row (POST /bastions is
+   * credentials.write, not the inventory.write this tab's own save needs —
+   * see sshconf_handlers.go) and, forwarded, BastionDialog's own nested
+   * Credential create row (v0.4g Task 7 and 10 fix rounds). */
   canCreateCredential: boolean;
 }) {
   const toast = useToast();
@@ -110,7 +111,7 @@ export function SettingsTab({
               value={bastion}
               onChange={setBastion}
               placeholder="— none (inherit from parent groups or the zone) —"
-              create={{ label: 'New jump host…', onSelect: setNewBastionName }}
+              create={canCreateCredential ? { label: 'New jump host…', onSelect: setNewBastionName } : undefined}
             />
           ) : (
             // No id here on purpose: the select above (and its options) is

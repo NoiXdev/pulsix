@@ -102,7 +102,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
           options={zoneList.map((z) => ({ value: z.id, label: `${z.name} (${z.slug})` }))}
           value={zone}
           onChange={setZoneId}
-          create={{ label: 'New zone', onSelect: setZoneDialogName }}
+          create={{ label: 'New zone…', onSelect: setZoneDialogName }}
         />
         <Label htmlFor="worker-name">Name</Label>
         <Input id="worker-name" className="font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="hel-1" />

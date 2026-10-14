@@ -57,7 +57,10 @@ function renderAt(path: string) {
   );
 }
 
+const ORG = { org: { id: 'o1', name: 'Acme', slug: 'acme', role: 'admin', created_at: '2026-01-01T00:00:00Z' } };
+
 const base = {
+  'GET /api/v1/orgs/acme': ORG,
   'GET /api/v1/orgs/acme/inventory/groups/g1': GROUP,
   'GET /api/v1/orgs/acme/inventory/groups': GROUPS,
   'GET /api/v1/orgs/acme/bastions': { bastions: [] },
@@ -278,6 +281,30 @@ describe('GroupDetailPage', () => {
     expect(patched?.body).toEqual({ name: 'webserver', bastion_id: 'b1' });
     await user.click(screen.getByRole('button', { name: 'Delete group' }));
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
+  });
+
+  // v0.4g final fix round: POST /orgs/{org}/bastions is credentials.write
+  // (admin, internal/api/sshconf_handlers.go), stricter than the
+  // inventory.write this tab's own save needs — an operator who could reach
+  // this form would otherwise fill in BastionDialog only to have the server
+  // refuse the create with a 403.
+  it('offers no jump-host create row for an operator, only an admin', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme': { org: { ...ORG.org, role: 'operator' } },
+    });
+    renderAt('/o/acme/groups/g1?tab=settings');
+    await user.click(await screen.findByLabelText('Jump host'));
+    expect(screen.queryByRole('option', { name: /New jump host/ })).not.toBeInTheDocument();
+  });
+
+  it('offers the jump-host create row for an admin', async () => {
+    const user = userEvent.setup();
+    mockApi(base);
+    renderAt('/o/acme/groups/g1?tab=settings');
+    await user.click(await screen.findByLabelText('Jump host'));
+    expect(screen.getByRole('option', { name: /New jump host/ })).toBeInTheDocument();
   });
 
   // v0.4g Task 5: the Jump host picker's quick-create row. This belongs

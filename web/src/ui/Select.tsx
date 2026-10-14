@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { useCombobox } from 'downshift';
 import { ChevronDown, Plus } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
@@ -21,7 +21,6 @@ export interface SelectProps {
   id?: string;
   'aria-label'?: string;
   disabled?: boolean;
-  invalid?: boolean;
   /** Forwarded to the underlying input so native constraint validation can
    *  block a form's submit while this field is empty — see the empty-value
    *  fix on `selectedLabel` below, which this depends on: a `required`
@@ -53,10 +52,9 @@ const NONE = ' none';
 const CREATE = ' create';
 
 /**
- * Select is the one picker Pulsix is standardising on (v0.4g, backlog 1.43):
- * it will replace the SPA's 76 native select elements over the tasks that
- * follow this one, and Task 9 adds the ESLint rule that bans a new native
- * <select> once that migration lands.
+ * Select is the one picker Pulsix standardised on (v0.4g, backlog 1.43): it
+ * replaced the SPA's 73 native select elements, and an ESLint rule bans a
+ * new native <select> from reappearing.
  *
  * Always a combobox, never a plain listbox, and with no threshold that
  * switches between the two: options arrive from queries, so a threshold
@@ -69,10 +67,16 @@ const CREATE = ' create';
  * rule on src/ui/**).
  */
 export function Select({
-  options, value, onChange, placeholder, id, disabled, invalid, required, create,
+  options, value, onChange, placeholder, id, disabled, required, create,
   'aria-label': ariaLabel,
 }: SelectProps) {
   const [filter, setFilter] = useState('');
+  // Always a real id, even when the caller gives none: the toggle button
+  // below reads its accessible name off this element (see getToggleButtonProps
+  // below), which needs an id to point at regardless of whether the caller
+  // also uses it for an external <Label htmlFor>.
+  const autoId = useId();
+  const inputId = id ?? autoId;
 
   // Shared by the rendered rows and by the stateReducer below, which needs
   // to re-filter from the keystroke's own value rather than from `filter`
@@ -95,10 +99,20 @@ export function Select({
   // create row must never be a candidate for that (spec decision 5) — kept
   // out of toRows, there is nothing to exclude there, see that case's
   // comment.
+  //
+  // Depending on `create?.label` rather than on `create` itself is what
+  // makes this memo actually hold across a render where the caller passed a
+  // fresh `create` object literal (every call site does: `create={{ label:
+  // …, onSelect: … }}` is a new object every render) — `onSelect` plays no
+  // part in computing `rows`, so its identity changing is not a reason to
+  // recompute this array.
   const rows = useMemo<SelectOption[]>(() => {
     const matched = toRows(filter);
     return create ? [...matched, { value: CREATE, label: create.label }] : matched;
-  }, [toRows, filter, create]);
+    // `create` itself is deliberately left out of the dependency array below
+    // (only its `label` is in it) — see the comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toRows, filter, create?.label]);
 
   const selected = options.find((o) => o.value === value) ?? null;
   // Review Focus 2: a value whose option is gone (a deleted credential a
@@ -170,7 +184,7 @@ export function Select({
     <div className="relative">
       <input
         {...cb.getInputProps({
-          id,
+          id: inputId,
           'aria-label': ariaLabel,
           // downshift's own default, when no aria-label is given, points
           // this at an internal label id (`${id}-label`) that Select never
@@ -223,13 +237,24 @@ export function Select({
         className={cn(
           'flex h-8 w-full rounded-md border border-border bg-background px-2.5 pr-7 text-xs text-foreground',
           'placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
-          invalid && 'border-destructive',
         )}
       />
+      {/* The button's own accessible name is "Open" plus the input's —
+          computed by referencing the input itself, not by re-typing the
+          input's name here: a call site with an external <Label htmlFor>
+          already gives the input the right name through that native
+          association, and a call site with `aria-label` instead gives it
+          directly, so reading it off the input is the one source of truth
+          for both rather than this button inventing its own (which, before
+          this, left every externally-labelled picker's button named the
+          same "Open list" — see the span below). */}
+      <span id={`${inputId}-open-label`} className="sr-only">
+        Open
+      </span>
       <button
         type="button"
         {...cb.getToggleButtonProps({ disabled, tabIndex: -1 })}
-        aria-label={`Open ${ariaLabel ?? 'list'}`}
+        aria-labelledby={`${inputId}-open-label ${inputId}`}
         className="absolute top-0 right-0 flex h-8 w-7 items-center justify-center text-muted-foreground"
       >
         <ChevronDown size={14} />

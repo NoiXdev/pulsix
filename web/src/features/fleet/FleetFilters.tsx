@@ -34,26 +34,34 @@ const FIELD =
 export function FleetFilters({ zones, groups, value, onChange, tagError }: FleetFiltersProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Zone
+      {/* Each label is a sibling of its Select, not a wrapper around it, with
+          htmlFor carrying the association instead: an <li role="option"> in
+          Select's own dropdown is not interactive content, so wrapping it
+          inside the label would make clicking a row trigger the label's own
+          activation behaviour — a synthetic click at the input that reopens
+          the list downshift just closed (its InputClick reducer toggles
+          isOpen unconditionally). A native <select> was interactive content,
+          so this never showed up there. */}
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="fleet-filter-zone">Zone</label>
         <Select
-          aria-label="Zone"
+          id="fleet-filter-zone"
           options={zones.map((z) => ({ value: z.id, label: z.name }))}
           value={value.zone ?? ''}
           onChange={(v) => onChange({ ...value, zone: v || undefined })}
           placeholder="All zones"
         />
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Monitoring group
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor="fleet-filter-group">Monitoring group</label>
         <Select
-          aria-label="Monitoring group"
+          id="fleet-filter-group"
           options={groups.map((g) => ({ value: g.id, label: g.name }))}
           value={value.group ?? ''}
           onChange={(v) => onChange({ ...value, group: v || undefined })}
           placeholder="All groups"
         />
-      </label>
+      </div>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         Tag
         <input

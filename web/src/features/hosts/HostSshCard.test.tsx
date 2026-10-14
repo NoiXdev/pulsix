@@ -97,4 +97,27 @@ describe('HostSshCard', () => {
     expect(screen.queryByText('pin complete')).not.toBeInTheDocument();
     expect(screen.queryByText('pin needs confirmation')).not.toBeInTheDocument();
   });
+
+  // v0.4g final fix round: POST /orgs/{org}/bastions is credentials.write
+  // (admin, internal/api/sshconf_handlers.go), stricter than the
+  // inventory.write this card's own canWrite mirrors — an operator who could
+  // reach this form would otherwise fill in BastionDialog only to have the
+  // server refuse the create with a 403.
+  it('offers no jump-host create row for an operator, only an admin', async () => {
+    const user = userEvent.setup();
+    mockApi(base);
+    renderCard(true, true, false);
+    await user.click(await screen.findByLabelText(/This jump host/));
+    await user.click(screen.getByLabelText('Jump host for this host'));
+    expect(screen.queryByRole('option', { name: /New jump host/ })).not.toBeInTheDocument();
+  });
+
+  it('offers the jump-host create row for an admin', async () => {
+    const user = userEvent.setup();
+    mockApi(base);
+    renderCard(true, true, true);
+    await user.click(await screen.findByLabelText(/This jump host/));
+    await user.click(screen.getByLabelText('Jump host for this host'));
+    expect(screen.getByRole('option', { name: /New jump host/ })).toBeInTheDocument();
+  });
 });

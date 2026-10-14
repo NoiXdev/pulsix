@@ -103,7 +103,7 @@ describe('ReposPage', () => {
     await user.click(screen.getByLabelText('Credential'));
     const rows = screen
       .getAllByRole('option')
-      .filter((o) => o.getAttribute('data-value') !== '' && o.getAttribute('data-label') !== 'New credential');
+      .filter((o) => o.getAttribute('data-value') !== '' && o.getAttribute('data-label') !== 'New credential…');
     expect(rows.map((o) => o.getAttribute('data-value'))).toEqual(['c1']);
     await user.click(rows[0]);
 

@@ -238,7 +238,7 @@ export function HostsListPage() {
                   value={field.value}
                   onChange={field.onChange}
                   placeholder="Select a zone…"
-                  create={{ label: 'New zone', onSelect: (text) => setZoneDialog({ from: 'picker', name: text }) }}
+                  create={{ label: 'New zone…', onSelect: (text) => setZoneDialog({ from: 'picker', name: text }) }}
                 />
               )}
             />

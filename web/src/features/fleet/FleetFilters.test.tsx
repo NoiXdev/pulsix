@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { pickOption } from '../../test/pickOption.ts';
 import { FleetFilters } from './FleetFilters.tsx';
 
@@ -62,5 +63,25 @@ describe('FleetFilters', () => {
     render(<FleetFilters zones={ZONES} groups={GROUPS} value={{ tag: '!=web' }} onChange={() => {}} tagError="tag must be a single key or key=value token" />);
 
     expect(screen.getByRole('alert')).toHaveTextContent('tag must be a single key or key=value token');
+  });
+
+  // v0.4g final fix round: Zone and Monitoring group each sit next to a
+  // <label>, not wrapped by one (migration-introduced bug — a native
+  // <select> was interactive content, so clicking one of its <option>s never
+  // triggered the surrounding <label>'s own click-forwarding; an
+  // <li role="option"> is not, so a wrapping label without `htmlFor` fired a
+  // synthetic click at the input on every row click, which downshift's own
+  // InputClick reducer reads as "open the list" — reopening what the click
+  // had just closed). Every assertion elsewhere in this file only checks the
+  // committed value, which is why this slipped through; this one checks the
+  // list itself.
+  it('closes the list after picking a zone, rather than reopening it', async () => {
+    const user = userEvent.setup();
+    render(<FleetFilters zones={ZONES} groups={GROUPS} value={{}} onChange={vi.fn()} />);
+
+    await user.click(screen.getByLabelText('Zone'));
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('option', { name: 'Frankfurt' }));
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
   });
 });
