@@ -101,15 +101,28 @@ ON CONFLICT (alert_id, route_id, position) DO NOTHING;
 -- comment gives. last_fired_at is NULL in that same case; the store reads
 -- a NULL there as the zero time.Time.
 --
--- last_event_at and snoozed_until are two of the three anchors spec
--- decision 5 names for LastUrgentAt — the alert's own most recent
--- severity_raised/ack_voided event, and its snoozed_until column. The
--- store (escalate_sql.go), not this statement, takes the later of the two:
--- GREATEST(x, y) does not widen to a nullable Go type the way COALESCE
--- does — tried first, it left sqlc unable to infer a concrete type for the
--- column at all, and casting to force one made it infer a non-nullable
--- time.Time despite both arguments being capable of NULL, which would
--- panic the first time an alert carried neither anchor.
+-- last_event_at and snoozed_until together cover TWO of spec decision 5's
+-- THREE anchors for LastUrgentAt. The first is the alert's own most recent
+-- severity_raised/ack_voided/unsnoozed event; the second is its
+-- snoozed_until column, for a bounded snooze that simply runs out rather
+-- than being cleared by a person. 'unsnoozed' belongs in the SAME event
+-- filter as severity_raised/ack_voided, not a filter of its own: Unsnooze
+-- (internal/alerts/store_sql.go) clears snoozed_until back to NULL and
+-- records only that event, so it is the ONLY trace a human-cleared snooze
+-- leaves anywhere — a query that read snoozed_until but not this event
+-- would see nothing for that case and fall back to the stale base
+-- fired_at, firing the next rung immediately instead of giving it its own
+-- full delay from the moment the alert actually became urgent again
+-- (TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase is the
+-- regression test for exactly this gap — caught in review, not before).
+--
+-- The store (escalate_sql.go), not this statement, takes the later of
+-- last_event_at and snoozed_until: GREATEST(x, y) does not widen to a
+-- nullable Go type the way COALESCE does — tried first, it left sqlc
+-- unable to infer a concrete type for the column at all, and casting to
+-- force one made it infer a non-nullable time.Time despite both arguments
+-- being capable of NULL, which would panic the first time an alert
+-- carried neither anchor.
 --
 -- last_event_at itself has the same problem one level down: a bare
 -- correlated subquery's nullability is exactly what ListItemsForHost's own
@@ -124,12 +137,14 @@ ON CONFLICT (alert_id, route_id, position) DO NOTHING;
 -- "zero if none" promise, not epoch, which an untouched alert must never
 -- read as having been "urgent" at 1970-01-01.
 --
--- The third anchor, the end of a maintenance occurrence, is deliberately
--- left to the follower: occurrences are computed in Go from the
--- maintenance package's own windows, this query has no view onto them, and
--- folding a half-known anchor in here would make the SQL look complete
--- when it is not — the follower is what actually finishes decision 5's
--- anchor list.
+-- The THIRD anchor, the end of a maintenance occurrence, is the one this
+-- query deliberately does NOT cover: occurrences are computed in Go from
+-- the maintenance package's own windows, this query has no view onto
+-- them, and folding a half-known anchor in here would make the SQL look
+-- complete when it is not. The follower (a later task) is what actually
+-- finishes decision 5's anchor list by adding that third one on top of
+-- what this query already returns — unlike the 'unsnoozed' gap above,
+-- this omission is a deliberate deferral, not a miss.
 --
 -- "has an unfired step" (ladder.max_position > fired_up_to) is also what
 -- keeps a route with no escalation steps at all out of this result
@@ -156,12 +171,12 @@ SELECT
   lf.fired_at AS last_fired_at,
   COALESCE(
     (SELECT MAX(ae.at) FROM alert_events ae
-      WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided')),
+      WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided', 'unsnoozed')),
     'epoch'::timestamptz
   )::timestamptz AS last_event_at,
   EXISTS (
     SELECT 1 FROM alert_events ae
-     WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided')
+     WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided', 'unsnoozed')
   ) AS has_urgent_event,
   a.snoozed_until AS snoozed_until
 FROM alerts a

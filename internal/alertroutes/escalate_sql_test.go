@@ -143,6 +143,44 @@ func mustCloseAlert(t *testing.T, d *db.DB, alertID uuid.UUID) {
 	}
 }
 
+// mustSnoozeThenClear simulates a human snoozing alertID and then clearing
+// that snooze themselves — alerts.Snooze followed by alerts.Unsnooze
+// (internal/alerts/store_sql.go), inline here rather than through that
+// package (alertroutes cannot import it without a cycle, and this file
+// already reads/writes alerts/alert_events directly: seedOpenAlert,
+// seedAlertEventAt, mustCloseAlert). Unsnooze's own shape is what spec
+// decision 5 leans on: it clears snoozed_until back to NULL and records
+// only the 'unsnoozed' event — nothing else is left behind once a person
+// clears a snooze, which is exactly what made the missing 'unsnoozed'
+// anchor a silent gap rather than a loud failure.
+func mustSnoozeThenClear(t *testing.T, d *db.DB, alertID uuid.UUID, until, clearedAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE alerts SET snoozed_until = $1 WHERE id = $2`, until, alertID); err != nil {
+		t.Fatalf("snooze alert: %v", err)
+	}
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE alerts SET snoozed_until = NULL WHERE id = $1`, alertID); err != nil {
+		t.Fatalf("clear snooze: %v", err)
+	}
+	org, err := alertOrgID(d, alertID)
+	if err != nil {
+		t.Fatalf("read alert org: %v", err)
+	}
+	seedAlertEventAt(t, d, org, alertID, "unsnoozed", clearedAt)
+}
+
+// alertOrgID reads back the org_id a bare alert id belongs to —
+// mustSnoozeThenClear's own caller only has alertID in hand, but
+// seedAlertEventAt (ledger_sql_test.go) needs org_id too.
+func alertOrgID(d *db.DB, alertID uuid.UUID) (uuid.UUID, error) {
+	var org uuid.UUID
+	err := d.Pool().QueryRow(context.Background(),
+		`SELECT org_id FROM alerts WHERE id = $1`, alertID).Scan(&org)
+	return org, err
+}
+
 // Review Focus 1: a shared alert_id is where an over-eager WHERE turns
 // two independent ladders into one.
 func TestTwoRoutesOnOneAlertKeepSeparateChains(t *testing.T) {
@@ -316,5 +354,61 @@ func TestChainsNeedingAttentionCarriesStepsAndAnchors(t *testing.T) {
 	}
 	if !c.State.LastFiredAt.Equal(base) {
 		t.Fatalf("LastFiredAt = %v, want the base claim at %v", c.State.LastFiredAt, base)
+	}
+}
+
+// TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase is the fix for the
+// gap review caught: a human clearing a snooze (Unsnooze) sets
+// snoozed_until back to NULL and records only the 'unsnoozed' event (spec
+// decision 5's own wording for how a mute that a person clears differs
+// from one that simply expires) — neither of ChainsNeedingAttentionBase's
+// other two LastUrgentAt sources (severity_raised/ack_voided events,
+// snoozed_until itself) sees that on its own. Without 'unsnoozed' in that
+// query's own event kind filter, LastUrgentAt fell back to the zero
+// time.Time here — no severity_raised/ack_voided event fired, and
+// snoozed_until is NULL again — so DueStep anchored on the stale base
+// fired_at alone and would fire the rung as soon as ITS delay had passed,
+// exactly the burst decision 5 exists to prevent, the moment a person
+// clears a snooze rather than letting one expire on its own.
+func TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	route := seedRouteWithSteps(t, d, org, []alertroutes.Step{{Position: 1, Delay: 5 * time.Minute}})
+
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	mustClaim(t, d, org, alert, route, 0, base)
+
+	// Snoozed shortly after the base, then cleared by a PERSON two minutes
+	// in — never allowed to run out on its own, so snoozed_until carries
+	// nothing useful by the time ChainsNeedingAttention reads it.
+	unsnoozedAt := base.Add(2 * time.Minute)
+	mustSnoozeThenClear(t, d, alert, base.Add(50*time.Minute), unsnoozedAt)
+
+	chains := mustChains(t, d, org)
+	if len(chains) != 1 {
+		t.Fatalf("chains = %+v, want exactly one", chains)
+	}
+	c := chains[0]
+	if !c.State.LastUrgentAt.Equal(unsnoozedAt) {
+		t.Fatalf("LastUrgentAt = %v, want the unsnoozed event at %v", c.State.LastUrgentAt, unsnoozedAt)
+	}
+
+	// base+5m (the rung's delay measured from the BASE alone) has long
+	// passed by this instant, but unsnoozedAt+5m (the rung's delay
+	// measured from the moment a person actually cleared the snooze) has
+	// not — the rung must not be due yet.
+	dueByBaseOnly := base.Add(6 * time.Minute)
+	if _, ok := alertroutes.DueStep(c.State, dueByBaseOnly); ok {
+		t.Fatalf("DueStep(%v) = due, want not due — anchoring on the stale base fires exactly the burst decision 5 forbids", dueByBaseOnly)
+	}
+
+	// Once the unsnooze anchor's own delay has actually elapsed, the rung
+	// is due — proving the fix anchors correctly rather than simply never
+	// firing.
+	dueByUnsnoozeAnchor := unsnoozedAt.Add(5 * time.Minute).Add(time.Second)
+	if _, ok := alertroutes.DueStep(c.State, dueByUnsnoozeAnchor); !ok {
+		t.Fatalf("DueStep(%v) = not due, want due once the unsnooze anchor's own delay elapsed", dueByUnsnoozeAnchor)
 	}
 }
