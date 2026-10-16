@@ -144,10 +144,18 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 			lastFired = r.LastFiredAt.Time
 		}
 		// LastUrgentAt is the later of the alert's own most recent
-		// severity_raised/ack_voided event and its snoozed_until column —
-		// two of spec decision 5's three anchors, the third (the end of a
-		// maintenance occurrence) left to the follower
-		// (ChainsNeedingAttentionBase's own doc comment explains why).
+		// severity_raised/ack_voided/unsnoozed event and its snoozed_until
+		// column — three of spec decision 5's four anchors (a cleared
+		// snooze and an expired one cannot both fire for the same alert:
+		// Unsnooze nulls snoozed_until and writes only the event, an
+		// expiring snooze writes no event at all, so the two sources never
+		// disagree). The fourth, the end of a maintenance occurrence, is
+		// still the follower's own to add on top of this — it is NOT
+		// covered here or by anything above, and does not need to be:
+		// occurrences are computed in Go from the maintenance package's
+		// own windows, which this store has no view onto
+		// (ChainsNeedingAttentionBase's own doc comment, alert_escalations.sql,
+		// gives the full reasoning).
 		// has_urgent_event, not a zero-value check, is what tells "no
 		// event at all" apart from "an event at the epoch sentinel" —
 		// row.LastEventAt is the COALESCE-to-'epoch' value the query uses
