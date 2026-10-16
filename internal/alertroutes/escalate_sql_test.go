@@ -337,13 +337,17 @@ func TestChainsNeedingAttentionCarriesStepsAndAnchors(t *testing.T) {
 	org := seedOrg(t, d)
 	host := seedHost(t, d, org)
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	// The alert and the route both predate the base: in reality neither an
-	// alert's severity_changed_at nor a route's own updated_at can be
-	// later than the chain's first real delivery, and escalate_sql.go now
-	// folds both into LastUrgentAt (migration 00058's review, Criticals 2
-	// and 3) — created at the real "now" (an hour after base) as
-	// seedOpenAlert/seedRouteWithSteps otherwise would, either one would
-	// swamp the severity_raised event this test means to pin.
+	// The alert and the route both predate the base: in reality neither can
+	// be created later than the chain's first real delivery, and the
+	// route's own updated_at IS one of LastUrgentAt's anchors
+	// (escalate_sql.go, migration 00058's review, Critical 3) — created at
+	// the real "now" (an hour after base) as seedRouteWithSteps otherwise
+	// would, it would swamp the severity_raised event this test means to
+	// pin. The alert is backdated the same way for consistency; its own
+	// severity_changed_at is NOT one of LastUrgentAt's anchors
+	// (escalate_sql.go's own doc comment explains why a fold there could
+	// stall a chain that oscillates inside a route's severity set), so
+	// backdating it specifically is not load-bearing here.
 	alert := seedOpenAlertAt(t, d, org, host, base.Add(-time.Minute))
 	ch := seedChannel(t, d, org)
 	route := seedRouteWithStepsAt(t, d, org, []alertroutes.Step{
@@ -396,9 +400,11 @@ func TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase(t *testing.T) {
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	// Backdated to predate base, the same reason
 	// TestChainsNeedingAttentionCarriesStepsAndAnchors' own setup gives:
-	// severity_changed_at/route updated_at are now folded into
-	// LastUrgentAt too (migration 00058's review, Criticals 2 and 3) and
-	// must not outrank the unsnoozed event this test means to pin.
+	// the route's own updated_at IS one of LastUrgentAt's anchors
+	// (escalate_sql.go, migration 00058's review, Critical 3) and must not
+	// outrank the unsnoozed event this test means to pin. The alert's own
+	// severity_changed_at is backdated too, for consistency, but is not
+	// itself an anchor (escalate_sql.go's own doc comment explains why).
 	alert := seedOpenAlertAt(t, d, org, host, base.Add(-time.Minute))
 	route := seedRouteWithStepsAt(t, d, org, []alertroutes.Step{{Position: 1, Delay: 5 * time.Minute}}, base.Add(-time.Minute))
 

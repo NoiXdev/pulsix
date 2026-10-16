@@ -223,10 +223,12 @@ func (e *followEnv) openAlert(severity rules.State) uuid.UUID {
 	ctx := context.Background()
 	var alertID uuid.UUID
 	// severity_changed_at starts equal to opened_at — the fixture's own
-	// clock, not real wall-clock now(): escalatePass folds this column
-	// into LastUrgentAt (migration 00058's review, Critical 2), and a real
-	// now() here would float free of every other timestamp these tests
-	// drive through the fixture's injected clock.
+	// clock, not real wall-clock now(): the column is NOT NULL (migration
+	// 00058) and a real now() here would float free of every other
+	// timestamp these tests drive through the fixture's injected clock,
+	// even though escalatePass itself does not anchor on this column
+	// (escalate_sql.go's own doc comment explains why a fold would risk
+	// stalling a chain that wobbles inside a route's severity set).
 	err := e.d.Pool().QueryRow(ctx, `
 		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
 		VALUES ($1, $2, 'tuple', 'cpu', '', $3, $4, $5, $5, $4)
@@ -691,13 +693,14 @@ func (e *followEnv) raiseSeverity(alert uuid.UUID) {
 
 // setSeverity moves alert's severity through the real write path
 // (alerts.SQLStore.Execute, ActionSeverity) rather than a raw event insert
-// — specifically so a FALLING severity, which writes no alert_events row
-// at all (raiseSeverity's own doc comment, internal/alerts/store_sql.go),
-// still moves severity_changed_at exactly the way production code does.
-// That column is the one anchor a fall-then-rise across a route's
-// severity set has to resume a chain without a burst (migration 00058's
-// review, Critical 2) — a raw UPDATE here would only prove the fixture's
-// own idea of "severity changed", not the real column the pass reads.
+// or a raw UPDATE — specifically so a FALLING severity, which writes no
+// alert_events row at all (raiseSeverity's own doc comment, internal/
+// alerts/store_sql.go), matches production exactly: no spurious
+// severity_raised event the escalation-pass tests would otherwise have to
+// account for, and severity_changed_at still moves the same way
+// production code moves it — a real fact about the alert, even though
+// escalatePass itself does not anchor a chain's resume timing on that
+// column (escalate_sql.go's own doc comment says why).
 func (e *followEnv) setSeverity(alert uuid.UUID, severity rules.State) {
 	e.t.Helper()
 	ctx := context.Background()

@@ -60,6 +60,8 @@ func seedHost(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
 // opened_at — migration 00058's own backfill reading, "a brand new alert's
 // severity has never changed, so the moment it last did is the moment it
 // opened" — same as InsertAlert's own real write path (queries/alerts.sql).
+// Stamped here for consistency only: escalate_sql.go does NOT fold this
+// column into a chain's LastUrgentAt (its own doc comment explains why).
 func seedOpenAlert(t *testing.T, d *db.DB, org, host uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
@@ -75,11 +77,15 @@ func seedOpenAlert(t *testing.T, d *db.DB, org, host uuid.UUID) uuid.UUID {
 
 // seedOpenAlertAt is seedOpenAlert with an explicit opened_at/
 // severity_changed_at instead of now() — for the handful of
-// ChainsNeedingAttention tests (escalate_sql_test.go) that need the
-// alert's own anchors to predate an artificially backdated escalation
-// base, so severity_changed_at (migration 00058, folded into LastUrgentAt
-// by escalate_sql.go) cannot outrank the specific anchor each of those
-// tests means to pin.
+// ChainsNeedingAttention tests (escalate_sql_test.go) that need the alert
+// to predate an artificially backdated escalation base, so the route's
+// own updated_at (seedRouteWithStepsAt, escalate_sql_test.go — which
+// escalate_sql.go DOES fold into LastUrgentAt) cannot outrank the specific
+// anchor each of those tests means to pin. severity_changed_at is stamped
+// here only to keep the row's own timestamps consistent; escalate_sql.go
+// does not fold it into anything (its own doc comment explains why a fold
+// there could stall a chain that oscillates inside a route's severity
+// set).
 func seedOpenAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, at time.Time) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID

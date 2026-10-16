@@ -1,22 +1,32 @@
 -- +goose Up
 
--- v0.4d escalation-chains review, Critical 2: a FALLING severity writes no
--- alert_events row at all (raiseSeverity's own comment, internal/alerts/
--- store_sql.go — "the column moves, the history does not gain noise"), so
--- an alert that rises out of a route's severity set and later falls back
--- into it had no anchor whatsoever to measure a resumed chain's next
--- delay from: severity_raised only ever fires on a RISE, and the acceptance
--- list (spec docs/superpowers/specs/2026-10-16-v0.4d-escalation-chains-
--- design.md) names this exact case — "an alert that leaves a route's
--- severity set and re-enters it resumes at the next unfired step, and that
--- step gets its full delay from the moment of re-entry" — without an
--- anchor a falling-then-rising severity can ever supply.
+-- v0.4d escalation-chains review: records the moment an alert's severity
+-- column last moved, rise or fall alike (RaiseAlertSeverity, queries/
+-- alerts.sql, sets it on every call — "the only reason Reconcile emits
+-- this action at all" is that the column is about to move). A FALLING
+-- severity writes no alert_events row at all (raiseSeverity's own comment,
+-- internal/alerts/store_sql.go — "the column moves, the history does not
+-- gain noise"), so this is the only trace a fall leaves anywhere, and a
+-- real, honest fact about an alert worth having a column for regardless
+-- of how escalation does or doesn't use it.
 --
--- severity_changed_at closes that gap: set on EVERY severity write, rise
--- or fall alike (RaiseAlertSeverity, queries/alerts.sql), it is "the
--- moment this alert last became urgent" regardless of which direction
--- brought the alert back into a route's selection — the same anchor role
--- severity_raised already plays for a rise, extended to cover a fall too.
+-- escalatePass (internal/alertroutes) deliberately does NOT anchor a
+-- chain's resume timing on this column. An earlier version of this
+-- migration's own comment argued it should — "the same anchor role
+-- severity_raised already plays, extended to cover a fall too" — and a
+-- round of review built exactly that fold, then caught the reasoning
+-- failing on its own terms: this column moves on EVERY severity write,
+-- including one that never leaves a route's own severity set at all (crit
+-- down to warn on a {warn, crit} route still moves it). Folding it into a
+-- chain's resume anchor restarted the next rung's delay on every such
+-- wobble, which can stall a chain oscillating inside the set forever — a
+-- burst pages someone a few minutes early, a stall pages nobody at all,
+-- which is the one outcome the whole feature exists to prevent. The spec
+-- was amended to match: a severity excursion is not a mute (nobody was
+-- told anything during a mute; during an excursion, other routes may well
+-- have been shouting the whole time), so re-entering a route's severity
+-- set fires the next rung promptly rather than waiting out a fresh delay,
+-- and this column plays no part in that.
 --
 -- Added nullable, backfilled, then set NOT NULL: a bare ADD COLUMN ...
 -- NOT NULL with no DEFAULT fails immediately against every existing row,
