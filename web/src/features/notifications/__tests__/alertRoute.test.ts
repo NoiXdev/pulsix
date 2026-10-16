@@ -162,4 +162,39 @@ describe('routeToInput', () => {
       }),
     ).toEqual({ name: 'Critical to ops', enabled: false, scope: 'org', severities: ['crit'], events: ['opened'], channels: ['c1', 'c2'] });
   });
+
+  // v0.4d Task 8's own repeat of Important #3: steps joined window/
+  // breakthrough_severities/rotation_id on the "silently dropped by the
+  // list page's enable/disable toggle" list once, because this is the one
+  // place that failure mode is caught and the new field had no case here.
+  // Round-trips a route with EVERY optional field set at once — including
+  // a two-rung ladder with one rotation-based and one channel-based step,
+  // the shape a single rung's own either/or rule allows — so a future
+  // field added to AlertRoute and left out of routeToInput's object
+  // literal fails this test specifically, not just the narrower window/
+  // breakthrough/rotation one above.
+  it('carries every optional field, including a mixed-source escalation ladder', () => {
+    expect(
+      routeToInput({
+        id: 'r1', name: 'Fully configured', enabled: true, scope: 'host', scope_id: 'h1',
+        severities: ['warn', 'crit'], events: ['opened', 'acknowledged'], channels: ['c1', 'c2'],
+        window: { cron: '0 9 * * 1,2,3,4,5', duration_seconds: 28800, timezone: 'Europe/Berlin' },
+        breakthrough_severities: ['crit'],
+        steps: [
+          { position: 1, delay_seconds: 300, channel_ids: ['c1'] },
+          { position: 2, delay_seconds: 600, rotation_id: 'rot1' },
+        ],
+        revision: 7, created_at: '', updated_at: '',
+      }),
+    ).toEqual({
+      name: 'Fully configured', enabled: true, scope: 'host', scope_id: 'h1',
+      severities: ['warn', 'crit'], events: ['opened', 'acknowledged'], channels: ['c1', 'c2'],
+      window: { cron: '0 9 * * 1,2,3,4,5', duration_seconds: 28800, timezone: 'Europe/Berlin' },
+      breakthrough_severities: ['crit'],
+      steps: [
+        { position: 1, delay_seconds: 300, channel_ids: ['c1'] },
+        { position: 2, delay_seconds: 600, rotation_id: 'rot1' },
+      ],
+    });
+  });
 });

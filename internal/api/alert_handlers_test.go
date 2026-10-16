@@ -13,6 +13,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -295,6 +296,60 @@ func TestAlertTimelineCarriesAnEscalatedEventsStepAndChannels(t *testing.T) {
 	}
 	if len(found.EscalationChannelIDs) != 1 || found.EscalationChannelIDs[0] != ch.String() {
 		t.Fatalf("escalation_channel_ids = %+v, want [%s]", found.EscalationChannelIDs, ch)
+	}
+}
+
+// TestEscalationChannelIDsDistinguishesReachedNobodyFromNotEscalated proves
+// the one thing EscalationChannelIDs' own doc comment (alert_handlers.go)
+// exists to guarantee: `[]` and absent/`null` are different facts on the
+// wire, not two spellings of the same one. Deliberately asserts on the raw
+// JSON bytes rather than decoding into a Go []string first — decoding
+// would itself erase the distinction being tested (Go's json package maps
+// both `null` and a missing key to a nil slice, so a assertion against the
+// decoded value could pass by accident even if omitempty had been left on).
+func TestEscalationChannelIDsDistinguishesReachedNobodyFromNotEscalated(t *testing.T) {
+	f := newAlertFixture(t, "alert-escalated-nobody")
+	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateCrit, opened)
+	// Empty, not nil: RecordEscalation's own contract for "this rung
+	// reached nobody" (escalate_sql.go's doc comment) is an explicit empty
+	// list, never a nil one.
+	f.seedEscalatedEvent(t, id, 1, []uuid.UUID{}, opened.Add(5*time.Minute))
+
+	resp := requestJSON(t, f.operatorC, http.MethodGet, f.alertsURL("/"+id.String()), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Alert struct {
+			Timeline []struct {
+				Event *struct {
+					Kind                 string          `json:"kind"`
+					EscalationChannelIDs json.RawMessage `json:"escalation_channel_ids"`
+				} `json:"event"`
+			} `json:"timeline"`
+		} `json:"alert"`
+	}
+	if err := json.Unmarshal([]byte(mustReadBody(t, resp)), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var openedRaw, escalatedRaw json.RawMessage
+	for _, e := range out.Alert.Timeline {
+		if e.Event == nil {
+			continue
+		}
+		switch e.Event.Kind {
+		case "opened":
+			openedRaw = e.Event.EscalationChannelIDs
+		case "escalated":
+			escalatedRaw = e.Event.EscalationChannelIDs
+		}
+	}
+	if string(openedRaw) != "null" {
+		t.Fatalf("opened event's escalation_channel_ids = %s, want the literal null (not escalated, nothing to decode)", openedRaw)
+	}
+	if string(escalatedRaw) != "[]" {
+		t.Fatalf("escalated event's escalation_channel_ids = %s, want the literal [] (reached nobody, not merely absent)", escalatedRaw)
 	}
 }
 

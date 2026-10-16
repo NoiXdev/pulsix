@@ -4,16 +4,19 @@ import { AlertTimeline } from '../AlertTimeline.tsx';
 import { timelineEntryLabel } from '../alertTimeline.ts';
 import type { AlertTimelineEntry } from '../../../api/types.ts';
 
+// escalation_channel_ids carries no omitempty on the wire (alert_handlers.go's
+// own doc comment on alertEventDTO): null for every kind but 'escalated',
+// so it has to be here on every fixture event, not just the escalated one.
 const opened = (at: string): AlertTimelineEntry => ({
   at,
   kind: 'event',
-  event: { id: 'e-opened', at, kind: 'opened' },
+  event: { id: 'e-opened', at, kind: 'opened', escalation_channel_ids: null },
 });
 
 const closed = (at: string): AlertTimelineEntry => ({
   at,
   kind: 'event',
-  event: { id: 'e-closed', at, kind: 'closed' },
+  event: { id: 'e-closed', at, kind: 'closed', escalation_channel_ids: null },
 });
 
 const change = (at: string, from: 'ok' | 'warn' | 'crit' | 'unknown', to: 'ok' | 'warn' | 'crit' | 'unknown'): AlertTimelineEntry => ({
@@ -39,7 +42,7 @@ describe('AlertTimeline', () => {
     const SAME_INSTANT = '2026-10-05T10:00:00Z';
     const entries: AlertTimelineEntry[] = [
       change(SAME_INSTANT, 'warn', 'crit'),
-      { at: SAME_INSTANT, kind: 'event', event: { id: 'e1', at: SAME_INSTANT, kind: 'severity_raised' } },
+      { at: SAME_INSTANT, kind: 'event', event: { id: 'e1', at: SAME_INSTANT, kind: 'severity_raised', escalation_channel_ids: null } },
       opened('2026-10-05T09:00:00Z'),
     ];
 
@@ -135,7 +138,7 @@ describe('timelineEntryLabel', () => {
   });
 
   it('names ack_voided as a voided acknowledgement', () => {
-    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'ack_voided' } };
+    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'ack_voided', escalation_channel_ids: null } };
     expect(timelineEntryLabel(entry, '').label).toMatch(/voided/i);
   });
 
@@ -156,12 +159,12 @@ describe('timelineEntryLabel', () => {
   // it. It needs the step number, not just the word "escalated" — a ladder
   // several rungs deep is unreadable if every rung says the same thing.
   it('names an escalated event by the ladder step that fired', () => {
-    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated', escalation_position: 2 } };
+    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated', escalation_position: 2, escalation_channel_ids: ['c1'] } };
     expect(timelineEntryLabel(entry, '').label).toMatch(/step 2/i);
   });
 
   it('still names an escalated event plainly if its step number could not be decoded', () => {
-    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated' } };
+    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated', escalation_channel_ids: null } };
     expect(timelineEntryLabel(entry, '').label).toMatch(/escalated/i);
   });
 });

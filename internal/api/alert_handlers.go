@@ -100,16 +100,31 @@ func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression) AlertDT
 // EscalationPosition and EscalationChannelIDs are set only for kind
 // "escalated" (alerts.EventEscalated, v0.4d) — the ladder step that fired
 // and the channels it reached, decoded from the row's own jsonb payload
-// (alerts.EscalatedPayload). Every other kind leaves both zero/omitted:
-// their own payload is the InsertAlertEvent default '{}', carrying
-// nothing worth exposing (alerts.Event's own doc comment).
+// (alerts.EscalatedPayload). Every other kind leaves EscalationPosition at
+// its zero value (omitted — a route's own validation never allows position
+// 0, so there is nothing to lose): their own payload is the
+// InsertAlertEvent default '{}', carrying nothing worth exposing (alerts.
+// Event's own doc comment).
+//
+// EscalationChannelIDs deliberately carries NO omitempty, unlike every
+// other optional field here: v0.4b already made "this route reaches
+// nobody" an explicit, named fact rather than an empty list that reads the
+// same as "no information" (ReachesNobody, AlertRouteCells.tsx) — a step
+// that reached nobody is that same fact about one rung, and MUST stay
+// distinguishable from "not an escalated event" / "payload failed to
+// decode". omitempty would collapse `[]` (reached nobody) into the exact
+// same wire absence as those two, since Go's own omitempty cannot tell an
+// empty slice from a nil one. Without it, a non-escalated event's zero
+// value (nil) serializes as `"escalation_channel_ids": null` — still
+// absent in meaning, but never silently equal to the `[]` a reached-nobody
+// rung must produce.
 type alertEventDTO struct {
 	ID                   string    `json:"id"`
 	At                   time.Time `json:"at"`
 	Kind                 string    `json:"kind" enum:"opened,severity_raised,acknowledged,ack_voided,snoozed,unsnoozed,closed,escalated"`
 	ActorID              string    `json:"actor_id,omitempty"`
 	EscalationPosition   int       `json:"escalation_position,omitempty" doc:"The ladder step that fired; only set for kind escalated"`
-	EscalationChannelIDs []string  `json:"escalation_channel_ids,omitempty" doc:"The channels this step reached; empty when the step reached nobody; only set for kind escalated"`
+	EscalationChannelIDs []string  `json:"escalation_channel_ids" doc:"The channels this step reached: empty (not null) when the step reached nobody; null for every kind other than escalated, or if the payload could not be decoded"`
 }
 
 // alertStateChangeDTO is one alerts.StateChange (a check_state_changes row

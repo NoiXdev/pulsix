@@ -58,6 +58,51 @@ export function routeReachesNobody(route: AlertRoute, rotation?: { channels?: st
   return (route.channels ?? []).length === 0;
 }
 
+/** AlertRouteIdentityKey names the AlertRoute fields that describe the ROW,
+ * never the configuration: a server-assigned id, its optimistic-lock
+ * revision, and the two timestamps. These are the only fields routeToInput
+ * is allowed to leave out of the body it builds — every other field has to
+ * be named in ROUTE_INPUT_FIELDS below, or it fails to compile (see
+ * there). */
+type AlertRouteIdentityKey = 'id' | 'revision' | 'created_at' | 'updated_at';
+
+/**
+ * ROUTE_INPUT_FIELDS is a compile-time guard against the exact bug
+ * routeToInput has now caused twice: a field added to AlertRouteDTO that
+ * nobody taught this function, so it vanishes the next time a user clicks
+ * something as unrelated as enable/disable (whole-branch review, Important
+ * #3 — window/breakthrough_severities/rotation_id; v0.4d Task 8 — steps).
+ *
+ * `Record<K, true>` forces exhaustiveness in both directions: TypeScript
+ * requires every key of K to appear as a property (a new AlertRouteDTO
+ * field left out here is a missing-property error), and rejects any
+ * property not in K (a field removed from the DTO, or a typo, is an
+ * excess-property error on this literal). K is `keyof AlertRoute` minus
+ * the identity keys above, so the day a twelfth configuration field joins
+ * the route, this line itself refuses to compile until the new key is
+ * listed — at which point whoever is adding it is standing right next to
+ * routeToInput's own body and the field can't be forgotten in the one
+ * silent way it was twice before.
+ *
+ * This only proves the field was ACKNOWLEDGED, not that routeToInput's own
+ * object literal actually carries it through correctly — that half is
+ * still the job of the round-trip test in alertRoute.test.ts, which this
+ * guard cannot replace, only force into existing.
+ */
+export const ROUTE_INPUT_FIELDS: Record<Exclude<keyof AlertRoute, AlertRouteIdentityKey>, true> = {
+  name: true,
+  enabled: true,
+  scope: true,
+  scope_id: true,
+  severities: true,
+  events: true,
+  channels: true,
+  rotation_id: true,
+  steps: true,
+  window: true,
+  breakthrough_severities: true,
+};
+
 /** routeToInput turns a stored route back into the create/update body.
  *
  * PATCH is a full replace (AlertRouteBody's own doc comment), so every

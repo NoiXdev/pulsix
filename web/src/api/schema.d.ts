@@ -2647,8 +2647,8 @@ export interface components {
             actor_id?: string;
             /** Format: date-time */
             at: string;
-            /** @description The channels this step reached; empty when the step reached nobody; only set for kind escalated */
-            escalation_channel_ids?: string[] | null;
+            /** @description The channels this step reached: empty (not null) when the step reached nobody; null for every kind other than escalated, or if the payload could not be decoded */
+            escalation_channel_ids: string[] | null;
             /**
              * Format: int64
              * @description The ladder step that fired; only set for kind escalated
