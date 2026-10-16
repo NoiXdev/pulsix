@@ -114,28 +114,40 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- comment gives. last_fired_at is NULL in that same case; the store reads
 -- a NULL there as the zero time.Time.
 --
--- last_event_at, snoozed_until, severity_changed_at and route_updated_at
--- together cover FIVE of spec decision 5's SIX anchors for LastUrgentAt
--- (the sixth, the end of a maintenance occurrence, is the one this query
--- still deliberately does not cover — see below):
+-- last_event_at, snoozed_until and route_updated_at together cover FOUR
+-- of spec decision 5's FIVE anchors for LastUrgentAt (the fifth, the end
+-- of a maintenance occurrence, is the one this query still deliberately
+-- does not cover — see below):
 --
 --   1. the alert's own most recent severity_raised/ack_voided/unsnoozed
 --      event (last_event_at/has_urgent_event);
 --   2. its snoozed_until column, for a bounded snooze that simply runs out
 --      rather than being cleared by a person;
---   3. its severity_changed_at column (v0.4d review, migration 00058),
---      which moves on EVERY severity write, a fall as much as a rise — a
---      falling severity writes no event at all, so an alert that leaves a
---      route's severity set and later re-enters it on a FALL had nothing
---      else here to measure a resumed chain's delay from, which is exactly
---      the acceptance list's own "resumes at the next unfired step ... with
---      its full delay from the moment of re-entry" for that case;
---   4. the owning route's own updated_at (review, Critical 3) — decision 4
+--   3. the owning route's own updated_at (review, Critical 3) — decision 4
 --      calls a disabled route a pause, but a disabled route cannot appear
 --      in this result at all (the JOIN below requires r.enabled), so the
 --      only way this column matters is the route reappearing re-enabled,
 --      or edited any other way, after this chain's last firing; updated_at
 --      already moves on exactly that and nothing else needs to.
+--
+-- alerts.severity_changed_at (migration 00058) exists and is read
+-- elsewhere, but is DELIBERATELY NOT an anchor here, after a round of
+-- review genuinely got this wrong: the first version of this fold folded
+-- it in, on the theory that a falling severity needed SOME anchor to
+-- resume a chain from, same as a mute ending. That reasoning does not
+-- survive contact with a severity that moves WITHIN a route's own set —
+-- crit down to warn on a {warn, crit} route never leaves the set at all,
+-- so there is no "resuming" to anchor, yet severity_changed_at still
+-- moves, and the next rung's delay restarts on every wobble. An alert that
+-- oscillates inside the set would never finish climbing the ladder — a
+-- STALL, not the burst decision 5 is worried about, and the dangerous
+-- direction: a burst pages someone a few minutes early, a stall pages
+-- nobody at all, which is the one failure this whole feature exists to
+-- prevent. The spec itself was amended (decision 5) to stop lumping
+-- severity re-entry in with the end of a mute: a mute means nobody heard
+-- anything, a severity excursion means other routes may well have been
+-- shouting the whole time, so firing the next rung promptly on re-entry is
+-- the right behaviour on its own terms, not a gap to patch.
 --
 -- 'unsnoozed' belongs in the SAME event filter as severity_raised/
 -- ack_voided, not a filter of its own: Unsnooze (internal/alerts/
@@ -149,16 +161,15 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- before).
 --
 -- The store (escalate_sql.go), not this statement, takes the GREATEST of
--- all four: GREATEST(x, y) does not widen to a nullable Go type the way
+-- all three: GREATEST(x, y) does not widen to a nullable Go type the way
 -- COALESCE does — tried first, it left sqlc unable to infer a concrete
 -- type for the column at all, and casting to force one made it infer a
 -- non-nullable time.Time despite the arguments being capable of NULL,
 -- which would panic the first time an alert carried neither of the
--- nullable ones. severity_changed_at and route_updated_at carry no such
--- hazard — both are plain NOT NULL columns, never a nullable subquery —
--- so they need no epoch-sentinel dance of their own; the store simply
--- compares them against whatever last_event_at/snoozed_until already
--- produced and keeps the latest.
+-- nullable ones. route_updated_at carries no such hazard — a plain NOT
+-- NULL column, never a nullable subquery — so it needs no epoch-sentinel
+-- dance of its own; the store simply compares it against whatever
+-- last_event_at/snoozed_until already produced and keeps the latest.
 --
 -- last_event_at itself has the same problem one level down: a bare
 -- correlated subquery's nullability is exactly what ListItemsForHost's own
@@ -171,12 +182,11 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- has_urgent_event is the EXISTS flag that tells the store whether to
 -- trust it or to use the Go zero time.Time instead — ChainState's own
 -- "zero if none" promise, not epoch, which an untouched alert must never
--- read as having been "urgent" at 1970-01-01. (severity_changed_at and
--- route_updated_at carry no such sentinel because an alert and its route
--- both always exist by the time this row exists — there is no "untouched"
--- case for either to read as zero.)
+-- read as having been "urgent" at 1970-01-01. (route_updated_at carries no
+-- such sentinel because a route always exists by the time this row does —
+-- there is no "untouched" case for it to read as zero.)
 --
--- The SIXTH anchor, the end of a maintenance occurrence, is the one this
+-- The FIFTH anchor, the end of a maintenance occurrence, is the one this
 -- query still deliberately does NOT cover: occurrences are computed in Go
 -- from the maintenance package's own windows, this query has no view onto
 -- them, and folding a half-known anchor in here would make the SQL look
@@ -218,7 +228,6 @@ SELECT
      WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided', 'unsnoozed')
   ) AS has_urgent_event,
   a.snoozed_until AS snoozed_until,
-  a.severity_changed_at AS severity_changed_at,
   r.updated_at AS route_updated_at
 FROM alerts a
 JOIN alert_routes r ON r.org_id = a.org_id AND r.enabled

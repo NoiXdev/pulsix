@@ -69,11 +69,11 @@ func TestEventKindsMatchTheSchema(t *testing.T) {
 func assertKindsMatch(t *testing.T, table string, want []string, gotKinds []EventKind) {
 	t.Helper()
 	if len(gotKinds) != len(want) {
-		t.Fatalf("%s.kind lists %d kinds (%v), want %d (%v)", table, len(want), want, len(gotKinds), gotKinds)
+		t.Fatalf("%s.kind lists %d kinds (%v), EventKinds() has %d (%v)", table, len(want), want, len(gotKinds), gotKinds)
 	}
 	for i := range want {
 		if string(gotKinds[i]) != want[i] {
-			t.Errorf("%s.kind[%d] = %q, want %q", table, i, want[i], gotKinds[i])
+			t.Errorf("EventKinds()[%d] = %q, want %q (%s.kind)", i, gotKinds[i], want[i], table)
 		}
 	}
 	for _, k := range want {

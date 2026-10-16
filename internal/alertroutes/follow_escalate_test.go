@@ -531,14 +531,20 @@ func TestAMaintenanceWindowHoldsTheChainThenResumesWithFullDelay(t *testing.T) {
 	}
 }
 
-// TestASeverityThatFallsThenRisesResumesWithFullDelay is Critical 2 of the
-// review: a FALLING severity writes no alert_events row at all
-// (raiseSeverity's own doc comment, internal/alerts/store_sql.go), so an
-// alert that leaves a route's severity set on a RISE and later re-enters
-// it on a FALL has nothing but severity_changed_at (migration 00058) to
-// anchor a resumed chain's next delay on. The spec's own acceptance list
-// names this exact case.
-func TestASeverityThatFallsThenRisesResumesWithFullDelay(t *testing.T) {
+// TestASeverityReEnteringTheRouteSSetFiresPromptly is spec decision 5 as
+// amended in review round 2: a severity excursion is NOT a mute. A mute
+// means nobody was told anything; a severity leaving a route's set and
+// coming back means the alert got worse and other routes may well have
+// been shouting the whole time it was gone. So re-entry gets the next
+// rung PROMPTLY — whatever the stale anchor already says is due — not a
+// fresh full delay measured from the moment of re-entry. (The first
+// version of this test asserted the opposite, deliberate-delay behaviour;
+// review found that the only way to deliver it — folding
+// severity_changed_at into LastUrgentAt — can stall a chain forever once
+// severity wobbles INSIDE a route's own set, which is the far worse
+// failure. See TestASeverityThatFallsButStaysInTheRouteSSetDoesNotPostponeTheNextRung
+// for that regression test.)
+func TestASeverityReEnteringTheRouteSSetFiresPromptly(t *testing.T) {
 	env := newFollowEnv(t)
 	alert := env.openAlert(rules.StateWarn)
 	route := env.routeWithStepsForSeverities([]rules.State{rules.StateWarn}, []alertroutes.Step{
@@ -549,11 +555,12 @@ func TestASeverityThatFallsThenRisesResumesWithFullDelay(t *testing.T) {
 	}
 
 	// Rises out of the route's own severity set — paused, not stopped —
-	// and stays there long enough that the stale base alone would have
-	// fired rung 1 many times over by the time it falls back.
+	// well past rung 1's own base-relative due time (t0+5m), so a resume
+	// that still required a FRESH delay would read as 0 fired here too;
+	// the point of this test is what happens the instant it re-enters.
 	env.clock.advance(time.Minute)
 	env.setSeverity(alert, rules.StateCrit)
-	env.clock.advance(2 * time.Hour)
+	env.clock.advance(10 * time.Minute)
 	if err := env.follower.Tick(context.Background(), env.org); err != nil {
 		t.Fatalf("Tick while the severity was outside the route's set: %v", err)
 	}
@@ -561,24 +568,58 @@ func TestASeverityThatFallsThenRisesResumesWithFullDelay(t *testing.T) {
 		t.Fatalf("rung 1 fired %d time(s) while severity was outside the route's set, want 0", n)
 	}
 
-	// Falls back into the route's set. One minute later: short of rung 1's
-	// own full delay measured from the re-entry.
+	// Falls back into the route's set and is ticked almost immediately —
+	// rung 1 must fire on THIS tick, not wait out a fresh delay from the
+	// re-entry: the base (t0) is already more than 5 minutes behind by
+	// now, so nothing further needs to elapse.
 	env.clock.advance(time.Minute)
 	env.setSeverity(alert, rules.StateWarn)
 	env.clock.advance(time.Minute)
 	if err := env.follower.Tick(context.Background(), env.org); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if n := env.deliveriesTo(route, 1); n != 0 {
-		t.Fatalf("rung 1 fired %d time(s) the instant severity re-entered the route's set; it should wait out its delay", n)
+	if n := env.deliveriesTo(route, 1); n != 1 {
+		t.Fatalf("rung 1 fired %d time(s) on the tick right after re-entry, want 1 — re-entry should fire promptly, not wait out a fresh delay", n)
+	}
+}
+
+// TestASeverityThatFallsButStaysInTheRouteSSetDoesNotPostponeTheNextRung is
+// the regression test for review round 2's own finding: a severity that
+// moves WITHOUT ever leaving the route's set (crit down to warn on a
+// {warn, crit} route) must not push the next rung's due time out at all.
+// Folding alerts.severity_changed_at into LastUrgentAt — the fix review
+// round 1 asked for — did exactly that: the column moves on EVERY
+// severity write, in or out of the set, so an alert that merely wobbles
+// inside the set would restart its own ladder's delay on every wobble and
+// could stall forever. This must fail against a build that still folds
+// severity_changed_at into the anchor.
+func TestASeverityThatFallsButStaysInTheRouteSSetDoesNotPostponeTheNextRung(t *testing.T) {
+	env := newFollowEnv(t)
+	alert := env.openAlert(rules.StateCrit)
+	route := env.routeWithStepsForSeverities([]rules.State{rules.StateWarn, rules.StateCrit}, []alertroutes.Step{
+		{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{env.channel}},
+	})
+	if err := env.follower.Tick(context.Background(), env.org); err != nil { // base at t0, crit matches
+		t.Fatalf("Tick: %v", err)
 	}
 
-	env.clock.advance(4 * time.Minute) // five minutes after re-entry
+	// Falls from crit to warn — still inside {warn, crit}, so the route
+	// keeps matching throughout; nothing here should count as leaving or
+	// re-entering anything.
+	env.clock.advance(time.Minute)
+	env.setSeverity(alert, rules.StateWarn)
+
+	// Exactly rung 1's own delay after the BASE, not after the severity
+	// move: if severity_changed_at were still folded into the anchor, this
+	// tick would see rung 1 not yet due (t0+1m+5m = t0+6m > now), which is
+	// the stall review found.
+	env.clock.advance(4 * time.Minute) // now = t0+5m
 	if err := env.follower.Tick(context.Background(), env.org); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 	if n := env.deliveriesTo(route, 1); n != 1 {
-		t.Fatalf("rung 1 fired %d time(s) once the chain resumed, want 1", n)
+		t.Fatalf("rung 1 fired %d time(s) at t0+5m after a severity move inside the route's own set, want 1 — "+
+			"a wobble inside the set must not postpone the next rung", n)
 	}
 }
 

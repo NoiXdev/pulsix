@@ -181,9 +181,9 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 		if r.LastFiredAt.Valid {
 			lastFired = r.LastFiredAt.Time
 		}
-		// LastUrgentAt is the latest of five of spec decision 5's six
+		// LastUrgentAt is the latest of four of spec decision 5's five
 		// anchors (ChainsNeedingAttentionBase's own doc comment,
-		// alert_escalations.sql, numbers all six and explains each):
+		// alert_escalations.sql, numbers all five and explains each):
 		//
 		//  1. the alert's own most recent severity_raised/ack_voided/
 		//     unsnoozed event (has_urgent_event/last_event_at);
@@ -192,23 +192,34 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 		//     same alert — Unsnooze nulls snoozed_until and writes only the
 		//     event, an expiring snooze writes no event at all — so these
 		//     two sources never disagree);
-		//  3. severity_changed_at (v0.4d review, Critical 2): moves on
-		//     every severity write, a FALL as much as a rise, which is the
-		//     only trace a falling severity leaves anywhere;
-		//  4. the owning route's own updated_at (review, Critical 3): a
+		//  3. the owning route's own updated_at (review, Critical 3): a
 		//     route can only reappear here re-enabled or otherwise edited
 		//     after this chain last fired, since a disabled route cannot
 		//     appear in this result at all.
+		//
+		// Deliberately NOT an anchor: alerts.severity_changed_at (migration
+		// 00058). A first version of this fold folded it in, reasoning that
+		// a falling severity needed some anchor to resume from, the same as
+		// a mute ending — but that column moves on EVERY severity write,
+		// including a move that never leaves the route's own set (crit down
+		// to warn on a {warn, crit} route). Folding it in restarted the next
+		// rung's delay on every such wobble, which can stall a chain
+		// oscillating inside the set forever — the dangerous direction
+		// (nobody paged at all), not the burst (paged a few minutes early)
+		// this feature was worried about. Decision 5 itself was amended:
+		// severity re-entry gets the next rung promptly, not a fresh delay,
+		// because a severity excursion (unlike a mute) means other routes
+		// may well have been shouting the whole time.
 		//
 		// has_urgent_event, not a zero-value check, is what tells "no event
 		// at all" apart from "an event at the epoch sentinel" —
 		// row.LastEventAt is the COALESCE-to-'epoch' value the query uses
 		// solely to keep the column NOT NULL for sqlc, never a real anchor
-		// on its own. SeverityChangedAt and RouteUpdatedAt need no such
-		// sentinel: both are plain NOT NULL columns on rows that always
-		// exist by the time this one does.
+		// on its own. RouteUpdatedAt needs no such sentinel: a plain NOT
+		// NULL column on a row that always exists by the time this one
+		// does.
 		//
-		// The sixth anchor, the end of a maintenance occurrence, is still
+		// The fifth anchor, the end of a maintenance occurrence, is still
 		// the follower's own to add on top of this — it is NOT covered here
 		// or by anything above, and does not need to be: occurrences are
 		// computed in Go from the maintenance package's own windows, which
@@ -219,9 +230,6 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 		}
 		if r.SnoozedUntil.Valid && r.SnoozedUntil.Time.After(lastUrgent) {
 			lastUrgent = r.SnoozedUntil.Time
-		}
-		if r.SeverityChangedAt.After(lastUrgent) {
-			lastUrgent = r.SeverityChangedAt
 		}
 		if r.RouteUpdatedAt.After(lastUrgent) {
 			lastUrgent = r.RouteUpdatedAt
