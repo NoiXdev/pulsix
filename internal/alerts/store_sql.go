@@ -613,7 +613,7 @@ func (s *SQLStore) Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Even
 	}
 	out := make([]Event, len(rows))
 	for i, r := range rows {
-		out[i] = Event{ID: r.ID, At: r.At, Kind: r.Kind, ActorID: db.UUIDPtr(r.ActorID)}
+		out[i] = Event{ID: r.ID, At: r.At, Kind: r.Kind, ActorID: db.UUIDPtr(r.ActorID), Payload: r.Payload}
 	}
 	return out, nil
 }

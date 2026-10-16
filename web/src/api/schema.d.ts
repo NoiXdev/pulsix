@@ -2647,9 +2647,16 @@ export interface components {
             actor_id?: string;
             /** Format: date-time */
             at: string;
+            /** @description The channels this step reached; empty when the step reached nobody; only set for kind escalated */
+            escalation_channel_ids?: string[] | null;
+            /**
+             * Format: int64
+             * @description The ladder step that fired; only set for kind escalated
+             */
+            escalation_position?: number;
             id: string;
             /** @enum {string} */
-            kind: "opened" | "severity_raised" | "acknowledged" | "ack_voided" | "snoozed" | "unsnoozed" | "closed";
+            kind: "opened" | "severity_raised" | "acknowledged" | "ack_voided" | "snoozed" | "unsnoozed" | "closed" | "escalated";
         };
         AlertGetOutputBody: {
             /**

@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/db"
@@ -136,6 +137,28 @@ func (f alertFixture) seedClosedAlert(t *testing.T, host uuid.UUID, sub alerts.S
 	return id
 }
 
+// seedEscalatedEvent writes one 'escalated' alert_events row directly
+// through alertroutes.Store.RecordEscalation — the only writer that
+// exists (escalatePass, the follower's second pass, v0.4d Task 6) — so
+// this fixture needs neither a real route nor a real follower tick to
+// prove the API round-trips the payload RecordEscalation writes.
+func (f alertFixture) seedEscalatedEvent(t *testing.T, alertID uuid.UUID, position int, channels []uuid.UUID, at time.Time) {
+	t.Helper()
+	st := alertroutes.NewSQLStore(f.s.DB)
+	ctx := context.Background()
+	tx, err := f.s.DB.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := st.RecordEscalation(ctx, tx, f.orgID, alertID, position, channels, at); err != nil {
+		t.Fatalf("seed escalated event: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
 type alertOut struct {
 	ID                string     `json:"id"`
 	HostID            string     `json:"host_id"`
@@ -169,8 +192,10 @@ type alertTimelineEntryOut struct {
 	At    time.Time `json:"at"`
 	Kind  string    `json:"kind"`
 	Event *struct {
-		ID   string `json:"id"`
-		Kind string `json:"kind"`
+		ID                   string   `json:"id"`
+		Kind                 string   `json:"kind"`
+		EscalationPosition   int      `json:"escalation_position"`
+		EscalationChannelIDs []string `json:"escalation_channel_ids"`
 	} `json:"event"`
 	Change *struct {
 		FromState string `json:"from_state"`
@@ -234,6 +259,42 @@ func TestAlertListAndGet(t *testing.T) {
 	}
 	if len(detail.Timeline) != 1 || detail.Timeline[0].Kind != "event" || detail.Timeline[0].Event == nil || detail.Timeline[0].Event.Kind != "opened" {
 		t.Fatalf("timeline = %+v, want exactly one 'opened' event", detail.Timeline)
+	}
+}
+
+// TestAlertTimelineCarriesAnEscalatedEventsStepAndChannels proves the
+// 'escalated' event (alerts.EventEscalated, v0.4d) round-trips its own
+// payload through GET instead of reading as an event with nothing in it:
+// before this test, alerts.Event never surfaced its payload column at all
+// (alert_handlers.go's own doc comment on alertEventDTO, pre-v0.4d Task 8)
+// — the step number that fired and the channels it reached.
+func TestAlertTimelineCarriesAnEscalatedEventsStepAndChannels(t *testing.T) {
+	f := newAlertFixture(t, "alert-escalated")
+	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateCrit, opened)
+	ch := uuid.New()
+	f.seedEscalatedEvent(t, id, 2, []uuid.UUID{ch}, opened.Add(10*time.Minute))
+
+	_, detail := f.getAlert(t, f.operatorC, id)
+	var found *struct {
+		ID                   string   `json:"id"`
+		Kind                 string   `json:"kind"`
+		EscalationPosition   int      `json:"escalation_position"`
+		EscalationChannelIDs []string `json:"escalation_channel_ids"`
+	}
+	for _, e := range detail.Timeline {
+		if e.Kind == "event" && e.Event != nil && e.Event.Kind == "escalated" {
+			found = e.Event
+		}
+	}
+	if found == nil {
+		t.Fatalf("timeline = %+v, want an 'escalated' event", detail.Timeline)
+	}
+	if found.EscalationPosition != 2 {
+		t.Fatalf("escalation_position = %d, want 2", found.EscalationPosition)
+	}
+	if len(found.EscalationChannelIDs) != 1 || found.EscalationChannelIDs[0] != ch.String() {
+		t.Fatalf("escalation_channel_ids = %+v, want [%s]", found.EscalationChannelIDs, ch)
 	}
 }
 

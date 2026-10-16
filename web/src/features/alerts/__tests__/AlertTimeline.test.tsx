@@ -150,4 +150,18 @@ describe('timelineEntryLabel', () => {
     expect(label).toMatch(/resolved/i);
     expect(label).not.toMatch(/stale/i);
   });
+
+  // v0.4d escalation chains, Task 8's own carried-over gap: an 'escalated'
+  // event used to read as "undefined" because EVENT_LABEL had no entry for
+  // it. It needs the step number, not just the word "escalated" — a ladder
+  // several rungs deep is unreadable if every rung says the same thing.
+  it('names an escalated event by the ladder step that fired', () => {
+    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated', escalation_position: 2 } };
+    expect(timelineEntryLabel(entry, '').label).toMatch(/step 2/i);
+  });
+
+  it('still names an escalated event plainly if its step number could not be decoded', () => {
+    const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated' } };
+    expect(timelineEntryLabel(entry, '').label).toMatch(/escalated/i);
+  });
 });

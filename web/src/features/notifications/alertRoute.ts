@@ -75,9 +75,14 @@ export function routeReachesNobody(route: AlertRoute, rotation?: { channels?: st
  * form state, not from a stored route, and its own draft is the authority
  * on what the user just edited.
  *
- * scope_id, window, breakthrough_severities and rotation_id are omitted
- * rather than sent empty, matching what the dialog sends and what the
- * server's own Validate accepts. */
+ * scope_id, window, breakthrough_severities, rotation_id and steps are
+ * omitted rather than sent empty, matching what the dialog sends and what
+ * the server's own Validate accepts. steps joined this list for the exact
+ * reason window/breakthrough/rotation are already on it (v0.4d, Task 8):
+ * leaving a route's escalation ladder out of a PATCH this function builds
+ * would silently delete it on every quick list-page toggle (enable/disable)
+ * that round-trips a route through here without ever opening the ladder
+ * editor at all. */
 export function routeToInput(route: AlertRoute): AlertRouteInput {
   return {
     name: route.name,
@@ -87,6 +92,7 @@ export function routeToInput(route: AlertRoute): AlertRouteInput {
     severities: route.severities ?? [],
     events: route.events ?? [],
     ...(route.rotation_id ? { rotation_id: route.rotation_id } : { channels: route.channels ?? [] }),
+    ...(route.steps?.length ? { steps: route.steps } : {}),
     ...(route.window ? { window: route.window } : {}),
     ...(route.breakthrough_severities?.length ? { breakthrough_severities: route.breakthrough_severities } : {}),
   };

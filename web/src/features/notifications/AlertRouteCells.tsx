@@ -1,6 +1,7 @@
 import { BellOff } from 'lucide-react';
 import { Pill } from '../../ui/badge.tsx';
 import { EVENT_LABEL, SEVERITY_LABEL } from './alertRoute.ts';
+import { formatElapsed } from './steps.ts';
 import type { AlertRoute } from '../../api/types.ts';
 
 /** The two pieces of a route both listing views show the same way: what
@@ -42,6 +43,28 @@ export function RouteFiresOn({ route }: { route: AlertRoute }) {
         ))}
       </span>
       <span className="truncate text-muted-foreground">{events.map((e) => EVENT_LABEL[e] ?? e).join(', ')}</span>
+    </span>
+  );
+}
+
+/** RouteEscalation is a route's own ladder, summarized to the one question
+ * both listing views need answered without opening the editor: who gets
+ * woken, and how late. "3 rungs" alone would not say that — a reader would
+ * still have to add up delay_seconds by hand (StepsEditor.tsx's own doc
+ * comment on why delay is relative to the rung before it, not to the
+ * alert) — so this names the rung count AND formatElapsed's own cumulative
+ * reading of the LAST one, the same wording the editor itself uses.
+ * Renders nothing for a route with no ladder (every route before v0.4d,
+ * and any that never added one since): a route that doesn't escalate has
+ * nothing here worth a line saying so, the same "nothing to add" reasoning
+ * ReachesNobody's absence already gives a route that reaches somebody. */
+export function RouteEscalation({ route }: { route: AlertRoute }) {
+  const steps = route.steps ?? [];
+  if (steps.length === 0) return null;
+  const total = steps.reduce((sum, s) => sum + s.delay_seconds, 0);
+  return (
+    <span className="text-[11px] text-muted-foreground">
+      Escalates over {steps.length} {steps.length === 1 ? 'rung' : 'rungs'}, the last one {formatElapsed(total)}
     </span>
   );
 }

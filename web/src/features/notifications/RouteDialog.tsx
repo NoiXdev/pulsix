@@ -4,8 +4,10 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
-import type { AlertRoute, AlertRouteEventKind, AlertRouteInput, AlertRouteScope, AlertRouteSeverity } from '../../api/types.ts';
+import type { AlertRoute, AlertRouteEventKind, AlertRouteInput, AlertRouteScope, AlertRouteSeverity, AlertRouteStep } from '../../api/types.ts';
 import { WEEKDAY_OPTIONS, compileWindow, decompileWindow, type Weekday, type WindowDraft } from './alertRoute.ts';
+import { StepsEditor } from './StepsEditor.tsx';
+import { stepsAreComplete } from './steps.ts';
 
 /** A route's channel, trimmed to what the picker needs — never the full
  * NotifyChannel DTO, so a caller does not have to thread webhook secrets
@@ -107,6 +109,7 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
   const [windowEnabled, setWindowEnabled] = useState(!!route?.window);
   const [windowDraft, setWindowDraft] = useState<WindowDraft>(route?.window ? decompileWindow(route.window) : DEFAULT_WINDOW_DRAFT);
   const [breakthrough, setBreakthrough] = useState<AlertRouteSeverity[]>((route?.breakthrough_severities ?? []) as AlertRouteSeverity[]);
+  const [steps, setSteps] = useState<AlertRouteStep[]>(route?.steps ?? []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,7 +120,14 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
 
   const channelsValid = channelSource === 'fixed' ? selectedChannels.length > 0 : rotationId !== '';
   const windowValid = !windowEnabled || windowDraft.days.length > 0;
-  const valid = name.trim() !== '' && severities.length > 0 && events.length > 0 && channelsValid && windowValid;
+  // stepsAreComplete mirrors channelsValid's own either/or rule, applied
+  // per rung (StepsEditor's own doc comment on why that is not a second
+  // copy of alertroutes.ValidateSteps): an incomplete rung — "fixed"
+  // picked with no channel ticked yet, or "rotation" picked with none
+  // chosen — is a 400 the server would refuse, the same reason an
+  // incomplete route-level channel source already gates Save below.
+  const stepsValid = stepsAreComplete(steps);
+  const valid = name.trim() !== '' && severities.length > 0 && events.length > 0 && channelsValid && windowValid && stepsValid;
 
   function toggleWeekday(day: Weekday) {
     setWindowDraft({ ...windowDraft, days: toggle(windowDraft.days, day) });
@@ -132,6 +142,7 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
       severities,
       events,
       ...(channelSource === 'rotation' ? { rotation_id: rotationId } : { channels: selectedChannels }),
+      ...(steps.length > 0 ? { steps } : {}),
       ...(windowEnabled ? { window: compileWindow(windowDraft) } : {}),
       ...(windowEnabled && breakthrough.length > 0 ? { breakthrough_severities: breakthrough.filter((s) => severities.includes(s)) } : {}),
     };
@@ -264,6 +275,7 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
             </>
           )}
         </fieldset>
+        <StepsEditor steps={steps} onChange={setSteps} channels={channels} rotations={rotations} />
         <label className="flex items-center gap-2 text-xs">
           <input type="checkbox" checked={windowEnabled} onChange={(e) => setWindowEnabled(e.target.checked)} />
           Only deliver during a window

@@ -1,4 +1,4 @@
-import type { AlertCloseReason, AlertEventKind, AlertNotificationHold, AlertTimelineEntry, AlertTupleState } from '../../api/types.ts';
+import type { AlertCloseReason, AlertEvent, AlertEventKind, AlertNotificationHold, AlertTimelineEntry, AlertTupleState } from '../../api/types.ts';
 import type { Tone } from '../../ui/badge.tsx';
 
 /**
@@ -23,7 +23,7 @@ const STATE_TONE: Record<AlertTupleState, Tone> = {
   unknown: 'unknown',
 };
 
-const EVENT_LABEL: Record<Exclude<AlertEventKind, 'closed'>, string> = {
+const EVENT_LABEL: Record<Exclude<AlertEventKind, 'closed' | 'escalated'>, string> = {
   opened: 'Alert opened',
   severity_raised: 'Severity raised',
   acknowledged: 'Acknowledged',
@@ -32,7 +32,7 @@ const EVENT_LABEL: Record<Exclude<AlertEventKind, 'closed'>, string> = {
   unsnoozed: 'Snooze cancelled',
 };
 
-const EVENT_TONE: Record<Exclude<AlertEventKind, 'closed'>, Tone> = {
+const EVENT_TONE: Record<Exclude<AlertEventKind, 'closed' | 'escalated'>, Tone> = {
   opened: 'accent',
   severity_raised: 'warn',
   acknowledged: 'ok',
@@ -65,10 +65,30 @@ function closedEventLabel(closedReason: AlertCloseReason | ''): TimelineEntryLab
 }
 
 /**
+ * escalatedEventLabel is `escalated`'s own wording (v0.4d escalation
+ * chains, Task 8's own carried-over gap): a ladder rung firing without
+ * acknowledgement. Like `closedEventLabel`, this depends on the event's
+ * own data rather than a static string — here `escalation_position`, the
+ * step that fired (alerts.EscalatedPayload, decoded server-side into
+ * `alertEventDTO`) — because "escalated" alone tells an operator a rung
+ * fired but not which one, and a ladder several rungs deep needs that
+ * number to read as a sequence rather than a repeated, undifferentiated
+ * event. `escalation_position` is only absent for an event the server
+ * could not decode a payload for (defensive: alert_handlers.go's own
+ * doc comment) — reads as plain "Escalated" rather than a crash.
+ */
+function escalatedEventLabel(event: AlertEvent): TimelineEntryLabel {
+  const position = event.escalation_position;
+  return { label: position ? `Escalated to step ${position}` : 'Escalated', tone: 'warn' };
+}
+
+/**
  * timelineEntryLabel names one merged timeline row the way AlertTimeline
  * renders it: a state change reads as its own transition ("ok → warn"),
  * an event reads by its kind — except `closed`, whose wording depends on
- * the alert's own `closed_reason` (closedEventLabel's own doc comment).
+ * the alert's own `closed_reason` (closedEventLabel's own doc comment),
+ * and `escalated`, whose wording depends on the event's own payload
+ * (escalatedEventLabel's own doc comment).
  */
 export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: AlertCloseReason | ''): TimelineEntryLabel {
   if (entry.kind === 'state_change' && entry.change) {
@@ -76,6 +96,7 @@ export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: Aler
   }
   if (entry.kind === 'event' && entry.event) {
     if (entry.event.kind === 'closed') return closedEventLabel(closedReason);
+    if (entry.event.kind === 'escalated') return escalatedEventLabel(entry.event);
     return { label: EVENT_LABEL[entry.event.kind], tone: EVENT_TONE[entry.event.kind] };
   }
   // Defensive: TimelineEntry's own contract (mergeTimeline, timeline.go)
