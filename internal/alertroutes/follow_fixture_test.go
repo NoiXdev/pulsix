@@ -15,6 +15,7 @@ package alertroutes_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -209,13 +210,27 @@ func (e *followEnv) createRoute(in alertroutes.Input) uuid.UUID {
 // exactly one open alert per subject.
 func (e *followEnv) openCritAlert() uuid.UUID {
 	e.t.Helper()
+	return e.openAlert(rules.StateCrit)
+}
+
+// openAlert is openCritAlert generalised to any severity — the handful of
+// escalation tests that need an alert to START inside a narrower route
+// selection (warn-only, say) rather than crit, so a later rise out of it
+// and fall back has somewhere to start from.
+func (e *followEnv) openAlert(severity rules.State) uuid.UUID {
+	e.t.Helper()
 	e.seq++
 	ctx := context.Background()
 	var alertID uuid.UUID
+	// severity_changed_at starts equal to opened_at — the fixture's own
+	// clock, not real wall-clock now(): escalatePass folds this column
+	// into LastUrgentAt (migration 00058's review, Critical 2), and a real
+	// now() here would float free of every other timestamp these tests
+	// drive through the fixture's injected clock.
 	err := e.d.Pool().QueryRow(ctx, `
-		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
-		VALUES ($1, $2, 'tuple', 'cpu', '', $3, $4, 'crit', 'crit')
-		RETURNING id`, e.org, e.host, fmt.Sprintf("used_percent_%d", e.seq), e.clock.Now()).Scan(&alertID)
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
+		VALUES ($1, $2, 'tuple', 'cpu', '', $3, $4, $5, $5, $4)
+		RETURNING id`, e.org, e.host, fmt.Sprintf("used_percent_%d", e.seq), e.clock.Now(), string(severity)).Scan(&alertID)
 	if err != nil {
 		e.t.Fatalf("open alert: %v", err)
 	}
@@ -231,13 +246,29 @@ func (e *followEnv) openCritAlert() uuid.UUID {
 // window covering [start, end).
 func (e *followEnv) maintenanceWindow(host uuid.UUID, start, end time.Time) uuid.UUID {
 	e.t.Helper()
+	return e.windowWithReason(host, start, end, "maintenance")
+}
+
+// silenceWindow is maintenanceWindow's own shape with reason 'silence' —
+// alerts.Mute's second mute reason (mute.go's own MuteSilence), expressed
+// as the identical maintenance.Window/Occurrence machinery with a
+// different Reason column (that file's own doc comment explains why both
+// share one mechanism). Needed to prove the escalation pass pauses for
+// ALL three of alerts.Mute's reasons, not only maintenance and snooze.
+func (e *followEnv) silenceWindow(host uuid.UUID, start, end time.Time) uuid.UUID {
+	e.t.Helper()
+	return e.windowWithReason(host, start, end, "silence")
+}
+
+func (e *followEnv) windowWithReason(host uuid.UUID, start, end time.Time, reason string) uuid.UUID {
+	e.t.Helper()
 	e.seq++
 	id := uuid.Must(uuid.NewV7())
 	if _, err := e.d.Pool().Exec(context.Background(), `
 		INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, starts_at, ends_at, reason)
-		VALUES ($1, $2, $3, 'host', $4, $5, $6, 'maintenance')`,
-		id, e.org, fmt.Sprintf("window-%d", e.seq), host, start, end); err != nil {
-		e.t.Fatalf("create maintenance window: %v", err)
+		VALUES ($1, $2, $3, 'host', $4, $5, $6, $7)`,
+		id, e.org, fmt.Sprintf("window-%d", e.seq), host, start, end, reason); err != nil {
+		e.t.Fatalf("create %s window: %v", reason, err)
 	}
 	return id
 }
@@ -331,6 +362,30 @@ func (e *followEnv) secondChannel() uuid.UUID {
 	return seedChannel(e.t, e.d, e.org)
 }
 
+// secondHost adds another host to the fixture's organization, in its own
+// zone — seedHost (ledger_sql_test.go) hardcodes a single zone/host slug
+// pair, so a second call in the same org collides on both; the scope test
+// (TestARouteNarrowedToAnotherHostStopsEscalating) needs a host distinct
+// from the fixture's own to narrow a route onto.
+func (e *followEnv) secondHost() uuid.UUID {
+	e.t.Helper()
+	e.seq++
+	ctx := context.Background()
+	q := gen.New(e.d.Pool())
+	slug := fmt.Sprintf("z-%d", e.seq)
+	z, err := q.CreateZone(ctx, gen.CreateZoneParams{ID: uuid.Must(uuid.NewV7()), OrgID: e.org, Slug: slug, Name: slug})
+	if err != nil {
+		e.t.Fatalf("create second zone: %v", err)
+	}
+	h, err := q.CreateHost(ctx, gen.CreateHostParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: e.org, ZoneID: z.ID, Name: fmt.Sprintf("h-%d", e.seq), Facts: []byte(`{}`),
+	})
+	if err != nil {
+		e.t.Fatalf("create second host: %v", err)
+	}
+	return h.ID
+}
+
 // rotation creates an on-call rotation cycling channels every periodDays,
 // first handover at anchor.
 func (e *followEnv) rotation(periodDays int, anchor time.Time, timezone string, channels []uuid.UUID) uuid.UUID {
@@ -382,13 +437,58 @@ func businessHours() *alertroutes.Window {
 // selection this helper would otherwise have to vary per test.
 func (e *followEnv) routeWithSteps(steps []alertroutes.Step) uuid.UUID {
 	e.t.Helper()
+	return e.routeWithStepsForSeverities([]rules.State{rules.StateCrit, rules.StateWarn, rules.StateUnknown}, steps)
+}
+
+// routeWithStepsForSeverities is routeWithSteps with an explicit severity
+// selection instead of "every severity" — the severity-pause tests need a
+// NARROWER set (warn-only, say) so a rise out of it and a fall back into
+// it are both observable.
+func (e *followEnv) routeWithStepsForSeverities(severities []rules.State, steps []alertroutes.Step) uuid.UUID {
+	e.t.Helper()
 	return e.createRoute(alertroutes.Input{
 		Enabled: true, Scope: alertroutes.ScopeOrg,
-		Severities: []rules.State{rules.StateCrit, rules.StateWarn, rules.StateUnknown},
-		Events:     alerts.EventKinds(),
-		Channels:   []uuid.UUID{e.channel},
-		Steps:      steps,
+		Severities: severities,
+		// alerts.EventKinds() minus EventEscalated: a route can never
+		// select 'escalated' as a trigger (TestEventKindsMatchTheSchema's
+		// own doc comment, internal/alerts/alert_test.go, explains why —
+		// it would race escalatePass's own delivery of the same event
+		// through the forward pass too), and Validate now rejects it
+		// outright, so listing it here would fail route creation, not
+		// subscribe this fixture's route to an event that does not exist.
+		Events:   []alerts.EventKind{alerts.EventOpened, alerts.EventSeverityRaised, alerts.EventAcknowledged, alerts.EventAckVoided, alerts.EventSnoozed, alerts.EventUnsnoozed, alerts.EventClosed},
+		Channels: []uuid.UUID{e.channel},
+		Steps:    steps,
 	})
+}
+
+// setRouteEnabled toggles route's own enabled flag and moves its
+// updated_at to the fixture's current clock — straight SQL, not
+// Store.Update, since the escalation pause/resume tests only need the one
+// column (and the timestamp move that any edit carries with it), not a
+// full Input round trip through a stale revision. route_updated_at is
+// exactly the anchor escalate_sql.go now folds into LastUrgentAt
+// (migration 00058's review, Critical 3) for precisely this case.
+func (e *followEnv) setRouteEnabled(route uuid.UUID, enabled bool) {
+	e.t.Helper()
+	if _, err := e.d.Pool().Exec(context.Background(),
+		`UPDATE alert_routes SET enabled = $2, updated_at = $3 WHERE id = $1`,
+		route, enabled, e.clock.Now()); err != nil {
+		e.t.Fatalf("set route enabled=%v: %v", enabled, err)
+	}
+}
+
+// narrowRouteToHost re-points a host-scope route at a different host,
+// straight SQL again — the escalation-pause scope test (review, Important
+// 5) needs a route whose scope no longer covers the alert's own host
+// without touching anything else about it.
+func (e *followEnv) narrowRouteToHost(route, host uuid.UUID) {
+	e.t.Helper()
+	if _, err := e.d.Pool().Exec(context.Background(),
+		`UPDATE alert_routes SET scope_host_id = $2, updated_at = $3 WHERE id = $1`,
+		route, host, e.clock.Now()); err != nil {
+		e.t.Fatalf("narrow route to host %s: %v", host, err)
+	}
 }
 
 // ledgerRow reads one (alert, route, position) row of alert_escalations —
@@ -408,6 +508,40 @@ func (e *followEnv) ledgerRow(alert, route uuid.UUID, position int) (time.Time, 
 		e.t.Fatalf("read escalation ledger row: %v", err)
 	}
 	return firedAt, true
+}
+
+// escalatedEvent reads alertID's own 'escalated' alert_events row for
+// position, decoding its payload — decision 7's own shape, {position,
+// channels} (RecordEscalation, escalate_sql.go) — so a test can assert the
+// timeline entry exists and names the right channels, not merely that a
+// step was claimed or a message sent. ok is false when no such event
+// exists at all.
+func (e *followEnv) escalatedEvent(alert uuid.UUID, position int) (channels []uuid.UUID, ok bool) {
+	e.t.Helper()
+	rows, err := e.d.Pool().Query(context.Background(), `
+		SELECT payload FROM alert_events
+		WHERE org_id = $1 AND alert_id = $2 AND kind = 'escalated'`, e.org, alert)
+	if err != nil {
+		e.t.Fatalf("read escalated events: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			e.t.Fatalf("scan escalated event: %v", err)
+		}
+		var p struct {
+			Position int         `json:"position"`
+			Channels []uuid.UUID `json:"channels"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			e.t.Fatalf("decode escalated payload: %v", err)
+		}
+		if p.Position == position {
+			return p.Channels, true
+		}
+	}
+	return nil, false
 }
 
 // deliveriesTo counts the notification_deliveries rows an escalation step
@@ -475,6 +609,23 @@ func (e *followEnv) snooze(alert uuid.UUID, until time.Time) {
 	}
 }
 
+// snoozeUntilChange mutes alert with an UNBOUNDED snooze — no until at
+// all, only snooze_until_change — alerts.Mute's own second snooze
+// candidate. Unlike a bounded snooze, this one carries no snoozed_until
+// value for ChainsNeedingAttentionBase to fold into LastUrgentAt at all
+// (that column stays NULL the whole time), so it is the one mute shape
+// where the escalation pass's own alerts.Mute call in dueStep is the ONLY
+// thing holding a chain back — a bounded snooze's own snoozed_until
+// anchor would still protect it even with that call deleted, which is
+// exactly why a test built on a bounded snooze alone cannot prove the
+// mute gate does anything (review, Critical 1).
+func (e *followEnv) snoozeUntilChange(alert uuid.UUID) {
+	e.t.Helper()
+	if err := e.alertStore.Snooze(context.Background(), e.org, alert, e.actor(), nil, true, e.clock.Now()); err != nil {
+		e.t.Fatalf("snooze alert until change: %v", err)
+	}
+}
+
 // acknowledge acks alert at its current severity, through the real store —
 // decision 2's own live comparison (severity <= acknowledged_severity) is
 // exactly what RecordDecision/escalatePass reads, so a raw UPDATE here
@@ -484,6 +635,19 @@ func (e *followEnv) acknowledge(alert uuid.UUID) {
 	e.t.Helper()
 	if err := e.alertStore.Acknowledge(context.Background(), e.org, alert, e.actor(), "", e.clock.Now()); err != nil {
 		e.t.Fatalf("acknowledge alert: %v", err)
+	}
+}
+
+// unsnooze clears alert's snooze (bounded or unbounded) through the real
+// store, which writes the 'unsnoozed' event ChainsNeedingAttentionBase
+// folds into LastUrgentAt (its own doc comment, alert_escalations.sql) —
+// the one anchor an unbounded snooze (snoozeUntilChange) has to resume
+// from, since it carries no snoozed_until column value to fold in its own
+// right.
+func (e *followEnv) unsnooze(alert uuid.UUID) {
+	e.t.Helper()
+	if err := e.alertStore.Unsnooze(context.Background(), e.org, alert, e.actor(), e.clock.Now()); err != nil {
+		e.t.Fatalf("unsnooze alert: %v", err)
 	}
 }
 
@@ -522,6 +686,33 @@ func (e *followEnv) raiseSeverity(alert uuid.UUID) {
 		INSERT INTO alert_events (org_id, alert_id, at, kind, payload)
 		VALUES ($1, $2, $3, 'severity_raised', '{}'::jsonb)`, e.org, alert, e.clock.Now()); err != nil {
 		e.t.Fatalf("raise severity event: %v", err)
+	}
+}
+
+// setSeverity moves alert's severity through the real write path
+// (alerts.SQLStore.Execute, ActionSeverity) rather than a raw event insert
+// — specifically so a FALLING severity, which writes no alert_events row
+// at all (raiseSeverity's own doc comment, internal/alerts/store_sql.go),
+// still moves severity_changed_at exactly the way production code does.
+// That column is the one anchor a fall-then-rise across a route's
+// severity set has to resume a chain without a burst (migration 00058's
+// review, Critical 2) — a raw UPDATE here would only prove the fixture's
+// own idea of "severity changed", not the real column the pass reads.
+func (e *followEnv) setSeverity(alert uuid.UUID, severity rules.State) {
+	e.t.Helper()
+	ctx := context.Background()
+	tx, err := e.d.Begin(ctx)
+	if err != nil {
+		e.t.Fatalf("begin set severity: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := e.alertStore.Execute(ctx, tx, e.org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: alert, At: e.clock.Now(), Severity: severity},
+	}); err != nil {
+		e.t.Fatalf("set severity: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		e.t.Fatalf("commit set severity: %v", err)
 	}
 }
 

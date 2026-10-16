@@ -103,6 +103,7 @@ type Alert struct {
 	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
 	SnoozeUntilChange    bool               `json:"snooze_until_change"`
 	WasFlapping          bool               `json:"was_flapping"`
+	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 }
 
 type AlertEscalation struct {

@@ -35,6 +35,18 @@ import (
 // since a route's ladder is edited after the route itself exists.
 func seedRouteWithSteps(t *testing.T, d *db.DB, org uuid.UUID, steps []alertroutes.Step) uuid.UUID {
 	t.Helper()
+	return seedRouteWithStepsAt(t, d, org, steps, time.Now())
+}
+
+// seedRouteWithStepsAt is seedRouteWithSteps with an explicit creation
+// instant instead of time.Now() — Create's own UpdatedAt starts equal to
+// it, and escalate_sql.go now folds alert_routes.updated_at into
+// LastUrgentAt (migration 00058's review, Critical 3), so the handful of
+// ChainsNeedingAttention tests that pin a SPECIFIC anchor need the route
+// itself to predate it, the same reason seedOpenAlertAt exists
+// (ledger_sql_test.go's own doc comment).
+func seedRouteWithStepsAt(t *testing.T, d *db.DB, org uuid.UUID, steps []alertroutes.Step, at time.Time) uuid.UUID {
+	t.Helper()
 	ctx := context.Background()
 	ch := seedChannel(t, d, org)
 	s := alertroutes.NewSQLStore(d)
@@ -43,7 +55,7 @@ func seedRouteWithSteps(t *testing.T, d *db.DB, org uuid.UUID, steps []alertrout
 		Severities: []rules.State{rules.StateCrit, rules.StateWarn},
 		Events:     []alerts.EventKind{alerts.EventOpened},
 		Channels:   []uuid.UUID{ch},
-	}, time.Now())
+	}, at)
 	if err != nil {
 		t.Fatalf("seed route: %v", err)
 	}
@@ -324,13 +336,20 @@ func TestChainsNeedingAttentionCarriesStepsAndAnchors(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d)
 	host := seedHost(t, d, org)
-	alert := seedOpenAlert(t, d, org, host)
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	// The alert and the route both predate the base: in reality neither an
+	// alert's severity_changed_at nor a route's own updated_at can be
+	// later than the chain's first real delivery, and escalate_sql.go now
+	// folds both into LastUrgentAt (migration 00058's review, Criticals 2
+	// and 3) — created at the real "now" (an hour after base) as
+	// seedOpenAlert/seedRouteWithSteps otherwise would, either one would
+	// swamp the severity_raised event this test means to pin.
+	alert := seedOpenAlertAt(t, d, org, host, base.Add(-time.Minute))
 	ch := seedChannel(t, d, org)
-	route := seedRouteWithSteps(t, d, org, []alertroutes.Step{
+	route := seedRouteWithStepsAt(t, d, org, []alertroutes.Step{
 		{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{ch}},
 		{Position: 2, Delay: 10 * time.Minute},
-	})
-	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	}, base.Add(-time.Minute))
 	mustClaim(t, d, org, alert, route, 0, base)
 	raisedAt := base.Add(2 * time.Minute)
 	seedAlertEventAt(t, d, org, alert, "severity_raised", raisedAt)
@@ -374,10 +393,15 @@ func TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d)
 	host := seedHost(t, d, org)
-	alert := seedOpenAlert(t, d, org, host)
-	route := seedRouteWithSteps(t, d, org, []alertroutes.Step{{Position: 1, Delay: 5 * time.Minute}})
-
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	// Backdated to predate base, the same reason
+	// TestChainsNeedingAttentionCarriesStepsAndAnchors' own setup gives:
+	// severity_changed_at/route updated_at are now folded into
+	// LastUrgentAt too (migration 00058's review, Criticals 2 and 3) and
+	// must not outrank the unsnoozed event this test means to pin.
+	alert := seedOpenAlertAt(t, d, org, host, base.Add(-time.Minute))
+	route := seedRouteWithStepsAt(t, d, org, []alertroutes.Step{{Position: 1, Delay: 5 * time.Minute}}, base.Add(-time.Minute))
+
 	mustClaim(t, d, org, alert, route, 0, base)
 
 	// Snoozed shortly after the base, then cleared by a PERSON two minutes

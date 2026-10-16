@@ -31,9 +31,10 @@ import (
 
 // Chain pairs a ChainState (escalate.go) with the identity it belongs to:
 // the (alert, route) pair ChainsNeedingAttention found, and the alert's
-// own severity at read time — the follower (a later task) needs it to
-// re-run match.go's own severity check before ever calling DueStep, since
-// this query deliberately does not (ChainsNeedingAttentionBase's own doc
+// own severity at read time — the follower needs it, together with the
+// route's own scope, to re-run match.go's own severity/scope checks
+// (dueStep, follow_escalate.go) before ever calling DueStep, since this
+// query deliberately does not (ChainsNeedingAttentionBase's own doc
 // comment, alert_escalations.sql, says why).
 type Chain struct {
 	AlertID  uuid.UUID
@@ -180,30 +181,50 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 		if r.LastFiredAt.Valid {
 			lastFired = r.LastFiredAt.Time
 		}
-		// LastUrgentAt is the later of the alert's own most recent
-		// severity_raised/ack_voided/unsnoozed event and its snoozed_until
-		// column — three of spec decision 5's four anchors (a cleared
-		// snooze and an expired one cannot both fire for the same alert:
-		// Unsnooze nulls snoozed_until and writes only the event, an
-		// expiring snooze writes no event at all, so the two sources never
-		// disagree). The fourth, the end of a maintenance occurrence, is
-		// still the follower's own to add on top of this — it is NOT
-		// covered here or by anything above, and does not need to be:
-		// occurrences are computed in Go from the maintenance package's
-		// own windows, which this store has no view onto
-		// (ChainsNeedingAttentionBase's own doc comment, alert_escalations.sql,
-		// gives the full reasoning).
-		// has_urgent_event, not a zero-value check, is what tells "no
-		// event at all" apart from "an event at the epoch sentinel" —
+		// LastUrgentAt is the latest of five of spec decision 5's six
+		// anchors (ChainsNeedingAttentionBase's own doc comment,
+		// alert_escalations.sql, numbers all six and explains each):
+		//
+		//  1. the alert's own most recent severity_raised/ack_voided/
+		//     unsnoozed event (has_urgent_event/last_event_at);
+		//  2. its snoozed_until column, for a snooze that simply ran out
+		//     (a cleared snooze and an expired one cannot both fire for the
+		//     same alert — Unsnooze nulls snoozed_until and writes only the
+		//     event, an expiring snooze writes no event at all — so these
+		//     two sources never disagree);
+		//  3. severity_changed_at (v0.4d review, Critical 2): moves on
+		//     every severity write, a FALL as much as a rise, which is the
+		//     only trace a falling severity leaves anywhere;
+		//  4. the owning route's own updated_at (review, Critical 3): a
+		//     route can only reappear here re-enabled or otherwise edited
+		//     after this chain last fired, since a disabled route cannot
+		//     appear in this result at all.
+		//
+		// has_urgent_event, not a zero-value check, is what tells "no event
+		// at all" apart from "an event at the epoch sentinel" —
 		// row.LastEventAt is the COALESCE-to-'epoch' value the query uses
-		// solely to keep the column NOT NULL for sqlc, never a real
-		// anchor on its own.
+		// solely to keep the column NOT NULL for sqlc, never a real anchor
+		// on its own. SeverityChangedAt and RouteUpdatedAt need no such
+		// sentinel: both are plain NOT NULL columns on rows that always
+		// exist by the time this one does.
+		//
+		// The sixth anchor, the end of a maintenance occurrence, is still
+		// the follower's own to add on top of this — it is NOT covered here
+		// or by anything above, and does not need to be: occurrences are
+		// computed in Go from the maintenance package's own windows, which
+		// this store has no view onto.
 		var lastUrgent time.Time
 		if r.HasUrgentEvent {
 			lastUrgent = r.LastEventAt
 		}
 		if r.SnoozedUntil.Valid && r.SnoozedUntil.Time.After(lastUrgent) {
 			lastUrgent = r.SnoozedUntil.Time
+		}
+		if r.SeverityChangedAt.After(lastUrgent) {
+			lastUrgent = r.SeverityChangedAt
+		}
+		if r.RouteUpdatedAt.After(lastUrgent) {
+			lastUrgent = r.RouteUpdatedAt
 		}
 		out[i] = Chain{
 			AlertID:  r.AlertID,

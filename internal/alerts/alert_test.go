@@ -3,6 +3,7 @@ package alerts
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,40 +16,70 @@ import (
 // eighth kind passed it unchanged, which is exactly the drift the type's
 // own doc comment cites fleetStateRank to justify preventing.
 //
-// Two tables carry the enum, and both are checked here even though only
-// the first belongs to this package:
+// Two tables carry the enum, and they are deliberately NOT compared the
+// same way:
 //
-//   - alert_events.kind (00049) — this package's own table, the authority
-//     the EventKind type describes.
-//   - alert_route_events.kind (00052) — internal/alertroutes' table,
-//     whose rows are alerts.EventKind values written by
-//     alertroutes.Validate through ParseEventKind. The Go list it must
-//     agree with is this package's, so the pin lives beside that list
-//     rather than beside the table; splitting it would mean a second copy
-//     of the parser below and a second place to remember.
+//   - alert_events.kind (00056, not 00049) — this package's own table, the
+//     authority EventKind describes. 00049 declared the original
+//     seven-value CHECK; 00056 (v0.4d) DROPs and ADDs it to widen the list
+//     to eight for 'escalated' — pointing this test at 00049 alone is
+//     exactly how it slept through that widening the first time: it kept
+//     comparing EventKinds() against a CHECK list the schema had already
+//     moved past. EventKinds() must match this one exactly, in order.
+//   - alert_route_events.kind (00052) — internal/alertroutes' table of a
+//     ROUTE's own Events selection, which drives the forward pass's
+//     matching (match.go). It is one short of EventKinds() ON PURPOSE:
+//     'escalated' is not — and must never become — something a route can
+//     select as a trigger. escalatePass (follow_escalate.go) already
+//     delivers that event directly, through its own claim-then-enqueue
+//     path; a route that could also select it would give the same
+//     alert_events row two uncoordinated delivery paths racing over it.
+//     So this table is checked against EventKinds() MINUS EventEscalated,
+//     and a widening of its own CHECK list to include 'escalated' fails
+//     this test loudly rather than quietly enabling the double delivery.
 func TestEventKindsMatchTheSchema(t *testing.T) {
-	for _, tc := range []struct{ migration, table string }{
-		{"../db/migrations/00049_alerts.sql", "alert_events"},
-		{"../db/migrations/00052_alert_routes.sql", "alert_route_events"},
-	} {
-		want := checkListIn(t, tc.migration, tc.table, "kind")
-		got := EventKinds()
-		if len(got) != len(want) {
-			t.Fatalf("%s.kind lists %d kinds (%v), EventKinds() has %d (%v)", tc.table, len(want), want, len(got), got)
-		}
-		for i := range want {
-			if string(got[i]) != want[i] {
-				t.Errorf("%s.kind[%d] = %q, EventKinds()[%d] = %q", tc.table, i, want[i], i, got[i])
-			}
-		}
-		for _, k := range want {
-			if parsed, ok := ParseEventKind(k); !ok || string(parsed) != k {
-				t.Errorf("ParseEventKind(%q) = %q, %v; want %q, true — %s accepts it", k, parsed, ok, k, tc.table)
-			}
-		}
+	got := EventKinds()
+
+	want := checkListIn(t, "../db/migrations/00056_escalation_chains.sql", "alert_events", "kind")
+	assertKindsMatch(t, "alert_events", want, got)
+
+	// EventKinds() always ends in EventEscalated (its own const block
+	// comment says so) — dropping the last element is what "minus
+	// escalated" means in code, not a slice of the first seven by number.
+	routeWant := checkListIn(t, "../db/migrations/00052_alert_routes.sql", "alert_route_events", "kind")
+	assertKindsMatch(t, "alert_route_events", routeWant, got[:len(got)-1])
+	if slices.Contains(routeWant, string(EventEscalated)) {
+		t.Fatal("alert_route_events.kind now permits 'escalated' — a route could select it as a trigger " +
+			"and race escalatePass's own delivery over the same event; this test's own doc comment " +
+			"explains why that must not happen, update it and this assertion together if it is now intended")
 	}
+
 	if _, ok := ParseEventKind("resolved"); ok {
 		t.Error(`ParseEventKind("resolved") accepted a kind no CHECK list has`)
+	}
+}
+
+// assertKindsMatch checks that want — one table's own CHECK list, in
+// schema order — equals gotKinds exactly, and that ParseEventKind accepts
+// every literal in it. Factored out of TestEventKindsMatchTheSchema so
+// that function's own two tables can be held to the same equality check
+// against two DIFFERENT slices (the full EventKinds() for alert_events,
+// EventKinds() minus EventEscalated for alert_route_events) without
+// duplicating the comparison itself.
+func assertKindsMatch(t *testing.T, table string, want []string, gotKinds []EventKind) {
+	t.Helper()
+	if len(gotKinds) != len(want) {
+		t.Fatalf("%s.kind lists %d kinds (%v), want %d (%v)", table, len(want), want, len(gotKinds), gotKinds)
+	}
+	for i := range want {
+		if string(gotKinds[i]) != want[i] {
+			t.Errorf("%s.kind[%d] = %q, want %q", table, i, want[i], gotKinds[i])
+		}
+	}
+	for _, k := range want {
+		if parsed, ok := ParseEventKind(k); !ok || string(parsed) != k {
+			t.Errorf("ParseEventKind(%q) = %q, %v; want %q, true — %s accepts it", k, parsed, ok, k, table)
+		}
 	}
 }
 
@@ -56,18 +87,29 @@ func TestEventKindsMatchTheSchema(t *testing.T) {
 var quotedLiteral = regexp.MustCompile(`'([^']*)'`)
 
 // checkListIn returns, in the schema's own order, the literals of the
-// `CHECK (<column> IN (…))` constraint declared on <column> inside
-// `CREATE TABLE <table>` in the named migration. It is a deliberately
-// small parser rather than a query against a live database: the point is
-// to fail at `go test ./internal/alerts` the moment a migration file
-// changes, with no container and no migration run in between.
+// `CHECK (<column> IN (…))` constraint declared on <column>, either inside
+// `CREATE TABLE <table>` or — migration 00056's own shape for
+// alert_events, which widens a constraint an earlier migration declared
+// rather than redeclaring the table — in a bare `ALTER TABLE <table> ADD
+// CONSTRAINT ... CHECK (...)` with no CREATE TABLE of its own to scope
+// into. It is a deliberately small parser rather than a query against a
+// live database: the point is to fail at `go test ./internal/alerts` the
+// moment a migration file changes, with no container and no migration run
+// in between.
 func checkListIn(t *testing.T, migration, table, column string) []string {
 	t.Helper()
 	b, err := os.ReadFile(migration)
 	if err != nil {
 		t.Fatalf("read %s: %v", migration, err)
 	}
-	body := createTableBody(t, string(b), table, migration)
+	body := string(b)
+	if strings.Contains(body, "CREATE TABLE "+table+" (") {
+		body = createTableBody(t, body, table, migration)
+	}
+	// Else: no CREATE TABLE for table in this migration at all — it only
+	// widens a CHECK an earlier migration declared (00056's own ALTER
+	// TABLE ... ADD CONSTRAINT) — so the search runs over the whole file
+	// rather than a table body there is none of here.
 	head := "CHECK (" + column + " IN ("
 	i := strings.Index(body, head)
 	if i < 0 {

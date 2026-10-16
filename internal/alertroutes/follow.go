@@ -262,7 +262,7 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	// (claimBases, above) is not mistaken this same tick for a chain
 	// whose base has been sitting long enough to escalate — its base is
 	// `now`, and DueStep never fires a step at its own anchor.
-	if err := f.escalatePass(ctx, tx, orgID, now); err != nil {
+	if err := f.escalatePass(ctx, tx, orgID, routes, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

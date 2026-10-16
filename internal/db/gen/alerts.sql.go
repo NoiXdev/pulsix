@@ -83,7 +83,7 @@ func (q *Queries) CloseAlert(ctx context.Context, arg CloseAlertParams) error {
 
 const getAlert = `-- name: GetAlert :one
 
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, COALESCE(h.name, '')::text AS host_name
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
 WHERE a.org_id = $1 AND a.id = $2
@@ -114,6 +114,7 @@ type GetAlertRow struct {
 	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
 	SnoozeUntilChange    bool               `json:"snooze_until_change"`
 	WasFlapping          bool               `json:"was_flapping"`
+	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	HostName             string             `json:"host_name"`
 }
 
@@ -161,6 +162,7 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 		&i.SnoozedUntil,
 		&i.SnoozeUntilChange,
 		&i.WasFlapping,
+		&i.SeverityChangedAt,
 		&i.HostName,
 	)
 	return i, err
@@ -189,7 +191,7 @@ func (q *Queries) GetAlertSeverity(ctx context.Context, arg GetAlertSeverityPara
 const insertAlert = `-- name: InsertAlert :one
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
   $7, $8, $8,
@@ -197,7 +199,8 @@ INSERT INTO alerts (
     (SELECT flapping FROM check_states s
      WHERE $3::text = 'tuple' AND s.org_id = $1 AND s.host_id = $2
        AND s.check_key = $4 AND s.item = $5 AND s.metric = $6),
-    false)
+    false),
+  $7
 )
 RETURNING id
 `
@@ -234,6 +237,11 @@ type InsertAlertParams struct {
 // scope='host' open consult check_states not at all, rather than merely
 // "usually" matching nothing because real tuples happen to have non-empty
 // keys (see TestExecuteOpenHostScopeNeverFlaps's own adversarial row).
+//
+// severity_changed_at (v0.4d, migration 00058) starts at @opened_at, the
+// same reading that migration's own backfill gives every row that
+// predates the column: a brand new alert's severity has never changed, so
+// the moment it last did is the moment it opened.
 func (q *Queries) InsertAlert(ctx context.Context, arg InsertAlertParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertAlert,
 		arg.OrgID,
@@ -348,7 +356,7 @@ func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams
 }
 
 const listAlerts = `-- name: ListAlerts :many
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, COALESCE(h.name, '')::text AS host_name
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
 WHERE a.org_id = $1
@@ -406,6 +414,7 @@ type ListAlertsRow struct {
 	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
 	SnoozeUntilChange    bool               `json:"snooze_until_change"`
 	WasFlapping          bool               `json:"was_flapping"`
+	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	HostName             string             `json:"host_name"`
 }
 
@@ -490,6 +499,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 			&i.SnoozedUntil,
 			&i.SnoozeUntilChange,
 			&i.WasFlapping,
+			&i.SeverityChangedAt,
 			&i.HostName,
 		); err != nil {
 			return nil, err
@@ -597,7 +607,7 @@ func (q *Queries) ListMaintenanceWindowsForHost(ctx context.Context, arg ListMai
 
 const listOpenAlertsForHost = `-- name: ListOpenAlertsForHost :many
 
-SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping FROM alerts
+SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping, severity_changed_at FROM alerts
 WHERE org_id = $1 AND host_id = $2 AND closed_at IS NULL
 ORDER BY scope, check_key, item, metric
 `
@@ -654,6 +664,7 @@ func (q *Queries) ListOpenAlertsForHost(ctx context.Context, arg ListOpenAlertsF
 			&i.SnoozedUntil,
 			&i.SnoozeUntilChange,
 			&i.WasFlapping,
+			&i.SeverityChangedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -745,8 +756,9 @@ UPDATE alerts SET severity = $1,
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
     THEN $1 ELSE peak_severity END,
   snooze_until_change = CASE WHEN $3::boolean THEN false ELSE snooze_until_change END,
-  acknowledged_severity = CASE WHEN $4::boolean THEN NULL ELSE acknowledged_severity END
-WHERE id = $5 AND org_id = $6
+  acknowledged_severity = CASE WHEN $4::boolean THEN NULL ELSE acknowledged_severity END,
+  severity_changed_at = $5
+WHERE id = $6 AND org_id = $7
 `
 
 type RaiseAlertSeverityParams struct {
@@ -754,6 +766,7 @@ type RaiseAlertSeverityParams struct {
 	SeverityRank int32     `json:"severity_rank"`
 	ClearsSnooze bool      `json:"clears_snooze"`
 	VoidsAck     bool      `json:"voids_ack"`
+	At           time.Time `json:"at"`
 	ID           uuid.UUID `json:"id"`
 	OrgID        uuid.UUID `json:"org_id"`
 }
@@ -784,12 +797,25 @@ type RaiseAlertSeverityParams struct {
 // acknowledged_at/acknowledged_by are deliberately left alone: they record
 // that an acknowledgement happened at all, which stays true even once it
 // no longer covers.
+//
+// severity_changed_at (v0.4d escalation-chains review, Critical 2) is the
+// fifth SET target, unconditional — raiseSeverity (store_sql.go) only ever
+// calls this statement when the severity column itself is about to move
+// (its own doc comment: "the only reason Reconcile emits this action at
+// all"), rise or fall alike, so every call here is a real severity change
+// and every one of them moves this column. A FALLING severity writes no
+// alert_events row at all — this is the only trace it leaves anywhere —
+// which is exactly why escalatePass's own anchor fold
+// (internal/alertroutes, migration 00058's own doc comment) needs it: a
+// route's severity set left and re-entered on a fall-then-rise has
+// nothing else to measure a resumed chain's delay from.
 func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) error {
 	_, err := q.db.Exec(ctx, raiseAlertSeverity,
 		arg.Severity,
 		arg.SeverityRank,
 		arg.ClearsSnooze,
 		arg.VoidsAck,
+		arg.At,
 		arg.ID,
 		arg.OrgID,
 	)

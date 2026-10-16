@@ -271,9 +271,10 @@ func toAlert(r gen.Alert) Alert {
 			CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
 		},
 
-		OpenedAt: r.OpenedAt,
-		Severity: rules.State(r.Severity),
-		Peak:     rules.State(r.PeakSeverity),
+		OpenedAt:          r.OpenedAt,
+		Severity:          rules.State(r.Severity),
+		Peak:              rules.State(r.PeakSeverity),
+		SeverityChangedAt: r.SeverityChangedAt,
 
 		ClosedAt:     db.TimePtr(r.ClosedAt),
 		ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
@@ -312,9 +313,10 @@ func toAlertFromGetRow(r gen.GetAlertRow) AlertWithHost {
 				HostID: r.HostID, Scope: Scope(r.Scope),
 				CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
 			},
-			OpenedAt: r.OpenedAt,
-			Severity: rules.State(r.Severity),
-			Peak:     rules.State(r.PeakSeverity),
+			OpenedAt:          r.OpenedAt,
+			Severity:          rules.State(r.Severity),
+			Peak:              rules.State(r.PeakSeverity),
+			SeverityChangedAt: r.SeverityChangedAt,
 
 			ClosedAt:     db.TimePtr(r.ClosedAt),
 			ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
@@ -342,9 +344,10 @@ func toAlertFromListRow(r gen.ListAlertsRow) AlertWithHost {
 				HostID: r.HostID, Scope: Scope(r.Scope),
 				CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
 			},
-			OpenedAt: r.OpenedAt,
-			Severity: rules.State(r.Severity),
-			Peak:     rules.State(r.PeakSeverity),
+			OpenedAt:          r.OpenedAt,
+			Severity:          rules.State(r.Severity),
+			Peak:              rules.State(r.PeakSeverity),
+			SeverityChangedAt: r.SeverityChangedAt,
 
 			ClosedAt:     db.TimePtr(r.ClosedAt),
 			ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
@@ -451,7 +454,7 @@ func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid
 
 	err = q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
 		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
-		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, ID: a.AlertID, OrgID: orgID,
+		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
 	})
 	if err != nil {
 		return fmt.Errorf("raise severity: %w", err)

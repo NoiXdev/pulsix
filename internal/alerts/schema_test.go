@@ -67,9 +67,9 @@ func insertAlertRow(t *testing.T, d *db.DB, org, host uuid.UUID, r alertRow) err
 	_, err := d.Pool().Exec(context.Background(), `
 		INSERT INTO alerts (
 			org_id, host_id, scope, check_key, item, metric,
-			opened_at, severity, peak_severity,
+			opened_at, severity, peak_severity, severity_changed_at,
 			closed_at, closed_reason, acknowledged_at, acknowledged_severity
-		) VALUES ($1, $2, $3, $4, $5, $6, now(), 'warn', 'warn', $7, $8, $9, $10)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, now(), 'warn', 'warn', now(), $7, $8, $9, $10)`,
 		org, host, r.scope, r.checkKey, r.item, r.metric,
 		r.closedAt, r.closedReason, r.ackAt, r.ackSeverity)
 	return err
@@ -223,8 +223,8 @@ func seedAlert(t *testing.T, d *db.DB, org, host uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	err := d.Pool().QueryRow(context.Background(), `
-		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
-		VALUES ($1, $2, 'tuple', 'cpu', '', 'used_percent', now(), 'warn', 'warn')
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
+		VALUES ($1, $2, 'tuple', 'cpu', '', 'used_percent', now(), 'warn', 'warn', now())
 		RETURNING id`, org, host).Scan(&id)
 	if err != nil {
 		t.Fatal(err)

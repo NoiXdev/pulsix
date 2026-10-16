@@ -547,6 +547,11 @@ func TestListAlertsAndGetAlertAgreeOnAFullyPopulatedRow(t *testing.T) {
 		OpenedAt: t0,
 		Severity: rules.StateCrit,
 		Peak:     rules.StateCrit,
+		// Moved by the ActionSeverity call below (t0+2m), not left at
+		// opened_at (t0): severity_changed_at (migration 00058) is set on
+		// every RaiseAlertSeverity write, which is exactly what that
+		// action issues.
+		SeverityChangedAt: t0.Add(2 * time.Minute),
 
 		ClosedAt:     timePtr(t0.Add(4 * time.Minute)),
 		ClosedReason: alerts.Stale,
@@ -583,6 +588,7 @@ func timePtr(t time.Time) *time.Time { return &t }
 // a real one.
 func normalizeAlertTimes(a alerts.Alert) alerts.Alert {
 	a.OpenedAt = a.OpenedAt.UTC()
+	a.SeverityChangedAt = a.SeverityChangedAt.UTC()
 	if a.ClosedAt != nil {
 		a.ClosedAt = timePtr(a.ClosedAt.UTC())
 	}
@@ -1086,8 +1092,8 @@ func TestAlertCursorRoundTrips(t *testing.T) {
 func insertAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, checkKey, item, metric string, openedAt time.Time) {
 	t.Helper()
 	_, err := d.Pool().Exec(context.Background(), `
-		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
-		VALUES ($1, $2, 'tuple', $3, $4, $5, $6, 'warn', 'warn')`,
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
+		VALUES ($1, $2, 'tuple', $3, $4, $5, $6, 'warn', 'warn', $6)`,
 		org, host, checkKey, item, metric, openedAt)
 	if err != nil {
 		t.Fatalf("insert alert at %v: %v", openedAt, err)

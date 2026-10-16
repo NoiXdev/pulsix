@@ -44,9 +44,14 @@ ORDER BY scope, check_key, item, metric;
 -- scope='host' open consult check_states not at all, rather than merely
 -- "usually" matching nothing because real tuples happen to have non-empty
 -- keys (see TestExecuteOpenHostScopeNeverFlaps's own adversarial row).
+--
+-- severity_changed_at (v0.4d, migration 00058) starts at @opened_at, the
+-- same reading that migration's own backfill gives every row that
+-- predates the column: a brand new alert's severity has never changed, so
+-- the moment it last did is the moment it opened.
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at
 ) VALUES (
   @org_id, @host_id, @scope, @check_key, @item, @metric,
   @opened_at, @severity, @severity,
@@ -54,7 +59,8 @@ INSERT INTO alerts (
     (SELECT flapping FROM check_states s
      WHERE @scope::text = 'tuple' AND s.org_id = @org_id AND s.host_id = @host_id
        AND s.check_key = @check_key AND s.item = @item AND s.metric = @metric),
-    false)
+    false),
+  @opened_at
 )
 RETURNING id;
 
@@ -92,12 +98,25 @@ SELECT severity FROM alerts WHERE id = @id AND org_id = @org_id;
 -- acknowledged_at/acknowledged_by are deliberately left alone: they record
 -- that an acknowledgement happened at all, which stays true even once it
 -- no longer covers.
+--
+-- severity_changed_at (v0.4d escalation-chains review, Critical 2) is the
+-- fifth SET target, unconditional — raiseSeverity (store_sql.go) only ever
+-- calls this statement when the severity column itself is about to move
+-- (its own doc comment: "the only reason Reconcile emits this action at
+-- all"), rise or fall alike, so every call here is a real severity change
+-- and every one of them moves this column. A FALLING severity writes no
+-- alert_events row at all — this is the only trace it leaves anywhere —
+-- which is exactly why escalatePass's own anchor fold
+-- (internal/alertroutes, migration 00058's own doc comment) needs it: a
+-- route's severity set left and re-entered on a fall-then-rise has
+-- nothing else to measure a resumed chain's delay from.
 UPDATE alerts SET severity = @severity,
   peak_severity = CASE WHEN @severity_rank::int > (
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
     THEN @severity ELSE peak_severity END,
   snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END,
-  acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END
+  acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END,
+  severity_changed_at = @at
 WHERE id = @id AND org_id = @org_id;
 
 -- name: SetAlertFlapping :exec

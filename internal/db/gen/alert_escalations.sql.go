@@ -40,7 +40,9 @@ SELECT
     SELECT 1 FROM alert_events ae
      WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided', 'unsnoozed')
   ) AS has_urgent_event,
-  a.snoozed_until AS snoozed_until
+  a.snoozed_until AS snoozed_until,
+  a.severity_changed_at AS severity_changed_at,
+  r.updated_at AS route_updated_at
 FROM alerts a
 JOIN alert_routes r ON r.org_id = a.org_id AND r.enabled
 JOIN ladder l ON l.route_id = r.id
@@ -60,14 +62,16 @@ type ChainsNeedingAttentionBaseParams struct {
 }
 
 type ChainsNeedingAttentionBaseRow struct {
-	AlertID        uuid.UUID          `json:"alert_id"`
-	RouteID        uuid.UUID          `json:"route_id"`
-	Severity       string             `json:"severity"`
-	FiredUpTo      int32              `json:"fired_up_to"`
-	LastFiredAt    pgtype.Timestamptz `json:"last_fired_at"`
-	LastEventAt    time.Time          `json:"last_event_at"`
-	HasUrgentEvent bool               `json:"has_urgent_event"`
-	SnoozedUntil   pgtype.Timestamptz `json:"snoozed_until"`
+	AlertID           uuid.UUID          `json:"alert_id"`
+	RouteID           uuid.UUID          `json:"route_id"`
+	Severity          string             `json:"severity"`
+	FiredUpTo         int32              `json:"fired_up_to"`
+	LastFiredAt       pgtype.Timestamptz `json:"last_fired_at"`
+	LastEventAt       time.Time          `json:"last_event_at"`
+	HasUrgentEvent    bool               `json:"has_urgent_event"`
+	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
+	SeverityChangedAt time.Time          `json:"severity_changed_at"`
+	RouteUpdatedAt    time.Time          `json:"route_updated_at"`
 }
 
 // The follower's second pass (spec "The sweep"): every open alert paired
@@ -100,28 +104,51 @@ type ChainsNeedingAttentionBaseRow struct {
 // comment gives. last_fired_at is NULL in that same case; the store reads
 // a NULL there as the zero time.Time.
 //
-// last_event_at and snoozed_until together cover TWO of spec decision 5's
-// THREE anchors for LastUrgentAt. The first is the alert's own most recent
-// severity_raised/ack_voided/unsnoozed event; the second is its
-// snoozed_until column, for a bounded snooze that simply runs out rather
-// than being cleared by a person. 'unsnoozed' belongs in the SAME event
-// filter as severity_raised/ack_voided, not a filter of its own: Unsnooze
-// (internal/alerts/store_sql.go) clears snoozed_until back to NULL and
-// records only that event, so it is the ONLY trace a human-cleared snooze
-// leaves anywhere — a query that read snoozed_until but not this event
-// would see nothing for that case and fall back to the stale base
-// fired_at, firing the next rung immediately instead of giving it its own
-// full delay from the moment the alert actually became urgent again
-// (TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase is the
-// regression test for exactly this gap — caught in review, not before).
+// last_event_at, snoozed_until, severity_changed_at and route_updated_at
+// together cover FIVE of spec decision 5's SIX anchors for LastUrgentAt
+// (the sixth, the end of a maintenance occurrence, is the one this query
+// still deliberately does not cover — see below):
 //
-// The store (escalate_sql.go), not this statement, takes the later of
-// last_event_at and snoozed_until: GREATEST(x, y) does not widen to a
-// nullable Go type the way COALESCE does — tried first, it left sqlc
-// unable to infer a concrete type for the column at all, and casting to
-// force one made it infer a non-nullable time.Time despite both arguments
-// being capable of NULL, which would panic the first time an alert
-// carried neither anchor.
+//  1. the alert's own most recent severity_raised/ack_voided/unsnoozed
+//     event (last_event_at/has_urgent_event);
+//  2. its snoozed_until column, for a bounded snooze that simply runs out
+//     rather than being cleared by a person;
+//  3. its severity_changed_at column (v0.4d review, migration 00058),
+//     which moves on EVERY severity write, a fall as much as a rise — a
+//     falling severity writes no event at all, so an alert that leaves a
+//     route's severity set and later re-enters it on a FALL had nothing
+//     else here to measure a resumed chain's delay from, which is exactly
+//     the acceptance list's own "resumes at the next unfired step ... with
+//     its full delay from the moment of re-entry" for that case;
+//  4. the owning route's own updated_at (review, Critical 3) — decision 4
+//     calls a disabled route a pause, but a disabled route cannot appear
+//     in this result at all (the JOIN below requires r.enabled), so the
+//     only way this column matters is the route reappearing re-enabled,
+//     or edited any other way, after this chain's last firing; updated_at
+//     already moves on exactly that and nothing else needs to.
+//
+// 'unsnoozed' belongs in the SAME event filter as severity_raised/
+// ack_voided, not a filter of its own: Unsnooze (internal/alerts/
+// store_sql.go) clears snoozed_until back to NULL and records only that
+// event, so it is the ONLY trace a human-cleared snooze leaves anywhere —
+// a query that read snoozed_until but not this event would see nothing for
+// that case and fall back to the stale base fired_at, firing the next rung
+// immediately instead of giving it its own full delay from the moment the
+// alert actually became urgent again (TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase
+// is the regression test for exactly this gap — caught in review, not
+// before).
+//
+// The store (escalate_sql.go), not this statement, takes the GREATEST of
+// all four: GREATEST(x, y) does not widen to a nullable Go type the way
+// COALESCE does — tried first, it left sqlc unable to infer a concrete
+// type for the column at all, and casting to force one made it infer a
+// non-nullable time.Time despite the arguments being capable of NULL,
+// which would panic the first time an alert carried neither of the
+// nullable ones. severity_changed_at and route_updated_at carry no such
+// hazard — both are plain NOT NULL columns, never a nullable subquery —
+// so they need no epoch-sentinel dance of their own; the store simply
+// compares them against whatever last_event_at/snoozed_until already
+// produced and keeps the latest.
 //
 // last_event_at itself has the same problem one level down: a bare
 // correlated subquery's nullability is exactly what ListItemsForHost's own
@@ -134,16 +161,19 @@ type ChainsNeedingAttentionBaseRow struct {
 // has_urgent_event is the EXISTS flag that tells the store whether to
 // trust it or to use the Go zero time.Time instead — ChainState's own
 // "zero if none" promise, not epoch, which an untouched alert must never
-// read as having been "urgent" at 1970-01-01.
+// read as having been "urgent" at 1970-01-01. (severity_changed_at and
+// route_updated_at carry no such sentinel because an alert and its route
+// both always exist by the time this row exists — there is no "untouched"
+// case for either to read as zero.)
 //
-// The THIRD anchor, the end of a maintenance occurrence, is the one this
-// query deliberately does NOT cover: occurrences are computed in Go from
-// the maintenance package's own windows, this query has no view onto
+// The SIXTH anchor, the end of a maintenance occurrence, is the one this
+// query still deliberately does NOT cover: occurrences are computed in Go
+// from the maintenance package's own windows, this query has no view onto
 // them, and folding a half-known anchor in here would make the SQL look
-// complete when it is not. The follower (a later task) is what actually
-// finishes decision 5's anchor list by adding that third one on top of
-// what this query already returns — unlike the 'unsnoozed' gap above,
-// this omission is a deliberate deferral, not a miss.
+// complete when it is not. The follower is what actually finishes decision
+// 5's anchor list by adding that one on top of what this query already
+// returns — unlike the 'unsnoozed' gap above, this omission is a
+// deliberate deferral, not a miss.
 //
 // "has an unfired step" (ladder.max_position > fired_up_to) is also what
 // keeps a route with no escalation steps at all out of this result
@@ -169,6 +199,8 @@ func (q *Queries) ChainsNeedingAttentionBase(ctx context.Context, arg ChainsNeed
 			&i.LastEventAt,
 			&i.HasUrgentEvent,
 			&i.SnoozedUntil,
+			&i.SeverityChangedAt,
+			&i.RouteUpdatedAt,
 		); err != nil {
 			return nil, err
 		}

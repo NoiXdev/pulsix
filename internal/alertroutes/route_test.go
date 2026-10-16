@@ -43,6 +43,15 @@ func TestValidate(t *testing.T) {
 		}, false},
 		{"no severity at all", func(in *Input) { in.Severities = nil }, false},
 		{"no event kind at all", func(in *Input) { in.Events = nil }, false},
+		// 'escalated' is alert_route_events' own CHECK (00052) minus one
+		// kind, deliberately (TestEventKindsMatchTheSchema's own doc
+		// comment, internal/alerts/alert_test.go, spells out why): a route
+		// that could select it as a trigger would race escalatePass's own
+		// delivery of the same alert_events row through the forward pass
+		// too.
+		{"escalated is not a selectable route event", func(in *Input) {
+			in.Events = []alerts.EventKind{alerts.EventEscalated}
+		}, false},
 		// A route with no channel tells nobody. Decision 8: it is rejected
 		// here rather than created and left silently ineffective.
 		{"no channel", func(in *Input) { in.Channels = nil }, false},

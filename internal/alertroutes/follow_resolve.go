@@ -152,6 +152,27 @@ type routing struct {
 	routeIDs []uuid.UUID
 }
 
+// hostGroupsFor resolves and caches hostID's monitoring groups for the
+// rest of this resolution's life. Factored out of route below so
+// escalatePass's own dueStep (follow_escalate.go, v0.4d) can ask the
+// identical question — whether a route's scope still covers an alert's
+// host — through the same cache rather than a second, uncoordinated
+// GroupsForHost call per chain: the answer depends only on the host and on
+// nothing that changes mid-tick, the same argument this file's own
+// resolution doc comment already makes for the rotation and window caches.
+func (r *resolution) hostGroupsFor(ctx context.Context, hostID uuid.UUID) ([]uuid.UUID, error) {
+	hostGroups, ok := r.groups[hostID]
+	if !ok {
+		var err error
+		hostGroups, err = r.f.groups.GroupsForHost(ctx, r.orgID, hostID)
+		if err != nil {
+			return nil, fmt.Errorf("groups for host %s: %w", hostID, err)
+		}
+		r.groups[hostID] = hostGroups
+	}
+	return hostGroups, nil
+}
+
 // route resolves one event to the channels that may hear it at this
 // instant. Routes add up (Scope's own doc comment), and each one carries
 // its own window, so the gate is applied per route and the survivors are
@@ -161,14 +182,9 @@ type routing struct {
 // applied to the union would hold a Saturday alert until Monday so the
 // weekday route could have it too, which is a stale page nobody can act on.
 func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error) {
-	hostGroups, ok := r.groups[ev.HostID]
-	if !ok {
-		var err error
-		hostGroups, err = r.f.groups.GroupsForHost(ctx, r.orgID, ev.HostID)
-		if err != nil {
-			return routing{}, fmt.Errorf("groups for host %s: %w", ev.HostID, err)
-		}
-		r.groups[ev.HostID] = hostGroups
+	hostGroups, err := r.hostGroupsFor(ctx, ev.HostID)
+	if err != nil {
+		return routing{}, err
 	}
 	subject := Subject{HostID: ev.HostID, Severity: ev.Severity, Event: ev.Kind}
 	matched := MatchRoutes(subject, hostGroups, r.routes)

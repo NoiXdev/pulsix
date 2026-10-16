@@ -44,7 +44,14 @@ type due struct {
 // claimed earlier in this loop must not change what a later chain's own
 // DueStep call sees for the identical `now`, and none of them do, because
 // nothing is claimed until this loop is over.
-func (f *Follower) escalatePass(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, now time.Time) error {
+//
+// routes is Tick's own already-read ListEnabled slice, passed in rather
+// than read a second time: this pass needs it purely for the two things
+// ChainsNeedingAttentionBase's own structural query deliberately does NOT
+// check (Chain's own doc comment, and the query's) — a route's severity
+// selection and its scope — and the forward pass has already paid for
+// that exact read this same tick.
+func (f *Follower) escalatePass(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, routes []Route, now time.Time) error {
 	chains, err := f.store.ChainsNeedingAttention(ctx, tx, orgID, f.batch)
 	if err != nil {
 		return fmt.Errorf("chains needing attention: %w", err)
@@ -53,23 +60,34 @@ func (f *Follower) escalatePass(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 		return nil
 	}
 
-	// ChainsNeedingAttentionBase's own join already restricts to enabled
-	// routes, so every route a chain names below is in this map — this
-	// read exists purely for the one thing that query deliberately does
-	// NOT check (Chain's own doc comment, and the query's): whether the
-	// alert's current severity is still in the route's own selection.
-	routes, err := f.store.ListEnabled(ctx, tx, orgID)
-	if err != nil {
-		return fmt.Errorf("list enabled routes: %w", err)
-	}
-	severities := make(map[uuid.UUID][]rules.State, len(routes))
+	routesByID := make(map[uuid.UUID]Route, len(routes))
 	for _, rt := range routes {
-		severities[rt.ID] = rt.Severities
+		routesByID[rt.ID] = rt
 	}
+
+	// One resolution for the whole pass: its host-groups cache
+	// (hostGroupsFor, follow_resolve.go) is what dueStep's own scope
+	// re-check shares across every chain on the same host, and its
+	// rotation cache (oncall) is exactly as valid for a step's channel
+	// source as it is for a route's own, since both depend only on a
+	// rotation id and on `now`. Built before the read loop below, not
+	// after it like the forward pass's own per-tick resolution is built
+	// before ITS read loop — the same shape, for the same reason.
+	res := &resolution{f: f, tx: tx, orgID: orgID, now: now,
+		groups: map[uuid.UUID][]uuid.UUID{}, oncall: map[uuid.UUID]uuid.UUID{}}
 
 	var dueSteps []due
 	for _, c := range chains {
-		ready, step, alert, err := f.dueStep(ctx, orgID, c, severities[c.RouteID], now)
+		rt, ok := routesByID[c.RouteID]
+		if !ok {
+			// Not reachable in the same transaction ChainsNeedingAttention
+			// just read routes in — its own JOIN requires r.enabled, so
+			// every route it can name is also in routes. Guarded rather
+			// than trusted: a chain this pass cannot place a route for is
+			// one it cannot safely evaluate, not a panic.
+			continue
+		}
+		ready, step, alert, err := f.dueStep(ctx, res, orgID, c, rt, now)
 		if err != nil {
 			return err
 		}
@@ -81,14 +99,6 @@ func (f *Follower) escalatePass(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 		return nil
 	}
 
-	// One resolution for the whole pass, built fresh rather than reused
-	// from the event pass's own (Tick never keeps that one alive this
-	// long): channelsOf's rotation cache (oncall) is exactly as valid
-	// here as there, since it depends only on a rotation id and on `now`,
-	// neither of which differs between a route's own channels and a
-	// step's. Nil groups/windows/alerts/gates maps are never touched —
-	// channelsOf reads none of them.
-	res := &resolution{f: f, tx: tx, orgID: orgID, now: now, oncall: map[uuid.UUID]uuid.UUID{}}
 	for _, d := range dueSteps {
 		if err := f.fireStep(ctx, tx, res, orgID, d, now); err != nil {
 			return err
@@ -99,11 +109,13 @@ func (f *Follower) escalatePass(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 
 // dueStep applies every gate decision 4 names that the store's own
 // structural query cannot (ChainsNeedingAttentionBase's doc comment): the
-// route's severity selection, acknowledgement, and every one of
-// alerts.Mute's three mute reasons. Only once a chain clears all of them
-// is DueStep (escalate.go) itself asked.
-func (f *Follower) dueStep(ctx context.Context, orgID uuid.UUID, c Chain, routeSeverities []rules.State, now time.Time) (bool, Step, alerts.AlertWithHost, error) {
-	if !slices.Contains(routeSeverities, c.Severity) {
+// route's severity selection, its SCOPE (review, Important 5 — both this
+// query's own doc comment and Chain's claim the follower re-runs match.go's
+// scope/severity logic, which was true of severity alone until this fix),
+// acknowledgement, and every one of alerts.Mute's three mute reasons. Only
+// once a chain clears all of them is DueStep (escalate.go) itself asked.
+func (f *Follower) dueStep(ctx context.Context, res *resolution, orgID uuid.UUID, c Chain, rt Route, now time.Time) (bool, Step, alerts.AlertWithHost, error) {
+	if !slices.Contains(rt.Severities, c.Severity) {
 		// Paused, not stopped (decision 4): the route's own selection no
 		// longer covers this alert's current severity. It resumes
 		// matching, and the chain picks up at the next unfired step with
@@ -115,6 +127,22 @@ func (f *Follower) dueStep(ctx context.Context, orgID uuid.UUID, c Chain, routeS
 	if err != nil {
 		return false, Step{}, alerts.AlertWithHost{}, fmt.Errorf("get alert %s: %w", c.AlertID, err)
 	}
+
+	hostGroups, err := res.hostGroupsFor(ctx, alert.Subject.HostID)
+	if err != nil {
+		return false, Step{}, alerts.AlertWithHost{}, err
+	}
+	if !scopeCovers(rt, alert.Subject.HostID, hostGroups) {
+		// Paused, the same as a severity leaving the route's set: a route
+		// narrowed to a different host or group — or a host moved out of
+		// the group a route was scoped to — must stop this chain's clock
+		// exactly as losing severity coverage does, not keep escalating
+		// for a host the route no longer names at all. match.go's own
+		// scopeCovers is reused rather than re-decided, the same posture
+		// this file already takes for channelsOf.
+		return false, Step{}, alerts.AlertWithHost{}, nil
+	}
+
 	if acknowledged(alert.Alert) {
 		// Stop (decision 2): acknowledged_severity already reads live
 		// here — RaiseAlertSeverity clears it on every ack_voided write
@@ -138,40 +166,69 @@ func (f *Follower) dueStep(ctx context.Context, orgID uuid.UUID, c Chain, routeS
 	}
 
 	cs := c.State
-	// The fourth anchor (decision 5), which ChainsNeedingAttentionBase's
-	// own doc comment leaves to the follower on purpose: whether a
-	// maintenance occurrence covered this alert is a fact about cron
-	// expressions evaluated in Go (internal/maintenance), not a column
-	// SQL can read. If one already covered the alert at the chain's own
-	// anchor and has since ended, the next step's delay counts from that
-	// end, not from the stale anchor — the same "full delay from the
-	// moment it became newly urgent again" rule the other three anchors
-	// already give.
+	// The sixth anchor (decision 5), which ChainsNeedingAttentionBase's own
+	// doc comment leaves to the follower on purpose: whether a maintenance
+	// occurrence covered this alert is a fact about cron expressions
+	// evaluated in Go (internal/maintenance), not a column SQL can read.
+	// If one already covered the alert somewhere between the chain's own
+	// anchor and the moment its next step would naively come due, and has
+	// since ended, that step's delay counts from the occurrence's end, not
+	// from the stale anchor — the same "full delay from the moment it
+	// became newly urgent again" rule the other five anchors already give.
 	//
-	// Sampled at the anchor itself, not at `now`: WindowsForHost only
-	// answers "what covers this instant", so by the time an occurrence is
-	// no longer active AT now there is nothing left in its answer to read
-	// an End from. Querying at the anchor still finds every occurrence
-	// that was already covering the alert there and has since ended —
-	// the shape a pause naturally takes, since the mute check immediately
-	// above already holds the chain for every tick the occurrence is
-	// active. What this does NOT find is a maintenance window that both
-	// started and ended strictly between the anchor and now without ever
-	// covering either instant — WindowsForHost's own shape (active-at-an-
+	// This is the resume path for TWO of alerts.Mute's three reasons, not
+	// one: alerts.Mute's own windows argument carries both a maintenance
+	// window AND an operator silence as maintenance.Occurrence values,
+	// distinguished only by Reason — WindowsForHost returns both, and this
+	// loop folds in whichever one it finds with no need to filter by
+	// Reason. The snooze reason needs no fold here at all: its own end is
+	// already the plain snoozed_until column ChainsNeedingAttentionBase
+	// reads directly (anchor 2, the query's own doc comment).
+	//
+	// Sampled at two instants, not at `now`: WindowsForHost only answers
+	// "what covers this instant", so by the time an occurrence is no
+	// longer active AT now there is nothing left in its answer to read an
+	// End from.
+	//
+	//   - the anchor itself: catches an occurrence that already covered
+	//     the alert there and has since ended — a mute that started at or
+	//     before the previous step's own firing.
+	//   - the anchor plus the next step's OWN delay — the instant that
+	//     step would have come due with no mute in the picture at all:
+	//     catches an occurrence that started after the anchor but was
+	//     already covering the alert by the time it would otherwise have
+	//     fired, which the mute check immediately above has been holding
+	//     on every tick since, exactly the ordinary "it came due while
+	//     muted" shape decision 4 describes.
+	//
+	// What this still does NOT find is an occurrence that starts AFTER
+	// both of those instants and has already ended by `now` — one that
+	// began and ended entirely inside the gap between this chain's anchor
+	// and whatever it would naively be due at, without ever covering
+	// either sampled point. WindowsForHost's own shape (active-at-an-
 	// instant, not active-over-a-range) has no way to see one, and fixing
-	// that is a store change outside this pass's own files. Left as a
-	// documented gap rather than silently assumed away.
+	// that fully needs an interval query this pass's own files do not
+	// have. Accepted as shippable: ticks run every DefaultFollowInterval,
+	// occurrences run minutes to hours, and the one failure direction left
+	// is "fires a little early", never "never fires at all".
 	anchor := cs.LastFiredAt
 	if cs.LastUrgentAt.After(anchor) {
 		anchor = cs.LastUrgentAt
 	}
-	if !anchor.IsZero() && anchor.Before(now) {
-		atAnchor, err := f.mutes.WindowsForHost(ctx, orgID, alert.Subject.HostID, anchor)
+	samples := []time.Time{anchor}
+	if d, ok := stepDelay(cs.Steps, cs.FiredUpTo+1); ok {
+		samples = append(samples, anchor.Add(d))
+	}
+	for _, at := range samples {
+		if at.IsZero() || !at.Before(now) {
+			continue
+		}
+		atSample, err := f.mutes.WindowsForHost(ctx, orgID, alert.Subject.HostID, at)
 		if err != nil {
 			return false, Step{}, alerts.AlertWithHost{}, fmt.Errorf(
-				"windows for host %s at %s: %w", alert.Subject.HostID, anchor, err)
+				"windows for host %s at %s: %w", alert.Subject.HostID, at, err)
 		}
-		for _, w := range atAnchor {
+		for _, w := range atSample {
 			if w.End.After(cs.LastUrgentAt) && !w.End.After(now) {
 				cs.LastUrgentAt = w.End
 			}
@@ -180,6 +237,20 @@ func (f *Follower) dueStep(ctx context.Context, orgID uuid.UUID, c Chain, routeS
 
 	step, ok := DueStep(cs, now)
 	return ok, step, alert, nil
+}
+
+// stepDelay finds position's own Delay in steps — the next unfired rung's
+// delay, used only to pick the fold's second sample instant above (the
+// moment that rung would naively come due with no mute in the picture at
+// all). false when no step at that position exists, which DueStep itself
+// will also find and refuse to answer for.
+func stepDelay(steps []Step, position int) (time.Duration, bool) {
+	for _, s := range steps {
+		if s.Position == position {
+			return s.Delay, true
+		}
+	}
+	return 0, false
 }
 
 // acknowledged is the same live comparison the alert list's own filter

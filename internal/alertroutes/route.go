@@ -110,6 +110,18 @@ func Validate(in Input) error {
 		return err
 	}
 	if err := checkSet("route", "event kind", in.Events, func(k alerts.EventKind) bool {
+		// EventEscalated is excluded on purpose, not merely unparsed: it IS
+		// a valid alerts.EventKind (alert_events.kind, migration 00056),
+		// but alert_route_events.kind (00052) was never widened to admit
+		// it, and must not be — escalatePass (follow_escalate.go) already
+		// delivers that event directly, through its own claim-then-enqueue
+		// path. A route that could also select it as a trigger would give
+		// the same alert_events row two uncoordinated delivery paths
+		// racing over it (TestEventKindsMatchTheSchema's own doc comment,
+		// internal/alerts/alert_test.go, has the full reasoning).
+		if k == alerts.EventEscalated {
+			return false
+		}
 		_, ok := alerts.ParseEventKind(string(k))
 		return ok
 	}); err != nil {

@@ -60,6 +60,15 @@ type Alert struct {
 
 	OpenedAt       time.Time
 	Severity, Peak rules.State
+	// SeverityChangedAt is v0.4d's own addition (migration 00058, Critical 2
+	// of the escalation-chains review): the moment the severity column last
+	// moved, rise or fall alike. severity_raised (alert_events) only ever
+	// fires on a rise — "the column moves, the history does not gain noise"
+	// (store_sql.go's own raiseSeverity comment) — so this is the only trace
+	// a FALLING severity leaves anywhere, which escalatePass
+	// (internal/alertroutes) needs to anchor a chain that resumes on a fall-
+	// then-rise rather than on a rise alone.
+	SeverityChangedAt time.Time
 
 	ClosedAt     *time.Time
 	ClosedReason CloseReason
@@ -117,13 +126,13 @@ type Action struct {
 	Reason CloseReason // ActionClose only
 }
 
-// EventKind is one row of alert_events.kind. The seven constants below
-// are exactly the CHECK list migration 00049 declares, and
-// EventKindsMatchTheSchema pins them to it: a Go copy of a database enum
-// with no compiler link between them is how internal/api's fleetStateRank
-// drifted from rules.StateRank, which that function's own doc comment
-// records. internal/alertroutes needs these names; the type lives here,
-// with the table it describes.
+// EventKind is one row of alert_events.kind. The eight constants below
+// are exactly the CHECK list migration 00056 widened 00049's original
+// seven to (v0.4d adds 'escalated'), and EventKindsMatchTheSchema pins
+// them to it: a Go copy of a database enum with no compiler link between
+// them is how internal/api's fleetStateRank drifted from rules.StateRank,
+// which that function's own doc comment records. internal/alertroutes
+// needs these names; the type lives here, with the table it describes.
 type EventKind string
 
 const (
@@ -134,13 +143,20 @@ const (
 	EventSnoozed        EventKind = "snoozed"
 	EventUnsnoozed      EventKind = "unsnoozed"
 	EventClosed         EventKind = "closed"
+	// EventEscalated is alertroutes' own write (follow_escalate.go, v0.4d):
+	// one escalation chain's rung firing, payload {position, channels}.
+	// Listed here, not in alertroutes, for the same reason the other seven
+	// are: ParseEventKind and EventKindsMatchTheSchema both live beside
+	// this list, and a second copy of either for one more kind is the
+	// drift this type exists to prevent.
+	EventEscalated EventKind = "escalated"
 )
 
 // EventKinds lists every kind, in the schema's own order.
 func EventKinds() []EventKind {
 	return []EventKind{
 		EventOpened, EventSeverityRaised, EventAcknowledged,
-		EventAckVoided, EventSnoozed, EventUnsnoozed, EventClosed,
+		EventAckVoided, EventSnoozed, EventUnsnoozed, EventClosed, EventEscalated,
 	}
 }
 

@@ -56,16 +56,39 @@ func seedHost(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
 }
 
 // seedOpenAlert inserts one open, tuple-scoped 'warn' alert on host, the
-// subject every event below hangs off.
+// subject every event below hangs off. severity_changed_at starts equal to
+// opened_at — migration 00058's own backfill reading, "a brand new alert's
+// severity has never changed, so the moment it last did is the moment it
+// opened" — same as InsertAlert's own real write path (queries/alerts.sql).
 func seedOpenAlert(t *testing.T, d *db.DB, org, host uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	err := d.Pool().QueryRow(context.Background(), `
-		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
-		VALUES ($1, $2, 'tuple', 'cpu', '', 'used_percent', now(), 'warn', 'warn')
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
+		VALUES ($1, $2, 'tuple', 'cpu', '', 'used_percent', now(), 'warn', 'warn', now())
 		RETURNING id`, org, host).Scan(&id)
 	if err != nil {
 		t.Fatalf("seed open alert: %v", err)
+	}
+	return id
+}
+
+// seedOpenAlertAt is seedOpenAlert with an explicit opened_at/
+// severity_changed_at instead of now() — for the handful of
+// ChainsNeedingAttention tests (escalate_sql_test.go) that need the
+// alert's own anchors to predate an artificially backdated escalation
+// base, so severity_changed_at (migration 00058, folded into LastUrgentAt
+// by escalate_sql.go) cannot outrank the specific anchor each of those
+// tests means to pin.
+func seedOpenAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, at time.Time) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := d.Pool().QueryRow(context.Background(), `
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
+		VALUES ($1, $2, 'tuple', 'cpu', '', 'used_percent', $3, 'warn', 'warn', $3)
+		RETURNING id`, org, host, at).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed open alert at %v: %v", at, err)
 	}
 	return id
 }
