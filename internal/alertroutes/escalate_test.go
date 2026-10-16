@@ -81,14 +81,53 @@ func TestDueStep(t *testing.T) {
 		{
 			// An urgency older than the last firing changes nothing —
 			// the anchor is the later of the two, not the newer concept.
+			// Using now strictly between the two candidate times (base-1h
+			// vs base) pins min-anchor vs max-anchor: with max-anchor
+			// (correct), not due; with min-anchor (wrong), would be due.
 			name: "an urgency before the last firing is ignored",
 			cs: ChainState{
 				Steps:     []Step{step(1, 5*time.Minute)},
 				FiredUpTo: 0, LastFiredAt: base,
 				LastUrgentAt: base.Add(-time.Hour),
 			},
-			now:  base.Add(5 * time.Minute),
-			want: 1,
+			now:  base.Add(2 * time.Minute),
+			want: -1,
+		},
+		{
+			// The guard FiredUpTo < 0 must block escalation, not just
+			// coincidental position numbering. A step at position 0 would
+			// be incorrectly returned if the guard were deleted.
+			name: "no base and a position-0 step still block escalation",
+			cs: ChainState{
+				Steps:     []Step{step(0, 5*time.Minute)},
+				FiredUpTo: -1,
+			},
+			now:  base.Add(6 * time.Hour),
+			want: -1,
+		},
+		{
+			// Delays are relative to the previous rung's own firing, not
+			// absolute from the base. This prevents pile-ups: each rung's
+			// clock only starts after its predecessor really fired. With
+			// base at t0, step 1 fired at t0+30m, both delays 5m, step 2
+			// should be due at t0+35m (t0+30m + 5m), not at t0+5m
+			// (t0 + 5m absolute).
+			name: "step 2 waits after step 1's own firing, not the base",
+			cs: ChainState{
+				Steps:     []Step{step(1, 5*time.Minute), step(2, 5*time.Minute)},
+				FiredUpTo: 1, LastFiredAt: base.Add(30 * time.Minute),
+			},
+			now:  base.Add(34 * time.Minute),
+			want: -1,
+		},
+		{
+			name: "step 2 is due after its own delay from step 1's firing",
+			cs: ChainState{
+				Steps:     []Step{step(1, 5*time.Minute), step(2, 5*time.Minute)},
+				FiredUpTo: 1, LastFiredAt: base.Add(30 * time.Minute),
+			},
+			now:  base.Add(35 * time.Minute),
+			want: 2,
 		},
 		{
 			name: "a route with no steps never escalates",
