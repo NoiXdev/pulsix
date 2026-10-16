@@ -105,6 +105,14 @@ type Alert struct {
 	WasFlapping          bool               `json:"was_flapping"`
 }
 
+type AlertEscalation struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	AlertID  uuid.UUID `json:"alert_id"`
+	RouteID  uuid.UUID `json:"route_id"`
+	Position int32     `json:"position"`
+	FiredAt  time.Time `json:"fired_at"`
+}
+
 type AlertEvent struct {
 	ID      uuid.UUID   `json:"id"`
 	OrgID   uuid.UUID   `json:"org_id"`
@@ -161,6 +169,21 @@ type AlertRouteSeverity struct {
 	OrgID    uuid.UUID `json:"org_id"`
 	RouteID  uuid.UUID `json:"route_id"`
 	Severity string    `json:"severity"`
+}
+
+type AlertRouteStep struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	RouteID      uuid.UUID   `json:"route_id"`
+	Position     int32       `json:"position"`
+	DelaySeconds int32       `json:"delay_seconds"`
+	RotationID   pgtype.UUID `json:"rotation_id"`
+}
+
+type AlertRouteStepChannel struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	RouteID   uuid.UUID `json:"route_id"`
+	Position  int32     `json:"position"`
+	ChannelID uuid.UUID `json:"channel_id"`
 }
 
 type ApiToken struct {

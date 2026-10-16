@@ -114,6 +114,24 @@ func seedAlertEvent(t *testing.T, d *db.DB, org, alert uuid.UUID, kind string) u
 	return id
 }
 
+// seedAlertRoute inserts one enabled, organization-wide route in org and
+// returns its id — the minimal fixture the escalation tables' own
+// composite FK to alert_routes needs; scope and name carry no meaning for
+// the tests that call this.
+func seedAlertRoute(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
+	t.Helper()
+	name := "r-" + uuid.Must(uuid.NewV7()).String()
+	var id uuid.UUID
+	err := d.Pool().QueryRow(context.Background(), `
+		INSERT INTO alert_routes (id, org_id, name, enabled, scope, revision, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, $2, true, 'org', 1, now(), now())
+		RETURNING id`, org, name).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestAlertRoutesSchema(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
@@ -414,5 +432,40 @@ func TestVaultPasswordCredentialAndRepoReference(t *testing.T) {
 	// from under it — the same guarantee the access credential has.
 	if _, err := d.Pool().Exec(ctx, `DELETE FROM credentials WHERE id = $1`, cred); err == nil {
 		t.Error("deleting a vault credential a repository still names must be refused")
+	}
+}
+
+func TestEscalationTablesEnforceTenancy(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
+
+	routeA := seedAlertRoute(t, d, orgA)
+	// A step belongs to its route's organization. The composite foreign
+	// key is what makes the cross-tenant version of this impossible
+	// rather than merely unused.
+	_, err := d.Pool().Exec(ctx,
+		`INSERT INTO alert_route_steps (org_id, route_id, position, delay_seconds)
+		 VALUES ($1, $2, 1, 300)`, orgB, routeA)
+	if err == nil {
+		t.Fatal("inserted a step into another organization's route")
+	}
+}
+
+func TestAlertEventsAcceptEscalated(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+
+	// The seventh kind was the last one 00049 allowed. 'escalated' is the
+	// eighth, and a chain that cannot write its own event is invisible on
+	// the alert page.
+	if _, err := d.Pool().Exec(ctx,
+		`INSERT INTO alert_events (id, org_id, alert_id, at, kind, payload)
+		 VALUES (gen_random_uuid(), $1, $2, now(), 'escalated', '{"position":1}'::jsonb)`,
+		org, alert); err != nil {
+		t.Fatalf("alert_events rejected kind 'escalated': %v", err)
 	}
 }
