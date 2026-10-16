@@ -66,19 +66,38 @@ RETURNING id;
 SELECT severity FROM alerts WHERE id = @id AND org_id = @org_id;
 
 -- name: RaiseAlertSeverity :exec
--- The brief's own statement, verbatim. The nested CASE's literal ranking
--- (warn=1, unknown=2, crit=3) is deliberately NOT what ships here — see
--- store_sql.go's own comment on raiseAlertSeverityRank for why, and
--- TestPeakSeverityRankMatchesRulesStateRank in store_sql_test.go for the
--- test that would fail if the two ever drifted apart again. Everything
--- else — the three SET targets, @severity_rank as the caller-computed
--- rank of the new severity, @clears_snooze clearing snooze_until_change
--- only when asked — is exactly as given.
+-- The brief's own statement, verbatim, plus v0.4d's own fourth SET target.
+-- The nested CASE's literal ranking (warn=1, unknown=2, crit=3) is
+-- deliberately NOT what ships here — see store_sql.go's own comment on
+-- raiseAlertSeverityRank for why, and TestPeakSeverityRankMatchesRulesStateRank
+-- in store_sql_test.go for the test that would fail if the two ever
+-- drifted apart again. The three original SET targets — @severity_rank as
+-- the caller-computed rank of the new severity, @clears_snooze clearing
+-- snooze_until_change only when asked — are exactly as given.
+--
+-- acknowledged_severity is the v0.4d addition (backlog 4.36): raiseSeverity
+-- (store_sql.go) already writes an ack_voided event exactly when
+-- @voids_ack is true, but until now that event was the only record of the
+-- void — acknowledged_severity itself was left standing. Since
+-- "acknowledged" is never a stored flag but the live comparison
+-- `severity <= acknowledged_severity`, a voided ack whose severity later
+-- fell back below the old acknowledged_severity read as acknowledged
+-- again, while its own timeline still showed the ack_voided event: the row
+-- and the history disagreed. Escalation is what turns that disagreement
+-- from cosmetic into material — a voided ack must keep a chain calling,
+-- not go quiet because severity happened to dip. Clearing it in this same
+-- UPDATE, gated on the identical @voids_ack the event write already uses,
+-- is what makes the column and the event move together by construction
+-- rather than by two call sites happening to agree today.
+-- acknowledged_at/acknowledged_by are deliberately left alone: they record
+-- that an acknowledgement happened at all, which stays true even once it
+-- no longer covers.
 UPDATE alerts SET severity = @severity,
   peak_severity = CASE WHEN @severity_rank::int > (
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
     THEN @severity ELSE peak_severity END,
-  snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END
+  snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END,
+  acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END
 WHERE id = @id AND org_id = @org_id;
 
 -- name: SetAlertFlapping :exec

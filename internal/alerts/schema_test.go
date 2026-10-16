@@ -175,27 +175,43 @@ func TestClosedAtAndReasonAreSetTogether(t *testing.T) {
 	}
 }
 
-// TestAcknowledgedAtAndSeverityAreSetTogether pins the acknowledgement
-// pair CHECK the same way TestClosedAtAndReasonAreSetTogether pins the
-// closing pair.
-func TestAcknowledgedAtAndSeverityAreSetTogether(t *testing.T) {
+// TestAcknowledgedSeverityImpliesAcknowledgedAt pins migration 00057's own
+// CHECK (v0.4d decision 2, backlog 4.36), which replaces the symmetric pair
+// CHECK 00049 put here (alerts_check1: acknowledged_at and
+// acknowledged_severity were either both NULL or both set). The new CHECK
+// keeps only the half that still makes sense — there is no "acknowledged
+// at severity X" without an acknowledgement — and drops the half that no
+// longer does: RaiseAlertSeverity now clears acknowledged_severity alone
+// when VoidsAck fires, leaving acknowledged_at (and acknowledged_by)
+// standing on purpose, because the acknowledgement itself still happened,
+// it just stopped covering. ackAt set with no ackSeverity — the shape
+// TestAcknowledgedAtAndSeverityAreSetTogether used to reject outright — is
+// exactly that voided state and must now be accepted, which is what
+// distinguishes this test from the one it replaces rather than only
+// renaming it.
+func TestAcknowledgedSeverityImpliesAcknowledgedAt(t *testing.T) {
 	d := testdb.Open(t)
 	org, host := seedHost(t, d)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	warn := "warn"
 
+	// Each case gets its own item, not the shared "" every other test in
+	// this file uses: the first case now persists an open row (that is the
+	// whole point of this test), and alerts_one_open_per_subject would
+	// otherwise refuse the third case's own open insert as a second open
+	// alert on the very same subject.
 	if err := insertAlertRow(t, d, org, host, alertRow{
-		scope: "tuple", checkKey: "disk", metric: "used_percent", ackAt: &now,
-	}); err == nil {
-		t.Fatal("acknowledged_at set without acknowledged_severity was accepted")
+		scope: "tuple", checkKey: "disk", item: "ack-at-alone", metric: "used_percent", ackAt: &now,
+	}); err != nil {
+		t.Fatalf("acknowledged_at set alone (the voided-ack shape) was refused: %v", err)
 	}
 	if err := insertAlertRow(t, d, org, host, alertRow{
-		scope: "tuple", checkKey: "disk", metric: "used_percent", ackSeverity: &warn,
+		scope: "tuple", checkKey: "disk", item: "severity-alone", metric: "used_percent", ackSeverity: &warn,
 	}); err == nil {
 		t.Fatal("acknowledged_severity set without acknowledged_at was accepted")
 	}
 	if err := insertAlertRow(t, d, org, host, alertRow{
-		scope: "tuple", checkKey: "disk", metric: "used_percent", ackAt: &now, ackSeverity: &warn,
+		scope: "tuple", checkKey: "disk", item: "both-set", metric: "used_percent", ackAt: &now, ackSeverity: &warn,
 	}); err != nil {
 		t.Fatalf("acknowledged_at and acknowledged_severity set together was refused: %v", err)
 	}
