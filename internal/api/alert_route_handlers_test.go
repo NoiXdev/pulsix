@@ -196,6 +196,79 @@ func TestAlertRouteCarriesItsWindow(t *testing.T) {
 	}
 }
 
+// TestAlertRouteCarriesItsEscalationLadder pins the v0.4d wire shape
+// (alert_route_dto.go's AlertRouteStepDTO): a route's steps round-trip in
+// order with their delays on create, and a later update that drops down to
+// one step removes the second rather than leaving it stranded — the same
+// full-replace semantics the rest of AlertRouteBody already has
+// (AlertRouteBody's own doc comment).
+func TestAlertRouteCarriesItsEscalationLadder(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+	ch2 := s.SeedChannel(t, org)
+	url := "/api/v1/orgs/" + org.String() + "/alert-routes"
+
+	created := s.Post(t, tok, url, map[string]any{
+		"name": "escalating", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"steps": []map[string]any{
+			{"position": 1, "delay_seconds": 300, "channel_ids": []string{ch.String()}},
+			{"position": 2, "delay_seconds": 600, "channel_ids": []string{ch2.String()}},
+		},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201: %s", created.Code, created.Body)
+	}
+	id := decodeID(t, created)
+
+	var createdBody struct {
+		Route struct {
+			Steps []struct {
+				Position     int      `json:"position"`
+				DelaySeconds int64    `json:"delay_seconds"`
+				ChannelIDs   []string `json:"channel_ids"`
+			} `json:"steps"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatalf("decode created route: %v: %s", err, created.Body)
+	}
+	if len(createdBody.Route.Steps) != 2 {
+		t.Fatalf("created route has %d steps, want 2: %s", len(createdBody.Route.Steps), created.Body)
+	}
+	if createdBody.Route.Steps[0].Position != 1 || createdBody.Route.Steps[0].DelaySeconds != 300 {
+		t.Errorf("step 1 did not round-trip: %+v", createdBody.Route.Steps[0])
+	}
+	if createdBody.Route.Steps[1].Position != 2 || createdBody.Route.Steps[1].DelaySeconds != 600 {
+		t.Errorf("step 2 did not round-trip: %+v", createdBody.Route.Steps[1])
+	}
+
+	updated := s.Patch(t, tok, url+"/"+id, `"1"`, map[string]any{
+		"name": "escalating", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"steps": []map[string]any{
+			{"position": 1, "delay_seconds": 300, "channel_ids": []string{ch.String()}},
+		},
+	})
+	if updated.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200: %s", updated.Code, updated.Body)
+	}
+	var updatedBody struct {
+		Route struct {
+			Steps []json.RawMessage `json:"steps"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &updatedBody); err != nil {
+		t.Fatalf("decode updated route: %v: %s", err, updated.Body)
+	}
+	if len(updatedBody.Route.Steps) != 1 {
+		t.Errorf("updated route has %d steps, want 1 (the second must be gone): %s", len(updatedBody.Route.Steps), updated.Body)
+	}
+}
+
 // TestAlertRouteRejectsAChannellessRoute pins alertroutes.Validate's own
 // rule through the HTTP boundary: a route with no channel tells nobody, so
 // the service refuses to create one, and the API must surface that as a

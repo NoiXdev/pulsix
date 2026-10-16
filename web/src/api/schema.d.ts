@@ -2693,6 +2693,8 @@ export interface components {
             scope_id?: string;
             /** @description warn, crit or unknown */
             severities?: string[] | null;
+            /** @description The route's escalation ladder; omit for a route that does not escalate */
+            steps?: components["schemas"]["AlertRouteStepDTO"][] | null;
             window?: components["schemas"]["AlertRouteWindowDTO"];
         };
         AlertRouteDTO: {
@@ -2717,6 +2719,8 @@ export interface components {
             scope_id?: string;
             /** @description Which alert severities this route fires on: warn, crit or unknown */
             severities: string[] | null;
+            /** @description The route's escalation ladder: each rung fires after its delay has passed without an acknowledgement */
+            steps?: components["schemas"]["AlertRouteStepDTO"][] | null;
             /** Format: date-time */
             updated_at: string;
             /** @description The route's delivery window; absent means it may deliver at any time */
@@ -2739,6 +2743,22 @@ export interface components {
              */
             readonly $schema?: string;
             route: components["schemas"]["AlertRouteDTO"];
+        };
+        AlertRouteStepDTO: {
+            /** @description Notification channel ids this step delivers to; absent means rotation_id is used */
+            channel_ids?: string[] | null;
+            /**
+             * Format: int64
+             * @description How long to wait, after the previous rung actually fired, before this one fires
+             */
+            delay_seconds: number;
+            /**
+             * Format: int64
+             * @description Where this rung sits in the ladder; 1 is the first step after the route's own delivery
+             */
+            position: number;
+            /** @description An on-call rotation whose current channel this step delivers to; absent means channel_ids is used */
+            rotation_id?: string;
         };
         AlertRouteWindowDTO: {
             /** @description A 5-field cron expression naming the window's start instants */

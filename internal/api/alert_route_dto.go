@@ -45,9 +45,15 @@ type AlertRouteDTO struct {
 	Window                 *AlertRouteWindowDTO `json:"window,omitempty" doc:"The route's delivery window; absent means it may deliver at any time"`
 	BreakthroughSeverities []string             `json:"breakthrough_severities,omitempty" doc:"The subset of severities that crosses a closed window anyway; only meaningful alongside window"`
 	RotationID             string               `json:"rotation_id,omitempty" doc:"An on-call rotation whose current channel replaces this route's fixed channel list; absent means channels is used as given"`
-	Revision               int64                `json:"revision"`
-	CreatedAt              time.Time            `json:"created_at"`
-	UpdatedAt              time.Time            `json:"updated_at"`
+	// Steps is v0.4d's own addition (design doc "API and permissions"): the
+	// route's escalation ladder beyond its own immediate delivery, absent
+	// for every route that does not escalate — the same optional shape
+	// Window already has, for the same reason (nil is alertroutes.Route's
+	// own default, not a route with a zero-length ladder it had to fill in).
+	Steps     []AlertRouteStepDTO `json:"steps,omitempty" doc:"The route's escalation ladder: each rung fires after its delay has passed without an acknowledgement"`
+	Revision  int64               `json:"revision"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
 }
 
 // AlertRouteWindowDTO is a route's delivery window on the wire
@@ -57,6 +63,22 @@ type AlertRouteWindowDTO struct {
 	Cron            string `json:"cron" doc:"A 5-field cron expression naming the window's start instants"`
 	DurationSeconds int64  `json:"duration_seconds" doc:"Length of each occurrence, in seconds"`
 	Timezone        string `json:"timezone" doc:"IANA timezone the cron is evaluated in"`
+}
+
+// AlertRouteStepDTO is one rung of a route's escalation ladder
+// (alertroutes.Step) on the wire. Position starts at 1 — position 0 is the
+// route's own Channels/RotationID, unchanged by this feature and never a
+// Step — and DelaySeconds carries the same minimum of 1 ValidateSteps
+// itself enforces (backlog 4.40: a client reading the schema should not
+// have to discover a bound by being rejected). RotationID and ChannelIDs
+// are the same either/or pair the route's own RotationID/Channels already
+// are, repeated per step rather than shared, because each rung picks its
+// own channel source independently of the route's.
+type AlertRouteStepDTO struct {
+	Position     int      `json:"position" minimum:"1" doc:"Where this rung sits in the ladder; 1 is the first step after the route's own delivery"`
+	DelaySeconds int64    `json:"delay_seconds" minimum:"1" doc:"How long to wait, after the previous rung actually fired, before this one fires"`
+	RotationID   string   `json:"rotation_id,omitempty" doc:"An on-call rotation whose current channel this step delivers to; absent means channel_ids is used"`
+	ChannelIDs   []string `json:"channel_ids,omitempty" doc:"Notification channel ids this step delivers to; absent means rotation_id is used"`
 }
 
 // toAlertRouteDTO flattens one alertroutes.Route onto the wire shape every
@@ -94,6 +116,22 @@ func toAlertRouteDTO(r alertroutes.Route) AlertRouteDTO {
 	}
 	if r.RotationID != nil {
 		dto.RotationID = r.RotationID.String()
+	}
+	if len(r.Steps) > 0 {
+		dto.Steps = make([]AlertRouteStepDTO, len(r.Steps))
+		for i, st := range r.Steps {
+			dto.Steps[i] = AlertRouteStepDTO{
+				Position:     st.Position,
+				DelaySeconds: int64(st.Delay / time.Second),
+				ChannelIDs:   make([]string, len(st.ChannelIDs)),
+			}
+			for j, ch := range st.ChannelIDs {
+				dto.Steps[i].ChannelIDs[j] = ch.String()
+			}
+			if st.RotationID != nil {
+				dto.Steps[i].RotationID = st.RotationID.String()
+			}
+		}
 	}
 	return dto
 }
@@ -133,6 +171,14 @@ type AlertRouteBody struct {
 	Window                 *AlertRouteWindowDTO `json:"window,omitempty"`
 	BreakthroughSeverities []string             `json:"breakthrough_severities,omitempty" doc:"Severities that cross a closed window anyway; needs window"`
 	RotationID             string               `json:"rotation_id,omitempty" doc:"An on-call rotation to resolve the delivery channel from instead of channels"`
+	// Steps is optional the same way the rest of this body is: omitting it
+	// leaves the route with no ladder, alertroutes.Route's own default for
+	// every route that does not escalate. A non-empty Steps still has to
+	// satisfy ValidateSteps (route.go) — gap-free positions from 1, a
+	// positive delay, exactly one channel source per step — surfaced as a
+	// 400 by mapAlertRouteErr the same way the route's own four selections
+	// are; this body adds no rule of its own.
+	Steps []AlertRouteStepDTO `json:"steps,omitempty" doc:"The route's escalation ladder; omit for a route that does not escalate"`
 }
 
 // input turns the wire body into alertroutes.Input. A malformed scope_id or
@@ -175,9 +221,29 @@ func (b AlertRouteBody) input() (alertroutes.Input, error) {
 	if err != nil {
 		return alertroutes.Input{}, err
 	}
+	steps := make([]alertroutes.Step, len(b.Steps))
+	for i, st := range b.Steps {
+		stepRotationID, err := optionalUUID(st.RotationID, "step rotation id")
+		if err != nil {
+			return alertroutes.Input{}, err
+		}
+		stepChannels := make([]uuid.UUID, len(st.ChannelIDs))
+		for j, c := range st.ChannelIDs {
+			id, err := parseUUID(c, "step channel id")
+			if err != nil {
+				return alertroutes.Input{}, err
+			}
+			stepChannels[j] = id
+		}
+		steps[i] = alertroutes.Step{
+			Position: st.Position, Delay: time.Duration(st.DelaySeconds) * time.Second,
+			RotationID: stepRotationID, ChannelIDs: stepChannels,
+		}
+	}
 	return alertroutes.Input{
 		Name: b.Name, Enabled: b.Enabled, Scope: alertroutes.Scope(b.Scope), ScopeID: scopeID,
 		Severities: severities, Events: events, Channels: channels,
 		Window: window, Breakthrough: breakthrough, RotationID: rotationID,
+		Steps: steps,
 	}, nil
 }
