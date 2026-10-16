@@ -2,7 +2,11 @@
 // CRUD against migration 00052's alert_routes table. Its four selection
 // tables (alert_route_severities, alert_route_events, alert_route_channels,
 // alert_route_breakthrough_severities, migration 00054) have their own read
-// and write side in selections_sql.go. Modelled on
+// and write side in selections_sql.go; its escalation ladder (migration
+// 00056's alert_route_steps/alert_route_step_channels) has its own in
+// escalate_sql.go (ReplaceSteps, stepsByRouteID) — Create, Update, Get, List
+// and ListEnabled below attach it to Route.Steps alongside the four
+// selections, the same way they already attach those. Modelled on
 // internal/alerts/store_sql.go throughout — how it reaches *db.DB, how it
 // maps "no rows" to ErrNotFound and "zero rows updated after a successful
 // read" to ErrRevisionMismatch.
@@ -79,9 +83,22 @@ func scopeIDFromColumns(scope string, groupID, hostID pgtype.UUID) *uuid.UUID {
 	}
 }
 
-// toRoute assembles the package's own Route from one gen.AlertRoute row,
-// its already-grouped selections and its breakthrough severities.
-func toRoute(r gen.AlertRoute, sel selection, breakthrough []rules.State) Route {
+// routeIDs collects rows' own ids, for the one round trip stepsByRouteID
+// needs — List and ListEnabled both already hold the full set of ids they
+// care about in rows, so this avoids a second pass building that list by
+// hand in each.
+func routeIDs(rows []gen.AlertRoute) []uuid.UUID {
+	out := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		out[i] = r.ID
+	}
+	return out
+}
+
+// toRoute assembles the package's own Route from one gen.AlertRoute row, its
+// already-grouped selections, its breakthrough severities and its
+// escalation ladder.
+func toRoute(r gen.AlertRoute, sel selection, breakthrough []rules.State, steps []Step) Route {
 	return Route{
 		ID:           r.ID,
 		OrgID:        r.OrgID,
@@ -95,6 +112,7 @@ func toRoute(r gen.AlertRoute, sel selection, breakthrough []rules.State) Route 
 		Window:       windowFromColumns(r.WindowCron, r.WindowDurationSeconds, r.WindowTimezone),
 		Breakthrough: breakthrough,
 		RotationID:   db.UUIDPtr(r.RotationID),
+		Steps:        steps,
 		Revision:     r.Revision,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
@@ -131,10 +149,10 @@ func routeRowError(err error, name string) error {
 	}
 }
 
-// Create inserts id's row and all four selections in one transaction: a
-// route that exists with no channels because the second statement failed
-// is exactly the silently-ineffective state this feature exists to
-// prevent, so the whole thing commits together or not at all.
+// Create inserts id's row, all four selections and its escalation ladder in
+// one transaction: a route that exists with no channels because a later
+// statement failed is exactly the silently-ineffective state this feature
+// exists to prevent, so the whole thing commits together or not at all.
 func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now time.Time) (Route, error) {
 	groupID, hostID := scopeColumns(in.Scope, in.ScopeID)
 	cron, durationSeconds, timezone := windowColumns(in.Window)
@@ -162,6 +180,9 @@ func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now t
 	if err := s.replaceSelections(ctx, q, orgID, id, in); err != nil {
 		return Route{}, err
 	}
+	if err := s.ReplaceSteps(ctx, tx, orgID, id, in.Steps); err != nil {
+		return Route{}, err
+	}
 
 	sel, err := s.selectionsByRoute(ctx, q, orgID)
 	if err != nil {
@@ -171,17 +192,21 @@ func (s *Store) Create(ctx context.Context, orgID, id uuid.UUID, in Input, now t
 	if err != nil {
 		return Route{}, err
 	}
+	steps, err := s.stepsByRouteID(ctx, q, orgID, []uuid.UUID{id})
+	if err != nil {
+		return Route{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Route{}, fmt.Errorf("commit create route: %w", err)
 	}
-	return toRoute(row, sel[id], breakthrough[id]), nil
+	return toRoute(row, sel[id], breakthrough[id], steps[id]), nil
 }
 
-// Update replaces id's row and all four selections in one transaction, the
-// same all-or-nothing posture Create takes. revision is the If-Match style
-// optimistic lock (backlog 1.31): UpdateAlertRoute is :execrows, not :one
-// with RETURNING, the same choice maintenance.SQLStore.Update already makes
+// Update replaces id's row, all four selections and its escalation ladder in
+// one transaction, the same all-or-nothing posture Create takes. revision is
+// the If-Match style optimistic lock (backlog 1.31): UpdateAlertRoute is
+// :execrows, not :one with RETURNING, the same choice maintenance.SQLStore.Update already makes
 // for the same reason — zero rows affected is the one signal this needs,
 // and re-reading the row (still inside this transaction) is what tells a
 // stale revision (ErrRevisionMismatch) from an id that no longer exists at
@@ -224,6 +249,9 @@ func (s *Store) Update(ctx context.Context, orgID, id uuid.UUID, revision int64,
 	if err := s.replaceSelections(ctx, q, orgID, id, in); err != nil {
 		return Route{}, err
 	}
+	if err := s.ReplaceSteps(ctx, tx, orgID, id, in.Steps); err != nil {
+		return Route{}, err
+	}
 
 	row, err := q.GetAlertRoute(ctx, gen.GetAlertRouteParams{OrgID: orgID, ID: id})
 	if err != nil {
@@ -237,11 +265,15 @@ func (s *Store) Update(ctx context.Context, orgID, id uuid.UUID, revision int64,
 	if err != nil {
 		return Route{}, err
 	}
+	steps, err := s.stepsByRouteID(ctx, q, orgID, []uuid.UUID{id})
+	if err != nil {
+		return Route{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Route{}, fmt.Errorf("commit update route: %w", err)
 	}
-	return toRoute(row, sel[id], breakthrough[id]), nil
+	return toRoute(row, sel[id], breakthrough[id], steps[id]), nil
 }
 
 // Get implements the Store's single-route read. ErrNotFound covers both a
@@ -266,12 +298,17 @@ func (s *Store) Get(ctx context.Context, orgID, id uuid.UUID) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	return toRoute(row, sel[id], breakthrough[id]), nil
+	steps, err := s.stepsByRouteID(ctx, q, orgID, []uuid.UUID{id})
+	if err != nil {
+		return Route{}, err
+	}
+	return toRoute(row, sel[id], breakthrough[id], steps[id]), nil
 }
 
 // List returns every one of org's routes, by name (ListAlertRoutes' own
-// ORDER BY), each with its selections attached from one shared
-// selectionsByRoute call rather than one selection query per route.
+// ORDER BY), each with its selections and its escalation ladder attached
+// from one shared selectionsByRoute/stepsByRouteID call rather than one
+// query per route.
 func (s *Store) List(ctx context.Context, orgID uuid.UUID) ([]Route, error) {
 	q := gen.New(s.d)
 	rows, err := q.ListAlertRoutes(ctx, orgID)
@@ -286,9 +323,13 @@ func (s *Store) List(ctx context.Context, orgID uuid.UUID) ([]Route, error) {
 	if err != nil {
 		return nil, err
 	}
+	steps, err := s.stepsByRouteID(ctx, q, orgID, routeIDs(rows))
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Route, len(rows))
 	for i, r := range rows {
-		out[i] = toRoute(r, sel[r.ID], breakthrough[r.ID])
+		out[i] = toRoute(r, sel[r.ID], breakthrough[r.ID], steps[r.ID])
 	}
 	return out, nil
 }
@@ -329,12 +370,16 @@ func (s *Store) ListEnabled(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) ([]
 	if err != nil {
 		return nil, err
 	}
+	steps, err := s.stepsByRouteID(ctx, q, orgID, routeIDs(rows))
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Route, 0, len(rows))
 	for _, r := range rows {
 		if !r.Enabled {
 			continue
 		}
-		out = append(out, toRoute(r, sel[r.ID], breakthrough[r.ID]))
+		out = append(out, toRoute(r, sel[r.ID], breakthrough[r.ID], steps[r.ID]))
 	}
 	return out, nil
 }

@@ -422,6 +422,83 @@ func TestStoreUpdateReplacesBreakthroughOverAnExistingRow(t *testing.T) {
 	}
 }
 
+// TestStoreRoundTripsSteps proves Route.Steps is actually read and written
+// alongside the route's four selections (Task 5,
+// docs/superpowers/plans/2026-10-16-v0.4d-escalation-chains.md):
+// ReplaceSteps and ListEscalationStepsForRoutes both existed since Task 4,
+// but nothing before this test exercised them through Create, Get, List and
+// Update on a real Route rather than directly against the store's own
+// escalation methods (escalate_sql_test.go).
+func TestStoreRoundTripsSteps(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch, escalateCh := seedChannel(t, d, org), seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+	now := time.Now()
+
+	in := alertroutes.Input{
+		Name: "ladder", Enabled: true, Scope: alertroutes.ScopeOrg,
+		Severities: []rules.State{rules.StateCrit},
+		Events:     []alerts.EventKind{alerts.EventOpened},
+		Channels:   []uuid.UUID{ch},
+		Steps: []alertroutes.Step{
+			{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{escalateCh}},
+			{Position: 2, Delay: time.Hour, ChannelIDs: []uuid.UUID{ch, escalateCh}},
+		},
+	}
+	created, err := s.Create(ctx, org, uuid.New(), in, now)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(created.Steps) != 2 {
+		t.Fatalf("Create() steps = %+v, want 2", created.Steps)
+	}
+
+	got, err := s.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Steps) != 2 ||
+		got.Steps[0].Position != 1 || got.Steps[0].Delay != 5*time.Minute || len(got.Steps[0].ChannelIDs) != 1 ||
+		got.Steps[1].Position != 2 || len(got.Steps[1].ChannelIDs) != 2 {
+		t.Fatalf("Get() steps = %+v, want the ladder Create wrote", got.Steps)
+	}
+
+	list, err := s.List(ctx, org)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || len(list[0].Steps) != 2 {
+		t.Fatalf("List() steps = %+v, want 2", list[0].Steps)
+	}
+
+	// Replacing the ladder with a shorter one must drop the removed rung,
+	// not merely leave it stale alongside the new one — the same
+	// delete-then-insert correctness
+	// TestStoreUpdateReplacesBreakthroughOverAnExistingRow already pins for
+	// the breakthrough table, pinned here for alert_route_steps too.
+	in.Steps = []alertroutes.Step{{Position: 1, Delay: time.Minute, ChannelIDs: []uuid.UUID{ch}}}
+	updated, err := s.Update(ctx, org, created.ID, created.Revision, in, now)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.Steps) != 1 || updated.Steps[0].Delay != time.Minute {
+		t.Fatalf("Update() steps = %+v, want exactly the one replaced step", updated.Steps)
+	}
+
+	// Clearing the ladder entirely — a route that stops escalating — must
+	// leave Steps empty, not a stale row DeleteRouteSteps somehow missed.
+	in.Steps = nil
+	cleared, err := s.Update(ctx, org, created.ID, updated.Revision, in, now)
+	if err != nil {
+		t.Fatalf("Update (clear): %v", err)
+	}
+	if len(cleared.Steps) != 0 {
+		t.Fatalf("Update() steps = %+v, want none left", cleared.Steps)
+	}
+}
+
 // Create and Update mapped a unique violation but not a foreign-key one,
 // so alert_routes_rotation_fkey, alert_routes_scope_group_fkey and
 // alert_routes_scope_host_fkey all surfaced unmapped and the API answered

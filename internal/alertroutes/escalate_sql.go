@@ -183,6 +183,26 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 	return out, nil
 }
 
+// stepsByRouteID reads routeIDs' own ladders in one round trip and groups
+// them the same way ChainsNeedingAttention already does, reused here so
+// store_sql.go's Create, Update, Get, List and ListEnabled can each attach
+// Route.Steps alongside the route's other selections without a second,
+// route-scoped query existing just for that. An empty routeIDs short-circuits
+// before ever reaching ListEscalationStepsForRoutes' own ANY(@route_ids) —
+// List and ListEnabled call this with every id they just read, and an
+// organization with no routes yet would otherwise send an empty array
+// through a round trip that can only ever come back empty.
+func (s *Store) stepsByRouteID(ctx context.Context, q *gen.Queries, orgID uuid.UUID, routeIDs []uuid.UUID) (map[uuid.UUID][]Step, error) {
+	if len(routeIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := q.ListEscalationStepsForRoutes(ctx, gen.ListEscalationStepsForRoutesParams{OrgID: orgID, RouteIds: routeIDs})
+	if err != nil {
+		return nil, fmt.Errorf("list route steps: %w", err)
+	}
+	return stepsByRoute(rows), nil
+}
+
 // stepsByRoute groups ListEscalationStepsForRoutes' own flat, one-row-per-
 // (step, channel) rows — that query's own LEFT JOIN, the reason a step
 // with no fixed channels (a rotation step, or an empty one) still
