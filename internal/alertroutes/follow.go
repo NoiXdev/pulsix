@@ -254,6 +254,17 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	if err := f.enqueue(ctx, tx, orgID, b, now); err != nil {
 		return err
 	}
+	// The second pass (v0.4d, follow_escalate.go): whose chains have a
+	// rung nobody has climbed to yet, and whose delay has run out. It
+	// shares this tick's transaction and advisory lock (the file's own
+	// doc comment on why), and runs after the event pass rather than
+	// before it so a pair whose very first delivery happens THIS tick
+	// (claimBases, above) is not mistaken this same tick for a chain
+	// whose base has been sitting long enough to escalate — its base is
+	// `now`, and DueStep never fires a step at its own anchor.
+	if err := f.escalatePass(ctx, tx, orgID, now); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit alert follow tick: %w", err)
 	}
@@ -309,7 +320,40 @@ func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batch
 		CheckKey: ev.CheckKey, Item: ev.Item, Metric: ev.Metric,
 		Severity: string(ev.Severity), Event: string(ev.Kind), At: ev.At,
 	})
+	if err := f.claimBases(ctx, tx, r.orgID, ev.AlertID, routed.routeIDs, r.now); err != nil {
+		return err
+	}
 	return f.record(ctx, tx, r, ev, StateSent)
+}
+
+// claimBases writes the escalation chain's position-0 ledger row for
+// every route that just delivered ev's alert (v0.4d spec decision 3:
+// "the base is observed, not computed" — the alternative, deriving "the
+// first moment this route could deliver" from the window's own cron
+// expression, would have to search forward across a shut window or a
+// lifted suppression and get it wrong across a DST boundary; observing
+// the real delivery is correct by construction for all three at once).
+//
+// Called here, at the one place in the tick that has just confirmed THIS
+// event clears every gate and is about to be enqueued — not inside
+// enqueue itself, which only sees channels and alert ids once they are
+// batched by channel (follow_resolve.go's own routing.routeIDs doc
+// comment says why the per-route identity would already be gone by
+// then) — and not any earlier, "intended" point such as a route simply
+// matching, which a shut window or a mute can still turn into nothing
+// being sent at all.
+//
+// ClaimStep's own ON CONFLICT DO NOTHING (escalate_sql.go) is what makes
+// every delivery after a pair's first a no-op, so calling this on every
+// 'sent' decision — not only the first one ever made for a pair — is
+// exactly right: the base never moves once it exists.
+func (f *Follower) claimBases(ctx context.Context, tx pgx.Tx, orgID, alertID uuid.UUID, routeIDs []uuid.UUID, now time.Time) error {
+	for _, routeID := range routeIDs {
+		if _, err := f.store.ClaimStep(ctx, tx, orgID, alertID, routeID, 0, now); err != nil {
+			return fmt.Errorf("claim escalation base for alert %s route %s: %w", alertID, routeID, err)
+		}
+	}
+	return nil
 }
 
 // record writes st unless the ledger already says exactly that. Only the

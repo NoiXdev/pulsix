@@ -17,6 +17,7 @@ package alertroutes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -99,6 +100,42 @@ func (s *Store) ClaimStep(ctx context.Context, tx pgx.Tx, orgID, alertID, routeI
 		return false, fmt.Errorf("claim escalation step: %w", err)
 	}
 	return n > 0, nil
+}
+
+// escalatedPayload is the 'escalated' event's own payload shape (spec
+// decision 7): the step number and the channels it reached, marshalled the
+// same way notify.Outbox already marshals an Event for a delivery's own
+// payload column — plain encoding/json, no SQL-side jsonb construction.
+type escalatedPayload struct {
+	Position int         `json:"position"`
+	Channels []uuid.UUID `json:"channels"`
+}
+
+// RecordEscalation writes the 'escalated' alert_events row for one step
+// firing — the follower's second pass (a later task) calls it once a step
+// has actually been claimed and enqueued, mirroring InsertAlertEvent's own
+// posture (alerts/store_sql.go) that every system-caused event is written
+// in the same transaction as the fact it reports. channels may be empty —
+// a step whose own channels are gone still fires and is still worth a
+// timeline entry naming that nobody was reached, the same "survives and
+// says so" ruling v0.4b already gives a route that reaches nobody.
+func (s *Store) RecordEscalation(ctx context.Context, tx pgx.Tx, orgID, alertID uuid.UUID, position int, channels []uuid.UUID, at time.Time) error {
+	if channels == nil {
+		// A nil slice marshals as JSON null; an unreachable step's payload
+		// should still read as "reached nobody" — an empty list — not as
+		// the field being absent.
+		channels = []uuid.UUID{}
+	}
+	payload, err := json.Marshal(escalatedPayload{Position: position, Channels: channels})
+	if err != nil {
+		return fmt.Errorf("marshal escalated payload: %w", err)
+	}
+	if err := gen.New(tx).InsertEscalatedEvent(ctx, gen.InsertEscalatedEventParams{
+		OrgID: orgID, AlertID: alertID, At: at, Payload: payload,
+	}); err != nil {
+		return fmt.Errorf("insert escalated event: %w", err)
+	}
+	return nil
 }
 
 // ChainsNeedingAttention returns one Chain per (open alert, enabled route)

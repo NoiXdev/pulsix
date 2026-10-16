@@ -70,6 +70,19 @@ INSERT INTO alert_escalations (org_id, alert_id, route_id, position, fired_at)
 VALUES (@org_id, @alert_id, @route_id, @position, @fired_at)
 ON CONFLICT (alert_id, route_id, position) DO NOTHING;
 
+-- name: InsertEscalatedEvent :exec
+-- Spec decision 7: an escalation is visible on the alert itself, not only
+-- in the channel it reached — "the alert page shows an untouched timeline
+-- while phones are ringing" is exactly the gap this closes. 'escalated' is
+-- the eighth alert_events kind (migration 00056's widened CHECK); payload
+-- is the step's own position and the channels it reached, the one piece
+-- of this event nothing else already has a column for — the same reason
+-- notification_deliveries' own payload exists, not a new table. actor_id
+-- is left NULL, like every other system-caused event InsertAlertEvent
+-- itself writes (alerts.sql's own comment): nobody acted, the clock did.
+INSERT INTO alert_events (org_id, alert_id, at, kind, payload)
+VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
+
 -- name: ChainsNeedingAttentionBase :many
 -- The follower's second pass (spec "The sweep"): every open alert paired
 -- with every enabled route whose ladder has at least one step nobody has

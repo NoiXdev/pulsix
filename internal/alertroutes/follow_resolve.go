@@ -140,6 +140,16 @@ type resolution struct {
 type routing struct {
 	channels []uuid.UUID
 	held     bool
+	// routeIDs is every route that contributed to channels above — the
+	// routes that are open (not held) and resolve to at least one channel
+	// for this event. decide (follow.go) uses it to claim each route's
+	// escalation base the instant an event actually goes out through it
+	// (v0.4d spec decision 3): channels itself is already a union
+	// (Channels, below) that has thrown the per-route identity away, and
+	// by the time enqueue runs that identity is gone for good — batches is
+	// keyed by channel, never by route — so this is the last point in the
+	// tick that still knows which routes delivered.
+	routeIDs []uuid.UUID
 }
 
 // route resolves one event to the channels that may hear it at this
@@ -193,7 +203,11 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		rt.Channels = chans
 		open = append(open, rt)
 	}
-	return routing{channels: Channels(open), held: held}, nil
+	routeIDs := make([]uuid.UUID, len(open))
+	for i, rt := range open {
+		routeIDs[i] = rt.ID
+	}
+	return routing{channels: Channels(open), held: held, routeIDs: routeIDs}, nil
 }
 
 // channelsOf is where a route's channel source is decided: the fixed list

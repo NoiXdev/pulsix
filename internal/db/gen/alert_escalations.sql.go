@@ -248,6 +248,37 @@ func (q *Queries) DeleteRouteSteps(ctx context.Context, arg DeleteRouteStepsPara
 	return err
 }
 
+const insertEscalatedEvent = `-- name: InsertEscalatedEvent :exec
+INSERT INTO alert_events (org_id, alert_id, at, kind, payload)
+VALUES ($1, $2, $3, 'escalated', $4)
+`
+
+type InsertEscalatedEventParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	AlertID uuid.UUID `json:"alert_id"`
+	At      time.Time `json:"at"`
+	Payload []byte    `json:"payload"`
+}
+
+// Spec decision 7: an escalation is visible on the alert itself, not only
+// in the channel it reached — "the alert page shows an untouched timeline
+// while phones are ringing" is exactly the gap this closes. 'escalated' is
+// the eighth alert_events kind (migration 00056's widened CHECK); payload
+// is the step's own position and the channels it reached, the one piece
+// of this event nothing else already has a column for — the same reason
+// notification_deliveries' own payload exists, not a new table. actor_id
+// is left NULL, like every other system-caused event InsertAlertEvent
+// itself writes (alerts.sql's own comment): nobody acted, the clock did.
+func (q *Queries) InsertEscalatedEvent(ctx context.Context, arg InsertEscalatedEventParams) error {
+	_, err := q.db.Exec(ctx, insertEscalatedEvent,
+		arg.OrgID,
+		arg.AlertID,
+		arg.At,
+		arg.Payload,
+	)
+	return err
+}
+
 const insertRouteStep = `-- name: InsertRouteStep :exec
 INSERT INTO alert_route_steps (org_id, route_id, position, delay_seconds, rotation_id)
 VALUES ($1, $2, $3, $4, $5)
