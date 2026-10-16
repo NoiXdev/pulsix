@@ -499,6 +499,55 @@ func TestStoreRoundTripsSteps(t *testing.T) {
 	}
 }
 
+// TestStoreListEnabledFiltersDisabledRoutesAndCarriesSteps closes a gap that
+// predates this task: ListEnabled had no test of its own at all before this
+// one, for steps or anything else, despite being the one method Task 6's
+// follower calls on every tick. ListEnabled shares its whole read path with
+// List except for the enabled filter, so this pins exactly that
+// difference — a disabled route absent, an enabled one present — together
+// with the step-loading this task added to both, rather than two separate
+// tests that would each only prove half of what ListEnabled actually needs
+// to get right. beginTx (ledger_sql_test.go) is reused as-is: ListEnabled
+// takes a caller-owned transaction, the same shape the follower's own tick
+// runs it under.
+func TestStoreListEnabledFiltersDisabledRoutesAndCarriesSteps(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	ch := seedChannel(t, d, org)
+	s := alertroutes.NewSQLStore(d)
+	now := time.Now()
+
+	mk := func(name string, enabled bool) alertroutes.Route {
+		t.Helper()
+		r, err := s.Create(ctx, org, uuid.New(), alertroutes.Input{
+			Name: name, Enabled: enabled, Scope: alertroutes.ScopeOrg,
+			Severities: []rules.State{rules.StateCrit},
+			Events:     []alerts.EventKind{alerts.EventOpened},
+			Channels:   []uuid.UUID{ch},
+			Steps:      []alertroutes.Step{{Position: 1, Delay: time.Minute, ChannelIDs: []uuid.UUID{ch}}},
+		}, now)
+		if err != nil {
+			t.Fatalf("Create(%s): %v", name, err)
+		}
+		return r
+	}
+	on := mk("on", true)
+	mk("off", false)
+
+	tx := beginTx(t, d)
+	got, err := s.ListEnabled(ctx, tx, org)
+	if err != nil {
+		t.Fatalf("ListEnabled: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != on.ID {
+		t.Fatalf("ListEnabled() = %+v, want exactly the one enabled route", got)
+	}
+	if len(got[0].Steps) != 1 || got[0].Steps[0].Delay != time.Minute {
+		t.Fatalf("ListEnabled() steps = %+v, want the one step Create wrote", got[0].Steps)
+	}
+}
+
 // Create and Update mapped a unique violation but not a foreign-key one,
 // so alert_routes_rotation_fkey, alert_routes_scope_group_fkey and
 // alert_routes_scope_host_fkey all surfaced unmapped and the API answered

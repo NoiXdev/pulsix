@@ -238,9 +238,15 @@ func TestValidateSteps(t *testing.T) {
 		{"no ladder is fine", nil, false},
 		{"one rung", []Step{{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}}}, false},
 		{"a gap in the positions", []Step{{Position: 2, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}}}, true},
+		// Three steps at 1, 2, 2 — not 1, 1 — so the 1..n gap scan alone
+		// would accept this (positions 1 and 2 both present) and only the
+		// duplicate check can reject it. With two steps both at 1, the scan
+		// finds no step at position 2 and fails for that reason instead,
+		// which would let the duplicate check be deleted unnoticed.
 		{"a repeated position", []Step{
 			{Position: 1, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
-			{Position: 1, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
+			{Position: 2, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
+			{Position: 2, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
 		}, true},
 		{"a zero delay", []Step{{Position: 1, ChannelIDs: []uuid.UUID{uuid.New()}}}, true},
 		// A rung that names nothing can never reach anybody, and unlike a

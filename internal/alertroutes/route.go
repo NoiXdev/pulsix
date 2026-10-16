@@ -216,9 +216,19 @@ func validateSteps(steps []Step) error {
 			return err
 		}
 	}
-	for pos := 1; pos <= len(steps); pos++ {
+	// Bounded by len(seen) — the number of DISTINCT positions — not
+	// len(steps): with a duplicate already rejected above, this never runs
+	// over a ladder shorter than its own step count, so the two checks stay
+	// independent rather than the gap scan accidentally catching every
+	// duplicate on its own (which it would if bounded by len(steps): a
+	// duplicate always leaves the count of distinct positions one short of
+	// the raw step count, so a scan over 1..len(steps) would reject it
+	// regardless of whether the dedicated check above ever ran — making
+	// that check dead code no test could ever pin, exactly the gap review
+	// found in this function's first version).
+	for pos := 1; pos <= len(seen); pos++ {
 		if _, ok := seen[pos]; !ok {
-			return fmt.Errorf("%w: step positions must run 1..%d with no gap", ErrInvalidInput, len(steps))
+			return fmt.Errorf("%w: step positions must run 1..%d with no gap", ErrInvalidInput, len(seen))
 		}
 	}
 	return nil
