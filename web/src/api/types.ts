@@ -143,6 +143,12 @@ export type AlertRouteInput = components['schemas']['AlertRouteBody'];
 export type AlertRouteScope = NonNullable<AlertRoute['scope']>;
 export type AlertRouteSeverity = 'warn' | 'crit' | 'unknown';
 export type AlertRouteEventKind = 'opened' | 'severity_raised' | 'acknowledged' | 'ack_voided' | 'snoozed' | 'unsnoozed' | 'closed';
+// AlertRouteStep is one rung of a route's escalation ladder (v0.4d,
+// AlertRouteStepDTO): the delay counts from the previous rung actually
+// firing, never from the alert opening, and exactly one of rotation_id/
+// channel_ids is set — alertroutes.Route.ValidateSteps' own rule, StepsEditor
+// edits around rather than re-checks (its own doc comment).
+export type AlertRouteStep = components['schemas']['AlertRouteStepDTO'];
 
 // AlertDetail is Alert plus its timeline (v0.4a design, "GUI" — "the full
 // story of one alert"): GET /alerts/{id}'s own shape, matching

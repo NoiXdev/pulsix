@@ -271,9 +271,10 @@ func toAlert(r gen.Alert) Alert {
 			CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
 		},
 
-		OpenedAt: r.OpenedAt,
-		Severity: rules.State(r.Severity),
-		Peak:     rules.State(r.PeakSeverity),
+		OpenedAt:          r.OpenedAt,
+		Severity:          rules.State(r.Severity),
+		Peak:              rules.State(r.PeakSeverity),
+		SeverityChangedAt: r.SeverityChangedAt,
 
 		ClosedAt:     db.TimePtr(r.ClosedAt),
 		ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
@@ -312,9 +313,10 @@ func toAlertFromGetRow(r gen.GetAlertRow) AlertWithHost {
 				HostID: r.HostID, Scope: Scope(r.Scope),
 				CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
 			},
-			OpenedAt: r.OpenedAt,
-			Severity: rules.State(r.Severity),
-			Peak:     rules.State(r.PeakSeverity),
+			OpenedAt:          r.OpenedAt,
+			Severity:          rules.State(r.Severity),
+			Peak:              rules.State(r.PeakSeverity),
+			SeverityChangedAt: r.SeverityChangedAt,
 
 			ClosedAt:     db.TimePtr(r.ClosedAt),
 			ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
@@ -342,9 +344,10 @@ func toAlertFromListRow(r gen.ListAlertsRow) AlertWithHost {
 				HostID: r.HostID, Scope: Scope(r.Scope),
 				CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric,
 			},
-			OpenedAt: r.OpenedAt,
-			Severity: rules.State(r.Severity),
-			Peak:     rules.State(r.PeakSeverity),
+			OpenedAt:          r.OpenedAt,
+			Severity:          rules.State(r.Severity),
+			Peak:              rules.State(r.PeakSeverity),
+			SeverityChangedAt: r.SeverityChangedAt,
 
 			ClosedAt:     db.TimePtr(r.ClosedAt),
 			ClosedReason: CloseReason(derefOr(r.ClosedReason, "")),
@@ -438,7 +441,11 @@ func raiseAlertSeverityRank(s rules.State) int32 { return int32(rules.StateRank(
 // change with no event, "the column moves, the history does not gain
 // noise" (the brief's own wording). ack_voided is independent of all of
 // that: it is written whenever the action says so, regardless of which
-// way the severity moved.
+// way the severity moved — and RaiseAlertSeverity's own CASE clears
+// acknowledged_severity in that same UPDATE whenever a.VoidsAck is set, so
+// the column cannot later read as acknowledged again (backlog 4.36) while
+// disagreeing with the ack_voided event this function writes right below
+// it for the very same action.
 func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a Action) error {
 	before, err := q.GetAlertSeverity(ctx, gen.GetAlertSeverityParams{ID: a.AlertID, OrgID: orgID})
 	if err != nil {
@@ -447,7 +454,7 @@ func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid
 
 	err = q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
 		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
-		ClearsSnooze: a.ClearsSnoozeUntilChange, ID: a.AlertID, OrgID: orgID,
+		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
 	})
 	if err != nil {
 		return fmt.Errorf("raise severity: %w", err)
@@ -606,7 +613,7 @@ func (s *SQLStore) Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Even
 	}
 	out := make([]Event, len(rows))
 	for i, r := range rows {
-		out[i] = Event{ID: r.ID, At: r.At, Kind: r.Kind, ActorID: db.UUIDPtr(r.ActorID)}
+		out[i] = Event{ID: r.ID, At: r.At, Kind: r.Kind, ActorID: db.UUIDPtr(r.ActorID), Payload: r.Payload}
 	}
 	return out, nil
 }

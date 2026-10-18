@@ -13,6 +13,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/db"
@@ -136,6 +138,28 @@ func (f alertFixture) seedClosedAlert(t *testing.T, host uuid.UUID, sub alerts.S
 	return id
 }
 
+// seedEscalatedEvent writes one 'escalated' alert_events row directly
+// through alertroutes.Store.RecordEscalation — the only writer that
+// exists (escalatePass, the follower's second pass, v0.4d Task 6) — so
+// this fixture needs neither a real route nor a real follower tick to
+// prove the API round-trips the payload RecordEscalation writes.
+func (f alertFixture) seedEscalatedEvent(t *testing.T, alertID uuid.UUID, position int, channels []uuid.UUID, at time.Time) {
+	t.Helper()
+	st := alertroutes.NewSQLStore(f.s.DB)
+	ctx := context.Background()
+	tx, err := f.s.DB.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := st.RecordEscalation(ctx, tx, f.orgID, alertID, position, channels, at); err != nil {
+		t.Fatalf("seed escalated event: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
 type alertOut struct {
 	ID                string     `json:"id"`
 	HostID            string     `json:"host_id"`
@@ -169,8 +193,10 @@ type alertTimelineEntryOut struct {
 	At    time.Time `json:"at"`
 	Kind  string    `json:"kind"`
 	Event *struct {
-		ID   string `json:"id"`
-		Kind string `json:"kind"`
+		ID                   string   `json:"id"`
+		Kind                 string   `json:"kind"`
+		EscalationPosition   int      `json:"escalation_position"`
+		EscalationChannelIDs []string `json:"escalation_channel_ids"`
 	} `json:"event"`
 	Change *struct {
 		FromState string `json:"from_state"`
@@ -234,6 +260,96 @@ func TestAlertListAndGet(t *testing.T) {
 	}
 	if len(detail.Timeline) != 1 || detail.Timeline[0].Kind != "event" || detail.Timeline[0].Event == nil || detail.Timeline[0].Event.Kind != "opened" {
 		t.Fatalf("timeline = %+v, want exactly one 'opened' event", detail.Timeline)
+	}
+}
+
+// TestAlertTimelineCarriesAnEscalatedEventsStepAndChannels proves the
+// 'escalated' event (alerts.EventEscalated, v0.4d) round-trips its own
+// payload through GET instead of reading as an event with nothing in it:
+// before this test, alerts.Event never surfaced its payload column at all
+// (alert_handlers.go's own doc comment on alertEventDTO, pre-v0.4d Task 8)
+// — the step number that fired and the channels it reached.
+func TestAlertTimelineCarriesAnEscalatedEventsStepAndChannels(t *testing.T) {
+	f := newAlertFixture(t, "alert-escalated")
+	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateCrit, opened)
+	ch := uuid.New()
+	f.seedEscalatedEvent(t, id, 2, []uuid.UUID{ch}, opened.Add(10*time.Minute))
+
+	_, detail := f.getAlert(t, f.operatorC, id)
+	var found *struct {
+		ID                   string   `json:"id"`
+		Kind                 string   `json:"kind"`
+		EscalationPosition   int      `json:"escalation_position"`
+		EscalationChannelIDs []string `json:"escalation_channel_ids"`
+	}
+	for _, e := range detail.Timeline {
+		if e.Kind == "event" && e.Event != nil && e.Event.Kind == "escalated" {
+			found = e.Event
+		}
+	}
+	if found == nil {
+		t.Fatalf("timeline = %+v, want an 'escalated' event", detail.Timeline)
+	}
+	if found.EscalationPosition != 2 {
+		t.Fatalf("escalation_position = %d, want 2", found.EscalationPosition)
+	}
+	if len(found.EscalationChannelIDs) != 1 || found.EscalationChannelIDs[0] != ch.String() {
+		t.Fatalf("escalation_channel_ids = %+v, want [%s]", found.EscalationChannelIDs, ch)
+	}
+}
+
+// TestEscalationChannelIDsDistinguishesReachedNobodyFromNotEscalated proves
+// the one thing EscalationChannelIDs' own doc comment (alert_handlers.go)
+// exists to guarantee: `[]` and absent/`null` are different facts on the
+// wire, not two spellings of the same one. Deliberately asserts on the raw
+// JSON bytes rather than decoding into a Go []string first — decoding
+// would itself erase the distinction being tested (Go's json package maps
+// both `null` and a missing key to a nil slice, so a assertion against the
+// decoded value could pass by accident even if omitempty had been left on).
+func TestEscalationChannelIDsDistinguishesReachedNobodyFromNotEscalated(t *testing.T) {
+	f := newAlertFixture(t, "alert-escalated-nobody")
+	opened := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateCrit, opened)
+	// Empty, not nil: RecordEscalation's own contract for "this rung
+	// reached nobody" (escalate_sql.go's doc comment) is an explicit empty
+	// list, never a nil one.
+	f.seedEscalatedEvent(t, id, 1, []uuid.UUID{}, opened.Add(5*time.Minute))
+
+	resp := requestJSON(t, f.operatorC, http.MethodGet, f.alertsURL("/"+id.String()), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Alert struct {
+			Timeline []struct {
+				Event *struct {
+					Kind                 string          `json:"kind"`
+					EscalationChannelIDs json.RawMessage `json:"escalation_channel_ids"`
+				} `json:"event"`
+			} `json:"timeline"`
+		} `json:"alert"`
+	}
+	if err := json.Unmarshal([]byte(mustReadBody(t, resp)), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var openedRaw, escalatedRaw json.RawMessage
+	for _, e := range out.Alert.Timeline {
+		if e.Event == nil {
+			continue
+		}
+		switch e.Event.Kind {
+		case "opened":
+			openedRaw = e.Event.EscalationChannelIDs
+		case "escalated":
+			escalatedRaw = e.Event.EscalationChannelIDs
+		}
+	}
+	if string(openedRaw) != "null" {
+		t.Fatalf("opened event's escalation_channel_ids = %s, want the literal null (not escalated, nothing to decode)", openedRaw)
+	}
+	if string(escalatedRaw) != "[]" {
+		t.Fatalf("escalated event's escalation_channel_ids = %s, want the literal [] (reached nobody, not merely absent)", escalatedRaw)
 	}
 }
 

@@ -44,9 +44,14 @@ ORDER BY scope, check_key, item, metric;
 -- scope='host' open consult check_states not at all, rather than merely
 -- "usually" matching nothing because real tuples happen to have non-empty
 -- keys (see TestExecuteOpenHostScopeNeverFlaps's own adversarial row).
+--
+-- severity_changed_at (v0.4d, migration 00058) starts at @opened_at, the
+-- same reading that migration's own backfill gives every row that
+-- predates the column: a brand new alert's severity has never changed, so
+-- the moment it last did is the moment it opened.
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at
 ) VALUES (
   @org_id, @host_id, @scope, @check_key, @item, @metric,
   @opened_at, @severity, @severity,
@@ -54,7 +59,8 @@ INSERT INTO alerts (
     (SELECT flapping FROM check_states s
      WHERE @scope::text = 'tuple' AND s.org_id = @org_id AND s.host_id = @host_id
        AND s.check_key = @check_key AND s.item = @item AND s.metric = @metric),
-    false)
+    false),
+  @opened_at
 )
 RETURNING id;
 
@@ -66,19 +72,57 @@ RETURNING id;
 SELECT severity FROM alerts WHERE id = @id AND org_id = @org_id;
 
 -- name: RaiseAlertSeverity :exec
--- The brief's own statement, verbatim. The nested CASE's literal ranking
--- (warn=1, unknown=2, crit=3) is deliberately NOT what ships here — see
--- store_sql.go's own comment on raiseAlertSeverityRank for why, and
--- TestPeakSeverityRankMatchesRulesStateRank in store_sql_test.go for the
--- test that would fail if the two ever drifted apart again. Everything
--- else — the three SET targets, @severity_rank as the caller-computed
--- rank of the new severity, @clears_snooze clearing snooze_until_change
--- only when asked — is exactly as given.
+-- The brief's own statement, verbatim, plus v0.4d's own fourth SET target.
+-- The nested CASE's literal ranking (warn=1, unknown=2, crit=3) is
+-- deliberately NOT what ships here — see store_sql.go's own comment on
+-- raiseAlertSeverityRank for why, and TestPeakSeverityRankMatchesRulesStateRank
+-- in store_sql_test.go for the test that would fail if the two ever
+-- drifted apart again. The three original SET targets — @severity_rank as
+-- the caller-computed rank of the new severity, @clears_snooze clearing
+-- snooze_until_change only when asked — are exactly as given.
+--
+-- acknowledged_severity is the v0.4d addition (backlog 4.36): raiseSeverity
+-- (store_sql.go) already writes an ack_voided event exactly when
+-- @voids_ack is true, but until now that event was the only record of the
+-- void — acknowledged_severity itself was left standing. Since
+-- "acknowledged" is never a stored flag but the live comparison
+-- `severity <= acknowledged_severity`, a voided ack whose severity later
+-- fell back below the old acknowledged_severity read as acknowledged
+-- again, while its own timeline still showed the ack_voided event: the row
+-- and the history disagreed. Escalation is what turns that disagreement
+-- from cosmetic into material — a voided ack must keep a chain calling,
+-- not go quiet because severity happened to dip. Clearing it in this same
+-- UPDATE, gated on the identical @voids_ack the event write already uses,
+-- is what makes the column and the event move together by construction
+-- rather than by two call sites happening to agree today.
+-- acknowledged_at/acknowledged_by are deliberately left alone: they record
+-- that an acknowledgement happened at all, which stays true even once it
+-- no longer covers.
+--
+-- severity_changed_at (v0.4d escalation-chains review, Critical 2) is the
+-- fifth SET target, unconditional — raiseSeverity (store_sql.go) only ever
+-- calls this statement when the severity column itself is about to move
+-- (its own doc comment: "the only reason Reconcile emits this action at
+-- all"), rise or fall alike, so every call here is a real severity change
+-- and every one of them moves this column. A FALLING severity writes no
+-- alert_events row at all — this is the only trace it leaves anywhere.
+--
+-- escalatePass (internal/alertroutes) does NOT read this column as an
+-- anchor, despite an earlier round of review arguing it should (migration
+-- 00058's own doc comment has the full reasoning): this column moves on
+-- every severity write, including one that never leaves a route's own
+-- severity set at all, so folding it into a chain's resume timing could
+-- stall a chain oscillating inside that set forever. The column is kept
+-- regardless — it is honest data about the alert, true on its own terms —
+-- but nothing outside the alerts store's own row mapping
+-- (internal/alerts/store_sql.go) reads it today.
 UPDATE alerts SET severity = @severity,
   peak_severity = CASE WHEN @severity_rank::int > (
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
     THEN @severity ELSE peak_severity END,
-  snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END
+  snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END,
+  acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END,
+  severity_changed_at = @at
 WHERE id = @id AND org_id = @org_id;
 
 -- name: SetAlertFlapping :exec
@@ -217,11 +261,13 @@ WHERE a.org_id = @org_id AND a.id = @id;
 -- severity ranking (crit=3, warn=2, unknown=1, else 0) RaiseAlertSeverity's
 -- own peak_severity column already uses — kept in sync by hand for the
 -- same reason that query's own comment gives: SQL cannot call
--- rules.StateRank. acknowledged_severity is NULL whenever acknowledged_at
--- is (the alerts table's own CHECK), which this ELSE 0 relies on: an
--- unacknowledged row's "ack rank" reads 0, below every real severity, so
--- it can never read as covered even without the explicit
--- acknowledged_at IS NOT NULL alongside it.
+-- rules.StateRank. acknowledged_severity reads NULL both for a row that
+-- has never been acknowledged and for one whose acknowledgement was later
+-- voided (migration 00057 relaxed the table's own CHECK to allow exactly
+-- that combination — acknowledged_at can stand with acknowledged_severity
+-- NULL now, where it once could not) — either way this ELSE 0 reads 0,
+-- below every real severity, so neither case can ever read as covered even
+-- without the explicit acknowledged_at IS NOT NULL alongside it.
 SELECT a.*, COALESCE(h.name, '')::text AS host_name
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id

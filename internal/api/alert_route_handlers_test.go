@@ -196,6 +196,197 @@ func TestAlertRouteCarriesItsWindow(t *testing.T) {
 	}
 }
 
+// TestAlertRouteCarriesItsEscalationLadder pins the v0.4d wire shape
+// (alert_route_dto.go's AlertRouteStepDTO): a route's steps round-trip in
+// order with their delays on create, and a later update that drops down to
+// one step removes the second rather than leaving it stranded — the same
+// full-replace semantics the rest of AlertRouteBody already has
+// (AlertRouteBody's own doc comment).
+func TestAlertRouteCarriesItsEscalationLadder(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+	ch2 := s.SeedChannel(t, org)
+	url := "/api/v1/orgs/" + org.String() + "/alert-routes"
+
+	created := s.Post(t, tok, url, map[string]any{
+		"name": "escalating", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"steps": []map[string]any{
+			{"position": 1, "delay_seconds": 300, "channel_ids": []string{ch.String()}},
+			{"position": 2, "delay_seconds": 600, "channel_ids": []string{ch2.String()}},
+		},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201: %s", created.Code, created.Body)
+	}
+	id := decodeID(t, created)
+
+	var createdBody struct {
+		Route struct {
+			Steps []struct {
+				Position     int      `json:"position"`
+				DelaySeconds int64    `json:"delay_seconds"`
+				ChannelIDs   []string `json:"channel_ids"`
+			} `json:"steps"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatalf("decode created route: %v: %s", err, created.Body)
+	}
+	if len(createdBody.Route.Steps) != 2 {
+		t.Fatalf("created route has %d steps, want 2: %s", len(createdBody.Route.Steps), created.Body)
+	}
+	if createdBody.Route.Steps[0].Position != 1 || createdBody.Route.Steps[0].DelaySeconds != 300 {
+		t.Errorf("step 1 did not round-trip: %+v", createdBody.Route.Steps[0])
+	}
+	if got := createdBody.Route.Steps[0].ChannelIDs; len(got) != 1 || got[0] != ch.String() {
+		t.Errorf("step 1 channel_ids = %v, want [%s]", got, ch)
+	}
+	if createdBody.Route.Steps[1].Position != 2 || createdBody.Route.Steps[1].DelaySeconds != 600 {
+		t.Errorf("step 2 did not round-trip: %+v", createdBody.Route.Steps[1])
+	}
+	if got := createdBody.Route.Steps[1].ChannelIDs; len(got) != 1 || got[0] != ch2.String() {
+		t.Errorf("step 2 channel_ids = %v, want [%s]", got, ch2)
+	}
+
+	updated := s.Patch(t, tok, url+"/"+id, `"1"`, map[string]any{
+		"name": "escalating", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"steps": []map[string]any{
+			{"position": 1, "delay_seconds": 300, "channel_ids": []string{ch.String()}},
+		},
+	})
+	if updated.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200: %s", updated.Code, updated.Body)
+	}
+	var updatedBody struct {
+		Route struct {
+			Steps []json.RawMessage `json:"steps"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &updatedBody); err != nil {
+		t.Fatalf("decode updated route: %v: %s", err, updated.Body)
+	}
+	if len(updatedBody.Route.Steps) != 1 {
+		t.Errorf("updated route has %d steps, want 1 (the second must be gone): %s", len(updatedBody.Route.Steps), updated.Body)
+	}
+}
+
+// alertRouteStepWire is the subset of AlertRouteStepDTO
+// TestAlertRouteEscalationStepChannelSourceIsEitherOr decodes and asserts
+// against — its own type so both the create and the update reads in that
+// test share one decoder.
+type alertRouteStepWire struct {
+	Position     int      `json:"position"`
+	DelaySeconds int64    `json:"delay_seconds"`
+	RotationID   string   `json:"rotation_id"`
+	ChannelIDs   []string `json:"channel_ids"`
+}
+
+// TestAlertRouteEscalationStepChannelSourceIsEitherOr pins the one thing
+// TestAlertRouteCarriesItsEscalationLadder never exercises: a step's
+// channel source is either a rotation or a fixed channel list, never both
+// — the same either/or alertroutes.validateChannelSource already enforces
+// for the route itself, reused per step (route.go's own doc comment on
+// validateChannelSource). The wire is where a client first meets that
+// shape, so this round-trips a ladder with one rung of each kind, then
+// updates the route swapping the two rungs' sources, to catch a converter
+// that writes one direction correctly and leaves the other stale.
+func TestAlertRouteEscalationStepChannelSourceIsEitherOr(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	ch := s.SeedChannel(t, org)
+	ch2 := s.SeedChannel(t, org)
+
+	rotCreated := s.Post(t, tok, "/api/v1/orgs/"+org.String()+"/oncall-rotations", map[string]any{
+		"name": "ladder rotation", "period_days": 7,
+		"anchor": "2026-01-05T09:00:00+01:00", "timezone": "Europe/Berlin",
+		"channels": []string{ch2.String()},
+	})
+	if rotCreated.Code != http.StatusCreated {
+		t.Fatalf("POST rotation = %d, want 201: %s", rotCreated.Code, rotCreated.Body)
+	}
+	rotationID := decodeID(t, rotCreated)
+
+	url := "/api/v1/orgs/" + org.String() + "/alert-routes"
+	created := s.Post(t, tok, url, map[string]any{
+		"name": "mixed ladder", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"steps": []map[string]any{
+			{"position": 1, "delay_seconds": 300, "channel_ids": []string{ch.String()}},
+			{"position": 2, "delay_seconds": 600, "rotation_id": rotationID},
+		},
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201: %s", created.Code, created.Body)
+	}
+	id := decodeID(t, created)
+
+	var createdBody struct {
+		Route struct {
+			Steps []alertRouteStepWire `json:"steps"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatalf("decode created route: %v: %s", err, created.Body)
+	}
+	if len(createdBody.Route.Steps) != 2 {
+		t.Fatalf("created route has %d steps, want 2: %s", len(createdBody.Route.Steps), created.Body)
+	}
+	step1, step2 := createdBody.Route.Steps[0], createdBody.Route.Steps[1]
+	if len(step1.ChannelIDs) != 1 || step1.ChannelIDs[0] != ch.String() {
+		t.Errorf("channel-based step 1 channel_ids = %v, want [%s]", step1.ChannelIDs, ch)
+	}
+	if step1.RotationID != "" {
+		t.Errorf("channel-based step 1 rotation_id = %q, want empty", step1.RotationID)
+	}
+	if step2.RotationID != rotationID {
+		t.Errorf("rotation-based step 2 rotation_id = %q, want %q", step2.RotationID, rotationID)
+	}
+	if len(step2.ChannelIDs) != 0 {
+		t.Errorf("rotation-based step 2 channel_ids = %v, want empty", step2.ChannelIDs)
+	}
+
+	// Swap the two rungs' sources: step 1 becomes rotation-based, step 2
+	// becomes channel-based. A converter that writes one direction
+	// correctly and leaves the other stale would still show the original
+	// shape on at least one of the two rungs here.
+	updated := s.Patch(t, tok, url+"/"+id, `"1"`, map[string]any{
+		"name": "mixed ladder", "enabled": true, "scope": "org",
+		"severities": []string{"crit"}, "events": []string{"opened"},
+		"channels": []string{ch.String()},
+		"steps": []map[string]any{
+			{"position": 1, "delay_seconds": 300, "rotation_id": rotationID},
+			{"position": 2, "delay_seconds": 600, "channel_ids": []string{ch2.String()}},
+		},
+	})
+	if updated.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200: %s", updated.Code, updated.Body)
+	}
+	var updatedBody struct {
+		Route struct {
+			Steps []alertRouteStepWire `json:"steps"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &updatedBody); err != nil {
+		t.Fatalf("decode updated route: %v: %s", err, updated.Body)
+	}
+	if len(updatedBody.Route.Steps) != 2 {
+		t.Fatalf("updated route has %d steps, want 2: %s", len(updatedBody.Route.Steps), updated.Body)
+	}
+	flipped1, flipped2 := updatedBody.Route.Steps[0], updatedBody.Route.Steps[1]
+	if flipped1.RotationID != rotationID || len(flipped1.ChannelIDs) != 0 {
+		t.Errorf("step 1 did not flip to rotation-based: %+v", flipped1)
+	}
+	if len(flipped2.ChannelIDs) != 1 || flipped2.ChannelIDs[0] != ch2.String() || flipped2.RotationID != "" {
+		t.Errorf("step 2 did not flip to channel-based: %+v", flipped2)
+	}
+}
+
 // TestAlertRouteRejectsAChannellessRoute pins alertroutes.Validate's own
 // rule through the HTTP boundary: a route with no channel tells nobody, so
 // the service refuses to create one, and the API must surface that as a

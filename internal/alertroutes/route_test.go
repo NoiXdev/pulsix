@@ -11,6 +11,12 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
+// ptr is a small generic helper for taking the address of a literal.
+// service_test.go (package alertroutes_test) already has its own copy: that
+// is a different package from this file's, so its unexported identifiers
+// are not visible here.
+func ptr[T any](v T) *T { return &v }
+
 func TestValidate(t *testing.T) {
 	gid := uuid.New()
 	base := func() Input {
@@ -37,6 +43,15 @@ func TestValidate(t *testing.T) {
 		}, false},
 		{"no severity at all", func(in *Input) { in.Severities = nil }, false},
 		{"no event kind at all", func(in *Input) { in.Events = nil }, false},
+		// 'escalated' is alert_route_events' own CHECK (00052) minus one
+		// kind, deliberately (TestEventKindsMatchTheSchema's own doc
+		// comment, internal/alerts/alert_test.go, spells out why): a route
+		// that could select it as a trigger would race escalatePass's own
+		// delivery of the same alert_events row through the forward pass
+		// too.
+		{"escalated is not a selectable route event", func(in *Input) {
+			in.Events = []alerts.EventKind{alerts.EventEscalated}
+		}, false},
 		// A route with no channel tells nobody. Decision 8: it is rejected
 		// here rather than created and left silently ineffective.
 		{"no channel", func(in *Input) { in.Channels = nil }, false},
@@ -217,6 +232,47 @@ func TestValidateWindowAndBreakthrough(t *testing.T) {
 			}
 			if !tc.want && err == nil {
 				t.Error("Validate() = nil, want an error")
+			}
+		})
+	}
+}
+
+func TestValidateSteps(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		steps   []Step
+		wantErr bool
+	}{
+		{"no ladder is fine", nil, false},
+		{"one rung", []Step{{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}}}, false},
+		{"a gap in the positions", []Step{{Position: 2, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}}}, true},
+		// Three steps at 1, 2, 2 — not 1, 1 — so the 1..n gap scan alone
+		// would accept this (positions 1 and 2 both present) and only the
+		// duplicate check can reject it. With two steps both at 1, the scan
+		// finds no step at position 2 and fails for that reason instead,
+		// which would let the duplicate check be deleted unnoticed.
+		{"a repeated position", []Step{
+			{Position: 1, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
+			{Position: 2, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
+			{Position: 2, Delay: time.Minute, ChannelIDs: []uuid.UUID{uuid.New()}},
+		}, true},
+		{"a zero delay", []Step{{Position: 1, ChannelIDs: []uuid.UUID{uuid.New()}}}, true},
+		// A rung that names nothing can never reach anybody, and unlike a
+		// channel that was deleted later, this one is a mistake being made
+		// right now — the moment to say so.
+		{"neither a rotation nor a channel", []Step{{Position: 1, Delay: time.Minute}}, true},
+		{"both a rotation and channels", []Step{{
+			Position: 1, Delay: time.Minute,
+			RotationID: ptr(uuid.New()), ChannelIDs: []uuid.UUID{uuid.New()},
+		}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Route{Name: "r", Steps: tc.steps}.ValidateSteps()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
 			}
 		})
 	}

@@ -350,6 +350,98 @@ func TestListAlertsAcknowledgedFilterUsesCoverageNotMerePresence(t *testing.T) {
 	}
 }
 
+// TestListAlertsAcknowledgedFilterStaysVoidedAfterSeverityFalls is backlog
+// 4.36 at this package's third read site (store_sql.go's own comment on
+// RaiseAlertSeverity names it alongside AlertRow.tsx's isAckCovering and
+// the host card, both client-side): the predicate above already compares
+// by coverage, not presence, but before v0.4d that comparison still used
+// the voided ack's own acknowledged_severity — never cleared — so a severity
+// that fell back down to (or below) that old value made the row cover
+// again. This extends TestListAlertsAcknowledgedFilterUsesCoverageNotMerePresence's
+// own fixture by one more step — crit falling back to warn, the exact
+// severity the stale acknowledged_severity used to equal — to prove the
+// filter now agrees with the ack_voided event sitting in this alert's own
+// timeline, permanently, rather than only for as long as severity stays
+// above the old ack.
+func TestListAlertsAcknowledgedFilterStaysVoidedAfterSeverityFalls(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	sub := tuple(host, "cpu", "", "used")
+	now := time.Now().UTC()
+
+	tx := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(context.Background(), tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	id := open[0].ID
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit open: %v", err)
+	}
+
+	actor := seedUser(t, d)
+	if err := st.Acknowledge(context.Background(), org, id, actor, "", now); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+
+	// Worsens to crit — voids the ack, same as the sibling test above.
+	tx2 := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx2, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: now.Add(time.Minute), Severity: rules.StateCrit, VoidsAck: true},
+	}); err != nil {
+		t.Fatalf("execute raise to crit: %v", err)
+	}
+	if err := tx2.Commit(context.Background()); err != nil {
+		t.Fatalf("commit raise: %v", err)
+	}
+
+	// Falls back to warn — the voided ack's own former severity. Before
+	// v0.4d, acknowledged_severity still read "warn" here, and
+	// severity(warn) <= acknowledged_severity(warn) made the row cover
+	// again despite the ack_voided event already on its timeline.
+	tx3 := beginTx(t, d)
+	if err := st.Execute(context.Background(), tx3, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: now.Add(2 * time.Minute), Severity: rules.StateWarn, VoidsAck: false},
+	}); err != nil {
+		t.Fatalf("execute fall back to warn: %v", err)
+	}
+	if err := tx3.Commit(context.Background()); err != nil {
+		t.Fatalf("commit fall: %v", err)
+	}
+
+	trueF := true
+	rows, _, err := st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &trueF}, "", 0)
+	if err != nil {
+		t.Fatalf("list acknowledged=true: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID == id {
+			t.Fatalf("list(acknowledged=true) includes an alert whose ack was voided at crit and whose severity has since only fallen back to the voided ack's own severity — the void must not expire")
+		}
+	}
+
+	falseF := false
+	rows, _, err = st.ListAlerts(context.Background(), org, alerts.Filter{Acknowledged: &falseF}, "", 0)
+	if err != nil {
+		t.Fatalf("list acknowledged=false: %v", err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("list(acknowledged=false) does not include an alert whose voided ack came back once severity fell — the row and its own ack_voided event disagree")
+	}
+}
+
 // TestListAlertsAndGetAlertAgreeOnAFullyPopulatedRow is the Minor review
 // finding this milestone's own review made load-bearing: nothing pinned
 // toAlertFromListRow's completeness against toAlertFromGetRow's. The two
@@ -455,13 +547,24 @@ func TestListAlertsAndGetAlertAgreeOnAFullyPopulatedRow(t *testing.T) {
 		OpenedAt: t0,
 		Severity: rules.StateCrit,
 		Peak:     rules.StateCrit,
+		// Moved by the ActionSeverity call below (t0+2m), not left at
+		// opened_at (t0): severity_changed_at (migration 00058) is set on
+		// every RaiseAlertSeverity write, which is exactly what that
+		// action issues.
+		SeverityChangedAt: t0.Add(2 * time.Minute),
 
 		ClosedAt:     timePtr(t0.Add(4 * time.Minute)),
 		ClosedReason: alerts.Stale,
 
-		AckAt:       timePtr(t0.Add(time.Minute)),
-		AckBy:       &actor,
-		AckSeverity: rules.StateWarn,
+		AckAt: timePtr(t0.Add(time.Minute)),
+		AckBy: &actor,
+		// AckSeverity is "" (unacknowledged-covering), not the warn it was
+		// given at: the severity action right below raises to crit with
+		// VoidsAck: true, and since v0.4d (backlog 4.36) that clears
+		// acknowledged_severity in the same UPDATE that writes the
+		// ack_voided event, rather than leaving the stale "warn" standing
+		// for a later fall back to warn to read as covering again.
+		AckSeverity: "",
 		AckNote:     "watching closely",
 
 		SnoozedUntil:      timePtr(until),
@@ -485,6 +588,7 @@ func timePtr(t time.Time) *time.Time { return &t }
 // a real one.
 func normalizeAlertTimes(a alerts.Alert) alerts.Alert {
 	a.OpenedAt = a.OpenedAt.UTC()
+	a.SeverityChangedAt = a.SeverityChangedAt.UTC()
 	if a.ClosedAt != nil {
 		a.ClosedAt = timePtr(a.ClosedAt.UTC())
 	}
@@ -988,8 +1092,8 @@ func TestAlertCursorRoundTrips(t *testing.T) {
 func insertAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, checkKey, item, metric string, openedAt time.Time) {
 	t.Helper()
 	_, err := d.Pool().Exec(context.Background(), `
-		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity)
-		VALUES ($1, $2, 'tuple', $3, $4, $5, $6, 'warn', 'warn')`,
+		INSERT INTO alerts (org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, severity_changed_at)
+		VALUES ($1, $2, 'tuple', $3, $4, $5, $6, 'warn', 'warn', $6)`,
 		org, host, checkKey, item, metric, openedAt)
 	if err != nil {
 		t.Fatalf("insert alert at %v: %v", openedAt, err)

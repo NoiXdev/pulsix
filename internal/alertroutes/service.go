@@ -61,8 +61,19 @@ func NewService(store RouteStore, groups GroupReader, now func() time.Time, newI
 // own CreateAlertRoute — surfaces as ErrNameTaken rather than a bare
 // wrapped database error, so the API can map it to a 409 the same way
 // every other named resource in this project does.
+//
+// Validate and ValidateSteps are two separate calls, not one: Validate
+// (route.go) covers the route's own four selections and knows nothing about
+// Step, while ValidateSteps is a method on Route precisely so a ladder can
+// be checked on its own — Task 8's GUI editor previews a candidate ladder
+// before the rest of the route is even filled in. Wrapping in.Steps in a
+// bare Route{} here costs nothing extra: ValidateSteps reads only its own
+// Steps field.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in Input) (Route, error) {
 	if err := Validate(in); err != nil {
+		return Route{}, err
+	}
+	if err := (Route{Steps: in.Steps}).ValidateSteps(); err != nil {
 		return Route{}, err
 	}
 	r, err := s.store.Create(ctx, orgID, s.newID(), in, s.now())
@@ -74,9 +85,12 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in Input) (Route,
 
 // Update validates in and replaces id's row when revision is still current
 // (Store.Update's own optimistic lock — ErrRevisionMismatch or ErrNotFound
-// otherwise).
+// otherwise). Same two-call split as Create, and for the same reason.
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in Input) (Route, error) {
 	if err := Validate(in); err != nil {
+		return Route{}, err
+	}
+	if err := (Route{Steps: in.Steps}).ValidateSteps(); err != nil {
 		return Route{}, err
 	}
 	r, err := s.store.Update(ctx, orgID, id, revision, in, s.now())

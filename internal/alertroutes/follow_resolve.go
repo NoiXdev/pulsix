@@ -140,6 +140,37 @@ type resolution struct {
 type routing struct {
 	channels []uuid.UUID
 	held     bool
+	// routeIDs is every route that contributed to channels above — the
+	// routes that are open (not held) and resolve to at least one channel
+	// for this event. decide (follow.go) uses it to claim each route's
+	// escalation base the instant an event actually goes out through it
+	// (v0.4d spec decision 3): channels itself is already a union
+	// (Channels, below) that has thrown the per-route identity away, and
+	// by the time enqueue runs that identity is gone for good — batches is
+	// keyed by channel, never by route — so this is the last point in the
+	// tick that still knows which routes delivered.
+	routeIDs []uuid.UUID
+}
+
+// hostGroupsFor resolves and caches hostID's monitoring groups for the
+// rest of this resolution's life. Factored out of route below so
+// escalatePass's own dueStep (follow_escalate.go, v0.4d) can ask the
+// identical question — whether a route's scope still covers an alert's
+// host — through the same cache rather than a second, uncoordinated
+// GroupsForHost call per chain: the answer depends only on the host and on
+// nothing that changes mid-tick, the same argument this file's own
+// resolution doc comment already makes for the rotation and window caches.
+func (r *resolution) hostGroupsFor(ctx context.Context, hostID uuid.UUID) ([]uuid.UUID, error) {
+	hostGroups, ok := r.groups[hostID]
+	if !ok {
+		var err error
+		hostGroups, err = r.f.groups.GroupsForHost(ctx, r.orgID, hostID)
+		if err != nil {
+			return nil, fmt.Errorf("groups for host %s: %w", hostID, err)
+		}
+		r.groups[hostID] = hostGroups
+	}
+	return hostGroups, nil
 }
 
 // route resolves one event to the channels that may hear it at this
@@ -151,14 +182,9 @@ type routing struct {
 // applied to the union would hold a Saturday alert until Monday so the
 // weekday route could have it too, which is a stale page nobody can act on.
 func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error) {
-	hostGroups, ok := r.groups[ev.HostID]
-	if !ok {
-		var err error
-		hostGroups, err = r.f.groups.GroupsForHost(ctx, r.orgID, ev.HostID)
-		if err != nil {
-			return routing{}, fmt.Errorf("groups for host %s: %w", ev.HostID, err)
-		}
-		r.groups[ev.HostID] = hostGroups
+	hostGroups, err := r.hostGroupsFor(ctx, ev.HostID)
+	if err != nil {
+		return routing{}, err
 	}
 	subject := Subject{HostID: ev.HostID, Severity: ev.Severity, Event: ev.Kind}
 	matched := MatchRoutes(subject, hostGroups, r.routes)
@@ -193,7 +219,11 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		rt.Channels = chans
 		open = append(open, rt)
 	}
-	return routing{channels: Channels(open), held: held}, nil
+	routeIDs := make([]uuid.UUID, len(open))
+	for i, rt := range open {
+		routeIDs[i] = rt.ID
+	}
+	return routing{channels: Channels(open), held: held, routeIDs: routeIDs}, nil
 }
 
 // channelsOf is where a route's channel source is decided: the fixed list

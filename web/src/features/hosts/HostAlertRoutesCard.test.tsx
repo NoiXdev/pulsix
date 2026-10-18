@@ -153,4 +153,67 @@ describe('HostAlertRoutesCard', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/boom/i);
   });
+
+  it('names a covering route\'s own ladder by rung count and the time to its last rung, without opening the editor', async () => {
+    // v0.4d Task 8: "who gets woken, and how late" has to be readable right
+    // here — delay_seconds is relative to the rung before it, so the total
+    // to the last rung (15 min: 5 then 10) is not the same number as
+    // either rung's own delay, and a reader should not have to add them up.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/alert-routes': {
+        routes: [
+          route({
+            name: 'pages on-call',
+            steps: [
+              { position: 1, delay_seconds: 300, channel_ids: ['c1'] },
+              { position: 2, delay_seconds: 600, channel_ids: ['c1'] },
+            ],
+          }),
+        ],
+      },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderCard();
+
+    expect(await screen.findByText('pages on-call')).toBeInTheDocument();
+    expect(screen.getByText(/2 rungs/i)).toBeInTheDocument();
+    expect(screen.getByText(/after 15 min/i)).toBeInTheDocument();
+  });
+
+  it('calls out two covering routes that each escalate on their own — the overlap the spec names as a risk', async () => {
+    // A route's ladder answers "when does THIS route escalate" — nothing
+    // merges the two, so an operator who only read one ladder would be
+    // surprised to be paged again by the other. This has to say so
+    // explicitly rather than leaving two "Escalates over N rungs" lines to
+    // be noticed and cross-referenced by eye.
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/alert-routes': {
+        routes: [
+          route({ id: 'r1', name: 'pages on-call', steps: [{ position: 1, delay_seconds: 300, channel_ids: ['c1'] }] }),
+          route({ id: 'r2', name: 'pages manager', steps: [{ position: 1, delay_seconds: 900, channel_ids: ['c1'] }] }),
+        ],
+      },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderCard();
+
+    await screen.findByText('pages on-call');
+    expect(screen.getByText(/2 routes below escalate independently/i)).toBeInTheDocument();
+  });
+
+  it('does not warn about overlapping escalation when only one covering route has a ladder', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/alert-routes': {
+        routes: [
+          route({ id: 'r1', name: 'pages on-call', steps: [{ position: 1, delay_seconds: 300, channel_ids: ['c1'] }] }),
+          route({ id: 'r2', name: 'plain route' }),
+        ],
+      },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+    });
+    renderCard();
+
+    await screen.findByText('pages on-call');
+    expect(screen.queryByText(/escalate independently/i)).not.toBeInTheDocument();
+  });
 });

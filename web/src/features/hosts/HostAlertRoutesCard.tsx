@@ -4,7 +4,7 @@ import { Pill } from '../../ui/badge.tsx';
 import { useHostAlertRoutes } from '../../api/hooks/useAlertRoutes.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useOncallRotations } from '../../api/hooks/useOncall.ts';
-import { ReachesNobody, RouteFiresOn } from '../notifications/AlertRouteCells.tsx';
+import { ReachesNobody, RouteEscalation, RouteFiresOn } from '../notifications/AlertRouteCells.tsx';
 import { routeReachesNobody } from '../notifications/alertRoute.ts';
 import type { AlertRoute, MonitoringGroup } from '../../api/types.ts';
 
@@ -51,6 +51,17 @@ export interface HostAlertRoutesCardProps {
  *
  * Editing stays on Settings → Alert routes, one click away through the
  * route's name.
+ *
+ * Each row also shows its own escalation ladder, when it has one
+ * (RouteEscalation) — but routes add up here, never override, so two
+ * routes covering the same host each keep their OWN ladder rather than
+ * merging into one. That is the spec's own named surprise (v0.4d risk
+ * section): an operator who reads one route's ladder and plans around it
+ * can still get woken by a second, independent one they never looked at.
+ * escalatingCount below turns that from an implicit fact (visible only by
+ * noticing two separate "Escalates over N rungs" lines) into an explicit
+ * sentence, the same "nothing is itself the finding" posture decision 8
+ * already gives an empty route list.
  */
 export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCardProps) {
   const routes = useHostAlertRoutes(org, hostId, canRead);
@@ -66,6 +77,7 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
   const rotationOf = (r: AlertRoute) =>
     r.rotation_id ? (rotations.data?.rotations ?? []).find((x) => x.id === r.rotation_id) : undefined;
   const list = routes.data?.routes ?? [];
+  const escalatingCount = list.filter((r) => (r.steps ?? []).length > 0).length;
 
   return (
     <Card className="p-4">
@@ -89,24 +101,32 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
         <p className="text-xs text-muted-foreground">No route covers this host — its alerts reach nobody.</p>
       )}
       {canRead && routes.data && list.length > 0 && (
-        <ul className="flex flex-col gap-2">
-          {list.map((r) => (
-            <li key={r.id} className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <Link
-                  to="/o/$org/settings/alert-routes"
-                  params={{ org }}
-                  className="truncate text-[13px] font-medium text-foreground hover:text-primary"
-                >
-                  {r.name}
-                </Link>
-                <Pill tone="accent">{scopeLabel(r, groupList)}</Pill>
-              </div>
-              <RouteFiresOn route={r} />
-              {routeReachesNobody(r, rotationOf(r)) && <ReachesNobody />}
-            </li>
-          ))}
-        </ul>
+        <>
+          {escalatingCount > 1 && (
+            <p className="mb-2 text-xs text-[var(--px-warn)]">
+              {escalatingCount} routes below escalate independently — acknowledging one route's chain does not stop another's.
+            </p>
+          )}
+          <ul className="flex flex-col gap-2">
+            {list.map((r) => (
+              <li key={r.id} className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Link
+                    to="/o/$org/settings/alert-routes"
+                    params={{ org }}
+                    className="truncate text-[13px] font-medium text-foreground hover:text-primary"
+                  >
+                    {r.name}
+                  </Link>
+                  <Pill tone="accent">{scopeLabel(r, groupList)}</Pill>
+                </div>
+                <RouteFiresOn route={r} />
+                <RouteEscalation route={r} />
+                {routeReachesNobody(r, rotationOf(r)) && <ReachesNobody />}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </Card>
   );

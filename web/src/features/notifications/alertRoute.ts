@@ -58,6 +58,51 @@ export function routeReachesNobody(route: AlertRoute, rotation?: { channels?: st
   return (route.channels ?? []).length === 0;
 }
 
+/** AlertRouteIdentityKey names the AlertRoute fields that describe the ROW,
+ * never the configuration: a server-assigned id, its optimistic-lock
+ * revision, and the two timestamps. These are the only fields routeToInput
+ * is allowed to leave out of the body it builds — every other field has to
+ * be named in ROUTE_INPUT_FIELDS below, or it fails to compile (see
+ * there). */
+type AlertRouteIdentityKey = 'id' | 'revision' | 'created_at' | 'updated_at';
+
+/**
+ * ROUTE_INPUT_FIELDS is a compile-time guard against the exact bug
+ * routeToInput has now caused twice: a field added to AlertRouteDTO that
+ * nobody taught this function, so it vanishes the next time a user clicks
+ * something as unrelated as enable/disable (whole-branch review, Important
+ * #3 — window/breakthrough_severities/rotation_id; v0.4d Task 8 — steps).
+ *
+ * `Record<K, true>` forces exhaustiveness in both directions: TypeScript
+ * requires every key of K to appear as a property (a new AlertRouteDTO
+ * field left out here is a missing-property error), and rejects any
+ * property not in K (a field removed from the DTO, or a typo, is an
+ * excess-property error on this literal). K is `keyof AlertRoute` minus
+ * the identity keys above, so the day a twelfth configuration field joins
+ * the route, this line itself refuses to compile until the new key is
+ * listed — at which point whoever is adding it is standing right next to
+ * routeToInput's own body and the field can't be forgotten in the one
+ * silent way it was twice before.
+ *
+ * This only proves the field was ACKNOWLEDGED, not that routeToInput's own
+ * object literal actually carries it through correctly — that half is
+ * still the job of the round-trip test in alertRoute.test.ts, which this
+ * guard cannot replace, only force into existing.
+ */
+export const ROUTE_INPUT_FIELDS: Record<Exclude<keyof AlertRoute, AlertRouteIdentityKey>, true> = {
+  name: true,
+  enabled: true,
+  scope: true,
+  scope_id: true,
+  severities: true,
+  events: true,
+  channels: true,
+  rotation_id: true,
+  steps: true,
+  window: true,
+  breakthrough_severities: true,
+};
+
 /** routeToInput turns a stored route back into the create/update body.
  *
  * PATCH is a full replace (AlertRouteBody's own doc comment), so every
@@ -75,9 +120,14 @@ export function routeReachesNobody(route: AlertRoute, rotation?: { channels?: st
  * form state, not from a stored route, and its own draft is the authority
  * on what the user just edited.
  *
- * scope_id, window, breakthrough_severities and rotation_id are omitted
- * rather than sent empty, matching what the dialog sends and what the
- * server's own Validate accepts. */
+ * scope_id, window, breakthrough_severities, rotation_id and steps are
+ * omitted rather than sent empty, matching what the dialog sends and what
+ * the server's own Validate accepts. steps joined this list for the exact
+ * reason window/breakthrough/rotation are already on it (v0.4d, Task 8):
+ * leaving a route's escalation ladder out of a PATCH this function builds
+ * would silently delete it on every quick list-page toggle (enable/disable)
+ * that round-trips a route through here without ever opening the ladder
+ * editor at all. */
 export function routeToInput(route: AlertRoute): AlertRouteInput {
   return {
     name: route.name,
@@ -87,6 +137,7 @@ export function routeToInput(route: AlertRoute): AlertRouteInput {
     severities: route.severities ?? [],
     events: route.events ?? [],
     ...(route.rotation_id ? { rotation_id: route.rotation_id } : { channels: route.channels ?? [] }),
+    ...(route.steps?.length ? { steps: route.steps } : {}),
     ...(route.window ? { window: route.window } : {}),
     ...(route.breakthrough_severities?.length ? { breakthrough_severities: route.breakthrough_severities } : {}),
   };

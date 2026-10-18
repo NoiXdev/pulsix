@@ -358,9 +358,12 @@ func TestPeakSeverityRankMatchesRulesStateRank(t *testing.T) {
 	}
 }
 
-// TestExecuteWritesAckVoided is the brief's own test: VoidsAck produces
-// the event and leaves acknowledged_at in place — the ack happened, it
-// just stopped covering the now-higher severity.
+// TestExecuteWritesAckVoided is the v0.4a brief's own test, updated for
+// v0.4d decision 2 (backlog 4.36): VoidsAck produces the event and leaves
+// acknowledged_at in place — the ack happened, it just stopped covering
+// the now-higher severity — but acknowledged_severity itself no longer
+// survives the void (TestExecuteClearsAckSeverityWhenVoided below drives
+// this further, into a severity that falls back to the voided value).
 func TestExecuteWritesAckVoided(t *testing.T) {
 	d := testdb.Open(t)
 	org, host := seedHost(t, d)
@@ -388,8 +391,11 @@ func TestExecuteWritesAckVoided(t *testing.T) {
 	}
 
 	row := alertRowByID(t, tx, id)
-	if row.ackAt == nil || row.ackSeverity == nil || *row.ackSeverity != "warn" {
-		t.Fatalf("acknowledged_at/severity = %v/%v, want the original ack left in place", row.ackAt, row.ackSeverity)
+	if row.ackAt == nil {
+		t.Fatalf("acknowledged_at = nil after a void, want the original acknowledgement left in place")
+	}
+	if row.ackSeverity != nil {
+		t.Fatalf("acknowledged_severity = %q after a void, want NULL (backlog 4.36: it no longer survives the void)", *row.ackSeverity)
 	}
 
 	kinds := alertEventKinds(t, tx, id)
@@ -401,6 +407,75 @@ func TestExecuteWritesAckVoided(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("ack_voided events = %d, want exactly 1: %v", count, kinds)
+	}
+}
+
+// TestExecuteClearsAckSeverityWhenVoided is backlog 4.36, settled by v0.4d
+// decision 2: acknowledged_severity is cleared in the same UPDATE that
+// writes the ack_voided event (RaiseAlertSeverity's own fourth SET
+// target), not left standing the way TestExecuteWritesAckVoided above
+// still finds it right after the void. Without the clear, a severity that
+// later falls back to (or below) the voided ack's own acknowledged_severity
+// makes the live comparison `severity <= acknowledged_severity` read
+// acknowledged again, while the alert's own timeline still shows the
+// ack_voided event — the row and the history disagreeing is exactly what
+// this test drives into existence and then rules out.
+func TestExecuteClearsAckSeverityWhenVoided(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	sub := tuple(host, "mem", "", "used_percent")
+	ctx := context.Background()
+
+	tx := beginTx(t, d)
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: sub, At: time.Now(), Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(ctx, tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v (%d rows)", err, len(open))
+	}
+	id := open[0].ID
+	setAcknowledged(t, tx, id, "warn")
+
+	// Raise to crit — the ack (given at warn) no longer covers, so this
+	// voids it, same as TestExecuteWritesAckVoided.
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: time.Now(), Severity: rules.StateCrit, VoidsAck: true},
+	}); err != nil {
+		t.Fatalf("execute severity + void ack: %v", err)
+	}
+
+	// Then fall back to warn — exactly the severity the old
+	// acknowledged_severity used to equal. A severity fall never writes an
+	// event (TestExecuteRaisesPeakButNeverLowersIt) and never voids an ack
+	// (Reconcile's own advance() only voids on a rise), so this action
+	// carries VoidsAck: false.
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: time.Now(), Severity: rules.StateWarn, VoidsAck: false},
+	}); err != nil {
+		t.Fatalf("execute fall back to warn: %v", err)
+	}
+
+	row := alertRowByID(t, tx, id)
+	if row.ackSeverity != nil {
+		t.Fatalf("acknowledged_severity = %v after a voided ack's severity fell back to its own old value, want NULL (backlog 4.36)", *row.ackSeverity)
+	}
+	if row.ackAt == nil {
+		t.Fatalf("acknowledged_at was cleared too; only acknowledged_severity should be — the acknowledgement itself still happened")
+	}
+
+	kinds := alertEventKinds(t, tx, id)
+	count := 0
+	for _, k := range kinds {
+		if k == "ack_voided" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("ack_voided events = %d, want exactly 1 (the fall back writes none): %v", count, kinds)
 	}
 }
 

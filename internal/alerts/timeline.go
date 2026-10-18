@@ -20,14 +20,29 @@ import (
 )
 
 // Event is one alert_events row (migration 00049): an alert's own append-
-// only history, independent of its current-state columns. Payload is not
-// surfaced yet — nothing downstream reads one (store_sql.go's own
-// InsertAlertEvent/InsertAlertActorEvent comments).
+// only history, independent of its current-state columns. Payload carries
+// the raw jsonb column: '{}' (InsertAlertEvent's own default) for every
+// kind except EventEscalated, whose shape is EscalatedPayload below
+// (alertroutes.RecordEscalation, migration 00056, writes it) — Task 8's
+// own GUI work is what first reads one back out.
 type Event struct {
 	ID      uuid.UUID
 	At      time.Time
 	Kind    string
 	ActorID *uuid.UUID
+	Payload []byte
+}
+
+// EscalatedPayload is the EventEscalated event's own payload shape: the
+// ladder step that fired and the channels it reached (empty, not absent,
+// when the step reached nobody — RecordEscalation's own doc comment).
+// Defined here, beside the EventKind it belongs to, rather than in
+// internal/alertroutes where it is written, so the write side
+// (RecordEscalation) and every future read side share one struct instead
+// of two json tags that could drift apart.
+type EscalatedPayload struct {
+	Position int         `json:"position"`
+	Channels []uuid.UUID `json:"channels"`
 }
 
 // StateChange is one check_state_changes row inside an alert's own
