@@ -35,6 +35,22 @@
 -- that predates this column behaves exactly as if its severity had last
 -- changed the moment it opened, which is the only honest reading for a row
 -- whose real severity history this column was never there to record.
+--
+-- This is the heavier of the two migrations touching alerts this release.
+-- 00056's own warning already named the ACCESS EXCLUSIVE lock its own
+-- ADD CONSTRAINT ... UNIQUE takes while building the backing index; this
+-- migration pays that same lock TWICE, with a full-table UPDATE sitting
+-- between the two. The ADD COLUMN above is metadata-only and fast (no
+-- DEFAULT, so nothing to backfill at add time), but the UPDATE that
+-- follows rewrites every row in the table — alerts carries no retention
+-- policy (00049's own "No retention policy") and only grows, so on a
+-- long-running installation this is a real cost, not a formality — and the
+-- SET NOT NULL after it takes a second ACCESS EXCLUSIVE lock plus a full
+-- scan to prove no row was left NULL, with no way to skip that scan since
+-- no prior CHECK constraint already established it. An operator applying
+-- this migration on a large installation should expect a startup that
+-- looks hung, with alerting stopped for its duration, not be surprised by
+-- one.
 ALTER TABLE alerts ADD COLUMN severity_changed_at timestamptz;
 UPDATE alerts SET severity_changed_at = opened_at;
 ALTER TABLE alerts ALTER COLUMN severity_changed_at SET NOT NULL;

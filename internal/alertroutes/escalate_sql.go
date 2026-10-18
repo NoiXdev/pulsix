@@ -187,33 +187,42 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 		//     (a cleared snooze and an expired one cannot both fire for the
 		//     same alert — Unsnooze nulls snoozed_until and writes only the
 		//     event, an expiring snooze writes no event at all — so these
-		//     two sources never disagree);
-		//  3. the owning route's own updated_at (review, Critical 3): a
-		//     route can only reappear here re-enabled or otherwise edited
-		//     after this chain last fired, since a disabled route cannot
-		//     appear in this result at all.
+		//     two sources never disagree).
 		//
-		// Deliberately NOT an anchor: alerts.severity_changed_at (migration
-		// 00058). A first version of this fold folded it in, reasoning that
-		// a falling severity needed some anchor to resume from, the same as
-		// a mute ending — but that column moves on EVERY severity write,
-		// including a move that never leaves the route's own set (crit down
-		// to warn on a {warn, crit} route). Folding it in restarted the next
-		// rung's delay on every such wobble, which can stall a chain
-		// oscillating inside the set forever — the dangerous direction
-		// (nobody paged at all), not the burst (paged a few minutes early)
-		// this feature was worried about. Decision 5 itself was amended:
-		// severity re-entry gets the next rung promptly, not a fresh delay,
-		// because a severity excursion (unlike a mute) means other routes
-		// may well have been shouting the whole time.
+		// A disabled-then-re-enabled route's own updated_at was folded in
+		// here for one round (review, Critical 3 of migration 00058's
+		// review). The final review (Important 2) withdrew it: the likeliest
+		// moment anyone edits a route is mid-incident, and folding
+		// updated_at in pushed every open alert that route matches further
+		// out the instant that edit landed — an operator widening the alarm
+		// was quietening it instead. A re-enabled or freshly edited route's
+		// next rung is now due promptly if its delay has already elapsed,
+		// the same answer decision 8 already gives a severity re-entry, for
+		// the same reason: firing a little early is the safe direction,
+		// firing late is not.
+		//
+		// Deliberately NOT an anchor either: alerts.severity_changed_at
+		// (migration 00058). A first version of this fold folded it in,
+		// reasoning that a falling severity needed some anchor to resume
+		// from, the same as a mute ending — but that column moves on EVERY
+		// severity write, including a move that never leaves the route's
+		// own set (crit down to warn on a {warn, crit} route). Folding it in
+		// restarted the next rung's delay on every such wobble, which can
+		// stall a chain oscillating inside the set forever — the dangerous
+		// direction (nobody paged at all), not the burst (paged a few
+		// minutes early) this feature was worried about. Decision 5 itself
+		// was amended: severity re-entry gets the next rung promptly, not a
+		// fresh delay, because a severity excursion (unlike a mute) means
+		// other routes may well have been shouting the whole time. Nothing
+		// outside the alerts store's own row mapping even reads this column
+		// today — it is honest data (RaiseAlertSeverity moves it on every
+		// severity write), not a value escalation leans on.
 		//
 		// has_urgent_event, not a zero-value check, is what tells "no event
 		// at all" apart from "an event at the epoch sentinel" —
 		// row.LastEventAt is the COALESCE-to-'epoch' value the query uses
 		// solely to keep the column NOT NULL for sqlc, never a real anchor
-		// on its own. RouteUpdatedAt needs no such sentinel: a plain NOT
-		// NULL column on a row that always exists by the time this one
-		// does.
+		// on its own.
 		//
 		// The fifth anchor, the end of a maintenance occurrence, is still
 		// the follower's own to add on top of this — it is NOT covered here
@@ -226,9 +235,6 @@ func (s *Store) ChainsNeedingAttention(ctx context.Context, tx pgx.Tx, orgID uui
 		}
 		if r.SnoozedUntil.Valid && r.SnoozedUntil.Time.After(lastUrgent) {
 			lastUrgent = r.SnoozedUntil.Time
-		}
-		if r.RouteUpdatedAt.After(lastUrgent) {
-			lastUrgent = r.RouteUpdatedAt
 		}
 		out[i] = Chain{
 			AlertID:  r.AlertID,

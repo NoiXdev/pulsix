@@ -39,12 +39,13 @@ func seedRouteWithSteps(t *testing.T, d *db.DB, org uuid.UUID, steps []alertrout
 }
 
 // seedRouteWithStepsAt is seedRouteWithSteps with an explicit creation
-// instant instead of time.Now() — Create's own UpdatedAt starts equal to
-// it, and escalate_sql.go now folds alert_routes.updated_at into
-// LastUrgentAt (migration 00058's review, Critical 3), so the handful of
-// ChainsNeedingAttention tests that pin a SPECIFIC anchor need the route
-// itself to predate it, the same reason seedOpenAlertAt exists
-// (ledger_sql_test.go's own doc comment).
+// instant instead of time.Now(). escalate_sql.go no longer folds
+// alert_routes.updated_at into LastUrgentAt — Important 2 of the final
+// review withdrew that anchor (migration 00058's review, Critical 3, had
+// added it; folding a route edit in meant widening an alarm mid-incident
+// quietened it instead) — so this no longer guards an anchor. Kept so a
+// route's own creation instant lines up with the alert's own backdating
+// (seedOpenAlertAt, ledger_sql_test.go) for a consistent test timeline.
 func seedRouteWithStepsAt(t *testing.T, d *db.DB, org uuid.UUID, steps []alertroutes.Step, at time.Time) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -338,16 +339,14 @@ func TestChainsNeedingAttentionCarriesStepsAndAnchors(t *testing.T) {
 	host := seedHost(t, d, org)
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	// The alert and the route both predate the base: in reality neither can
-	// be created later than the chain's first real delivery, and the
-	// route's own updated_at IS one of LastUrgentAt's anchors
-	// (escalate_sql.go, migration 00058's review, Critical 3) — created at
-	// the real "now" (an hour after base) as seedRouteWithSteps otherwise
-	// would, it would swamp the severity_raised event this test means to
-	// pin. The alert is backdated the same way for consistency; its own
-	// severity_changed_at is NOT one of LastUrgentAt's anchors
-	// (escalate_sql.go's own doc comment explains why a fold there could
-	// stall a chain that oscillates inside a route's severity set), so
-	// backdating it specifically is not load-bearing here.
+	// be created later than the chain's first real delivery. Neither
+	// backdating is load-bearing for LastUrgentAt any more — escalate_sql.go
+	// no longer folds the route's own updated_at into it (Important 2 of the
+	// final review withdrew that anchor), and the alert's own
+	// severity_changed_at never was one (escalate_sql.go's own doc comment
+	// explains why a fold there could stall a chain that oscillates inside a
+	// route's severity set) — kept purely so both timestamps line up with
+	// the rest of this test's own timeline rather than real wall-clock now().
 	alert := seedOpenAlertAt(t, d, org, host, base.Add(-time.Minute))
 	ch := seedChannel(t, d, org)
 	route := seedRouteWithStepsAt(t, d, org, []alertroutes.Step{
@@ -399,12 +398,12 @@ func TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase(t *testing.T) {
 	host := seedHost(t, d, org)
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	// Backdated to predate base, the same reason
-	// TestChainsNeedingAttentionCarriesStepsAndAnchors' own setup gives:
-	// the route's own updated_at IS one of LastUrgentAt's anchors
-	// (escalate_sql.go, migration 00058's review, Critical 3) and must not
-	// outrank the unsnoozed event this test means to pin. The alert's own
-	// severity_changed_at is backdated too, for consistency, but is not
-	// itself an anchor (escalate_sql.go's own doc comment explains why).
+	// TestChainsNeedingAttentionCarriesStepsAndAnchors' own setup gives —
+	// neither the route's own updated_at (no longer an anchor at all,
+	// Important 2 of the final review) nor the alert's own
+	// severity_changed_at (never was one) needs to outrank the unsnoozed
+	// event this test means to pin, but both are backdated anyway to keep
+	// the whole timeline consistent.
 	alert := seedOpenAlertAt(t, d, org, host, base.Add(-time.Minute))
 	route := seedRouteWithStepsAt(t, d, org, []alertroutes.Step{{Position: 1, Delay: 5 * time.Minute}}, base.Add(-time.Minute))
 
@@ -440,5 +439,111 @@ func TestChainsNeedingAttentionAnchorsOnUnsnoozeNotJustBase(t *testing.T) {
 	dueByUnsnoozeAnchor := unsnoozedAt.Add(5 * time.Minute).Add(time.Second)
 	if _, ok := alertroutes.DueStep(c.State, dueByUnsnoozeAnchor); !ok {
 		t.Fatalf("DueStep(%v) = not due, want due once the unsnooze anchor's own delay elapsed", dueByUnsnoozeAnchor)
+	}
+}
+
+// TestChainsNeedingAttentionDoesNotStarveADueChainBehindBaselessOnes is
+// Critical 1 of the final review. ChainsNeedingAttentionBase's own
+// ORDER BY (opened_at, id, route id) / LIMIT window used to include every
+// open-alert/enabled-route pair regardless of whether it could ever become
+// due. A pair with no base row at all is one DueStep (escalate.go) always
+// refuses — FiredUpTo < 0 — and nothing about such a pair changes on its
+// own, so in the old query it was a STABLE, PERMANENT occupant of the
+// window rather than a candidate that would clear out on a later tick. An
+// organization with more such pairs than the per-tick batch size would see
+// its NEWEST alerts never reach the window at all, and therefore never
+// escalate — silent, and the exact failure this whole feature exists to
+// prevent.
+//
+// This test fails against a build that lacks the `f.fired_up_to IS NOT
+// NULL` predicate (ChainsNeedingAttentionBase, alert_escalations.sql):
+// with the batch limited to exactly the number of baseless pairs seeded
+// below, the unfixed query fills the entire window with them — they sort
+// first, having opened earliest — and the one pair that actually has a
+// base, and is due, never appears.
+func TestChainsNeedingAttentionDoesNotStarveADueChainBehindBaselessOnes(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	route := seedRouteWithSteps(t, d, org, []alertroutes.Step{{Position: 1, Delay: time.Minute}})
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+
+	const baseless = 5
+	for i := 0; i < baseless; i++ {
+		h := seedHost(t, d, org)
+		// Opened strictly before the due pair below, and never claimed at
+		// all — the structural shape the fix must exclude outright, not
+		// merely rank behind the due one.
+		seedOpenAlertAt(t, d, org, h, base.Add(time.Duration(i)*time.Minute))
+	}
+
+	// Opened after every baseless alert above, with a real base claimed
+	// well past rung 1's own one-minute delay — the one pair that is
+	// actually due.
+	dueHost := seedHost(t, d, org)
+	dueAlert := seedOpenAlertAt(t, d, org, dueHost, base.Add(time.Hour))
+	mustClaim(t, d, org, dueAlert, route, 0, base.Add(time.Hour))
+
+	s := alertroutes.NewSQLStore(d)
+	tx := beginTx(t, d)
+	// LIMIT equal to the number of baseless pairs: if they were not
+	// filtered out of the WHERE clause, they alone would fill the whole
+	// window and the due pair would never be reached.
+	chains, err := s.ChainsNeedingAttention(ctx, tx, org, baseless)
+	if err != nil {
+		t.Fatalf("chains needing attention: %v", err)
+	}
+
+	var found *alertroutes.Chain
+	for i := range chains {
+		if chains[i].AlertID == dueAlert {
+			found = &chains[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("chains = %+v, want the due alert %s among them — it was starved behind %d ineligible baseless pair(s)",
+			chains, dueAlert, baseless)
+	}
+	dueCheckAt := base.Add(2 * time.Hour)
+	if _, ok := alertroutes.DueStep(found.State, dueCheckAt); !ok {
+		t.Fatalf("the surfaced chain is not actually due at %v: %+v", dueCheckAt, found.State)
+	}
+}
+
+// TestDeletingARouteStopsItsChain is the one stopping condition decision 4
+// names (route deleted) that had no silence proof yet: the spec asks for
+// one per stopping condition, and every other row already has one
+// (TestChainsNeedingAttentionSkipsClosedAlerts for closed/stale,
+// TestClaimingAStepTwiceIsANoOp and the acknowledgement tests in
+// follow_escalate_test.go for the rest). A deleted route holds this one by
+// foreign-key cascade alone — alert_route_steps and alert_escalations both
+// carry `FOREIGN KEY (org_id, route_id) REFERENCES alert_routes (org_id,
+// id) ON DELETE CASCADE` (migration 00056) — and ChainsNeedingAttentionBase's
+// own JOIN against alert_routes means a route that no longer exists cannot
+// produce a row either way; this test exists to prove the cascade actually
+// fires, not merely that the query's JOIN would exclude it if it somehow
+// didn't.
+func TestDeletingARouteStopsItsChain(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d)
+	host := seedHost(t, d, org)
+	alert := seedOpenAlert(t, d, org, host)
+	route := seedRouteWithSteps(t, d, org, []alertroutes.Step{{Position: 1, Delay: time.Minute}})
+	mustClaim(t, d, org, alert, route, 0, time.Now().UTC())
+
+	if chains := mustChains(t, d, org); len(chains) != 1 {
+		t.Fatalf("chains before delete = %+v, want exactly one", chains)
+	}
+
+	s := alertroutes.NewSQLStore(d)
+	if err := s.Delete(context.Background(), org, route); err != nil {
+		t.Fatalf("delete route: %v", err)
+	}
+
+	if chains := mustChains(t, d, org); len(chains) != 0 {
+		t.Fatalf("a deleted route still offered %d chain(s): %+v — the cascade did not actually clear its ledger", len(chains), chains)
+	}
+	if got := mustReadSteps(t, d, org, route); len(got) != 0 {
+		t.Fatalf("alert_route_steps still has %d row(s) for a deleted route: %+v", len(got), got)
 	}
 }

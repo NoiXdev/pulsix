@@ -12,6 +12,18 @@
 // or roll back together exactly as the forward pass's ledger write and
 // enqueue already do (follow.go's own file comment is the reason, restated
 // here for a second axis of state rather than re-argued).
+//
+// An alert already open the moment this release deploys never escalates,
+// and that is correct rather than a gap: claimBases only runs on a
+// delivery this same release just made, so a pair whose last delivery
+// predates the upgrade has no base row and DueStep refuses it forever
+// (cs.FiredUpTo < 0), the same as any other pair with no base. Nothing
+// retroactively claims one for an alert that was already sitting open —
+// this pass only ever reads what claimBases already wrote. Every alert
+// opened from here on gets a base the first time any route delivers for
+// it, so the gap is a one-time, self-healing artefact of the upgrade
+// moment itself, not a standing hole: by the time an operator could
+// notice it, every alert it could apply to has long since closed.
 package alertroutes
 
 import (

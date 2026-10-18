@@ -467,10 +467,13 @@ func (e *followEnv) routeWithStepsForSeverities(severities []rules.State, steps 
 // setRouteEnabled toggles route's own enabled flag and moves its
 // updated_at to the fixture's current clock — straight SQL, not
 // Store.Update, since the escalation pause/resume tests only need the one
-// column (and the timestamp move that any edit carries with it), not a
-// full Input round trip through a stale revision. route_updated_at is
-// exactly the anchor escalate_sql.go now folds into LastUrgentAt
-// (migration 00058's review, Critical 3) for precisely this case.
+// column, not a full Input round trip through a stale revision.
+// updated_at is no longer an anchor escalate_sql.go folds into
+// LastUrgentAt (Important 2 of the final review withdrew that; migration
+// 00058's review, Critical 3, had added it for exactly this re-enable
+// case) — moved here anyway because a real edit always moves it, and a
+// fixture route should behave like a real one even in the column the
+// store no longer reads.
 func (e *followEnv) setRouteEnabled(route uuid.UUID, enabled bool) {
 	e.t.Helper()
 	if _, err := e.d.Pool().Exec(context.Background(),

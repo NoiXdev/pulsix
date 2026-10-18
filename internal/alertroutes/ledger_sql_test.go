@@ -36,18 +36,24 @@ func beginTx(t *testing.T, d *db.DB) pgx.Tx {
 }
 
 // seedHost creates a bare zone and host in org, the minimal fixture an
-// alert's composite FK (org_id, host_id) needs.
+// alert's composite FK (org_id, host_id) needs. Both names carry a fresh
+// uuid so two calls for the same org — the starvation regression test
+// (escalate_sql_test.go) needs several distinct hosts in one org, since
+// alerts_one_open_per_subject (migration 00049) permits only one open
+// alert per host/subject — never collide on zones' own (org_id, slug)
+// uniqueness.
 func seedHost(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
 	t.Helper()
 	q := gen.New(d.Pool())
+	suffix := uuid.NewString()
 	z, err := q.CreateZone(context.Background(), gen.CreateZoneParams{
-		ID: uuid.Must(uuid.NewV7()), OrgID: org, Slug: "z1", Name: "z1",
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Slug: "z-" + suffix, Name: "z-" + suffix,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h, err := q.CreateHost(context.Background(), gen.CreateHostParams{
-		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: z.ID, Name: "h1", Facts: []byte(`{}`),
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: z.ID, Name: "h-" + suffix, Facts: []byte(`{}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,14 +84,16 @@ func seedOpenAlert(t *testing.T, d *db.DB, org, host uuid.UUID) uuid.UUID {
 // seedOpenAlertAt is seedOpenAlert with an explicit opened_at/
 // severity_changed_at instead of now() — for the handful of
 // ChainsNeedingAttention tests (escalate_sql_test.go) that need the alert
-// to predate an artificially backdated escalation base, so the route's
-// own updated_at (seedRouteWithStepsAt, escalate_sql_test.go — which
-// escalate_sql.go DOES fold into LastUrgentAt) cannot outrank the specific
-// anchor each of those tests means to pin. severity_changed_at is stamped
-// here only to keep the row's own timestamps consistent; escalate_sql.go
-// does not fold it into anything (its own doc comment explains why a fold
-// there could stall a chain that oscillates inside a route's severity
-// set).
+// to predate an artificially backdated escalation base, so its own
+// opened_at cannot outrank the specific anchor each of those tests means to
+// pin. Neither timestamp here is itself an anchor escalate_sql.go folds
+// into LastUrgentAt — the route's own updated_at was, for one round
+// (migration 00058's review, Critical 3), but Important 2 of the final
+// review withdrew it, and severity_changed_at never was one (escalate_sql.go's
+// own doc comment explains why a fold there could stall a chain that
+// oscillates inside a route's severity set). Both are stamped here only to
+// keep the row's own timestamps consistent with the rest of the test's
+// timeline.
 func seedOpenAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, at time.Time) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID

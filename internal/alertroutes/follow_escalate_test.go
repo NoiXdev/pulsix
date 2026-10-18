@@ -343,13 +343,13 @@ func TestAnExpiringSnoozeResumesTheChain(t *testing.T) {
 // the moment it actually went out, not the window's next opening.
 func TestABreakthroughSeverityStartsTheClockAtOpen(t *testing.T) {
 	env := newFollowEnv(t)
-	// The clock is pinned BEFORE the route is created, not after: the
-	// route's own updated_at is now one of LastUrgentAt's anchors
-	// (escalate_sql.go, migration 00058's review, Critical 3), and
-	// creating it at the fixture's REAL starting instant — October, by
-	// wall-clock, against this test's January timeline — would make that
-	// anchor read as "in the future" relative to every `now` the test
-	// drives afterward, which DueStep reads as never due.
+	// The clock is pinned to a known instant, outside business hours,
+	// before anything else in the test happens: createRoute stamps the
+	// route's own created_at/updated_at from this same injected clock
+	// (followEnv.createRoute's own call to e.clock.Now()), and the window
+	// check below needs the fixture's `now` outside business hours from the
+	// very first Tick, not only once the test starts moving the clock by
+	// hand.
 	env.clock.set(time.Date(2026, 1, 5, 3, 0, 0, 0, time.UTC)) // outside business hours
 	route := env.createRoute(alertroutes.Input{
 		Enabled: true, Scope: alertroutes.ScopeOrg,
@@ -623,26 +623,33 @@ func TestASeverityThatFallsButStaysInTheRouteSSetDoesNotPostponeTheNextRung(t *t
 	}
 }
 
-// TestADisabledRouteResumesWithFullDelayWhenReEnabled is Critical 3 of the
-// review. Decision 4 calls a disabled route a pause, but decision 5's
-// anchor list never named it — a disabled route cannot appear in
-// ChainsNeedingAttention at all (its own JOIN requires r.enabled), so
-// re-enabling it is the only way this matters, and alert_routes.updated_at
-// (which moves on exactly that, and on any other edit) is what
-// escalate_sql.go now folds in to answer it.
-func TestADisabledRouteResumesWithFullDelayWhenReEnabled(t *testing.T) {
+// TestARouteReEnabledFiresPromptlyIfItsDelayHasElapsed is Important 2 of
+// the final review, reversing migration 00058's own Critical 3. Decision 4
+// calls a disabled route a pause; Critical 3 answered "what does resuming
+// cost" by folding alert_routes.updated_at into LastUrgentAt, so a
+// re-enable gave the next rung a fresh full delay, the same as a cleared
+// snooze. The final review found the real-world cost of that: the likeliest
+// moment anyone edits a route — including flipping it back on — is
+// mid-incident, adding a channel precisely because nobody has answered yet,
+// and a fresh delay is exactly backwards there: it quietens the alarm the
+// operator is trying to widen. A re-enabled route's next rung is now due
+// promptly once its delay has already elapsed, measured from the ladder's
+// own last real anchor (here, the base), the same answer decision 8 already
+// gives a severity re-entry and for the same reason — firing a little
+// early is the safe direction, firing late is not.
+func TestARouteReEnabledFiresPromptlyIfItsDelayHasElapsed(t *testing.T) {
 	env := newFollowEnv(t)
 	env.openCritAlert()
 	route := env.routeWithSteps([]alertroutes.Step{
 		{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{env.channel}},
 	})
-	if err := env.follower.Tick(context.Background(), env.org); err != nil {
+	if err := env.follower.Tick(context.Background(), env.org); err != nil { // base at t0
 		t.Fatalf("Tick: %v", err)
 	}
 
 	// Disabled well before rung 1's own delay would otherwise have
-	// elapsed, and for long enough that the stale base alone would have
-	// fired it many times over by the time it is re-enabled.
+	// elapsed, and for long enough that the base alone is already more
+	// than 5 minutes behind by the time it is re-enabled.
 	env.clock.advance(time.Minute)
 	env.setRouteEnabled(route, false)
 	env.clock.advance(2 * time.Hour)
@@ -653,24 +660,21 @@ func TestADisabledRouteResumesWithFullDelayWhenReEnabled(t *testing.T) {
 		t.Fatalf("rung 1 fired %d time(s) while the route was disabled, want 0", n)
 	}
 
-	// Re-enabled. One minute later: short of rung 1's own full delay
-	// measured from the re-enable.
+	// Re-enabled and ticked almost immediately — rung 1 must fire on THIS
+	// tick, not wait out a fresh delay from the re-enable: the base (t0) is
+	// already more than 5 minutes behind by now, so nothing further needs
+	// to elapse. A build that still folds the route's own updated_at into
+	// LastUrgentAt would read this as 0 fired, exactly the burst-turned-
+	// silence the final review found.
 	env.clock.advance(time.Minute)
 	env.setRouteEnabled(route, true)
 	env.clock.advance(time.Minute)
 	if err := env.follower.Tick(context.Background(), env.org); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if n := env.deliveriesTo(route, 1); n != 0 {
-		t.Fatalf("rung 1 fired %d time(s) the instant the route was re-enabled; it should wait out its delay", n)
-	}
-
-	env.clock.advance(4 * time.Minute) // five minutes after re-enabling
-	if err := env.follower.Tick(context.Background(), env.org); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
 	if n := env.deliveriesTo(route, 1); n != 1 {
-		t.Fatalf("rung 1 fired %d time(s) once re-enabled, want 1", n)
+		t.Fatalf("rung 1 fired %d time(s) on the tick right after re-enabling, want 1 — "+
+			"re-enabling should fire promptly once the delay has elapsed, not restart it", n)
 	}
 }
 

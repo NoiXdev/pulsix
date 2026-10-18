@@ -448,11 +448,13 @@ type ListAlertsRow struct {
 // severity ranking (crit=3, warn=2, unknown=1, else 0) RaiseAlertSeverity's
 // own peak_severity column already uses — kept in sync by hand for the
 // same reason that query's own comment gives: SQL cannot call
-// rules.StateRank. acknowledged_severity is NULL whenever acknowledged_at
-// is (the alerts table's own CHECK), which this ELSE 0 relies on: an
-// unacknowledged row's "ack rank" reads 0, below every real severity, so
-// it can never read as covered even without the explicit
-// acknowledged_at IS NOT NULL alongside it.
+// rules.StateRank. acknowledged_severity reads NULL both for a row that
+// has never been acknowledged and for one whose acknowledgement was later
+// voided (migration 00057 relaxed the table's own CHECK to allow exactly
+// that combination — acknowledged_at can stand with acknowledged_severity
+// NULL now, where it once could not) — either way this ELSE 0 reads 0,
+// below every real severity, so neither case can ever read as covered even
+// without the explicit acknowledged_at IS NOT NULL alongside it.
 // id breaks a tie between two alerts one Execute call opened at the
 // identical opened_at (review finding, Minor): without it, two runs of
 // this same query could disagree on which of the two comes first. It is
@@ -804,11 +806,17 @@ type RaiseAlertSeverityParams struct {
 // (its own doc comment: "the only reason Reconcile emits this action at
 // all"), rise or fall alike, so every call here is a real severity change
 // and every one of them moves this column. A FALLING severity writes no
-// alert_events row at all — this is the only trace it leaves anywhere —
-// which is exactly why escalatePass's own anchor fold
-// (internal/alertroutes, migration 00058's own doc comment) needs it: a
-// route's severity set left and re-entered on a fall-then-rise has
-// nothing else to measure a resumed chain's delay from.
+// alert_events row at all — this is the only trace it leaves anywhere.
+//
+// escalatePass (internal/alertroutes) does NOT read this column as an
+// anchor, despite an earlier round of review arguing it should (migration
+// 00058's own doc comment has the full reasoning): this column moves on
+// every severity write, including one that never leaves a route's own
+// severity set at all, so folding it into a chain's resume timing could
+// stall a chain oscillating inside that set forever. The column is kept
+// regardless — it is honest data about the alert, true on its own terms —
+// but nothing outside the alerts store's own row mapping
+// (internal/alerts/store_sql.go) reads it today.
 func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) error {
 	_, err := q.db.Exec(ctx, raiseAlertSeverity,
 		arg.Severity,

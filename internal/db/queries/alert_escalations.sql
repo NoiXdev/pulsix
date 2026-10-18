@@ -109,33 +109,53 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- the other's ladder (TestTwoRoutesOnOneAlertKeepSeparateChains), so every
 -- join below carries both columns.
 --
--- fired_up_to is -1 when the ledger has no row at all for this pair — not
--- even the base at position 0 — the same sentinel ChainState's own doc
--- comment gives. last_fired_at is NULL in that same case; the store reads
--- a NULL there as the zero time.Time.
+-- fired_up_to can no longer actually BE -1 by the time a row leaves this
+-- query (Critical 1, below, excludes a pair with no base row at all from
+-- the WHERE clause itself), but the SELECT list still reads it through
+-- COALESCE(f.fired_up_to, -1) rather than the bare column: sqlc's own
+-- static analysis (no live database behind it, same limitation
+-- ListItemsForHost's own comment, queries/items.sql, already found) cannot
+-- see that the WHERE clause rules NULL out, and would otherwise infer a
+-- nullable Go type for a column the store already treats as plain int32.
+-- ChainState's own doc comment (escalate.go) still documents -1 as the
+-- general "no base" reading for the type as a whole — it is simply
+-- unreachable through this particular query now, not a meaning this query
+-- ever disagreed with.
 --
--- last_event_at, snoozed_until and route_updated_at together cover FOUR
--- of spec decision 5's FIVE anchors for LastUrgentAt (the fifth, the end
--- of a maintenance occurrence, is the one this query still deliberately
--- does not cover — see below):
+-- last_event_at and snoozed_until together cover FOUR of spec decision 5's
+-- FIVE anchors for LastUrgentAt (the fifth, the end of a maintenance
+-- occurrence, is the one this query still deliberately does not cover —
+-- see below):
 --
 --   1. the alert's own most recent severity_raised/ack_voided/unsnoozed
 --      event (last_event_at/has_urgent_event);
 --   2. its snoozed_until column, for a bounded snooze that simply runs out
 --      rather than being cleared by a person;
---   3. the owning route's own updated_at (review, Critical 3) — decision 4
---      calls a disabled route a pause, but a disabled route cannot appear
---      in this result at all (the JOIN below requires r.enabled), so the
---      only way this column matters is the route reappearing re-enabled,
---      or edited any other way, after this chain's last firing; updated_at
---      already moves on exactly that and nothing else needs to.
 --
--- alerts.severity_changed_at (migration 00058) exists and is read
--- elsewhere, but is DELIBERATELY NOT an anchor here, after a round of
--- review genuinely got this wrong: the first version of this fold folded
--- it in, on the theory that a falling severity needed SOME anchor to
--- resume a chain from, same as a mute ending. That reasoning does not
--- survive contact with a severity that moves WITHIN a route's own set —
+-- The owning route's own updated_at was folded in here too for one round
+-- (review, Critical 3 of migration 00058's review) — reasoning that a
+-- disabled-then-re-enabled route needed an anchor the same way a cleared
+-- snooze does. The final review (Important 2) reversed that: the likeliest
+-- moment anyone edits a route is mid-incident — adding a channel precisely
+-- because nobody answered — and folding updated_at in pushed every open
+-- alert that route matches further out the instant that edit landed. An
+-- operator trying to widen the alarm was quietening it instead. A
+-- re-enabled or freshly edited route's next rung is now due promptly if
+-- its delay has already elapsed, the same answer decision 8 already gives
+-- a severity re-entry, and for the same reason: firing a little early is
+-- the safe direction, firing late is not, and there is no state here that
+-- would let a "resume with a fresh delay" rule tell the two cases apart
+-- anyway.
+--
+-- alerts.severity_changed_at (migration 00058) exists and is honest data —
+-- RaiseAlertSeverity (queries/alerts.sql) moves it on every severity
+-- write, rise or fall — but nothing outside the alerts store's own row
+-- mapping (internal/alerts/store_sql.go) ever reads it, and it is
+-- DELIBERATELY NOT an anchor here either, after a round of review
+-- genuinely got this wrong: the first version of this fold folded it in,
+-- on the theory that a falling severity needed SOME anchor to resume a
+-- chain from, same as a mute ending. That reasoning does not survive
+-- contact with a severity that moves WITHIN a route's own set —
 -- crit down to warn on a {warn, crit} route never leaves the set at all,
 -- so there is no "resuming" to anchor, yet severity_changed_at still
 -- moves, and the next rung's delay restarts on every wobble. An alert that
@@ -161,15 +181,12 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- before).
 --
 -- The store (escalate_sql.go), not this statement, takes the GREATEST of
--- all three: GREATEST(x, y) does not widen to a nullable Go type the way
+-- the two: GREATEST(x, y) does not widen to a nullable Go type the way
 -- COALESCE does — tried first, it left sqlc unable to infer a concrete
 -- type for the column at all, and casting to force one made it infer a
 -- non-nullable time.Time despite the arguments being capable of NULL,
 -- which would panic the first time an alert carried neither of the
--- nullable ones. route_updated_at carries no such hazard — a plain NOT
--- NULL column, never a nullable subquery — so it needs no epoch-sentinel
--- dance of its own; the store simply compares it against whatever
--- last_event_at/snoozed_until already produced and keeps the latest.
+-- nullable ones.
 --
 -- last_event_at itself has the same problem one level down: a bare
 -- correlated subquery's nullability is exactly what ListItemsForHost's own
@@ -182,9 +199,7 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- has_urgent_event is the EXISTS flag that tells the store whether to
 -- trust it or to use the Go zero time.Time instead — ChainState's own
 -- "zero if none" promise, not epoch, which an untouched alert must never
--- read as having been "urgent" at 1970-01-01. (route_updated_at carries no
--- such sentinel because a route always exists by the time this row does —
--- there is no "untouched" case for it to read as zero.)
+-- read as having been "urgent" at 1970-01-01.
 --
 -- The FIFTH anchor, the end of a maintenance occurrence, is the one this
 -- query still deliberately does NOT cover: occurrences are computed in Go
@@ -201,6 +216,35 @@ VALUES (@org_id, @alert_id, @at, 'escalated', @payload);
 -- own comment), so a plain v0.4b route with no ladder joins to no ladder
 -- row and is filtered out by the inner join, never reaching the predicate
 -- at all.
+--
+-- `f.fired_up_to IS NOT NULL` and the acknowledgement predicate below are
+-- Critical 1 of the final review, and both close the same hole: this
+-- query's own ORDER BY/LIMIT window used to include pairs that could
+-- NEVER become due and never would on their own — a pair whose base row
+-- was never written (DueStep, escalate.go, always refuses one: FiredUpTo
+-- < 0), or an alert an operator has already acknowledged at its current
+-- severity. Neither case changes by itself, so each was a STABLE,
+-- PERMANENT occupant of the window rather than a candidate that simply
+-- lost a race one tick and would clear out the next. An organization with
+-- more such pairs than the per-tick batch size saw its NEWEST alerts never
+-- reach the window at all, and therefore never escalate — silent, and the
+-- exact failure this whole feature exists to prevent
+-- (TestChainsNeedingAttentionDoesNotStarveADueChainBehindBaselessOnes,
+-- escalate_sql_test.go, is the regression test). Filtering both out here,
+-- rather than leaving them to be rejected once they reach the follower's
+-- own dueStep, also cuts the per-tick cost: each ineligible candidate used
+-- to still pay for a GetAlert and up to three WindowsForHost calls inside
+-- the advisory-locked transaction before being rejected.
+--
+-- The acknowledgement predicate is the same coverage comparison ListAlerts'
+-- own `acknowledged` filter already uses (queries/alerts.sql) — severity
+-- ranked no higher than acknowledged_severity — not a bare
+-- `acknowledged_at IS NOT NULL`: decision 2's whole point is that an
+-- acknowledgement given at warn does not cover a later rise to crit, and a
+-- chain must resume the instant that happens, not stay silenced by a stale
+-- ack. A voided acknowledgement (RaiseAlertSeverity clears
+-- acknowledged_severity back to NULL on exactly that) therefore reads as
+-- uncovered again here too, with no second predicate needed.
 WITH fired AS (
   SELECT alert_id, route_id, MAX(position) AS fired_up_to
   FROM alert_escalations
@@ -227,8 +271,7 @@ SELECT
     SELECT 1 FROM alert_events ae
      WHERE ae.org_id = a.org_id AND ae.alert_id = a.id AND ae.kind IN ('severity_raised', 'ack_voided', 'unsnoozed')
   ) AS has_urgent_event,
-  a.snoozed_until AS snoozed_until,
-  r.updated_at AS route_updated_at
+  a.snoozed_until AS snoozed_until
 FROM alerts a
 JOIN alert_routes r ON r.org_id = a.org_id AND r.enabled
 JOIN ladder l ON l.route_id = r.id
@@ -237,6 +280,12 @@ LEFT JOIN alert_escalations lf
   ON lf.org_id = a.org_id AND lf.alert_id = a.id AND lf.route_id = r.id AND lf.position = f.fired_up_to
 WHERE a.org_id = @org_id
   AND a.closed_at IS NULL
-  AND l.max_position > COALESCE(f.fired_up_to, -1)
+  AND f.fired_up_to IS NOT NULL
+  AND NOT (
+    a.acknowledged_severity IS NOT NULL
+    AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+        <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+  )
+  AND l.max_position > f.fired_up_to
 ORDER BY a.opened_at, a.id, r.id
 LIMIT @lim;
