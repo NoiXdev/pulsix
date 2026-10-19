@@ -1,7 +1,7 @@
 import { childPath, indexPath } from '../inventory/schema/paths.ts';
 import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } from '../inventory/schema/secrets.ts';
 import type { SchemaField, Vars } from '../inventory/schema/types.ts';
-import type { TemplateInput } from '../../api/types.ts';
+import type { TemplateInput, TemplateUpdateInput } from '../../api/types.ts';
 
 /**
  * The masked-secret roundtrip contract: a GET returns {"$secret": "set"}
@@ -98,11 +98,21 @@ function stripSetMarkers(vars: Vars): Vars {
   return out;
 }
 
-/** TemplateBodyIdentityKey is the one TemplateInput field with no form
+/** TemplateBodyIdentityKey is the one TemplateBodyKey with no form
  * counterpart: `$schema` is the generated JSON-Schema self-pointer huma
  * stamps on every *InputBody, never a value the client sends — the only
  * key TEMPLATE_BODY_FIELDS below may leave out. */
 type TemplateBodyIdentityKey = '$schema';
+
+/** TemplateBodyKey is the union of TemplateCreateInputBody's and
+ * TemplateUpdateInputBody's own fields. TEMPLATE_BODY_FIELDS is keyed off
+ * the union, not off TemplateInput (the Create body) alone: the two
+ * schemas are generated independently and are free to diverge, and a guard
+ * anchored on Create alone would compile cleanly — no missing-property
+ * error, since an optional field missing from an object literal is not one
+ * — the day a field is added only to TemplateUpdateInputBody, leaving
+ * submit()'s PUT free to silently omit it. */
+type TemplateBodyKey = keyof TemplateInput | keyof TemplateUpdateInput;
 
 /**
  * TEMPLATE_BODY_FIELDS is TemplateForm submit()'s own compile-time guard
@@ -116,14 +126,15 @@ type TemplateBodyIdentityKey = '$schema';
  * already added on top of its repository's own set (PUT is a full
  * replace).
  *
- * `Record<K, true>` forces exhaustiveness in both directions, same as
- * there: a field TemplateInput gains and this literal does not list is a
- * missing-property error, and a stale key for a field TemplateInput no
- * longer has is an excess-property error — so the day a new field joins
- * this body, this line refuses to compile until TemplateForm's own
- * submit() is updated right next to it.
+ * `Record<K, true>` forces exhaustiveness in both directions, over BOTH
+ * bodies' fields (K is TemplateBodyKey, not just keyof TemplateInput): a
+ * field either body gains and this literal does not list is a
+ * missing-property error, and a stale key neither body has is an
+ * excess-property error — so the day a new field joins either the create
+ * or the update body, this line refuses to compile until TemplateForm's
+ * own submit() is updated right next to it.
  */
-export const TEMPLATE_BODY_FIELDS: Record<Exclude<keyof TemplateInput, TemplateBodyIdentityKey>, true> = {
+export const TEMPLATE_BODY_FIELDS: Record<Exclude<TemplateBodyKey, TemplateBodyIdentityKey>, true> = {
   name: true,
   playbook_id: true,
   scope: true,
