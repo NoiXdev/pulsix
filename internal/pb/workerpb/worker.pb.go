@@ -168,9 +168,6 @@ type Job struct {
 	// into the run's known_hosts under the hop aliases; a bastion in
 	// bastion_host_keys without an entry here fails the job closed.
 	BastionKnownHosts map[string]string `protobuf:"bytes,19,rep,name=bastion_known_hosts,json=bastionKnownHosts,proto3" json:"bastion_known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// is what makes the deletion legible to
-	// buf breaking under WIRE_JSON (see
-	// buf.yaml) and to the next reader.
 	// vault_identities carries the run's resolved labelled Ansible Vault
 	// passwords: the union of its repository's set and its job template's,
 	// with the template winning a label collision

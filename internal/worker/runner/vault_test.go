@@ -17,6 +17,7 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,13 +30,17 @@ import (
 
 func TestVaultIdentitiesAreWrittenAndNamedInTheConfig(t *testing.T) {
 	const (
-		prodID    = "11111111-1111-1111-1111-111111111111"
-		stagingID = "22222222-2222-2222-2222-222222222222"
+		// prod's uuid sorts AFTER staging's — the opposite of their label
+		// order — so a sort by credential id or by path would pass this
+		// test identically to a sort by label. Only sorting by label
+		// produces the line this test asserts.
+		prodID    = "99999999-9999-9999-9999-999999999999"
+		stagingID = "11111111-1111-1111-1111-111111111111"
 	)
 	job := &workerpb.Job{
-		// Deliberately out of label order: the runner must sort, not trust
-		// the wire order, so ansible.cfg is byte-stable regardless of how
-		// the manager happened to enumerate the set.
+		// Deliberately out of label order on the wire too: the runner must
+		// sort, not trust the claim's order, so ansible.cfg is byte-stable
+		// regardless of how the manager happened to enumerate the set.
 		VaultIdentities: []*workerpb.VaultIdentity{
 			{CredentialId: stagingID, Label: "staging"},
 			{CredentialId: prodID, Label: "prod"},
@@ -171,5 +176,45 @@ func TestDuplicateVaultLabelFailsTheRun(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "first-passphrase") || strings.Contains(err.Error(), "second-passphrase") {
 		t.Errorf("error leaks a vault passphrase: %v", err)
+	}
+}
+
+func TestUnsafeVaultLabelFailsTheRun(t *testing.T) {
+	// The uuid-named password file closed the path-traversal door a label
+	// could otherwise open; this closes the other one. A label lands
+	// verbatim in ansible.cfg's vault_identity_list ("label@path, ..."),
+	// so a newline forges an arbitrary extra key (host_key_checking =
+	// False would quietly undo this very file's host-key pinning) and a
+	// comma or "@" forges an extra identity entry. This is the runner's
+	// own belt-and-braces check, independent of whatever validation the
+	// API applies at write time.
+	const credID = "66666666-6666-6666-6666-666666666666"
+	cases := []string{
+		"",
+		"prod\nhost_key_checking = False",
+		"prod\rhost_key_checking = False",
+		"prod,staging",
+		"prod@/etc/passwd",
+		" prod",
+		"prod ",
+	}
+	for _, label := range cases {
+		t.Run(fmt.Sprintf("%q", label), func(t *testing.T) {
+			job := &workerpb.Job{
+				VaultIdentities: []*workerpb.VaultIdentity{{CredentialId: credID, Label: label}},
+				Credentials:     map[string]string{credID: secretJSON(t, credentials.Secret{Password: "the-passphrase"})},
+			}
+			env := worker.RunEnv{WorkDir: t.TempDir()}
+			err := (&Runner{}).materializeRunnerConfig(job, env)
+			if err == nil {
+				t.Fatalf("label %q must fail the run", label)
+			}
+			if !strings.Contains(err.Error(), credID) {
+				t.Errorf("error does not name the credential id %q: %v", credID, err)
+			}
+			if strings.Contains(err.Error(), "the-passphrase") {
+				t.Errorf("error leaks the vault passphrase: %v", err)
+			}
+		})
 	}
 }
