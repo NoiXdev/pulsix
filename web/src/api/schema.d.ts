@@ -4065,6 +4065,7 @@ export interface components {
             trigger: "manual" | "schedule" | "webhook" | "system";
             /** @description The schedule or webhook trigger that started the job */
             trigger_ref?: string;
+            vault_identities: components["schemas"]["JobVaultIdentityDTO"][] | null;
             worker_name?: string;
             zone_id: string;
         };
@@ -4151,6 +4152,11 @@ export interface components {
             id: string;
             /** @description (deleted) when the template no longer exists */
             name: string;
+        };
+        JobVaultIdentityDTO: {
+            credential_id: string;
+            from_template: boolean;
+            label: string;
         };
         KeyValuesDTO: {
             key: string;
