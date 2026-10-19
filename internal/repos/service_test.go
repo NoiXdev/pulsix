@@ -717,10 +717,17 @@ func TestVaultIdentityLabelValidation(t *testing.T) {
 		// strings.TrimSpace (and so this gate and the runner's) treats it as
 		// whitespace too.
 		{"non-breaking space", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod "}}, "leading or trailing whitespace"},
-		{"newline", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\nhost_key_checking = False"}}, "newline"},
-		{"carriage return", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\rx"}}, "carriage return"},
+		{"newline", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\nhost_key_checking = False"}}, "control or format"},
+		{"carriage return", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\rx"}}, "control or format"},
 		{"comma", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod,staging"}}, "comma"},
 		{"at sign", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod@file"}}, "'@'"},
+		// internal/vaultlabel's rule widened from a fixed character list to
+		// a Unicode category (Cc/Cf) after a reviewer found the client and
+		// the server disagreed about a leading BOM: JavaScript's trim()
+		// strips it, Go's strings.TrimSpace does not. Both cases now fail
+		// on the shared rule itself rather than on either trim's accident.
+		{"byte-order mark", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "\ufeffprod"}}, "control or format"},
+		{"bidirectional override", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\u202e"}}, "control or format"},
 		{"overlong", []repos.VaultIdentity{{CredentialID: vault.ID, Label: strings.Repeat("a", repos.MaxVaultLabelLength+1)}}, "exceeds"},
 		// The bound is runes, not bytes, matching huma's own maxLength check
 		// (utf8.RuneCountInString): a 100-rune label of umlauts is over 100

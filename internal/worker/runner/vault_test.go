@@ -197,6 +197,14 @@ func TestUnsafeVaultLabelFailsTheRun(t *testing.T) {
 		"prod@/etc/passwd",
 		" prod",
 		"prod ",
+		// internal/vaultlabel's rule covers category Cc/Cf wholesale, not
+		// only "\n\r,@": a byte-order mark (which JavaScript's trim()
+		// strips but Go's strings.TrimSpace does not) and a
+		// bidirectional-override character (which can make a label render
+		// on an operator's screen as something other than what it is) must
+		// fail here too, not only at the API's write-time gate.
+		"\ufeffprod",
+		"prod\u202e",
 	}
 	for _, label := range cases {
 		t.Run(fmt.Sprintf("%q", label), func(t *testing.T) {

@@ -4,7 +4,7 @@
  * are the server's own, shown as-is (the server remains the authority; a
  * rejected save surfaces its detail at the field too).
  */
-import type { RepoInput } from '../../api/types.ts';
+import type { RepoInput, RepoUpdateInput } from '../../api/types.ts';
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 const URL_PATTERN = /^(https:\/\/[^/ ]+|ssh:\/\/[^/ ]+|[^@/ ]+@[^:/ ]+:)/;
@@ -58,11 +58,21 @@ export function repoErrorsFromServer(message: string): Partial<Record<keyof Repo
   return errors;
 }
 
-/** RepoBodyIdentityKey is the one RepoInput field with no form counterpart:
+/** RepoBodyIdentityKey is the one RepoBodyKey with no form counterpart:
  * `$schema` is the generated JSON-Schema self-pointer huma stamps on every
  * *InputBody, never a value the client sends — the only key REPO_BODY_FIELDS
  * below may leave out. */
 type RepoBodyIdentityKey = '$schema';
+
+/** RepoBodyKey is the union of RepoCreateInputBody's and
+ * RepoUpdateInputBody's own fields. REPO_BODY_FIELDS is keyed off the union,
+ * not off RepoInput (the Create body) alone: the two schemas are generated
+ * independently and are free to diverge, and a guard anchored on Create
+ * alone would compile cleanly — no missing-property error, since an
+ * optional field missing from an object literal is not one — the day a
+ * field is added only to RepoUpdateInputBody, leaving submit()'s PUT free
+ * to silently omit it. */
+type RepoBodyKey = keyof RepoInput | keyof RepoUpdateInput;
 
 /**
  * REPO_BODY_FIELDS is RepoDialog submit()'s own compile-time guard against
@@ -77,14 +87,15 @@ type RepoBodyIdentityKey = '$schema';
  * it (RepoUpdateInputBody is a full replace, the same contract
  * AlertRouteBody's own doc comment names for routes).
  *
- * `Record<K, true>` forces exhaustiveness in both directions, same as
- * there: a field RepoInput gains and this literal does not list is a
- * missing-property error, and a stale key for a field RepoInput no longer
- * has is an excess-property error — so the day a new field joins this
- * body, this line refuses to compile until RepoDialog's own submit() is
- * updated right next to it.
+ * `Record<K, true>` forces exhaustiveness in both directions, over BOTH
+ * bodies' fields (K is RepoBodyKey, not just keyof RepoInput): a field
+ * either body gains and this literal does not list is a missing-property
+ * error, and a stale key neither body has is an excess-property error — so
+ * the day a new field joins either the create or the update body, this
+ * line refuses to compile until RepoDialog's own submit() is updated right
+ * next to it.
  */
-export const REPO_BODY_FIELDS: Record<Exclude<keyof RepoInput, RepoBodyIdentityKey>, true> = {
+export const REPO_BODY_FIELDS: Record<Exclude<RepoBodyKey, RepoBodyIdentityKey>, true> = {
   name: true,
   url: true,
   branch: true,

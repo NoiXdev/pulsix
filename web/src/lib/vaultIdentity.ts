@@ -3,12 +3,25 @@
  * internal/repos.MaxVaultLabelLength (internal/repos/vault.go): the one
  * rule for what text a vault identity's label may hold. A label is
  * rendered verbatim into a generated ansible.cfg as "label@path", entries
- * joined with ", " — a comma or '@' forges an extra entry, and a newline
- * forges an entire configuration key. RepoDialog and TemplateDialog are
- * the two places that write a labelled vault identity set, and both import
- * from here so a mistake reads the same message before the round trip as
- * the 400 that would otherwise name it after (the messages are the
- * server's own, not a second vocabulary invented for the form).
+ * joined with ", " — a comma or '@' forges an extra entry, any Unicode
+ * control character (category Cc) forges an entire configuration key, and
+ * any Unicode format character (category Cf — invisible by design, which
+ * includes the byte-order mark U+FEFF and the bidirectional-override
+ * characters around U+202E) can make the label display on an operator's
+ * screen as something other than the bytes it actually is. RepoDialog and
+ * TemplateDialog are the two places that write a labelled vault identity
+ * set, and both import from here so a mistake reads the same message
+ * before the round trip as the 400 that would otherwise name it after (the
+ * messages are the server's own, not a second vocabulary invented for the
+ * form).
+ *
+ * Go is the reference for this rule, not the other way around: a reviewer
+ * found that a label beginning with U+FEFF was refused here but accepted
+ * by internal/vaultlabel.Invalid, because JavaScript's String.trim() strips
+ * a leading/trailing BOM as whitespace while Go's strings.TrimSpace does
+ * not — a disagreement neither trim implementation was ever asked to
+ * settle. internal/vaultlabel/vaultlabel_test.go carries the fuller
+ * character table this file's regex is checked against.
  */
 
 export const MAX_VAULT_LABEL_LENGTH = 100;
@@ -18,8 +31,16 @@ export const MAX_VAULT_LABEL_LENGTH = 100;
 export function invalidVaultLabel(label: string): string {
   if (label === '') return 'label is empty';
   if (label.trim() !== label) return 'label has leading or trailing whitespace';
-  if (/[\n\r,@]/.test(label)) {
-    return "label contains a newline, carriage return, comma or '@', any of which ansible.cfg would read as more than one label";
+  if (/[,@]/.test(label)) {
+    return "label contains a comma or '@', either of which ansible.cfg would read as more than one label";
+  }
+  // \p{Cc} (control) and \p{Cf} (format, invisible by design — the
+  // byte-order mark and bidirectional-override characters are both in it)
+  // are the JavaScript equivalent of Go's unicode.IsControl(r) ||
+  // unicode.In(r, unicode.Cf); the `u` flag is required for \p{} property
+  // escapes and for correct matching of the astral-plane Cf characters.
+  if (/[\p{Cc}\p{Cf}]/u.test(label)) {
+    return "label contains a Unicode control or format character (for example a newline, carriage return, byte-order mark, or bidirectional-override character), which ansible.cfg could read as more than one label or which could make the label display as something other than what it is";
   }
   // Runes, not UTF-16 code units: the server counts with Go's
   // utf8.RuneCountInString (internal/repos/vault.go's own comment, matching

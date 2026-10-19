@@ -618,10 +618,15 @@ func TestVaultCredentialLabelValidation(t *testing.T) {
 		{"empty label", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: ""}}, "label is empty"},
 		{"leading whitespace", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: " team-a"}}, "leading or trailing whitespace"},
 		{"trailing whitespace", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a "}}, "leading or trailing whitespace"},
-		{"newline", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\nhost_key_checking = False"}}, "newline"},
-		{"carriage return", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\rx"}}, "carriage return"},
+		{"newline", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\nhost_key_checking = False"}}, "control or format"},
+		{"carriage return", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\rx"}}, "control or format"},
 		{"comma", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a,team-b"}}, "comma"},
 		{"at sign", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a@file"}}, "'@'"},
+		// Same widened rule as internal/repos's own table (see its comment):
+		// a reviewer found the client's trim() stripping a leading BOM while
+		// Go's strings.TrimSpace did not, so the server used to accept it.
+		{"byte-order mark", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "\ufeffteam-a"}}, "control or format"},
+		{"bidirectional override", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\u202e"}}, "control or format"},
 		{"duplicate label", []templates.VaultCredential{
 			{CredentialID: f.vaultCred, Label: "team-a"},
 			{CredentialID: f.vaultCred, Label: "team-a"},

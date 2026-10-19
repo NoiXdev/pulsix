@@ -40,6 +40,15 @@ export type HostTest = components['schemas']['HostTestDTO'];
 export type RepoInput = components['schemas']['RepoCreateInputBody'];
 export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
 
+// RepoUpdateInput/TemplateUpdateInput exist only so REPO_BODY_FIELDS and
+// TEMPLATE_BODY_FIELDS (features/repos/validate.ts, features/templates/vars.ts)
+// can be keyed off BOTH bodies' fields, not just the Create one: the Create
+// and Update schemas are generated separately and are free to diverge, and a
+// guard anchored on Create alone would not notice a field added only to
+// Update.
+export type RepoUpdateInput = components['schemas']['RepoUpdateInputBody'];
+export type TemplateUpdateInput = components['schemas']['TemplateUpdateInputBody'];
+
 // VaultIdentity is one labelled vault password as a repository or template
 // carries it on the wire (v0.2e design, repos.VaultIdentity /
 // templates.VaultCredential): a vault_password credential plus the label
