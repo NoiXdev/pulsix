@@ -159,8 +159,9 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
             value={vaultCredentialId}
             onChange={setVaultCredentialId}
             placeholder="— none —"
+            disabled={vaultRows.length > 0}
             create={
-              canCreateCredential
+              canCreateCredential && vaultRows.length === 0
                 ? { label: 'New credential…', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }
                 : undefined
             }
@@ -169,9 +170,19 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
               other its contents. Only vault_password credentials are
               offered — the server refuses anything else here, and a
               deploy key accepted as a vault password would fail far
-              from its cause, as Ansible's own "decryption failed". */}
+              from its cause, as Ansible's own "decryption failed".
+              Disabled rather than hidden once a Vault identities row
+              exists: legacyVaultIdentities (service.go) ignores this
+              field entirely once the list is non-empty, so leaving it
+              editable would let an operator believe changing it still
+              does something. It stays visible and keeps showing its
+              stored value — still useful to see on a repository the
+              00059 backfill populated — rather than disappearing and
+              silently discarding what is on the row. */}
           <span className="text-[11px] text-muted-foreground">
-            Passphrase Ansible needs for this repository&apos;s encrypted files.
+            {vaultRows.length > 0
+              ? 'Ignored while any Vault identity below is set — only the identities list is sent to a run.'
+              : "Passphrase Ansible needs for this repository's encrypted files."}
           </span>
         </div>
         <VaultIdentitiesField
@@ -181,7 +192,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           canCreateCredential={canCreateCredential}
           errors={vaultErrors}
           onRequestCreate={(row, text) => setAddingCredential({ field: 'vault-identity', rowKey: row.key, name: text })}
-          help="Additional labelled vault passwords, for encrypted files that use more than one. Leave empty to rely only on the Vault password above."
+          help="Labelled vault passwords a run receives. Replaces the Vault password above the moment one row exists — the two are never combined."
         />
         {repo && (
           <div className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5">

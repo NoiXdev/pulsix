@@ -25,9 +25,11 @@ type DeleteRepoVaultCredentialsParams struct {
 // statement order is undefined in Postgres
 // (https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-MODIFYING),
 // the exact mistake DeleteRouteSeverities' own comment (alert_routes.sql)
-// describes losing a row to in v0.4b. Sent in sequence on the caller's own
-// replace call (repos.SQLStore.ReplaceRepoVaultIdentities, store_sql.go),
-// so the DELETE commits before the INSERT ever runs.
+// describes losing a row to in v0.4b. The caller's own replace call
+// (repos.SQLStore.ReplaceRepoVaultIdentities, store_sql.go) runs both inside
+// one transaction (932c009) precisely so this DELETE cannot commit before
+// that INSERT runs — a failing insert now rolls the delete back with it
+// instead of leaving the set wiped to empty.
 func (q *Queries) DeleteRepoVaultCredentials(ctx context.Context, arg DeleteRepoVaultCredentialsParams) error {
 	_, err := q.db.Exec(ctx, deleteRepoVaultCredentials, arg.OrgID, arg.RepoID)
 	return err
@@ -114,7 +116,7 @@ const listRepoVaultCredentials = `-- name: ListRepoVaultCredentials :many
 
 SELECT credential_id, label FROM git_repo_vault_credentials
 WHERE org_id = $1 AND repo_id = $2
-ORDER BY label
+ORDER BY label COLLATE "C"
 `
 
 type ListRepoVaultCredentialsParams struct {
@@ -135,7 +137,13 @@ type ListRepoVaultCredentialsRow struct {
 // One repository's labelled vault passwords, in label order — the same
 // order ResolveVaultIdentities (internal/repos/vault.go) itself produces,
 // so a caller reading straight off this query already sees a stable list
-// before it is ever unioned with a template's own set.
+// before it is ever unioned with a template's own set. That parity needs
+// COLLATE "C": Postgres's default collation orders by the database's
+// locale, Go's `<` orders by byte value, and the two disagree on mixed-case
+// labels ("Prod" vs "prod") — without pinning this, the list a client reads
+// here and the list a run resolves could be ordered differently for the
+// same set, even though the generated ansible.cfg (always Go-sorted) is
+// unaffected either way.
 func (q *Queries) ListRepoVaultCredentials(ctx context.Context, arg ListRepoVaultCredentialsParams) ([]ListRepoVaultCredentialsRow, error) {
 	rows, err := q.db.Query(ctx, listRepoVaultCredentials, arg.OrgID, arg.RepoID)
 	if err != nil {
@@ -159,7 +167,7 @@ func (q *Queries) ListRepoVaultCredentials(ctx context.Context, arg ListRepoVaul
 const listTemplateVaultCredentials = `-- name: ListTemplateVaultCredentials :many
 SELECT credential_id, label FROM job_template_vault_credentials
 WHERE org_id = $1 AND template_id = $2
-ORDER BY label
+ORDER BY label COLLATE "C"
 `
 
 type ListTemplateVaultCredentialsParams struct {
@@ -172,8 +180,8 @@ type ListTemplateVaultCredentialsRow struct {
 	Label        string    `json:"label"`
 }
 
-// ListRepoVaultCredentials' own shape, for a job template's own set
-// (migration 00059's second table).
+// ListRepoVaultCredentials' own shape, own COLLATE "C" and own reason, for
+// a job template's own set (migration 00059's second table).
 func (q *Queries) ListTemplateVaultCredentials(ctx context.Context, arg ListTemplateVaultCredentialsParams) ([]ListTemplateVaultCredentialsRow, error) {
 	rows, err := q.db.Query(ctx, listTemplateVaultCredentials, arg.OrgID, arg.TemplateID)
 	if err != nil {

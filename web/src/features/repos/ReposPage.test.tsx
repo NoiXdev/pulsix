@@ -479,5 +479,41 @@ describe('ReposPage', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Save repository' }));
       expect(put).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
     });
+
+    // Review item 1: legacyVaultIdentities (internal/repos/service.go)
+    // ignores vault_credential_id the moment any identity row exists — a
+    // repository configured only through the legacy Vault password field,
+    // then given one identity row, loses that password from every run even
+    // though the field still shows it as set. The dialog must stop
+    // presenting that field as live the moment a row is added.
+    it('disables the legacy Vault password field once a vault identity row is added, and still saves the identity', async () => {
+      const user = userEvent.setup();
+      let put: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': { repos: [repo({ vault_credential_id: 'c3' })] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd, vaultStaging] },
+        'PUT /api/v1/orgs/acme/repos/r1': (req: MockRequest) => {
+          put = req.body;
+          return { repo: repo({ vault_credential_id: 'c3' }) };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'infra' }));
+      const dialog = await screen.findByRole('dialog', { name: 'infra' });
+      const vaultSelect = within(dialog).getByLabelText('Vault password');
+      expect(vaultSelect).toHaveValue('vault-prod');
+      expect(vaultSelect).not.toBeDisabled();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Add vault password' }));
+      await user.type(within(dialog).getByLabelText('Vault identity 1 label'), 'staging');
+      await pickOption(screen, 'Vault identity 1 credential', { value: 'c4' });
+
+      expect(vaultSelect).toBeDisabled();
+      expect(within(dialog).getByText(/Ignored while any Vault identity below is set/)).toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save repository' }));
+      expect(put).toMatchObject({ vault_identities: [{ label: 'staging', credential_id: 'c4' }] });
+    });
   });
 });

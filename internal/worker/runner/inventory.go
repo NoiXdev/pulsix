@@ -492,9 +492,10 @@ func pinHosts(doc map[string]any, connections, hostKeys, knownHosts map[string]s
 // ansible.cfg key — host_key_checking = False would quietly undo the very
 // host-key pinning this file exists to enforce — and a comma or "@" would
 // forge an extra identity entry. This check is deliberate belt-and-braces
-// alongside the write-time validation the API owns (non-empty, no "@", no
-// comma); the runner is the last gate before a file that carries secrets
-// and must not assume that validation ran.
+// alongside the write-time validation the API owns (internal/vaultlabel:
+// non-empty, no leading/trailing whitespace, no "@", no comma, no Unicode
+// control or format character); the runner is the last gate before a file
+// that carries secrets and must not assume that validation ran.
 func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) ([]vaultFile, error) {
 	identities := job.GetVaultIdentities()
 	if len(identities) == 0 {
