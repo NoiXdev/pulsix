@@ -70,7 +70,22 @@ type Repo struct {
 	// One repository, one vault password. Ansible supports several vault
 	// ids for several environments; that would make this a list, and the
 	// limit is recorded here, in migration 00055 and in the proto.
+	//
+	// v0.2e lifts that limit: VaultIdentities below is the labelled set a
+	// repository actually carries. This column is kept (spec decision 5,
+	// additive migrations only) and nothing reads it after that
+	// sub-project — VaultIdentities is what Create/Update now write and
+	// Get/List attach.
 	VaultCredentialID *uuid.UUID
+	// VaultIdentities is this repository's own labelled vault password set
+	// (migration 00059, spec decision 1): the base set a run's job template
+	// may add to but never sees reduced. Read separately from the row by
+	// Get/List (ListRepoVaultIdentities) and written separately by
+	// Create/Update (ReplaceRepoVaultIdentities) — it does not live in this
+	// table. FromTemplate is always false on every entry here; the merge
+	// with a template's own set happens at run time, in
+	// ResolveVaultIdentities, never on this struct.
+	VaultIdentities []VaultIdentity
 	// SSHHostKey is the git server's pinned host-key fingerprint
 	// (SHA256:…) and SSHHostPublicKey the full key in authorized-key form —
 	// written by the sync sink from what the FIRST (unpinned) successful
@@ -97,6 +112,9 @@ func (r Repo) PinState() string {
 }
 
 // CreateInput is a new repository. An empty Branch becomes DefaultBranch.
+// VaultIdentities rides alongside VaultCredentialID, not in place of it: the
+// old single-password slot stays live (spec decision 5), the new labelled
+// set is this repository's actual passwords from v0.2e on.
 type CreateInput struct {
 	Name              string
 	URL               string
@@ -104,10 +122,13 @@ type CreateInput struct {
 	Subpath           string
 	CredentialID      *uuid.UUID
 	VaultCredentialID *uuid.UUID
+	VaultIdentities   []VaultIdentity
 }
 
 // UpdateInput replaces every editable field, name included; a name clash
-// with another repository is ErrNameTaken.
+// with another repository is ErrNameTaken. VaultIdentities is a full
+// replacement too (PUT semantics, the same as every other field here): a
+// label present before and absent from this call is dropped.
 type UpdateInput struct {
 	Name              string
 	URL               string
@@ -115,6 +136,7 @@ type UpdateInput struct {
 	Subpath           string
 	CredentialID      *uuid.UUID
 	VaultCredentialID *uuid.UUID
+	VaultIdentities   []VaultIdentity
 }
 
 // CredentialSource is the slice of credentials.Service a repo's credential
@@ -143,6 +165,13 @@ type Store interface {
 	// 2.41's unpin); ErrNotFound when the repository does not exist in the
 	// organization.
 	ClearHostKey(ctx context.Context, orgID, id uuid.UUID) error
+	// ReplaceRepoVaultIdentities replaces a repository's labelled vault
+	// password set wholesale (spec decision 1); an empty or nil slice is
+	// the legal "no vault passwords" result.
+	ReplaceRepoVaultIdentities(ctx context.Context, orgID, repoID uuid.UUID, identities []VaultIdentity) error
+	// ListRepoVaultIdentities returns a repository's labelled vault
+	// password set, in label order.
+	ListRepoVaultIdentities(ctx context.Context, orgID, repoID uuid.UUID) ([]VaultIdentity, error)
 }
 
 // Service implements the repository registry.
@@ -157,27 +186,60 @@ func NewService(store Store, creds CredentialSource, jobs JobEnqueuer) *Service 
 	return &Service{store: store, creds: creds, jobs: jobs}
 }
 
-// Create validates and registers a repository.
+// Create validates and registers a repository, then stores its labelled
+// vault identity set (ReplaceRepoVaultIdentities is always called, even with
+// an empty slice, so Create and Update share one "this is now the full set"
+// rule rather than Create having a silent special case for "none given").
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Repo, error) {
-	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath); err != nil {
+	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
-	return s.store.Create(ctx, Repo{
+	created, err := s.store.Create(ctx, Repo{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
 		Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
 		CredentialID:      in.CredentialID,
 		VaultCredentialID: in.VaultCredentialID,
 	})
+	if err != nil {
+		return Repo{}, err
+	}
+	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, in.VaultIdentities); err != nil {
+		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
+	}
+	created.VaultIdentities = in.VaultIdentities
+	return created, nil
 }
 
-// Get returns one repository, ErrNotFound when it does not exist in the org.
+// Get returns one repository, with its vault identity set attached,
+// ErrNotFound when it does not exist in the org.
 func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Repo, error) {
-	return s.store.Get(ctx, orgID, id)
+	r, err := s.store.Get(ctx, orgID, id)
+	if err != nil {
+		return Repo{}, err
+	}
+	identities, err := s.store.ListRepoVaultIdentities(ctx, orgID, id)
+	if err != nil {
+		return Repo{}, fmt.Errorf("list repo vault identities: %w", err)
+	}
+	r.VaultIdentities = identities
+	return r, nil
 }
 
-// List returns every repository of the organization, ordered by name.
+// List returns every repository of the organization, ordered by name, each
+// with its vault identity set attached.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Repo, error) {
-	return s.store.List(ctx, orgID)
+	list, err := s.store.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		identities, err := s.store.ListRepoVaultIdentities(ctx, orgID, list[i].ID)
+		if err != nil {
+			return nil, fmt.Errorf("list repo vault identities: %w", err)
+		}
+		list[i].VaultIdentities = identities
+	}
+	return list, nil
 }
 
 // Update replaces every editable field, name included (a clash with another
@@ -190,7 +252,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err != nil {
 		return Repo{}, err
 	}
-	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath); err != nil {
+	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
 	next := cur
@@ -199,7 +261,15 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if next.URL != cur.URL {
 		next.SSHHostKey, next.SSHHostPublicKey = "", ""
 	}
-	return s.store.Update(ctx, next)
+	updated, err := s.store.Update(ctx, next)
+	if err != nil {
+		return Repo{}, err
+	}
+	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, in.VaultIdentities); err != nil {
+		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
+	}
+	updated.VaultIdentities = in.VaultIdentities
+	return updated, nil
 }
 
 // Delete removes a repository that no playbook references; the foreign key
@@ -237,7 +307,15 @@ func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUI
 // validate checks every editable field, resolving the credential (when
 // referenced) first so a wrong-kind credential fails before anything is
 // stored.
-func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, vaultCredentialID *uuid.UUID, name, url, branch, subpath string) error {
+//
+// The git credential check only runs when credentialID is set — a public
+// repository legitimately has none. It used to return early in that case,
+// before the vault checks below existed; that early return also skipped
+// vaultCredentialID and vaultIdentities, which made "a public repository
+// with encrypted vars" (no git credential, but a vault password) silently
+// skip vault validation entirely. Fixed here: the git credential's own
+// absence short-circuits only its own check now, never the two below it.
+func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, vaultCredentialID *uuid.UUID, name, url, branch, subpath string, vaultIdentities []VaultIdentity) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%w: invalid name: must be lowercase letters, digits, dots, underscores or hyphens (1–63 characters), starting with a letter or digit", ErrInvalidInput)
 	}
@@ -250,6 +328,19 @@ func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, v
 	if strings.Contains(subpath, "..") || !subpathPattern.MatchString(subpath) {
 		return fmt.Errorf("%w: invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no \"..\"", ErrInvalidInput)
 	}
+	if err := s.validateGitCredential(ctx, orgID, credentialID); err != nil {
+		return err
+	}
+	if err := s.validateVaultCredential(ctx, orgID, vaultCredentialID); err != nil {
+		return err
+	}
+	return s.validateVaultIdentities(ctx, orgID, vaultIdentities)
+}
+
+// validateGitCredential refuses anything but a git_key or git_token
+// credential in the repository's checkout slot; nil (no credential: a
+// public repository) is fine.
+func (s *Service) validateGitCredential(ctx context.Context, orgID uuid.UUID, credentialID *uuid.UUID) error {
 	if credentialID == nil {
 		return nil
 	}
@@ -263,7 +354,33 @@ func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, v
 	if cred.Kind != credentials.KindGitKey && cred.Kind != credentials.KindGitToken {
 		return fmt.Errorf("%w: the referenced credential must be a git_key or git_token credential", ErrInvalidInput)
 	}
-	return s.validateVaultCredential(ctx, orgID, vaultCredentialID)
+	return nil
+}
+
+// validateVaultIdentities checks a repository's labelled vault password set:
+// every label must pass InvalidVaultLabel (spec decision 4, amended — the
+// same rule internal/worker/runner enforces again as its own last gate) and
+// must be unique within the set — the table's own PRIMARY KEY (repo_id,
+// label) would otherwise turn a duplicate into a 500 from the store instead
+// of a 400 naming the mistake. Each credential must exist and be a
+// vault_password credential, the same rule validateVaultCredential applies
+// to the single VaultCredentialID slot beside this set.
+func (s *Service) validateVaultIdentities(ctx context.Context, orgID uuid.UUID, identities []VaultIdentity) error {
+	seen := make(map[string]bool, len(identities))
+	for _, identity := range identities {
+		if reason := InvalidVaultLabel(identity.Label); reason != "" {
+			return fmt.Errorf("%w: invalid vault identity label %q: %s", ErrInvalidInput, identity.Label, reason)
+		}
+		if seen[identity.Label] {
+			return fmt.Errorf("%w: duplicate vault identity label %q", ErrInvalidInput, identity.Label)
+		}
+		seen[identity.Label] = true
+		credentialID := identity.CredentialID
+		if err := s.validateVaultCredential(ctx, orgID, &credentialID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateVaultCredential refuses anything but a vault_password in the

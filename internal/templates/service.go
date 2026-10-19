@@ -40,6 +40,7 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer. Value
@@ -96,8 +97,16 @@ type Template struct {
 	ExtraVars       map[string]any
 	ExtraVarsSchema *schema.Schema
 	CredentialID    *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// VaultCredentials is this template's own labelled vault password set
+	// (migration 00059, spec decision 1): the passwords it adds on top of
+	// its repository's base set, never the repository's own (store_sql.go's
+	// VaultCredential doc). Read separately by Get/List
+	// (ListVaultCredentials) and written separately by Create/Update
+	// (ReplaceVaultCredentials); 4b resolves it against the repository's set
+	// at run time through ToVaultIdentity and repos.ResolveVaultIdentities.
+	VaultCredentials []VaultCredential
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // PlaybookLookup is the slice of playbooks.Service validation needs: the
@@ -136,6 +145,13 @@ type Store interface {
 	List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
 	Update(ctx context.Context, t Template) (Template, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
+	// ReplaceVaultCredentials replaces a template's own labelled vault
+	// password set wholesale (spec decision 1); an empty or nil slice is the
+	// legal "no added vault passwords" result.
+	ReplaceVaultCredentials(ctx context.Context, orgID, templateID uuid.UUID, items []VaultCredential) error
+	// ListVaultCredentials returns a template's own labelled vault password
+	// set, in label order.
+	ListVaultCredentials(ctx context.Context, orgID, templateID uuid.UUID) ([]VaultCredential, error)
 }
 
 // Sealer is the slice of crypto.Box the service needs: secret-typed extra
@@ -168,31 +184,39 @@ func NewService(store Store, playbooks PlaybookLookup, groups GroupLookup, hosts
 	return &Service{store: store, playbooks: playbooks, groups: groups, hosts: hosts, creds: creds, box: box}
 }
 
-// CreateInput is a new job template.
+// CreateInput is a new job template. VaultCredentials is this template's own
+// added labelled vault passwords (spec decision 1), never the repository's.
 type CreateInput struct {
-	Name            string
-	PlaybookID      uuid.UUID
-	Scope           Scope
-	Limit           string
-	ExtraVars       map[string]any
-	ExtraVarsSchema *schema.Schema
-	CredentialID    *uuid.UUID
+	Name             string
+	PlaybookID       uuid.UUID
+	Scope            Scope
+	Limit            string
+	ExtraVars        map[string]any
+	ExtraVarsSchema  *schema.Schema
+	CredentialID     *uuid.UUID
+	VaultCredentials []VaultCredential
 }
 
 // UpdateInput fully replaces a template's fields (PUT semantics).
+// VaultCredentials is a full replacement too: a label present before and
+// absent from this call is dropped.
 type UpdateInput struct {
-	Name            string
-	PlaybookID      uuid.UUID
-	Scope           Scope
-	Limit           string
-	ExtraVars       map[string]any
-	ExtraVarsSchema *schema.Schema
-	CredentialID    *uuid.UUID
+	Name             string
+	PlaybookID       uuid.UUID
+	Scope            Scope
+	Limit            string
+	ExtraVars        map[string]any
+	ExtraVarsSchema  *schema.Schema
+	CredentialID     *uuid.UUID
+	VaultCredentials []VaultCredential
 }
 
-// Create validates the input and stores a new template.
+// Create validates the input and stores a new template, then its own
+// labelled vault credential set (ReplaceVaultCredentials is always called,
+// even with an empty slice — the same "always a full replacement, never a
+// silent no-op special case" rule Update follows).
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Template, error) {
-	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, nil)
+	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, nil, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
@@ -200,16 +224,21 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err != nil {
 		return Template{}, err
 	}
+	if err := s.store.ReplaceVaultCredentials(ctx, orgID, created.ID, in.VaultCredentials); err != nil {
+		return Template{}, fmt.Errorf("store template vault credentials: %w", err)
+	}
+	created.VaultCredentials = in.VaultCredentials
 	return masked(created), nil
 }
 
-// Update validates the input and replaces an existing template's fields.
+// Update validates the input and replaces an existing template's fields,
+// including its own labelled vault credential set.
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInput) (Template, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
 		return Template{}, err
 	}
-	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, cur.ExtraVars)
+	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, cur.ExtraVars, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
@@ -217,20 +246,30 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err != nil {
 		return Template{}, err
 	}
+	if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {
+		return Template{}, fmt.Errorf("store template vault credentials: %w", err)
+	}
+	updated.VaultCredentials = in.VaultCredentials
 	return masked(updated), nil
 }
 
-// Get returns one template with its extra vars masked.
+// Get returns one template with its extra vars masked and its own vault
+// credential set attached.
 func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Template, error) {
 	t, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
 		return Template{}, err
 	}
+	items, err := s.store.ListVaultCredentials(ctx, orgID, id)
+	if err != nil {
+		return Template{}, fmt.Errorf("list template vault credentials: %w", err)
+	}
+	t.VaultCredentials = items
 	return masked(t), nil
 }
 
 // List returns every template of the organization, ordered by name, with
-// masked extra vars.
+// masked extra vars and each one's own vault credential set attached.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Template, error) {
 	list, err := s.store.List(ctx, orgID)
 	if err != nil {
@@ -238,6 +277,11 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
 	}
 	out := make([]Template, len(list))
 	for i, t := range list {
+		items, err := s.store.ListVaultCredentials(ctx, orgID, t.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list template vault credentials: %w", err)
+		}
+		t.VaultCredentials = items
 		out[i] = masked(t)
 	}
 	return out, nil
@@ -254,9 +298,9 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 
 // build validates an input and returns the Template to persist, with
 // timestamps left to the store. Validation order is meta (name, limit),
-// playbook, scope, credential, then the schema and the values against it —
-// each step naming exactly what is wrong.
-func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, stored map[string]any) (Template, error) {
+// playbook, scope, credential, vault credentials, then the schema and the
+// values against it — each step naming exactly what is wrong.
+func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, stored map[string]any, vaultCredentials []VaultCredential) (Template, error) {
 	if err := validateMeta(name, limit); err != nil {
 		return Template{}, err
 	}
@@ -280,6 +324,9 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, p
 		if !c.Kind.IsSSH() {
 			return Template{}, fmt.Errorf("%w: credential %s has kind %s", ErrNotSSH, c.Name, c.Kind)
 		}
+	}
+	if err := s.validateVaultCredentials(ctx, orgID, vaultCredentials); err != nil {
+		return Template{}, err
 	}
 	if vars == nil {
 		vars = map[string]any{}
@@ -340,6 +387,41 @@ func (s *Service) validateScope(ctx context.Context, orgID uuid.UUID, scope Scop
 		}
 		if !h.Managed {
 			return fmt.Errorf("%w: host %s is not managed", ErrUnmanagedHost, id)
+		}
+	}
+	return nil
+}
+
+// validateVaultCredentials checks a template's own added labelled vault
+// password set (spec decision 1): every label must pass
+// repos.InvalidVaultLabel (decision 4, amended — the same rule
+// internal/worker/runner enforces again as its own last gate, and the same
+// rule repos.Service.validateVaultIdentities applies to a repository's own
+// set) and must be unique within this set — job_template_vault_credentials'
+// own PRIMARY KEY (template_id, label) would otherwise turn a duplicate into
+// a 500 from the store instead of a 400 naming the mistake. Each credential
+// must exist and be a vault_password credential, the rule
+// repos.Service.validateVaultCredential applies to a repository's single
+// VaultCredentialID slot.
+func (s *Service) validateVaultCredentials(ctx context.Context, orgID uuid.UUID, items []VaultCredential) error {
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		if reason := repos.InvalidVaultLabel(item.Label); reason != "" {
+			return fmt.Errorf("%w: invalid vault credential label %q: %s", ErrInvalidInput, item.Label, reason)
+		}
+		if seen[item.Label] {
+			return fmt.Errorf("%w: duplicate vault credential label %q", ErrInvalidInput, item.Label)
+		}
+		seen[item.Label] = true
+		cred, err := s.creds.Get(ctx, orgID, item.CredentialID)
+		if err != nil {
+			if errors.Is(err, credentials.ErrNotFound) {
+				return fmt.Errorf("%w: vault credential not found", ErrInvalidInput)
+			}
+			return fmt.Errorf("look up vault credential: %w", err)
+		}
+		if cred.Kind != credentials.KindVaultPassword {
+			return fmt.Errorf("%w: the referenced vault credential must be a vault_password credential", ErrInvalidInput)
 		}
 	}
 	return nil

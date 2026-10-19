@@ -14,6 +14,49 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
+// vaultIdentityDTO is one labelled vault password on a repository's or job
+// template's own set (spec decision 1, migration 00059): credential_id the
+// vault_password credential, label what ansible-vault's own --vault-id
+// label@file names it. Shared between repo_handlers.go and
+// template_handlers.go because both carry the same repos.VaultIdentity
+// shape on the wire. maxLength mirrors repos.MaxVaultLabelLength so the
+// generated OpenAPI document names the same bound the service enforces
+// (backlog 4.40's lesson); deliberately no minLength — an empty or
+// whitespace-padded label must reach the service's own ErrInvalidInput
+// message, not a generic schema-validation 422.
+type vaultIdentityDTO struct {
+	CredentialID string `json:"credential_id"`
+	Label        string `json:"label" maxLength:"100"`
+}
+
+func toVaultIdentityDTO(v repos.VaultIdentity) vaultIdentityDTO {
+	return vaultIdentityDTO{CredentialID: v.CredentialID.String(), Label: v.Label}
+}
+
+func toVaultIdentityDTOs(list []repos.VaultIdentity) []vaultIdentityDTO {
+	out := make([]vaultIdentityDTO, len(list))
+	for i, v := range list {
+		out[i] = toVaultIdentityDTO(v)
+	}
+	return out
+}
+
+// parseVaultIdentities parses the create/update body's vault_identities into
+// the shape repos.Service validates and stores. Label-level validation
+// (empty, whitespace, forbidden characters, duplicates, credential kind)
+// is the service's job, not this transport-layer conversion's.
+func parseVaultIdentities(in []vaultIdentityDTO) ([]repos.VaultIdentity, error) {
+	out := make([]repos.VaultIdentity, len(in))
+	for i, v := range in {
+		id, err := parseUUID(v.CredentialID, "vault identity credential id")
+		if err != nil {
+			return nil, err
+		}
+		out[i] = repos.VaultIdentity{CredentialID: id, Label: v.Label}
+	}
+	return out, nil
+}
+
 type repoDTO struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -26,6 +69,11 @@ type repoDTO struct {
 	// second field rather than a second use of CredentialID: one secret
 	// reaches the repository, the other its contents.
 	VaultCredentialID string `json:"vault_credential_id,omitempty"`
+	// VaultIdentities is this repository's own labelled vault password set
+	// (spec decision 1, migration 00059), superseding the single
+	// VaultCredentialID above for anything v0.2e onward writes. 4b resolves
+	// it against the job template's own on a run.
+	VaultIdentities []vaultIdentityDTO `json:"vault_identities"`
 	// SSHHostKey is the git server's pinned host-key fingerprint (backlog
 	// 2.41), absent while the repository is unpinned (trust on first use).
 	SSHHostKey *string `json:"ssh_host_key,omitempty"`
@@ -44,7 +92,8 @@ type repoDTO struct {
 func toRepoDTO(r repos.Repo) repoDTO {
 	dto := repoDTO{
 		ID: r.ID.String(), Name: r.Name, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath,
-		LastSync: r.LastSync, LastSyncError: r.LastSyncError,
+		VaultIdentities: toVaultIdentityDTOs(r.VaultIdentities),
+		LastSync:        r.LastSync, LastSyncError: r.LastSyncError,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 	if r.CredentialID != nil {
@@ -106,12 +155,13 @@ type repoDetailOutput struct {
 type repoCreateInput struct {
 	Org  string `path:"org"`
 	Body struct {
-		Name              string `json:"name" minLength:"1" maxLength:"63"`
-		URL               string `json:"url" minLength:"1" maxLength:"500"`
-		Branch            string `json:"branch,omitempty" maxLength:"100"`
-		Subpath           string `json:"subpath,omitempty" maxLength:"200"`
-		CredentialID      string `json:"credential_id,omitempty"`
-		VaultCredentialID string `json:"vault_credential_id,omitempty"`
+		Name              string             `json:"name" minLength:"1" maxLength:"63"`
+		URL               string             `json:"url" minLength:"1" maxLength:"500"`
+		Branch            string             `json:"branch,omitempty" maxLength:"100"`
+		Subpath           string             `json:"subpath,omitempty" maxLength:"200"`
+		CredentialID      string             `json:"credential_id,omitempty"`
+		VaultCredentialID string             `json:"vault_credential_id,omitempty"`
+		VaultIdentities   []vaultIdentityDTO `json:"vault_identities,omitempty"`
 	}
 }
 
@@ -119,12 +169,13 @@ type repoUpdateInput struct {
 	Org  string `path:"org"`
 	ID   string `path:"id"`
 	Body struct {
-		Name              string `json:"name" minLength:"1" maxLength:"63"`
-		URL               string `json:"url" minLength:"1" maxLength:"500"`
-		Branch            string `json:"branch,omitempty" maxLength:"100"`
-		Subpath           string `json:"subpath,omitempty" maxLength:"200"`
-		CredentialID      string `json:"credential_id,omitempty"`
-		VaultCredentialID string `json:"vault_credential_id,omitempty"`
+		Name              string             `json:"name" minLength:"1" maxLength:"63"`
+		URL               string             `json:"url" minLength:"1" maxLength:"500"`
+		Branch            string             `json:"branch,omitempty" maxLength:"100"`
+		Subpath           string             `json:"subpath,omitempty" maxLength:"200"`
+		CredentialID      string             `json:"credential_id,omitempty"`
+		VaultCredentialID string             `json:"vault_credential_id,omitempty"`
+		VaultIdentities   []vaultIdentityDTO `json:"vault_identities,omitempty"`
 	}
 }
 
@@ -163,9 +214,14 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		vaultIdentities, err := parseVaultIdentities(in.Body.VaultIdentities)
+		if err != nil {
+			return nil, err
+		}
 		r, err := deps.Repos.Create(ctx, scope.OrgID, repos.CreateInput{
 			Name: in.Body.Name, URL: in.Body.URL, Branch: in.Body.Branch,
 			Subpath: in.Body.Subpath, CredentialID: credentialID, VaultCredentialID: vaultCredentialID,
+			VaultIdentities: vaultIdentities,
 		})
 		if err != nil {
 			return nil, mapReposErr(ctx, err)
@@ -207,9 +263,14 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		vaultIdentities, err := parseVaultIdentities(in.Body.VaultIdentities)
+		if err != nil {
+			return nil, err
+		}
 		r, err := deps.Repos.Update(ctx, scope.OrgID, id, repos.UpdateInput{
 			Name: in.Body.Name, URL: in.Body.URL, Branch: in.Body.Branch,
 			Subpath: in.Body.Subpath, CredentialID: credentialID, VaultCredentialID: vaultCredentialID,
+			VaultIdentities: vaultIdentities,
 		})
 		if err != nil {
 			return nil, mapReposErr(ctx, err)

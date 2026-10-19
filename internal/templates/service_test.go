@@ -3,6 +3,7 @@ package templates_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -23,10 +24,30 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	byID    map[uuid.UUID]templates.Template
+	vault   map[uuid.UUID][]templates.VaultCredential
 	nextErr error // one-shot error, standing in for a constraint violation
 }
 
-func newFakeStore() *fakeStore { return &fakeStore{byID: map[uuid.UUID]templates.Template{}} }
+func newFakeStore() *fakeStore {
+	return &fakeStore{byID: map[uuid.UUID]templates.Template{}, vault: map[uuid.UUID][]templates.VaultCredential{}}
+}
+
+// ReplaceVaultCredentials and ListVaultCredentials stand in for the real
+// store's two statements run inside one transaction (store_sql.go): the fake
+// has no partial-failure mode to reproduce, so a plain map assignment is the
+// whole "replace".
+func (f *fakeStore) ReplaceVaultCredentials(_ context.Context, _, templateID uuid.UUID, items []templates.VaultCredential) error {
+	stored := make([]templates.VaultCredential, len(items))
+	copy(stored, items)
+	f.vault[templateID] = stored
+	return nil
+}
+
+func (f *fakeStore) ListVaultCredentials(_ context.Context, _, templateID uuid.UUID) ([]templates.VaultCredential, error) {
+	out := make([]templates.VaultCredential, len(f.vault[templateID]))
+	copy(out, f.vault[templateID])
+	return out, nil
+}
 
 func (f *fakeStore) Create(_ context.Context, t templates.Template) (templates.Template, error) {
 	if f.nextErr != nil {
@@ -131,6 +152,7 @@ type fixture struct {
 	unmanaged uuid.UUID
 	sshCred   uuid.UUID
 	gitCred   uuid.UUID
+	vaultCred uuid.UUID
 }
 
 func newFixture() fixture {
@@ -141,6 +163,7 @@ func newFixture() fixture {
 	unmanaged := uuid.Must(uuid.NewV7())
 	sshCred := uuid.Must(uuid.NewV7())
 	gitCred := uuid.Must(uuid.NewV7())
+	vaultCred := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	svc := templates.NewService(store,
 		fakePlaybooks{byID: map[uuid.UUID]playbooks.Playbook{playbook: {ID: playbook, OrgID: org, Source: playbooks.SourceEditor}}},
@@ -150,14 +173,15 @@ func newFixture() fixture {
 			{ID: unmanaged, OrgID: org, Managed: false},
 		}},
 		fakeCreds{byID: map[uuid.UUID]credentials.Credential{
-			sshCred: {ID: sshCred, OrgID: org, Name: "ssh", Kind: credentials.KindSSHPassword},
-			gitCred: {ID: gitCred, OrgID: org, Name: "git", Kind: credentials.KindGitToken},
+			sshCred:   {ID: sshCred, OrgID: org, Name: "ssh", Kind: credentials.KindSSHPassword},
+			gitCred:   {ID: gitCred, OrgID: org, Name: "git", Kind: credentials.KindGitToken},
+			vaultCred: {ID: vaultCred, OrgID: org, Name: "vault", Kind: credentials.KindVaultPassword},
 		}},
 		testBox(),
 	)
 	return fixture{
 		store: store, svc: svc, org: org, playbook: playbook, group: group,
-		managed: managed, unmanaged: unmanaged, sshCred: sshCred, gitCred: gitCred,
+		managed: managed, unmanaged: unmanaged, sshCred: sshCred, gitCred: gitCred, vaultCred: vaultCred,
 	}
 }
 
@@ -508,5 +532,118 @@ func TestSecretFieldsInsideContainers(t *testing.T) {
 	}
 	if entry["domain"] != "a.example" {
 		t.Fatalf("sibling value must be untouched: %#v", entry["domain"])
+	}
+}
+
+// --- vault credentials (v0.2e, task 4a) ---
+
+// TestCreateAndUpdateVaultCredentialsRoundTrip is the brief's Step 3 round
+// trip: create with two labelled vault credentials, read back and compare
+// values (not only the count), update down to one, and assert the dropped
+// label is actually gone.
+func TestCreateAndUpdateVaultCredentialsRoundTrip(t *testing.T) {
+	f := newFixture()
+	otherVault := uuid.Must(uuid.NewV7())
+	// A second vault_password credential, added through the fake creds map
+	// directly (newFixture only seeds one).
+	creds := fakeCreds{byID: map[uuid.UUID]credentials.Credential{
+		f.vaultCred: {ID: f.vaultCred, OrgID: f.org, Name: "vault", Kind: credentials.KindVaultPassword},
+		otherVault:  {ID: otherVault, OrgID: f.org, Name: "vault-2", Kind: credentials.KindVaultPassword},
+	}}
+	svc := templates.NewService(f.store,
+		fakePlaybooks{byID: map[uuid.UUID]playbooks.Playbook{f.playbook: {ID: f.playbook, OrgID: f.org, Source: playbooks.SourceEditor}}},
+		fakeGroups{}, fakeHosts{}, creds, testBox())
+
+	created, err := svc.Create(ctx, f.org, templates.CreateInput{
+		Name: "deploy", PlaybookID: f.playbook,
+		VaultCredentials: []templates.VaultCredential{
+			{CredentialID: f.vaultCred, Label: "team-a"},
+			{CredentialID: otherVault, Label: "team-b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	wantCreated := []templates.VaultCredential{
+		{CredentialID: f.vaultCred, Label: "team-a"},
+		{CredentialID: otherVault, Label: "team-b"},
+	}
+	if !reflect.DeepEqual(created.VaultCredentials, wantCreated) {
+		t.Fatalf("created.VaultCredentials = %+v, want %+v", created.VaultCredentials, wantCreated)
+	}
+
+	got, err := svc.Get(ctx, f.org, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reflect.DeepEqual(got.VaultCredentials, wantCreated) {
+		t.Fatalf("Get.VaultCredentials = %+v, want %+v", got.VaultCredentials, wantCreated)
+	}
+
+	updated, err := svc.Update(ctx, f.org, created.ID, templates.UpdateInput{
+		Name: "deploy", PlaybookID: f.playbook,
+		VaultCredentials: []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a"}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	wantUpdated := []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a"}}
+	if !reflect.DeepEqual(updated.VaultCredentials, wantUpdated) {
+		t.Fatalf("updated.VaultCredentials = %+v, want %+v (team-b must be dropped)", updated.VaultCredentials, wantUpdated)
+	}
+	got, err = svc.Get(ctx, f.org, created.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	for _, item := range got.VaultCredentials {
+		if item.Label == "team-b" {
+			t.Fatalf("team-b must be gone, got %+v", got.VaultCredentials)
+		}
+	}
+}
+
+// TestVaultCredentialLabelValidation is the brief's Step 2/3: one case per
+// character class internal/worker/runner's invalidVaultLabel rejects
+// (matched exactly through repos.InvalidVaultLabel), plus duplicate labels
+// (the table's PRIMARY KEY would otherwise turn this into a 500) and a
+// wrong-kind credential.
+func TestVaultCredentialLabelValidation(t *testing.T) {
+	f := newFixture()
+
+	cases := []struct {
+		name    string
+		items   []templates.VaultCredential
+		wantErr string
+	}{
+		{"empty label", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: ""}}, "label is empty"},
+		{"leading whitespace", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: " team-a"}}, "leading or trailing whitespace"},
+		{"trailing whitespace", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a "}}, "leading or trailing whitespace"},
+		{"newline", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\nhost_key_checking = False"}}, "newline"},
+		{"carriage return", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a\rx"}}, "carriage return"},
+		{"comma", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a,team-b"}}, "comma"},
+		{"at sign", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a@file"}}, "'@'"},
+		{"duplicate label", []templates.VaultCredential{
+			{CredentialID: f.vaultCred, Label: "team-a"},
+			{CredentialID: f.vaultCred, Label: "team-a"},
+		}, "duplicate vault credential label"},
+		{"wrong credential kind", []templates.VaultCredential{{CredentialID: f.sshCred, Label: "team-a"}}, "vault_password credential"},
+		{"unknown credential", []templates.VaultCredential{{CredentialID: uuid.Must(uuid.NewV7()), Label: "team-a"}}, "vault credential not found"},
+		{"valid", []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := f.in()
+			in.VaultCredentials = tc.items
+			_, err := f.svc.Create(ctx, f.org, in)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Create = %v, want valid", err)
+				}
+				return
+			}
+			if !errors.Is(err, templates.ErrInvalidInput) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Create = %v, want ErrInvalidInput naming %q", err, tc.wantErr)
+			}
+		})
 	}
 }

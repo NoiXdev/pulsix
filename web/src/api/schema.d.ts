@@ -4960,6 +4960,7 @@ export interface components {
             subpath?: string;
             url: string;
             vault_credential_id?: string;
+            vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         RepoDTO: {
             branch: string;
@@ -4979,6 +4980,7 @@ export interface components {
             updated_at: string;
             url: string;
             vault_credential_id?: string;
+            vault_identities: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         RepoDetailOutputBody: {
             /**
@@ -5020,6 +5022,7 @@ export interface components {
             subpath?: string;
             url: string;
             vault_credential_id?: string;
+            vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         RotationStartOutputBody: {
             /**
@@ -5435,6 +5438,7 @@ export interface components {
             name: string;
             playbook_id: string;
             scope?: components["schemas"]["TemplateScopeInput"];
+            vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         TemplateDTO: {
             /** Format: date-time */
@@ -5451,6 +5455,7 @@ export interface components {
             scope: components["schemas"]["TemplateScopeDTO"];
             /** Format: date-time */
             updated_at: string;
+            vault_identities: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         TemplateDetailOutputBody: {
             /**
@@ -5498,6 +5503,7 @@ export interface components {
             name: string;
             playbook_id: string;
             scope?: components["schemas"]["TemplateScopeInput"];
+            vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         TokenDTO: {
             /** Format: date-time */
@@ -5666,6 +5672,10 @@ export interface components {
             /** Format: int64 */
             count: number;
             value: string;
+        };
+        VaultIdentityDTO: {
+            credential_id: string;
+            label: string;
         };
         Warning: {
             group?: string;

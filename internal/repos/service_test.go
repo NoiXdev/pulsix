@@ -3,6 +3,7 @@ package repos_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -19,15 +20,40 @@ var ctx = context.Background()
 // --- fakes ---
 
 type fakeStore struct {
-	mu      sync.Mutex
-	byID    map[uuid.UUID]repos.Repo
-	names   map[string]string // name -> id string, for uniqueness bookkeeping
-	nextErr error
-	cleared []uuid.UUID
+	mu         sync.Mutex
+	byID       map[uuid.UUID]repos.Repo
+	names      map[string]string // name -> id string, for uniqueness bookkeeping
+	identities map[uuid.UUID][]repos.VaultIdentity
+	nextErr    error
+	cleared    []uuid.UUID
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{byID: map[uuid.UUID]repos.Repo{}, names: map[string]string{}}
+	return &fakeStore{
+		byID: map[uuid.UUID]repos.Repo{}, names: map[string]string{},
+		identities: map[uuid.UUID][]repos.VaultIdentity{},
+	}
+}
+
+// ReplaceRepoVaultIdentities and ListRepoVaultIdentities stand in for the
+// real store's two statements run inside one transaction (store_sql.go):
+// the fake has no partial-failure mode to reproduce, so a plain map
+// assignment is the whole "replace".
+func (f *fakeStore) ReplaceRepoVaultIdentities(_ context.Context, _, repoID uuid.UUID, identities []repos.VaultIdentity) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	stored := make([]repos.VaultIdentity, len(identities))
+	copy(stored, identities)
+	f.identities[repoID] = stored
+	return nil
+}
+
+func (f *fakeStore) ListRepoVaultIdentities(_ context.Context, _, repoID uuid.UUID) ([]repos.VaultIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]repos.VaultIdentity, len(f.identities[repoID]))
+	copy(out, f.identities[repoID])
+	return out, nil
 }
 
 func (f *fakeStore) Create(_ context.Context, r repos.Repo) (repos.Repo, error) {
@@ -460,5 +486,128 @@ func TestSyncEnqueuesThroughPort(t *testing.T) {
 	enq.err = repos.ErrNotFound // any error surfaces wrapped
 	if _, err := svc.Sync(ctx, org, created.ID, &actor); !errors.Is(err, repos.ErrNotFound) {
 		t.Fatalf("enqueuer failure = %v, want wrapped", err)
+	}
+}
+
+func vaultPasswordCred() credentials.Credential {
+	return credentials.Credential{ID: uuid.Must(uuid.NewV7()), Kind: credentials.KindVaultPassword}
+}
+
+// TestCreateAndUpdateVaultIdentitiesRoundTrip is the brief's Step 3 round
+// trip: create with two labelled identities, read back and compare values
+// (not only the count — an earlier sub-project here shipped a round-trip
+// test that counted and never compared, and the mapping bug it would have
+// caught was found only by a later review), update down to one, and assert
+// the dropped label is actually gone.
+func TestCreateAndUpdateVaultIdentitiesRoundTrip(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	prod, staging := vaultPasswordCred(), vaultPasswordCred()
+	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{prod.ID: prod, staging.ID: staging})
+	store := newFakeStore()
+	svc := newService(store, creds, &fakeEnqueuer{})
+
+	created, err := svc.Create(ctx, org, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/x",
+		VaultIdentities: []repos.VaultIdentity{
+			{CredentialID: prod.ID, Label: "prod"},
+			{CredentialID: staging.ID, Label: "staging"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	wantCreated := []repos.VaultIdentity{
+		{CredentialID: prod.ID, Label: "prod"},
+		{CredentialID: staging.ID, Label: "staging"},
+	}
+	if !reflect.DeepEqual(created.VaultIdentities, wantCreated) {
+		t.Fatalf("created.VaultIdentities = %+v, want %+v", created.VaultIdentities, wantCreated)
+	}
+
+	got, err := svc.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reflect.DeepEqual(got.VaultIdentities, wantCreated) {
+		t.Fatalf("Get.VaultIdentities = %+v, want %+v", got.VaultIdentities, wantCreated)
+	}
+
+	updated, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{
+		Name: "infra", URL: created.URL,
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: prod.ID, Label: "prod"}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	wantUpdated := []repos.VaultIdentity{{CredentialID: prod.ID, Label: "prod"}}
+	if !reflect.DeepEqual(updated.VaultIdentities, wantUpdated) {
+		t.Fatalf("updated.VaultIdentities = %+v, want %+v (staging must be dropped)", updated.VaultIdentities, wantUpdated)
+	}
+	got, err = svc.Get(ctx, org, created.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if !reflect.DeepEqual(got.VaultIdentities, wantUpdated) {
+		t.Fatalf("Get after update = %+v, want %+v", got.VaultIdentities, wantUpdated)
+	}
+	for _, id := range got.VaultIdentities {
+		if id.Label == "staging" {
+			t.Fatalf("staging must be gone, got %+v", got.VaultIdentities)
+		}
+	}
+}
+
+// TestVaultIdentityLabelValidation is the brief's Step 2/3: one case per
+// character class internal/worker/runner's invalidVaultLabel rejects
+// (matched exactly, see repos.InvalidVaultLabel's own comment), plus
+// duplicate labels (the table's PRIMARY KEY would otherwise turn this into a
+// 500) and a wrong-kind credential.
+func TestVaultIdentityLabelValidation(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	vault := vaultPasswordCred()
+	ssh := credentials.Credential{ID: uuid.Must(uuid.NewV7()), Kind: credentials.KindSSHKey}
+	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{vault.ID: vault, ssh.ID: ssh})
+
+	cases := []struct {
+		name       string
+		identities []repos.VaultIdentity
+		wantErr    string
+	}{
+		{"empty label", []repos.VaultIdentity{{CredentialID: vault.ID, Label: ""}}, "label is empty"},
+		{"leading whitespace", []repos.VaultIdentity{{CredentialID: vault.ID, Label: " prod"}}, "leading or trailing whitespace"},
+		{"trailing whitespace", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod "}}, "leading or trailing whitespace"},
+		// unicode.IsSpace whitespace (a non-breaking space), not only ASCII —
+		// strings.TrimSpace (and so this gate and the runner's) treats it as
+		// whitespace too.
+		{"non-breaking space", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod "}}, "leading or trailing whitespace"},
+		{"newline", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\nhost_key_checking = False"}}, "newline"},
+		{"carriage return", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod\rx"}}, "carriage return"},
+		{"comma", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod,staging"}}, "comma"},
+		{"at sign", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod@file"}}, "'@'"},
+		{"overlong", []repos.VaultIdentity{{CredentialID: vault.ID, Label: strings.Repeat("a", repos.MaxVaultLabelLength+1)}}, "exceeds"},
+		{"duplicate label", []repos.VaultIdentity{
+			{CredentialID: vault.ID, Label: "prod"},
+			{CredentialID: vault.ID, Label: "prod"},
+		}, "duplicate vault identity label"},
+		{"wrong credential kind", []repos.VaultIdentity{{CredentialID: ssh.ID, Label: "prod"}}, "vault_password credential"},
+		{"unknown credential", []repos.VaultIdentity{{CredentialID: uuid.Must(uuid.NewV7()), Label: "prod"}}, "vault credential not found"},
+		{"valid", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newService(newFakeStore(), creds, &fakeEnqueuer{})
+			_, err := svc.Create(ctx, org, repos.CreateInput{
+				Name: "infra", URL: "https://git.example.com/x", VaultIdentities: tc.identities,
+			})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Create = %v, want valid", err)
+				}
+				return
+			}
+			if !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Create = %v, want ErrInvalidInput naming %q", err, tc.wantErr)
+			}
+		})
 	}
 }
