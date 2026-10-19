@@ -105,6 +105,55 @@ func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
+// ReplaceRepoVaultIdentities replaces a repository's labelled vault
+// credential set in one call: delete then insert
+// (internal/db/queries/vault_identities.sql's own comment explains why
+// never one data-modifying WITH). An empty or nil slice is the legal "no
+// vault passwords" result, not an error.
+func (s *SQLStore) ReplaceRepoVaultIdentities(ctx context.Context, orgID, repoID uuid.UUID, identities []VaultIdentity) error {
+	if err := s.q.DeleteRepoVaultCredentials(ctx, gen.DeleteRepoVaultCredentialsParams{OrgID: orgID, RepoID: repoID}); err != nil {
+		return fmt.Errorf("delete repo vault credentials: %w", err)
+	}
+	credentialIDs, labels := vaultIdentityArrays(identities)
+	if err := s.q.InsertRepoVaultCredentials(ctx, gen.InsertRepoVaultCredentialsParams{
+		OrgID: orgID, RepoID: repoID, CredentialIds: credentialIDs, Labels: labels,
+	}); err != nil {
+		return fmt.Errorf("insert repo vault credentials: %w", err)
+	}
+	return nil
+}
+
+// ListRepoVaultIdentities returns a repository's labelled vault credential
+// set, in label order. FromTemplate is always false: this table never
+// carries a template's own identities — job_template_vault_credentials, a
+// separate table, does.
+func (s *SQLStore) ListRepoVaultIdentities(ctx context.Context, orgID, repoID uuid.UUID) ([]VaultIdentity, error) {
+	rows, err := s.q.ListRepoVaultCredentials(ctx, gen.ListRepoVaultCredentialsParams{OrgID: orgID, RepoID: repoID})
+	if err != nil {
+		return nil, fmt.Errorf("list repo vault credentials: %w", err)
+	}
+	out := make([]VaultIdentity, len(rows))
+	for i, r := range rows {
+		out[i] = VaultIdentity{CredentialID: r.CredentialID, Label: r.Label}
+	}
+	return out, nil
+}
+
+// vaultIdentityArrays splits a slice of VaultIdentity into the two parallel
+// arrays InsertRepoVaultCredentials needs — built from the same slice in
+// one pass, so the two arrays are always the same length and the query's
+// lockstep unnest (InsertCheckItems' own shape, items.sql) never pads with
+// NULLs.
+func vaultIdentityArrays(identities []VaultIdentity) ([]uuid.UUID, []string) {
+	credentialIDs := make([]uuid.UUID, len(identities))
+	labels := make([]string, len(identities))
+	for i, id := range identities {
+		credentialIDs[i] = id.CredentialID
+		labels[i] = id.Label
+	}
+	return credentialIDs, labels
+}
+
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound

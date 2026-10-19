@@ -109,6 +109,60 @@ func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
+// VaultCredential is one labelled vault password a job template adds
+// (migration 00059's second table, spec decision 1 — a template may add
+// passwords a shared repository's other templates must not have). Local to
+// this package rather than internal/repos.VaultIdentity: every row this
+// store reads or writes IS from a template, so there is no "FromTemplate"
+// to carry, and importing internal/repos just to reach that one field would
+// put the dependency edge the wrong way round for a single struct. The
+// caller that resolves a run's identities already imports both packages
+// (internal/repos.ResolveVaultIdentities's own call site) and builds
+// repos.VaultIdentity{..., FromTemplate: true} from this type itself.
+type VaultCredential struct {
+	CredentialID uuid.UUID
+	Label        string
+}
+
+// ReplaceVaultCredentials replaces a template's labelled vault credential
+// set in one call: delete then insert
+// (internal/db/queries/vault_identities.sql's own comment explains why
+// never one data-modifying WITH). An empty or nil slice is the legal "no
+// added vault passwords" result, not an error.
+func (s *SQLStore) ReplaceVaultCredentials(ctx context.Context, orgID, templateID uuid.UUID, items []VaultCredential) error {
+	if err := s.q.DeleteTemplateVaultCredentials(ctx, gen.DeleteTemplateVaultCredentialsParams{OrgID: orgID, TemplateID: templateID}); err != nil {
+		return fmt.Errorf("delete template vault credentials: %w", err)
+	}
+	credentialIDs := make([]uuid.UUID, len(items))
+	labels := make([]string, len(items))
+	for i, it := range items {
+		credentialIDs[i] = it.CredentialID
+		labels[i] = it.Label
+	}
+	if err := s.q.InsertTemplateVaultCredentials(ctx, gen.InsertTemplateVaultCredentialsParams{
+		OrgID: orgID, TemplateID: templateID, CredentialIds: credentialIDs, Labels: labels,
+	}); err != nil {
+		return fmt.Errorf("insert template vault credentials: %w", err)
+	}
+	return nil
+}
+
+// ListVaultCredentials returns a template's own labelled vault credential
+// set, in label order — the identities it adds on top of its repository's,
+// never the repository's own (repos.SQLStore.ListRepoVaultIdentities reads
+// those, from the other table).
+func (s *SQLStore) ListVaultCredentials(ctx context.Context, orgID, templateID uuid.UUID) ([]VaultCredential, error) {
+	rows, err := s.q.ListTemplateVaultCredentials(ctx, gen.ListTemplateVaultCredentialsParams{OrgID: orgID, TemplateID: templateID})
+	if err != nil {
+		return nil, fmt.Errorf("list template vault credentials: %w", err)
+	}
+	out := make([]VaultCredential, len(rows))
+	for i, r := range rows {
+		out[i] = VaultCredential{CredentialID: r.CredentialID, Label: r.Label}
+	}
+	return out, nil
+}
+
 // mapWriteErr maps the unique (org_id, name) constraint to ErrNameTaken and
 // the composite foreign keys to ErrNotFound (a playbook or credential
 // deleted between the service's check and this write — the same "invisible,
