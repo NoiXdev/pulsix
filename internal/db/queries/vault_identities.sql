@@ -8,10 +8,16 @@
 -- One repository's labelled vault passwords, in label order — the same
 -- order ResolveVaultIdentities (internal/repos/vault.go) itself produces,
 -- so a caller reading straight off this query already sees a stable list
--- before it is ever unioned with a template's own set.
+-- before it is ever unioned with a template's own set. That parity needs
+-- COLLATE "C": Postgres's default collation orders by the database's
+-- locale, Go's `<` orders by byte value, and the two disagree on mixed-case
+-- labels ("Prod" vs "prod") — without pinning this, the list a client reads
+-- here and the list a run resolves could be ordered differently for the
+-- same set, even though the generated ansible.cfg (always Go-sorted) is
+-- unaffected either way.
 SELECT credential_id, label FROM git_repo_vault_credentials
 WHERE org_id = @org_id AND repo_id = @repo_id
-ORDER BY label;
+ORDER BY label COLLATE "C";
 
 -- name: DeleteRepoVaultCredentials :exec
 -- The first half of replacing a repository's set; InsertRepoVaultCredentials
@@ -19,9 +25,11 @@ ORDER BY label;
 -- statement order is undefined in Postgres
 -- (https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-MODIFYING),
 -- the exact mistake DeleteRouteSeverities' own comment (alert_routes.sql)
--- describes losing a row to in v0.4b. Sent in sequence on the caller's own
--- replace call (repos.SQLStore.ReplaceRepoVaultIdentities, store_sql.go),
--- so the DELETE commits before the INSERT ever runs.
+-- describes losing a row to in v0.4b. The caller's own replace call
+-- (repos.SQLStore.ReplaceRepoVaultIdentities, store_sql.go) runs both inside
+-- one transaction (932c009) precisely so this DELETE cannot commit before
+-- that INSERT runs — a failing insert now rolls the delete back with it
+-- instead of leaving the set wiped to empty.
 DELETE FROM git_repo_vault_credentials WHERE org_id = @org_id AND repo_id = @repo_id;
 
 -- name: InsertRepoVaultCredentials :exec
@@ -44,11 +52,11 @@ INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
 SELECT @org_id, @repo_id, unnest(@credential_ids::uuid[]), unnest(@labels::text[]);
 
 -- name: ListTemplateVaultCredentials :many
--- ListRepoVaultCredentials' own shape, for a job template's own set
--- (migration 00059's second table).
+-- ListRepoVaultCredentials' own shape, own COLLATE "C" and own reason, for
+-- a job template's own set (migration 00059's second table).
 SELECT credential_id, label FROM job_template_vault_credentials
 WHERE org_id = @org_id AND template_id = @template_id
-ORDER BY label;
+ORDER BY label COLLATE "C";
 
 -- name: DeleteTemplateVaultCredentials :exec
 -- DeleteRepoVaultCredentials' own shape and own reason, for the template's
