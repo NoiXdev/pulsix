@@ -175,3 +175,96 @@ func TestEscalationTablesAreIsolatedPerOrg(t *testing.T) {
 		}
 	})
 }
+
+// TestVaultCredentialsAreIsolatedPerOrg exercises query-time visibility for
+// the two tables migration 00059 added, the same gap
+// TestEscalationTablesAreIsolatedPerOrg's own comment names for 00056:
+// schema_test.go's TestGitRepoVaultCredentialsSchema and
+// TestJobTemplateVaultCredentialsSchema insert and read through
+// d.Pool() with no session org bound at all, so a composite foreign key
+// rejecting a cross-tenant insert is the only thing either one actually
+// proves — neither ever runs a SELECT through the org_isolation policy,
+// and both would still pass with RLS switched off entirely. This test
+// seeds both organizations' rows through the bypass path (same d.Pool(),
+// no org bound) and then reads through d.WithOrg, the same shape
+// TestMembershipsAreIsolatedPerOrg and TestEscalationTablesAreIsolatedPerOrg
+// above use.
+func TestVaultCredentialsAreIsolatedPerOrg(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
+	repoA, repoB := seedGitRepo(t, d, orgA, "repo-a"), seedGitRepo(t, d, orgB, "repo-b")
+	tmplA, tmplB := seedJobTemplate(t, d, orgA, "tmpl-a"), seedJobTemplate(t, d, orgB, "tmpl-b")
+	credA, credB := seedVaultCredential(t, d, orgA, "cred-a"), seedVaultCredential(t, d, orgB, "cred-b")
+
+	for _, s := range []struct {
+		org  uuid.UUID
+		repo uuid.UUID
+		tmpl uuid.UUID
+		cred uuid.UUID
+	}{
+		{orgA, repoA, tmplA, credA},
+		{orgB, repoB, tmplB, credB},
+	} {
+		if _, err := d.Pool().Exec(ctx, `
+			INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
+			VALUES ($1, $2, $3, 'default')`, s.org, s.repo, s.cred); err != nil {
+			t.Fatalf("insert repo link: %v", err)
+		}
+		if _, err := d.Pool().Exec(ctx, `
+			INSERT INTO job_template_vault_credentials (org_id, template_id, credential_id, label)
+			VALUES ($1, $2, $3, 'default')`, s.org, s.tmpl, s.cred); err != nil {
+			t.Fatalf("insert template link: %v", err)
+		}
+	}
+
+	t.Run("git_repo_vault_credentials", func(t *testing.T) {
+		var seen []uuid.UUID
+		err := d.WithOrg(ctx, orgA, func(tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, `SELECT org_id FROM git_repo_vault_credentials`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id uuid.UUID
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				seen = append(seen, id)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(seen) != 1 || seen[0] != orgA {
+			t.Fatalf("RLS leak: saw %v, want only %s", seen, orgA)
+		}
+	})
+
+	t.Run("job_template_vault_credentials", func(t *testing.T) {
+		var seen []uuid.UUID
+		err := d.WithOrg(ctx, orgA, func(tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, `SELECT org_id FROM job_template_vault_credentials`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id uuid.UUID
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				seen = append(seen, id)
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(seen) != 1 || seen[0] != orgA {
+			t.Fatalf("RLS leak: saw %v, want only %s", seen, orgA)
+		}
+	})
+}

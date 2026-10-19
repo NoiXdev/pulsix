@@ -8,6 +8,8 @@ package db_test
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -597,6 +599,50 @@ func TestJobTemplateVaultCredentialsSchema(t *testing.T) {
 		VALUES ($1, $2, $3, 'leak')`, org, tmpl, foreignCred); err == nil {
 		t.Error("a link row must not name another organization's credential")
 	}
+
+	// The same deliberate asymmetry as the repository table: the credential
+	// a link still names cannot be deleted out from under it...
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM credentials WHERE id = $1`, cred); err == nil {
+		t.Error("deleting a vault credential a template still names must be refused")
+	}
+	// ...but deleting the template takes its links with it. Without this
+	// pair, a future edit dropping ON DELETE CASCADE here (or adding it to
+	// the credential side) would pass every other test in this file.
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM job_templates WHERE id = $1`, tmpl); err != nil {
+		t.Fatalf("delete template: %v", err)
+	}
+	var n int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM job_template_vault_credentials WHERE template_id = $1`, tmpl).Scan(&n); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("links after template delete = %d, want 0", n)
+	}
+}
+
+// backfillStatement extracts the git_repo_vault_credentials backfill INSERT
+// out of 00059_vault_identities.sql's own text, between the two markers that
+// bound it in the migration file, so TestVaultCredentialBackfillStatement
+// below runs the real statement rather than a hand-copied one that could
+// drift from it unnoticed.
+func backfillStatement(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("migrations/00059_vault_identities.sql")
+	if err != nil {
+		t.Fatalf("read migration file: %v", err)
+	}
+	const start = "INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)"
+	i := strings.Index(string(src), start)
+	if i < 0 {
+		t.Fatalf("backfill INSERT not found in migration file")
+	}
+	rest := string(src)[i:]
+	end := strings.Index(rest, ";")
+	if end < 0 {
+		t.Fatalf("backfill INSERT has no terminating ';' in migration file")
+	}
+	return rest[:end]
 }
 
 // TestVaultCredentialBackfillStatement pins migration 00059's backfill
@@ -626,13 +672,13 @@ func TestVaultCredentialBackfillStatement(t *testing.T) {
 		t.Fatalf("set legacy vault column: %v", err)
 	}
 
-	// Verbatim from 00059_vault_identities.sql's own Up section.
-	const backfill = `
-		INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
-		SELECT org_id, id, vault_credential_id, 'default'
-		FROM git_repos
-		WHERE vault_credential_id IS NOT NULL`
-	if _, err := d.Pool().Exec(ctx, backfill); err != nil {
+	// Read straight out of the migration file on disk rather than retyping
+	// it, so this test cannot silently drift from the statement the
+	// migration actually runs: internal/db's own embed.FS is unexported, so
+	// this package (db_test) cannot read through it, but go test's working
+	// directory is the package directory, and the migration file lives at
+	// the relative path below either way.
+	if _, err := d.Pool().Exec(ctx, backfillStatement(t)); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
