@@ -17,6 +17,9 @@ import type { Problem, VarSchema, Vars } from '../inventory/schema/types.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { KIND_LABEL } from '../credentials/labels.ts';
+import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
+import type { Credential } from '../../api/types.ts';
+import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { toEditableVars, varsForPut } from './vars.ts';
 
@@ -63,6 +66,7 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
       );
     }
     const t = detail.data.template;
+    const allCredentials = credentials.data?.credentials ?? [];
     return (
       <TemplateForm
         org={org}
@@ -75,19 +79,23 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
           schema: t.extra_vars_schema ? toVarSchema(t.extra_vars_schema) : null,
           vars: t.extra_vars ?? {},
           credentialId: t.credential_id ?? '',
+          vaultIdentities: rowsFromIdentities(t.vault_identities),
         }}
         playbooks={playbooks.data?.playbooks ?? []}
-        credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+        credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+        vaultCredentials={allCredentials}
         canCreateCredential={canCreateCredential}
         onClose={onClose}
       />
     );
   }
+  const allCredentials = credentials.data?.credentials ?? [];
   return (
     <TemplateForm
       org={org}
       playbooks={playbooks.data?.playbooks ?? []}
-      credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+      credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
+      vaultCredentials={allCredentials}
       canCreateCredential={canCreateCredential}
       onClose={onClose}
     />
@@ -103,15 +111,21 @@ interface Existing {
   schema: VarSchema | null;
   vars: Vars;
   credentialId: string;
+  vaultIdentities: VaultIdentityRow[];
 }
 
 function TemplateForm({
-  org, existing, playbooks, credentials, canCreateCredential, onClose,
+  org, existing, playbooks, credentials, vaultCredentials, canCreateCredential, onClose,
 }: {
   org: string;
   existing?: Existing;
   playbooks: readonly { id: string; source: string; summary: string; path?: string }[];
   credentials: readonly { id: string; name: string; kind: string }[];
+  /** The org's full credential list, unfiltered — `credentials` above is
+   * already narrowed to ssh_key/ssh_password for the Default SSH
+   * credential field, which excludes every vault_password credential the
+   * Vault identities list below needs to offer. */
+  vaultCredentials: readonly Credential[];
   canCreateCredential: boolean;
   onClose: () => void;
 }) {
@@ -138,9 +152,13 @@ function TemplateForm({
     return existing ? (loaded.length > 0 ? toEditableVars(loaded, existing.vars) : existing.vars) : {};
   });
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
-  // null = closed; a string is the name typed into the picker before it
-  // opened this.
-  const [newCredentialName, setNewCredentialName] = useState<string | null>(null);
+  const [vaultRows, setVaultRows] = useState<VaultIdentityRow[]>(existing?.vaultIdentities ?? []);
+  const [vaultErrors, setVaultErrors] = useState<Record<string, string>>({});
+  // null = closed. One mount point for the Default SSH credential field and
+  // every row of the Vault identities list, since only one AddCredentialDialog
+  // can be open at a time (the same division RepoDialog's own
+  // `addingCredential` keeps).
+  const [addingCredential, setAddingCredential] = useState<{ field: 'ssh'; name: string } | { field: 'vault-identity'; rowKey: string; name: string } | null>(null);
   const [varProblems, setVarProblems] = useState<Problem[]>([]);
   const [schemaProblems, setSchemaProblems] = useState<Problem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +168,9 @@ function TemplateForm({
     setError(null);
     setVarProblems([]);
     setSchemaProblems([]);
+    const identityErrors = vaultIdentityErrors(vaultRows);
+    setVaultErrors(identityErrors);
+    if (Object.keys(identityErrors).length > 0) return;
     const body = {
       name,
       playbook_id: playbookId,
@@ -158,6 +179,7 @@ function TemplateForm({
       extra_vars: varsForPut(schema?.fields, vars),
       extra_vars_schema: schema && schema.fields.length > 0 ? schema : undefined,
       credential_id: credentialId || undefined,
+      vault_identities: identitiesForBody(vaultRows),
     };
     try {
       if (existing) await update.mutateAsync(body);
@@ -222,10 +244,19 @@ function TemplateForm({
             value={credentialId}
             onChange={setCredentialId}
             placeholder="— none —"
-            create={canCreateCredential ? { label: 'New credential…', onSelect: setNewCredentialName } : undefined}
+            create={canCreateCredential ? { label: 'New credential…', onSelect: (text) => setAddingCredential({ field: 'ssh', name: text }) } : undefined}
           />
           <span className="text-[11px] text-muted-foreground">SSH key or password credential for hosts without one of their own.</span>
         </div>
+        <VaultIdentitiesField
+          rows={vaultRows}
+          onChange={setVaultRows}
+          credentials={vaultCredentials}
+          canCreateCredential={canCreateCredential}
+          errors={vaultErrors}
+          onRequestCreate={(row, text) => setAddingCredential({ field: 'vault-identity', rowKey: row.key, name: text })}
+          help="Labelled vault passwords this template adds on top of its repository's own set; a label shared with the repository resolves to this one."
+        />
         {error && (
           <p role="alert" className="text-xs text-destructive">
             {error}
@@ -242,13 +273,27 @@ function TemplateForm({
       </form>
       {/* Sibling of the <form> above, not inside it — see HostSshCard.tsx's
           own comment on why a nested <dialog> here would double-submit. */}
-      {newCredentialName !== null && (
+      {addingCredential && (
         <AddCredentialDialog
           org={org}
           open
-          initialName={newCredentialName}
-          onClose={() => setNewCredentialName(null)}
-          onCreated={setCredentialId}
+          initialName={addingCredential.name}
+          // The Vault identities list filters to vault_password, which
+          // this dialog's own ssh_key default would not match — without
+          // this the new credential would not appear as an option in the
+          // very row that created it (the same reason RepoDialog's
+          // equivalent pickers pass it).
+          initialKind={addingCredential.field === 'vault-identity' ? 'vault_password' : undefined}
+          onClose={() => setAddingCredential(null)}
+          onCreated={(id) => {
+            // Narrowed into a local const: TS forgets a discriminated union
+            // narrowed from component state the moment it is read inside a
+            // nested closure (the `rows.map` callback below), even though
+            // `addingCredential` cannot change mid-callback.
+            const adding = addingCredential;
+            if (adding.field === 'ssh') setCredentialId(id);
+            else setVaultRows((rows) => rows.map((r) => (r.key === adding.rowKey ? { ...r, credentialId: id } : r)));
+          }}
         />
       )}
     </Dialog>

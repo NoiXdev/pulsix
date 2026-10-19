@@ -15,6 +15,8 @@ const ORG = { org: { id: 'org-1', name: 'Acme', slug: 'acme', role: 'operator', 
 const ADMIN_ORG = { org: { ...ORG.org, role: 'admin' } };
 const gitKey = { id: 'c1', name: 'deploy-key', kind: 'git_key', username: 'git', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
 const sshKey = { id: 'c2', name: 'host-login', kind: 'ssh_key', username: 'ansible', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 3 }, created_at: '', updated_at: '' };
+const vaultProd = { id: 'c3', name: 'vault-prod', kind: 'vault_password', username: '', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
+const vaultStaging = { id: 'c4', name: 'vault-staging', kind: 'vault_password', username: '', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
 
 const repo = (over: Record<string, unknown> = {}) => ({
   id: 'r1', name: 'infra', url: 'https://git.example/acme/infra.git', branch: 'main', subpath: '',
@@ -359,5 +361,123 @@ describe('ReposPage', () => {
     const dialog = await screen.findByRole('dialog', { name: 'infra' });
     expect(within(dialog).getByText(/not pinned yet/)).toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Unpin key' })).not.toBeInTheDocument();
+  });
+
+  // v0.2e Task 5: a repository's own labelled vault password set, beside
+  // the legacy single Vault password field.
+  describe('vault identities', () => {
+    it('adds vault identity rows, each with a label and a credential picker, and posts them', async () => {
+      const user = userEvent.setup();
+      let posted: unknown;
+      const repos: Record<string, unknown>[] = [];
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': () => ({ repos }),
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd, vaultStaging] },
+        'POST /api/v1/orgs/acme/repos': (req: MockRequest) => {
+          posted = req.body;
+          const created = repo({ id: 'r9', name: 'new-repo' });
+          repos.push(created);
+          return { repo: created };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+      await user.type(screen.getByLabelText('Name'), 'new-repo');
+      await user.type(screen.getByLabelText('URL'), 'https://git.example/acme/new.git');
+
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 1 label'), 'production');
+      await pickOption(screen, 'Vault identity 1 credential', { value: 'c3' });
+
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 2 label'), 'staging');
+      await pickOption(screen, 'Vault identity 2 credential', { value: 'c4' });
+
+      await user.click(screen.getByRole('button', { name: 'Create repository' }));
+      expect(await screen.findByText('new-repo')).toBeInTheDocument();
+      expect(posted).toMatchObject({
+        vault_identities: [
+          { label: 'production', credential_id: 'c3' },
+          { label: 'staging', credential_id: 'c4' },
+        ],
+      });
+    });
+
+    it('removes a vault identity row, keeping the rest', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': { repos: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd, vaultStaging] },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 1 label'), 'production');
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 2 label'), 'staging');
+
+      await user.click(screen.getByRole('button', { name: 'Remove vault identity 1' }));
+      expect(screen.queryByLabelText('Vault identity 2 label')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Vault identity 1 label')).toHaveValue('staging');
+    });
+
+    it('refuses a duplicate vault identity label before submitting', async () => {
+      const user = userEvent.setup();
+      let posted: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': { repos: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd, vaultStaging] },
+        'POST /api/v1/orgs/acme/repos': (req: MockRequest) => {
+          posted = req.body;
+          return { repo: repo() };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Add repository' }));
+      await user.type(screen.getByLabelText('Name'), 'new-repo');
+      await user.type(screen.getByLabelText('URL'), 'https://git.example/acme/new.git');
+
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 1 label'), 'production');
+      await pickOption(screen, 'Vault identity 1 credential', { value: 'c3' });
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 2 label'), 'production');
+      await pickOption(screen, 'Vault identity 2 credential', { value: 'c4' });
+
+      await user.click(screen.getByRole('button', { name: 'Create repository' }));
+      expect(await screen.findAllByText('duplicate vault identity label "production"')).toHaveLength(2);
+      expect(posted).toBeUndefined();
+    });
+
+    // The bug class the brief calls out by name: a hand-built save body
+    // that forgets a field silently wipes it on an unrelated edit. Saving
+    // a repository that already has identities, without touching them,
+    // must keep sending the same set.
+    it('keeps an existing repository\'s vault identities when an unrelated field is edited', async () => {
+      const user = userEvent.setup();
+      let put: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': {
+          repos: [repo({ vault_identities: [{ credential_id: 'c3', label: 'production' }] })],
+        },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd] },
+        'PUT /api/v1/orgs/acme/repos/r1': (req: MockRequest) => {
+          put = req.body;
+          return { repo: repo({ branch: 'release' }) };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'infra' }));
+      const dialog = await screen.findByRole('dialog', { name: 'infra' });
+      const branch = within(dialog).getByLabelText('Branch');
+      await user.clear(branch);
+      await user.type(branch, 'release');
+      await user.click(within(dialog).getByRole('button', { name: 'Save repository' }));
+      expect(put).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
+    });
   });
 });

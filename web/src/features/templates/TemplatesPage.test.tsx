@@ -15,6 +15,8 @@ const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', crea
 const ADMIN_ORG = { org: { ...ORG.org, role: 'admin' } };
 const playbookRow = { id: 'pb1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' };
 const sshKey = { id: 'c1', name: 'host-login', kind: 'ssh_key', username: 'ansible', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
+const vaultProd = { id: 'c3', name: 'vault-prod', kind: 'vault_password', username: '', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
+const vaultStaging = { id: 'c4', name: 'vault-staging', kind: 'vault_password', username: '', expired: false, expires_soon: false, used_by: { bastions: 0, hosts: 0 }, created_at: '', updated_at: '' };
 const groupRow = { id: 'g1', name: 'webserver', description: '', parent_id: null, members: 0, group_fields: 0, host_fields: 0, complete: true, revision: 1 };
 
 const template = (over: Record<string, unknown> = {}) => ({
@@ -334,5 +336,118 @@ describe('TemplatesPage', () => {
     const dialog = screen.getByRole('dialog', { name: 'New job template' });
     await user.click(within(dialog).getByRole('button', { name: 'Create template' }));
     expect(await within(dialog).findByText('is required')).toBeInTheDocument();
+  });
+
+  // v0.2e Task 5: a template's own labelled vault password set, added on
+  // top of its repository's (decision 2: a shared label resolves to the
+  // template's).
+  describe('vault identities', () => {
+    it('adds vault identity rows, each with a label and a credential picker, and posts them', async () => {
+      const user = userEvent.setup();
+      let posted: unknown;
+      const templates: Record<string, unknown>[] = [];
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': () => ({ templates }),
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey, vaultProd, vaultStaging] },
+        'POST /api/v1/orgs/acme/job-templates': (req: MockRequest) => {
+          posted = req.body;
+          const created = template({ name: 'deploy-site' });
+          templates.push(created);
+          return { template: created };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Add template' }));
+      await user.type(screen.getByLabelText('Name'), 'deploy-site');
+      await pickOption(screen, 'Playbook', { value: 'pb1' });
+
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 1 label'), 'production');
+      await pickOption(screen, 'Vault identity 1 credential', { value: 'c3' });
+
+      await user.click(screen.getByRole('button', { name: 'Create template' }));
+      expect(await screen.findByText('deploy-site')).toBeInTheDocument();
+      expect(posted).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
+    });
+
+    it('removes a vault identity row, keeping the rest', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey, vaultProd, vaultStaging] },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Add template' }));
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 1 label'), 'production');
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 2 label'), 'staging');
+
+      await user.click(screen.getByRole('button', { name: 'Remove vault identity 1' }));
+      expect(screen.queryByLabelText('Vault identity 2 label')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Vault identity 1 label')).toHaveValue('staging');
+    });
+
+    it('refuses a duplicate vault identity label before submitting', async () => {
+      const user = userEvent.setup();
+      let posted: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey, vaultProd, vaultStaging] },
+        'POST /api/v1/orgs/acme/job-templates': (req: MockRequest) => {
+          posted = req.body;
+          return { template: template() };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Add template' }));
+      await user.type(screen.getByLabelText('Name'), 'deploy-site');
+      await pickOption(screen, 'Playbook', { value: 'pb1' });
+
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 1 label'), 'production');
+      await pickOption(screen, 'Vault identity 1 credential', { value: 'c3' });
+      await user.click(screen.getByRole('button', { name: 'Add vault password' }));
+      await user.type(screen.getByLabelText('Vault identity 2 label'), 'production');
+      await pickOption(screen, 'Vault identity 2 credential', { value: 'c4' });
+
+      await user.click(screen.getByRole('button', { name: 'Create template' }));
+      expect(await screen.findAllByText('duplicate vault identity label "production"')).toHaveLength(2);
+      expect(posted).toBeUndefined();
+    });
+
+    // The bug class the brief calls out by name: a hand-built save body
+    // that forgets a field silently wipes it on an unrelated edit.
+    it('keeps an existing template\'s vault identities when an unrelated field is edited', async () => {
+      const user = userEvent.setup();
+      let put: unknown;
+      const withVault = { vault_identities: [{ credential_id: 'c3', label: 'production' }] };
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withVault })] },
+        'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withVault }) },
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey, vaultProd] },
+        'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+          put = req.body;
+          return { template: template({ ...withVault }) };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+      const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+      await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+      expect(put).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
+    });
   });
 });

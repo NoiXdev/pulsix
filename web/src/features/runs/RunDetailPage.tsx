@@ -54,6 +54,12 @@ export function RunDetailPage() {
   // button, where the operator decides.
   const retryDropsOverrides = j.trigger === 'schedule' || j.trigger === 'webhook';
   const siblings = j.group ?? [];
+  // Which labelled vault passwords this run actually received, and whether
+  // each came from the repository or the template (decision 2's
+  // template-wins precedence, internal/repos/vault.go's
+  // ResolveVaultIdentities) — empty for a run whose repository uses no
+  // encrypted files at all.
+  const vaultIdentities = j.vault_identities ?? [];
   // The run log's SSE status frame may carry the status before the detail
   // poll catches up; the header shows whichever is fresher.
   const status = log.status ?? j.status;
@@ -138,6 +144,21 @@ export function RunDetailPage() {
           <Fact label="Run group" value={`${siblings.length + 1} job${siblings.length === 0 ? '' : 's'}`} />
         </div>
       </Card>
+      {vaultIdentities.length > 0 && (
+        <Card>
+          <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+            Vault identities
+          </div>
+          <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Vault identities">
+            {vaultIdentities.map((identity) => (
+              <li key={identity.label} className="flex items-center justify-between gap-2">
+                <span className="font-mono">{identity.label}</span>
+                <span className="text-[11px] text-muted-foreground">{identity.from_template ? 'from template' : 'from repository'}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
       {siblings.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" aria-label="Run group">
           <span>Same trigger:</span>
