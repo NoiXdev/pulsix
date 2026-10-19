@@ -551,10 +551,27 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		BastionHostKeys:   pins.bastionFPs,
 		BastionKnownHosts: pins.bastionPubs,
 		KindPayload:       kindPayload,
-		VaultCredentialId: vaultCredentialID,
+		VaultIdentities:   legacyVaultIdentity(vaultCredentialID),
 		Redact:            redact.list,
 	}
 	return nil
+}
+
+// legacyVaultIdentity wraps the repository's single vault_credential_id
+// (the RepoRef field this claim path still reads; internal/repos' labelled
+// link tables and ResolveVaultIdentities, added alongside it, are not
+// wired into the claim yet — no task in
+// docs/superpowers/plans/2026-10-19-v0.2e-multiple-vault-passwords.md
+// currently does that) as the one-entry list workerpb.Job.vault_identities
+// now expects, under label "default" — the same label migration 00059's
+// backfill gives every pre-existing repository's lone password, so this
+// claim path and a migrated repository's link row agree on what an
+// unlabelled vault credential is called.
+func legacyVaultIdentity(credentialID string) []*workerpb.VaultIdentity {
+	if credentialID == "" {
+		return nil
+	}
+	return []*workerpb.VaultIdentity{{CredentialId: credentialID, Label: "default"}}
 }
 
 // excludeChangedAtClaim re-applies the enqueue's block-on-mismatch (spec §5)
@@ -1005,10 +1022,10 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 		credentials["git:"+repoID.String()] = string(b)
 	}
 	// The vault passphrase rides the same map as every other revealed
-	// secret, under the credential's own uuid so the job's
-	// vault_credential_id names it directly. Opening it here, beside the
-	// git credential, is also what puts it through the same redaction:
-	// the caller adds every credentials entry to the redact list.
+	// secret, under the credential's own uuid so legacyVaultIdentity's
+	// entry names it directly. Opening it here, beside the git
+	// credential, is also what puts it through the same redaction: the
+	// caller adds every credentials entry to the redact list.
 	vaultID := ""
 	if repo.VaultCredentialID != nil {
 		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *repo.VaultCredentialID)

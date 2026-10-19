@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/noixdev/pulsix/internal/worker"
 )
@@ -31,11 +32,15 @@ const (
 	ansibleCfgName = "ansible.cfg"
 	// keysDirName holds the run's per-credential private key files.
 	keysDirName = "keys"
-	// vaultPasswordName is the run's Ansible Vault password file, written
-	// only when the job's repository names a vault credential. It lives
-	// in the work directory the runner already creates and removes, so
-	// the passphrase's lifetime is the run's.
-	vaultPasswordName = "vault-password"
+	// vaultDirName holds the run's Ansible Vault password files, one per
+	// identity the job carries, written only when there is at least one.
+	// Each file is named by its credential's uuid (materializeVaultPassword,
+	// inventory.go) rather than its label: the label is operator-entered
+	// text with no path-safety guarantee — it could hold "../x" or a "/" —
+	// while a uuid is safe by construction. The directory lives in the
+	// work directory the runner already creates and removes, so every
+	// passphrase's lifetime is the run's.
+	vaultDirName = "vault"
 	// gitKeysDir / gitTokensDir hold the repo fetch's credential files.
 	gitKeysDir   = "gitkeys"
 	gitTokensDir = "gittokens"
@@ -89,15 +94,30 @@ func sshArgs(workDir string) string {
 		filepath.Join(workDir, sshConfigName), filepath.Join(workDir, knownHostsName))
 }
 
+// vaultFile is one written Ansible Vault password file, paired with the
+// label Ansible must use to reach it (materializeVaultPassword produces
+// these; ansibleCfgText renders them into vault_identity_list).
+type vaultFile struct {
+	Label string
+	Path  string
+}
+
 // ansibleCfgText renders the run's ansible.cfg.
-func ansibleCfgText(workDir, vaultPasswordFile string) string {
-	// vault_password_file is written only when there is one. An empty
-	// setting is not the same as an absent one: Ansible would try to run
-	// it and fail on the empty path, which is a worse error than having
-	// no vault configured at all.
+func ansibleCfgText(workDir string, vaultFiles []vaultFile) string {
+	// vault_identity_list is written only when there is at least one
+	// identity, and vault_password_file is never written at all: Ansible
+	// accepts either key, and a run carrying one stale and one fresh
+	// setting is exactly the silent misconfiguration labelled vault
+	// identities exist to remove. An empty setting is not the same as an
+	// absent one either way — Ansible would try to use it and fail on the
+	// empty value, a worse error than having no vault configured.
 	vault := ""
-	if vaultPasswordFile != "" {
-		vault = "vault_password_file = " + vaultPasswordFile + "\n"
+	if len(vaultFiles) > 0 {
+		pairs := make([]string, len(vaultFiles))
+		for i, f := range vaultFiles {
+			pairs[i] = f.Label + "@" + f.Path
+		}
+		vault = "vault_identity_list = " + strings.Join(pairs, ", ") + "\n"
 	}
 	return fmt.Sprintf(`[defaults]
 host_key_checking = True

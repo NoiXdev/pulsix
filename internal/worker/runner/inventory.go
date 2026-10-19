@@ -235,11 +235,11 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 // -e @env/extravars, so the values never pass through the command line)
 // and the scratch directories.
 func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) error {
-	vaultFile, err := r.materializeVaultPassword(job, env)
+	vaultFiles, err := r.materializeVaultPassword(job, env)
 	if err != nil {
 		return err
 	}
-	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFile), 0o600); err != nil {
+	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFiles), 0o600); err != nil {
 		return err
 	}
 	extraVars := job.GetExtraVars()
@@ -460,41 +460,66 @@ func pinHosts(doc map[string]any, connections, hostKeys, knownHosts map[string]s
 	return b.String(), nil
 }
 
-// materializeVaultPassword writes the run's Ansible Vault password file
-// and returns its path, or "" when the job's repository names no vault
-// credential — which is almost every run.
+// materializeVaultPassword writes one Ansible Vault password file per
+// identity the job carries, returning them in label order, or nil when
+// the job carries none — which is almost every run.
 //
-// The passphrase arrives like every other revealed secret, in the job's
-// own credentials map; VaultCredentialId is only the pointer saying
-// which of them it is. That keeps one channel for secrets and one
-// redaction list covering all of them.
+// Each passphrase arrives like every other revealed secret, in the job's
+// own credentials map; a VaultIdentity is only the pointer saying which
+// of them it is and what label Ansible must use to reach it. That keeps
+// one channel for secrets and one redaction list covering all of them.
 //
-// A pointer naming a credential the claim did not reveal fails the run.
-// Carrying on would hand Ansible an encrypted file and no key, and its
+// A pointer naming a credential the claim did not reveal fails the run,
+// naming the label and the credential id but never the password —
+// carrying on would hand Ansible an encrypted file and no key, and its
 // own "decryption failed" is exactly the confusing symptom this whole
 // path exists to remove.
-func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) (string, error) {
-	id := job.GetVaultCredentialId()
-	if id == "" {
-		return "", nil
+//
+// A label is unique per parent (repository or template), not per run:
+// internal/repos.ResolveVaultIdentities is supposed to have already
+// merged the repository's set with the template's, template winning any
+// collision, before the manager ever claims this job. Two identities
+// reaching the runner under the same label is therefore a bug upstream,
+// not something to paper over here — the second one would otherwise
+// silently overwrite the first's file on disk.
+func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) ([]vaultFile, error) {
+	identities := job.GetVaultIdentities()
+	if len(identities) == 0 {
+		return nil, nil
 	}
-	raw, ok := job.GetCredentials()[id]
-	if !ok {
-		return "", fmt.Errorf("vault credential %s named by the claim but not revealed in it", id)
+	vaultDir := filepath.Join(env.WorkDir, vaultDirName)
+	byLabel := make(map[string]string, len(identities)) // label -> credential id, duplicate check only
+	files := make([]vaultFile, 0, len(identities))
+	for _, vi := range identities {
+		label, id := vi.GetLabel(), vi.GetCredentialId()
+		if prev, dup := byLabel[label]; dup {
+			return nil, fmt.Errorf("vault identity label %q names both credential %s and %s: the claim must resolve this before naming it to the worker", label, prev, id)
+		}
+		byLabel[label] = id
+		raw, ok := job.GetCredentials()[id]
+		if !ok {
+			return nil, fmt.Errorf("vault credential %s (label %q) named by the claim but not revealed in it", id, label)
+		}
+		var secret credentials.Secret
+		if err := json.Unmarshal([]byte(raw), &secret); err != nil {
+			return nil, fmt.Errorf("vault credential %s (label %q): %w", id, label, err)
+		}
+		if secret.Password == "" {
+			return nil, fmt.Errorf("vault credential %s (label %q) carries no password", id, label)
+		}
+		path := filepath.Join(vaultDir, id)
+		// A trailing newline is what a hand-written password file has and
+		// what Ansible reads past; writing the bare string would be fine
+		// too, but this matches what an operator would produce by hand.
+		if err := writeSecretFile(path, secret.Password+"\n", 0o600); err != nil {
+			return nil, err
+		}
+		files = append(files, vaultFile{Label: label, Path: path})
 	}
-	var secret credentials.Secret
-	if err := json.Unmarshal([]byte(raw), &secret); err != nil {
-		return "", fmt.Errorf("vault credential %s: %w", id, err)
-	}
-	if secret.Password == "" {
-		return "", fmt.Errorf("vault credential %s carries no password", id)
-	}
-	path := filepath.Join(env.WorkDir, vaultPasswordName)
-	// A trailing newline is what a hand-written password file has and
-	// what Ansible reads past; writing the bare string would be fine too,
-	// but this matches what an operator would produce by hand.
-	if err := writeTextFile(path, secret.Password+"\n", 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
+	// Byte-stable output: without the sort, vault_identity_list's order
+	// would follow the claim's wire order, which the manager's own
+	// ResolveVaultIdentities already sorts — but the runner must not
+	// depend on that upstream guarantee to produce a stable ansible.cfg.
+	slices.SortFunc(files, func(a, b vaultFile) int { return strings.Compare(a.Label, b.Label) })
+	return files, nil
 }
