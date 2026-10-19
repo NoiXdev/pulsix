@@ -15,4 +15,12 @@ lint:
     - RPC_REQUEST_RESPONSE_UNIQUE
 breaking:
   use:
-    - FILE
+    # WIRE_JSON, not FILE: FILE's FIELD_NO_DELETE is unconditional and so
+    # forbids the only safe way to renumber a field (reserve, then never
+    # reuse), which task-3 (v0.2e) needed for vault_credential_id -> 21.
+    # Source breakage between this repo's own producer and consumer is the
+    # Go compiler's job and it does that more precisely anyway; what this
+    # proto actually needs guarded is wire compatibility between a manager
+    # and a worker deployed as separate images at different versions, which
+    # is exactly what WIRE_JSON's reserved-number-and-name rules check.
+    - WIRE_JSON
