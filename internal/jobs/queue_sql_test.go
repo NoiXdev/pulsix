@@ -534,7 +534,37 @@ func (a repoRefAdapter) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.
 		return jobs.RepoRef{}, err
 	}
 	return jobs.RepoRef{ID: r.ID, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath, CredentialID: r.CredentialID,
-		SSHHostKey: r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey}, nil
+		VaultIdentities: toJobsVault(r.VaultIdentities),
+		SSHHostKey:      r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey}, nil
+}
+
+// vaultResolverAdapter mirrors internal/app's unexported vaultResolver
+// (jobs.VaultResolver wired to repos.ResolveVaultIdentities): app's own
+// adapters are deliberately unexported, so an integration test that needs
+// the real repos.Service and the real merge algorithm rebuilds the same
+// thin wiring here, the same reason repoRefAdapter above is a local copy
+// rather than an app import.
+type vaultResolverAdapter struct{}
+
+func (vaultResolverAdapter) ResolveVaultIdentities(repo, template []jobs.VaultIdentity) []jobs.VaultIdentity {
+	resolved := repos.ResolveVaultIdentities(toRepoVault(repo), toRepoVault(template))
+	return toJobsVault(resolved)
+}
+
+func toJobsVault(in []repos.VaultIdentity) []jobs.VaultIdentity {
+	out := make([]jobs.VaultIdentity, len(in))
+	for i, id := range in {
+		out[i] = jobs.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
+}
+
+func toRepoVault(in []jobs.VaultIdentity) []repos.VaultIdentity {
+	out := make([]repos.VaultIdentity, len(in))
+	for i, id := range in {
+		out[i] = repos.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
 }
 
 // TestQueueFinishRecordsSyncResults pins the finish-path sync recording:
@@ -910,4 +940,139 @@ func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
 	if hostKey == nil || *hostKey != fp1 || hostPub == nil || *hostPub != pub1 {
 		t.Fatalf("a failed sync must not change the pin: %v / %v", hostKey, hostPub)
 	}
+}
+
+// TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel is the
+// write-time bridge's own regression test: a repository configured only
+// through the old single VaultCredentialID column — the only vault control
+// the product's web UI has today (RepoDialog.tsx has no VaultIdentities
+// editor) — must still decrypt on a real claim. Through the real
+// repos.Service, not a fake, so repos.Service.Create's bridge
+// (legacyVaultIdentities) is what is actually under test, on the
+// workerpb.Job the claim produces, not an intermediate. This is the
+// regression the coordinator found: before the bridge, this resolved to
+// zero vault identities, silently.
+func TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-legacy-vault-org")
+	box := crypto.NewBox(testBoxKey("jobs-legacy-vault-claim-key-0123"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+
+	scoped := db.WithOrgScope(ctx, org)
+	zone, err := hostsSvc.CreateZone(scoped, org, "z1", "Zone 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostCred, err := credsSvc.Create(scoped, org, credentials.CreateInput{
+		Name: "host-login", Kind: credentials.KindSSHKey, Username: "ansible",
+		Material: credentials.Material{Generate: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultCred, err := credsSvc.Create(scoped, org, credentials.CreateInput{
+		Name: "legacy-vault", Kind: credentials.KindVaultPassword,
+		Material: credentials.Material{Password: "legacy-vault-passphrase"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{
+		Name: "web1", Address: "10.0.0.1", ZoneID: zone.ID, Managed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sshSvc.SetHostSSH(scoped, org, host.ID, sshconf.HostSSHInput{
+		CredentialID: &hostCred.ID, Port: 22, BastionMode: sshconf.ModeInherit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	grp, err := invSvc.CreateGroup(scoped, org, inventory.GroupInput{Name: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invSvc.Assign(scoped, org, grp.ID, host.ID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	templateStore := templates.NewSQLStore(d)
+	playbooksStore := playbooks.NewSQLStore(d)
+	lookup := app.NewTemplateLookup(templateStore, playbooksStore, box)
+	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+
+	// The circular wiring app.Build uses: reposSvc needs the jobs service
+	// for its own Sync action, so it is built after jobsSvc and wired onto
+	// the queue afterward (SetRepoSource/SetVaultResolver).
+	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
+	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
+	queue.SetVaultResolver(vaultResolverAdapter{})
+	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
+	templatesSvc := templates.NewService(templateStore, playbooksSvc, invSvc, hostsSvc, credsSvc, box)
+
+	repo, err := reposSvc.Create(scoped, org, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/acme/infra.git",
+		// The legacy field alone — no VaultIdentities — is exactly what
+		// RepoDialog.tsx still sends today.
+		VaultCredentialID: &vaultCred.ID,
+	})
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	pb, err := playbooksSvc.CreateRepo(scoped, org, repo.ID, "site.yml")
+	if err != nil {
+		t.Fatalf("create repo playbook: %v", err)
+	}
+	tmpl, err := templatesSvc.Create(scoped, org, templates.CreateInput{
+		Name: "deploy", PlaybookID: pb.ID, Scope: templates.Scope{GroupID: &grp.ID},
+	})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+
+	created, err := svc.EnqueueRun(scoped, org, tmpl.ID, nil)
+	if err != nil {
+		t.Fatalf("EnqueueRun: %v", err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("enqueued = %+v, want one job", created)
+	}
+
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{zone.ID}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	identities := claim.Job.GetVaultIdentities()
+	if len(identities) != 1 || identities[0].GetCredentialId() != vaultCred.ID.String() || identities[0].GetLabel() != "default" {
+		t.Fatalf("vault_identities = %v, want one entry {credential_id: %q, label: \"default\"}", identities, vaultCred.ID)
+	}
+	raw, ok := claim.Job.GetCredentials()[vaultCred.ID.String()]
+	if !ok {
+		t.Fatalf("the claim names the legacy vault credential but did not reveal it; credentials has %v", keysOf(claim.Job.GetCredentials()))
+	}
+	var secret credentials.Secret
+	if err := json.Unmarshal([]byte(raw), &secret); err != nil {
+		t.Fatalf("decode revealed vault secret: %v", err)
+	}
+	if secret.Password != "legacy-vault-passphrase" {
+		t.Errorf("revealed vault secret = %+v, want the legacy passphrase", secret)
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
