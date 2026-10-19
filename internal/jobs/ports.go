@@ -191,8 +191,11 @@ type RepoRef struct {
 	// VaultCredentialID is the vault_password credential whose passphrase
 	// Ansible needs to read this repository's encrypted files, nil when
 	// it has none. The claim ships its secret under the credential's own
-	// uuid — unlike the git credential's `git:<repo-id>` key, so that the
-	// job's vault_credential_id field names what it says it names.
+	// uuid — unlike the git credential's `git:<repo-id>` key — and names
+	// it to the worker as the one-entry vault_identities list
+	// legacyVaultIdentity builds, under label "default"
+	// (queue_sql.go). internal/repos' labelled link tables added
+	// alongside this field are not read on this claim path yet.
 	VaultCredentialID *uuid.UUID
 	SSHHostKey        string
 	SSHHostPublicKey  string

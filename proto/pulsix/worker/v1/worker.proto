@@ -87,19 +87,29 @@ message Job {
   // into the run's known_hosts under the hop aliases; a bastion in
   // bastion_host_keys without an entry here fails the job closed.
   map<string, string> bastion_known_hosts = 19;
-  // vault_credential_id names the entry in `credentials` above holding
-  // the Ansible Vault passphrase for this job's repository, empty when
-  // the repository has none. The passphrase itself travels in that map
-  // like every other revealed secret and is redacted like every other;
-  // this field is only the pointer, so the worker knows which of them
-  // to write as a password file and name in the run's ansible.cfg.
-  //
-  // It is per REPOSITORY, not per template: the encrypted files live in
-  // the repository, so ten templates over one repository share one
-  // passphrase rather than repeating the assignment ten times. The known
-  // limit, recorded where it will be read: one repository, one vault
-  // password. Ansible's several-vault-ids case would need a list here.
-  string vault_credential_id = 20;
+  reserved 20;  // was string vault_credential_id, replaced by the repeated
+                // field below. Never reuse the number: a worker built
+                // against the old descriptor would read the new bytes as a
+                // malformed string rather than failing cleanly.
+  // vault_identities carries the run's resolved labelled Ansible Vault
+  // passwords: the union of its repository's set and its job template's,
+  // with the template winning a label collision
+  // (internal/repos.ResolveVaultIdentities). Empty means the repository
+  // has no vault at all. Each entry's credential_id names an entry in
+  // `credentials` above; the passphrase itself travels in that map like
+  // every other revealed secret and is redacted like every other. The
+  // worker writes one password file per entry and points the run's
+  // ansible.cfg at all of them by label (vault_identity_list), which is
+  // what lets one playbook mix files encrypted under different passwords.
+  repeated VaultIdentity vault_identities = 21;
+}
+
+// VaultIdentity is one labelled Ansible Vault password, already resolved
+// for this run — the manager hands the worker the answer, never the
+// merge rule that produced it.
+message VaultIdentity {
+  string credential_id = 1;  // uuid naming the entry in Job.credentials
+  string label = 2;          // Ansible vault id; must match the one used to encrypt
 }
 
 message RunEvent {

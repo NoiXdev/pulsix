@@ -53,11 +53,16 @@ func TestRunClaimCarriesTheRepositoryVaultCredential(t *testing.T) {
 		t.Fatalf("buildPayload: %v", err)
 	}
 
-	// The pointer names the credential's own uuid, so the field says what
-	// it is called — unlike the git credential, which the claim ships
-	// under "git:<repo-id>" for its own historical reasons.
-	if out.GetVaultCredentialId() != vaultCredID.String() {
-		t.Errorf("vault_credential_id = %q, want the credential's uuid %q", out.GetVaultCredentialId(), vaultCredID)
+	// The identity names the credential's own uuid, so the field says
+	// what it is called — unlike the git credential, which the claim
+	// ships under "git:<repo-id>" for its own historical reasons. This
+	// claim path still reads the repository's single legacy column
+	// (RepoRef.VaultCredentialID), not the labelled link tables, so it
+	// surfaces as the one-entry list under label "default" —
+	// migration 00059's own backfill label for a pre-existing password.
+	identities := out.GetVaultIdentities()
+	if len(identities) != 1 || identities[0].GetCredentialId() != vaultCredID.String() || identities[0].GetLabel() != "default" {
+		t.Errorf("vault_identities = %v, want one entry {credential_id: %q, label: \"default\"}", identities, vaultCredID)
 	}
 	raw, ok := out.GetCredentials()[vaultCredID.String()]
 	if !ok {
@@ -78,7 +83,7 @@ func TestRunClaimCarriesTheRepositoryVaultCredential(t *testing.T) {
 	}
 }
 
-func TestRunClaimWithoutARepositoryVaultLeavesThePointerEmpty(t *testing.T) {
+func TestRunClaimWithoutARepositoryVaultLeavesTheIdentityListEmpty(t *testing.T) {
 	org, hostID := uuid.New(), uuid.New()
 	templateID, repoID := uuid.New(), uuid.New()
 	credID, gitCredID := uuid.New(), uuid.New()
@@ -105,8 +110,8 @@ func TestRunClaimWithoutARepositoryVaultLeavesThePointerEmpty(t *testing.T) {
 	if err := q.buildPayload(context.Background(), job, &out); err != nil {
 		t.Fatalf("buildPayload: %v", err)
 	}
-	if out.GetVaultCredentialId() != "" {
-		t.Errorf("vault_credential_id = %q, want empty for a repository with no vault", out.GetVaultCredentialId())
+	if identities := out.GetVaultIdentities(); len(identities) != 0 {
+		t.Errorf("vault_identities = %v, want empty for a repository with no vault", identities)
 	}
 }
 
