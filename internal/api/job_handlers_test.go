@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -147,6 +148,11 @@ type jobDTO struct {
 		ZoneID string `json:"zone_id"`
 		Status string `json:"status"`
 	} `json:"group"`
+	VaultIdentities []struct {
+		Label        string `json:"label"`
+		CredentialID string `json:"credential_id"`
+		FromTemplate bool   `json:"from_template"`
+	} `json:"vault_identities"`
 }
 
 func runJob(t *testing.T, c *http.Client, url string) []jobDTO {
@@ -689,6 +695,78 @@ func TestJobDetailGroupListsSiblings(t *testing.T) {
 		if g.ID != other.ID || g.ZoneID != other.ZoneID || g.Status != "queued" {
 			t.Fatalf("sibling for %s = %+v, want %+v", me.ID, g, other)
 		}
+	}
+}
+
+// TestRunDetailShowsResolvedVaultIdentitiesAndTheirOrigin is spec decision
+// 3: the run detail lists the resolved vault identity set and whether each
+// came from the repository or the template — the condition under which
+// decision 2's silent collision resolution is acceptable at all. The
+// collision case is the one an operator actually stares at, so this pins
+// it directly: a repository-only label reads from_template: false, while
+// the label the template overrides reads true.
+func TestRunDetailShowsResolvedVaultIdentitiesAndTheirOrigin(t *testing.T) {
+	f := newRunFixture(t, "run-vault-detail-org")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+
+	repoProdCred := seedVaultCredentialForRepo(t, f.s, f.orgID, "repo-prod-vault")
+	repoInfraCred := seedVaultCredentialForRepo(t, f.s, f.orgID, "repo-infra-vault")
+	templateProdCred := seedVaultCredentialForRepo(t, f.s, f.orgID, "template-prod-vault")
+
+	repo, err := f.s.Deps.Repos.Create(scoped, f.orgID, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/acme/infra.git",
+		VaultIdentities: []repos.VaultIdentity{
+			{CredentialID: mustUUID(t, repoProdCred), Label: "prod"},
+			{CredentialID: mustUUID(t, repoInfraCred), Label: "infra"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := f.s.Deps.Playbooks.CreateRepo(scoped, f.orgID, repo.ID, "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := f.s.Deps.Templates.Create(scoped, f.orgID, templates.CreateInput{
+		Name: "deploy-infra", PlaybookID: pb.ID, Scope: templates.Scope{HostIDs: []uuid.UUID{f.hostA}},
+		// "prod" collides with the repository's own: decision 2 says the
+		// template wins. "infra" is untouched, so it must still read as
+		// the repository's.
+		VaultCredentials: []templates.VaultCredential{{CredentialID: mustUUID(t, templateProdCred), Label: "prod"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobID := runJob(t, f.operatorC, f.runURLFor(tmpl.ID))[0].ID
+
+	resp := requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+jobID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Job jobDTO `json:"job"`
+	}
+	decodeInto(t, resp, &out)
+
+	if len(out.Job.VaultIdentities) != 2 {
+		t.Fatalf("vault_identities = %+v, want 2 (infra, prod)", out.Job.VaultIdentities)
+	}
+	byLabel := map[string]struct {
+		credentialID string
+		fromTemplate bool
+	}{}
+	for _, id := range out.Job.VaultIdentities {
+		byLabel[id.Label] = struct {
+			credentialID string
+			fromTemplate bool
+		}{id.CredentialID, id.FromTemplate}
+	}
+	if got := byLabel["infra"]; got.credentialID != repoInfraCred || got.fromTemplate {
+		t.Errorf("label infra = %+v, want {%s, from_template: false} (untouched, stays the repository's)", got, repoInfraCred)
+	}
+	if got := byLabel["prod"]; got.credentialID != templateProdCred || !got.fromTemplate {
+		t.Errorf("label prod = %+v, want {%s, from_template: true} (the template's own wins the collision)", got, templateProdCred)
 	}
 }
 

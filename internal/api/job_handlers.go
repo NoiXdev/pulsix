@@ -29,6 +29,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -105,6 +108,23 @@ type jobDetailDTO struct {
 	// Group lists the sibling jobs of the same run group (id/zone/status),
 	// so the UI can show a grouped run.
 	Group []jobGroupMemberDTO `json:"group"`
+	// VaultIdentities is the run's resolved vault identity set (spec
+	// decision 3): the price of decision 1, where a repository and its
+	// template may each configure vault passwords — two places to search
+	// when a play cannot decrypt, since Ansible's own failure never says
+	// which label was missing. Empty for a run whose playbook has no
+	// repository, or none configured on either side.
+	VaultIdentities []jobVaultIdentityDTO `json:"vault_identities"`
+}
+
+// jobVaultIdentityDTO is one vault id the run detail shows, and whether it
+// came from the template or the repository — spec decision 3's own reason
+// for existing: a label collision resolved silently (decision 2) becomes
+// visible here.
+type jobVaultIdentityDTO struct {
+	Label        string `json:"label"`
+	CredentialID string `json:"credential_id"`
+	FromTemplate bool   `json:"from_template"`
 }
 
 func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
@@ -141,6 +161,61 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		out.Group = append(out.Group, jobGroupMemberDTO{ID: g.ID.String(), ZoneID: g.ZoneID.String(), Status: string(g.Status)})
 	}
 	return out
+}
+
+// runVaultIdentities resolves the vault identity set a run's playbook was
+// or will be given to decrypt its repository's files (spec decision 3):
+// the repository's own labelled set unioned with its template's, the
+// template's winning a label collision (decision 2) — the same resolution
+// internal/jobs' claim path performs, recomputed here because the job row
+// itself carries none of it and no migration in this sub-project adds a
+// place to store it. Composed from three services rather than one,
+// because the answer spans the repository, the playbook and the template —
+// none of which jobs.Job holds a cross-reference deep enough to answer
+// alone, and jobs.Service itself cannot reach repos.Service (the reverse
+// import exists for EnqueueSync, see jobs.VaultIdentity's own comment).
+//
+// A deleted template, playbook or repository degrades to no identities
+// rather than failing the whole detail view — the same posture the
+// dangling template_id above already takes ("(deleted)", not a 404).
+func runVaultIdentities(ctx context.Context, deps Deps, orgID uuid.UUID, j jobs.Job) ([]jobVaultIdentityDTO, error) {
+	if j.Kind != jobs.KindRun || j.TemplateID == nil {
+		return nil, nil
+	}
+	tmpl, err := deps.Templates.Get(ctx, orgID, *j.TemplateID)
+	if errors.Is(err, templates.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	pb, err := deps.Playbooks.Get(ctx, orgID, tmpl.PlaybookID)
+	if errors.Is(err, playbooks.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pb.RepoID == nil {
+		return nil, nil // an inline playbook has no repository to decrypt
+	}
+	repo, err := deps.Repos.Get(ctx, orgID, *pb.RepoID)
+	if errors.Is(err, repos.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	templateVault := make([]repos.VaultIdentity, len(tmpl.VaultCredentials))
+	for i, vc := range tmpl.VaultCredentials {
+		templateVault[i] = vc.ToVaultIdentity()
+	}
+	resolved := repos.ResolveVaultIdentities(repo.VaultIdentities, templateVault)
+	out := make([]jobVaultIdentityDTO, len(resolved))
+	for i, id := range resolved {
+		out[i] = jobVaultIdentityDTO{Label: id.Label, CredentialID: id.CredentialID.String(), FromTemplate: id.FromTemplate}
+	}
+	return out, nil
 }
 
 type jobListInput struct {
@@ -355,8 +430,14 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}
+		vaultIdentities, err := runVaultIdentities(ctx, deps, scope.OrgID, j)
+		if err != nil {
+			slog.ErrorContext(ctx, "resolve run vault identities", "job_id", j.ID, "err", err)
+			return nil, huma.Error500InternalServerError("internal error")
+		}
 		out := &jobDetailOutput{}
 		out.Body.Job = toJobDetailDTO(j, group)
+		out.Body.Job.VaultIdentities = vaultIdentities
 		return out, nil
 	})
 

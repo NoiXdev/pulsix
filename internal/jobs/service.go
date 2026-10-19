@@ -390,6 +390,14 @@ type TemplateRow struct {
 	ExtraVars       json.RawMessage
 	ExtraVarsSchema json.RawMessage
 	CredentialID    *uuid.UUID
+	// VaultIdentities is the template's own labelled vault password set
+	// (spec decision 1, migration 00059's job_template_vault_credentials —
+	// internal/templates' ListVaultCredentials), added to the repository's
+	// own set and resolved against it at claim time (VaultResolver, spec
+	// decision 2): the template's label wins a collision. Empty for a
+	// template whose playbook is not a repo playbook — nothing reads it in
+	// that case, there is no repository to decrypt.
+	VaultIdentities []VaultIdentity
 }
 
 // TemplateSource looks one template up, ErrNotFound when it does not exist

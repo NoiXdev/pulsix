@@ -175,6 +175,31 @@ type RepoSource interface {
 	Get(ctx context.Context, orgID, repoID uuid.UUID) (RepoRef, error)
 }
 
+// VaultIdentity is one labelled vault password a resolved run carries: the
+// claim path's own copy of repos.VaultIdentity's shape, not an import of
+// it — this package cannot import internal/repos, because repos.Service
+// already depends on jobs.Service for EnqueueSync (repos/service.go's
+// JobEnqueuer), so the reverse edge would cycle. VaultResolver below is
+// how the claim path still reaches the canonical merge algorithm without
+// that import.
+type VaultIdentity struct {
+	CredentialID uuid.UUID
+	Label        string
+	FromTemplate bool
+}
+
+// VaultResolver merges a repo playbook's repository-level vault identities
+// with its job template's into the set a run actually receives (spec
+// decision 2: the union, the template winning a label collision). The
+// real algorithm is repos.ResolveVaultIdentities, which already sorts the
+// result by label and sets FromTemplate — this port exists only so the
+// claim path can reach it without the import VaultIdentity's own comment
+// rules out. Declared next to its consumer so unit tests drive a fake;
+// internal/app wires the real function.
+type VaultResolver interface {
+	ResolveVaultIdentities(repo, template []VaultIdentity) []VaultIdentity
+}
+
 // RepoRef is the repository one repo playbook's claim carries to the
 // worker: the fetch needs url, branch and the playbook's file path (the
 // repo's own subpath joined with the playbook's path), and the git
@@ -188,15 +213,17 @@ type RepoRef struct {
 	Branch       string
 	Subpath      string
 	CredentialID *uuid.UUID
-	// VaultCredentialID is the vault_password credential whose passphrase
-	// Ansible needs to read this repository's encrypted files, nil when
-	// it has none. The claim ships its secret under the credential's own
-	// uuid — unlike the git credential's `git:<repo-id>` key — and names
-	// it to the worker as the one-entry vault_identities list
-	// legacyVaultIdentity builds, under label "default"
-	// (queue_sql.go). internal/repos' labelled link tables added
-	// alongside this field are not read on this claim path yet.
-	VaultCredentialID *uuid.UUID
-	SSHHostKey        string
-	SSHHostPublicKey  string
+	// VaultIdentities is the repository's own labelled vault password set
+	// (spec decision 1, migration 00059's link table — internal/repos'
+	// ListRepoVaultIdentities, read through repos.Service.Get). The claim
+	// resolves it against the playbook's template (VaultResolver, spec
+	// decision 2) and ships each resulting secret under its credential's
+	// own uuid, unlike the git credential's `git:<repo-id>` key. A
+	// migrated repository's lone pre-v0.2e password surfaces here as the
+	// one-entry set labelled "default" — migration 00059's own backfill
+	// label, so this claim path and a migrated repository's link row agree
+	// on what an unlabelled vault credential is called.
+	VaultIdentities  []VaultIdentity
+	SSHHostKey       string
+	SSHHostPublicKey string
 }

@@ -95,13 +95,53 @@ func (a repoRefSource) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.R
 		return jobs.RepoRef{}, err
 	}
 	return jobs.RepoRef{
-		ID:           r.ID,
-		URL:          r.URL,
-		Branch:       r.Branch,
-		Subpath:      r.Subpath,
-		CredentialID: r.CredentialID,
-		SSHHostKey:   r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey,
+		ID:              r.ID,
+		URL:             r.URL,
+		Branch:          r.Branch,
+		Subpath:         r.Subpath,
+		CredentialID:    r.CredentialID,
+		VaultIdentities: toJobsVaultIdentities(r.VaultIdentities),
+		SSHHostKey:      r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey,
 	}, nil
+}
+
+// toJobsVaultIdentities converts repos.VaultIdentity rows into the claim
+// path's own copy of the shape (jobs.VaultIdentity) — jobs cannot import
+// internal/repos (see jobs.VaultIdentity's own comment), so this wiring
+// layer does the conversion both repoRefSource.Get and vaultResolver below
+// need.
+func toJobsVaultIdentities(in []repos.VaultIdentity) []jobs.VaultIdentity {
+	out := make([]jobs.VaultIdentity, len(in))
+	for i, id := range in {
+		out[i] = jobs.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
+}
+
+// vaultResolver adapts repos.ResolveVaultIdentities to the jobs queue's
+// VaultResolver port (see that type's own comment for why the claim path
+// cannot call the function directly). The merge itself is pure, so the
+// adapter holds no state; it only converts both directions.
+type vaultResolver struct{}
+
+// ResolveVaultIdentities implements jobs.VaultResolver.
+func (vaultResolver) ResolveVaultIdentities(repo, template []jobs.VaultIdentity) []jobs.VaultIdentity {
+	resolved := repos.ResolveVaultIdentities(toRepoVaultIdentities(repo), toRepoVaultIdentities(template))
+	out := make([]jobs.VaultIdentity, len(resolved))
+	for i, id := range resolved {
+		out[i] = jobs.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
+}
+
+// toRepoVaultIdentities is toJobsVaultIdentities' inverse, needed because
+// repos.ResolveVaultIdentities' own signature is in terms of its own type.
+func toRepoVaultIdentities(in []jobs.VaultIdentity) []repos.VaultIdentity {
+	out := make([]repos.VaultIdentity, len(in))
+	for i, id := range in {
+		out[i] = repos.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
 }
 
 // systemAuditor adapts audit.Recorder to grpcsrv.SystemAuditor: the gRPC

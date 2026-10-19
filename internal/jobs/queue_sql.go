@@ -61,6 +61,13 @@ type SQLQueue struct {
 	// repos.Service, which itself is built with the jobs service this
 	// queue belongs to.
 	repos RepoSource
+	// vaultResolver merges a repo playbook's repository and template vault
+	// identities (SetVaultResolver): repos.ResolveVaultIdentities, reached
+	// through the port because this package cannot import internal/repos
+	// (see VaultResolver's own comment). Nil fails a repo playbook's claim
+	// closed only once it actually names a vault identity on either side —
+	// see repoKindPayload.
+	vaultResolver VaultResolver
 	// pins is the optional source of host-key fingerprints (the hosts
 	// service). Nil until SetKeyPins: a connection_test claim without it
 	// fails closed — the probe could not run trust on first use against
@@ -134,6 +141,12 @@ func (q *SQLQueue) SetEventBroker(b *Broker) { q.broker = b }
 // claim fail closed — a wiring bug, never silently shipped without the
 // repo the run must fetch.
 func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
+
+// SetVaultResolver injects the merge a repo playbook's claim needs to turn
+// its repository's and template's own vault identities into the set the
+// run actually receives (see the vaultResolver field for why the claim
+// path cannot compute this itself).
+func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
 
 // SetKeyPins injects the host-key fingerprint source the claim needs. A
 // nil source makes every connection_test claim fail closed (see the pins
@@ -353,10 +366,17 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	}
 	scope := render.Scope{HostIDs: hostIDs}
 	playbook, limit, sshUser := "", "", ""
-	// vaultCredentialID is the uuid of the repository's vault_password
-	// credential, empty for every claim whose playbook is inline or whose
-	// repository has none — which is almost all of them.
-	vaultCredentialID := ""
+	// vaultIdentities is the run's resolved vault identity set (spec
+	// decision 2), nil for every claim whose playbook is inline or whose
+	// repository and template name no vault credential — which is almost
+	// all of them.
+	var vaultIdentities []*workerpb.VaultIdentity
+	// templateVault is the template's own vault identities, captured here
+	// because tmpl itself goes out of scope at the end of this block but
+	// the repo-kind payload below — built after this block, once the
+	// playbook ref names a repository — needs it to resolve against the
+	// repository's own set.
+	var templateVault []VaultIdentity
 	var extraVars map[string]string
 	var defaultCred *uuid.UUID
 	var redact redactSet
@@ -369,6 +389,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 			return fmt.Errorf("look up template: %w", err)
 		}
 		playbook = playbookRef(tmpl)
+		templateVault = tmpl.VaultIdentities
 		// The template's limit stays an ansible host pattern applied on top
 		// of the job's rendered hosts: it can only narrow a job, never widen
 		// it past job.HostIDs (the inventory holds nothing else). A run
@@ -524,7 +545,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		// the repo's git credential as `git:<repo-id>`: the worker clones
 		// itself, and it needs url, branch and the playbook's file path.
 		var err error
-		if kindPayload, vaultCredentialID, err = q.repoKindPayload(ctx, job, repoID, sub, credentials); err != nil {
+		if kindPayload, vaultIdentities, err = q.repoKindPayload(ctx, job, repoID, sub, credentials, templateVault); err != nil {
 			return err
 		}
 	}
@@ -551,27 +572,10 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		BastionHostKeys:   pins.bastionFPs,
 		BastionKnownHosts: pins.bastionPubs,
 		KindPayload:       kindPayload,
-		VaultIdentities:   legacyVaultIdentity(vaultCredentialID),
+		VaultIdentities:   vaultIdentities,
 		Redact:            redact.list,
 	}
 	return nil
-}
-
-// legacyVaultIdentity wraps the repository's single vault_credential_id
-// (the RepoRef field this claim path still reads; internal/repos' labelled
-// link tables and ResolveVaultIdentities, added alongside it, are not
-// wired into the claim yet — no task in
-// docs/superpowers/plans/2026-10-19-v0.2e-multiple-vault-passwords.md
-// currently does that) as the one-entry list workerpb.Job.vault_identities
-// now expects, under label "default" — the same label migration 00059's
-// backfill gives every pre-existing repository's lone password, so this
-// claim path and a migrated repository's link row agree on what an
-// unlabelled vault credential is called.
-func legacyVaultIdentity(credentialID string) []*workerpb.VaultIdentity {
-	if credentialID == "" {
-		return nil
-	}
-	return []*workerpb.VaultIdentity{{CredentialId: credentialID, Label: "default"}}
 }
 
 // excludeChangedAtClaim re-applies the enqueue's block-on-mismatch (spec §5)
@@ -992,17 +996,20 @@ func parsePlaybookRef(ref string) (uuid.UUID, string, bool) {
 }
 
 // repoKindPayload resolves a repo playbook's repository into the claim's
-// kind payload and opens the repo's git credential into the credentials
-// map as `git:<repo-id>`. A missing repo source is a wiring bug and fails
-// closed; an unknown repository is a dangling playbook reference (the
-// playbooks table's foreign key keeps the window narrow).
-func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUID, path string, credentials map[string]string) (string, string, error) {
+// kind payload, opens the repo's git credential into the credentials map
+// as `git:<repo-id>`, and resolves the run's vault identities: the
+// repository's own labelled set unioned with templateVault, the template's
+// own (spec decision 2 — the template wins a label collision). A missing
+// repo source is a wiring bug and fails closed; an unknown repository is a
+// dangling playbook reference (the playbooks table's foreign key keeps the
+// window narrow).
+func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUID, path string, credentials map[string]string, templateVault []VaultIdentity) (string, []*workerpb.VaultIdentity, error) {
 	if q.repos == nil {
-		return "", "", fmt.Errorf("repo playbook %s: no repo source wired", repoID)
+		return "", nil, fmt.Errorf("repo playbook %s: no repo source wired", repoID)
 	}
 	repo, err := q.repos.Get(ctx, job.OrgID, repoID)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve repo %s: %w", repoID, err)
+		return "", nil, fmt.Errorf("resolve repo %s: %w", repoID, err)
 	}
 	sub := repo.Subpath
 	if sub == "" {
@@ -1013,31 +1020,17 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	if repo.CredentialID != nil {
 		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *repo.CredentialID)
 		if err != nil {
-			return "", "", fmt.Errorf("open repo credential %s: %w", *repo.CredentialID, err)
+			return "", nil, fmt.Errorf("open repo credential %s: %w", *repo.CredentialID, err)
 		}
 		b, err := json.Marshal(secret)
 		if err != nil {
-			return "", "", fmt.Errorf("encode repo credential %s: %w", *repo.CredentialID, err)
+			return "", nil, fmt.Errorf("encode repo credential %s: %w", *repo.CredentialID, err)
 		}
 		credentials["git:"+repoID.String()] = string(b)
 	}
-	// The vault passphrase rides the same map as every other revealed
-	// secret, under the credential's own uuid so legacyVaultIdentity's
-	// entry names it directly. Opening it here, beside the git
-	// credential, is also what puts it through the same redaction: the
-	// caller adds every credentials entry to the redact list.
-	vaultID := ""
-	if repo.VaultCredentialID != nil {
-		secret, err := q.creds.OpenSecret(ctx, job.OrgID, *repo.VaultCredentialID)
-		if err != nil {
-			return "", "", fmt.Errorf("open repo vault credential %s: %w", *repo.VaultCredentialID, err)
-		}
-		b, err := json.Marshal(secret)
-		if err != nil {
-			return "", "", fmt.Errorf("encode repo vault credential %s: %w", *repo.VaultCredentialID, err)
-		}
-		vaultID = repo.VaultCredentialID.String()
-		credentials[vaultID] = string(b)
+	identities, err := q.resolveVaultIdentities(ctx, job, repoID, repo.VaultIdentities, templateVault, credentials)
+	if err != nil {
+		return "", nil, err
 	}
 	payload := map[string]any{"repo": map[string]any{
 		"id": repoID.String(), "url": repo.URL, "branch": repo.Branch, "subpath": sub,
@@ -1051,9 +1044,50 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return "", "", fmt.Errorf("encode repo kind payload: %w", err)
+		return "", nil, fmt.Errorf("encode repo kind payload: %w", err)
 	}
-	return string(b), vaultID, nil
+	return string(b), identities, nil
+}
+
+// resolveVaultIdentities merges repo and templateVault (spec decision 2)
+// and reveals each resulting identity's secret into credentials, the same
+// map every other revealed secret rides so the caller's blanket "add every
+// entry to the redact list" covers it too (queue_sql.go's buildPayload).
+// Nothing to resolve when both sides are empty — the common case — so the
+// resolver stays optional until a run actually needs it, the same posture
+// SetKeyPins takes for connection_test claims. Two identities may name the
+// same credential under different labels; its secret is opened once and
+// shared, matching the one entry buildPayload's credential-id-keyed map
+// can hold. A credential the resolution names but that cannot be opened
+// fails the claim with the label and the credential id, never the
+// password.
+func (q *SQLQueue) resolveVaultIdentities(ctx context.Context, job Job, repoID uuid.UUID, repoVault, templateVault []VaultIdentity, credentials map[string]string) ([]*workerpb.VaultIdentity, error) {
+	if len(repoVault) == 0 && len(templateVault) == 0 {
+		return nil, nil
+	}
+	if q.vaultResolver == nil {
+		return nil, fmt.Errorf("repo playbook %s: no vault resolver wired", repoID)
+	}
+	resolved := q.vaultResolver.ResolveVaultIdentities(repoVault, templateVault)
+	identities := make([]*workerpb.VaultIdentity, len(resolved))
+	opened := make(map[uuid.UUID]bool, len(resolved))
+	for i, id := range resolved {
+		identities[i] = &workerpb.VaultIdentity{CredentialId: id.CredentialID.String(), Label: id.Label}
+		if opened[id.CredentialID] {
+			continue
+		}
+		secret, err := q.creds.OpenSecret(ctx, job.OrgID, id.CredentialID)
+		if err != nil {
+			return nil, fmt.Errorf("open vault credential for label %q (%s): %w", id.Label, id.CredentialID, err)
+		}
+		b, err := json.Marshal(secret)
+		if err != nil {
+			return nil, fmt.Errorf("encode vault credential for label %q (%s): %w", id.Label, id.CredentialID, err)
+		}
+		credentials[id.CredentialID.String()] = string(b)
+		opened[id.CredentialID] = true
+	}
+	return identities, nil
 }
 
 // claimConnection is the connection JSON one claim ships for a host: the

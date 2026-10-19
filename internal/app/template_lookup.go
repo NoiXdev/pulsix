@@ -72,11 +72,26 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 		}
 		schemaRaw = b
 	}
+	// The template's own vault identities (spec decision 1), read from the
+	// store directly like the rest of this adapter — not templates.Service,
+	// which this type deliberately bypasses (see its own doc comment) — so
+	// the claim can resolve them against the repository's (VaultResolver,
+	// spec decision 2).
+	vaultCreds, err := a.templates.ListVaultCredentials(ctx, orgID, id)
+	if err != nil {
+		return jobs.TemplateRow{}, fmt.Errorf("list template vault credentials: %w", err)
+	}
+	vaultIdentities := make([]jobs.VaultIdentity, len(vaultCreds))
+	for i, vc := range vaultCreds {
+		v := vc.ToVaultIdentity()
+		vaultIdentities[i] = jobs.VaultIdentity{CredentialID: v.CredentialID, Label: v.Label, FromTemplate: v.FromTemplate}
+	}
 	return jobs.TemplateRow{
 		ID: t.ID, OrgID: t.OrgID, PlaybookID: t.PlaybookID,
 		PlaybookRepo: p.RepoID, PlaybookPath: playbookText(p.Path), PlaybookInline: playbookText(p.Inline),
 		Scope: scope, Limit: t.Limit,
 		ExtraVars: vars, ExtraVarsSchema: schemaRaw, CredentialID: t.CredentialID,
+		VaultIdentities: vaultIdentities,
 	}, nil
 }
 
