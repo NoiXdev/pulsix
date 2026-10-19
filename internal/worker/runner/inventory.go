@@ -11,6 +11,7 @@ import (
 	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/vaultlabel"
 	"github.com/noixdev/pulsix/internal/worker"
 )
 
@@ -540,19 +541,13 @@ func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) 
 }
 
 // invalidVaultLabel reports why label cannot be written into ansible.cfg's
-// vault_identity_list, or "" when it is fine. Empty, leading/trailing
-// whitespace, and the three characters that change what the INI line
-// means: '\n' and '\r' start a new line (a new key entirely), ',' ends an
-// entry early, and '@' ends a label early within one entry.
+// vault_identity_list, or "" when it is fine. The rule itself lives in
+// internal/vaultlabel, shared with internal/repos's write-time gate, so this
+// last-chance check before rendering the config can never disagree with the
+// one the API already applied — a disagreement would only surface as a run
+// failing after a form already accepted the value. This gate has no length
+// bound: internal/repos.MaxVaultLabelLength exists only to describe that
+// service's OpenAPI contract, not because a long label is unsafe to render.
 func invalidVaultLabel(label string) string {
-	switch {
-	case label == "":
-		return "label is empty"
-	case strings.TrimSpace(label) != label:
-		return "label has leading or trailing whitespace"
-	case strings.ContainsAny(label, "\n\r,@"):
-		return "label contains a newline, carriage return, comma or '@', any of which ansible.cfg would read as more than one label"
-	default:
-		return ""
-	}
+	return vaultlabel.Invalid(label)
 }

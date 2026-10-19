@@ -585,6 +585,12 @@ func TestVaultIdentityLabelValidation(t *testing.T) {
 		{"comma", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod,staging"}}, "comma"},
 		{"at sign", []repos.VaultIdentity{{CredentialID: vault.ID, Label: "prod@file"}}, "'@'"},
 		{"overlong", []repos.VaultIdentity{{CredentialID: vault.ID, Label: strings.Repeat("a", repos.MaxVaultLabelLength+1)}}, "exceeds"},
+		// The bound is runes, not bytes, matching huma's own maxLength check
+		// (utf8.RuneCountInString): a 100-rune label of umlauts is over 100
+		// bytes but must still be accepted, or the server would refuse what
+		// the published maxLength: 100 promised was fine.
+		{"100 runes with umlauts", []repos.VaultIdentity{{CredentialID: vault.ID, Label: strings.Repeat("ä", 100)}}, ""},
+		{"101 runes with umlauts", []repos.VaultIdentity{{CredentialID: vault.ID, Label: strings.Repeat("ä", 101)}}, "exceeds"},
 		{"duplicate label", []repos.VaultIdentity{
 			{CredentialID: vault.ID, Label: "prod"},
 			{CredentialID: vault.ID, Label: "prod"},

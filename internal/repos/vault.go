@@ -11,9 +11,11 @@ package repos
 import (
 	"fmt"
 	"sort"
-	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/vaultlabel"
 )
 
 // VaultIdentity is one labelled vault password, resolved for a run.
@@ -60,37 +62,33 @@ func ResolveVaultIdentities(repo, template []VaultIdentity) []VaultIdentity {
 
 // MaxVaultLabelLength bounds a vault identity label on the write path. The
 // label column itself is unbounded text (migration 00059) and
-// internal/worker/runner's invalidVaultLabel does not bound length either —
-// this exists only so the generated OpenAPI document names a limit a client
-// can rely on (backlog 4.40's lesson: a server-enforced bound left
-// undescribed in the schema is itself a bug). It is stricter than the
-// runner's own gate, which stays safe only because nothing that passes
-// through this gate can ever be long enough to reach the runner and
-// disagree with it: this is the only path that writes a label.
+// internal/worker/runner does not bound length either — this exists only so
+// the generated OpenAPI document names a limit a client can rely on
+// (backlog 4.40's lesson: a server-enforced bound left undescribed in the
+// schema is itself a bug). A length bound is an API-contract concern, not a
+// safety one — nothing about ansible.cfg cares how long a label is — so it
+// stays here rather than moving into internal/vaultlabel's shared rule; the
+// runner's own gate has no equivalent and does not need one.
 const MaxVaultLabelLength = 100
 
 // InvalidVaultLabel reports why label cannot be written into ansible.cfg's
-// vault_identity_list, or "" when it is fine. This mirrors
-// internal/worker/runner's own invalidVaultLabel character-for-character
-// (spec decision 4, amended during implementation): empty, leading or
-// trailing whitespace, or a newline, carriage return, comma or '@' are all
-// rejected here exactly as they are there, so the write-time gate (this one)
-// and the runner's last-chance gate before it renders the config never
-// disagree about what ansible.cfg can safely contain — a disagreement would
-// only surface as a run failing after a form already accepted the value.
-// TrimSpace (and so this function) treats whitespace as unicode.IsSpace
-// does, not only the ASCII space, matching the runner's own rule.
+// vault_identity_list, or "" when it is fine. The character rule is
+// internal/vaultlabel's, shared with internal/worker/runner's own gate, so
+// the write-time check here and the runner's last-chance check before it
+// renders the config can never disagree about what ansible.cfg can safely
+// contain — a disagreement would only surface as a run failing after a form
+// already accepted the value. The length bound is checked here only (see
+// MaxVaultLabelLength) and in runes, not bytes: huma validates its sibling
+// maxLength:"100" tag with utf8.RuneCountInString (confirmed in
+// huma/v2@v2.39.1/validate.go), and a byte count would reject a sub-100-rune
+// label — any multi-byte character, such as a German umlaut, makes one —
+// that huma's own schema check had already accepted.
 func InvalidVaultLabel(label string) string {
-	switch {
-	case label == "":
-		return "label is empty"
-	case strings.TrimSpace(label) != label:
-		return "label has leading or trailing whitespace"
-	case strings.ContainsAny(label, "\n\r,@"):
-		return "label contains a newline, carriage return, comma or '@', any of which ansible.cfg would read as more than one label"
-	case len(label) > MaxVaultLabelLength:
-		return fmt.Sprintf("label exceeds %d characters", MaxVaultLabelLength)
-	default:
-		return ""
+	if reason := vaultlabel.Invalid(label); reason != "" {
+		return reason
 	}
+	if utf8.RuneCountInString(label) > MaxVaultLabelLength {
+		return fmt.Sprintf("label exceeds %d characters", MaxVaultLabelLength)
+	}
+	return ""
 }

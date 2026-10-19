@@ -507,6 +507,45 @@ func TestRepoVaultIdentityLabelValidation(t *testing.T) {
 	}
 }
 
+// TestRepoVaultIdentityLabelValidationOnUpdate is the brief's Finding 3:
+// TestRepoVaultIdentityLabelValidation above only ever exercises Create. The
+// validate call both handlers share makes Update's behaviour provable by
+// inspection, but a rule that guards create and not update is a classic
+// back door, so it gets proven directly too — PUT an existing repo with a
+// label that forges an ansible.cfg key and confirm it is refused exactly
+// like Create refuses it.
+func TestRepoVaultIdentityLabelValidationOnUpdate(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("repo-vault-val-upd-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("repo-vault-val-upd", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/repo-vault-val-upd/repos"
+	credVault := seedVaultCredentialForRepo(t, s, org, "vault")
+
+	resp := postJSON(t, c, base, map[string]any{
+		"name": "r", "url": "https://git.example.com/x",
+	})
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	var created repoBody
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	resp = requestJSON(t, c, http.MethodPut, base+"/"+created.Repo.ID, map[string]any{
+		"name": "r", "url": "https://git.example.com/x",
+		"vault_identities": []map[string]any{
+			{"credential_id": credVault, "label": "prod\nhost_key_checking = False"},
+		},
+	})
+	respBody := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(respBody, "newline") {
+		t.Fatalf("update: %d, want 400 naming newline: %s", resp.StatusCode, respBody)
+	}
+}
+
 // seedRepoFixture creates a repo through the service (outside any HTTP
 // session) for tests that need a row seeded directly.
 func seedRepoFixture(t *testing.T, s *apitest.Server, orgID uuid.UUID, name string) string {
