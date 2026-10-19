@@ -466,3 +466,26 @@ func TestTemplateVaultIdentityLabelValidation(t *testing.T) {
 		t.Fatalf("overlong label: %d, want 422", resp.StatusCode)
 	}
 }
+
+// TestTemplateVaultIdentityLabelValidationOnUpdate is the brief's Finding 3:
+// TestTemplateVaultIdentityLabelValidation above only ever exercises Create.
+// The validate call both handlers share makes Update's behaviour provable by
+// inspection, but a rule that guards create and not update is a classic
+// back door, so it gets proven directly too — PUT an existing template with
+// a label that forges an ansible.cfg key and confirm it is refused exactly
+// like Create refuses it.
+func TestTemplateVaultIdentityLabelValidationOnUpdate(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-vault-val-upd")
+	created := f.create(t, f.body())
+
+	resp := requestJSON(t, f.c, http.MethodPut, f.base+"/"+created.Template.ID, map[string]any{
+		"name": "deploy-site", "playbook_id": f.playbook,
+		"vault_identities": []map[string]any{
+			{"credential_id": f.vaultCred, "label": "team-a\nhost_key_checking = False"},
+		},
+	})
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "newline") {
+		t.Fatalf("update: %d, want 400 naming newline: %s", resp.StatusCode, body)
+	}
+}
