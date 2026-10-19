@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,7 +32,8 @@ type templateDTOBody struct {
 		ExtraVarsSchema *struct {
 			Fields []map[string]any `json:"fields"`
 		} `json:"extra_vars_schema"`
-		CredentialID string `json:"credential_id"`
+		CredentialID    string              `json:"credential_id"`
+		VaultIdentities []vaultIdentityBody `json:"vault_identities"`
 	} `json:"template"`
 }
 
@@ -46,6 +48,7 @@ type templateFixture struct {
 	playbook  string
 	sshCred   string
 	gitCred   string
+	vaultCred string
 	group     string
 	managed   string
 	unmanaged string
@@ -77,6 +80,13 @@ func newTemplateFixture(t *testing.T, slug string) templateFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	vaultCred, err := sshSvc.Create(scoped, orgID, credentials.CreateInput{
+		Name: "vault", Kind: credentials.KindVaultPassword,
+		Material: credentials.Material{Password: "the-vault-passphrase"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	zones, err := s.Deps.Hosts.ListZones(scoped, orgID)
 	if err != nil || len(zones) == 0 {
 		t.Fatalf("zones: %v", err)
@@ -100,7 +110,7 @@ func newTemplateFixture(t *testing.T, slug string) templateFixture {
 	return templateFixture{
 		s: s, c: s.LoginAs(owner), orgID: orgID,
 		base:     s.HTTP.URL + "/api/v1/orgs/" + slug + "/job-templates",
-		playbook: pb.ID.String(), sshCred: sshCred.ID.String(), gitCred: gitCred.ID.String(),
+		playbook: pb.ID.String(), sshCred: sshCred.ID.String(), gitCred: gitCred.ID.String(), vaultCred: vaultCred.ID.String(),
 		group: grp.ID.String(), managed: managed.ID.String(), unmanaged: unmanaged.ID.String(),
 	}
 }
@@ -352,5 +362,107 @@ func TestTemplatePermissionsAndCrossOrgIsolation(t *testing.T) {
 	// like one that does not exist.
 	if resp := requestJSON(t, stranger.c, http.MethodGet, stranger.base+"/"+created.Template.ID, nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-org read: %d", resp.StatusCode)
+	}
+}
+
+// TestTemplateVaultIdentitiesRoundTrip is the brief's Step 3: create a
+// template with two labelled vault credentials, read the values back (not
+// only the count), then update down to one and assert the dropped label is
+// gone, on every read (GET and the PUT's own response).
+func TestTemplateVaultIdentitiesRoundTrip(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-vault")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	otherVault, err := f.s.Deps.Credentials.Create(scoped, f.orgID, credentials.CreateInput{
+		Name: "vault-2", Kind: credentials.KindVaultPassword,
+		Material: credentials.Material{Password: "another-passphrase"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := f.body()
+	body["vault_identities"] = []map[string]any{
+		{"credential_id": f.vaultCred, "label": "team-a"},
+		{"credential_id": otherVault.ID.String(), "label": "team-b"},
+	}
+	created := f.create(t, body)
+	wantCreated := []vaultIdentityBody{
+		{CredentialID: f.vaultCred, Label: "team-a"},
+		{CredentialID: otherVault.ID.String(), Label: "team-b"},
+	}
+	if !reflect.DeepEqual(created.Template.VaultIdentities, wantCreated) {
+		t.Fatalf("created vault identities = %+v, want %+v", created.Template.VaultIdentities, wantCreated)
+	}
+
+	resp := requestJSON(t, f.c, http.MethodGet, f.base+"/"+created.Template.ID, nil)
+	var got templateDTOBody
+	decodeInto(t, resp, &got)
+	if resp.StatusCode != http.StatusOK || !reflect.DeepEqual(got.Template.VaultIdentities, wantCreated) {
+		t.Fatalf("get: %d, vault identities = %+v, want %+v", resp.StatusCode, got.Template.VaultIdentities, wantCreated)
+	}
+
+	resp = requestJSON(t, f.c, http.MethodPut, f.base+"/"+created.Template.ID, map[string]any{
+		"name": "deploy-site", "playbook_id": f.playbook,
+		"vault_identities": []map[string]any{{"credential_id": f.vaultCred, "label": "team-a"}},
+	})
+	var updated templateDTOBody
+	decodeInto(t, resp, &updated)
+	wantUpdated := []vaultIdentityBody{{CredentialID: f.vaultCred, Label: "team-a"}}
+	if resp.StatusCode != http.StatusOK || !reflect.DeepEqual(updated.Template.VaultIdentities, wantUpdated) {
+		t.Fatalf("update: %d, vault identities = %+v, want %+v (team-b must be dropped)", resp.StatusCode, updated.Template.VaultIdentities, wantUpdated)
+	}
+
+	resp = requestJSON(t, f.c, http.MethodGet, f.base+"/"+created.Template.ID, nil)
+	decodeInto(t, resp, &got)
+	for _, id := range got.Template.VaultIdentities {
+		if id.Label == "team-b" {
+			t.Fatalf("team-b must be gone, got %+v", got.Template.VaultIdentities)
+		}
+	}
+}
+
+// TestTemplateVaultIdentityLabelValidation is the brief's Step 2/3: one case
+// per character class rejected (status and message), plus a duplicate
+// label, a wrong-kind credential and an unknown credential.
+func TestTemplateVaultIdentityLabelValidation(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-vault-val")
+
+	cases := []struct {
+		name  string
+		items []map[string]any
+		want  int
+		msg   string
+	}{
+		{"empty label", []map[string]any{{"credential_id": f.vaultCred, "label": ""}}, http.StatusBadRequest, "label is empty"},
+		{"leading whitespace", []map[string]any{{"credential_id": f.vaultCred, "label": " team-a"}}, http.StatusBadRequest, "leading or trailing whitespace"},
+		{"trailing whitespace", []map[string]any{{"credential_id": f.vaultCred, "label": "team-a "}}, http.StatusBadRequest, "leading or trailing whitespace"},
+		{"newline", []map[string]any{{"credential_id": f.vaultCred, "label": "team-a\nhost_key_checking = False"}}, http.StatusBadRequest, "newline"},
+		{"carriage return", []map[string]any{{"credential_id": f.vaultCred, "label": "team-a\rx"}}, http.StatusBadRequest, "carriage return"},
+		{"comma", []map[string]any{{"credential_id": f.vaultCred, "label": "team-a,team-b"}}, http.StatusBadRequest, "comma"},
+		{"at sign", []map[string]any{{"credential_id": f.vaultCred, "label": "team-a@file"}}, http.StatusBadRequest, "'@'"},
+		{"duplicate label", []map[string]any{
+			{"credential_id": f.vaultCred, "label": "team-a"},
+			{"credential_id": f.vaultCred, "label": "team-a"},
+		}, http.StatusBadRequest, "duplicate vault credential label"},
+		{"wrong credential kind", []map[string]any{{"credential_id": f.sshCred, "label": "team-a"}}, http.StatusBadRequest, "vault_password credential"},
+		{"unknown credential", []map[string]any{{"credential_id": "11111111-1111-1111-1111-111111111111", "label": "team-a"}}, http.StatusBadRequest, "vault credential not found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := f.body()
+			body["vault_identities"] = tc.items
+			resp := postJSON(t, f.c, f.base, body)
+			respBody := mustReadBody(t, resp)
+			if resp.StatusCode != tc.want || !strings.Contains(respBody, tc.msg) {
+				t.Fatalf("status %d, want %d naming %q: %s", resp.StatusCode, tc.want, tc.msg, respBody)
+			}
+		})
+	}
+	// An overlong label is a schema-level 422 (maxLength), not the
+	// service's 400 — huma rejects it before the handler ever runs.
+	body := f.body()
+	body["vault_identities"] = []map[string]any{{"credential_id": f.vaultCred, "label": strings.Repeat("a", 101)}}
+	if resp := postJSON(t, f.c, f.base, body); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("overlong label: %d, want 422", resp.StatusCode)
 	}
 }

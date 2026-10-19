@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,16 +17,22 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
+type vaultIdentityBody struct {
+	CredentialID string `json:"credential_id"`
+	Label        string `json:"label"`
+}
+
 type repoBody struct {
 	Repo struct {
-		ID           string  `json:"id"`
-		Name         string  `json:"name"`
-		URL          string  `json:"url"`
-		Branch       string  `json:"branch"`
-		Subpath      string  `json:"subpath"`
-		CredentialID string  `json:"credential_id"`
-		SSHHostKey   *string `json:"ssh_host_key"`
-		PinState     *string `json:"pin_state"`
+		ID              string              `json:"id"`
+		Name            string              `json:"name"`
+		URL             string              `json:"url"`
+		Branch          string              `json:"branch"`
+		Subpath         string              `json:"subpath"`
+		CredentialID    string              `json:"credential_id"`
+		VaultIdentities []vaultIdentityBody `json:"vault_identities"`
+		SSHHostKey      *string             `json:"ssh_host_key"`
+		PinState        *string             `json:"pin_state"`
 	} `json:"repo"`
 }
 
@@ -350,6 +357,153 @@ func TestRepoHostKeyPin(t *testing.T) {
 	activity := mustReadBody(t, resp)
 	if !strings.Contains(activity, "DELETE clearRepoHostKey") {
 		t.Fatalf("activity missing the unpin: %s", activity)
+	}
+}
+
+// seedVaultCredentialForRepo creates a vault_password credential through the
+// real credentials service, outside any HTTP session — what a repository's
+// vault_identities entry points at.
+func seedVaultCredentialForRepo(t *testing.T, s *apitest.Server, orgID uuid.UUID, name string) string {
+	t.Helper()
+	scoped := db.WithOrgScope(context.Background(), orgID)
+	c, err := s.Deps.Credentials.Create(scoped, orgID, credentials.CreateInput{
+		Name: name, Kind: credentials.KindVaultPassword,
+		Material: credentials.Material{Password: "the-vault-passphrase"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.ID.String()
+}
+
+// TestRepoVaultIdentitiesRoundTrip is the brief's Step 3: create a repo with
+// two labelled vault identities, read the values back (not only the count —
+// an earlier sub-project here shipped a round-trip test that counted and
+// never compared, and the mapping bug it would have caught was found only by
+// a later review), then update down to one and assert the dropped label is
+// gone, on every read (GET and the PUT's own response).
+func TestRepoVaultIdentitiesRoundTrip(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("repo-vault-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("repo-vault-org", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/repo-vault-org/repos"
+
+	credProd := seedVaultCredentialForRepo(t, s, org, "prod-vault")
+	credStaging := seedVaultCredentialForRepo(t, s, org, "staging-vault")
+
+	resp := postJSON(t, c, base, map[string]any{
+		"name": "infra", "url": "https://git.example.com/acme/infra.git",
+		"vault_identities": []map[string]any{
+			{"credential_id": credProd, "label": "prod"},
+			{"credential_id": credStaging, "label": "staging"},
+		},
+	})
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	var created repoBody
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatal(err)
+	}
+	wantCreated := []vaultIdentityBody{
+		{CredentialID: credProd, Label: "prod"},
+		{CredentialID: credStaging, Label: "staging"},
+	}
+	if !reflect.DeepEqual(created.Repo.VaultIdentities, wantCreated) {
+		t.Fatalf("created vault identities = %+v, want %+v", created.Repo.VaultIdentities, wantCreated)
+	}
+
+	resp = requestJSON(t, c, http.MethodGet, base+"/"+created.Repo.ID, nil)
+	var got repoBody
+	decodeInto(t, resp, &got)
+	if resp.StatusCode != http.StatusOK || !reflect.DeepEqual(got.Repo.VaultIdentities, wantCreated) {
+		t.Fatalf("get: %d, vault identities = %+v, want %+v", resp.StatusCode, got.Repo.VaultIdentities, wantCreated)
+	}
+
+	resp = requestJSON(t, c, http.MethodPut, base+"/"+created.Repo.ID, map[string]any{
+		"name": "infra", "url": created.Repo.URL,
+		"vault_identities": []map[string]any{{"credential_id": credProd, "label": "prod"}},
+	})
+	var updated repoBody
+	decodeInto(t, resp, &updated)
+	wantUpdated := []vaultIdentityBody{{CredentialID: credProd, Label: "prod"}}
+	if resp.StatusCode != http.StatusOK || !reflect.DeepEqual(updated.Repo.VaultIdentities, wantUpdated) {
+		t.Fatalf("update: %d, vault identities = %+v, want %+v (staging must be dropped)", resp.StatusCode, updated.Repo.VaultIdentities, wantUpdated)
+	}
+
+	resp = requestJSON(t, c, http.MethodGet, base+"/"+created.Repo.ID, nil)
+	decodeInto(t, resp, &got)
+	if !reflect.DeepEqual(got.Repo.VaultIdentities, wantUpdated) {
+		t.Fatalf("get after update = %+v, want %+v", got.Repo.VaultIdentities, wantUpdated)
+	}
+	for _, id := range got.Repo.VaultIdentities {
+		if id.Label == "staging" {
+			t.Fatalf("staging must be gone, got %+v", got.Repo.VaultIdentities)
+		}
+	}
+}
+
+// TestRepoVaultIdentityLabelValidation is the brief's Step 2/3: one case per
+// character class rejected (status and message), plus a duplicate label, a
+// wrong-kind credential and an unknown credential.
+func TestRepoVaultIdentityLabelValidation(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("repo-vault-val-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("repo-vault-val", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/repo-vault-val/repos"
+	credVault := seedVaultCredentialForRepo(t, s, org, "vault")
+	scoped := db.WithOrgScope(context.Background(), org)
+	sshCred, err := s.Deps.Credentials.Create(scoped, org, credentials.CreateInput{
+		Name: "host-login", Kind: credentials.KindSSHKey, Username: "ansible",
+		Material: credentials.Material{Generate: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name  string
+		items []map[string]any
+		want  int
+		msg   string
+	}{
+		{"empty label", []map[string]any{{"credential_id": credVault, "label": ""}}, http.StatusBadRequest, "label is empty"},
+		{"leading whitespace", []map[string]any{{"credential_id": credVault, "label": " prod"}}, http.StatusBadRequest, "leading or trailing whitespace"},
+		{"trailing whitespace", []map[string]any{{"credential_id": credVault, "label": "prod "}}, http.StatusBadRequest, "leading or trailing whitespace"},
+		{"newline", []map[string]any{{"credential_id": credVault, "label": "prod\nhost_key_checking = False"}}, http.StatusBadRequest, "newline"},
+		{"carriage return", []map[string]any{{"credential_id": credVault, "label": "prod\rx"}}, http.StatusBadRequest, "carriage return"},
+		{"comma", []map[string]any{{"credential_id": credVault, "label": "prod,staging"}}, http.StatusBadRequest, "comma"},
+		{"at sign", []map[string]any{{"credential_id": credVault, "label": "prod@file"}}, http.StatusBadRequest, "'@'"},
+		{"duplicate label", []map[string]any{
+			{"credential_id": credVault, "label": "prod"},
+			{"credential_id": credVault, "label": "prod"},
+		}, http.StatusBadRequest, "duplicate vault identity label"},
+		{"wrong credential kind", []map[string]any{{"credential_id": sshCred.ID.String(), "label": "prod"}}, http.StatusBadRequest, "vault_password credential"},
+		{"unknown credential", []map[string]any{{"credential_id": "11111111-1111-1111-1111-111111111111", "label": "prod"}}, http.StatusBadRequest, "vault credential not found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := postJSON(t, c, base, map[string]any{
+				"name": "r", "url": "https://git.example.com/x", "vault_identities": tc.items,
+			})
+			body := mustReadBody(t, resp)
+			if resp.StatusCode != tc.want || !strings.Contains(body, tc.msg) {
+				t.Fatalf("status %d, want %d naming %q: %s", resp.StatusCode, tc.want, tc.msg, body)
+			}
+		})
+	}
+	// An overlong label is a schema-level 422 (maxLength), not the service's
+	// 400 — huma rejects it before the handler ever runs.
+	overlong := strings.Repeat("a", repos.MaxVaultLabelLength+1)
+	resp := postJSON(t, c, base, map[string]any{
+		"name": "r", "url": "https://git.example.com/x",
+		"vault_identities": []map[string]any{{"credential_id": credVault, "label": overlong}},
+	})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("overlong label: %d, want 422", resp.StatusCode)
 	}
 }
 

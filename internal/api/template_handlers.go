@@ -50,8 +50,38 @@ type templateDTO struct {
 	ExtraVars       map[string]any   `json:"extra_vars"`
 	ExtraVarsSchema *schema.Schema   `json:"extra_vars_schema,omitempty"`
 	CredentialID    string           `json:"credential_id,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	// VaultIdentities is this template's own labelled vault password set
+	// (spec decision 1, migration 00059): what it adds on top of its
+	// repository's base set, never the repository's own. 4b resolves the
+	// two against each other on a run.
+	VaultIdentities []vaultIdentityDTO `json:"vault_identities"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+}
+
+// toTemplateVaultCredentialDTOs converts a template's own added vault
+// credentials (templates.VaultCredential, no FromTemplate field — see that
+// type's own comment) to the wire shape shared with repositories.
+func toTemplateVaultCredentialDTOs(items []templates.VaultCredential) []vaultIdentityDTO {
+	out := make([]vaultIdentityDTO, len(items))
+	for i, it := range items {
+		out[i] = vaultIdentityDTO{CredentialID: it.CredentialID.String(), Label: it.Label}
+	}
+	return out
+}
+
+// parseTemplateVaultCredentials mirrors parseVaultIdentities
+// (repo_handlers.go) for the template's own vault credential store type.
+func parseTemplateVaultCredentials(in []vaultIdentityDTO) ([]templates.VaultCredential, error) {
+	out := make([]templates.VaultCredential, len(in))
+	for i, v := range in {
+		id, err := parseUUID(v.CredentialID, "vault identity credential id")
+		if err != nil {
+			return nil, err
+		}
+		out[i] = templates.VaultCredential{CredentialID: id, Label: v.Label}
+	}
+	return out, nil
 }
 
 func toTemplateDTO(t templates.Template) templateDTO {
@@ -59,7 +89,8 @@ func toTemplateDTO(t templates.Template) templateDTO {
 		ID: t.ID.String(), Name: t.Name, PlaybookID: t.PlaybookID.String(),
 		Scope: toScopeDTO(t.Scope), Limit: t.Limit,
 		ExtraVars: t.ExtraVars, ExtraVarsSchema: t.ExtraVarsSchema,
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		VaultIdentities: toTemplateVaultCredentialDTOs(t.VaultCredentials),
+		CreatedAt:       t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 	if t.ExtraVars == nil {
 		dto.ExtraVars = map[string]any{}
@@ -99,6 +130,9 @@ type TemplateBody struct {
 	ExtraVars       map[string]any     `json:"extra_vars,omitempty" doc:"Validated against extra_vars_schema when one is set; secrets read back as {\"$secret\": \"set\"}"`
 	ExtraVarsSchema *schema.Schema     `json:"extra_vars_schema,omitempty" doc:"The optional typed schema the extra vars must satisfy"`
 	CredentialID    string             `json:"credential_id,omitempty" doc:"The default SSH credential for hosts without one of their own"`
+	// VaultIdentities is this template's own added labelled vault passwords
+	// (spec decision 1), on top of its repository's base set.
+	VaultIdentities []vaultIdentityDTO `json:"vault_identities,omitempty"`
 }
 
 func (b TemplateBody) parseScope() (templates.Scope, error) {
@@ -182,9 +216,14 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		vaultCredentials, err := parseTemplateVaultCredentials(in.Body.VaultIdentities)
+		if err != nil {
+			return nil, err
+		}
 		t, err := deps.Templates.Create(ctx, scope.OrgID, templates.CreateInput{
 			Name: in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
+			VaultCredentials: vaultCredentials,
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
@@ -230,9 +269,14 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		vaultCredentials, err := parseTemplateVaultCredentials(in.Body.VaultIdentities)
+		if err != nil {
+			return nil, err
+		}
 		t, err := deps.Templates.Update(ctx, scope.OrgID, id, templates.UpdateInput{
 			Name: in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
+			VaultCredentials: vaultCredentials,
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
