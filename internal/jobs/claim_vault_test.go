@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -42,9 +43,14 @@ func TestRunClaimCarriesTheRepositoryVaultCredential(t *testing.T) {
 
 	q := newTestQueue(renderer, creds, templates, fakeBastions{})
 	q.SetKeyPins(fakePins{})
+	q.SetVaultResolver(fakeVaultResolver{})
+	// A migrated repository (migration 00059's backfill) has exactly one
+	// link row, labelled "default" — the same one-entry set the removed
+	// legacy shim used to fabricate from the old vault_credential_id
+	// column. The claim now reads it from the labelled set instead.
 	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{repoID: {
 		ID: repoID, URL: "ssh://git@example.org/x.git", Branch: "main",
-		CredentialID: &gitCredID, VaultCredentialID: &vaultCredID,
+		CredentialID: &gitCredID, VaultIdentities: []VaultIdentity{{CredentialID: vaultCredID, Label: "default"}},
 	}}})
 
 	var out workerpb.Job
@@ -55,11 +61,7 @@ func TestRunClaimCarriesTheRepositoryVaultCredential(t *testing.T) {
 
 	// The identity names the credential's own uuid, so the field says
 	// what it is called — unlike the git credential, which the claim
-	// ships under "git:<repo-id>" for its own historical reasons. This
-	// claim path still reads the repository's single legacy column
-	// (RepoRef.VaultCredentialID), not the labelled link tables, so it
-	// surfaces as the one-entry list under label "default" —
-	// migration 00059's own backfill label for a pre-existing password.
+	// ships under "git:<repo-id>" for its own historical reasons.
 	identities := out.GetVaultIdentities()
 	if len(identities) != 1 || identities[0].GetCredentialId() != vaultCredID.String() || identities[0].GetLabel() != "default" {
 		t.Errorf("vault_identities = %v, want one entry {credential_id: %q, label: \"default\"}", identities, vaultCredID)
@@ -112,6 +114,341 @@ func TestRunClaimWithoutARepositoryVaultLeavesTheIdentityListEmpty(t *testing.T)
 	}
 	if identities := out.GetVaultIdentities(); len(identities) != 0 {
 		t.Errorf("vault_identities = %v, want empty for a repository with no vault", identities)
+	}
+	// No vault resolver was wired either — proof that an unwired resolver
+	// only fails a claim that actually needs it (resolveVaultIdentities'
+	// own early return), not every repo playbook.
+}
+
+// vaultTestFixture builds the shared plumbing (org, host, renderer,
+// credentials, bastions) every vault-resolution test below needs, so each
+// test can focus on its repo/template vault configuration.
+type vaultTestFixture struct {
+	org, hostID uuid.UUID
+	gitCredID   uuid.UUID
+	repoID      uuid.UUID
+	creds       *fakeCreds
+}
+
+func newVaultTestFixture() *vaultTestFixture {
+	org, hostID := uuid.New(), uuid.New()
+	credID, gitCredID, repoID := uuid.New(), uuid.New(), uuid.New()
+	return &vaultTestFixture{
+		org: org, hostID: hostID, gitCredID: gitCredID, repoID: repoID,
+		creds: &fakeCreds{
+			secrets: map[uuid.UUID]credentials.Secret{
+				credID:    {PrivateKey: "host-key"},
+				gitCredID: {PrivateKey: "deploy-key"},
+			},
+			metas: map[uuid.UUID]credentials.Credential{
+				credID:    {ID: credID, Kind: credentials.KindSSHKey, Username: "ansible"},
+				gitCredID: {ID: gitCredID, Kind: credentials.KindGitKey},
+			},
+		},
+	}
+}
+
+// addVaultCredential registers a vault credential's secret and metadata,
+// so a test can name it in a repo's or template's vault identity set.
+func (f *vaultTestFixture) addVaultCredential(id uuid.UUID, password string) {
+	f.creds.secrets[id] = credentials.Secret{Password: password}
+	f.creds.metas[id] = credentials.Credential{ID: id, Kind: credentials.KindVaultPassword}
+}
+
+func (f *vaultTestFixture) queue(templates fakeTemplates) *SQLQueue {
+	q := newTestQueue(secretsRenderer{hostID: f.hostID, credID: f.gitCredID}, f.creds, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	q.SetVaultResolver(fakeVaultResolver{})
+	return q
+}
+
+func (f *vaultTestFixture) job(templateID uuid.UUID) Job {
+	return Job{ID: uuid.Must(uuid.NewV7()), Kind: KindRun, OrgID: f.org, ZoneID: uuid.New(), TemplateID: &templateID, HostIDs: []uuid.UUID{f.hostID}}
+}
+
+// TestRunClaimResolvesRepositoryAndTemplateVaultIdentities is the spec's
+// first acceptance criterion: a repository with two labelled vault
+// passwords, and a template that adds a third, resolves to three — in
+// label order, each carrying its secret — asserted on the workerpb.Job
+// the claim actually produces, not on an intermediate.
+func TestRunClaimResolvesRepositoryAndTemplateVaultIdentities(t *testing.T) {
+	f := newVaultTestFixture()
+	prodCred, stagingCred, infraCred := uuid.New(), uuid.New(), uuid.New()
+	f.addVaultCredential(prodCred, "prod-pass")
+	f.addVaultCredential(stagingCred, "staging-pass")
+	f.addVaultCredential(infraCred, "infra-pass")
+
+	templateID := uuid.New()
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: f.org, PlaybookRepo: &f.repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{}`), ExtraVars: json.RawMessage(`{}`),
+			VaultIdentities: []VaultIdentity{{CredentialID: infraCred, Label: "infra"}},
+		},
+	}}
+	q := f.queue(templates)
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{f.repoID: {
+		ID: f.repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &f.gitCredID,
+		VaultIdentities: []VaultIdentity{
+			{CredentialID: prodCred, Label: "prod"},
+			{CredentialID: stagingCred, Label: "staging"},
+		},
+	}}})
+
+	var out workerpb.Job
+	if err := q.buildPayload(context.Background(), f.job(templateID), &out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+
+	identities := out.GetVaultIdentities()
+	if len(identities) != 3 {
+		t.Fatalf("vault_identities has %d entries, want 3: %v", len(identities), identities)
+	}
+	wantLabels := []string{"infra", "prod", "staging"} // label order
+	for i, want := range wantLabels {
+		if identities[i].GetLabel() != want {
+			t.Errorf("vault_identities[%d].label = %q, want %q (order: %v)", i, identities[i].GetLabel(), want, identities)
+		}
+	}
+	// The proto carries no from_template bit (that is the run detail's own
+	// job, spec decision 3, covered at the API layer); what this asserts
+	// is that every label still names the credential its source actually
+	// configured.
+	wantCred := map[string]uuid.UUID{"infra": infraCred, "prod": prodCred, "staging": stagingCred}
+	for _, id := range identities {
+		if want := wantCred[id.GetLabel()]; id.GetCredentialId() != want.String() {
+			t.Errorf("vault_identities label %q names credential %s, want %s", id.GetLabel(), id.GetCredentialId(), want)
+		}
+	}
+	for _, credID := range []uuid.UUID{prodCred, stagingCred, infraCred} {
+		if _, ok := out.GetCredentials()[credID.String()]; !ok {
+			t.Errorf("credentials map is missing the secret for %s", credID)
+		}
+	}
+}
+
+// TestRunClaimTemplateVaultIdentityWinsLabelCollision is the spec's third
+// acceptance criterion: the same label on both sides resolves to the
+// template's credential. The repository's own credential for that label
+// must not appear anywhere in the claim — its secret was never the one
+// this run was meant to receive.
+func TestRunClaimTemplateVaultIdentityWinsLabelCollision(t *testing.T) {
+	f := newVaultTestFixture()
+	repoCred, templateCred := uuid.New(), uuid.New()
+	f.addVaultCredential(repoCred, "repo-prod-pass")
+	f.addVaultCredential(templateCred, "template-prod-pass")
+
+	templateID := uuid.New()
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: f.org, PlaybookRepo: &f.repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{}`), ExtraVars: json.RawMessage(`{}`),
+			VaultIdentities: []VaultIdentity{{CredentialID: templateCred, Label: "prod"}},
+		},
+	}}
+	q := f.queue(templates)
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{f.repoID: {
+		ID: f.repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &f.gitCredID,
+		VaultIdentities: []VaultIdentity{{CredentialID: repoCred, Label: "prod"}},
+	}}})
+
+	var out workerpb.Job
+	if err := q.buildPayload(context.Background(), f.job(templateID), &out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+
+	identities := out.GetVaultIdentities()
+	if len(identities) != 1 || identities[0].GetLabel() != "prod" || identities[0].GetCredentialId() != templateCred.String() {
+		t.Fatalf("vault_identities = %v, want one entry {label: \"prod\", credential_id: %q}", identities, templateCred)
+	}
+	if _, ok := out.GetCredentials()[repoCred.String()]; ok {
+		t.Errorf("the repository's overridden credential %s was revealed; only the template's winning credential should be", repoCred)
+	}
+	if !slices.Contains(out.GetRedact(), "template-prod-pass") {
+		t.Errorf("the winning passphrase is not redacted: %v", out.GetRedact())
+	}
+	if slices.Contains(out.GetRedact(), "repo-prod-pass") {
+		t.Errorf("the overridden passphrase was never opened, yet it is in the redact list: %v", out.GetRedact())
+	}
+}
+
+// TestSiblingTemplateDoesNotReceiveAnotherTemplatesVaultIdentity is the
+// spec's named risk made concrete: two templates share one repository: the
+// repository has two vault identities, template A adds a third of its own.
+// The claim for template B — the sibling, which configures nothing extra —
+// must resolve to exactly the repository's two, never A's third. Nothing
+// about this failing would be visible from B's run succeeding; it would
+// simply succeed with a password it was never supposed to have.
+func TestSiblingTemplateDoesNotReceiveAnotherTemplatesVaultIdentity(t *testing.T) {
+	f := newVaultTestFixture()
+	prodCred, stagingCred, secretThirdCred := uuid.New(), uuid.New(), uuid.New()
+	f.addVaultCredential(prodCred, "prod-pass")
+	f.addVaultCredential(stagingCred, "staging-pass")
+	f.addVaultCredential(secretThirdCred, "template-a-only-pass")
+
+	templateA, templateB := uuid.New(), uuid.New()
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateA: {
+			ID: templateA, OrgID: f.org, PlaybookRepo: &f.repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{}`), ExtraVars: json.RawMessage(`{}`),
+			VaultIdentities: []VaultIdentity{{CredentialID: secretThirdCred, Label: "infra"}},
+		},
+		templateB: {
+			ID: templateB, OrgID: f.org, PlaybookRepo: &f.repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{}`), ExtraVars: json.RawMessage(`{}`),
+			// Template B adds nothing of its own: it is the sibling that
+			// must stay confined to the repository's own set.
+		},
+	}}
+	repoSource := fakeRepos{byID: map[uuid.UUID]RepoRef{f.repoID: {
+		ID: f.repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &f.gitCredID,
+		VaultIdentities: []VaultIdentity{
+			{CredentialID: prodCred, Label: "prod"},
+			{CredentialID: stagingCred, Label: "staging"},
+		},
+	}}}
+
+	// One shared queue instance serves both claims — a real manager has
+	// exactly one SQLQueue, not one per template — so this also catches a
+	// per-instance caching mistake (resolving once per repository and
+	// reusing the answer for the next template's claim), not only a
+	// mistake visible from fresh state.
+	q := f.queue(templates)
+	q.SetRepoSource(repoSource)
+
+	// Template A's own claim does get the third identity — the setup is
+	// correct, so the assertion against B below is a real isolation check,
+	// not a trivially-empty resolution.
+	var outA workerpb.Job
+	if err := q.buildPayload(context.Background(), f.job(templateA), &outA); err != nil {
+		t.Fatalf("buildPayload (template A): %v", err)
+	}
+	if len(outA.GetVaultIdentities()) != 3 {
+		t.Fatalf("template A's own claim has %d identities, want 3 (setup is wrong, not the isolation under test): %v", len(outA.GetVaultIdentities()), outA.GetVaultIdentities())
+	}
+
+	var outB workerpb.Job
+	if err := q.buildPayload(context.Background(), f.job(templateB), &outB); err != nil {
+		t.Fatalf("buildPayload (template B, the sibling): %v", err)
+	}
+
+	identities := outB.GetVaultIdentities()
+	if len(identities) != 2 {
+		t.Fatalf("sibling template B's vault_identities has %d entries, want 2 (prod, staging only): %v", len(identities), identities)
+	}
+	for _, id := range identities {
+		if id.GetCredentialId() == secretThirdCred.String() {
+			t.Fatalf("sibling template B's claim names template A's own credential %s — the secret leaked across templates sharing one repository", secretThirdCred)
+		}
+	}
+	if _, ok := outB.GetCredentials()[secretThirdCred.String()]; ok {
+		t.Fatalf("sibling template B's claim reveals template A's own vault secret in its credentials map")
+	}
+	if slices.Contains(outB.GetRedact(), "template-a-only-pass") {
+		t.Fatalf("template A's passphrase appears in sibling B's redact list, meaning it was opened for a claim that must never see it")
+	}
+}
+
+// TestRunClaimRedactsEveryVaultPassphrase proves the inherited property
+// the brief calls out by name: every vault passphrase a claim reveals must
+// be in the redact list, including when two labels legitimately share one
+// credential (one secret entry, two identity entries) — a shape a less
+// careful implementation could redact only once for and miss nothing, but
+// is exactly the case worth pinning since "inherited" properties are the
+// ones that quietly stop holding when the shape around them changes.
+func TestRunClaimRedactsEveryVaultPassphrase(t *testing.T) {
+	f := newVaultTestFixture()
+	sharedCred, soloCred := uuid.New(), uuid.New()
+	f.addVaultCredential(sharedCred, "shared-pass")
+	f.addVaultCredential(soloCred, "solo-pass")
+
+	templateID := uuid.New()
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: f.org, PlaybookRepo: &f.repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{}`), ExtraVars: json.RawMessage(`{}`),
+			// prod and staging legitimately share one credential under two
+			// different labels (spec: a label belongs to the encrypted
+			// content, not to the password).
+			VaultIdentities: []VaultIdentity{{CredentialID: sharedCred, Label: "staging"}},
+		},
+	}}
+	q := f.queue(templates)
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{f.repoID: {
+		ID: f.repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &f.gitCredID,
+		VaultIdentities: []VaultIdentity{
+			{CredentialID: sharedCred, Label: "prod"},
+			{CredentialID: soloCred, Label: "infra"},
+		},
+	}}})
+
+	var out workerpb.Job
+	if err := q.buildPayload(context.Background(), f.job(templateID), &out); err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+
+	identities := out.GetVaultIdentities()
+	if len(identities) != 3 {
+		t.Fatalf("vault_identities has %d entries, want 3 (prod, staging, infra): %v", len(identities), identities)
+	}
+	// Two identities (prod, staging) legitimately name the same credential;
+	// the claim must still resolve and reveal it, once, under its own id.
+	sharedCount := 0
+	for _, id := range identities {
+		if id.GetCredentialId() == sharedCred.String() {
+			sharedCount++
+		}
+	}
+	if sharedCount != 2 {
+		t.Errorf("vault_identities names the shared credential %d times, want 2 (prod and staging)", sharedCount)
+	}
+	raw, ok := out.GetCredentials()[sharedCred.String()]
+	if !ok {
+		t.Fatalf("credentials map has no entry for the shared credential %s", sharedCred)
+	}
+	var sharedSecret credentials.Secret
+	if err := json.Unmarshal([]byte(raw), &sharedSecret); err != nil || sharedSecret.Password != "shared-pass" {
+		t.Errorf("shared credential's revealed secret = %+v (err %v), want password \"shared-pass\"", sharedSecret, err)
+	}
+	for _, want := range []string{"shared-pass", "solo-pass"} {
+		if !slices.Contains(out.GetRedact(), want) {
+			t.Errorf("passphrase %q is not in the redact list: %v", want, out.GetRedact())
+		}
+	}
+}
+
+// TestRunClaimFailsWhenAResolvedVaultCredentialCannotBeOpened pins the
+// failure shape: the error names the label and the credential id — what an
+// operator needs to fix the wiring — never the password, which never
+// exists in this branch to begin with.
+func TestRunClaimFailsWhenAResolvedVaultCredentialCannotBeOpened(t *testing.T) {
+	f := newVaultTestFixture()
+	missingCred := uuid.New()
+	// missingCred is named by the repo's vault set but never registered
+	// with fakeCreds, so OpenSecret reports credentials.ErrNotFound.
+
+	templateID := uuid.New()
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {ID: templateID, OrgID: f.org, PlaybookRepo: &f.repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{}`), ExtraVars: json.RawMessage(`{}`)},
+	}}
+	q := f.queue(templates)
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{f.repoID: {
+		ID: f.repoID, URL: "ssh://git@example.org/x.git", Branch: "main", CredentialID: &f.gitCredID,
+		VaultIdentities: []VaultIdentity{{CredentialID: missingCred, Label: "prod"}},
+	}}})
+
+	var out workerpb.Job
+	err := q.buildPayload(context.Background(), f.job(templateID), &out)
+	if err == nil {
+		t.Fatal("buildPayload succeeded, want an error naming the unopenable vault credential")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "prod") || !strings.Contains(msg, missingCred.String()) {
+		t.Errorf("error %q does not name both the label %q and the credential id %s", msg, "prod", missingCred)
+	}
+	if strings.Contains(msg, "the-vault-passphrase") {
+		t.Errorf("error %q leaks a password", msg)
 	}
 }
 

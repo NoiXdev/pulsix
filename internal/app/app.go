@@ -351,6 +351,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
 	jobsQueue.SetRepoSource(repoRefSource{reposSvc})
+	// A repo playbook's vault identities (v0.2e, spec decision 2) resolve
+	// through repos.ResolveVaultIdentities, reached via the vaultResolver
+	// adapter because the queue's own package cannot import internal/repos
+	// (jobs.VaultResolver's own comment explains the cycle).
+	jobsQueue.SetVaultResolver(vaultResolver{})
 	// The run events' SSE fan-out (Task 12): the jobs service owns the
 	// in-process subscriber registry the run view streams from, and the
 	// queue's append path — the gRPC EventRecorder port lands on it —

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,32 @@ func (f fakeRepos) Get(_ context.Context, _, id uuid.UUID) (RepoRef, error) {
 		return RepoRef{}, ErrNotFound
 	}
 	return r, nil
+}
+
+// fakeVaultResolver mirrors repos.ResolveVaultIdentities' contract (union,
+// the template wins a label collision, sorted by label) without importing
+// internal/repos — this package cannot (see jobs.VaultIdentity's own
+// comment). Good enough to drive a unit test's sibling-isolation and
+// collision-resolution assertions; parity with the real algorithm is
+// internal/repos' own test file's job (vault_test.go), not this fake's.
+type fakeVaultResolver struct{}
+
+func (fakeVaultResolver) ResolveVaultIdentities(repo, template []VaultIdentity) []VaultIdentity {
+	byLabel := make(map[string]VaultIdentity, len(repo)+len(template))
+	for _, id := range repo {
+		id.FromTemplate = false
+		byLabel[id.Label] = id
+	}
+	for _, id := range template {
+		id.FromTemplate = true
+		byLabel[id.Label] = id
+	}
+	out := make([]VaultIdentity, 0, len(byLabel))
+	for _, id := range byLabel {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
 }
 
 // testHosts is the target list the white-box payload tests give their
