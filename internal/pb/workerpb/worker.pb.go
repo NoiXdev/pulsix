@@ -168,9 +168,9 @@ type Job struct {
 	// into the run's known_hosts under the hop aliases; a bastion in
 	// bastion_host_keys without an entry here fails the job closed.
 	BastionKnownHosts map[string]string `protobuf:"bytes,19,rep,name=bastion_known_hosts,json=bastionKnownHosts,proto3" json:"bastion_known_hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// field below. Never reuse the number: a worker built
-	// against the old descriptor would read the new bytes as a
-	// malformed string rather than failing cleanly.
+	// is what makes the deletion legible to
+	// buf breaking under WIRE_JSON (see
+	// buf.yaml) and to the next reader.
 	// vault_identities carries the run's resolved labelled Ansible Vault
 	// passwords: the union of its repository's set and its job template's,
 	// with the template winning a label collision
@@ -876,7 +876,7 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\x81\v\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\x96\v\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -922,7 +922,7 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aD\n" +
 	"\x16BastionKnownHostsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x14\x10\x15\"J\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x14\x10\x15R\x13vault_credential_id\"J\n" +
 	"\rVaultIdentity\x12#\n" +
 	"\rcredential_id\x18\x01 \x01(\tR\fcredentialId\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\"\xb7\x01\n" +
