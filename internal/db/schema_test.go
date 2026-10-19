@@ -435,6 +435,228 @@ func TestVaultPasswordCredentialAndRepoReference(t *testing.T) {
 	}
 }
 
+// seedVaultCredential inserts one vault_password credential in org and
+// returns its id — the kind 00055 added, which the vault identity link
+// tables' own composite foreign key needs something of to point at (the
+// schema itself does not check kind at the link table, only existence and
+// tenancy).
+func seedVaultCredential(t *testing.T, d *db.DB, org uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := d.Pool().QueryRow(context.Background(), `
+		INSERT INTO credentials (id, org_id, name, kind, secret, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, $2, 'vault_password', '\x00'::bytea, now(), now())
+		RETURNING id`, org, name).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// seedGitRepo inserts a bare repository in org, with no vault credential of
+// its own — git_repo_vault_credentials' own composite FK needs a real
+// repository to point at, and the name carries no meaning for the tests
+// that call this.
+func seedGitRepo(t *testing.T, d *db.DB, org uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := d.Pool().QueryRow(context.Background(), `
+		INSERT INTO git_repos (id, org_id, name, url)
+		VALUES (gen_random_uuid(), $1, $2, 'https://example.test/' || $2 || '.git')
+		RETURNING id`, org, name).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// seedJobTemplate inserts a bare job template in org, through a throwaway
+// editor playbook (job_templates.playbook_id is NOT NULL) —
+// job_template_vault_credentials' own composite FK needs a real template to
+// point at.
+func seedJobTemplate(t *testing.T, d *db.DB, org uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var playbookID uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO playbooks (id, org_id, source, inline)
+		VALUES (gen_random_uuid(), $1, 'editor', '- hosts: all\n  tasks: []\n')
+		RETURNING id`, org).Scan(&playbookID); err != nil {
+		t.Fatal(err)
+	}
+	var id uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO job_templates (id, org_id, name, playbook_id, scope)
+		VALUES (gen_random_uuid(), $1, $2, $3, '{}'::jsonb)
+		RETURNING id`, org, name, playbookID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// TestGitRepoVaultCredentialsSchema pins migration 00059's first table
+// against the two schema facts the spec's Data section exists to make
+// facts rather than service rules: a label may not repeat under one
+// repository, and a link row may not name another organization's
+// credential. It also pins the deliberate foreign-key asymmetry the spec
+// calls out by name — the parent cascades, the credential does not — the
+// same guarantee git_repos.vault_credential_id (00055) already had, now
+// re-proven for the table that replaces it.
+func TestGitRepoVaultCredentialsSchema(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	repo := seedGitRepo(t, d, org, "infra")
+	credA := seedVaultCredential(t, d, org, "prod vault")
+	credB := seedVaultCredential(t, d, org, "staging vault")
+
+	// The same credential may sit behind two different labels — the spec's
+	// own example is "prod" in one repository and "production" in another,
+	// because the label describes what was typed at encryption time, not
+	// the password itself.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
+		VALUES ($1, $2, $3, 'prod')`, org, repo, credA); err != nil {
+		t.Fatalf("insert first label: %v", err)
+	}
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
+		VALUES ($1, $2, $3, 'staging')`, org, repo, credA); err != nil {
+		t.Fatalf("same credential under a second label: %v", err)
+	}
+
+	// But a label may not repeat under one repository — PRIMARY KEY
+	// (repo_id, label) is what makes "one password per label" a schema
+	// fact rather than a service rule.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
+		VALUES ($1, $2, $3, 'prod')`, org, repo, credB); err == nil {
+		t.Error("a repeated label under one repository must be rejected")
+	}
+
+	// A link row may not name another organization's credential — the
+	// composite foreign key, the same guarantee the access credential
+	// beside it already has.
+	other := seedOrg(t, d)
+	foreignCred := seedVaultCredential(t, d, other, "their vault")
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
+		VALUES ($1, $2, $3, 'leak')`, org, repo, foreignCred); err == nil {
+		t.Error("a link row must not name another organization's credential")
+	}
+
+	// The asymmetry the spec calls deliberate: the credential a link still
+	// names cannot be deleted out from under it...
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM credentials WHERE id = $1`, credA); err == nil {
+		t.Error("deleting a vault credential a repository still names must be refused")
+	}
+	// ...but deleting the repository takes its links with it.
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM git_repos WHERE id = $1`, repo); err != nil {
+		t.Fatalf("delete repo: %v", err)
+	}
+	var n int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM git_repo_vault_credentials WHERE repo_id = $1`, repo).Scan(&n); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("links after repo delete = %d, want 0", n)
+	}
+}
+
+// TestJobTemplateVaultCredentialsSchema re-proves the label-uniqueness and
+// cross-tenant guarantees above hold for the second table too — it is "the
+// same shape" (spec's own words) rather than a copy a future edit could
+// drift out of sync with unnoticed.
+func TestJobTemplateVaultCredentialsSchema(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	tmpl := seedJobTemplate(t, d, org, "deploy")
+	cred := seedVaultCredential(t, d, org, "team vault")
+
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO job_template_vault_credentials (org_id, template_id, credential_id, label)
+		VALUES ($1, $2, $3, 'prod')`, org, tmpl, cred); err != nil {
+		t.Fatalf("insert link: %v", err)
+	}
+
+	// A label may not repeat under one template, the same primary key as
+	// the repository table.
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO job_template_vault_credentials (org_id, template_id, credential_id, label)
+		VALUES ($1, $2, $3, 'prod')`, org, tmpl, cred); err == nil {
+		t.Error("a repeated label under one template must be rejected")
+	}
+
+	// A link row may not name another organization's credential.
+	other := seedOrg(t, d)
+	foreignCred := seedVaultCredential(t, d, other, "their vault")
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO job_template_vault_credentials (org_id, template_id, credential_id, label)
+		VALUES ($1, $2, $3, 'leak')`, org, tmpl, foreignCred); err == nil {
+		t.Error("a link row must not name another organization's credential")
+	}
+}
+
+// TestVaultCredentialBackfillStatement pins migration 00059's backfill
+// statement directly, standing in for "seed before migrating, then
+// migrate". testdb.Open cannot do that: start() in internal/db/testdb
+// migrates the one shared container once per test binary before any test's
+// fixtures exist, and offers no hook to seed a row first — see that
+// package's own comment on why (migrating once per binary, not once per
+// test, is a deliberate cost tradeoff). Running the exact INSERT ... SELECT
+// the migration file uses, over a row this test seeds itself with the
+// pre-v0.2e column already set, proves the statement is correct without a
+// second, unmigrated database — the thing Review Focus 4 asks to protect:
+// an existing installation's vault password must survive the upgrade as
+// the link labelled 'default'.
+func TestVaultCredentialBackfillStatement(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	org := seedOrg(t, d)
+	cred := seedVaultCredential(t, d, org, "legacy vault")
+	repo := seedGitRepo(t, d, org, "legacy")
+
+	// The pre-v0.2e shape: a repository naming its one vault password
+	// through the column 00055 added, exactly as every installation
+	// upgrading from before this migration has one.
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE git_repos SET vault_credential_id = $1 WHERE id = $2`, cred, repo); err != nil {
+		t.Fatalf("set legacy vault column: %v", err)
+	}
+
+	// Verbatim from 00059_vault_identities.sql's own Up section.
+	const backfill = `
+		INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label)
+		SELECT org_id, id, vault_credential_id, 'default'
+		FROM git_repos
+		WHERE vault_credential_id IS NOT NULL`
+	if _, err := d.Pool().Exec(ctx, backfill); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	var label string
+	var gotCred uuid.UUID
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT label, credential_id FROM git_repo_vault_credentials WHERE repo_id = $1`, repo).
+		Scan(&label, &gotCred); err != nil {
+		t.Fatalf("read backfilled link: %v", err)
+	}
+	if label != "default" || gotCred != cred {
+		t.Errorf("backfilled link = (%s, %s), want (default, %s)", label, gotCred, cred)
+	}
+
+	var n int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM git_repo_vault_credentials WHERE repo_id = $1`, repo).Scan(&n); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("link rows for the repo = %d, want exactly 1", n)
+	}
+}
+
 func TestEscalationTablesEnforceTenancy(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()

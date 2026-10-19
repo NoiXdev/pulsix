@@ -396,6 +396,13 @@ type GitRepo struct {
 	VaultCredentialID pgtype.UUID        `json:"vault_credential_id"`
 }
 
+type GitRepoVaultCredential struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	RepoID       uuid.UUID `json:"repo_id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	Label        string    `json:"label"`
+}
+
 type Host struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`
@@ -553,6 +560,13 @@ type JobTemplate struct {
 	CredentialID    pgtype.UUID `json:"credential_id"`
 	CreatedAt       time.Time   `json:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at"`
+}
+
+type JobTemplateVaultCredential struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	TemplateID   uuid.UUID `json:"template_id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	Label        string    `json:"label"`
 }
 
 type JobTrigger struct {
