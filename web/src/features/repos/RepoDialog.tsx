@@ -6,17 +6,22 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
+import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
 import { useCreateRepo, useClearRepoKey, useDeleteRepo, useUpdateRepo } from '../../api/hooks/useRepos.ts';
-import type { Credential } from '../../api/types.ts';
+import type { Credential, VaultIdentity } from '../../api/types.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { KIND_LABEL } from '../credentials/labels.ts';
+import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
 import { repoErrorsFromServer, validateRepoInput, type RepoFormValues } from './validate.ts';
 
 export interface RepoDialogProps {
   org: string;
   /** A repo to edit; absent means create. sshHostKey is the git server
    * key pin the last sync observed (SHA256:…), absent while unpinned. */
-  repo?: { id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; vault_credential_id?: string; ssh_host_key?: string; pin_state?: string };
+  repo?: {
+    id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; vault_credential_id?: string;
+    vault_identities?: VaultIdentity[] | null; ssh_host_key?: string; pin_state?: string;
+  };
   credentials: readonly Credential[];
   /** Gates both credential pickers' create rows: credentials.write is
    * admin, stricter than the repos.write that gates this whole dialog
@@ -24,6 +29,14 @@ export interface RepoDialogProps {
   canCreateCredential: boolean;
   onClose: () => void;
 }
+
+/** Who asked a credential picker to open AddCredentialDialog: the single
+ * Credential field, the legacy single Vault password field, or one row of
+ * the Vault identities list (named by its own row key, since there can be
+ * any number of those). Only one such request exists at a time — the
+ * dialog mount below is a sibling of every picker, not owned by any one of
+ * them. */
+type AddingCredential = { field: 'credential'; name: string } | { field: 'vault'; name: string } | { field: 'vault-identity'; rowKey: string; name: string };
 
 type FieldErrors = Partial<Record<keyof RepoFormValues, string>>;
 
@@ -41,14 +54,17 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
   );
   const [credentialId, setCredentialId] = useState(repo?.credential_id ?? '');
   const [vaultCredentialId, setVaultCredentialId] = useState(repo?.vault_credential_id ?? '');
+  const [vaultRows, setVaultRows] = useState<VaultIdentityRow[]>(() => rowsFromIdentities(repo?.vault_identities));
+  const [vaultErrors, setVaultErrors] = useState<Record<string, string>>({});
   const [pinnedKey, setPinnedKey] = useState(repo?.ssh_host_key ?? '');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   // Which field asked for a new credential, and what was typed into it
   // before it did — null means the create dialog is closed. One mount
-  // point for both Credential and Vault password, since only one can be
-  // open at a time.
-  const [addingCredential, setAddingCredential] = useState<{ field: 'credential' | 'vault'; name: string } | null>(null);
+  // point for the Credential field, the legacy Vault password field and
+  // every row of the Vault identities list, since only one can be open at
+  // a time.
+  const [addingCredential, setAddingCredential] = useState<AddingCredential | null>(null);
 
   function setValue(key: keyof RepoFormValues) {
     return (e: ChangeEvent<HTMLInputElement>) => setValues((v) => ({ ...v, [key]: e.target.value }));
@@ -82,11 +98,15 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
     setFormError(null);
     const fieldErrors = validateRepoInput(values);
     setErrors(fieldErrors);
+    const identityErrors = vaultIdentityErrors(vaultRows);
+    setVaultErrors(identityErrors);
     if (fieldErrors.name || fieldErrors.url || fieldErrors.branch || fieldErrors.subpath) return;
+    if (Object.keys(identityErrors).length > 0) return;
     const body = {
       name: values.name, url: values.url, branch: values.branch || 'main',
       subpath: values.subpath, credential_id: credentialId || undefined,
       vault_credential_id: vaultCredentialId || undefined,
+      vault_identities: identitiesForBody(vaultRows),
     };
     try {
       if (repo) await update.mutateAsync(body);
@@ -154,6 +174,15 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
             Passphrase Ansible needs for this repository&apos;s encrypted files.
           </span>
         </div>
+        <VaultIdentitiesField
+          rows={vaultRows}
+          onChange={setVaultRows}
+          credentials={credentials}
+          canCreateCredential={canCreateCredential}
+          errors={vaultErrors}
+          onRequestCreate={(row, text) => setAddingCredential({ field: 'vault-identity', rowKey: row.key, name: text })}
+          help="Additional labelled vault passwords, for encrypted files that use more than one. Leave empty to rely only on the Vault password above."
+        />
         {repo && (
           <div className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5">
             <div className="flex min-w-0 flex-col gap-0.5">
@@ -232,14 +261,21 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           open
           initialName={addingCredential.name}
           // The Credential field filters to git_key/git_token, Vault
-          // password to vault_password — neither matches the dialog's own
-          // ssh_key default, so without this the new credential would not
-          // appear as an option in the very field that created it.
+          // password and every Vault identities row to vault_password —
+          // none of those match the dialog's own ssh_key default, so
+          // without this the new credential would not appear as an option
+          // in the very field that created it.
           initialKind={addingCredential.field === 'credential' ? 'git_key' : 'vault_password'}
           onClose={() => setAddingCredential(null)}
           onCreated={(id) => {
-            if (addingCredential.field === 'credential') setCredentialId(id);
-            else setVaultCredentialId(id);
+            // Narrowed into a local const: TS forgets a discriminated
+            // union narrowed from component state the moment it is read
+            // inside a nested closure (the `rows.map` callback below), even
+            // though `addingCredential` cannot change mid-callback.
+            const adding = addingCredential;
+            if (adding.field === 'credential') setCredentialId(id);
+            else if (adding.field === 'vault') setVaultCredentialId(id);
+            else setVaultRows((rows) => rows.map((r) => (r.key === adding.rowKey ? { ...r, credentialId: id } : r)));
           }}
         />
       )}

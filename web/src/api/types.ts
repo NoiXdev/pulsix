@@ -39,6 +39,17 @@ export type HostTest = components['schemas']['HostTestDTO'];
 
 export type RepoInput = components['schemas']['RepoCreateInputBody'];
 export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
+
+// VaultIdentity is one labelled vault password as a repository or template
+// carries it on the wire (v0.2e design, repos.VaultIdentity /
+// templates.VaultCredential): a vault_password credential plus the label
+// Ansible's vault_identity_list keys it by. JobVaultIdentity is the same
+// pair as a run actually received it, plus from_template — the run detail's
+// own answer to "did this one come from the repository or the template"
+// (decision 2's template-wins precedence, internal/repos/vault.go's
+// ResolveVaultIdentities).
+export type VaultIdentity = components['schemas']['VaultIdentityDTO'];
+export type JobVaultIdentity = components['schemas']['JobVaultIdentityDTO'];
 export type BootstrapInput = components['schemas']['BootstrapInputBody'];
 export type AdhocInput = components['schemas']['AdhocInputBody'];
 

@@ -242,6 +242,47 @@ describe('RunDetailPage', () => {
   });
 });
 
+describe('RunDetailPage vault identities', () => {
+  // v0.2e Task 5: the run detail says which labelled vault passwords the
+  // run received, and whether each came from the repository or the
+  // template (decision 2: a shared label resolves to the template's).
+  it('lists each vault identity and whether it came from the repository or the template', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({
+          vault_identities: [
+            { credential_id: 'c3', label: 'production', from_template: false },
+            { credential_id: 'c4', label: 'staging', from_template: true },
+          ],
+        }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+    const list = await screen.findByRole('list', { name: 'Vault identities' });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText('production')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('from repository')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('staging')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('from template')).toBeInTheDocument();
+  });
+
+  it('shows no vault identities section for a run with none', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail({ vault_identities: [] }).job },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+    await screen.findByText('deploy-site');
+    expect(screen.queryByRole('list', { name: 'Vault identities' })).not.toBeInTheDocument();
+  });
+});
+
 describe('RunDetailPage trigger', () => {
   it('names a scheduled run and links to its schedule', async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;

@@ -1,6 +1,7 @@
 import { childPath, indexPath } from '../inventory/schema/paths.ts';
 import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } from '../inventory/schema/secrets.ts';
 import type { SchemaField, Vars } from '../inventory/schema/types.ts';
+import type { TemplateInput } from '../../api/types.ts';
 
 /**
  * The masked-secret roundtrip contract: a GET returns {"$secret": "set"}
@@ -96,3 +97,39 @@ function stripSetMarkers(vars: Vars): Vars {
   }
   return out;
 }
+
+/** TemplateBodyIdentityKey is the one TemplateInput field with no form
+ * counterpart: `$schema` is the generated JSON-Schema self-pointer huma
+ * stamps on every *InputBody, never a value the client sends — the only
+ * key TEMPLATE_BODY_FIELDS below may leave out. */
+type TemplateBodyIdentityKey = '$schema';
+
+/**
+ * TEMPLATE_BODY_FIELDS is TemplateForm submit()'s own compile-time guard
+ * against routeToInput's class of bug (alertRoute.ts's own
+ * ROUTE_INPUT_FIELDS — this copies the technique, not the contents):
+ * submit() builds its save body by hand from component state, so a field
+ * added to TemplateCreateInputBody/TemplateUpdateInputBody that nobody
+ * teaches submit() to send would silently never reach the server on the
+ * next save — the exact shape that, for vault_identities, also means
+ * saving an edited template wipes whatever labelled vault passwords it
+ * already added on top of its repository's own set (PUT is a full
+ * replace).
+ *
+ * `Record<K, true>` forces exhaustiveness in both directions, same as
+ * there: a field TemplateInput gains and this literal does not list is a
+ * missing-property error, and a stale key for a field TemplateInput no
+ * longer has is an excess-property error — so the day a new field joins
+ * this body, this line refuses to compile until TemplateForm's own
+ * submit() is updated right next to it.
+ */
+export const TEMPLATE_BODY_FIELDS: Record<Exclude<keyof TemplateInput, TemplateBodyIdentityKey>, true> = {
+  name: true,
+  playbook_id: true,
+  scope: true,
+  limit: true,
+  extra_vars: true,
+  extra_vars_schema: true,
+  credential_id: true,
+  vault_identities: true,
+};
