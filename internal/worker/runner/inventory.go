@@ -482,6 +482,18 @@ func pinHosts(doc map[string]any, connections, hostKeys, knownHosts map[string]s
 // reaching the runner under the same label is therefore a bug upstream,
 // not something to paper over here — the second one would otherwise
 // silently overwrite the first's file on disk.
+//
+// A label also reaches ansible.cfg verbatim, rendered into
+// "label@path, label@path" inside an INI file (ansibleCfgText). The
+// uuid-named password file already stops a label from reaching a
+// filesystem path; this stops the same untrusted text from reaching that
+// other place it lands. A newline would inject an arbitrary extra
+// ansible.cfg key — host_key_checking = False would quietly undo the very
+// host-key pinning this file exists to enforce — and a comma or "@" would
+// forge an extra identity entry. This check is deliberate belt-and-braces
+// alongside the write-time validation the API owns (non-empty, no "@", no
+// comma); the runner is the last gate before a file that carries secrets
+// and must not assume that validation ran.
 func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) ([]vaultFile, error) {
 	identities := job.GetVaultIdentities()
 	if len(identities) == 0 {
@@ -492,6 +504,9 @@ func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) 
 	files := make([]vaultFile, 0, len(identities))
 	for _, vi := range identities {
 		label, id := vi.GetLabel(), vi.GetCredentialId()
+		if reason := invalidVaultLabel(label); reason != "" {
+			return nil, fmt.Errorf("vault credential %s (label %q): %s", id, label, reason)
+		}
 		if prev, dup := byLabel[label]; dup {
 			return nil, fmt.Errorf("vault identity label %q names both credential %s and %s: the claim must resolve this before naming it to the worker", label, prev, id)
 		}
@@ -522,4 +537,22 @@ func (r *Runner) materializeVaultPassword(job *workerpb.Job, env worker.RunEnv) 
 	// depend on that upstream guarantee to produce a stable ansible.cfg.
 	slices.SortFunc(files, func(a, b vaultFile) int { return strings.Compare(a.Label, b.Label) })
 	return files, nil
+}
+
+// invalidVaultLabel reports why label cannot be written into ansible.cfg's
+// vault_identity_list, or "" when it is fine. Empty, leading/trailing
+// whitespace, and the three characters that change what the INI line
+// means: '\n' and '\r' start a new line (a new key entirely), ',' ends an
+// entry early, and '@' ends a label early within one entry.
+func invalidVaultLabel(label string) string {
+	switch {
+	case label == "":
+		return "label is empty"
+	case strings.TrimSpace(label) != label:
+		return "label has leading or trailing whitespace"
+	case strings.ContainsAny(label, "\n\r,@"):
+		return "label contains a newline, carriage return, comma or '@', any of which ansible.cfg would read as more than one label"
+	default:
+		return ""
+	}
 }

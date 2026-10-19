@@ -91,10 +91,10 @@ message Job {
                 // field below. Never reuse the number: a worker built
                 // against the old descriptor would read the new bytes as a
                 // malformed string rather than failing cleanly.
-  reserved "vault_credential_id";  // the name, alongside the number: this
-                                    // is what makes the deletion legible to
-                                    // buf breaking under WIRE_JSON (see
-                                    // buf.yaml) and to the next reader.
+  // the name, alongside the number: this is what makes the deletion
+  // legible to buf breaking under WIRE_JSON (see buf.yaml) and to the
+  // next reader.
+  reserved "vault_credential_id";
   // vault_identities carries the run's resolved labelled Ansible Vault
   // passwords: the union of its repository's set and its job template's,
   // with the template winning a label collision
