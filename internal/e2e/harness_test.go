@@ -317,7 +317,7 @@ func materializeFixtureRepo(t *testing.T) string {
 	if err := os.MkdirAll(seed, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"hello.yml", "fail.yml"} {
+	for _, f := range []string{"hello.yml", "fail.yml", "vault.yml", "vault_prod.yml", "vault_staging.yml"} {
 		raw, err := os.ReadFile(filepath.Join("fixtures", "git", f))
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", f, err)

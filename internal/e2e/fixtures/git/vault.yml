@@ -1,0 +1,27 @@
+# The multiple-vault-passwords e2e fixture (v0.2e, backlog 2.89): a
+# repository can hold more than one labelled vault password, and this
+# playbook's two vars_files are each encrypted under a different one —
+# vault_prod.yml with --vault-id prod, vault_staging.yml with --vault-id
+# staging (see those files' own headers). A run only succeeds when both
+# passwords reach ansible.cfg's vault_identity_list under the right label
+# (internal/repos.ResolveVaultIdentities resolves the set,
+# internal/worker/runner writes the password files and the config line).
+#
+# Task names match the greeting fixture's (fixtures/playbooks/hello.yml) on
+# purpose: the deterministic fake ansible-runner (harness_test.go) emits
+# that exact event shape no matter which real playbook is named, so the
+# scenario's event assertions (internal/e2e/vault_test.go) read the same
+# whether CI's fake or real ansible-runner pass is driving. Only the real
+# pass actually decrypts these two files; the fake pass proves the
+# surrounding plumbing (the repository's and template's resolved identity
+# sets, reported on the run detail) instead.
+- name: Pulsix greeting
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - vault_prod.yml
+    - vault_staging.yml
+  tasks:
+    - name: Pulsix greeting
+      ansible.builtin.debug:
+        msg: "{{ vault_prod_secret }}/{{ vault_staging_secret }}"

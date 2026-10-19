@@ -62,6 +62,14 @@ type (
 				ID     string `json:"id"`
 				Status string `json:"status"`
 			} `json:"group"`
+			// VaultIdentities is the run's resolved vault identity set
+			// (spec decision 3): internal/e2e/vault_test.go's own scenario
+			// is the only one that reads it.
+			VaultIdentities []struct {
+				Label        string `json:"label"`
+				CredentialID string `json:"credential_id"`
+				FromTemplate bool   `json:"from_template"`
+			} `json:"vault_identities"`
 		} `json:"job"`
 	}
 	jobEventsOut struct {
