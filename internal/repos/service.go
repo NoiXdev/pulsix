@@ -203,11 +203,45 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err != nil {
 		return Repo{}, err
 	}
-	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, in.VaultIdentities); err != nil {
+	identities := legacyVaultIdentities(in.VaultCredentialID, in.VaultIdentities)
+	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, identities); err != nil {
 		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
 	}
-	created.VaultIdentities = in.VaultIdentities
+	created.VaultIdentities = identities
 	return created, nil
+}
+
+// legacyVaultIdentities is the write-time bridge for VaultCredentialID, the
+// single-password slot the claim path (internal/jobs) stopped reading once
+// it moved to this link table (ListRepoVaultIdentities) — a repository
+// configured solely through the old field would otherwise go silently
+// passwordless on every run. The two inputs are never merged;
+// VaultIdentities, whenever it is non-empty, is the whole truth:
+//
+//   - identities given: returned as-is; VaultCredentialID is still stored
+//     on the row (an additive column, spec decision 5) but contributes
+//     nothing to what a run receives.
+//   - identities empty, VaultCredentialID set: synthesizes the one-entry
+//     "default" set — the exact label migration 00059's backfill used, so
+//     a repository configured this way and a migrated one are
+//     indistinguishable to the claim path.
+//   - both empty: no vault identities.
+//
+// This is temporary scaffolding, not a second permanent source of truth:
+// the product has no VaultIdentities editor in its UI yet (only
+// RepoDialog.tsx's single vault_credential_id field), so freezing the
+// write path outright (refusing VaultCredentialID once anything is set)
+// would break the only working way to configure a repository's vault
+// password today. Retire this function once that editor ships and nothing
+// in the product still depends on the old field to make a run decryptable.
+func legacyVaultIdentities(vaultCredentialID *uuid.UUID, identities []VaultIdentity) []VaultIdentity {
+	if len(identities) > 0 {
+		return identities
+	}
+	if vaultCredentialID != nil {
+		return []VaultIdentity{{CredentialID: *vaultCredentialID, Label: "default"}}
+	}
+	return identities
 }
 
 // Get returns one repository, with its vault identity set attached,
@@ -265,10 +299,11 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err != nil {
 		return Repo{}, err
 	}
-	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, in.VaultIdentities); err != nil {
+	identities := legacyVaultIdentities(in.VaultCredentialID, in.VaultIdentities)
+	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, identities); err != nil {
 		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
 	}
-	updated.VaultIdentities = in.VaultIdentities
+	updated.VaultIdentities = identities
 	return updated, nil
 }
 
