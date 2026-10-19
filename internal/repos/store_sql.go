@@ -13,11 +13,17 @@ import (
 )
 
 // SQLStore implements Store with sqlc queries on *db.DB, so every statement
-// runs inside the request's organization scope.
-type SQLStore struct{ q *gen.Queries }
+// runs inside the request's organization scope. d is kept alongside q (not
+// just q built once over d) so ReplaceRepoVaultIdentities can open its own
+// transaction — every other method here is a single statement and has no
+// need of one.
+type SQLStore struct {
+	q *gen.Queries
+	d *db.DB
+}
 
 // NewSQLStore builds the store.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 
 func (s *SQLStore) Create(ctx context.Context, r Repo) (Repo, error) {
 	row, err := s.q.CreateRepo(ctx, gen.CreateRepoParams{
@@ -106,19 +112,41 @@ func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 }
 
 // ReplaceRepoVaultIdentities replaces a repository's labelled vault
-// credential set in one call: delete then insert
+// credential set: delete then insert
 // (internal/db/queries/vault_identities.sql's own comment explains why
-// never one data-modifying WITH). An empty or nil slice is the legal "no
+// never one data-modifying WITH), the two run inside one transaction —
+// alertroutes.Store.Create's own posture, and its own reason: s.q runs each
+// statement on the pool directly, auto-committing as it goes, so without a
+// transaction a DELETE that succeeds followed by an INSERT that fails (a
+// duplicate label in the submitted set, which this table's own missing ON
+// CONFLICT turns into a unique violation — see the query file's comment)
+// would leave the row already committed gone and nothing in its place. That
+// is not a lost row the way the CTE mistake this file's INSERT comment
+// warns about was; it is the repository's or template's entire vault
+// identity set wiped to empty — a silently-ineffective state, same shape as
+// the one alertroutes.Store.Create's own comment names, just reached by a
+// different path (two auto-committing statements instead of one CTE whose
+// internal order is undefined). An empty or nil slice is the legal "no
 // vault passwords" result, not an error.
 func (s *SQLStore) ReplaceRepoVaultIdentities(ctx context.Context, orgID, repoID uuid.UUID, identities []VaultIdentity) error {
-	if err := s.q.DeleteRepoVaultCredentials(ctx, gen.DeleteRepoVaultCredentialsParams{OrgID: orgID, RepoID: repoID}); err != nil {
+	tx, err := s.d.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin replace repo vault identities: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	q := gen.New(tx)
+
+	if err := q.DeleteRepoVaultCredentials(ctx, gen.DeleteRepoVaultCredentialsParams{OrgID: orgID, RepoID: repoID}); err != nil {
 		return fmt.Errorf("delete repo vault credentials: %w", err)
 	}
 	credentialIDs, labels := vaultIdentityArrays(identities)
-	if err := s.q.InsertRepoVaultCredentials(ctx, gen.InsertRepoVaultCredentialsParams{
+	if err := q.InsertRepoVaultCredentials(ctx, gen.InsertRepoVaultCredentialsParams{
 		OrgID: orgID, RepoID: repoID, CredentialIds: credentialIDs, Labels: labels,
 	}); err != nil {
 		return fmt.Errorf("insert repo vault credentials: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit replace repo vault identities: %w", err)
 	}
 	return nil
 }

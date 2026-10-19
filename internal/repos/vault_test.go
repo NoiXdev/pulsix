@@ -205,7 +205,7 @@ func TestStoreRoundTripVaultIdentitiesStayPerTemplate(t *testing.T) {
 		}
 		tmplIdentities := make([]repos.VaultIdentity, len(rows))
 		for i, r := range rows {
-			tmplIdentities[i] = repos.VaultIdentity{CredentialID: r.CredentialID, Label: r.Label}
+			tmplIdentities[i] = r.ToVaultIdentity()
 		}
 		return repos.ResolveVaultIdentities(repoIdentities, tmplIdentities)
 	}
@@ -270,5 +270,54 @@ func TestStoreRoundTripVaultIdentitiesReplaceDropsStaleLabels(t *testing.T) {
 	}
 	if got, err := store.ListRepoVaultIdentities(scoped, org, repo.ID); err != nil || len(got) != 0 {
 		t.Fatalf("got %+v, %v, want empty", got, err)
+	}
+}
+
+// TestStoreReplaceRepoVaultIdentitiesRollsBackOnPartialFailure proves the
+// delete-then-insert pair commits atomically rather than as two
+// auto-committing statements. Without a transaction, DeleteRepoVaultCredentials
+// would commit on its own the moment it ran, and a submitted set whose
+// InsertRepoVaultCredentials half then fails (here, two entries sharing a
+// label — illegal under PRIMARY KEY (repo_id, label), and deliberately not
+// absorbed by an ON CONFLICT per the query file's own comment) would leave
+// the repository's vault identity set wiped to empty rather than the
+// previous, still-valid set it had before the call — a more severe version
+// of the lost-row bug the brief's delete-then-insert rule was written to
+// prevent in the first place.
+func TestStoreReplaceRepoVaultIdentitiesRollsBackOnPartialFailure(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "vault-txn-org")
+	scoped := db.WithOrgScope(ctx, org)
+	store := repos.NewSQLStore(d)
+
+	repo, err := store.Create(scoped, repos.Repo{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra", URL: "https://git.example.com/infra.git",
+	})
+	if err != nil {
+		t.Fatalf("Create repo: %v", err)
+	}
+	credProd := seedVaultCredential(t, d, org, "prod vault")
+	if err := store.ReplaceRepoVaultIdentities(scoped, org, repo.ID,
+		[]repos.VaultIdentity{{CredentialID: credProd, Label: "prod"}}); err != nil {
+		t.Fatalf("seed ReplaceRepoVaultIdentities: %v", err)
+	}
+
+	credDup := seedVaultCredential(t, d, org, "duplicate-label vault")
+	err = store.ReplaceRepoVaultIdentities(scoped, org, repo.ID, []repos.VaultIdentity{
+		{CredentialID: credProd, Label: "prod"},
+		{CredentialID: credDup, Label: "prod"}, // same label twice: a unique violation on insert
+	})
+	if err == nil {
+		t.Fatal("want an error from the duplicate label, got nil")
+	}
+
+	got, err := store.ListRepoVaultIdentities(scoped, org, repo.ID)
+	if err != nil {
+		t.Fatalf("ListRepoVaultIdentities after the failed replace: %v", err)
+	}
+	want := []repos.VaultIdentity{{CredentialID: credProd, Label: "prod"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v after a failed replace, want the previous set %+v left untouched", got, want)
 	}
 }

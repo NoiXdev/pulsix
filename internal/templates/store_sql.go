@@ -12,14 +12,21 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/repos"
 )
 
 // SQLStore implements Store with sqlc queries on *db.DB, so every statement
-// runs inside the request's organization scope.
-type SQLStore struct{ q *gen.Queries }
+// runs inside the request's organization scope. d is kept alongside q (not
+// just q built once over d) so ReplaceVaultCredentials can open its own
+// transaction — every other method here is a single statement and has no
+// need of one.
+type SQLStore struct {
+	q *gen.Queries
+	d *db.DB
+}
 
 // NewSQLStore builds the store.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 
 func (s *SQLStore) Create(ctx context.Context, t Template) (Template, error) {
 	scope, err := json.Marshal(t.Scope)
@@ -114,23 +121,55 @@ func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 // passwords a shared repository's other templates must not have). Local to
 // this package rather than internal/repos.VaultIdentity: every row this
 // store reads or writes IS from a template, so there is no "FromTemplate"
-// to carry, and importing internal/repos just to reach that one field would
-// put the dependency edge the wrong way round for a single struct. The
-// caller that resolves a run's identities already imports both packages
-// (internal/repos.ResolveVaultIdentities's own call site) and builds
-// repos.VaultIdentity{..., FromTemplate: true} from this type itself.
+// field to carry on the struct itself — ToVaultIdentity below sets it.
 type VaultCredential struct {
 	CredentialID uuid.UUID
 	Label        string
 }
 
+// ToVaultIdentity converts one of a template's own vault credentials into
+// the shape internal/repos.ResolveVaultIdentities needs for its template
+// argument, with FromTemplate forced true. One named place for this
+// conversion, so a future caller (Task 4's run assembly) calls this once
+// per row from ListVaultCredentials rather than rebuilding the struct
+// literal by hand at each call site, where the two packages' fields could
+// drift apart unnoticed.
+//
+// This does make internal/templates import internal/repos directly, which
+// is exactly the signal the plan's pre-Task-2 ruling said to report: "if
+// internal/templates ends up importing repos solely to reach this type,
+// say so — that is the signal the placement is wrong." Reported, but the
+// reverse placement is not available to fix it: internal/templates already
+// depends on internal/repos transitively through internal/playbooks
+// (templates -> playbooks -> repos, playbooks.RepoSource), so this adds a
+// direct edge where a transitive one already existed rather than a new
+// cycle. The opposite direction — repos importing templates so this method
+// could live there instead — is not a style choice available to take:
+// repos already sits underneath playbooks underneath templates, so
+// internal/repos importing internal/templates would be an import cycle,
+// not merely an undesirable edge.
+func (c VaultCredential) ToVaultIdentity() repos.VaultIdentity {
+	return repos.VaultIdentity{CredentialID: c.CredentialID, Label: c.Label, FromTemplate: true}
+}
+
 // ReplaceVaultCredentials replaces a template's labelled vault credential
-// set in one call: delete then insert
-// (internal/db/queries/vault_identities.sql's own comment explains why
-// never one data-modifying WITH). An empty or nil slice is the legal "no
-// added vault passwords" result, not an error.
+// set: delete then insert (internal/db/queries/vault_identities.sql's own
+// comment explains why never one data-modifying WITH), the two run inside
+// one transaction — repos.SQLStore.ReplaceRepoVaultIdentities' own posture
+// and its own reason: s.q runs each statement on the pool directly,
+// auto-committing as it goes, so without a transaction an INSERT that fails
+// after the DELETE already committed would wipe the template's whole set to
+// empty rather than leaving it unchanged. An empty or nil slice is the
+// legal "no added vault passwords" result, not an error.
 func (s *SQLStore) ReplaceVaultCredentials(ctx context.Context, orgID, templateID uuid.UUID, items []VaultCredential) error {
-	if err := s.q.DeleteTemplateVaultCredentials(ctx, gen.DeleteTemplateVaultCredentialsParams{OrgID: orgID, TemplateID: templateID}); err != nil {
+	tx, err := s.d.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin replace template vault credentials: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	q := gen.New(tx)
+
+	if err := q.DeleteTemplateVaultCredentials(ctx, gen.DeleteTemplateVaultCredentialsParams{OrgID: orgID, TemplateID: templateID}); err != nil {
 		return fmt.Errorf("delete template vault credentials: %w", err)
 	}
 	credentialIDs := make([]uuid.UUID, len(items))
@@ -139,10 +178,13 @@ func (s *SQLStore) ReplaceVaultCredentials(ctx context.Context, orgID, templateI
 		credentialIDs[i] = it.CredentialID
 		labels[i] = it.Label
 	}
-	if err := s.q.InsertTemplateVaultCredentials(ctx, gen.InsertTemplateVaultCredentialsParams{
+	if err := q.InsertTemplateVaultCredentials(ctx, gen.InsertTemplateVaultCredentialsParams{
 		OrgID: orgID, TemplateID: templateID, CredentialIds: credentialIDs, Labels: labels,
 	}); err != nil {
 		return fmt.Errorf("insert template vault credentials: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit replace template vault credentials: %w", err)
 	}
 	return nil
 }
