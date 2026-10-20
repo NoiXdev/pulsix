@@ -138,8 +138,8 @@ func (e *NameCollisionError) Unwrap() error { return ErrNameTaken }
 // organization whose projection is still referenced by something inside
 // it ("a projection may be named by a schedule, a trigger or a job — a
 // customer's configuration"), and Reasons names what, in whatever terms
-// the caller's own dependant check produced ("a job trigger", "a job
-// template", …) — kept as a slice of strings rather than a single
+// the caller's own dependant check produced ("a job trigger", "a
+// playbook", …) — kept as a slice of strings rather than a single
 // formatted sentence so Task 4 can decide how (or whether) to render the
 // list, the same reasoning that keeps NameCollisionError's Orgs as data
 // rather than prose. Reasons may be empty: a foreign-key violation caught
