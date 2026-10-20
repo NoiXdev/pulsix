@@ -394,6 +394,7 @@ type GitRepo struct {
 	SshHostKey        *string            `json:"ssh_host_key"`
 	SshHostPublicKey  *string            `json:"ssh_host_public_key"`
 	VaultCredentialID pgtype.UUID        `json:"vault_credential_id"`
+	SharedRepoID      pgtype.UUID        `json:"shared_repo_id"`
 }
 
 type GitRepoVaultCredential struct {
@@ -806,6 +807,16 @@ type Session struct {
 	ExpiresAt   time.Time          `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	MfaAt       pgtype.Timestamptz `json:"mfa_at"`
+}
+
+type SharedRepo struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Url       string    `json:"url"`
+	Branch    string    `json:"branch"`
+	Subpath   string    `json:"subpath"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TotpSecret struct {
