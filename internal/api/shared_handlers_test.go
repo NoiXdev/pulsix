@@ -311,11 +311,14 @@ func TestRepoDefinitionInUseNamesOrganizationToInstanceAdmin(t *testing.T) {
 // TestOrgScopedRepoRoutesNeverLeakAnotherOrgsIdentity is Task 4's Review
 // Focus 3, the hard half: a member of organization A provokes every
 // organization-scoped repository path reachable from org A, and none of
-// the response bodies may ever mention organization B's slug or name —
-// decision 7's collision message (and decision 5's in-use message) is
+// the response bodies may ever mention organization B's slug, name, or raw
+// id — decision 7's collision message (and decision 5's in-use message) is
 // correct only when an instance admin, who already sees every
 // organization, reads it; anywhere else it is one customer learning
-// another customer's identity.
+// another customer's identity. The id matters as much as the slug: the
+// likeliest real leak shape is *shared.InUseError.Error(), which embeds the
+// raw OrgID (internal/shared/definition.go) rather than the slug, so a
+// check that only forbids the slug would walk straight past it.
 //
 // This asserts on response body text throughout, not status codes — a 409
 // or a 403 is an expected, correct outcome for several of these calls (an
@@ -343,7 +346,7 @@ func TestOrgScopedRepoRoutesNeverLeakAnotherOrgsIdentity(t *testing.T) {
 
 	ownerB := s.SeedUser("leak-org-b-owner@example.test", "correct horse battery")
 	const orgBIdentity = "leak-secret-org-b" // SeedOrg sets both slug and name to this string.
-	s.SeedOrg(orgBIdentity, ownerB)
+	orgB := s.SeedOrg(orgBIdentity, ownerB)
 	bClient := s.LoginAs(ownerB)
 	// Org B owns a repository of the same name org A is about to create —
 	// a real, same-named row elsewhere, so a leak would have something
@@ -415,9 +418,18 @@ func TestOrgScopedRepoRoutesNeverLeakAnotherOrgsIdentity(t *testing.T) {
 		"name": "shared-candidate", "url": "https://git.example.com/a/infra.git",
 	}))
 
+	// orgB.String() is the canonical, lowercase, hyphenated form — the only
+	// shape google/uuid ever renders it in, by fmt's %s (what
+	// *shared.InUseError.Error() and *shared.NameCollisionError.Error() use)
+	// or by JSON encoding (uuid.UUID has no custom MarshalJSON, so it falls
+	// back to the same MarshalText). There is no second encoding to also
+	// forbid.
+	forbidden := []string{orgBIdentity, orgB.String()}
 	for i, body := range bodies {
-		if strings.Contains(body, orgBIdentity) {
-			t.Fatalf("response #%d body contains organization B's identity %q: %s", i, orgBIdentity, body)
+		for _, identity := range forbidden {
+			if strings.Contains(body, identity) {
+				t.Fatalf("response #%d body contains organization B's identity %q: %s", i, identity, body)
+			}
 		}
 	}
 }
