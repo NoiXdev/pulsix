@@ -25,8 +25,9 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  * sidebar entries under Infrastructure now, and their routes left
  * /settings with them (router.tsx).
  *
- * "Outgoing mail" is instance-wide and shown only to instance
- * administrators — the only callers GET /admin/settings/smtp admits.
+ * "Outgoing mail" and "Shared resources" are instance-wide and shown only
+ * to instance administrators — the only callers GET /admin/settings/smtp
+ * and GET /admin/repos/definitions admit, respectively (v0.2f).
  * "Notifications", "Alert routes" and "On-call rotations" are shown to
  * the roles that may read channels (channels.read, operator and above) —
  * alert_route_handlers.go and oncall_handlers.go both gate their own
@@ -108,6 +109,17 @@ export function SettingsTabs({ org }: { org: string }) {
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
           Outgoing mail
+        </Link>
+      )}
+      {me.data?.instance_admin && (
+        <Link
+          to="/o/$org/settings/shared-resources"
+          params={{ org }}
+          role="tab"
+          activeProps={{ className: ACTIVE, 'aria-selected': true }}
+          inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+        >
+          Shared resources
         </Link>
       )}
     </div>

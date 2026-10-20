@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
 import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
@@ -21,6 +22,13 @@ export interface RepoDialogProps {
   repo?: {
     id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; vault_credential_id?: string;
     vault_identities?: VaultIdentity[] | null; ssh_host_key?: string; pin_state?: string;
+    /** Set when this repository is a projection of an installation-owned
+     * definition (spec v0.2f decisions 1, 2). Its presence, not its value,
+     * is what the dialog acts on: name, url, branch and subpath become
+     * read-only and the delete action disappears (decision 6 refuses the
+     * delete server-side regardless of what a caller sends, so offering
+     * the button here would only ever produce a refusal). */
+    shared_repo_id?: string;
   };
   credentials: readonly Credential[];
   /** Gates both credential pickers' create rows: credentials.write is
@@ -49,6 +57,14 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
   const update = useUpdateRepo(org, repo?.id ?? '');
   const remove = useDeleteRepo(org);
   const clearKey = useClearRepoKey(org, repo?.id ?? '');
+  // Set means this row is a projection of an installation-owned definition
+  // (spec v0.2f decision 1): name, url, branch and subpath are the
+  // definition's own, refused on write by repos.Service.Update
+  // (refuseSharedFieldChange, internal/repos/service.go) regardless of
+  // what this dialog sends, so they are disabled rather than merely
+  // validated client-side — offering an editable field that always 400s is
+  // the same mistake decision 6 calls out for the delete button below.
+  const projected = Boolean(repo?.shared_repo_id);
   const [values, setValues] = useState<RepoFormValues>(
     repo ? { name: repo.name, url: repo.url, branch: repo.branch, subpath: repo.subpath } : { name: '', url: '', branch: '', subpath: '' },
   );
@@ -83,6 +99,12 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           placeholder={placeholder}
           aria-invalid={errors[key] ? true : undefined}
           autoFocus={key === 'name'}
+          // Every field this helper renders — name, url, branch, subpath —
+          // is exactly the set spec decision 2 gives to the installation's
+          // definition, so one flag covers all four. Disabled, not
+          // hidden/removed: the value still describes the resource, which
+          // is the whole reason this dialog shows it in the first place.
+          disabled={projected}
         />
         {errors[key] && (
           <span role="alert" className="text-[11px] text-destructive">
@@ -125,6 +147,14 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
   return (
     <Dialog open onClose={onClose} title={repo?.name ?? 'New repository'}>
       <form onSubmit={submit} className="flex flex-col gap-3">
+        {projected && (
+          <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5">
+            <Pill tone="accent">Installation-managed</Pill>
+            <span className="text-[11px] text-muted-foreground">
+              Name, URL, branch and subpath belong to the installation&apos;s definition.
+            </span>
+          </div>
+        )}
         {field('name', 'infra')}
         {field('url', 'https://git.example/acme/infra.git')}
         {field('branch', 'main')}
@@ -235,7 +265,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           </p>
         )}
         <div className="flex items-center justify-between gap-2">
-          {repo && (
+          {repo && !projected && (
             <Button
               type="button"
               variant="destructive"

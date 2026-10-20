@@ -39,6 +39,25 @@ describe('SettingsTabs', () => {
     expect(await screen.findByRole('tab', { name: 'Outgoing mail' })).toBeInTheDocument();
   });
 
+  // v0.2f: SharedResourcesPage is gated the same way as mail — GET
+  // /admin/repos/definitions admits only an instance administrator.
+  it('shows the instance-wide "Shared resources" tab to an instance administrator', async () => {
+    mockApi({ 'GET /api/v1/auth/me': me(true) });
+    renderTabs();
+    expect(await screen.findByRole('tab', { name: 'Shared resources' })).toHaveAttribute(
+      'href',
+      '/o/acme/settings/shared-resources',
+    );
+  });
+
+  it('hides "Shared resources" from everyone else', async () => {
+    mockApi({ 'GET /api/v1/auth/me': me(false) });
+    renderTabs();
+    expect(await screen.findByRole('tab', { name: 'Members' })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('tab', { name: 'Shared resources' })).not.toBeInTheDocument();
+  });
+
   // Credentials and Jump hosts are sidebar entries under Infrastructure
   // now (v0.4f) — they are reached from there, not from this strip, and
   // a tab left behind here would be a second route to a page that no

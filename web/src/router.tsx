@@ -16,6 +16,7 @@ import { MembersPage } from './features/members/MembersPage.tsx';
 import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
+import { SharedResourcesPage } from './features/instance/SharedResourcesPage.tsx';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
@@ -249,6 +250,14 @@ const legacyJumpHostsRoute = createRoute({
 // Instance-wide outgoing mail settings, for instance administrators; filed
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
+// Instance-wide shared repository definitions (v0.2f), for instance
+// administrators; filed under Settings for navigation only, same as mail
+// above (see SharedResourcesPage).
+const sharedResourcesRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/shared-resources',
+  component: SharedResourcesPage,
+});
 const notificationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/notifications', component: ChannelsPage });
 const alertRoutesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/alert-routes', component: AlertRoutesPage });
 const rotationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/rotations', component: RotationsPage });
@@ -288,6 +297,7 @@ const routeTree = rootRoute.addChildren([
       legacyCredentialsRoute,
       legacyJumpHostsRoute,
       mailRoute,
+      sharedResourcesRoute,
       notificationsRoute,
       alertRoutesRoute,
       rotationsRoute,

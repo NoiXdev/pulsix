@@ -363,6 +363,70 @@ describe('ReposPage', () => {
     expect(within(dialog).queryByRole('button', { name: 'Unpin key' })).not.toBeInTheDocument();
   });
 
+  // v0.2f Task 5: a repository that is a projection of an installation-owned
+  // definition (spec decisions 1, 2, 6). Its url/branch/subpath — and name,
+  // which the spec's own table gives to the definition for every resource
+  // type (decisions 2) just as much as the other three — stay visible but
+  // read-only; its credential and the delete action are not: a credential
+  // never belongs to the definition (decision 3), and decision 6 refuses a
+  // delete from inside an organization outright, so offering the button
+  // here would only ever produce a refusal (the same reasoning the brief
+  // gives for leaving it off).
+  describe('installation-managed projection (v0.2f)', () => {
+    it('marks a projected repository in the list and the dialog, disables its shared fields, and offers no delete action', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': { repos: [repo({ shared_repo_id: 'def-1' })] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+      });
+      renderPage();
+
+      expect(await screen.findByText('Installation-managed')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'infra' }));
+      const dialog = await screen.findByRole('dialog', { name: 'infra' });
+
+      // The marker repeats inside the dialog — it is its own element, not
+      // only the list row's.
+      expect(within(dialog).getByText('Installation-managed')).toBeInTheDocument();
+
+      // Disabled, not hidden: the value stays on screen, describing the
+      // resource, even though this organization cannot change it.
+      expect(within(dialog).getByLabelText('Name')).toBeDisabled();
+      expect(within(dialog).getByLabelText('Name')).toHaveValue('infra');
+      expect(within(dialog).getByLabelText('URL')).toBeDisabled();
+      expect(within(dialog).getByLabelText('URL')).toHaveValue('https://git.example/acme/infra.git');
+      expect(within(dialog).getByLabelText('Branch')).toBeDisabled();
+      expect(within(dialog).getByLabelText('Subdirectory')).toBeDisabled();
+
+      // The organization's own bindings stay editable.
+      expect(within(dialog).getByLabelText('Credential')).not.toBeDisabled();
+
+      expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    });
+
+    it('keeps every field editable and offers delete for an ordinary, non-projected repository', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/repos': { repos: [repo()] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+      });
+      renderPage();
+
+      expect(screen.queryByText('Installation-managed')).not.toBeInTheDocument();
+
+      await user.click(await screen.findByRole('button', { name: 'infra' }));
+      const dialog = await screen.findByRole('dialog', { name: 'infra' });
+      expect(within(dialog).getByLabelText('Name')).not.toBeDisabled();
+      expect(within(dialog).getByLabelText('URL')).not.toBeDisabled();
+      expect(within(dialog).getByLabelText('Branch')).not.toBeDisabled();
+      expect(within(dialog).getByLabelText('Subdirectory')).not.toBeDisabled();
+      expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    });
+  });
+
   // v0.2e Task 5: a repository's own labelled vault password set, beside
   // the legacy single Vault password field.
   describe('vault identities', () => {

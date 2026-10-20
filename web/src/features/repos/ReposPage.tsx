@@ -74,13 +74,20 @@ export function ReposPage() {
         </GridHeader>
         {list.map((r) => (
           <GridRow key={r.id} columns={COLUMNS}>
-            {canWrite ? (
-              <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(r)}>
-                {r.name}
-              </button>
-            ) : (
-              <span className="truncate font-mono text-[13px]">{r.name}</span>
-            )}
+            <span className="flex min-w-0 items-center gap-1.5">
+              {canWrite ? (
+                <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(r)}>
+                  {r.name}
+                </button>
+              ) : (
+                <span className="truncate font-mono text-[13px]">{r.name}</span>
+              )}
+              {/* r.shared_repo_id marks a projection of an installation-owned
+                  definition (spec v0.2f decision 1) — RepoDialog disables its
+                  name/url/branch/subpath and drops its delete action, so the
+                  row needs to say why before the dialog ever opens. */}
+              {r.shared_repo_id && <Pill tone="accent">Installation-managed</Pill>}
+            </span>
             <span className="truncate font-mono text-xs text-muted-foreground">{r.url}</span>
             <span className="truncate font-mono text-xs">{r.branch}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{r.subpath || '—'}</span>
@@ -115,6 +122,7 @@ export function ReposPage() {
             credential_id: dialog.credential_id, vault_credential_id: dialog.vault_credential_id,
             vault_identities: dialog.vault_identities,
             ssh_host_key: dialog.ssh_host_key, pin_state: dialog.pin_state,
+            shared_repo_id: dialog.shared_repo_id,
           }}
           credentials={names}
           canCreateCredential={canCreateCredential}
