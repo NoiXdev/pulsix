@@ -53,6 +53,7 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -165,6 +166,14 @@ type Server struct {
 	// how checksFixture.record seeds observations through s.Checks instead
 	// of a second, parallel ingest path.
 	Items *items.Service
+	// Shared is the installation-owned definition/projection service
+	// (v0.2f), the same instance Deps.Shared carries — exposed here,
+	// exactly like Checks/Rules/Items, so SeedOrg can give a fixture org
+	// whatever repository definitions already exist the way a real
+	// organization's own creation hook would, and so a test can define a
+	// shared repository directly through the service the instance-admin
+	// routes under test read from.
+	Shared *shared.Service
 	// Alerts is the alert lifecycle's own service (v0.4a), the same
 	// instance Deps.Alerts carries. Opening an alert is not exposed on
 	// Service at all (only Apply, driven by a rules evaluation, does
@@ -458,14 +467,20 @@ func New(t *testing.T, opts ...Option) *Server {
 	// manager actually runs.
 	s.Items = items.NewService(items.NewSQLStore(d), app.ItemCheckKeys)
 	s.Push = &PushRecorder{}
+	// Installation-owned repository definitions (v0.2f), wired exactly like
+	// production (internal/app.Build): sharedSvc needs no org-scoped ports
+	// of its own, built here for the organization-created hook right below.
+	s.Shared = shared.NewService(shared.NewSQLStore(d))
 	// Every organization gets its "default" zone, its check definitions
-	// seed set and its rule starter set through this hook, whichever of the
-	// two ways it was created — POST /orgs (tenancy.Service.CreateOrg) or
-	// the first-run wizard (setup.Service.Complete) — exactly like
-	// production wiring (internal/app/app.go) chains all three hooks the
-	// same way, rules after checks so its rules can always assume the
-	// checks their metrics belong to already exist.
-	orgCreated := app.ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg)
+	// seed set, its rule starter set and a projection of every existing
+	// repository definition through this hook, whichever of the two ways
+	// it was created — POST /orgs (tenancy.Service.CreateOrg) or the
+	// first-run wizard (setup.Service.Complete) — exactly like production
+	// wiring (internal/app/app.go) chains all four hooks the same way,
+	// rules after checks so its rules can always assume the checks their
+	// metrics belong to already exist, and shared last since it depends on
+	// nothing the other three seed.
+	orgCreated := app.ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg, s.Shared.ProjectAllInto)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)
 	credsSvc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox(testMasterKey), time.Now, rand.Reader)
@@ -591,6 +606,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Inventory:   inventorySvc,
 		Renderer:    renderer,
 		Repos:       reposSvc,
+		Shared:      s.Shared,
 		Playbooks:   playbooksSvc,
 		Templates:   templatesSvc,
 		Jobs:        jobsSvc,
@@ -713,11 +729,13 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 // ChainOrgCreatedHooks (New, above): the hook is registered on tenancySvc/
 // setupSvc, and only fires when creation goes through one of them — a
 // direct s.Q.CreateOrganization call, like this one, never reaches it. So
-// SeedOrg calls EnsureDefaultZone, checks' SeedForOrg and rules' SeedForOrg
-// itself, explicitly, the same three steps the hook would have run, so a
-// seeded org still carries the same invariants a real one does
-// (host_handlers_test.go relies on the zone; check_handlers_test.go and
-// rule_handlers_test.go rely on their own seed sets the same way).
+// SeedOrg calls EnsureDefaultZone, checks' SeedForOrg, rules' SeedForOrg and
+// shared's ProjectAllInto itself, explicitly, the same four steps the hook
+// would have run, so a seeded org still carries the same invariants a real
+// one does (host_handlers_test.go relies on the zone; check_handlers_test.go
+// and rule_handlers_test.go rely on their own seed sets the same way; a
+// test that needs a seeded org to already carry an existing repository
+// definition's projection relies on this last step).
 // TestOrgCreationSeedsCheckDefinitions and
 // TestFirstRunWizardSeedsCheckDefinitions (internal/api/host_handlers_test.go)
 // are what actually exercise the hook path end to end, through the real
@@ -739,6 +757,9 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	if err := s.Rules.SeedForOrg(ctx, id); err != nil {
+		s.T.Fatal(err)
+	}
+	if err := s.Shared.ProjectAllInto(ctx, id); err != nil {
 		s.T.Fatal(err)
 	}
 	return id

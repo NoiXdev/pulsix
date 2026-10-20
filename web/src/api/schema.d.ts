@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/api/v1/admin/repos/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin repos definitions */
+        get: operations["get-api-v1-admin-repos-definitions"];
+        put?: never;
+        /** Post API v1 admin repos definitions */
+        post: operations["createRepoDefinition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/repos/definitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin repos definitions by ID */
+        get: operations["get-api-v1-admin-repos-definitions-by-id"];
+        /** Put API v1 admin repos definitions by ID */
+        put: operations["updateRepoDefinition"];
+        post?: never;
+        /** Delete API v1 admin repos definitions by ID */
+        delete: operations["deleteRepoDefinition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/settings/smtp": {
         parameters: {
             query?: never;
@@ -4980,6 +5017,7 @@ export interface components {
             name: string;
             /** @enum {string} */
             pin_state?: "full" | "fingerprint_only";
+            shared_repo_id?: string;
             ssh_host_key?: string;
             subpath: string;
             /** Format: date-time */
@@ -4987,6 +5025,43 @@ export interface components {
             url: string;
             vault_credential_id?: string;
             vault_identities: components["schemas"]["VaultIdentityDTO"][] | null;
+        };
+        RepoDefinitionBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoDefinitionBody.json
+             */
+            readonly $schema?: string;
+            branch?: string;
+            name: string;
+            subpath?: string;
+            url: string;
+        };
+        RepoDefinitionDTO: {
+            branch: string;
+            id: string;
+            name: string;
+            subpath: string;
+            url: string;
+        };
+        RepoDefinitionDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoDefinitionDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            definition: components["schemas"]["RepoDefinitionDTO"];
+        };
+        RepoDefinitionListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoDefinitionListOutputBody.json
+             */
+            readonly $schema?: string;
+            definitions: components["schemas"]["RepoDefinitionDTO"][] | null;
         };
         RepoDetailOutputBody: {
             /**
@@ -5795,6 +5870,165 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "get-api-v1-admin-repos-definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDefinitionListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createRepoDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoDefinitionBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDefinitionDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-repos-definitions-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDefinitionDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateRepoDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoDefinitionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoDefinitionDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteRepoDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-admin-settings-smtp": {
         parameters: {
             query?: never;

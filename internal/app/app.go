@@ -258,12 +258,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	ruleStates := rules.NewSQLStore(appDB)
 	// Installation-owned repository definitions (v0.2f): sharedSvc needs no
 	// org-scoped ports of its own (every method but ProjectInto runs on an
-	// unscoped ctx by design — shared.SQLStore's own doc comment), so it is
-	// built here for the sole purpose of the hook right below, exactly the
+	// unscoped ctx by design — shared.SQLStore's own doc comment). Built
+	// here for the organization-created hook right below, exactly the
 	// shape rulesSvc above already set: a new organization's own projection
 	// of every existing repository definition is what spec decision 4 calls
-	// "the same seam rules.SeedForOrg already uses". Task 4 wires its own,
-	// separately built instance into the installation-admin API surface.
+	// "the same seam rules.SeedForOrg already uses". The same instance also
+	// backs api.Deps.Shared (Task 4's instance-admin CRUD over definitions,
+	// registerSharedRepoRoutes) — one Service, no Principal or org state of
+	// its own to make sharing it across both callers unsafe.
 	sharedSvc := shared.NewService(shared.NewSQLStore(appDB))
 	// Discovery and item decisions (v0.3b-3): one store, two lifecycles —
 	// itemsStore is also what the evaluation ticker's own EvalSQLStore
@@ -501,7 +503,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		AuthRateLimit: cfg.AuthRateLimit,
 		Credentials:   credsSvc, SSH: sshSvc,
 		Inventory: inventorySvc, Renderer: renderer,
-		Repos: reposSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
+		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		// The Agents page and the host Agent card read the same registry

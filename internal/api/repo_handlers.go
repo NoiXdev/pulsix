@@ -81,6 +81,14 @@ type repoDTO struct {
 	// "full" while pinned (a repo pin always carries the full public key —
 	// no legacy fingerprint-only pins exist), absent while unpinned.
 	PinState *string `json:"pin_state,omitempty" enum:"full,fingerprint_only"`
+	// SharedRepoID is set when this row is a projection of an
+	// installation-owned definition (spec v0.2f decisions 1, 2; Task 3's
+	// repos.Repo.SharedRepoID), absent for an ordinary, organization-owned
+	// repository. The GUI uses it to mark the row as installation-managed
+	// and disable name/url/branch/subpath, which repos.Service already
+	// refuses to change on a projection (refuseSharedFieldChange) — this
+	// field only lets the UI say so before the user tries and is refused.
+	SharedRepoID string `json:"shared_repo_id,omitempty"`
 	// LastSync is when the last sync_repo job for this repo reached a
 	// terminal state, and LastSyncError its failure reason ("" on success).
 	LastSync      *time.Time `json:"last_sync,omitempty"`
@@ -107,6 +115,9 @@ func toRepoDTO(r repos.Repo) repoDTO {
 	}
 	if state := r.PinState(); state != "" {
 		dto.PinState = &state
+	}
+	if r.SharedRepoID != nil {
+		dto.SharedRepoID = r.SharedRepoID.String()
 	}
 	return dto
 }
