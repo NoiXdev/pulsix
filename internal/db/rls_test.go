@@ -268,3 +268,63 @@ func TestVaultCredentialsAreIsolatedPerOrg(t *testing.T) {
 		}
 	})
 }
+
+// TestSharedRepoProjectionsAreIsolatedPerOrg is migration 00060's version of
+// the gap TestVaultCredentialsAreIsolatedPerOrg's own comment names for
+// 00059: schema_test.go's TestSharedReposSchema only shows shared_repos
+// carries no org_id and no row-level security of its own — it never proves
+// that git_repos, which DOES carry both, still isolates a row that happens
+// to project a shared definition. The whole point of "the installation owns
+// a definition, each organization gets a projection" (spec decision 1) is
+// that the projection is ordinary tenant data: two organizations project
+// the SAME shared_repos row here, and a session scoped to org A must still
+// see only its own git_repos row, exactly as it would for any other
+// git_repos row that named no shared_repo_id at all.
+func TestSharedRepoProjectionsAreIsolatedPerOrg(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
+
+	var shared uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `
+		INSERT INTO shared_repos (id, name, url, branch)
+		VALUES (gen_random_uuid(), 'infra-playbooks', 'https://example.test/infra.git', 'main')
+		RETURNING id`).Scan(&shared); err != nil {
+		t.Fatalf("insert shared_repos: %v", err)
+	}
+
+	for _, s := range []struct {
+		org  uuid.UUID
+		name string
+	}{{orgA, "repo-a"}, {orgB, "repo-b"}} {
+		if _, err := d.Pool().Exec(ctx, `
+			INSERT INTO git_repos (id, org_id, name, url, shared_repo_id)
+			VALUES (gen_random_uuid(), $1, $2, 'https://example.test/' || $2 || '.git', $3)`,
+			s.org, s.name, shared); err != nil {
+			t.Fatalf("insert git_repos projection: %v", err)
+		}
+	}
+
+	var seen []uuid.UUID
+	err := d.WithOrg(ctx, orgA, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT org_id FROM git_repos WHERE shared_repo_id = $1`, shared)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			seen = append(seen, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != orgA {
+		t.Fatalf("RLS leak: saw %v, want only %s", seen, orgA)
+	}
+}
