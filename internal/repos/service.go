@@ -26,6 +26,16 @@ var (
 	ErrNameTaken    = errors.New("name already in use")
 	// ErrInUse means a playbook still references the repository.
 	ErrInUse = errors.New("repository is in use")
+	// ErrForbidden means the request is well-formed but refused because of
+	// who the resource belongs to, not because of anything the request
+	// could change — spec decision 6's own case: deleting a projected
+	// repository from inside an organization. No edit to the request would
+	// ever make it succeed, which is what sets it apart from
+	// ErrInvalidInput (a value the caller could fix) and is why it is a
+	// separate sentinel rather than reusing that one. The house convention
+	// (internal/tenancy.ErrForbidden, mapped to 403 by
+	// internal/api/authz.go's mapTenancyErr) applies here the same way.
+	ErrForbidden = errors.New("forbidden")
 )
 
 // DefaultBranch is what an empty branch field becomes: the repo's checkout
@@ -361,13 +371,23 @@ func refuseSharedFieldChange(cur Repo, name, url, branch, subpath string) error 
 // deliberately did not build. An organization that wants out of a shared
 // repository leaves its bindings empty instead, which is already how an
 // unconfigured projection looks.
+//
+// This refusal is ErrForbidden, not ErrInvalidInput: no change to the
+// DELETE request's content — it carries none to change — could ever make
+// it succeed, because the refusal is about who owns the row, not about
+// anything the caller sent. Do not "simplify" this back to ErrInvalidInput
+// alongside refuseSharedFieldChange's cases above: those are refused
+// because of a value the caller could fix (omit the field, echo the
+// current one); this one is refused regardless of the request's content,
+// which is exactly the distinction a client needs to tell "fix your input"
+// apart from "this is not yours to remove".
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
 		return err
 	}
 	if cur.SharedRepoID != nil {
-		return fmt.Errorf("%w: this repository is a projection of an installation-owned definition and cannot be deleted from inside an organization", ErrInvalidInput)
+		return fmt.Errorf("%w: this repository is a projection of an installation-owned definition and cannot be deleted from inside an organization", ErrForbidden)
 	}
 	return s.store.Delete(ctx, orgID, id)
 }

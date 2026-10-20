@@ -432,7 +432,14 @@ func TestUpdateRefusesSharedFieldsOnAProjectedRepoButAllowsCredentialID(t *testi
 
 // TestDeleteRefusesAProjectedRepoInsideAnOrganization is spec decision 6's
 // own test: an organization cannot delete its own projection — the next
-// propagation from the definition would simply recreate it.
+// propagation from the definition would simply recreate it. The refusal is
+// ErrForbidden, not ErrInvalidInput: no change to the request's content
+// could ever make the delete succeed, since the problem is ownership, not
+// anything the caller sent — the two refusals are different shapes
+// (TestUpdateRefusesSharedFieldsOnAProjectedRepoButAllowsCredentialID above
+// is the "caller could fix this" one) and Task 4's GUI builds its error
+// handling directly on telling them apart, so they must not share a
+// sentinel.
 func TestDeleteRefusesAProjectedRepoInsideAnOrganization(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
@@ -447,8 +454,11 @@ func TestDeleteRefusesAProjectedRepoInsideAnOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.Delete(ctx, org, projected.ID); !errors.Is(err, repos.ErrInvalidInput) {
-		t.Fatalf("Delete a projection = %v, want ErrInvalidInput", err)
+	if err := svc.Delete(ctx, org, projected.ID); !errors.Is(err, repos.ErrForbidden) {
+		t.Fatalf("Delete a projection = %v, want ErrForbidden", err)
+	}
+	if errors.Is(err, repos.ErrInvalidInput) {
+		t.Fatalf("Delete a projection = %v, must not also be ErrInvalidInput — the two refusals must not share a sentinel", err)
 	}
 	// It must survive the refused delete — this is the whole point of
 	// decision 6, not merely an error code.
