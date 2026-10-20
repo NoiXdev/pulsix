@@ -21,28 +21,41 @@ var (
 	// organization to name.
 	ErrNameTaken = errors.New("name already in use")
 	// ErrInUse means a projection is still referenced by something inside
-	// its organization (a playbook, today) and DeleteRepo therefore refused
-	// to remove the definition — spec decision 5.
+	// its organization and DeleteRepo therefore refused to remove the
+	// definition — spec decision 5. *InUseError (definition.go) is the
+	// richer form naming the organization and, where known, what it is a
+	// playbook, a job trigger or a vault credential binding — still
+	// references.
 	ErrInUse = errors.New("definition is in use")
 )
 
 // Store persists repository definitions and their projections. Every
-// method here is used by a caller running on a context with NO
-// organization bound (db.WithOrgScope is never called for it): shared_repos
+// method here except ProjectInto must be called on a context with NO
+// organization bound (db.WithOrgScope never called for it): shared_repos
 // carries no org_id and no row-level security (migration 00060, the
 // instance_settings posture since migration 00009), and reaching every
 // organization's git_repos rows in one call — to read every existing name
 // for decision 7's check, or to write every projection in one transaction —
 // depends on git_repos' own org_isolation_bypass policy, which only admits
-// everything when no organization is bound. store_sql.go's own doc comment
-// says this again at the one place a future reader is likeliest to reach
-// for db.WithOrgScope out of habit.
+// everything when no organization is bound. ProjectInto writes exactly one
+// organization's own row and is the one method Task 3 calls from inside
+// tenancy.Service.CreateOrg's own, already org-bound transaction — see its
+// own doc comment below. store_sql.go's doc comment says this again at the
+// one place a future reader is likeliest to reach for db.WithOrgScope out
+// of habit.
 type Store interface {
 	// CreateWithProjections inserts def and one projection of it into every
-	// one of orgIDs, atomically: spec decision 4 — a brand new definition
-	// appears everywhere at once or not at all. ErrNameTaken when another
-	// definition already has def.Name.
-	CreateWithProjections(ctx context.Context, def RepoDefinition, orgIDs []uuid.UUID) (RepoDefinition, error)
+	// organization that exists at the moment this call's own transaction
+	// reads the organization list — spec decision 4 — atomically: a brand
+	// new definition appears everywhere at once or not at all. The
+	// organization list is read inside this call, not supplied by the
+	// caller, precisely so there is no separate round trip between
+	// "decide who to project into" and "write it" for an organization
+	// created in between to fall through. ErrNameTaken when another
+	// definition already has def.Name; *NameCollisionError when a race
+	// against the caller's own pre-flight check lets a newly created
+	// organization's own unrelated row collide with def.Name instead.
+	CreateWithProjections(ctx context.Context, def RepoDefinition) (RepoDefinition, error)
 	// UpdateAndPropagate updates def's own row and every one of its
 	// existing projections' shared columns (name, url, branch, subpath),
 	// atomically — Review Focus 2: a failure partway must leave every
@@ -62,8 +75,13 @@ type Store interface {
 	// exist.
 	GetDefinition(ctx context.Context, id uuid.UUID) (RepoDefinition, error)
 	// ProjectInto creates one projection of def in orgID — ProjectAllInto's
-	// single-organization, single-definition step. ErrNameTaken if orgID
-	// already has a row named def.Name (not expected to happen for a
+	// single-organization, single-definition step. Unlike every other
+	// method on this Store, it is expected to run on an org-bound ctx: it
+	// writes exactly one organization's own row, which git_repos' ordinary
+	// org_isolation policy (not the bypass) already admits, and Task 3
+	// calls it from inside tenancy.Service.CreateOrg's own org-scoped
+	// transaction for the organization being created. ErrNameTaken if
+	// orgID already has a row named def.Name (not expected for a
 	// brand-new organization, which cannot yet own any row at all, but
 	// handled rather than assumed away).
 	ProjectInto(ctx context.Context, def RepoDefinition, orgID uuid.UUID) error
@@ -73,9 +91,6 @@ type Store interface {
 	// matched against a candidate name by the pure CollidingOrgs. Pass
 	// uuid.Nil for a brand-new definition, which excludes nothing.
 	ExistingNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error)
-	// OrgIDs returns every organization's id, oldest first — for
-	// projecting a brand new definition into all of them at once.
-	OrgIDs(ctx context.Context) ([]uuid.UUID, error)
 }
 
 // Service implements the installation-admin operations on repository
@@ -111,15 +126,11 @@ func (s *Service) CreateRepo(ctx context.Context, in RepoDefinitionInput) (RepoD
 	if colliding := CollidingOrgs(existing, in.Name); len(colliding) > 0 {
 		return RepoDefinition{}, &NameCollisionError{Name: in.Name, Orgs: colliding}
 	}
-	orgIDs, err := s.store.OrgIDs(ctx)
-	if err != nil {
-		return RepoDefinition{}, fmt.Errorf("list organizations: %w", err)
-	}
 	def := RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: in.Name, URL: in.URL,
 		Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
 	}
-	return s.store.CreateWithProjections(ctx, def, orgIDs)
+	return s.store.CreateWithProjections(ctx, def)
 }
 
 // UpdateRepo replaces def's editable fields and propagates the shared ones

@@ -23,16 +23,14 @@ import (
 type fakeStore struct {
 	defs         map[uuid.UUID]shared.RepoDefinition
 	gitRepoNames []shared.OrgName
-	orgIDs       []uuid.UUID
 
 	existingNamesExcludes []uuid.UUID // every exclude CreateRepo/UpdateRepo passed, in call order
-	createCalls           []createCall
+	createCalls           []shared.RepoDefinition
 	updateCalls           []shared.RepoDefinition
 	deleteCalls           []uuid.UUID
 	projectCalls          []projectCall
 
 	forceExistingNamesErr error
-	forceOrgIDsErr        error
 	forceCreateErr        error
 	forceUpdateErr        error
 	forceDeleteErr        error
@@ -46,11 +44,6 @@ type fakeStore struct {
 	forceProjectErr       error
 }
 
-type createCall struct {
-	def    shared.RepoDefinition
-	orgIDs []uuid.UUID
-}
-
 type projectCall struct {
 	def   shared.RepoDefinition
 	orgID uuid.UUID
@@ -60,11 +53,18 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{defs: map[uuid.UUID]shared.RepoDefinition{}}
 }
 
-func (f *fakeStore) CreateWithProjections(_ context.Context, def shared.RepoDefinition, orgIDs []uuid.UUID) (shared.RepoDefinition, error) {
+// CreateWithProjections no longer takes an organization list (store_sql.go
+// now reads it live, inside its own transaction — the fix for the
+// round-trip gap the review caught); the fake has no organizations of its
+// own to fan out into, since that behaviour now lives entirely in
+// SQLStore and is proven for real in store_sql_test.go. This fake only
+// proves Service builds the right RepoDefinition and calls this exactly
+// once.
+func (f *fakeStore) CreateWithProjections(_ context.Context, def shared.RepoDefinition) (shared.RepoDefinition, error) {
 	if f.forceCreateErr != nil {
 		return shared.RepoDefinition{}, f.forceCreateErr
 	}
-	f.createCalls = append(f.createCalls, createCall{def: def, orgIDs: orgIDs})
+	f.createCalls = append(f.createCalls, def)
 	f.defs[def.ID] = def
 	return def, nil
 }
@@ -129,19 +129,10 @@ func (f *fakeStore) ExistingNames(_ context.Context, exclude uuid.UUID) ([]share
 	return f.gitRepoNames, nil
 }
 
-func (f *fakeStore) OrgIDs(_ context.Context) ([]uuid.UUID, error) {
-	if f.forceOrgIDsErr != nil {
-		return nil, f.forceOrgIDsErr
-	}
-	return f.orgIDs, nil
-}
-
 // --- CreateRepo ---
 
-func TestCreateRepoProjectsIntoEveryOrganization(t *testing.T) {
+func TestCreateRepoCallsCreateWithProjectionsOnce(t *testing.T) {
 	store := newFakeStore()
-	orgA, orgB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	store.orgIDs = []uuid.UUID{orgA, orgB}
 	svc := shared.NewService(store)
 
 	got, err := svc.CreateRepo(ctx, shared.RepoDefinitionInput{
@@ -154,8 +145,8 @@ func TestCreateRepoProjectsIntoEveryOrganization(t *testing.T) {
 		t.Fatalf("CreateWithProjections called %d times, want 1", len(store.createCalls))
 	}
 	call := store.createCalls[0]
-	if !reflect.DeepEqual(call.orgIDs, store.orgIDs) {
-		t.Fatalf("CreateWithProjections orgIDs = %v, want every organization %v", call.orgIDs, store.orgIDs)
+	if call.Name != "infra" || call.URL != "https://git.example.com/infra.git" || call.Branch != "main" || call.Subpath != "ansible" {
+		t.Fatalf("CreateWithProjections called with %+v, want the input's own values", call)
 	}
 	if got.Name != "infra" || got.Branch != "main" {
 		t.Fatalf("CreateRepo() = %+v, unexpected", got)
@@ -179,7 +170,6 @@ func TestCreateRepoRefusesACollidingName(t *testing.T) {
 	store := newFakeStore()
 	orgA := uuid.Must(uuid.NewV7())
 	store.gitRepoNames = []shared.OrgName{{OrgID: orgA, Name: "ansible-base"}}
-	store.orgIDs = []uuid.UUID{orgA}
 	svc := shared.NewService(store)
 
 	_, err := svc.CreateRepo(ctx, shared.RepoDefinitionInput{Name: "ansible-base", URL: "https://git.example.com/x.git"})

@@ -18,6 +18,7 @@ package shared
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -132,3 +133,30 @@ func (e *NameCollisionError) Error() string {
 // internal/alertroutes/store_sql.go, for one) stays matchable by its
 // sentinel.
 func (e *NameCollisionError) Unwrap() error { return ErrNameTaken }
+
+// InUseError is ErrInUse's richer form for spec decision 5: OrgID names the
+// organization whose projection is still referenced by something inside
+// it ("a projection may be named by a schedule, a trigger or a job — a
+// customer's configuration"), and Reasons names what, in whatever terms
+// the caller's own dependant check produced ("a job trigger", "a job
+// template", …) — kept as a slice of strings rather than a single
+// formatted sentence so Task 4 can decide how (or whether) to render the
+// list, the same reasoning that keeps NameCollisionError's Orgs as data
+// rather than prose. Reasons may be empty: a foreign-key violation caught
+// as a backstop (not from an explicit dependant check) has no named reason
+// to offer, only the organization.
+type InUseError struct {
+	OrgID   uuid.UUID
+	Reasons []string
+}
+
+func (e *InUseError) Error() string {
+	if len(e.Reasons) == 0 {
+		return fmt.Sprintf("organization %s still has a dependant referencing this definition's projection", e.OrgID)
+	}
+	return fmt.Sprintf("organization %s: %s still reference this definition's projection", e.OrgID, strings.Join(e.Reasons, ", "))
+}
+
+// Unwrap is what makes errors.Is(err, ErrInUse) true for this richer
+// error — NameCollisionError's own Unwrap, for the other sentinel.
+func (e *InUseError) Unwrap() error { return ErrInUse }
