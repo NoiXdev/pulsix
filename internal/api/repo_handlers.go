@@ -365,6 +365,13 @@ func mapReposErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, repos.ErrInUse):
 		return huma.Error409Conflict("the repository is still referenced by a playbook")
+	case errors.Is(err, repos.ErrForbidden):
+		// spec v0.2f decision 6: a projected repository cannot be deleted
+		// from inside an organization. The same mapping
+		// internal/api/authz.go's mapTenancyErr already gives
+		// tenancy.ErrForbidden — this is not a value the caller could fix,
+		// so 403, not 400.
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, jobs.ErrNoZone):
 		return huma.Error409Conflict("the organization has no default zone, so nothing can be synced yet")
 	default:
