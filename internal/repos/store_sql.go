@@ -192,6 +192,7 @@ func mapErr(err error) error {
 func toRepo(r gen.GitRepo) Repo {
 	return Repo{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, URL: r.Url, Branch: r.Branch, Subpath: r.Subpath,
+		SharedRepoID:      db.UUIDPtr(r.SharedRepoID),
 		CredentialID:      db.UUIDPtr(r.CredentialID),
 		VaultCredentialID: db.UUIDPtr(r.VaultCredentialID),
 		SSHHostKey:        textOrEmpty(r.SshHostKey), SSHHostPublicKey: textOrEmpty(r.SshHostPublicKey),

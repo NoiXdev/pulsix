@@ -361,6 +361,102 @@ func TestDeletePropagatesStoreOutcomes(t *testing.T) {
 	}
 }
 
+// TestUpdateRefusesSharedFieldsOnAProjectedRepoButAllowsCredentialID is
+// spec v0.2f decision 2's own test: a projection's name, url, branch and
+// subpath belong to the installation-owned definition and are refused on
+// write, naming the field and saying the installation owns it, while
+// credential_id — the organization's own — still goes through.
+func TestUpdateRefusesSharedFieldsOnAProjectedRepoButAllowsCredentialID(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	cred := gitKeyCred()
+	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{cred.ID: cred})
+	svc := newService(store, creds, &fakeEnqueuer{})
+
+	sharedID := uuid.Must(uuid.NewV7())
+	// A projection is created directly through the store, exactly the way
+	// shared.Store.ProjectInto writes one (internal/shared/store_sql.go):
+	// repos.Service.Create never sets SharedRepoID itself — only the
+	// shared package's own projection path does.
+	projected, err := store.Create(ctx, repos.Repo{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra",
+		URL: "https://git.example.com/infra.git", Branch: "main", Subpath: "",
+		SharedRepoID: &sharedID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.Update(ctx, org, projected.ID, repos.UpdateInput{
+		Name: projected.Name, URL: "https://git.example.com/other.git", Branch: projected.Branch, Subpath: projected.Subpath,
+	})
+	if !errors.Is(err, repos.ErrInvalidInput) {
+		t.Fatalf("Update url on a projection = %v, want ErrInvalidInput", err)
+	}
+	if !strings.Contains(err.Error(), "url") || !strings.Contains(err.Error(), "installation") {
+		t.Fatalf("Update url error = %q, want it to name the field \"url\" and say the installation owns it", err.Error())
+	}
+
+	// Branch and subpath are refused the same way.
+	if _, err := svc.Update(ctx, org, projected.ID, repos.UpdateInput{
+		Name: projected.Name, URL: projected.URL, Branch: "develop", Subpath: projected.Subpath,
+	}); !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), "branch") {
+		t.Fatalf("Update branch on a projection = %v, want ErrInvalidInput naming \"branch\"", err)
+	}
+	if _, err := svc.Update(ctx, org, projected.ID, repos.UpdateInput{
+		Name: projected.Name, URL: projected.URL, Branch: projected.Branch, Subpath: "deploy",
+	}); !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), "subpath") {
+		t.Fatalf("Update subpath on a projection = %v, want ErrInvalidInput naming \"subpath\"", err)
+	}
+	if _, err := svc.Update(ctx, org, projected.ID, repos.UpdateInput{
+		Name: "renamed", URL: projected.URL, Branch: projected.Branch, Subpath: projected.Subpath,
+	}); !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), "name") {
+		t.Fatalf("Update name on a projection = %v, want ErrInvalidInput naming \"name\"", err)
+	}
+
+	// credential_id is the organization's own and must still be settable.
+	updated, err := svc.Update(ctx, org, projected.ID, repos.UpdateInput{
+		Name: projected.Name, URL: projected.URL, Branch: projected.Branch, Subpath: projected.Subpath,
+		CredentialID: &cred.ID,
+	})
+	if err != nil {
+		t.Fatalf("Update credential_id on a projection: %v", err)
+	}
+	if updated.CredentialID == nil || *updated.CredentialID != cred.ID {
+		t.Fatalf("updated.CredentialID = %v, want %s", updated.CredentialID, cred.ID)
+	}
+	if updated.SharedRepoID == nil || *updated.SharedRepoID != sharedID {
+		t.Fatalf("updated.SharedRepoID = %v, want it to survive the edit unchanged", updated.SharedRepoID)
+	}
+}
+
+// TestDeleteRefusesAProjectedRepoInsideAnOrganization is spec decision 6's
+// own test: an organization cannot delete its own projection — the next
+// propagation from the definition would simply recreate it.
+func TestDeleteRefusesAProjectedRepoInsideAnOrganization(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, &fakeCreds{}, &fakeEnqueuer{})
+	sharedID := uuid.Must(uuid.NewV7())
+	projected, err := store.Create(ctx, repos.Repo{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra",
+		URL: "https://git.example.com/infra.git", Branch: "main",
+		SharedRepoID: &sharedID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Delete(ctx, org, projected.ID); !errors.Is(err, repos.ErrInvalidInput) {
+		t.Fatalf("Delete a projection = %v, want ErrInvalidInput", err)
+	}
+	// It must survive the refused delete — this is the whole point of
+	// decision 6, not merely an error code.
+	if _, err := store.Get(ctx, org, projected.ID); err != nil {
+		t.Fatalf("projection must survive a refused delete: %v", err)
+	}
+}
+
 // TestUpdateDropsThePinOnURLChange proves the pin's one service-side rule
 // (backlog 2.41): the pin pins the server the URL names, so an edit that
 // changes the URL drops it (the next sync re-pins whatever the new server

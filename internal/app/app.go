@@ -53,6 +53,7 @@ import (
 	"github.com/noixdev/pulsix/internal/schedule"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -255,6 +256,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// rules.StateStore is deliberately the narrower, read-only interface
 	// (see its own doc comment).
 	ruleStates := rules.NewSQLStore(appDB)
+	// Installation-owned repository definitions (v0.2f): sharedSvc needs no
+	// org-scoped ports of its own (every method but ProjectInto runs on an
+	// unscoped ctx by design — shared.SQLStore's own doc comment), so it is
+	// built here for the sole purpose of the hook right below, exactly the
+	// shape rulesSvc above already set: a new organization's own projection
+	// of every existing repository definition is what spec decision 4 calls
+	// "the same seam rules.SeedForOrg already uses". Task 4 wires its own,
+	// separately built instance into the installation-admin API surface.
+	sharedSvc := shared.NewService(shared.NewSQLStore(appDB))
 	// Discovery and item decisions (v0.3b-3): one store, two lifecycles —
 	// itemsStore is also what the evaluation ticker's own EvalSQLStore
 	// discovers items and resolves decisions through (see evalTicker
@@ -265,20 +275,29 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	itemsStore := items.NewSQLStore(appDB)
 	itemsSvc := items.NewService(itemsStore, ItemCheckKeys)
 	// Every organization gets its "default" zone, its "Linux base" check
-	// definitions and its five-row starter rule set the moment it is
-	// created, through whichever of the two paths created it — POST /orgs
-	// (tenancy.Service.CreateOrg) or the first-run wizard
-	// (setup.Service.Complete) — both bound to the same three hooks,
-	// chained (ChainOrgCreatedHooks, checks_ports.go) since
-	// SetOrgCreatedHook only ever holds one, so neither path can produce an
-	// organization the other would have given a zone, a check seed set or a
-	// rule seed set. rulesSvc.SeedForOrg runs after checksSvc.SeedForOrg so
-	// that its rules can always assume the checks their metrics belong to
-	// already exist. See
-	// tenancy.OrgCreatedHook's own doc comment for why this runs as a
-	// sequential step after each service's own writes commit, rather than
-	// inside either one's transaction.
-	orgCreated := ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, checksSvc.SeedForOrg, rulesSvc.SeedForOrg)
+	// definitions, its five-row starter rule set and a projection of every
+	// installation-owned repository definition (v0.2f, spec decision 4) the
+	// moment it is created, through whichever of the two paths created it —
+	// POST /orgs (tenancy.Service.CreateOrg) or the first-run wizard
+	// (setup.Service.Complete) — both bound to the same four hooks, chained
+	// (ChainOrgCreatedHooks, checks_ports.go) since SetOrgCreatedHook only
+	// ever holds one, so neither path can produce an organization the other
+	// would have given a zone, a check seed set, a rule seed set or a
+	// definition's own projection. rulesSvc.SeedForOrg runs after
+	// checksSvc.SeedForOrg so that its rules can always assume the checks
+	// their metrics belong to already exist; sharedSvc.ProjectAllInto has no
+	// ordering dependency on either (it only ever writes git_repos) and runs
+	// last. See tenancy.OrgCreatedHook's own doc comment for why this runs
+	// as a sequential step after each service's own writes commit, rather
+	// than inside either one's transaction — sharedSvc.ProjectAllInto's own
+	// doc comment says the same thing again from its side: a brand-new
+	// organization created while a definition is mid-edit still lands on
+	// either the whole old value or the whole new one, never a mixture,
+	// because shared.Service.UpdateRepo's own propagation is atomic per
+	// definition (shared.SQLStore.UpdateAndPropagate) — that guarantee comes
+	// from the mechanism a read goes through, not from this hook running
+	// inside any transaction of its own, which it does not.
+	orgCreated := ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, checksSvc.SeedForOrg, rulesSvc.SeedForOrg, sharedSvc.ProjectAllInto)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)
 
