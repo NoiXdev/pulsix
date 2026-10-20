@@ -13,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/shared"
 )
 
 func seedOrg(t *testing.T, q *gen.Queries, slug string) uuid.UUID {
@@ -192,6 +193,61 @@ func TestSQLStoreDeleteReferencedRepoIsInUse(t *testing.T) {
 	}
 	if err := store.Delete(scoped, org, created.ID); err != nil {
 		t.Fatalf("Delete after unreferencing: %v", err)
+	}
+}
+
+// TestSQLStoreCredentialDeleteIsBlockedByAProjectedRepo is Review Focus 4's
+// own test: credentials.SQLStore.Delete refuses with ErrInUse when a
+// git_repos row still references the credential through credential_id
+// (migration 00018's own (org_id, credential_id) foreign key, NO ACTION) —
+// exactly the same check an ordinary repository relies on
+// (TestSQLStoreCredentialFKIsOrgScoped above exercises the same foreign
+// key from the other side). That foreign key does not look at
+// shared_repo_id at all, so a projected repository must block the delete
+// identically; this test proves it rather than assuming the FK "just
+// covers" a row it has never been exercised against in this sub-project.
+func TestSQLStoreCredentialDeleteIsBlockedByAProjectedRepo(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := repos.NewSQLStore(d)
+	org := seedOrg(t, q, "repo-shared-cred-org")
+	scoped := db.WithOrgScope(ctx, org)
+
+	// A definition projected into the organization, the real path
+	// (shared.Service.CreateRepo projects into every existing
+	// organization, org included since it was seeded first) — not a
+	// hand-rolled stand-in, so this test also proves the projection repos.
+	// SQLStore reads back is the very row shared.SQLStore wrote.
+	def, err := shared.NewService(shared.NewSQLStore(d)).CreateRepo(ctx, shared.RepoDefinitionInput{
+		Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("CreateRepo (definition): %v", err)
+	}
+	list, err := store.List(scoped, org)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List after projection = %+v, %v", list, err)
+	}
+	projected := list[0]
+	if projected.SharedRepoID == nil || *projected.SharedRepoID != def.ID {
+		t.Fatalf("projected.SharedRepoID = %v, want %s", projected.SharedRepoID, def.ID)
+	}
+
+	credID := seedGitCredential(t, d, org, "deploy-key")
+	projected.CredentialID = &credID
+	if _, err := store.Update(scoped, projected); err != nil {
+		t.Fatalf("bind the organization's own credential to the projection: %v", err)
+	}
+
+	if err := credentials.NewSQLStore(d).Delete(scoped, org, credID); !errors.Is(err, credentials.ErrInUse) {
+		t.Fatalf("Delete credential bound to a projected repo = %v, want ErrInUse", err)
+	}
+	// The projection, and its credential binding, must survive the refused
+	// delete — "it returned an error" alone would not catch a credential
+	// delete that half-succeeded or a binding silently cleared.
+	got, err := store.Get(scoped, org, projected.ID)
+	if err != nil || got.CredentialID == nil || *got.CredentialID != credID {
+		t.Fatalf("projection after refused credential delete = %+v, %v, want the credential still bound", got, err)
 	}
 }
 

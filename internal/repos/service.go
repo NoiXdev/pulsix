@@ -59,6 +59,15 @@ type Repo struct {
 	URL     string
 	Branch  string
 	Subpath string
+	// SharedRepoID is non-nil when this row is a PROJECTION of an
+	// installation-owned definition (migration 00060, spec v0.2f decision
+	// 1): shared_repos.id, not composed with org_id — the definition has no
+	// org_id to compose with (that table's own doc comment explains why).
+	// Name, URL, Branch and Subpath then belong to the definition and are
+	// refused on write (Service.Update, spec decision 2); only
+	// CredentialID and the vault identity set remain this organization's
+	// own. Nil for an ordinary, organization-created repository.
+	SharedRepoID *uuid.UUID
 	// CredentialID is nil when the checkout fetches without a credential.
 	CredentialID *uuid.UUID
 	// VaultCredentialID names the vault_password credential Ansible needs
@@ -282,6 +291,15 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Repo, error) {
 // editable field: it survives the edit unless the URL changes — the pin
 // pins the server the URL names, so a moved checkout is unpinned and the
 // next sync re-pins whatever the new server presents (backlog 2.41).
+//
+// A projected repository (SharedRepoID set) refuses any attempt to change
+// name, URL, branch or subpath — spec decision 2's table gives those four
+// to the installation-owned definition, read-only inside every
+// organization; only CredentialID and the vault identity set are this
+// organization's to change here. The refusal runs after ordinary field
+// validation (a malformed value is reported as that, not as "you may not
+// change this") and before the store is touched, so a refused edit never
+// partially writes.
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInput) (Repo, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
@@ -290,9 +308,15 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
+	branch := defaultBranch(in.Branch)
+	if cur.SharedRepoID != nil {
+		if err := refuseSharedFieldChange(cur, in.Name, in.URL, branch, in.Subpath); err != nil {
+			return Repo{}, err
+		}
+	}
 	next := cur
 	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID, next.VaultCredentialID =
-		in.Name, in.URL, defaultBranch(in.Branch), in.Subpath, in.CredentialID, in.VaultCredentialID
+		in.Name, in.URL, branch, in.Subpath, in.CredentialID, in.VaultCredentialID
 	if next.URL != cur.URL {
 		next.SSHHostKey, next.SSHHostPublicKey = "", ""
 	}
@@ -308,9 +332,43 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	return updated, nil
 }
 
+// refuseSharedFieldChange refuses to change any of a projected repository's
+// shared columns (spec decision 2: name, url, branch and subpath belong to
+// the installation-owned definition and are read-only inside every
+// organization). cur is the projection's current row; name, url, branch and
+// subpath are the already-defaulted values Update is about to write.
+func refuseSharedFieldChange(cur Repo, name, url, branch, subpath string) error {
+	switch {
+	case name != cur.Name:
+		return fmt.Errorf("%w: name: this repository is a projection of an installation-owned definition; the installation owns its name", ErrInvalidInput)
+	case url != cur.URL:
+		return fmt.Errorf("%w: url: this repository is a projection of an installation-owned definition; the installation owns its url", ErrInvalidInput)
+	case branch != cur.Branch:
+		return fmt.Errorf("%w: branch: this repository is a projection of an installation-owned definition; the installation owns its branch", ErrInvalidInput)
+	case subpath != cur.Subpath:
+		return fmt.Errorf("%w: subpath: this repository is a projection of an installation-owned definition; the installation owns its subpath", ErrInvalidInput)
+	}
+	return nil
+}
+
 // Delete removes a repository that no playbook references; the foreign key
 // is the guard (no cascade), so a referenced repository is ErrInUse.
+//
+// A projected repository (SharedRepoID set) cannot be deleted from inside
+// an organization at all (spec decision 6): the next propagation from the
+// definition would simply recreate it, so a delete here would either be
+// silently undone or need a tombstone — the opt-out catalogue decision 4
+// deliberately did not build. An organization that wants out of a shared
+// repository leaves its bindings empty instead, which is already how an
+// unconfigured projection looks.
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
+	cur, err := s.store.Get(ctx, orgID, id)
+	if err != nil {
+		return err
+	}
+	if cur.SharedRepoID != nil {
+		return fmt.Errorf("%w: this repository is a projection of an installation-owned definition and cannot be deleted from inside an organization", ErrInvalidInput)
+	}
 	return s.store.Delete(ctx, orgID, id)
 }
 
