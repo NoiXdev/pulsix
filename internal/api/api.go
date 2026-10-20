@@ -36,6 +36,7 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
+	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -76,6 +77,13 @@ type Deps struct {
 	Renderer *inventory.Renderer
 	// Repos is the git repository registry; see registerRepoRoutes.
 	Repos *repos.Service
+	// Shared is the installation-owned definition/projection mechanism
+	// (spec v0.2f, decisions 1, 2, 4, 5, 7, 8): an instance admin's own
+	// CRUD over repository definitions, each projected into every
+	// organization as an ordinary repos.Repo (Task 3's SharedRepoID). See
+	// registerSharedRepoRoutes (shared_handlers.go) — every route it wires
+	// is instance-admin-only; nothing org-scoped calls this field.
+	Shared *shared.Service
 	// Playbooks stores repo and editor playbooks; see registerPlaybookRoutes.
 	Playbooks *playbooks.Service
 	// Templates is the job-template registry (a run's playbook, scope,
@@ -490,6 +498,9 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// session or bearer credential is accepted.
 	registerHookRoutes(hapi, deps)
 	registerSMTPSettingsRoutes(hapi, deps) // /admin/settings/smtp... — instance admin, session only
+	// /admin/repos/definitions... — instance admin, session only (spec
+	// v0.2f decision 8: no org_id, no per-org access at all).
+	registerSharedRepoRoutes(hapi, deps)
 	// GET /me/activity spans every org the caller belongs to, so — like
 	// registerOrgRoutes above — it takes no org in its path and accepts no
 	// bearer credential: a token is scoped to the one org it was minted

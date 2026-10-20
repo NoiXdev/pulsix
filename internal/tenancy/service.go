@@ -262,6 +262,16 @@ func (s *Service) GetOrgBySlug(ctx context.Context, slug string) (Org, error) {
 	return s.store.GetOrgBySlug(ctx, slug)
 }
 
+// GetOrgByID looks up an organization by its id. It exists for callers that
+// only hold an id — spec v0.2f decision 7's collision error (and decision
+// 5's ErrInUse) names organizations by uuid.UUID, and the instance-admin
+// handler that resolves those ids into a slug for its response
+// (internal/api/shared_handlers.go) needs this rather than reaching into
+// tenancy's own store, which handlers must never do directly.
+func (s *Service) GetOrgByID(ctx context.Context, id uuid.UUID) (Org, error) {
+	return s.store.GetOrgByID(ctx, id)
+}
+
 // UpdateOrg renames orgID. The slug is immutable — it appears in URLs and
 // API token scopes, so changing it would silently break both.
 func (s *Service) UpdateOrg(ctx context.Context, orgID uuid.UUID, name string) (Org, error) {
