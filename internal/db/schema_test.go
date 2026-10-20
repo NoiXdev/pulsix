@@ -737,3 +737,64 @@ func TestAlertEventsAcceptEscalated(t *testing.T) {
 		t.Fatalf("alert_events rejected kind 'escalated': %v", err)
 	}
 }
+
+// TestSharedReposSchema pins migration 00060's split between installation
+// data and tenant data (spec decision 1): shared_repos is installation-
+// level, so it must NOT have org_id and must NOT carry row-level security
+// — both asserted here, because a later migration copying a neighbour's
+// policy block onto it would silently make the table invisible to every
+// organization at once, the same failure mode TestEveryOrgOwnedTableForces
+// RowLevelSecurity (rls_catalog_test.go) exists to catch in the other
+// direction. git_repos.shared_repo_id is checked separately: nullable,
+// because a git_repos row that is not a projection has no definition to
+// point at, and ON DELETE RESTRICT, because deleting a definition out from
+// under a customer's schedules is what spec decision 5 refuses.
+func TestSharedReposSchema(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+
+	var hasOrgID bool
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_attribute a
+			JOIN pg_class c ON c.oid = a.attrelid
+			WHERE c.relname = 'shared_repos' AND a.attname = 'org_id' AND NOT a.attisdropped
+		)`).Scan(&hasOrgID); err != nil {
+		t.Fatalf("check org_id column: %v", err)
+	}
+	if hasOrgID {
+		t.Error("shared_repos must not have an org_id column; it is installation-level, not tenant data")
+	}
+
+	var rls bool
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT c.relrowsecurity FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		WHERE c.relname = 'shared_repos'`).Scan(&rls); err != nil {
+		t.Fatalf("check relrowsecurity: %v", err)
+	}
+	if rls {
+		t.Error("shared_repos must not carry row-level security; it is visible to every organization by design")
+	}
+
+	var nullable string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_name = 'git_repos' AND column_name = 'shared_repo_id'`).Scan(&nullable); err != nil {
+		t.Fatalf("check git_repos.shared_repo_id exists: %v", err)
+	}
+	if nullable != "YES" {
+		t.Errorf("git_repos.shared_repo_id is_nullable = %q, want YES — a non-projecting row names no definition", nullable)
+	}
+
+	var deleteRule string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT confdeltype FROM pg_constraint
+		WHERE conrelid = 'git_repos'::regclass AND confrelid = 'shared_repos'::regclass`).Scan(&deleteRule); err != nil {
+		t.Fatalf("check git_repos.shared_repo_id foreign key: %v", err)
+	}
+	if deleteRule != "r" {
+		t.Errorf("git_repos.shared_repo_id foreign key confdeltype = %q, want %q (restrict) — "+
+			"deleting a definition still projected into an organization must be refused, not cascade", deleteRule, "r")
+	}
+}
