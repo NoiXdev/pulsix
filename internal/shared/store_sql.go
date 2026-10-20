@@ -199,86 +199,88 @@ func (s *SQLStore) UpdateAndPropagate(ctx context.Context, def RepoDefinition) (
 }
 
 // DeleteWithProjections checks every organization holding a projection of
-// id for a job trigger, refuses the whole call with *InUseError on the
-// first one found, and otherwise clears each organization's discovered
-// playbooks and deletes its projection before removing id's own row — all
-// inside one transaction (withTx), so a refusal discovered partway rolls
-// back any projection already deleted this call rather than leaving some
-// organizations' projections gone and others not.
+// id for a job trigger or a playbook, refuses the whole call with
+// *InUseError on the first one found, and otherwise deletes every
+// projection before removing id's own row — all inside one transaction
+// (withTx), so a refusal discovered partway rolls back any projection
+// already deleted this call rather than leaving some organizations'
+// projections gone and others not.
 //
 // The full inventory of every table with a foreign key to git_repos, and
-// what this method does about each one (verified against the migrations,
-// not assumed from whatever error a DELETE happened to raise — that
-// assumption is what let a customer's job trigger disappear silently
-// before this review):
+// what this method does about each one (verified against the migrations
+// and the code that writes each table, not assumed — an earlier version of
+// this comment asserted playbooks are discovered by sync and therefore
+// safe to delete explicitly; that was false, caught in review, and is
+// corrected here):
 //
 //   - job_triggers (migration 00026): ON DELETE CASCADE. Checked
 //     EXPLICITLY, via GitRepoHasJobTrigger, and blocks with *InUseError —
 //     a webhook trigger is a customer's own configuration that would
 //     silently vanish otherwise (spec decision 5's own example: "a
 //     schedule, a trigger or a job").
+//   - playbooks (migration 00018): no ON DELETE clause at all — NO ACTION
+//     — and checked EXPLICITLY too, via GitRepoHasPlaybook, beside
+//     job_triggers. A playbook row is written in exactly one place,
+//     playbooks.Service.CreateRepo (internal/playbooks/service.go), behind
+//     POST /orgs/{org}/playbooks under playbooks.write — an organization
+//     registering it deliberately. Syncing a repository
+//     (internal/worker/runner/gitrepo.go) only clones its checkout and
+//     never writes a playbooks row. A playbook is therefore customer-owned
+//     configuration, exactly like a job trigger, not derived data this
+//     method could safely clear on the customer's behalf — and unlike
+//     job_triggers, its own foreign key would already refuse the delete
+//     outright; checking it explicitly only turns that into the same
+//     named *InUseError the job-trigger case gets.
 //   - git_repo_vault_credentials (migration 00059): ON DELETE CASCADE,
 //     and left to cascade on purpose. A vault password binding is PART OF
 //     the projection, not a dependant on it (the same reasoning v0.2e's
 //     own design gave this table its cascade in the first place) — a
 //     repository with vault passwords configured must still be deletable,
 //     and its passwords go with it.
-//   - playbooks (migration 00018): no ON DELETE clause at all — NO ACTION
-//     — and NOT counted as a blocking dependant either, but not left
-//     alone: DeletePlaybooksForRepo (below, run per organization right
-//     before DeleteProjectedRepo) removes them explicitly. A playbook is
-//     discovered by sync, not configured by a customer, so treating it as
-//     a reason to refuse would make every shared repository permanently
-//     undeletable the moment it synced once. If a job template still
-//     names one of those playbooks, DeletePlaybooksForRepo's own DELETE
-//     fails on job_templates' (org_id, playbook_id) foreign key (also NO
-//     ACTION, migration 00018) and is mapped to *InUseError here too — a
-//     job template choosing to run this playbook IS customer
-//     configuration, one hop further from git_repos than job_triggers but
-//     the same idea.
 //
 // jobs (run history) carries no foreign key to git_repos at all — verified
 // by reading every migration that mentions git_repos — so there is
 // nothing for this method to check or clean up there.
+//
+// ListProjectedReposForUpdate (not ListProjectedRepos) is what this method
+// reads the projection list with: its own FOR UPDATE holds a lock on every
+// projection row from before the two checks below run until this
+// transaction ends, which is what stops a job trigger or a playbook from
+// being inserted concurrently, after the checks but before the DELETE —
+// see its own query comment (queries/shared.sql) for the locking argument.
 func (s *SQLStore) DeleteWithProjections(ctx context.Context, id uuid.UUID) error {
 	return withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
-		projections, err := q.ListProjectedRepos(ctx, id)
+		projections, err := q.ListProjectedReposForUpdate(ctx, id)
 		if err != nil {
 			return fmt.Errorf("list projected repos: %w", err)
 		}
 
 		for _, p := range projections {
-			has, err := q.GitRepoHasJobTrigger(ctx, gen.GitRepoHasJobTriggerParams{OrgID: p.OrgID, RepoID: p.ID})
+			hasTrigger, err := q.GitRepoHasJobTrigger(ctx, gen.GitRepoHasJobTriggerParams{OrgID: p.OrgID, RepoID: p.ID})
 			if err != nil {
 				return fmt.Errorf("check job triggers in organization %s: %w", p.OrgID, err)
 			}
-			if has {
+			if hasTrigger {
 				return &InUseError{OrgID: p.OrgID, Reasons: []string{"a job trigger"}}
+			}
+			hasPlaybook, err := q.GitRepoHasPlaybook(ctx, gen.GitRepoHasPlaybookParams{OrgID: p.OrgID, RepoID: p.ID})
+			if err != nil {
+				return fmt.Errorf("check playbooks in organization %s: %w", p.OrgID, err)
+			}
+			if hasPlaybook {
+				return &InUseError{OrgID: p.OrgID, Reasons: []string{"a playbook"}}
 			}
 		}
 
-		if err := propagate(projections, func(p gen.ListProjectedReposRow) error {
-			if err := q.DeletePlaybooksForRepo(ctx, gen.DeletePlaybooksForRepoParams{OrgID: p.OrgID, RepoID: p.ID}); err != nil {
-				if db.IsForeignKeyViolation(err) {
-					// A job template still names one of this organization's
-					// discovered playbooks — see the method's own doc
-					// comment for why that is treated as customer
-					// configuration too, even though it is one hop removed
-					// from git_repos itself.
-					return &InUseError{OrgID: p.OrgID, Reasons: []string{"a job template"}}
-				}
-				return fmt.Errorf("delete playbooks for organization %s: %w", p.OrgID, err)
-			}
+		if err := propagate(projections, func(p gen.ListProjectedReposForUpdateRow) error {
 			if _, err := q.DeleteProjectedRepo(ctx, gen.DeleteProjectedRepoParams{OrgID: p.OrgID, SharedRepoID: id}); err != nil {
 				if db.IsForeignKeyViolation(err) {
-					// Backstop only: the explicit checks above already
-					// refused the whole call if a job trigger existed, and
-					// playbooks are already cleared by the time this runs.
-					// Reaching this means either a genuine race (something
-					// inserted between those checks and this statement) or
-					// a future referencing table this method does not yet
-					// know about — either way, a real in-use condition,
-					// just one this call cannot name a reason for.
+					// Backstop only, for a future referencing table this
+					// method does not yet know to check — see
+					// DeleteProjectedRepo's own query comment for why the
+					// two known tables (job_triggers, playbooks) cannot
+					// reach here concurrently once ListProjectedReposForUpdate
+					// has locked the row.
 					return &InUseError{OrgID: p.OrgID}
 				}
 				return fmt.Errorf("delete projected repo in organization %s: %w", p.OrgID, err)

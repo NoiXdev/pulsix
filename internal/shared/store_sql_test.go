@@ -36,31 +36,17 @@ func seedOtherRepo(t *testing.T, d *db.DB, orgID uuid.UUID, name string) uuid.UU
 	return id
 }
 
-// seedPlaybook inserts a playbook referencing repoID — the one dependant
-// table whose own foreign key to git_repos has no ON DELETE clause at all
-// (migration 00018, i.e. NO ACTION), the only one of the three that would
-// ever raise the violation DeleteProjectedRepo used to rely on alone.
+// seedPlaybook inserts a playbook referencing repoID — a registered
+// playbook (playbooks.Service.CreateRepo's own path, POST
+// /orgs/{org}/playbooks under playbooks.write) is customer-owned
+// configuration, not something sync discovers, so it blocks a definition
+// delete exactly like a job trigger does.
 func seedPlaybook(t *testing.T, d *db.DB, orgID, repoID uuid.UUID) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
 		`INSERT INTO playbooks (id, org_id, repo_id, path, source) VALUES ($1, $2, $3, 'site.yml', 'repo')`,
 		id, orgID, repoID); err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
-// seedJobTemplateForPlaybook inserts a job template naming playbookID —
-// the customer configuration that makes deleting that playbook (and so,
-// transitively, the repository it was discovered from) refused rather
-// than silently taking the template's own source out from under it.
-func seedJobTemplateForPlaybook(t *testing.T, d *db.DB, orgID, playbookID uuid.UUID) uuid.UUID {
-	t.Helper()
-	id := uuid.Must(uuid.NewV7())
-	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
-		`INSERT INTO job_templates (id, org_id, name, playbook_id, scope) VALUES ($1, $2, 'deploy', $3, '{}'::jsonb)`,
-		id, orgID, playbookID); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -132,6 +118,19 @@ func projectionExists(t *testing.T, d *db.DB, orgID, defID uuid.UUID) bool {
 		t.Fatal(err)
 	}
 	return n > 0
+}
+
+// countVaultCredentialBindings reads git_repo_vault_credentials directly —
+// the table the Critical finding's regression test must prove actually
+// loses its rows on a successful delete, not merely that the call returned
+// nil.
+func countVaultCredentialBindings(t *testing.T, d *db.DB, repoID uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM git_repo_vault_credentials WHERE repo_id = $1`, repoID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func containsString(haystack []string, want string) bool {
@@ -382,18 +381,16 @@ func TestUpdateSkipsACascadedOrganization(t *testing.T) {
 
 // --- DeleteWithProjections ---
 //
-// What blocks and what does not is the Critical finding's own correction:
-// job_triggers is the one table whose row is counted as a blocking
-// dependant (customer configuration that would otherwise silently vanish —
-// its own foreign key CASCADEs, migration 00026). playbooks and
-// git_repo_vault_credentials are NOT counted — a vault binding is part of
-// the projection and goes with it (git_repo_vault_credentials' own
-// CASCADE, migration 00059), and a playbook is sync-discovered rather than
-// customer-configured, so DeleteWithProjections clears it explicitly
-// instead of either blocking on it or leaving it to a foreign key that
-// (unlike the other two) is NO ACTION and would otherwise refuse the
-// delete permanently. See DeleteWithProjections' own doc comment
-// (store_sql.go) for the full inventory.
+// What blocks is job_triggers and playbooks, both checked explicitly in
+// the same pre-write loop. git_repo_vault_credentials is the one NOT
+// counted — a vault binding is part of the projection and goes with it
+// (its own ON DELETE CASCADE, migration 00059). Playbooks were, for one
+// review round, wrongly treated as sync-discovered and therefore safe to
+// delete explicitly; they are registered by an organization itself
+// (playbooks.Service.CreateRepo, POST /orgs/{org}/playbooks under
+// playbooks.write) and block exactly like job triggers do — see
+// DeleteWithProjections' own doc comment (store_sql.go) for the corrected,
+// verified inventory.
 
 func TestDeleteWithProjectionsRefusesWhileAJobTriggerExists(t *testing.T) {
 	d := testdb.Open(t)
@@ -429,62 +426,16 @@ func TestDeleteWithProjectionsRefusesWhileAJobTriggerExists(t *testing.T) {
 	}
 }
 
-// TestDeleteWithProjectionsRefusesWhileAJobTemplateUsesAPlaybook covers the
-// one hop beyond git_repos the review's explicit inventory did not name
-// directly: DeleteWithProjections clears a projection's discovered
-// playbooks itself (they are not customer configuration), but if a job
-// template still names one of them, job_templates' own (org_id,
-// playbook_id) foreign key (migration 00018, NO ACTION) refuses THAT
-// delete, and a job template choosing to run this playbook is customer
-// configuration — the store maps the failure back to *InUseError rather
-// than letting it surface as an unmapped database error.
-func TestDeleteWithProjectionsRefusesWhileAJobTemplateUsesAPlaybook(t *testing.T) {
+// TestDeleteWithProjectionsRefusesWhileAPlaybookExists is the test that
+// replaces the review's second, false premise: a playbook is registered
+// deliberately (playbooks.Service.CreateRepo), never written by sync, so
+// it is customer-owned configuration exactly like a job trigger and must
+// block a definition delete rather than being cleared silently.
+func TestDeleteWithProjectionsRefusesWhileAPlaybookExists(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	store := shared.NewSQLStore(d)
-	org := seedOrg(t, q, "shared-delete-template-playbook")
-
-	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
-		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	})
-	if err != nil {
-		t.Fatalf("seed CreateWithProjections: %v", err)
-	}
-	projID, _, _, _, _ := projectionRow(t, d, org, def.ID)
-	playbookID := seedPlaybook(t, d, org, projID)
-	seedJobTemplateForPlaybook(t, d, org, playbookID)
-
-	err = store.DeleteWithProjections(ctx, def.ID)
-	var inUse *shared.InUseError
-	if !errors.As(err, &inUse) {
-		t.Fatalf("DeleteWithProjections() error = %v, want *InUseError — a job template still using the playbook must block the delete", err)
-	}
-	if inUse.OrgID != org {
-		t.Fatalf("InUseError.OrgID = %v, want %v", inUse.OrgID, org)
-	}
-	if !containsString(inUse.Reasons, "a job template") {
-		t.Fatalf("InUseError.Reasons = %v, want to include %q", inUse.Reasons, "a job template")
-	}
-	if !projectionExists(t, d, org, def.ID) {
-		t.Fatal("projection gone after a refused delete, want it rolled back along with the definition")
-	}
-}
-
-// TestDeleteWithProjectionsSucceedsWithVaultIdentitiesAndDiscoveredPlaybooks
-// is the test the review asked for specifically to catch the naive version
-// of this fix: a projection with a vault credential binding AND a
-// sync-discovered playbook — neither referenced by anything else — must
-// still delete cleanly. A version of this fix that simply added
-// job_triggers to the old three-table dependant count (rather than
-// dropping playbooks and vault credentials from it and explicitly clearing
-// playbooks) would fail this test, either by refusing the delete outright
-// or by leaving the playbook behind to block git_repos' own DELETE through
-// playbooks' NO ACTION foreign key.
-func TestDeleteWithProjectionsSucceedsWithVaultIdentitiesAndDiscoveredPlaybooks(t *testing.T) {
-	d := testdb.Open(t)
-	q := gen.New(d.Pool())
-	store := shared.NewSQLStore(d)
-	org := seedOrg(t, q, "shared-delete-clean-with-extras")
+	org := seedOrg(t, q, "shared-delete-playbook")
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
@@ -494,16 +445,63 @@ func TestDeleteWithProjectionsSucceedsWithVaultIdentitiesAndDiscoveredPlaybooks(
 	}
 	projID, _, _, _, _ := projectionRow(t, d, org, def.ID)
 	seedPlaybook(t, d, org, projID)
+
+	err = store.DeleteWithProjections(ctx, def.ID)
+	var inUse *shared.InUseError
+	if !errors.As(err, &inUse) {
+		t.Fatalf("DeleteWithProjections() error = %v, want *InUseError — a registered playbook is customer configuration and must not be cleared silently", err)
+	}
+	if inUse.OrgID != org {
+		t.Fatalf("InUseError.OrgID = %v, want %v", inUse.OrgID, org)
+	}
+	if !containsString(inUse.Reasons, "a playbook") {
+		t.Fatalf("InUseError.Reasons = %v, want to include %q", inUse.Reasons, "a playbook")
+	}
+	if _, gerr := store.GetDefinition(ctx, def.ID); gerr != nil {
+		t.Fatalf("GetDefinition() after a refused delete = %v, want the definition still to exist", gerr)
+	}
+	if !projectionExists(t, d, org, def.ID) {
+		t.Fatal("projection gone after a refused delete, want it rolled back along with the definition")
+	}
+}
+
+// TestDeleteWithProjectionsSucceedsWithAVaultCredentialBinding is the
+// regression test for the Critical finding, reduced to vault credentials
+// alone now that playbooks block: a vault password binding, referenced by
+// nothing else, must not prevent a definition delete, and — the assertion
+// the review's own first version of this test was missing — the binding
+// itself must actually be gone afterwards, not merely have let the call
+// return nil. "It returned nil" is exactly what let the false playbooks
+// premise through undetected the first time.
+func TestDeleteWithProjectionsSucceedsWithAVaultCredentialBinding(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-delete-clean-with-vault")
+
+	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateWithProjections: %v", err)
+	}
+	projID, _, _, _, _ := projectionRow(t, d, org, def.ID)
 	seedVaultCredentialBinding(t, d, org, projID)
+	if n := countVaultCredentialBindings(t, d, projID); n != 1 {
+		t.Fatalf("countVaultCredentialBindings() before delete = %d, want 1", n)
+	}
 
 	if err := store.DeleteWithProjections(ctx, def.ID); err != nil {
-		t.Fatalf("DeleteWithProjections() error = %v, want nil — vault identities and discovered playbooks must not block a definition delete", err)
+		t.Fatalf("DeleteWithProjections() error = %v, want nil — a vault credential binding must not block a definition delete", err)
 	}
 	if _, gerr := store.GetDefinition(ctx, def.ID); !errors.Is(gerr, shared.ErrNotFound) {
 		t.Fatalf("GetDefinition() after delete = %v, want ErrNotFound", gerr)
 	}
 	if n := countProjections(t, d, def.ID); n != 0 {
 		t.Fatalf("countProjections() = %d, want 0", n)
+	}
+	if n := countVaultCredentialBindings(t, d, projID); n != 0 {
+		t.Fatalf("countVaultCredentialBindings() after delete = %d, want 0 — the binding must actually be gone, not just the call having returned nil", n)
 	}
 }
 

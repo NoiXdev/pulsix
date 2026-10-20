@@ -106,48 +106,62 @@ VALUES (@id, @org_id, @name, @url, @branch, @subpath, @shared_repo_id);
 
 -- name: ListProjectedRepos :many
 -- Every organization currently holding a projection of one definition, with
--- the projection's own id (GitRepoHasJobTrigger, DeletePlaybooksForRepo and
+-- the projection's own id (GitRepoHasJobTrigger, GitRepoHasPlaybook and
 -- DeleteProjectedRepo all need it, the last only for its org_id half) —
 -- oldest projection first
 -- (ORDER BY the projection's own id, uuid v7 ordering again), which is
--- UpdateAndPropagate's and DeleteWithProjections' own iteration order: "the
--- second organization" in a propagation failure is the second one actually
--- projected, not an arbitrary one, and a DeleteWithProjections failure
--- names the first organization still using its projection rather than a
--- random one among several.
+-- UpdateAndPropagate's own iteration order: "the second organization" in a
+-- propagation failure is the second one actually projected, not an
+-- arbitrary one.
 SELECT id, org_id FROM git_repos WHERE shared_repo_id = @shared_repo_id::uuid ORDER BY id;
 
+-- name: ListProjectedReposForUpdate :many
+-- ListProjectedRepos' own shape, with FOR UPDATE, for
+-- DeleteWithProjections alone: locking each projection row before checking
+-- it for dependants is what actually closes the race DeleteProjectedRepo's
+-- own backstop comment used to merely gesture at. A concurrent INSERT into
+-- job_triggers or playbooks takes a FOR KEY SHARE lock on the git_repos
+-- row it references, to verify that row still exists; this FOR UPDATE
+-- conflicts with that and blocks it until this transaction ends. By the
+-- time it can proceed, either this transaction has committed (the row is
+-- gone, so the blocked INSERT then fails on the very foreign key it was
+-- checking) or this transaction rolled back (the row is still there to
+-- reference, and the INSERT proceeds normally). UpdateAndPropagate does
+-- not need this: it only ever changes columns, never removes the row a
+-- concurrent insert depends on existing.
+SELECT id, org_id FROM git_repos WHERE shared_repo_id = @shared_repo_id::uuid ORDER BY id FOR UPDATE;
+
 -- name: GitRepoHasJobTrigger :one
--- Whether a job trigger still names one organization's projection — the
--- ONE table DeleteWithProjections checks explicitly before refusing a
--- delete with InUseError. See DeleteWithProjections' own doc comment
--- (store_sql.go) for the full inventory of every table that references
--- git_repos and why this is the only one of them checked here: job
--- triggers are a customer's own webhook configuration that would
--- otherwise silently disappear (job_triggers' own ON DELETE CASCADE,
--- migration 00026) — exactly spec decision 5's own example ("a schedule, a
--- trigger or a job"). Playbooks and vault credential bindings are
--- deliberately NOT checked here; DeletePlaybooksForRepo below and
--- git_repo_vault_credentials' own cascade handle them instead.
+-- Whether a job trigger still names one organization's projection — one of
+-- the two tables DeleteWithProjections checks explicitly, in the same
+-- pre-write loop as GitRepoHasPlaybook, before touching anything. See
+-- DeleteWithProjections' own doc comment (store_sql.go) for the full
+-- inventory of every table that references git_repos and why these two
+-- are the ones checked here: job triggers are a customer's own webhook
+-- configuration that would otherwise silently disappear (job_triggers' own
+-- ON DELETE CASCADE, migration 00026) — exactly spec decision 5's own
+-- example ("a schedule, a trigger or a job"). git_repo_vault_credentials
+-- is the one table deliberately NOT checked; its own cascade (migration
+-- 00059) is left to run, because a vault password binding is part of the
+-- projection rather than a dependant on it.
 SELECT EXISTS (SELECT 1 FROM job_triggers WHERE org_id = @org_id::uuid AND repo_id = @repo_id::uuid);
 
--- name: DeletePlaybooksForRepo :exec
--- Removes every playbook discovered by syncing this organization's
--- projection, run immediately before DeleteProjectedRepo in the same
--- transaction. playbooks.repo_id's own foreign key to git_repos (migration
--- 00018) carries no ON DELETE clause at all — NO ACTION — so without this
--- statement the git_repos DELETE below would fail the moment a shared
--- repository had ever synced once, which is every shared repository,
--- permanently: a playbook is discovered by sync, not configured by a
--- customer, so DeleteWithProjections' own doc comment explains why it goes
--- with the projection rather than blocking its removal. If a job template
--- still names one of these playbooks, THIS statement itself fails — on
--- job_templates' own (org_id, playbook_id) foreign key, also NO ACTION,
--- migration 00018 — and the store maps that back to InUseError: a job
--- template choosing to run this playbook is exactly the kind of customer
--- configuration spec decision 5 protects, one hop further from git_repos
--- than job_triggers but the same idea.
-DELETE FROM playbooks WHERE org_id = @org_id::uuid AND repo_id = @repo_id::uuid;
+-- name: GitRepoHasPlaybook :one
+-- Whether a playbook still names one organization's projection — the
+-- second table DeleteWithProjections checks explicitly, beside
+-- GitRepoHasJobTrigger. A playbook is registered by an organization
+-- itself (playbooks.Service.CreateRepo, POST /orgs/{org}/playbooks under
+-- playbooks.write) — sync only clones a repository's checkout
+-- (internal/worker/runner/gitrepo.go) and never writes a playbooks row —
+-- so a playbook is customer-owned configuration exactly like a job
+-- trigger, not derived data a delete may clear on the customer's behalf.
+-- playbooks.repo_id's own foreign key to git_repos (migration 00018)
+-- carries no ON DELETE clause at all (NO ACTION) and would already refuse
+-- DeleteProjectedRepo below on its own; checking here is what turns that
+-- into the same named, machine-readable InUseError the job-trigger case
+-- gets, instead of a bare foreign-key violation surfacing from whichever
+-- organization the loop happens to reach first.
+SELECT EXISTS (SELECT 1 FROM playbooks WHERE org_id = @org_id::uuid AND repo_id = @repo_id::uuid);
 
 -- name: UpdateProjectedRepo :execrows
 -- One organization's projection, propagating the definition's new shared
@@ -168,18 +182,20 @@ UPDATE git_repos SET name = @name, url = @url, branch = @branch, subpath = @subp
 WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;
 
 -- name: DeleteProjectedRepo :execrows
--- One organization's projection, run immediately after
--- DeletePlaybooksForRepo has already cleared that organization's own
--- playbooks, looped over by shared.SQLStore.DeleteWithProjections inside
--- one transaction — after GitRepoHasJobTrigger has already refused the
--- whole call if any organization's projection still has a job trigger.
--- This statement's own foreign-key violation (IsForeignKeyViolation,
--- mapped to InUseError) is therefore only a backstop: a race between the
--- job-trigger check and this delete, or a future referencing table this
--- method does not yet know to check — not the primary detection path.
--- Looping (rather than a single bulk DELETE) is what lets that backstop,
--- when it fires, name "this organization" rather than a bulk failure
--- naming none of them; the transaction around the loop is what rolls back
--- any organization's row already deleted this call when a later one is
--- refused.
+-- One organization's projection, looped over by
+-- shared.SQLStore.DeleteWithProjections inside one transaction — after
+-- GitRepoHasJobTrigger and GitRepoHasPlaybook have already refused the
+-- whole call if either still names any organization's projection, and
+-- after ListProjectedReposForUpdate's own FOR UPDATE has held a lock on
+-- every projection row since before those checks ran. That lock is what
+-- makes this statement's own foreign-key violation (IsForeignKeyViolation,
+-- mapped to InUseError) a backstop for a future referencing table this
+-- method does not yet know to check, and nothing more: a job_triggers or
+-- playbooks row inserted concurrently cannot slip in between the checks
+-- and this DELETE, because inserting either one requires a FOR KEY SHARE
+-- lock on this row that the FOR UPDATE already holds. Looping (rather than
+-- a single bulk DELETE) is what lets that backstop, when it fires, name
+-- "this organization" rather than a bulk failure naming none of them; the
+-- transaction around the loop is what rolls back any organization's row
+-- already deleted this call when a later one is refused.
 DELETE FROM git_repos WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;

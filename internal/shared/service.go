@@ -23,9 +23,11 @@ var (
 	// ErrInUse means a projection is still referenced by something inside
 	// its organization and DeleteRepo therefore refused to remove the
 	// definition — spec decision 5. *InUseError (definition.go) is the
-	// richer form naming the organization and, where known, what it is a
-	// playbook, a job trigger or a vault credential binding — still
-	// references.
+	// richer form naming the organization and, where known, what it is —
+	// a job trigger or a playbook, today — still references. A vault
+	// credential binding never appears here: it is part of the
+	// projection, not a dependant on it, and goes with a delete rather
+	// than blocking one.
 	ErrInUse = errors.New("definition is in use")
 )
 
