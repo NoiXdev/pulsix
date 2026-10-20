@@ -948,6 +948,42 @@ func TestGetOrgBySlugNotFound(t *testing.T) {
 	}
 }
 
+// TestGetOrgByIDFound and TestGetOrgByIDNotFound are GetOrgByID's own direct
+// coverage: it was added in 76fd643 only as a pass-through so the
+// instance-admin repository-definition handler could resolve a
+// *shared.NameCollisionError/*shared.InUseError's organization ids to slugs
+// through tenancy.Service rather than reaching into tenancy's store
+// directly, and that commit covered it only incidentally, through the store
+// method and the fake. internal/tenancy carries a >=90% coverage gate, so
+// the method wants its own test rather than relying on another package's
+// handler test to exercise it.
+func TestGetOrgByIDFound(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	created, err := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.GetOrgByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetOrgByID(%s): %v", created.ID, err)
+	}
+	if got.ID != created.ID || got.Slug != "acme" {
+		t.Fatalf("GetOrgByID(%s) = %+v, want slug acme for the org just created", created.ID, got)
+	}
+}
+
+func TestGetOrgByIDNotFound(t *testing.T) {
+	ctx := context.Background()
+	svc := tenancy.NewService(newFakeStore(), &fakeMailer{}, testPublicURL, time.Now)
+	if _, err := svc.GetOrgByID(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
+
 func TestMembershipOfNotMember(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
