@@ -104,15 +104,50 @@ SELECT unnest(@ids::uuid[]), unnest(@org_ids::uuid[]), @name, @url, @branch, @su
 INSERT INTO git_repos (id, org_id, name, url, branch, subpath, shared_repo_id)
 VALUES (@id, @org_id, @name, @url, @branch, @subpath, @shared_repo_id);
 
--- name: ListProjectedRepoOrgIDs :many
--- The organizations currently holding a projection of one definition,
--- oldest projection first (ORDER BY the projection's own id, uuid v7
--- ordering again) — UpdateAndPropagate's and DeleteWithProjections' own
--- iteration order, so "the second organization" in a propagation failure
--- is the second one actually projected, not an arbitrary one, and so a
--- DeleteWithProjections failure names the first organization still using
--- its projection rather than a random one among several.
-SELECT org_id FROM git_repos WHERE shared_repo_id = @shared_repo_id::uuid ORDER BY id;
+-- name: ListProjectedRepos :many
+-- Every organization currently holding a projection of one definition, with
+-- the projection's own id (GitRepoHasJobTrigger, DeletePlaybooksForRepo and
+-- DeleteProjectedRepo all need it, the last only for its org_id half) —
+-- oldest projection first
+-- (ORDER BY the projection's own id, uuid v7 ordering again), which is
+-- UpdateAndPropagate's and DeleteWithProjections' own iteration order: "the
+-- second organization" in a propagation failure is the second one actually
+-- projected, not an arbitrary one, and a DeleteWithProjections failure
+-- names the first organization still using its projection rather than a
+-- random one among several.
+SELECT id, org_id FROM git_repos WHERE shared_repo_id = @shared_repo_id::uuid ORDER BY id;
+
+-- name: GitRepoHasJobTrigger :one
+-- Whether a job trigger still names one organization's projection — the
+-- ONE table DeleteWithProjections checks explicitly before refusing a
+-- delete with InUseError. See DeleteWithProjections' own doc comment
+-- (store_sql.go) for the full inventory of every table that references
+-- git_repos and why this is the only one of them checked here: job
+-- triggers are a customer's own webhook configuration that would
+-- otherwise silently disappear (job_triggers' own ON DELETE CASCADE,
+-- migration 00026) — exactly spec decision 5's own example ("a schedule, a
+-- trigger or a job"). Playbooks and vault credential bindings are
+-- deliberately NOT checked here; DeletePlaybooksForRepo below and
+-- git_repo_vault_credentials' own cascade handle them instead.
+SELECT EXISTS (SELECT 1 FROM job_triggers WHERE org_id = @org_id::uuid AND repo_id = @repo_id::uuid);
+
+-- name: DeletePlaybooksForRepo :exec
+-- Removes every playbook discovered by syncing this organization's
+-- projection, run immediately before DeleteProjectedRepo in the same
+-- transaction. playbooks.repo_id's own foreign key to git_repos (migration
+-- 00018) carries no ON DELETE clause at all — NO ACTION — so without this
+-- statement the git_repos DELETE below would fail the moment a shared
+-- repository had ever synced once, which is every shared repository,
+-- permanently: a playbook is discovered by sync, not configured by a
+-- customer, so DeleteWithProjections' own doc comment explains why it goes
+-- with the projection rather than blocking its removal. If a job template
+-- still names one of these playbooks, THIS statement itself fails — on
+-- job_templates' own (org_id, playbook_id) foreign key, also NO ACTION,
+-- migration 00018 — and the store maps that back to InUseError: a job
+-- template choosing to run this playbook is exactly the kind of customer
+-- configuration spec decision 5 protects, one hop further from git_repos
+-- than job_triggers but the same idea.
+DELETE FROM playbooks WHERE org_id = @org_id::uuid AND repo_id = @repo_id::uuid;
 
 -- name: UpdateProjectedRepo :execrows
 -- One organization's projection, propagating the definition's new shared
@@ -133,13 +168,18 @@ UPDATE git_repos SET name = @name, url = @url, branch = @branch, subpath = @subp
 WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;
 
 -- name: DeleteProjectedRepo :execrows
--- One organization's projection, looped over by
--- shared.SQLStore.DeleteWithProjections inside one transaction, the same
--- shape as UpdateProjectedRepo and for the same reason: looping (rather
--- than a single bulk DELETE) is what lets a foreign-key violation on one
--- organization's row (a schedule or a job still naming it — git_repos has
--- no cascade from those tables) be reported as "this organization" rather
--- than a bulk failure naming none of them, while the transaction around
--- the loop is what rolls back any organization's row already deleted this
--- call when a later one is refused.
+-- One organization's projection, run immediately after
+-- DeletePlaybooksForRepo has already cleared that organization's own
+-- playbooks, looped over by shared.SQLStore.DeleteWithProjections inside
+-- one transaction — after GitRepoHasJobTrigger has already refused the
+-- whole call if any organization's projection still has a job trigger.
+-- This statement's own foreign-key violation (IsForeignKeyViolation,
+-- mapped to InUseError) is therefore only a backstop: a race between the
+-- job-trigger check and this delete, or a future referencing table this
+-- method does not yet know to check — not the primary detection path.
+-- Looping (rather than a single bulk DELETE) is what lets that backstop,
+-- when it fires, name "this organization" rather than a bulk failure
+-- naming none of them; the transaction around the loop is what rolls back
+-- any organization's row already deleted this call when a later one is
+-- refused.
 DELETE FROM git_repos WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;

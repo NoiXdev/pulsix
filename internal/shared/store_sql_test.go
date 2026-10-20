@@ -2,7 +2,6 @@ package shared_test
 
 import (
 	"errors"
-	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -24,8 +23,8 @@ func seedOrg(t *testing.T, q *gen.Queries, slug string) uuid.UUID {
 
 // seedOtherRepo inserts an ordinary, non-projection git_repos row directly —
 // standing in for a repository an organization created on its own, the raw
-// material decision 7's collision check must see and a dependent (a
-// playbook) must be able to point at.
+// material decision 7's collision check must see and a dependant must be
+// able to point at.
 func seedOtherRepo(t *testing.T, d *db.DB, orgID uuid.UUID, name string) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
@@ -37,8 +36,10 @@ func seedOtherRepo(t *testing.T, d *db.DB, orgID uuid.UUID, name string) uuid.UU
 	return id
 }
 
-// seedPlaybook inserts a playbook referencing repoID, the dependent whose
-// presence is what makes a projection "in use" (spec decision 5).
+// seedPlaybook inserts a playbook referencing repoID — the one dependant
+// table whose own foreign key to git_repos has no ON DELETE clause at all
+// (migration 00018, i.e. NO ACTION), the only one of the three that would
+// ever raise the violation DeleteProjectedRepo used to rely on alone.
 func seedPlaybook(t *testing.T, d *db.DB, orgID, repoID uuid.UUID) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
@@ -48,6 +49,57 @@ func seedPlaybook(t *testing.T, d *db.DB, orgID, repoID uuid.UUID) uuid.UUID {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// seedJobTemplateForPlaybook inserts a job template naming playbookID —
+// the customer configuration that makes deleting that playbook (and so,
+// transitively, the repository it was discovered from) refused rather
+// than silently taking the template's own source out from under it.
+func seedJobTemplateForPlaybook(t *testing.T, d *db.DB, orgID, playbookID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`INSERT INTO job_templates (id, org_id, name, playbook_id, scope) VALUES ($1, $2, 'deploy', $3, '{}'::jsonb)`,
+		id, orgID, playbookID); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// seedJobTrigger inserts a repo_sync webhook trigger referencing repoID —
+// migration 00026's own ON DELETE CASCADE off git_repos, which means a
+// DELETE against repoID would succeed and silently take this row with it
+// rather than ever raising a foreign-key violation. The columns beyond
+// what the CHECK constraints and NOT NULLs require are arbitrary; nothing
+// about this test exercises the trigger itself, only its mere existence.
+func seedJobTrigger(t *testing.T, d *db.DB, orgID, repoID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`INSERT INTO job_triggers (id, org_id, kind, repo_id, name, preset, auth, signature_header, secret, rate_limit)
+		 VALUES ($1, $2, 'repo_sync', $3, 'push', 'pulsix', 'hmac', 'X-Signature', $4, '{}'::jsonb)`,
+		id, orgID, repoID, []byte("secret")); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// seedVaultCredentialBinding inserts a labelled vault credential binding for
+// repoID — migration 00059's own ON DELETE CASCADE off git_repos, the same
+// silent-loss shape seedJobTrigger exercises for job_triggers.
+func seedVaultCredentialBinding(t *testing.T, d *db.DB, orgID, repoID uuid.UUID) {
+	t.Helper()
+	credID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`INSERT INTO credentials (id, org_id, name, kind, secret) VALUES ($1, $2, 'vault-password', 'git_key', $3)`,
+		credID, orgID, []byte("sealed")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`INSERT INTO git_repo_vault_credentials (org_id, repo_id, credential_id, label) VALUES ($1, $2, $3, 'prod')`,
+		orgID, repoID, credID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // projectionRow reads one organization's projection of def directly —
@@ -82,6 +134,15 @@ func projectionExists(t *testing.T, d *db.DB, orgID, defID uuid.UUID) bool {
 	return n > 0
 }
 
+func containsString(haystack []string, want string) bool {
+	for _, s := range haystack {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSQLStoreCreateWithProjectionsProjectsIntoEveryOrg(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -92,7 +153,7 @@ func TestSQLStoreCreateWithProjectionsProjectsIntoEveryOrg(t *testing.T) {
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git",
 		Branch: "main", Subpath: "ansible",
-	}, []uuid.UUID{orgA, orgB})
+	})
 	if err != nil {
 		t.Fatalf("CreateWithProjections() error = %v, want nil", err)
 	}
@@ -108,19 +169,45 @@ func TestSQLStoreCreateWithProjectionsProjectsIntoEveryOrg(t *testing.T) {
 	}
 }
 
+// TestSQLStoreCreateWithProjectionsReadsTheOrganizationListLive proves the
+// fix for the round-trip gap the review caught: CreateRepo used to read the
+// organization list in a SEPARATE call from CreateWithProjections, leaving
+// a window where an organization created in between received no
+// projection. The organization list is now read from inside
+// CreateWithProjections' own transaction — this test creates the
+// organization immediately before the call, with nothing in between, and
+// asserts it is included, the way any caller that queries organizations and
+// then writes projections in two round trips could otherwise miss it.
+func TestSQLStoreCreateWithProjectionsReadsTheOrganizationListLive(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-create-live")
+
+	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("CreateWithProjections() error = %v, want nil", err)
+	}
+	if !projectionExists(t, d, org, def.ID) {
+		t.Fatal("organization seeded before the call has no projection — CreateWithProjections must read the organization list itself, not rely on a stale list supplied earlier")
+	}
+}
+
 func TestSQLStoreCreateWithProjectionsRefusesADuplicateDefinitionName(t *testing.T) {
 	d := testdb.Open(t)
 	store := shared.NewSQLStore(d)
 
 	if _, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "dup-definition-name", URL: "https://git.example.com/a.git", Branch: "main",
-	}, nil); err != nil {
+	}); err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
 
 	_, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "dup-definition-name", URL: "https://git.example.com/b.git", Branch: "main",
-	}, nil)
+	})
 	if !errors.Is(err, shared.ErrNameTaken) {
 		t.Fatalf("CreateWithProjections() error = %v, want ErrNameTaken", err)
 	}
@@ -131,13 +218,13 @@ func TestSQLStoreExistingNamesExcludesOwnProjections(t *testing.T) {
 	q := gen.New(d.Pool())
 	store := shared.NewSQLStore(d)
 	orgA := seedOrg(t, q, "shared-existing-a")
-	orgB := seedOrg(t, q, "shared-existing-b")
+	seedOrg(t, q, "shared-existing-b") // a second organization that also receives a projection; not asserted on individually
 	orgC := seedOrg(t, q, "shared-existing-c")
 	seedOtherRepo(t, d, orgC, "unrelated")
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	}, []uuid.UUID{orgA, orgB})
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
@@ -146,7 +233,7 @@ func TestSQLStoreExistingNamesExcludesOwnProjections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExistingNames(uuid.Nil) error = %v", err)
 	}
-	if !containsOrgName(all, orgA, "infra") || !containsOrgName(all, orgB, "infra") || !containsOrgName(all, orgC, "unrelated") {
+	if !containsOrgName(all, orgA, "infra") || !containsOrgName(all, orgC, "unrelated") {
 		t.Fatalf("ExistingNames(uuid.Nil) = %v, want every organization's own row, projections included", all)
 	}
 
@@ -154,7 +241,7 @@ func TestSQLStoreExistingNamesExcludesOwnProjections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExistingNames(def.ID) error = %v", err)
 	}
-	if containsOrgName(excluded, orgA, "infra") || containsOrgName(excluded, orgB, "infra") {
+	if containsOrgName(excluded, orgA, "infra") {
 		t.Fatalf("ExistingNames(def.ID) = %v, want def's own projections excluded", excluded)
 	}
 	if !containsOrgName(excluded, orgC, "unrelated") {
@@ -187,8 +274,9 @@ func containsOrgName(rows []shared.OrgName, org uuid.UUID, name string) bool {
 // its own) ended up on the NEW branch while org2 and org3 stayed on the
 // old one, a "one new, two old" state no caller of UpdateRepo could
 // distinguish from success without re-reading every organization. Wrapped
-// in s.d.Begin, the same engineered failure instead leaves every
-// organization — org1 included — on the value it had before this call.
+// in a transaction (withTx), the same engineered failure instead leaves
+// every organization — org1 included — on the value it had before this
+// call.
 func TestUpdatePropagatesToEveryProjectionOrNone(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -199,7 +287,7 @@ func TestUpdatePropagatesToEveryProjectionOrNone(t *testing.T) {
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	}, []uuid.UUID{org1, org2, org3})
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
@@ -246,9 +334,9 @@ func TestUpdatePropagatesToEveryProjectionOrNone(t *testing.T) {
 // organization holding a projection is deleted before UpdateAndPropagate
 // ever runs. Its projection cascades away with it through git_repos.org_id's
 // own ON DELETE CASCADE foreign key (migration 00018) — by the time
-// UpdateAndPropagate's ListProjectedRepoOrgIDs reads the projection list,
-// the dead organization is simply not in it, so the call must succeed and
-// the survivors must end up correct.
+// UpdateAndPropagate's ListProjectedRepos reads the projection list, the
+// dead organization is simply not in it, so the call must succeed and the
+// survivors must end up correct.
 func TestUpdateSkipsACascadedOrganization(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -259,7 +347,7 @@ func TestUpdateSkipsACascadedOrganization(t *testing.T) {
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	}, []uuid.UUID{org1, org2, org3})
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
@@ -292,26 +380,47 @@ func TestUpdateSkipsACascadedOrganization(t *testing.T) {
 	}
 }
 
-func TestDeleteWithProjectionsRefusesWhileAProjectionIsInUse(t *testing.T) {
+// --- DeleteWithProjections ---
+//
+// What blocks and what does not is the Critical finding's own correction:
+// job_triggers is the one table whose row is counted as a blocking
+// dependant (customer configuration that would otherwise silently vanish —
+// its own foreign key CASCADEs, migration 00026). playbooks and
+// git_repo_vault_credentials are NOT counted — a vault binding is part of
+// the projection and goes with it (git_repo_vault_credentials' own
+// CASCADE, migration 00059), and a playbook is sync-discovered rather than
+// customer-configured, so DeleteWithProjections clears it explicitly
+// instead of either blocking on it or leaving it to a foreign key that
+// (unlike the other two) is NO ACTION and would otherwise refuse the
+// delete permanently. See DeleteWithProjections' own doc comment
+// (store_sql.go) for the full inventory.
+
+func TestDeleteWithProjectionsRefusesWhileAJobTriggerExists(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	store := shared.NewSQLStore(d)
-	org := seedOrg(t, q, "shared-delete-inuse")
+	org := seedOrg(t, q, "shared-delete-trigger")
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	}, []uuid.UUID{org})
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
 	projID, _, _, _, _ := projectionRow(t, d, org, def.ID)
-	seedPlaybook(t, d, org, projID)
+	seedJobTrigger(t, d, org, projID)
 
 	err = store.DeleteWithProjections(ctx, def.ID)
-	if !errors.Is(err, shared.ErrInUse) {
-		t.Fatalf("DeleteWithProjections() error = %v, want ErrInUse", err)
+	var inUse *shared.InUseError
+	if !errors.As(err, &inUse) {
+		t.Fatalf("DeleteWithProjections() error = %v, want *InUseError — job_triggers' own ON DELETE CASCADE must not let this through silently", err)
 	}
-
+	if inUse.OrgID != org {
+		t.Fatalf("InUseError.OrgID = %v, want %v", inUse.OrgID, org)
+	}
+	if !containsString(inUse.Reasons, "a job trigger") {
+		t.Fatalf("InUseError.Reasons = %v, want to include %q", inUse.Reasons, "a job trigger")
+	}
 	if _, gerr := store.GetDefinition(ctx, def.ID); gerr != nil {
 		t.Fatalf("GetDefinition() after a refused delete = %v, want the definition still to exist", gerr)
 	}
@@ -320,18 +429,99 @@ func TestDeleteWithProjectionsRefusesWhileAProjectionIsInUse(t *testing.T) {
 	}
 }
 
+// TestDeleteWithProjectionsRefusesWhileAJobTemplateUsesAPlaybook covers the
+// one hop beyond git_repos the review's explicit inventory did not name
+// directly: DeleteWithProjections clears a projection's discovered
+// playbooks itself (they are not customer configuration), but if a job
+// template still names one of them, job_templates' own (org_id,
+// playbook_id) foreign key (migration 00018, NO ACTION) refuses THAT
+// delete, and a job template choosing to run this playbook is customer
+// configuration — the store maps the failure back to *InUseError rather
+// than letting it surface as an unmapped database error.
+func TestDeleteWithProjectionsRefusesWhileAJobTemplateUsesAPlaybook(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-delete-template-playbook")
+
+	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateWithProjections: %v", err)
+	}
+	projID, _, _, _, _ := projectionRow(t, d, org, def.ID)
+	playbookID := seedPlaybook(t, d, org, projID)
+	seedJobTemplateForPlaybook(t, d, org, playbookID)
+
+	err = store.DeleteWithProjections(ctx, def.ID)
+	var inUse *shared.InUseError
+	if !errors.As(err, &inUse) {
+		t.Fatalf("DeleteWithProjections() error = %v, want *InUseError — a job template still using the playbook must block the delete", err)
+	}
+	if inUse.OrgID != org {
+		t.Fatalf("InUseError.OrgID = %v, want %v", inUse.OrgID, org)
+	}
+	if !containsString(inUse.Reasons, "a job template") {
+		t.Fatalf("InUseError.Reasons = %v, want to include %q", inUse.Reasons, "a job template")
+	}
+	if !projectionExists(t, d, org, def.ID) {
+		t.Fatal("projection gone after a refused delete, want it rolled back along with the definition")
+	}
+}
+
+// TestDeleteWithProjectionsSucceedsWithVaultIdentitiesAndDiscoveredPlaybooks
+// is the test the review asked for specifically to catch the naive version
+// of this fix: a projection with a vault credential binding AND a
+// sync-discovered playbook — neither referenced by anything else — must
+// still delete cleanly. A version of this fix that simply added
+// job_triggers to the old three-table dependant count (rather than
+// dropping playbooks and vault credentials from it and explicitly clearing
+// playbooks) would fail this test, either by refusing the delete outright
+// or by leaving the playbook behind to block git_repos' own DELETE through
+// playbooks' NO ACTION foreign key.
+func TestDeleteWithProjectionsSucceedsWithVaultIdentitiesAndDiscoveredPlaybooks(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-delete-clean-with-extras")
+
+	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateWithProjections: %v", err)
+	}
+	projID, _, _, _, _ := projectionRow(t, d, org, def.ID)
+	seedPlaybook(t, d, org, projID)
+	seedVaultCredentialBinding(t, d, org, projID)
+
+	if err := store.DeleteWithProjections(ctx, def.ID); err != nil {
+		t.Fatalf("DeleteWithProjections() error = %v, want nil — vault identities and discovered playbooks must not block a definition delete", err)
+	}
+	if _, gerr := store.GetDefinition(ctx, def.ID); !errors.Is(gerr, shared.ErrNotFound) {
+		t.Fatalf("GetDefinition() after delete = %v, want ErrNotFound", gerr)
+	}
+	if n := countProjections(t, d, def.ID); n != 0 {
+		t.Fatalf("countProjections() = %d, want 0", n)
+	}
+}
+
 func TestDeleteWithProjectionsRemovesDefinitionAndProjectionsWhenUnused(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	store := shared.NewSQLStore(d)
-	orgA := seedOrg(t, q, "shared-delete-clean-a")
-	orgB := seedOrg(t, q, "shared-delete-clean-b")
+	seedOrg(t, q, "shared-delete-clean-a")
+	seedOrg(t, q, "shared-delete-clean-b")
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	}, []uuid.UUID{orgA, orgB})
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
+	}
+	if n := countProjections(t, d, def.ID); n != 2 {
+		t.Fatalf("countProjections() before delete = %d, want 2", n)
 	}
 
 	if err := store.DeleteWithProjections(ctx, def.ID); err != nil {
@@ -353,7 +543,7 @@ func TestSQLStoreProjectIntoANewOrganization(t *testing.T) {
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main", Subpath: "ansible",
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
@@ -376,7 +566,7 @@ func TestSQLStoreProjectIntoRefusesACollidingName(t *testing.T) {
 
 	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main",
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("seed CreateWithProjections: %v", err)
 	}
@@ -386,36 +576,4 @@ func TestSQLStoreProjectIntoRefusesACollidingName(t *testing.T) {
 	if err := store.ProjectInto(ctx, def, org); !errors.Is(err, shared.ErrNameTaken) {
 		t.Fatalf("ProjectInto() error = %v, want ErrNameTaken", err)
 	}
-}
-
-func TestSQLStoreOrgIDsReturnsEveryOrganization(t *testing.T) {
-	d := testdb.Open(t)
-	q := gen.New(d.Pool())
-	store := shared.NewSQLStore(d)
-	orgA := seedOrg(t, q, "shared-orgids-a")
-	orgB := seedOrg(t, q, "shared-orgids-b")
-
-	got, err := store.OrgIDs(ctx)
-	if err != nil {
-		t.Fatalf("OrgIDs() error = %v", err)
-	}
-	want := []uuid.UUID{orgA, orgB}
-	sort.Slice(got, func(i, j int) bool { return got[i].String() < got[j].String() })
-	sort.Slice(want, func(i, j int) bool { return want[i].String() < want[j].String() })
-	if !containsAll(got, want) {
-		t.Fatalf("OrgIDs() = %v, want at least %v", got, want)
-	}
-}
-
-func containsAll(haystack, needles []uuid.UUID) bool {
-	set := make(map[uuid.UUID]bool, len(haystack))
-	for _, h := range haystack {
-		set[h] = true
-	}
-	for _, n := range needles {
-		if !set[n] {
-			return false
-		}
-	}
-	return true
 }
