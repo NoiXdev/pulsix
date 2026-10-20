@@ -40,6 +40,17 @@ export type HostTest = components['schemas']['HostTestDTO'];
 export type RepoInput = components['schemas']['RepoCreateInputBody'];
 export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
 
+// RepoDefinition is the installation-owned half of a shared repository
+// (v0.2f decision 2, SharedResourcesPage): name, url, branch and subpath,
+// read-only inside every organization once projected (RepoDTO's own
+// shared_repo_id names the projection). RepoDefinitionInput is the same
+// four fields as the body both create and update send — unlike
+// RepoInput/RepoUpdateInput there is only one body shape here
+// (repoDefinitionBody, internal/api/shared_handlers.go), so one alias
+// covers both verbs.
+export type RepoDefinition = components['schemas']['RepoDefinitionDTO'];
+export type RepoDefinitionInput = components['schemas']['RepoDefinitionBody'];
+
 // RepoUpdateInput/TemplateUpdateInput exist only so REPO_BODY_FIELDS and
 // TEMPLATE_BODY_FIELDS (features/repos/validate.ts, features/templates/vars.ts)
 // can be keyed off BOTH bodies' fields, not just the Create one: the Create
