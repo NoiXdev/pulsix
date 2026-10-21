@@ -278,14 +278,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	itemsSvc := items.NewService(itemsStore, ItemCheckKeys)
 	// Every organization gets its "default" zone, its "Linux base" check
 	// definitions, its five-row starter rule set and a projection of every
-	// installation-owned repository AND job template definition (v0.2f,
-	// spec decision 4) the moment it is created, through whichever of the
+	// installation-owned repository, job template AND check definition
+	// (v0.2f, spec decision 4) the moment it is created, through whichever of the
 	// two paths created it — POST /orgs (tenancy.Service.CreateOrg) or the
 	// first-run wizard (setup.Service.Complete) — both bound to the same
 	// six hooks, chained (ChainOrgCreatedHooks, checks_ports.go) since
 	// SetOrgCreatedHook only ever holds one, so neither path can produce an
 	// organization the other would have given a zone, a check seed set, a
-	// rule seed set or either definition kind's own projection.
+	// rule seed set or any of the three definition kinds' own projections.
 	// rulesSvc.SeedForOrg runs after checksSvc.SeedForOrg so that its rules
 	// can always assume the checks their metrics belong to already exist;
 	// sharedSvc.ProjectAllInto (repositories) runs before
