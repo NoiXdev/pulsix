@@ -1,0 +1,39 @@
+-- +goose Up
+-- backlog 2.91: the run detail used to re-resolve a run's vault identity
+-- set from the repository's and template's CURRENT configuration every
+-- time the page was opened (internal/api/job_handlers.go's
+-- runVaultIdentities) — on exactly the screen someone opens after a run
+-- failed to decrypt, to find out which labelled password it was given.
+-- Rename a label, swap a credential, or remove an identity afterwards, and
+-- the page quietly started describing today's configuration while still
+-- claiming to explain what happened. No migration in the v0.2e sub-project
+-- gave the job row anywhere to record the answer, so this one does.
+--
+-- resolved_vault_identities holds the run's resolved set as a JSON array of
+-- {credential_id, label, from_template} (internal/jobs.VaultIdentity's own
+-- shape), written once, at claim time (internal/jobs/queue_sql.go's claim,
+-- in the same transaction as the ClaimJob UPDATE that flips the row to
+-- running — see RecordVaultIdentities in queries/jobs.sql): a job visible
+-- as running can never be read back without its own record already
+-- committed alongside it.
+--
+-- NULL and an empty array ('[]') are deliberately different answers, not
+-- the same "nothing" written two ways:
+--   - NULL means "never recorded" — a run still queued (today's
+--     configuration genuinely IS the right answer, a forecast rather than
+--     history), a run claimed before this migration existed, or a job
+--     cancelled before it was ever claimed. The API falls back to live
+--     resolution for these and says so.
+--   - '[]' means "recorded, and there was nothing to decrypt" — an inline
+--     playbook, or a repository and template that configure no vault
+--     identity at all. This is itself a fact about the run, not a gap.
+--
+-- Unlike payload (CancelQueuedDependents and the jobs.sql UPDATE above it
+-- both null it out on a terminal transition), this column is NEVER cleared
+-- once written: payload is live material a finished run has no further use
+-- for, while this column is the historical record of what the run was
+-- given — exactly what is wanted after the run ends, not before.
+ALTER TABLE jobs ADD COLUMN resolved_vault_identities jsonb;
+
+-- +goose Down
+ALTER TABLE jobs DROP COLUMN resolved_vault_identities;

@@ -256,6 +256,7 @@ describe('RunDetailPage vault identities', () => {
             { credential_id: 'c3', label: 'production', from_template: false },
             { credential_id: 'c4', label: 'staging', from_template: true },
           ],
+          vault_identities_source: 'computed',
         }).job,
       },
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
@@ -268,6 +269,27 @@ describe('RunDetailPage vault identities', () => {
     expect(within(rows[0]).getByText('from repository')).toBeInTheDocument();
     expect(within(rows[1]).getByText('staging')).toBeInTheDocument();
     expect(within(rows[1]).getByText('from template')).toBeInTheDocument();
+    // No stored record for this run (backlog 2.91): the card must say this
+    // is a live read, not imply it is reading back history.
+    expect(screen.getByText('computed from current configuration')).toBeInTheDocument();
+  });
+
+  it('says the vault identities were recorded at claim time when the job carries a stored record', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({
+          vault_identities: [{ credential_id: 'c3', label: 'production', from_template: false }],
+          vault_identities_source: 'recorded',
+        }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+    await screen.findByRole('list', { name: 'Vault identities' });
+    expect(screen.getByText('recorded at claim time')).toBeInTheDocument();
+    expect(screen.queryByText('computed from current configuration')).not.toBeInTheDocument();
   });
 
   it('shows no vault identities section for a run with none', async () => {

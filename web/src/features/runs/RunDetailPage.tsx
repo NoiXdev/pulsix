@@ -60,6 +60,13 @@ export function RunDetailPage() {
   // ResolveVaultIdentities) — empty for a run whose repository uses no
   // encrypted files at all.
   const vaultIdentities = j.vault_identities ?? [];
+  // "recorded" means this is what the claim actually resolved and stored
+  // for this run (backlog 2.91); "computed" means there is no stored
+  // record — a run still queued, one claimed before that recording
+  // existed, or a job cancelled before it was ever claimed — so this is a
+  // live read of the repository's and template's configuration right now,
+  // which may no longer match what actually ran if either changed since.
+  const vaultIdentitiesRecorded = j.vault_identities_source === 'recorded';
   // The run log's SSE status frame may carry the status before the detail
   // poll catches up; the header shows whichever is fresher.
   const status = log.status ?? j.status;
@@ -146,8 +153,18 @@ export function RunDetailPage() {
       </Card>
       {vaultIdentities.length > 0 && (
         <Card>
-          <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-            Vault identities
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+            <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vault identities</span>
+            <span
+              className="text-[11px] text-muted-foreground"
+              title={
+                vaultIdentitiesRecorded
+                  ? 'Recorded when this run was claimed; later changes to the repository or template do not affect it.'
+                  : 'No record exists for this run yet, so this is read from the repository and template as they are configured right now.'
+              }
+            >
+              {vaultIdentitiesRecorded ? 'recorded at claim time' : 'computed from current configuration'}
+            </span>
           </div>
           <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Vault identities">
             {vaultIdentities.map((identity) => (

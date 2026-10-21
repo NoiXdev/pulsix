@@ -526,6 +526,16 @@ func New(t *testing.T, opts ...Option) *Server {
 	credsSvc.SetRotationEnqueuer(jobsSvc)
 	jobsQueue.SetRotationFinisher(credsSvc)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
+	// A repo playbook's claim needs its repository and the vault-identity
+	// merge, exactly like production wiring (internal/app.Build's own
+	// SetRepoSource/SetVaultResolver, right after reposSvc exists there for
+	// the same circularity reason). Without this, Queue.Claim fails closed
+	// on ANY repo-backed run job ("no repo source wired") — a gap that cost
+	// nothing visible only because no test claimed one before backlog 2.91's
+	// own test did (TestRunDetailStillShowsTheClaimedVaultIdentitiesAfterARepoEdit,
+	// internal/api/job_handlers_test.go).
+	jobsQueue.SetRepoSource(apitestRepoRefSource{reposSvc})
+	jobsQueue.SetVaultResolver(apitestVaultResolver{})
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, s.Shared)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, crypto.NewBox(testMasterKey))
 	auditRec := audit.NewRecorder(audit.NewSQLStore(d), time.Now)
@@ -1207,4 +1217,52 @@ func (r *PushRecorder) FailWith(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.err = err
+}
+
+// apitestRepoRefSource mirrors internal/app's own unexported repoRefSource
+// (repos.Service narrowed to the jobs queue's RepoSource port): app's
+// adapters are deliberately unexported, so this fixture — which needs the
+// real repos.Service wired onto a real claim, the same way production does
+// — carries its own copy rather than an app import, the same reason
+// internal/jobs/queue_sql_test.go's repoRefAdapter exists.
+type apitestRepoRefSource struct{ s *repos.Service }
+
+func (a apitestRepoRefSource) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.RepoRef, error) {
+	r, err := a.s.Get(ctx, orgID, repoID)
+	if err != nil {
+		return jobs.RepoRef{}, err
+	}
+	return jobs.RepoRef{
+		ID: r.ID, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath, CredentialID: r.CredentialID,
+		VaultIdentities: apitestToJobsVault(r.VaultIdentities),
+		SSHHostKey:      r.SSHHostKey, SSHHostPublicKey: r.SSHHostPublicKey,
+	}, nil
+}
+
+// apitestVaultResolver mirrors internal/app's own unexported vaultResolver:
+// the real repos.ResolveVaultIdentities (spec decision 2), reached through
+// the conversion both directions need because the jobs package cannot
+// import internal/repos (jobs.VaultResolver's own comment explains the
+// cycle).
+type apitestVaultResolver struct{}
+
+func (apitestVaultResolver) ResolveVaultIdentities(repo, template []jobs.VaultIdentity) []jobs.VaultIdentity {
+	resolved := repos.ResolveVaultIdentities(apitestToRepoVault(repo), apitestToRepoVault(template))
+	return apitestToJobsVault(resolved)
+}
+
+func apitestToJobsVault(in []repos.VaultIdentity) []jobs.VaultIdentity {
+	out := make([]jobs.VaultIdentity, len(in))
+	for i, id := range in {
+		out[i] = jobs.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
+}
+
+func apitestToRepoVault(in []jobs.VaultIdentity) []repos.VaultIdentity {
+	out := make([]repos.VaultIdentity, len(in))
+	for i, id := range in {
+		out[i] = repos.VaultIdentity{CredentialID: id.CredentialID, Label: id.Label, FromTemplate: id.FromTemplate}
+	}
+	return out
 }

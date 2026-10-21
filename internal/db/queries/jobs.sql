@@ -99,6 +99,18 @@ WHERE id = (
 )
 RETURNING *;
 
+-- name: RecordVaultIdentities :exec
+-- The claim-time record backlog 2.91 exists for: called from the same
+-- transaction ClaimJob's UPDATE runs in (internal/jobs/queue_sql.go's
+-- claim), so a job this transaction commits as 'running' can never be
+-- read back without its resolved vault identity set already committed
+-- alongside it. identities is always a JSON array, even an empty one — see
+-- migration 00064's own comment for why NULL (never called) and '[]'
+-- (called, nothing to decrypt) must stay distinguishable. Never called
+-- again after this: a run's own history does not change after the run
+-- that made it, and nothing else about this column is ever written.
+UPDATE jobs SET resolved_vault_identities = sqlc.arg(identities)::jsonb WHERE id = sqlc.arg(id);
+
 -- name: RequeueStaleJobs :many
 -- Reaper pass 1 (org-unscoped, raw pool): claims whose worker went away
 -- go back to queued for the next claim round — but only while the job has

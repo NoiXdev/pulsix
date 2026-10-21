@@ -460,3 +460,89 @@ func keysOf(m map[string]string) []string {
 	slices.Sort(out)
 	return out
 }
+
+// countingCreds wraps fakeCreds and counts OpenSecret calls — the probe
+// resolveClaimVaultIdentities's own tests use to prove it never reveals a
+// vault secret: that only belongs after the claim's commit (buildPayload),
+// never while the row's lock is still held.
+type countingCreds struct {
+	fakeCreds
+	opens int
+}
+
+func (c *countingCreds) OpenSecret(ctx context.Context, orgID, id uuid.UUID) (credentials.Secret, error) {
+	c.opens++
+	return c.fakeCreds.OpenSecret(ctx, orgID, id)
+}
+
+// TestResolveClaimVaultIdentitiesMergesWithoutOpeningSecrets pins
+// resolveClaimVaultIdentities's own contract (backlog 2.91): it resolves
+// the same merge buildPayload will reveal moments later, but it must never
+// itself call OpenSecret — that call belongs strictly after the claim's
+// commit, never while this function runs inside the still-open transaction
+// holding the job row's lock.
+func TestResolveClaimVaultIdentitiesMergesWithoutOpeningSecrets(t *testing.T) {
+	org, repoID := uuid.New(), uuid.New()
+	templateID := uuid.New()
+	prodCred, infraCred := uuid.New(), uuid.New()
+
+	creds := &countingCreds{fakeCreds: fakeCreds{
+		secrets: map[uuid.UUID]credentials.Secret{prodCred: {Password: "prod-pass"}, infraCred: {Password: "infra-pass"}},
+	}}
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: org, PlaybookRepo: &repoID, PlaybookPath: "site.yml",
+			VaultIdentities: []VaultIdentity{{CredentialID: infraCred, Label: "infra"}},
+		},
+	}}
+	q := newTestQueue(secretsRenderer{}, creds, templates, fakeBastions{})
+	q.SetVaultResolver(fakeVaultResolver{})
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{repoID: {
+		ID: repoID, VaultIdentities: []VaultIdentity{{CredentialID: prodCred, Label: "prod"}},
+	}}})
+
+	job := Job{ID: uuid.Must(uuid.NewV7()), Kind: KindRun, OrgID: org, TemplateID: &templateID}
+	identities, err := q.resolveClaimVaultIdentities(context.Background(), job)
+	if err != nil {
+		t.Fatalf("resolveClaimVaultIdentities: %v", err)
+	}
+	if len(identities) != 2 {
+		t.Fatalf("identities = %+v, want 2 (infra, prod)", identities)
+	}
+	if creds.opens != 0 {
+		t.Errorf("OpenSecret was called %d times; resolveClaimVaultIdentities must never open a secret", creds.opens)
+	}
+}
+
+// TestResolveClaimVaultIdentitiesIsEmptyNotNilWhenThereIsNothingToDecrypt
+// pins the distinction migration 00064's own comment relies on: an inline
+// playbook, and a repo playbook naming no vault identity on either side,
+// both resolve to a non-nil empty slice — a real recorded answer ("nothing
+// to decrypt"), never the nil that would be indistinguishable from "not
+// resolved at all" once marshalled.
+func TestResolveClaimVaultIdentitiesIsEmptyNotNilWhenThereIsNothingToDecrypt(t *testing.T) {
+	org := uuid.New()
+	inlineTemplateID, repoTemplateID, repoID := uuid.New(), uuid.New(), uuid.New()
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		inlineTemplateID: {ID: inlineTemplateID, OrgID: org, PlaybookInline: "- hosts: all"},
+		repoTemplateID:   {ID: repoTemplateID, OrgID: org, PlaybookRepo: &repoID, PlaybookPath: "site.yml"},
+	}}
+	q := newTestQueue(secretsRenderer{}, fakeCreds{}, templates, fakeBastions{})
+	q.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{repoID: {ID: repoID}}})
+
+	for name, templateID := range map[string]uuid.UUID{"inline playbook": inlineTemplateID, "repo with no vault identity": repoTemplateID} {
+		t.Run(name, func(t *testing.T) {
+			job := Job{ID: uuid.Must(uuid.NewV7()), Kind: KindRun, OrgID: org, TemplateID: &templateID}
+			identities, err := q.resolveClaimVaultIdentities(context.Background(), job)
+			if err != nil {
+				t.Fatalf("resolveClaimVaultIdentities: %v", err)
+			}
+			if identities == nil {
+				t.Fatal("identities is nil, want a non-nil empty slice")
+			}
+			if len(identities) != 0 {
+				t.Fatalf("identities = %+v, want empty", identities)
+			}
+		})
+	}
+}

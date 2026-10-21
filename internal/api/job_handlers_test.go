@@ -153,6 +153,7 @@ type jobDTO struct {
 		CredentialID string `json:"credential_id"`
 		FromTemplate bool   `json:"from_template"`
 	} `json:"vault_identities"`
+	VaultIdentitiesSource string `json:"vault_identities_source"`
 }
 
 func runJob(t *testing.T, c *http.Client, url string) []jobDTO {
@@ -362,6 +363,65 @@ func TestCancelRouteMapsNotRunningToConflict(t *testing.T) {
 	resp = postJSON(t, f.operatorC, cancelURL, nil)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("second cancel: status %d, want 409, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestRunDetailAfterCancelBeforeClaimFallsBackWithoutCrashing is the third
+// of backlog 2.91's three "nothing was ever recorded" cases: a job cancelled
+// while still queued never reaches internal/jobs/queue_sql.go's claim, so
+// resolved_vault_identities stays NULL forever — there is no "what actually
+// happened" to read back, only ever the live configuration, same as a run
+// that is simply still queued. The detail must still answer (not panic or
+// 500) and must say so (vault_identities_source: "computed").
+func TestRunDetailAfterCancelBeforeClaimFallsBackWithoutCrashing(t *testing.T) {
+	f := newRunFixture(t, "run-cancel-vault-org")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+
+	vaultCred := seedVaultCredentialForRepo(t, f.s, f.orgID, "prod-vault")
+	repo, err := f.s.Deps.Repos.Create(scoped, f.orgID, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/acme/infra.git",
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: mustUUID(t, vaultCred), Label: "prod"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := f.s.Deps.Playbooks.CreateRepo(scoped, f.orgID, repo.ID, "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := f.s.Deps.Templates.Create(scoped, f.orgID, templates.CreateInput{
+		Name: "deploy-infra", PlaybookID: pb.ID, Scope: templates.Scope{HostIDs: []uuid.UUID{f.hostA}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobID := runJob(t, f.operatorC, f.runURLFor(tmpl.ID))[0].ID
+
+	// Cancelled while still queued — the job never reaches the claim path,
+	// so resolved_vault_identities is never written.
+	resp := postJSON(t, f.operatorC, f.baseURL()+"/"+jobID+"/cancel", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("cancel: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+jobID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Job jobDTO `json:"job"`
+	}
+	decodeInto(t, resp, &out)
+
+	if out.Job.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", out.Job.Status)
+	}
+	if out.Job.VaultIdentitiesSource != "computed" {
+		t.Errorf("vault_identities_source = %q, want %q for a job cancelled before it was ever claimed", out.Job.VaultIdentitiesSource, "computed")
+	}
+	if len(out.Job.VaultIdentities) != 1 || out.Job.VaultIdentities[0].CredentialID != vaultCred {
+		t.Errorf("vault_identities = %+v, want one entry for the repository's own credential %s (live resolution, nothing recorded)", out.Job.VaultIdentities, vaultCred)
 	}
 }
 
@@ -767,6 +827,86 @@ func TestRunDetailShowsResolvedVaultIdentitiesAndTheirOrigin(t *testing.T) {
 	}
 	if got := byLabel["prod"]; got.credentialID != templateProdCred || !got.fromTemplate {
 		t.Errorf("label prod = %+v, want {%s, from_template: true} (the template's own wins the collision)", got, templateProdCred)
+	}
+	// The job is still queued — never claimed — so today's configuration
+	// really is the right answer, and the response must say so rather than
+	// implying it is reading back a record that does not exist yet
+	// (backlog 2.91).
+	if out.Job.VaultIdentitiesSource != "computed" {
+		t.Errorf("vault_identities_source = %q, want %q for a run that was never claimed", out.Job.VaultIdentitiesSource, "computed")
+	}
+}
+
+// TestRunDetailStillShowsTheClaimedVaultIdentitiesAfterARepoEdit is backlog
+// 2.91's own acceptance test, and the reason the row exists: the old
+// runVaultIdentities recomputed the repository's and template's CURRENT
+// configuration on every read, so a run detail opened after an edit quietly
+// started describing today's setup instead of what the run actually
+// received — on exactly the screen someone opens after a decryption
+// failure to find out which password was missing. A test that only checks
+// the new column round-trips would miss that bug entirely; this one edits
+// the repository AFTER the claim and asserts the response is unaffected.
+func TestRunDetailStillShowsTheClaimedVaultIdentitiesAfterARepoEdit(t *testing.T) {
+	f := newRunFixture(t, "run-vault-record-org")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+
+	oldCred := seedVaultCredentialForRepo(t, f.s, f.orgID, "prod-vault-old")
+	newCred := seedVaultCredentialForRepo(t, f.s, f.orgID, "prod-vault-new")
+
+	repo, err := f.s.Deps.Repos.Create(scoped, f.orgID, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/acme/infra.git",
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: mustUUID(t, oldCred), Label: "prod"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := f.s.Deps.Playbooks.CreateRepo(scoped, f.orgID, repo.ID, "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := f.s.Deps.Templates.Create(scoped, f.orgID, templates.CreateInput{
+		Name: "deploy-infra", PlaybookID: pb.ID, Scope: templates.Scope{HostIDs: []uuid.UUID{f.hostA}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobID := runJob(t, f.operatorC, f.runURLFor(tmpl.ID))[0].ID
+
+	// Claim the run through the real queue, exactly like a worker does: this
+	// is the moment internal/jobs/queue_sql.go's claim resolves and records
+	// the vault identity set.
+	claim, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{f.zoneA}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	if got := claim.Job.GetId(); got != jobID {
+		t.Fatalf("claimed %s, want %s", got, jobID)
+	}
+
+	// The repository is edited AFTER the claim: the same label "prod" now
+	// names a different credential.
+	if _, err := f.s.Deps.Repos.Update(scoped, f.orgID, repo.ID, repos.UpdateInput{
+		Name: repo.Name, URL: repo.URL, Branch: repo.Branch,
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: mustUUID(t, newCred), Label: "prod"}},
+	}); err != nil {
+		t.Fatalf("update repo: %v", err)
+	}
+
+	resp := requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+jobID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Job jobDTO `json:"job"`
+	}
+	decodeInto(t, resp, &out)
+
+	if out.Job.VaultIdentitiesSource != "recorded" {
+		t.Fatalf("vault_identities_source = %q, want %q for a claimed run", out.Job.VaultIdentitiesSource, "recorded")
+	}
+	if len(out.Job.VaultIdentities) != 1 || out.Job.VaultIdentities[0].CredentialID != oldCred || out.Job.VaultIdentities[0].Label != "prod" {
+		t.Fatalf("vault_identities = %+v, want one entry {label: \"prod\", credential_id: %q} — the credential the run was CLAIMED with, not the repository's current one", out.Job.VaultIdentities, oldCred)
 	}
 }
 
