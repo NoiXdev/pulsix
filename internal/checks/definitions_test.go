@@ -722,3 +722,67 @@ func TestGetDefinitionIsOrgScoped(t *testing.T) {
 		t.Fatalf("cross-org get = %v, want ErrNotFound", err)
 	}
 }
+
+// TestCreateDefinitionRefusesAKeyASharedProjectionHolds is the service-side
+// half of a hole a review found in migration 00063's own fix. That trigger
+// rebinds a shared projection to ('org', nil, nil) when the group or host
+// it was bound to is deleted, so the provider's check survives a customer
+// deleting their own group. But check_definitions carries UNIQUE NULLS NOT
+// DISTINCT (org_id, binding_kind, group_id, host_id, key), so the rebind
+// only works while that organization-scope slot is still free — and
+// nothing stopped a customer from taking it:
+//
+//  1. the provider creates shared key K; the projection lands at org scope
+//  2. the customer rebinds it to a group, freeing ('org', nil, nil, K)
+//  3. the customer creates their OWN check with key K at org scope
+//  4. the customer deletes the group — and the trigger's UPDATE raises
+//     23505, aborting the whole DELETE FROM monitoring_groups
+//
+// Step 4 is the damage: the customer can no longer delete their own group,
+// with an opaque error naming a table they never touched. The fix is to
+// make step 3 impossible rather than to handle step 4, because by step 4
+// the trigger has only bad options left — fail the customer's delete, or
+// silently drop the provider's check.
+//
+// The refusal is deliberately narrow: it bites only on a key some SHARED
+// projection in this organization already holds, at any scope. The same key
+// at two different scopes stays legal in general (UNIQUE NULLS NOT DISTINCT
+// allows it on purpose, and running disk org-wide and disk on one host with
+// different parameters is a real thing people do) — taking that away would
+// change behaviour for ordinary checks that have nothing to do with shared
+// resources.
+func TestCreateDefinitionRefusesAKeyASharedProjectionHolds(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	group := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := checks.NewService(store)
+
+	// The projection, already rebound by its customer to a group — so the
+	// organization-scope slot its key needs back is free right now.
+	projection := checks.Definition{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "disk-data", Plugin: "disk",
+		Interval: 60 * time.Second, Enabled: true, Origin: "shared",
+		BindingKind: checks.BindingGroup, GroupID: &group,
+	}
+	store.defsByID[projection.ID] = projection
+
+	_, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Key: "disk-data", Plugin: "disk", Interval: 60 * time.Second, Enabled: true,
+		BindingKind: checks.BindingOrg,
+	})
+	if !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("creating a check whose key a shared projection holds = %v, want ErrInvalidInput", err)
+	}
+	if !strings.Contains(err.Error(), "disk-data") {
+		t.Fatalf("the refusal must name the key so a person can act on it, got %q", err)
+	}
+
+	// Narrowness: a key NO shared projection holds is unaffected, including
+	// at a scope another ordinary check already uses.
+	if _, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Key: "disk-logs", Plugin: "disk", Interval: 60 * time.Second, Enabled: true,
+		BindingKind: checks.BindingOrg,
+	}); err != nil {
+		t.Fatalf("a key no shared projection holds must still be creatable, got %v", err)
+	}
+}
