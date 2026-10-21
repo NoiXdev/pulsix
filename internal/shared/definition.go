@@ -250,13 +250,32 @@ func CollidingOrgs(existing []OrgName, name string) []uuid.UUID {
 // so an instance-admin-only caller (Task 4) can list them without this
 // package ever composing a sentence that might reach an organization.
 // errors.Is(err, ErrNameTaken) still reports true through Unwrap.
+//
+// Scope optionally names WHERE Name collides, left empty by repos and
+// templates — every projection of either kind lives at exactly one flat
+// scope (UNIQUE (org_id, name)), so "already used by N organization(s)" is
+// the whole story and naming a scope would add nothing. A check
+// definition's own scope is part of the named organization's OWN,
+// customer-editable binding (spec v0.2f decision 2: binding_kind, group_id,
+// host_id), so an organization named here as colliding may have nothing
+// visible at the org-wide scope an instance admin would naturally check
+// first — a review finding: the message pointed at that organization
+// without saying there was anywhere else to look. Set by
+// internal/shared's own check-definition collision paths
+// (Service.CreateCheckDefinition/UpdateCheckDefinition's pre-flight check,
+// and the two backstops in store_sql.go), never read or written by the
+// other two kinds.
 type NameCollisionError struct {
-	Name string
-	Orgs []uuid.UUID
+	Name  string
+	Orgs  []uuid.UUID
+	Scope string
 }
 
 func (e *NameCollisionError) Error() string {
-	return fmt.Sprintf("name %q is already used by %d organization(s)", e.Name, len(e.Orgs))
+	if e.Scope == "" {
+		return fmt.Sprintf("name %q is already used by %d organization(s)", e.Name, len(e.Orgs))
+	}
+	return fmt.Sprintf("name %q is already used by %d organization(s), at %s", e.Name, len(e.Orgs), e.Scope)
 }
 
 // Unwrap is what makes errors.Is(err, ErrNameTaken) true for this richer

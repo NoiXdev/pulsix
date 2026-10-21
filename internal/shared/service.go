@@ -483,7 +483,7 @@ func (s *Service) CreateCheckDefinition(ctx context.Context, in CheckDefinitionI
 		return CheckDefinition{}, fmt.Errorf("list existing check definition keys: %w", err)
 	}
 	if colliding := CollidingOrgs(existing, key); len(colliding) > 0 {
-		return CheckDefinition{}, &NameCollisionError{Name: key, Orgs: colliding}
+		return CheckDefinition{}, &NameCollisionError{Name: key, Orgs: colliding, Scope: checkDefinitionOrgScopeDescription}
 	}
 	def := CheckDefinition{
 		ID: uuid.Must(uuid.NewV7()), Key: key, Plugin: strings.TrimSpace(in.Plugin),
@@ -506,7 +506,7 @@ func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in Ch
 		return CheckDefinition{}, fmt.Errorf("list existing check definition keys: %w", err)
 	}
 	if colliding := CollidingOrgs(existing, key); len(colliding) > 0 {
-		return CheckDefinition{}, &NameCollisionError{Name: key, Orgs: colliding}
+		return CheckDefinition{}, &NameCollisionError{Name: key, Orgs: colliding, Scope: checkDefinitionOrgScopeDescription}
 	}
 	def := CheckDefinition{
 		ID: id, Key: key, Plugin: strings.TrimSpace(in.Plugin),
@@ -551,6 +551,53 @@ func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) 
 	return s.store.ListCheckDefinitions(ctx)
 }
 
+// reservedSeedKeys are the exact keys internal/checks.SeedDefinitions()
+// stamps into EVERY organization at the org-wide scope — present the
+// instant an organization is created and never absent afterward. A shared
+// check definition's own pre-flight collision check
+// (ExistingCheckDefinitionNames, called right after this function in
+// CreateCheckDefinition/UpdateCheckDefinition) can only catch a definition
+// reusing one of these when at least one organization already exists to
+// compare against: on a genuinely fresh install, or an installation whose
+// last organization has since been deleted, there is nothing to collide
+// with, and the collision check alone would let the definition through.
+// The consequence is not merely "a confusing duplicate key" — it is a
+// HALF-PROVISIONED organization: tenancy.Service.CreateOrg commits the
+// organization row and its owner's membership BEFORE running the
+// organization-created hook chain (tenancy/service.go's own doc comment
+// explains why: no transaction spans both), so the very first
+// ProjectAllCheckDefinitionsInto call for the very next organization
+// created would fail on the real collision this reserved key finally has
+// something to hit, leaving CreateOrg's own caller an error and an
+// organization that nonetheless exists, with its owner already a member.
+// Refusing these four keys unconditionally, independent of whether any
+// collision can currently be demonstrated, is what closes that window
+// rather than narrowing it.
+var reservedSeedKeys = map[string]bool{
+	checks.PluginCPU: true, checks.PluginMemory: true, checks.PluginDisk: true, checks.PluginService: true,
+}
+
+// checkDefinitionOrgScopeDescription names the scope both
+// CreateCheckDefinition/UpdateCheckDefinition's own pre-flight check
+// (CollidingOrgs over ExistingCheckDefinitionNames) and
+// collisionFromCheckDefinitionRace (store_sql.go) collide at: the default
+// ('org', nil, nil) binding a fresh projection always starts at — the only
+// scope either of those two ever examines (NameCollisionError's own doc
+// comment explains why that needs saying explicitly for this kind).
+const checkDefinitionOrgScopeDescription = "the organization-wide scope every fresh projection starts at"
+
+// checkDefinitionUnknownScopeDescription is UpdateCheckDefinitionAndPropagate's
+// own per-organization backstop (store_sql.go): a unique violation caught
+// while propagating a rename to an organization that has REBOUND its own
+// projection away from the default scope (ListCheckDefinitionKeysAtOrgScopeExcludingDefinition's
+// own doc comment on the gap this closes). Which scope exactly is not
+// re-queried here — doing so would cost another round trip for a message
+// only an instance admin ever sees — so this says plainly that it is NOT
+// necessarily the organization-wide one, which is the one fact that
+// prevents the review's own finding (checking that organization's org-wide
+// list and finding nothing).
+const checkDefinitionUnknownScopeDescription = "a scope that organization has configured for its own projection, not necessarily the organization-wide one"
+
 // validateCheckDefinitionInput runs checks.ValidateDefinitionShape — the
 // plugin set, the key pattern (defaulting an empty key to the plugin name,
 // same as an organization's own create) and each plugin's own parameter
@@ -558,11 +605,18 @@ func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) 
 // rather than letting checks.ErrInvalidInput escape: mapSharedErr
 // (internal/api/shared_handlers.go) only recognizes shared.ErrInvalidInput,
 // the same reason validateTemplateDefinitionInput exists for a shared
-// template's extra vars.
+// template's extra vars. Then refuses reservedSeedKeys outright — see that
+// var's own doc comment for why this cannot be left to the ordinary
+// collision check alone.
 func validateCheckDefinitionInput(in CheckDefinitionInput) (string, error) {
 	key, err := checks.ValidateDefinitionShape(in.Plugin, in.Key, in.Params, in.Interval)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	if reservedSeedKeys[key] {
+		return "", fmt.Errorf(
+			"%w: key %q is reserved for the \"Linux base\" set every organization already has; choose a different key",
+			ErrInvalidInput, key)
 	}
 	return key, nil
 }

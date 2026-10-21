@@ -3699,7 +3699,7 @@ export interface components {
             interval_seconds: number;
             key: string;
             /** @enum {string} */
-            origin: "seed" | "custom";
+            origin: "seed" | "custom" | "shared";
             params: {
                 [key: string]: unknown;
             };

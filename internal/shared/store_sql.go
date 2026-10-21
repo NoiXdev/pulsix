@@ -793,7 +793,7 @@ func collisionFromCheckDefinitionRace(ctx context.Context, q *gen.Queries, exclu
 		existing[i] = OrgName{OrgID: r.OrgID, Name: r.Key}
 	}
 	if colliding := CollidingOrgs(existing, key); len(colliding) > 0 {
-		return &NameCollisionError{Name: key, Orgs: colliding}
+		return &NameCollisionError{Name: key, Orgs: colliding, Scope: checkDefinitionOrgScopeDescription}
 	}
 	return ErrNameTaken
 }
@@ -843,8 +843,11 @@ func (s *SQLStore) UpdateCheckDefinitionAndPropagate(ctx context.Context, def Ch
 					// moved off the default scope this package's own
 					// pre-flight check examines, and the database's own
 					// UNIQUE constraint is what actually caught the
-					// collision at whatever scope it now sits at.
-					return &NameCollisionError{Name: key, Orgs: []uuid.UUID{orgID}}
+					// collision at whatever scope it now sits at — Scope
+					// says so explicitly rather than leaving an instance
+					// admin to check this organization's org-wide list and
+					// find nothing (review finding).
+					return &NameCollisionError{Name: key, Orgs: []uuid.UUID{orgID}, Scope: checkDefinitionUnknownScopeDescription}
 				}
 				return fmt.Errorf("propagate to organization %s: %w", orgID, err)
 			}
