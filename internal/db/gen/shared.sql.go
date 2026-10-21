@@ -1265,6 +1265,31 @@ func (q *Queries) ResolveTemplatePlaybooksForNewPath(ctx context.Context, arg Re
 	return err
 }
 
+const sharedRepoHasTemplate = `-- name: SharedRepoHasTemplate :one
+SELECT name FROM shared_job_templates WHERE shared_repo_id = $1::uuid LIMIT 1
+`
+
+// Whether any job template DEFINITION resolves its playbook against this
+// repository definition — shared_job_templates.shared_repo_id (migration
+// 00061:24) is NOT NULL REFERENCES shared_repos (id) ON DELETE RESTRICT,
+// and a whole-branch review found that DeleteWithProjections checked every
+// PER-ORGANIZATION dependant (job triggers, playbooks) but not this one,
+// the single dependant that lives at the INSTALLATION level instead of
+// inside an organization. Without this check, deleting a repository
+// definition a template definition still references hit that RESTRICT
+// directly, wrapped with no sentinel, and mapSharedErr fell through to a
+// bare 500 — instead of spec decision 5's promised named refusal. Checked
+// BEFORE the per-organization loop (DeleteWithProjections, store_sql.go):
+// cheaper than discovering it only after every organization's projection
+// row is already gone, and it guards something the per-organization checks
+// cannot see at all.
+func (q *Queries) SharedRepoHasTemplate(ctx context.Context, sharedRepoID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, sharedRepoHasTemplate, sharedRepoID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const updateProjectedCheckDefinition = `-- name: UpdateProjectedCheckDefinition :execrows
 UPDATE check_definitions SET
   key = $1, plugin = $2, params = $3::jsonb, interval_seconds = $4, updated_at = now()
@@ -1308,8 +1333,11 @@ func (q *Queries) UpdateProjectedCheckDefinition(ctx context.Context, arg Update
 }
 
 const updateProjectedRepo = `-- name: UpdateProjectedRepo :execrows
-UPDATE git_repos SET name = $1, url = $2, branch = $3, subpath = $4, updated_at = now()
-WHERE org_id = $5 AND shared_repo_id = $6::uuid
+UPDATE git_repos SET name = $1, url = $2, branch = $3, subpath = $4,
+    ssh_host_key = CASE WHEN $5::bool THEN NULL ELSE ssh_host_key END,
+    ssh_host_public_key = CASE WHEN $5::bool THEN NULL ELSE ssh_host_public_key END,
+    updated_at = now()
+WHERE org_id = $6 AND shared_repo_id = $7::uuid
 `
 
 type UpdateProjectedRepoParams struct {
@@ -1317,6 +1345,7 @@ type UpdateProjectedRepoParams struct {
 	Url          string    `json:"url"`
 	Branch       string    `json:"branch"`
 	Subpath      string    `json:"subpath"`
+	UrlChanged   bool      `json:"url_changed"`
 	OrgID        uuid.UUID `json:"org_id"`
 	SharedRepoID uuid.UUID `json:"shared_repo_id"`
 }
@@ -1335,12 +1364,28 @@ type UpdateProjectedRepoParams struct {
 // organization would leave every organization already updated this call
 // on the NEW value and everyone after it on the old one (Review Focus 2's
 // exact "two new and one old").
+//
+// @url_changed also clears the git-server key pin (ssh_host_key,
+// ssh_host_public_key) when true — a whole-branch review finding:
+// repos.Service.Update already does this on the single-row path when an
+// organization's own repository's url changes ("the pin pins the server
+// the url names"), but this propagating path used to leave every
+// projection's pin untouched regardless. A provider moving a shared
+// repository to a new host would otherwise leave every organization
+// pinned to the OLD server forever — PinRepoHostKey only writes
+// WHERE ssh_host_key IS NULL, so a stale pin never heals on its own, and
+// every customer would have to clear it by hand, exactly the
+// per-organization repetition this feature exists to remove. CASE rather
+// than a second statement: one round trip per organization, not two, and
+// no window where a concurrent read could see the new url with the old
+// pin still attached.
 func (q *Queries) UpdateProjectedRepo(ctx context.Context, arg UpdateProjectedRepoParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateProjectedRepo,
 		arg.Name,
 		arg.Url,
 		arg.Branch,
 		arg.Subpath,
+		arg.UrlChanged,
 		arg.OrgID,
 		arg.SharedRepoID,
 	)

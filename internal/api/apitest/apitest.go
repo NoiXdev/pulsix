@@ -473,17 +473,26 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Shared = shared.NewService(shared.NewSQLStore(d))
 	// Every organization gets its "default" zone, its check definitions
 	// seed set, its rule starter set and a projection of every existing
-	// repository AND job template definition through this hook, whichever
-	// of the two ways it was created — POST /orgs (tenancy.Service.CreateOrg)
-	// or the first-run wizard (setup.Service.Complete) — exactly like
-	// production wiring (internal/app/app.go) chains all five hooks the
-	// same way, rules after checks so its rules can always assume the
-	// checks their metrics belong to already exist, and shared's two last
-	// (repositories before templates, app.go's own ordering note) since
-	// neither depends on what the other three seed.
+	// repository, job template AND check definition through this hook,
+	// whichever of the two ways it was created — POST /orgs
+	// (tenancy.Service.CreateOrg) or the first-run wizard
+	// (setup.Service.Complete) — exactly like production wiring
+	// (internal/app/app.go) chains all six hooks the same way, rules after
+	// checks so its rules can always assume the checks their metrics
+	// belong to already exist, and shared's three last (repositories, then
+	// templates, then check definitions — app.go's own ordering note on
+	// why check definitions run last) since propagation order among the
+	// three never depends on anything this fixture does differently from
+	// production. A whole-branch review found this chain missing the sixth
+	// hook (ProjectAllCheckDefinitionsInto): the mismatch cost nothing
+	// visible because every check-definition test that needed a projection
+	// called the service directly, but it meant deleting app.go's own
+	// argument would have left the entire suite green — see
+	// TestOrgCreationProjectsAnExistingSharedCheckDefinition
+	// (shared_check_handlers_test.go), added to close exactly that gap.
 	orgCreated := app.ChainOrgCreatedHooks(
 		hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg,
-		s.Shared.ProjectAllInto, s.Shared.ProjectAllTemplatesInto,
+		s.Shared.ProjectAllInto, s.Shared.ProjectAllTemplatesInto, s.Shared.ProjectAllCheckDefinitionsInto,
 	)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)
@@ -734,13 +743,17 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 // setupSvc, and only fires when creation goes through one of them — a
 // direct s.Q.CreateOrganization call, like this one, never reaches it. So
 // SeedOrg calls EnsureDefaultZone, checks' SeedForOrg, rules' SeedForOrg,
-// shared's ProjectAllInto and shared's ProjectAllTemplatesInto itself,
-// explicitly, the same five steps the hook would have run, so a seeded org
-// still carries the same invariants a real one does (host_handlers_test.go
-// relies on the zone; check_handlers_test.go and rule_handlers_test.go
-// rely on their own seed sets the same way; a test that needs a seeded org
-// to already carry an existing repository or job template definition's
-// projection relies on these last two steps).
+// shared's ProjectAllInto, shared's ProjectAllTemplatesInto AND shared's
+// ProjectAllCheckDefinitionsInto itself, explicitly, the same six steps the
+// hook would have run, so a seeded org still carries the same invariants a
+// real one does (host_handlers_test.go relies on the zone;
+// check_handlers_test.go and rule_handlers_test.go rely on their own seed
+// sets the same way; a test that needs a seeded org to already carry an
+// existing repository, job template or check definition's projection
+// relies on these last three steps). A whole-branch review found this list
+// stopping at templates, one short of app.go's own six — ChainOrgCreatedHooks
+// above had the identical gap, and TestOrgCreationProjectsAnExistingSharedCheckDefinition
+// (shared_check_handlers_test.go) is what closes both at once.
 // TestOrgCreationSeedsCheckDefinitions and
 // TestFirstRunWizardSeedsCheckDefinitions (internal/api/host_handlers_test.go)
 // are what actually exercise the hook path end to end, through the real
@@ -768,6 +781,9 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	if err := s.Shared.ProjectAllTemplatesInto(ctx, id); err != nil {
+		s.T.Fatal(err)
+	}
+	if err := s.Shared.ProjectAllCheckDefinitionsInto(ctx, id); err != nil {
 		s.T.Fatal(err)
 	}
 	return id

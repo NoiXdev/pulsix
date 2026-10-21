@@ -786,3 +786,116 @@ func TestCreateDefinitionRefusesAKeyASharedProjectionHolds(t *testing.T) {
 		t.Fatalf("a key no shared projection holds must still be creatable, got %v", err)
 	}
 }
+
+// TestUpdateDefinitionRefusesRebindingOntoASharedKeysOrgSlot is a whole-branch
+// review's own finding: UpdateDefinition only ever called
+// refuseKeyHeldBySharedProjection when the KEY changed
+// (existing.Origin == originCustom && d.Key != existing.Key), so a binding
+// change with an UNCHANGED key never reached it at all. Reachable end to
+// end, every step through a normal route (TestRebindingACustomCheckOntoA
+// SharedProjectionsOrgSlotIsRefused, shared_check_handlers_test.go, is the
+// same five-step sequence proven through the real API and the real
+// migration 00063 trigger):
+//
+//  1. a customer has their own check "disk-data" bound to a host — this
+//     must predate any shared projection of the same key, since the
+//     create guard (refuseKeyHeldBySharedProjection, called
+//     unconditionally from createDefinition) already blocks a new one at
+//     ANY scope once a shared projection holds the key.
+//  2. the provider's shared "disk-data" lands at org scope (the create
+//     preflight only sees OTHER organizations' org-scope rows, never this
+//     organization's own host-bound one, so there is nothing to collide
+//     with from the provider's side either).
+//  3. the customer rebinds the SHARED projection to a group, freeing the
+//     ('org', nil, nil, "disk-data") slot.
+//  4. the customer rebinds their OWN check from the host to org scope —
+//     same key throughout, so the old condition never ran the guard, and
+//     the slot migration 00063's trigger needs back was taken.
+//  5. deleting the group then aborts on 23505 (not exercised by this unit
+//     test — the real trigger needs a real Postgres; see the apitest
+//     sibling above for that half).
+//
+// The fix call the guard whenever the row's RESULTING binding is org scope
+// (not whether the key changed) and either the key or the binding itself
+// just changed — narrow on purpose, so an ordinary edit that leaves an
+// already org-scoped custom row at org scope with the same key it already
+// had (no way to newly create a collision) pays no extra ListDefinitions
+// call, exactly as the review's own ruling asked for.
+func TestUpdateDefinitionRefusesRebindingOntoASharedKeysOrgSlot(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	group := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := checks.NewService(store)
+
+	// Step 2+3: the shared projection, already rebound away from org scope
+	// by its customer — the slot its key needs back is free right now.
+	shared := checks.Definition{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "disk-data", Plugin: "disk",
+		Interval: 60 * time.Second, Enabled: true, Origin: "shared",
+		BindingKind: checks.BindingGroup, GroupID: &group,
+	}
+	store.defsByID[shared.ID] = shared
+
+	// Step 1: the customer's OWN check, host-bound, same key — created
+	// before the shared definition ever existed, so the create guard never
+	// saw it.
+	custom := checks.Definition{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "disk-data", Plugin: "disk",
+		Interval: 60 * time.Second, Enabled: true, Origin: "custom",
+		BindingKind: checks.BindingHost, HostID: &host,
+	}
+	store.defsByID[custom.ID] = custom
+
+	// Step 4: rebinding the custom row to org scope, key UNCHANGED, must be
+	// refused — it would retake the slot the trigger needs free to rebind
+	// the shared projection back onto when its own group is later deleted.
+	_, err := svc.UpdateDefinition(ctx, org, custom.ID, checks.DefinitionInput{
+		Key: "disk-data", Plugin: "disk", Interval: 60 * time.Second, Enabled: true,
+		BindingKind: checks.BindingOrg,
+	})
+	if !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("rebinding a custom check onto a shared key's org slot, key unchanged = %v, want ErrInvalidInput", err)
+	}
+	if !strings.Contains(err.Error(), "disk-data") {
+		t.Fatalf("the refusal must name the key so a person can act on it, got %q", err)
+	}
+
+	// The custom row must still be exactly where it was — a refused update
+	// never partially writes.
+	got, err := svc.GetDefinition(ctx, org, custom.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BindingKind != checks.BindingHost || got.HostID == nil || *got.HostID != host {
+		t.Fatalf("custom row after a refused rebind = %+v, want it unchanged at host scope", got)
+	}
+
+	// Narrowness, part one: an ordinary edit that leaves an org-scope
+	// custom row at org scope, same key, must still go through — nothing
+	// about it could newly create the collision the guard exists to catch.
+	orgScoped := checks.Definition{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "cpu-watch", Plugin: "cpu",
+		Interval: 60 * time.Second, Enabled: true, Origin: "custom", BindingKind: checks.BindingOrg,
+	}
+	store.defsByID[orgScoped.ID] = orgScoped
+	if _, err := svc.UpdateDefinition(ctx, org, orgScoped.ID, checks.DefinitionInput{
+		Key: "cpu-watch", Plugin: "cpu", Interval: 120 * time.Second, Enabled: false, BindingKind: checks.BindingOrg,
+	}); err != nil {
+		t.Fatalf("an ordinary edit that leaves an org-scope row at org scope must still succeed, got %v", err)
+	}
+
+	// Narrowness, part two: rebinding a DIFFERENT custom check to org scope
+	// under a key no shared projection holds must still succeed.
+	other := checks.Definition{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "disk-logs", Plugin: "disk",
+		Interval: 60 * time.Second, Enabled: true, Origin: "custom",
+		BindingKind: checks.BindingHost, HostID: &host,
+	}
+	store.defsByID[other.ID] = other
+	if _, err := svc.UpdateDefinition(ctx, org, other.ID, checks.DefinitionInput{
+		Key: "disk-logs", Plugin: "disk", Interval: 60 * time.Second, Enabled: true, BindingKind: checks.BindingOrg,
+	}); err != nil {
+		t.Fatalf("rebinding under a key no shared projection holds must still succeed, got %v", err)
+	}
+}

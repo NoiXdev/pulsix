@@ -22,7 +22,18 @@ import (
 // organization exists must already be there the moment the organization is
 // created — spec decision 4, the same seam rules.SeedForOrg already uses
 // (TestBuildSeedsRuleSetOnOrgCreation, app_test.go), now carrying
-// sharedSvc.ProjectAllInto too (app.go's own ChainOrgCreatedHooks call).
+// sharedSvc.ProjectAllInto too (app.go's own ChainOrgCreatedHooks call). It
+// also seeds a job template definition and a check definition the same way
+// and asserts both land in the new organization too — a whole-branch
+// review finding: ProjectAllCheckDefinitionsInto had exactly one production
+// call site and nothing outside internal/shared's own unit tests ever drove
+// it through app.Build's real hook chain, so deleting app.go's own argument
+// for it would have left this file's suite green. Repositories, templates
+// and check definitions in ONE test (rather than three separate ones) is
+// deliberate: app.go chains all three shared-projection hooks together, and
+// a test that only ever built and tore down a fresh app.Build per kind
+// could not catch an ordering mistake between them the way one shared
+// setup-completion call can.
 // Access to a.db is why this lives in package app, not app_test: Build does
 // not expose the pool it wires sharedSvc onto, and reusing the SAME pool
 // (rather than a second admin connection, TestBuildReconcilesZonelessOrganizations's
@@ -37,11 +48,24 @@ func TestBuildProjectsSharedRepoDefinitionsIntoNewOrganizations(t *testing.T) {
 	}
 	defer a.Close()
 
-	def, err := shared.NewService(shared.NewSQLStore(a.db)).CreateRepo(ctx, shared.RepoDefinitionInput{
+	sharedSvc := shared.NewService(shared.NewSQLStore(a.db))
+	def, err := sharedSvc.CreateRepo(ctx, shared.RepoDefinitionInput{
 		Name: "infra-base", URL: "https://git.example.com/infra-base.git", Branch: "main", Subpath: "playbooks",
 	})
 	if err != nil {
 		t.Fatalf("CreateRepo (definition): %v", err)
+	}
+	tplDef, err := sharedSvc.CreateTemplate(ctx, shared.TemplateDefinitionInput{
+		Name: "deploy-site", SharedRepoID: def.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("CreateTemplate (definition): %v", err)
+	}
+	checkDef, err := sharedSvc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{
+		Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckDefinition (definition): %v", err)
 	}
 
 	body := `{"admin_email":"shared-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"shared-org","org_name":"Shared Org"}`
@@ -65,7 +89,7 @@ func TestBuildProjectsSharedRepoDefinitionsIntoNewOrganizations(t *testing.T) {
 		`SELECT name, url, branch, subpath, credential_id FROM git_repos WHERE org_id = $1 AND shared_repo_id = $2`,
 		org.ID, def.ID).Scan(&name, &url, &branch, &subpath, &credentialID)
 	if err != nil {
-		t.Fatalf("read the new organization's projection: %v", err)
+		t.Fatalf("read the new organization's repository projection: %v", err)
 	}
 	if name != def.Name || url != def.URL || branch != def.Branch || subpath != def.Subpath {
 		t.Fatalf("projection = (name=%q, url=%q, branch=%q, subpath=%q), want the definition's own (%q, %q, %q, %q)",
@@ -73,6 +97,32 @@ func TestBuildProjectsSharedRepoDefinitionsIntoNewOrganizations(t *testing.T) {
 	}
 	if credentialID != nil {
 		t.Fatalf("a brand-new projection must have no credential of its own, got %v", *credentialID)
+	}
+
+	// job_templates carries playbook_id, not a path — the path lives only on
+	// the definition and is resolved per organization (ProjectedTemplateColumns'
+	// own doc comment); name is the shared column this projection must
+	// still carry.
+	var tplName string
+	err = a.db.Pool().QueryRow(ctx,
+		`SELECT name FROM job_templates WHERE org_id = $1 AND shared_template_id = $2`,
+		org.ID, tplDef.ID).Scan(&tplName)
+	if err != nil {
+		t.Fatalf("read the new organization's job template projection: %v", err)
+	}
+	if tplName != tplDef.Name {
+		t.Fatalf("template projection name = %q, want the definition's own %q", tplName, tplDef.Name)
+	}
+
+	var checkKey, checkOrigin string
+	err = a.db.Pool().QueryRow(ctx,
+		`SELECT key, origin FROM check_definitions WHERE org_id = $1 AND shared_definition_id = $2`,
+		org.ID, checkDef.ID).Scan(&checkKey, &checkOrigin)
+	if err != nil {
+		t.Fatalf("read the new organization's check definition projection: %v", err)
+	}
+	if checkKey != "disk-data" || checkOrigin != "shared" {
+		t.Fatalf("check projection = (key=%q, origin=%q), want (%q, %q)", checkKey, checkOrigin, "disk-data", "shared")
 	}
 }
 

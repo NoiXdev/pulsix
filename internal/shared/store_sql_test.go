@@ -384,6 +384,104 @@ func TestUpdateSkipsACascadedOrganization(t *testing.T) {
 	}
 }
 
+// projectionHostKeyPin reads one organization's projection's git-server key
+// pin directly — UpdateProjectedRepo's own two columns
+// (ssh_host_key, ssh_host_public_key), neither of which projectionRow
+// reads.
+func projectionHostKeyPin(t *testing.T, d *db.DB, orgID, defID uuid.UUID) (hostKey, publicKey string) {
+	t.Helper()
+	var hk, pk *string
+	err := d.Pool().QueryRow(ctx,
+		`SELECT ssh_host_key, ssh_host_public_key FROM git_repos WHERE org_id = $1 AND shared_repo_id = $2`,
+		orgID, defID).Scan(&hk, &pk)
+	if err != nil {
+		t.Fatalf("read host key pin for org %s: %v", orgID, err)
+	}
+	if hk != nil {
+		hostKey = *hk
+	}
+	if pk != nil {
+		publicKey = *pk
+	}
+	return
+}
+
+// TestUpdateAndPropagateClearsEveryProjectionsHostKeyPinWhenTheUrlChanges is
+// a whole-branch review's own finding: repos.Service.Update already clears
+// SSHHostKey/SSHHostPublicKey on the SINGLE-row path when an organization's
+// OWN repository's url changes ("the pin pins the server the url names"),
+// but UpdateProjectedRepo (queries/shared.sql) only ever set
+// name/url/branch/subpath — never the pin — on the PROPAGATING path. So
+// when the provider moves a shared repository to a new host, every
+// organization keeps the OLD server's pin, the next sync fails host-key
+// verification, and PinRepoHostKey's own WHERE ssh_host_key IS NULL means
+// it never heals on its own — every customer would have to clear the key
+// by hand, exactly the per-customer repetition this whole feature exists
+// to remove. The fix clears both columns in UpdateProjectedRepo too, but
+// ONLY when the url actually changed — an edit to branch or subpath alone
+// must leave an existing pin alone, the same condition the single-row path
+// already applies.
+func TestUpdateAndPropagateClearsEveryProjectionsHostKeyPinWhenTheUrlChanges(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org1 := seedOrg(t, q, "pin-clear-org-1")
+	org2 := seedOrg(t, q, "pin-clear-org-2")
+
+	def, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra", URL: "https://old-host.example.com/infra.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateWithProjections: %v", err)
+	}
+
+	// Simulate TOFU having already pinned both organizations' projections —
+	// exactly what the sync sink would have written after a first
+	// successful sync against the OLD host.
+	for _, org := range []uuid.UUID{org1, org2} {
+		if _, err := d.Pool().Exec(ctx,
+			`UPDATE git_repos SET ssh_host_key = $1, ssh_host_public_key = $2 WHERE org_id = $3 AND shared_repo_id = $4`,
+			"SHA256:old-host-fingerprint", "ssh-ed25519 AAAAOLD old-host", org, def.ID); err != nil {
+			t.Fatalf("seed host key pin for org %s: %v", org, err)
+		}
+	}
+
+	// A branch-only edit, url UNCHANGED: the pin must survive, exactly like
+	// repos.Service.Update's own single-row path.
+	if _, err := store.UpdateAndPropagate(ctx, shared.RepoDefinition{
+		ID: def.ID, Name: "infra", URL: def.URL, Branch: "develop", Subpath: def.Subpath,
+	}); err != nil {
+		t.Fatalf("UpdateAndPropagate (branch only) error = %v, want nil", err)
+	}
+	for _, org := range []uuid.UUID{org1, org2} {
+		hostKey, publicKey := projectionHostKeyPin(t, d, org, def.ID)
+		if hostKey != "SHA256:old-host-fingerprint" || publicKey != "ssh-ed25519 AAAAOLD old-host" {
+			t.Fatalf("org %s pin after a branch-only edit = (%q, %q), want it UNCHANGED — the url never moved", org, hostKey, publicKey)
+		}
+	}
+
+	// The url changes: every projection's pin — not just the definition's
+	// own row, which UpdateSharedRepo never even carried a pin to clear in
+	// the first place — must be cleared, in every organization, so the
+	// next sync re-pins whatever the NEW host presents instead of failing
+	// host-key verification against the old one forever.
+	if _, err := store.UpdateAndPropagate(ctx, shared.RepoDefinition{
+		ID: def.ID, Name: "infra", URL: "https://new-host.example.com/infra.git", Branch: "develop", Subpath: def.Subpath,
+	}); err != nil {
+		t.Fatalf("UpdateAndPropagate (url changed) error = %v, want nil", err)
+	}
+	for _, org := range []uuid.UUID{org1, org2} {
+		hostKey, publicKey := projectionHostKeyPin(t, d, org, def.ID)
+		if hostKey != "" || publicKey != "" {
+			t.Fatalf("org %s pin after the url changed = (%q, %q), want both cleared — the OLD pin names a server this projection no longer points at", org, hostKey, publicKey)
+		}
+		_, _, url, _, _ := projectionRow(t, d, org, def.ID)
+		if url != "https://new-host.example.com/infra.git" {
+			t.Fatalf("org %s url after the change = %q, want the new url propagated too", org, url)
+		}
+	}
+}
+
 // --- DeleteWithProjections ---
 //
 // What blocks is job_triggers and playbooks, both checked explicitly in
@@ -536,6 +634,49 @@ func TestDeleteWithProjectionsRemovesDefinitionAndProjectionsWhenUnused(t *testi
 	}
 	if n := countProjections(t, d, def.ID); n != 0 {
 		t.Fatalf("countProjections() = %d, want 0 — the projections must go with the definition", n)
+	}
+}
+
+// TestDeleteWithProjectionsRefusesWhileATemplateDefinitionReferencesIt is a
+// whole-branch review's own finding: shared_job_templates.shared_repo_id
+// (migration 00061:24) is NOT NULL REFERENCES shared_repos ON DELETE
+// RESTRICT, and DeleteWithProjections checked every PER-ORGANIZATION
+// dependant (job triggers, playbooks) but never this one — the single
+// dependant on a repository DEFINITION that lives at the installation
+// level, outside any organization. Before the fix, deleting a repository
+// definition a template definition still referenced hit that RESTRICT
+// directly with no sentinel attached, and mapSharedErr's unmapped-error
+// branch turned it into a bare 500 instead of spec decision 5's promised
+// named refusal. No organization needs to exist at all for this: the
+// dependant is the template DEFINITION row itself, not any projection of
+// it.
+func TestDeleteWithProjectionsRefusesWhileATemplateDefinitionReferencesIt(t *testing.T) {
+	d := testdb.Open(t)
+	store := shared.NewSQLStore(d)
+
+	repoDef := seedSharedRepoDef(t, d, "infra-blocked-by-template")
+	tplDef, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateTemplateWithProjections: %v", err)
+	}
+
+	err = store.DeleteWithProjections(ctx, repoDef.ID)
+	if err == nil {
+		t.Fatal("DeleteWithProjections() error = nil, want the template definition to block it")
+	}
+	if !errors.Is(err, shared.ErrInUse) {
+		t.Fatalf("DeleteWithProjections() error = %v, want errors.Is(_, ErrInUse)", err)
+	}
+	if !strings.Contains(err.Error(), tplDef.Name) {
+		t.Fatalf("DeleteWithProjections() error = %q, want it to name the blocking template definition %q", err.Error(), tplDef.Name)
+	}
+
+	// Refused, not partially applied: the repository definition must still
+	// exist, exactly like the per-organization dependant tests above.
+	if _, gerr := store.GetDefinition(ctx, repoDef.ID); gerr != nil {
+		t.Fatalf("GetDefinition() after a refused delete = %v, want the definition still to exist", gerr)
 	}
 }
 

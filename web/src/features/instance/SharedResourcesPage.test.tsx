@@ -303,8 +303,39 @@ describe('SharedResourcesPage — job template definitions (v0.2f Task 6)', () =
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.type(within(dialog).getByLabelText('Limit pattern'), 'web*');
     await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
-    expect(put).toEqual({ name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml', limit: 'web*' });
+    expect(put).toEqual({
+      name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml', limit: 'web*', extra_vars: {},
+    });
     expect(await screen.findByText('Job template definition deploy-site saved')).toBeInTheDocument();
+  });
+
+  // Whole-branch review finding: this dialog has no field for extra vars or
+  // their schema (the comment above TemplateDefinitionDialog explains why —
+  // they are set through the API, not here), but the PUT it sends is a full
+  // replace. Before this fix, submit() built its body from only the fields
+  // this form renders, so editing the limit here SILENTLY CLEARED a value
+  // set through the API, for every organization's projection, in the same
+  // transaction. The fix rounds the stored value back through the form
+  // state unchanged rather than defaulting it to {} on every save.
+  it('leaves stored extra vars intact when editing a field this dialog does not render them through', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    const withExtraVars = tplDef({ extra_vars: { region: 'eu-west-1', replicas: 3 } });
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [withExtraVars] },
+      'PUT /api/v1/admin/templates/definitions/t1': (req: MockRequest) => {
+        put = req.body;
+        return { definition: { ...withExtraVars, limit: 'web*' } };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.type(within(dialog).getByLabelText('Limit pattern'), 'web*');
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(put).toMatchObject({ limit: 'web*', extra_vars: { region: 'eu-west-1', replicas: 3 } });
   });
 
   // Spec decision 7, Task 6's own application: a name collision names the
@@ -474,6 +505,37 @@ describe('SharedResourcesPage — check definitions (v0.2f Task 7)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
     expect(put).toEqual({ key: 'disk-data', plugin: 'disk', interval_seconds: 600, params: {} });
     expect(await screen.findByText('Check definition disk saved')).toBeInTheDocument();
+  });
+
+  // Whole-branch review finding: this dialog only ever renders a field for
+  // "service"'s units; every other plugin's params() branch returned a bare
+  // {}, so saving a "disk" definition's interval (the one field this dialog
+  // DOES render for it) silently cleared its stored mounts allow-list, for
+  // every organization's projection, in the same PUT. The fix rounds the
+  // stored params back through unchanged when the plugin itself did not
+  // change, exactly like the job template dialog now does for extra vars.
+  it('leaves stored disk mounts intact when editing the interval, which this dialog renders instead', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    const withMounts = checkDef({ params: { mounts: ['/data', '/var/lib/postgres'] } });
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': { definitions: [withMounts] },
+      'PUT /api/v1/admin/checks/definitions/c1': (req: MockRequest) => {
+        put = req.body;
+        return { definition: { ...withMounts, interval_seconds: 600 } };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'disk-data' }));
+    const dialog = await screen.findByRole('dialog', { name: 'disk-data' });
+    const interval = within(dialog).getByLabelText('Interval (seconds)');
+    await user.clear(interval);
+    await user.type(interval, '600');
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(put).toMatchObject({ interval_seconds: 600, params: { mounts: ['/data', '/var/lib/postgres'] } });
   });
 
   // Spec decision 7, Task 7's own application: a name collision names the

@@ -24,14 +24,20 @@ var (
 	// DEFINITIONS want the same shared_repos.name, which carries no
 	// organization to name.
 	ErrNameTaken = errors.New("name already in use")
-	// ErrInUse means a projection is still referenced by something inside
-	// its organization and DeleteRepo therefore refused to remove the
-	// definition — spec decision 5. *InUseError (definition.go) is the
-	// richer form naming the organization and, where known, what it is —
-	// a job trigger or a playbook, today — still references. A vault
-	// credential binding never appears here: it is part of the
-	// projection, not a dependant on it, and goes with a delete rather
-	// than blocking one.
+	// ErrInUse means something still references a definition and its
+	// DeleteRepo/DeleteTemplate/DeleteCheckDefinition therefore refused to
+	// remove it — spec decision 5. Most of the time that something is a
+	// PROJECTION'S own dependant inside one organization, and *InUseError
+	// (definition.go) is the richer form naming that organization and,
+	// where known, what it is — a job trigger, a playbook or a schedule,
+	// today — still references; a vault credential binding never appears
+	// here, since it is part of the projection rather than a dependant on
+	// it, and goes with a delete rather than blocking one. One dependant is
+	// NOT a projection's: shared_job_templates.shared_repo_id references a
+	// repository definition directly, at the installation level, so a
+	// template definition can block a repository definition's delete too —
+	// returned as a plain, definition-naming ErrInUse rather than
+	// *InUseError, since there is no organization to attach to it.
 	ErrInUse = errors.New("definition is in use")
 	// ErrInvalidInput marks a definition input this package can judge
 	// without a database: a shared template whose extra-vars schema
@@ -47,20 +53,24 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 )
 
-// Store persists repository definitions and their projections. Every
-// method here except ProjectInto must be called on a context with NO
-// organization bound (db.WithOrgScope never called for it): shared_repos
-// carries no org_id and no row-level security (migration 00060, the
-// instance_settings posture since migration 00009), and reaching every
-// organization's git_repos rows in one call — to read every existing name
-// for decision 7's check, or to write every projection in one transaction —
-// depends on git_repos' own org_isolation_bypass policy, which only admits
-// everything when no organization is bound. ProjectInto writes exactly one
-// organization's own row and is the one method Task 3 calls from inside
-// tenancy.Service.CreateOrg's own, already org-bound transaction — see its
-// own doc comment below. store_sql.go's doc comment says this again at the
-// one place a future reader is likeliest to reach for db.WithOrgScope out
-// of habit.
+// Store persists repository, job template and check definitions and their
+// projections — the three applications of this package's one mechanism
+// (spec v0.2f decisions 1, 2, 4, 5, 7). Every method here except ProjectInto
+// and its two namesakes (ProjectAllInto's own per-kind siblings) must be
+// called on a context with NO organization bound (db.WithOrgScope never
+// called for it): none of the three definition tables carries an org_id or
+// row-level security (migration 00060, the instance_settings posture since
+// migration 00009), and reaching every organization's own projection rows
+// in one call — to read every existing name/key for decision 7's check, or
+// to write every projection in one transaction — depends on each projected
+// table's own org_isolation_bypass policy, which only admits everything
+// when no organization is bound. ProjectInto (and ProjectTemplateInto,
+// ProjectCheckDefinitionInto) write exactly one organization's own row and
+// are the one method per kind Task 3/6/7 call from inside
+// tenancy.Service.CreateOrg's own, already org-bound transaction — see
+// ProjectInto's own doc comment below. store_sql.go's doc comment says this
+// again at the one place a future reader is likeliest to reach for
+// db.WithOrgScope out of habit.
 type Store interface {
 	// CreateWithProjections inserts def and one projection of it into every
 	// organization that exists at the moment this call's own transaction
@@ -219,7 +229,8 @@ type Store interface {
 	ExistingCheckDefinitionNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error)
 }
 
-// Service implements the installation-admin operations on repository
+// Service implements the installation-admin operations on all three kinds
+// of installation-owned definition — repositories, job templates and check
 // definitions: define one, change one, remove one, and seed one into a
 // newly created organization. Every method takes Principal.InstanceAdmin
 // as a decision already made by its caller (spec decision 8) — this
