@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 )
@@ -1017,7 +1018,12 @@ func TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel(t *testin
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
 	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
 	queue.SetVaultResolver(vaultResolverAdapter{})
-	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
+	// A real shared.Service, not a fake: this test never creates a shared
+	// template definition, so CreateRepo's resolve call below always
+	// touches zero rows — wiring the real implementation here is simpler
+	// than a fake that would only ever be asked to do nothing.
+	sharedSvc := shared.NewService(shared.NewSQLStore(d))
+	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, sharedSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, invSvc, hostsSvc, credsSvc, box)
 
 	repo, err := reposSvc.Create(scoped, org, repos.CreateInput{

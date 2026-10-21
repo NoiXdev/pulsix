@@ -42,14 +42,24 @@ func toScopeDTO(s templates.Scope) templateScopeDTO {
 // sealed values, and non-empty values under secret-typed fields, read as
 // {"$secret": "set"} — never a plaintext secret.
 type templateDTO struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	PlaybookID      string           `json:"playbook_id"`
-	Scope           templateScopeDTO `json:"scope"`
-	Limit           string           `json:"limit"`
-	ExtraVars       map[string]any   `json:"extra_vars"`
-	ExtraVarsSchema *schema.Schema   `json:"extra_vars_schema,omitempty"`
-	CredentialID    string           `json:"credential_id,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	PlaybookID string `json:"playbook_id"`
+	// SharedTemplateID is set when this row is a projection of an
+	// installation-owned definition (spec v0.2f decisions 1, 2; Task 6's
+	// templates.Template.SharedTemplateID), absent for an ordinary,
+	// organization-owned template. repoDTO.SharedRepoID's own doc comment,
+	// same reasoning: the GUI uses it to mark the row and disable name,
+	// playbook, limit, extra vars and their schema, which templates.
+	// Service already refuses to change on a projection
+	// (refuseSharedFieldChange) — this field only lets the UI say so
+	// before the user tries and is refused.
+	SharedTemplateID string           `json:"shared_template_id,omitempty"`
+	Scope            templateScopeDTO `json:"scope"`
+	Limit            string           `json:"limit"`
+	ExtraVars        map[string]any   `json:"extra_vars"`
+	ExtraVarsSchema  *schema.Schema   `json:"extra_vars_schema,omitempty"`
+	CredentialID     string           `json:"credential_id,omitempty"`
 	// VaultIdentities is this template's own labelled vault password set
 	// (spec decision 1, migration 00059): what it adds on top of its
 	// repository's base set, never the repository's own. 4b resolves the
@@ -85,8 +95,20 @@ func parseTemplateVaultCredentials(in []vaultIdentityDTO) ([]templates.VaultCred
 }
 
 func toTemplateDTO(t templates.Template) templateDTO {
+	// PlaybookID is "" rather than the nil UUID's own string form
+	// ("00000000-...") when t.PlaybookID is uuid.Nil — the unresolved case
+	// Template.PlaybookID's own doc comment describes, possible only for a
+	// projection whose organization has not synced a matching playbook yet.
+	// An ordinary template's PlaybookID is never uuid.Nil (templates.
+	// Service.build always resolves one through playbooks.Get first), so
+	// this never changes that shape, only gives the GUI a field it can test
+	// for emptiness instead of a string that merely looks like an id.
+	playbookID := ""
+	if t.PlaybookID != uuid.Nil {
+		playbookID = t.PlaybookID.String()
+	}
 	dto := templateDTO{
-		ID: t.ID.String(), Name: t.Name, PlaybookID: t.PlaybookID.String(),
+		ID: t.ID.String(), Name: t.Name, PlaybookID: playbookID,
 		Scope: toScopeDTO(t.Scope), Limit: t.Limit,
 		ExtraVars: t.ExtraVars, ExtraVarsSchema: t.ExtraVarsSchema,
 		VaultIdentities: toTemplateVaultCredentialDTOs(t.VaultCredentials),
@@ -97,6 +119,9 @@ func toTemplateDTO(t templates.Template) templateDTO {
 	}
 	if t.CredentialID != nil {
 		dto.CredentialID = t.CredentialID.String()
+	}
+	if t.SharedTemplateID != nil {
+		dto.SharedTemplateID = t.SharedTemplateID.String()
 	}
 	return dto
 }
@@ -257,9 +282,19 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		playbookID, err := parseUUID(in.Body.PlaybookID, "playbook id")
-		if err != nil {
-			return nil, err
+		// Unlike Create's own required playbook_id (parseUUID below),
+		// Update must also accept "" here: a projected template's own GET
+		// renders an unresolved playbook_id as "" (toTemplateDTO's own
+		// comment), and the GUI echoes exactly that back on a save that
+		// only touches the projection's own fields (scope, credential) —
+		// templates.Service.Update's own refuseSharedFieldChange is what
+		// actually enforces that this value may not CHANGE, not this
+		// parse step.
+		playbookID := uuid.Nil
+		if in.Body.PlaybookID != "" {
+			if playbookID, err = parseUUID(in.Body.PlaybookID, "playbook id"); err != nil {
+				return nil, err
+			}
 		}
 		sc, err := in.Body.parseScope()
 		if err != nil {
@@ -341,6 +376,12 @@ func mapTemplatesErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, templates.ErrNameTaken):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, templates.ErrForbidden):
+		// spec v0.2f decision 6: a projected template cannot be deleted
+		// from inside an organization. repos' own mapReposErr gives
+		// repos.ErrForbidden the same mapping, for the same reason: this is
+		// not a value the caller could fix, so 403, not 400.
+		return huma.Error403Forbidden(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped templates error", "err", err)
 		return huma.Error500InternalServerError("internal error")

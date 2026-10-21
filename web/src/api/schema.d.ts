@@ -76,6 +76,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/templates/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin templates definitions */
+        get: operations["get-api-v1-admin-templates-definitions"];
+        put?: never;
+        /** Post API v1 admin templates definitions */
+        post: operations["createTemplateDefinition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/templates/definitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin templates definitions by ID */
+        get: operations["get-api-v1-admin-templates-definitions-by-id"];
+        /** Put API v1 admin templates definitions by ID */
+        put: operations["updateTemplateDefinition"];
+        post?: never;
+        /** Delete API v1 admin templates definitions by ID */
+        delete: operations["deleteTemplateDefinition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{userId}/deactivate": {
         parameters: {
             query?: never;
@@ -5534,9 +5571,55 @@ export interface components {
             name: string;
             playbook_id: string;
             scope: components["schemas"]["TemplateScopeDTO"];
+            shared_template_id?: string;
             /** Format: date-time */
             updated_at: string;
             vault_identities: components["schemas"]["VaultIdentityDTO"][] | null;
+        };
+        TemplateDefinitionBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateDefinitionBody.json
+             */
+            readonly $schema?: string;
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            extra_vars_schema?: components["schemas"]["Schema"];
+            limit?: string;
+            name: string;
+            playbook_path: string;
+            shared_repo_id: string;
+        };
+        TemplateDefinitionDTO: {
+            extra_vars: {
+                [key: string]: unknown;
+            };
+            extra_vars_schema?: components["schemas"]["Schema"];
+            id: string;
+            limit: string;
+            name: string;
+            playbook_path: string;
+            shared_repo_id: string;
+        };
+        TemplateDefinitionDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateDefinitionDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            definition: components["schemas"]["TemplateDefinitionDTO"];
+        };
+        TemplateDefinitionListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateDefinitionListOutputBody.json
+             */
+            readonly $schema?: string;
+            definitions: components["schemas"]["TemplateDefinitionDTO"][] | null;
         };
         TemplateDetailOutputBody: {
             /**
@@ -6109,6 +6192,165 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SmtpTestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-templates-definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDefinitionListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createTemplateDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateDefinitionBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDefinitionDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-templates-definitions-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDefinitionDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateTemplateDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateDefinitionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateDefinitionDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteTemplateDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */

@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,7 +17,9 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -98,5 +101,69 @@ func TestTemplateLookupOpensSealedExtraVars(t *testing.T) {
 	}
 	if _, err := NewTemplateLookup(store, playbooks.NewSQLStore(d), box).TemplateLookup(scoped, org.ID, moved); err == nil {
 		t.Fatal("a ciphertext of another template must not open")
+	}
+}
+
+// TestTemplateLookupRefusesAnUnresolvedSharedTemplateDistinctly is finding
+// 2 of the Task 6 review: a projection of an installation-owned definition
+// (spec v0.2f) whose playbook has not been registered in this organization
+// yet must not report jobs.ErrNotFound when a run is attempted — that is
+// indistinguishable from a template that was deleted or never existed,
+// while the row is visibly sitting in this organization's own list. It
+// gets its own sentinel, jobs.ErrTemplateNotReady, instead.
+func TestTemplateLookupRefusesAnUnresolvedSharedTemplateDistinctly(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	org, err := gen.New(d.Pool()).CreateOrganization(ctx, gen.CreateOrganizationParams{
+		ID: uuid.Must(uuid.NewV7()), Slug: "app-template-lookup-unresolved", Name: "lookup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A shared repository and job template definition, created through the
+	// real installation-admin path — CreateWithProjections/
+	// CreateTemplateWithProjections project into every existing
+	// organization immediately (spec decision 4), but nothing has
+	// registered a matching playbook in THIS organization yet, so the
+	// projection's own playbook_id stays NULL (migration 00061's own
+	// reason the column became nullable).
+	sharedStore := shared.NewSQLStore(d)
+	repoDef, err := sharedStore.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra-for-lookup-unresolved", URL: "https://git.example.com/x.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmplDef, err := sharedStore.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site-unresolved", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scoped := db.WithOrgScope(ctx, org.ID)
+	templateStore := templates.NewSQLStore(d)
+	list, err := templateStore.List(scoped, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projID uuid.UUID
+	for _, tt := range list {
+		if tt.SharedTemplateID != nil && *tt.SharedTemplateID == tmplDef.ID {
+			projID = tt.ID
+		}
+	}
+	if projID == uuid.Nil {
+		t.Fatal("no projection of the shared template definition found in the organization")
+	}
+
+	box := crypto.NewBox([32]byte{7, 7, 7})
+	_, err = NewTemplateLookup(templateStore, playbooks.NewSQLStore(d), box).TemplateLookup(scoped, org.ID, projID)
+	if !errors.Is(err, jobs.ErrTemplateNotReady) {
+		t.Fatalf("TemplateLookup() on an unresolved projection error = %v, want errors.Is(_, jobs.ErrTemplateNotReady)", err)
+	}
+	if errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("TemplateLookup() error = %v, must not also be jobs.ErrNotFound — indistinguishable from a deleted template", err)
 	}
 }

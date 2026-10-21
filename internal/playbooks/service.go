@@ -68,6 +68,24 @@ type RepoSource interface {
 	Get(ctx context.Context, orgID, id uuid.UUID) (repos.Repo, error)
 }
 
+// TemplateResolver is the slice of shared.Service a new repo playbook
+// needs (spec v0.2f, Task 6's own review finding): registering
+// (orgID, repoID, path) here is the ORGANIZATION-side event that makes a
+// shared job template's projection resolvable in the first place, and
+// nothing fired on it before this port existed. shared.Service.
+// CreateTemplate/UpdateTemplate already resolve playbook_id per
+// organization, but only on a DEFINITION-side event — a provider defining
+// a shared template before any customer has synced its matching playbook
+// (the normal order: configure centrally, then customers catch up) left
+// that projection's playbook_id NULL until the definition's next edit,
+// which may never come. CreateRepo below calls this once the playbook
+// itself is safely stored, so a template an organization could not run a
+// minute ago becomes runnable the moment it registers the matching path,
+// with no action on the provider's part.
+type TemplateResolver interface {
+	ResolveTemplatePlaybooks(ctx context.Context, orgID, repoID, playbookID uuid.UUID, path string) error
+}
+
 // Store persists playbooks. Every lookup that finds nothing returns
 // ErrNotFound; deleting a playbook a job template still references is
 // ErrInUse.
@@ -84,13 +102,16 @@ type Store interface {
 
 // Service implements the playbook registry.
 type Service struct {
-	store Store
-	repos RepoSource
+	store    Store
+	repos    RepoSource
+	resolver TemplateResolver
 }
 
-// NewService wires the store and the repo source.
-func NewService(store Store, repoSource RepoSource) *Service {
-	return &Service{store: store, repos: repoSource}
+// NewService wires the store, the repo source and the template resolver
+// (TemplateResolver's own doc comment: the organization-side half of
+// shared job template resolution).
+func NewService(store Store, repoSource RepoSource, resolver TemplateResolver) *Service {
+	return &Service{store: store, repos: repoSource, resolver: resolver}
 }
 
 // CreateEditor validates the inline document and stores it as an editor
@@ -108,6 +129,17 @@ func (s *Service) CreateEditor(ctx context.Context, orgID uuid.UUID, in CreateIn
 
 // CreateRepo stores a playbook reference to a path inside a registered
 // repository. The path is validated here and the repository must exist.
+//
+// Once the row is stored, this is also the organization-side resolution
+// event TemplateResolver's own doc comment describes: whether repoID
+// projects a shared repository definition or not, and whether any shared
+// template definition names this exact path or not, is for
+// shared.Service.ResolveTemplatePlaybooks to decide, not this package —
+// playbooks must not need to know what a "shared template" is to report
+// that a path now exists. A resolution failure is reported rather than
+// swallowed: a caller that successfully registered a playbook but silently
+// failed to light up a template waiting on it would be a harder bug to
+// find than one that surfaces here, at the one call site that can.
 func (s *Service) CreateRepo(ctx context.Context, orgID, repoID uuid.UUID, path string) (Playbook, error) {
 	if strings.Contains(path, "..") || !RepoPathPattern.MatchString(path) {
 		return Playbook{}, fmt.Errorf("%w: invalid path: a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no \"..\"", ErrInvalidInput)
@@ -118,10 +150,17 @@ func (s *Service) CreateRepo(ctx context.Context, orgID, repoID uuid.UUID, path 
 		}
 		return Playbook{}, fmt.Errorf("look up repository: %w", err)
 	}
-	return s.store.Create(ctx, Playbook{
+	p, err := s.store.Create(ctx, Playbook{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
 		Source: SourceRepo, RepoID: &repoID, Path: &path,
 	})
+	if err != nil {
+		return Playbook{}, err
+	}
+	if err := s.resolver.ResolveTemplatePlaybooks(ctx, orgID, repoID, p.ID, path); err != nil {
+		return Playbook{}, fmt.Errorf("resolve shared template playbooks: %w", err)
+	}
+	return p, nil
 }
 
 // Get returns one playbook, ErrNotFound when it does not exist in the org.

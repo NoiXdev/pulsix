@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
 
 // SQLStore implements Store with sqlc queries on *db.DB
@@ -367,4 +369,372 @@ func (s *SQLStore) ExistingNames(ctx context.Context, exclude uuid.UUID) ([]OrgN
 // gen.SharedRepo row.
 func toDefinition(r gen.SharedRepo) RepoDefinition {
 	return RepoDefinition{ID: r.ID, Name: r.Name, URL: r.Url, Branch: r.Branch, Subpath: r.Subpath}
+}
+
+// --- job templates (Task 6) ---
+
+// CreateTemplateWithProjections inserts def's own row and one projection of
+// it into every organization that exists, inside a single transaction —
+// CreateWithProjections' own doc comment, unchanged reasoning, for job
+// templates. Unlike that method, a brand-new projection's playbook_id is
+// not one literal value shared by every row: InsertProjectedTemplates
+// resolves it per organization, by joining each one's own git_repos
+// projection of def.SharedRepoID to its own playbooks row at
+// def.PlaybookPath (queries/shared.sql's own doc comment on that query has
+// the join). A foreign-key violation from shared_job_templates.shared_repo_id
+// (migration 00061) means def.SharedRepoID does not name an existing
+// repository definition — reported as ErrNotFound, not a bare constraint
+// error, since the caller supplied it directly rather than this package
+// having looked it up itself.
+func (s *SQLStore) CreateTemplateWithProjections(ctx context.Context, def TemplateDefinition) (TemplateDefinition, error) {
+	var created TemplateDefinition
+	err := withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		name, limit, extraVars, extraVarsSchema := ProjectedTemplateColumns(def)
+		varsRaw, schemaRaw, err := encodeTemplateDefinitionColumns(extraVars, extraVarsSchema)
+		if err != nil {
+			return err
+		}
+		row, err := q.CreateSharedTemplate(ctx, gen.CreateSharedTemplateParams{
+			ID: def.ID, Name: name, SharedRepoID: def.SharedRepoID, PlaybookPath: def.PlaybookPath,
+			Lim: limit, ExtraVars: varsRaw, ExtraVarsSchema: schemaRaw,
+		})
+		if err != nil {
+			if db.IsUniqueViolation(err) {
+				return ErrNameTaken
+			}
+			if db.IsForeignKeyViolation(err) {
+				return fmt.Errorf("%w: the referenced repository definition does not exist", ErrNotFound)
+			}
+			return fmt.Errorf("create shared template: %w", err)
+		}
+
+		orgIDs, err := q.ListOrganizationIDs(ctx)
+		if err != nil {
+			return fmt.Errorf("list organizations: %w", err)
+		}
+		if len(orgIDs) > 0 {
+			ids := make([]uuid.UUID, len(orgIDs))
+			for i := range orgIDs {
+				ids[i] = uuid.Must(uuid.NewV7())
+			}
+			path := def.PlaybookPath
+			if err := q.InsertProjectedTemplates(ctx, gen.InsertProjectedTemplatesParams{
+				Ids: ids, OrgIds: orgIDs, Name: name, Lim: limit, ExtraVars: varsRaw, ExtraVarsSchema: schemaRaw,
+				SharedTemplateID: db.NullUUID(&def.ID), SharedRepoID: def.SharedRepoID, PlaybookPath: &path,
+			}); err != nil {
+				if db.IsUniqueViolation(err) {
+					return collisionFromTemplateRace(ctx, q, def.ID, name)
+				}
+				return fmt.Errorf("insert projected templates: %w", err)
+			}
+		}
+
+		created, err = toTemplateDefinition(row)
+		return err
+	})
+	if err != nil {
+		return TemplateDefinition{}, err
+	}
+	return created, nil
+}
+
+// collisionFromTemplateRace is collisionFromRace for job templates — same
+// reasoning, different table: an organization created after Service.
+// CreateTemplate's pre-flight ExistingTemplateNames check ran, already
+// carrying name on a row of its own.
+func collisionFromTemplateRace(ctx context.Context, q *gen.Queries, excludeDef uuid.UUID, name string) error {
+	rows, err := q.ListJobTemplateNamesExcludingDefinition(ctx, excludeDef)
+	if err != nil {
+		return fmt.Errorf("re-check colliding organizations: %w", err)
+	}
+	existing := make([]OrgName, len(rows))
+	for i, r := range rows {
+		existing[i] = OrgName{OrgID: r.OrgID, Name: r.Name}
+	}
+	if colliding := CollidingOrgs(existing, name); len(colliding) > 0 {
+		return &NameCollisionError{Name: name, Orgs: colliding}
+	}
+	return ErrNameTaken
+}
+
+// UpdateTemplateAndPropagate updates def's own row and loops
+// UpdateProjectedTemplate over every organization currently holding a
+// projection of it, all inside one transaction — UpdateAndPropagate's own
+// doc comment and Review Focus 2 reasoning, unchanged. UpdateProjectedTemplate
+// itself RE-RESOLVES playbook_id per organization rather than copying one
+// value (queries/shared.sql's own doc comment on that query), since
+// def.SharedRepoID or def.PlaybookPath may be exactly what just changed.
+func (s *SQLStore) UpdateTemplateAndPropagate(ctx context.Context, def TemplateDefinition) (TemplateDefinition, error) {
+	var updated TemplateDefinition
+	err := withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		name, limit, extraVars, extraVarsSchema := ProjectedTemplateColumns(def)
+		varsRaw, schemaRaw, err := encodeTemplateDefinitionColumns(extraVars, extraVarsSchema)
+		if err != nil {
+			return err
+		}
+		row, err := q.UpdateSharedTemplate(ctx, gen.UpdateSharedTemplateParams{
+			ID: def.ID, Name: name, SharedRepoID: def.SharedRepoID, PlaybookPath: def.PlaybookPath,
+			Lim: limit, ExtraVars: varsRaw, ExtraVarsSchema: schemaRaw,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			if db.IsUniqueViolation(err) {
+				return ErrNameTaken
+			}
+			if db.IsForeignKeyViolation(err) {
+				return fmt.Errorf("%w: the referenced repository definition does not exist", ErrNotFound)
+			}
+			return fmt.Errorf("update shared template: %w", err)
+		}
+
+		projections, err := q.ListProjectedTemplates(ctx, def.ID)
+		if err != nil {
+			return fmt.Errorf("list projected templates: %w", err)
+		}
+		path := def.PlaybookPath
+		if err := propagate(projections, func(p gen.ListProjectedTemplatesRow) error {
+			orgID := p.OrgID
+			if _, err := q.UpdateProjectedTemplate(ctx, gen.UpdateProjectedTemplateParams{
+				OrgID: orgID, SharedTemplateID: def.ID, Name: name, SharedRepoID: def.SharedRepoID,
+				PlaybookPath: &path, Lim: limit, ExtraVars: varsRaw, ExtraVarsSchema: schemaRaw,
+			}); err != nil {
+				if db.IsUniqueViolation(err) {
+					return &NameCollisionError{Name: name, Orgs: []uuid.UUID{orgID}}
+				}
+				return fmt.Errorf("propagate to organization %s: %w", orgID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		updated, err = toTemplateDefinition(row)
+		return err
+	})
+	if err != nil {
+		return TemplateDefinition{}, err
+	}
+	return updated, nil
+}
+
+// DeleteTemplateWithProjections checks every organization holding a
+// projection of id for a schedule or a job trigger, refuses the whole call
+// with *InUseError on the first one found, and otherwise deletes every
+// projection before removing id's own row — all inside one transaction,
+// exactly DeleteWithProjections' own shape and locking argument
+// (ListProjectedTemplatesForUpdate's own FOR UPDATE, held from before the
+// checks run until commit).
+//
+// The full inventory of every table with a foreign key to job_templates,
+// and what this method does about each one — the brief's own table,
+// verified here rather than assumed, the way the repository version's
+// equivalent comment was corrected after a review caught a false premise
+// in its first draft (store_sql_test.go's own comment on
+// TestDeleteWithProjectionsRefusesWhileAPlaybookExists tells that story):
+//
+//   - schedules (migration 00025): ON DELETE CASCADE. Checked EXPLICITLY,
+//     via JobTemplateHasSchedule, and blocks with *InUseError — a
+//     schedule is the clearest case spec decision 5 names ("a schedule, a
+//     trigger or a job") and would otherwise vanish silently the moment a
+//     definition this organization's schedule runs is deleted.
+//   - job_triggers (migration 00026): ON DELETE CASCADE. Checked
+//     EXPLICITLY, via JobTemplateHasTrigger, beside JobTemplateHasSchedule —
+//     the same reasoning git_repos' own job-trigger check gives, for a
+//     webhook that runs this template instead of syncing a repository.
+//   - job_template_vault_credentials (migration 00059): ON DELETE CASCADE,
+//     and left to cascade ON PURPOSE — the one table deliberately NOT
+//     checked here. A labelled vault password binding is PART OF the
+//     projection, not a dependant on it (v0.2e's own design gave this
+//     table its cascade for exactly that reason, the same reasoning
+//     git_repo_vault_credentials gets on the repository side): a template
+//     projection with vault passwords configured must still be deletable,
+//     and its passwords go with it. Naming it here, explicitly, is
+//     deliberate — the brief's own words — so the next reader who notices
+//     this list is shorter than schedules-and-triggers-and-something-else
+//     does not "fix" it by adding a third check that would block a delete
+//     spec decision 5 never meant to block.
+//
+// jobs (run history) references template_id with no foreign key at all
+// (migration 00018's own comment: "deleting a template that ran before is
+// allowed"), so there is nothing for this method to check or clean up
+// there — verified by reading migration 00018, not assumed from the
+// repository version's own equivalent note about a different table.
+func (s *SQLStore) DeleteTemplateWithProjections(ctx context.Context, id uuid.UUID) error {
+	return withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		projections, err := q.ListProjectedTemplatesForUpdate(ctx, id)
+		if err != nil {
+			return fmt.Errorf("list projected templates: %w", err)
+		}
+
+		for _, p := range projections {
+			hasSchedule, err := q.JobTemplateHasSchedule(ctx, gen.JobTemplateHasScheduleParams{OrgID: p.OrgID, TemplateID: p.ID})
+			if err != nil {
+				return fmt.Errorf("check schedules in organization %s: %w", p.OrgID, err)
+			}
+			if hasSchedule {
+				return &InUseError{OrgID: p.OrgID, Reasons: []string{"a schedule"}}
+			}
+			hasTrigger, err := q.JobTemplateHasTrigger(ctx, gen.JobTemplateHasTriggerParams{OrgID: p.OrgID, TemplateID: p.ID})
+			if err != nil {
+				return fmt.Errorf("check job triggers in organization %s: %w", p.OrgID, err)
+			}
+			if hasTrigger {
+				return &InUseError{OrgID: p.OrgID, Reasons: []string{"a job trigger"}}
+			}
+		}
+
+		if err := propagate(projections, func(p gen.ListProjectedTemplatesForUpdateRow) error {
+			if _, err := q.DeleteProjectedTemplate(ctx, gen.DeleteProjectedTemplateParams{OrgID: p.OrgID, SharedTemplateID: id}); err != nil {
+				if db.IsForeignKeyViolation(err) {
+					// Backstop only, for a future referencing table this
+					// method does not yet know to check — DeleteProjectedRepo's
+					// own comment, unchanged reasoning.
+					return &InUseError{OrgID: p.OrgID}
+				}
+				return fmt.Errorf("delete projected template in organization %s: %w", p.OrgID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		n, err := q.DeleteSharedTemplate(ctx, id)
+		if err != nil {
+			return fmt.Errorf("delete shared template: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// ListTemplateDefinitions returns every job template definition, oldest
+// first.
+func (s *SQLStore) ListTemplateDefinitions(ctx context.Context) ([]TemplateDefinition, error) {
+	rows, err := gen.New(s.d).ListSharedTemplates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list shared templates: %w", err)
+	}
+	out := make([]TemplateDefinition, len(rows))
+	for i, r := range rows {
+		d, err := toTemplateDefinition(r)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = d
+	}
+	return out, nil
+}
+
+// GetTemplateDefinition reads one job template definition. ErrNotFound when
+// it does not exist.
+func (s *SQLStore) GetTemplateDefinition(ctx context.Context, id uuid.UUID) (TemplateDefinition, error) {
+	row, err := gen.New(s.d).GetSharedTemplate(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TemplateDefinition{}, ErrNotFound
+		}
+		return TemplateDefinition{}, fmt.Errorf("get shared template: %w", err)
+	}
+	return toTemplateDefinition(row)
+}
+
+// ProjectTemplateInto creates one projection of def in orgID, resolving
+// playbook_id against orgID's own git_repos/playbooks rows — a single
+// statement, not wrapped in its own transaction, ProjectInto's own
+// reasoning unchanged. Expected to run on an org-bound ctx.
+func (s *SQLStore) ProjectTemplateInto(ctx context.Context, def TemplateDefinition, orgID uuid.UUID) error {
+	name, limit, extraVars, extraVarsSchema := ProjectedTemplateColumns(def)
+	varsRaw, schemaRaw, err := encodeTemplateDefinitionColumns(extraVars, extraVarsSchema)
+	if err != nil {
+		return err
+	}
+	path := def.PlaybookPath
+	err = gen.New(s.d).InsertProjectedTemplate(ctx, gen.InsertProjectedTemplateParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Name: name, SharedRepoID: def.SharedRepoID, PlaybookPath: &path,
+		Lim: limit, ExtraVars: varsRaw, ExtraVarsSchema: schemaRaw, SharedTemplateID: db.NullUUID(&def.ID),
+	})
+	if err != nil {
+		if db.IsUniqueViolation(err) {
+			return ErrNameTaken
+		}
+		return fmt.Errorf("insert projected template: %w", err)
+	}
+	return nil
+}
+
+// ExistingTemplateNames returns every organization's job_templates name,
+// excluding rows that are already a projection of exclude —
+// ExistingNames' own doc comment, unchanged reasoning.
+func (s *SQLStore) ExistingTemplateNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error) {
+	rows, err := gen.New(s.d).ListJobTemplateNamesExcludingDefinition(ctx, exclude)
+	if err != nil {
+		return nil, fmt.Errorf("list existing template names: %w", err)
+	}
+	out := make([]OrgName, len(rows))
+	for i, r := range rows {
+		out[i] = OrgName{OrgID: r.OrgID, Name: r.Name}
+	}
+	return out, nil
+}
+
+// ResolveTemplatePlaybooksForNewPath is Service.ResolveTemplatePlaybooks'
+// own store call — a single statement, not wrapped in its own transaction,
+// ProjectInto's own reasoning unchanged: it only ever writes rows already
+// scoped to orgID, so there is no multi-row atomicity to protect the way
+// CreateTemplateWithProjections/UpdateTemplateAndPropagate need. Expected
+// to run on an org-bound ctx, exactly like ProjectTemplateInto.
+func (s *SQLStore) ResolveTemplatePlaybooksForNewPath(ctx context.Context, orgID, repoID, playbookID uuid.UUID, path string) error {
+	if err := gen.New(s.d).ResolveTemplatePlaybooksForNewPath(ctx, gen.ResolveTemplatePlaybooksForNewPathParams{
+		OrgID: orgID, RepoID: repoID, PlaybookID: playbookID, PlaybookPath: path,
+	}); err != nil {
+		return fmt.Errorf("resolve template playbooks for new path: %w", err)
+	}
+	return nil
+}
+
+// encodeTemplateDefinitionColumns marshals a definition's extra vars and
+// schema for storage — the same shapes internal/templates/store_sql.go's
+// own Create/Update encode, duplicated rather than imported: importing
+// internal/templates here would cycle (that package will, in a later
+// task, need to read TemplateDefinition-shaped data back through the API,
+// not the reverse), and the encoding itself is two json.Marshal calls, not
+// a mechanism worth sharing across the package boundary.
+func encodeTemplateDefinitionColumns(vars map[string]any, sc *schema.Schema) (varsRaw, schemaRaw []byte, err error) {
+	varsRaw, err = json.Marshal(vars)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode template extra vars: %w", err)
+	}
+	if sc != nil {
+		if schemaRaw, err = json.Marshal(*sc); err != nil {
+			return nil, nil, fmt.Errorf("encode template extra vars schema: %w", err)
+		}
+	}
+	return varsRaw, schemaRaw, nil
+}
+
+// toTemplateDefinition decodes one gen.SharedJobTemplate row.
+func toTemplateDefinition(r gen.SharedJobTemplate) (TemplateDefinition, error) {
+	d := TemplateDefinition{
+		ID: r.ID, Name: r.Name, SharedRepoID: r.SharedRepoID, PlaybookPath: r.PlaybookPath, Limit: r.Limit,
+	}
+	if len(r.ExtraVars) > 0 {
+		if err := json.Unmarshal(r.ExtraVars, &d.ExtraVars); err != nil {
+			return TemplateDefinition{}, fmt.Errorf("decode template extra vars: %w", err)
+		}
+	}
+	if d.ExtraVars == nil {
+		d.ExtraVars = map[string]any{}
+	}
+	if len(r.ExtraVarsSchema) > 0 {
+		sc := schema.Schema{}
+		if err := json.Unmarshal(r.ExtraVarsSchema, &sc); err != nil {
+			return TemplateDefinition{}, fmt.Errorf("decode template extra vars schema: %w", err)
+		}
+		d.ExtraVarsSchema = &sc
+	}
+	return d, nil
 }

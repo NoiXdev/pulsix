@@ -21,6 +21,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
 
 // DefaultBranch mirrors repos.DefaultBranch (that package cannot be
@@ -69,6 +71,92 @@ type RepoDefinitionInput struct {
 // definition).
 func ProjectedRepoColumns(def RepoDefinition) (name, url, branch, subpath string) {
 	return def.Name, def.URL, def.Branch, def.Subpath
+}
+
+// TemplateDefinition is the installation-owned half of a shared job
+// template (spec decision 2's table): playbook path, limit, extra vars and
+// their schema are the provider's own and read-only inside every
+// organization; scope and the ssh credential are the projection's
+// (internal/templates.Template, Task 6's own SharedTemplateID field).
+// Name is part of this type for the reason RepoDefinition's own doc
+// comment gives for carrying one: a projection's job_templates.name IS the
+// definition's own name, which is what makes decision 7's collision check
+// mean anything.
+//
+// SharedRepoID is NOT in spec decision 2's own table (which lists only
+// "playbook path" on the definition's side), but the text right below that
+// table requires it: "each one syncs its own clone of the repository and
+// gets its own playbooks row" only works when every organization is
+// guaranteed a clone under the SAME path, which holds only for a
+// repository that is itself a shared definition — never an organization's
+// own, which would differ per organization by construction. Checked
+// against the schema, not assumed: shared_job_templates.shared_repo_id is
+// a NOT NULL foreign key to shared_repos (migration 00061).
+type TemplateDefinition struct {
+	ID              uuid.UUID
+	Name            string
+	SharedRepoID    uuid.UUID
+	PlaybookPath    string
+	Limit           string
+	ExtraVars       map[string]any
+	ExtraVarsSchema *schema.Schema
+}
+
+// TemplateDefinitionInput is a TemplateDefinition's editable fields, taken
+// by both Service.CreateTemplate and Service.UpdateTemplate — the same
+// full-replacement shape RepoDefinitionInput already uses.
+type TemplateDefinitionInput struct {
+	Name            string
+	SharedRepoID    uuid.UUID
+	PlaybookPath    string
+	Limit           string
+	ExtraVars       map[string]any
+	ExtraVarsSchema *schema.Schema
+}
+
+// ProjectedTemplateColumns returns the shared columns a job_templates
+// projection of def must carry — ProjectedRepoColumns' own doc comment,
+// Task 6's analogous function for job templates' own, different column
+// split. Deliberately does NOT return a playbook_id: unlike every column
+// here, that one is not copied from the definition at all. It is resolved
+// PER ORGANIZATION, by joining that organization's own projection of
+// SharedRepoID to its own playbooks row at PlaybookPath — store_sql.go's
+// own queries (queries/shared.sql) do that resolution in SQL, where the
+// join lives; there is nothing pure left for a Go function to compute
+// here, which is exactly why this function's signature has one fewer
+// return value than ProjectedRepoColumns' four.
+func ProjectedTemplateColumns(def TemplateDefinition) (name, limit string, extraVars map[string]any, extraVarsSchema *schema.Schema) {
+	return def.Name, def.Limit, def.ExtraVars, def.ExtraVarsSchema
+}
+
+// schemaHasSecretField reports whether fields declares a TypeSecret field,
+// at any depth (inside a repeater's Item or an object's own Fields). A
+// shared template definition's schema may not declare one: propagating a
+// definition writes its extra_vars straight into every organization's own
+// job_templates.extra_vars column (store_sql.go's INSERT/UPDATE, bypassing
+// internal/templates.Service entirely — ProjectedRepoColumns' own doc
+// comment on why there is nothing left here for a Go function to seal),
+// which never seals a secret-typed value the way
+// templates.Service.sealExtraVars does for an ordinary template. Refusing
+// the schema at Service.CreateTemplate/UpdateTemplate is what keeps a
+// provider's shared extra var from ever reaching a customer's own database
+// column as plaintext — the same principle the spec's own "What may be
+// shared" section states for the feature as a whole: "A shared definition
+// carries no secret by construction, so there is nothing for a policy to
+// get wrong."
+func schemaHasSecretField(fields []schema.Field) bool {
+	for _, f := range fields {
+		if f.Type == schema.TypeSecret {
+			return true
+		}
+		if f.Item != nil && schemaHasSecretField([]schema.Field{*f.Item}) {
+			return true
+		}
+		if schemaHasSecretField(f.Fields) {
+			return true
+		}
+	}
+	return false
 }
 
 // OrgName is one organization-scoped row's own name, the raw material

@@ -473,14 +473,18 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Shared = shared.NewService(shared.NewSQLStore(d))
 	// Every organization gets its "default" zone, its check definitions
 	// seed set, its rule starter set and a projection of every existing
-	// repository definition through this hook, whichever of the two ways
-	// it was created — POST /orgs (tenancy.Service.CreateOrg) or the
-	// first-run wizard (setup.Service.Complete) — exactly like production
-	// wiring (internal/app/app.go) chains all four hooks the same way,
-	// rules after checks so its rules can always assume the checks their
-	// metrics belong to already exist, and shared last since it depends on
-	// nothing the other three seed.
-	orgCreated := app.ChainOrgCreatedHooks(hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg, s.Shared.ProjectAllInto)
+	// repository AND job template definition through this hook, whichever
+	// of the two ways it was created — POST /orgs (tenancy.Service.CreateOrg)
+	// or the first-run wizard (setup.Service.Complete) — exactly like
+	// production wiring (internal/app/app.go) chains all five hooks the
+	// same way, rules after checks so its rules can always assume the
+	// checks their metrics belong to already exist, and shared's two last
+	// (repositories before templates, app.go's own ordering note) since
+	// neither depends on what the other three seed.
+	orgCreated := app.ChainOrgCreatedHooks(
+		hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg,
+		s.Shared.ProjectAllInto, s.Shared.ProjectAllTemplatesInto,
+	)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)
 	credsSvc := credentials.NewService(credentials.NewSQLStore(d), crypto.NewBox(testMasterKey), time.Now, rand.Reader)
@@ -513,7 +517,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	credsSvc.SetRotationEnqueuer(jobsSvc)
 	jobsQueue.SetRotationFinisher(credsSvc)
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, jobsSvc)
-	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc)
+	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, s.Shared)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, crypto.NewBox(testMasterKey))
 	auditRec := audit.NewRecorder(audit.NewSQLStore(d), time.Now)
 	// The schedules service (Task 7): fires job templates on a timetable
@@ -729,13 +733,14 @@ func (s *Server) SeedUser(email, password string) uuid.UUID {
 // ChainOrgCreatedHooks (New, above): the hook is registered on tenancySvc/
 // setupSvc, and only fires when creation goes through one of them — a
 // direct s.Q.CreateOrganization call, like this one, never reaches it. So
-// SeedOrg calls EnsureDefaultZone, checks' SeedForOrg, rules' SeedForOrg and
-// shared's ProjectAllInto itself, explicitly, the same four steps the hook
-// would have run, so a seeded org still carries the same invariants a real
-// one does (host_handlers_test.go relies on the zone; check_handlers_test.go
-// and rule_handlers_test.go rely on their own seed sets the same way; a
-// test that needs a seeded org to already carry an existing repository
-// definition's projection relies on this last step).
+// SeedOrg calls EnsureDefaultZone, checks' SeedForOrg, rules' SeedForOrg,
+// shared's ProjectAllInto and shared's ProjectAllTemplatesInto itself,
+// explicitly, the same five steps the hook would have run, so a seeded org
+// still carries the same invariants a real one does (host_handlers_test.go
+// relies on the zone; check_handlers_test.go and rule_handlers_test.go
+// rely on their own seed sets the same way; a test that needs a seeded org
+// to already carry an existing repository or job template definition's
+// projection relies on these last two steps).
 // TestOrgCreationSeedsCheckDefinitions and
 // TestFirstRunWizardSeedsCheckDefinitions (internal/api/host_handlers_test.go)
 // are what actually exercise the hook path end to end, through the real
@@ -760,6 +765,9 @@ func (s *Server) SeedOrg(slug string, ownerID uuid.UUID) uuid.UUID {
 		s.T.Fatal(err)
 	}
 	if err := s.Shared.ProjectAllInto(ctx, id); err != nil {
+		s.T.Fatal(err)
+	}
+	if err := s.Shared.ProjectAllTemplatesInto(ctx, id); err != nil {
 		s.T.Fatal(err)
 	}
 	return id

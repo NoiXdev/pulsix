@@ -39,7 +39,7 @@ func newOutboxWorld(t *testing.T, slug string) *outboxWorld {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl, err := q.InsertTemplate(ctx, gen.InsertTemplateParams{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Name: "patch-all", PlaybookID: pb.ID, Scope: []byte(`{}`), ExtraVars: []byte(`{}`)})
+	tmpl, err := q.InsertTemplate(ctx, gen.InsertTemplateParams{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Name: "patch-all", PlaybookID: db.NullUUID(&pb.ID), Scope: []byte(`{}`), ExtraVars: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

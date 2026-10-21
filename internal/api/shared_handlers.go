@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/shared"
 )
 
@@ -186,6 +187,192 @@ func registerSharedRepoRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("deleteRepoDefinition", "shared_repo"))
 }
 
+// --- job templates (Task 6) ---
+//
+// The same shape as the repository definition DTOs and routes above, one
+// kind reusing the same instance-admin mechanism (requireInstanceAdmin,
+// mapSharedErr, resolveOrgLabel/resolveOrgLabels below) rather than a
+// second, parallel set of helpers — tx.go's own comment is why the
+// underlying shared.Store and shared.Service are one of each, not two;
+// this file's own handler layer follows the same rule.
+
+// templateDefinitionDTO is the installation-owned half of a shared job
+// template (spec v0.2f decision 2): name, the shared repository it
+// resolves its playbook against, the playbook's path within that
+// repository, limit, extra vars and their schema — every projection's own
+// templateDTO (template_handlers.go) echoes these read-only once
+// SharedTemplateID is set. No scope, no credential — those are the
+// projection's own.
+type templateDefinitionDTO struct {
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	SharedRepoID    string         `json:"shared_repo_id"`
+	PlaybookPath    string         `json:"playbook_path"`
+	Limit           string         `json:"limit"`
+	ExtraVars       map[string]any `json:"extra_vars"`
+	ExtraVarsSchema *schema.Schema `json:"extra_vars_schema,omitempty"`
+}
+
+func toTemplateDefinitionDTO(d shared.TemplateDefinition) templateDefinitionDTO {
+	dto := templateDefinitionDTO{
+		ID: d.ID.String(), Name: d.Name, SharedRepoID: d.SharedRepoID.String(), PlaybookPath: d.PlaybookPath,
+		Limit: d.Limit, ExtraVars: d.ExtraVars, ExtraVarsSchema: d.ExtraVarsSchema,
+	}
+	if dto.ExtraVars == nil {
+		dto.ExtraVars = map[string]any{}
+	}
+	return dto
+}
+
+type templateDefinitionListOutput struct {
+	Body struct {
+		Definitions []templateDefinitionDTO `json:"definitions"`
+	}
+}
+
+type templateDefinitionGetInput struct {
+	ID string `path:"id"`
+}
+
+type templateDefinitionDetailOutput struct {
+	Body struct {
+		Definition templateDefinitionDTO `json:"definition"`
+	}
+}
+
+// templateDefinitionBody is the editable shape both create and update take
+// — repoDefinitionBody's own doc comment, same convention: shared.
+// TemplateDefinitionInput itself enforces no format rules on name,
+// shared_repo_id or playbook_path, by design (format validation belongs at
+// this schema layer). ExtraVars and ExtraVarsSchema are the one part of
+// this body shared.Service DOES validate itself (shared.ErrInvalidInput):
+// no secret-typed field, and no forbidden connection-security variable —
+// checks this package cannot push down to a schema tag.
+type templateDefinitionBody struct {
+	Name            string         `json:"name" minLength:"1" maxLength:"63"`
+	SharedRepoID    string         `json:"shared_repo_id"`
+	PlaybookPath    string         `json:"playbook_path" minLength:"1" maxLength:"500"`
+	Limit           string         `json:"limit,omitempty" maxLength:"500"`
+	ExtraVars       map[string]any `json:"extra_vars,omitempty"`
+	ExtraVarsSchema *schema.Schema `json:"extra_vars_schema,omitempty"`
+}
+
+type templateDefinitionCreateInput struct {
+	Body templateDefinitionBody
+}
+
+type templateDefinitionUpdateInput struct {
+	ID   string `path:"id"`
+	Body templateDefinitionBody
+}
+
+func templateDefinitionDetail(d shared.TemplateDefinition) *templateDefinitionDetailOutput {
+	out := &templateDefinitionDetailOutput{}
+	out.Body.Definition = toTemplateDefinitionDTO(d)
+	return out
+}
+
+// registerSharedTemplateRoutes wires the installation admin's own CRUD over
+// job template definitions — registerSharedRepoRoutes' own doc comment,
+// same gate, same per-verb 403 reasoning
+// (TestTemplateDefinitionRoutesRequireInstanceAdmin), same root-API
+// registration (no {org} in the path, no bearer token admitted).
+func registerSharedTemplateRoutes(hapi huma.API, deps Deps) {
+	huma.Get(hapi, "/api/v1/admin/templates/definitions", func(ctx context.Context, _ *struct{}) (*templateDefinitionListOutput, error) {
+		if _, err := requireInstanceAdmin(ctx); err != nil {
+			return nil, err
+		}
+		list, err := deps.Shared.ListTemplateDefs(ctx)
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		out := &templateDefinitionListOutput{}
+		out.Body.Definitions = make([]templateDefinitionDTO, len(list))
+		for i, d := range list {
+			out.Body.Definitions[i] = toTemplateDefinitionDTO(d)
+		}
+		return out, nil
+	})
+
+	huma.Post(hapi, "/api/v1/admin/templates/definitions", func(ctx context.Context, in *templateDefinitionCreateInput) (*templateDefinitionDetailOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		repoID, err := parseUUID(in.Body.SharedRepoID, "shared repo id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Shared.CreateTemplate(ctx, shared.TemplateDefinitionInput{
+			Name: in.Body.Name, SharedRepoID: repoID, PlaybookPath: in.Body.PlaybookPath,
+			Limit: in.Body.Limit, ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema,
+		})
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, d.ID.String(), "created shared job template definition "+d.Name)
+		return templateDefinitionDetail(d), nil
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createTemplateDefinition", "shared_job_template"))
+
+	huma.Get(hapi, "/api/v1/admin/templates/definitions/{id}", func(ctx context.Context, in *templateDefinitionGetInput) (*templateDefinitionDetailOutput, error) {
+		if _, err := requireInstanceAdmin(ctx); err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "template definition id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Shared.GetTemplateDef(ctx, id)
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		return templateDefinitionDetail(d), nil
+	})
+
+	huma.Put(hapi, "/api/v1/admin/templates/definitions/{id}", func(ctx context.Context, in *templateDefinitionUpdateInput) (*templateDefinitionDetailOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "template definition id")
+		if err != nil {
+			return nil, err
+		}
+		repoID, err := parseUUID(in.Body.SharedRepoID, "shared repo id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Shared.UpdateTemplate(ctx, id, shared.TemplateDefinitionInput{
+			Name: in.Body.Name, SharedRepoID: repoID, PlaybookPath: in.Body.PlaybookPath,
+			Limit: in.Body.Limit, ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema,
+		})
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, d.ID.String(), "updated shared job template definition "+d.Name)
+		return templateDefinitionDetail(d), nil
+	}, withAudit("updateTemplateDefinition", "shared_job_template"))
+
+	huma.Delete(hapi, "/api/v1/admin/templates/definitions/{id}", func(ctx context.Context, in *templateDefinitionGetInput) (*okOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "template definition id")
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Shared.DeleteTemplate(ctx, id); err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, id.String(), "deleted shared job template definition")
+		return &okOutput{}, nil
+	}, withAudit("deleteTemplateDefinition", "shared_job_template"))
+}
+
 // mapSharedErr converts shared.Service sentinels into HTTP errors for the
 // instance-admin-only repository-definition routes registered above. It is
 // deliberately its own function, never merged into mapReposErr
@@ -235,6 +422,13 @@ func mapSharedErr(ctx context.Context, deps Deps, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, shared.ErrInUse):
 		return huma.Error409Conflict(err.Error())
+	// shared.ErrInvalidInput (Task 6 only, so far: a shared job template's
+	// extra-vars schema declaring a secret field, or extra vars naming a
+	// forbidden connection-security variable — shared.
+	// validateTemplateDefinitionInput's own doc comment). Never carries an
+	// organization either.
+	case errors.Is(err, shared.ErrInvalidInput):
+		return huma.Error400BadRequest(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped shared error", "err", err)
 		return huma.Error500InternalServerError("internal error")

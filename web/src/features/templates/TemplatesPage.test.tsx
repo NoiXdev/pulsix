@@ -450,4 +450,76 @@ describe('TemplatesPage', () => {
       expect(put).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
     });
   });
+
+  // v0.2f Task 6: a job template that is a projection of an installation-
+  // owned definition (spec decisions 1, 2, 6) — the second application of
+  // Task 5's own ReposPage test. Name, playbook, limit and extra vars stay
+  // visible but read-only; scope and the default SSH credential do not:
+  // neither belongs to the definition (decision 2's own table), and no
+  // delete action is offered inside an organization today regardless of
+  // projection status (useDeleteTemplate has no caller in this GUI yet).
+  describe('installation-managed projection (v0.2f)', () => {
+    it('marks a projected template in the list and the dialog, and disables its shared fields', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': {
+          templates: [template({ shared_template_id: 'def-1', playbook_id: '', limit: 'web*' })],
+        },
+        'GET /api/v1/orgs/acme/job-templates/t1': {
+          template: template({ shared_template_id: 'def-1', playbook_id: '', limit: 'web*' }),
+        },
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      });
+      renderPage();
+
+      expect(await screen.findByText('Installation-managed')).toBeInTheDocument();
+      // playbook_id "" (unresolved — this organization has not synced a
+      // matching playbook yet) renders as its own label, not an empty cell.
+      expect(screen.getByText('not synced yet')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'deploy-site' }));
+      const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+
+      // The marker repeats inside the dialog — its own element, not only
+      // the list row's.
+      expect(within(dialog).getByText('Installation-managed')).toBeInTheDocument();
+
+      // Disabled, not hidden: the value stays on screen even though this
+      // organization cannot change it.
+      expect(within(dialog).getByLabelText('Name')).toBeDisabled();
+      expect(within(dialog).getByLabelText('Name')).toHaveValue('deploy-site');
+      expect(within(dialog).getByLabelText('Playbook')).toBeDisabled();
+      expect(within(dialog).getByLabelText('Limit pattern')).toBeDisabled();
+      expect(within(dialog).getByLabelText('Limit pattern')).toHaveValue('web*');
+
+      // The organization's own scope stays editable; no delete action is
+      // offered (pre-existing: this GUI wires no delete button for any
+      // template yet, projected or not).
+      expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    });
+
+    it('keeps every shared field editable for an ordinary, non-projected template', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
+        'GET /api/v1/orgs/acme/job-templates/t1': { template: template() },
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      });
+      renderPage();
+
+      expect(screen.queryByText('Installation-managed')).not.toBeInTheDocument();
+
+      await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+      const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+      expect(within(dialog).getByLabelText('Name')).not.toBeDisabled();
+      expect(within(dialog).getByLabelText('Playbook')).not.toBeDisabled();
+      expect(within(dialog).getByLabelText('Limit pattern')).not.toBeDisabled();
+    });
+  });
 });

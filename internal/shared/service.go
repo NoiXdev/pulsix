@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer (Task 4),
@@ -29,6 +32,18 @@ var (
 	// projection, not a dependant on it, and goes with a delete rather
 	// than blocking one.
 	ErrInUse = errors.New("definition is in use")
+	// ErrInvalidInput marks a definition input this package can judge
+	// without a database: a shared template whose extra-vars schema
+	// declares a secret field (schemaHasSecretField's own doc comment,
+	// definition.go), or extra vars naming a connection-security variable
+	// ansiblevars.ForbiddenIn reserves. RepoDefinitionInput never needed
+	// this sentinel — url/branch/subpath format validation is pushed to
+	// the API schema layer (shared_handlers.go's own repoDefinitionBody
+	// comment) because none of the three carries anything this package
+	// alone can judge; a template's extra vars are different; nothing but
+	// this package ever sees them before they are written straight into
+	// every organization's own job_templates row.
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 // Store persists repository definitions and their projections. Every
@@ -93,6 +108,59 @@ type Store interface {
 	// matched against a candidate name by the pure CollidingOrgs. Pass
 	// uuid.Nil for a brand-new definition, which excludes nothing.
 	ExistingNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error)
+
+	// --- job templates (Task 6) ---
+	//
+	// The same seven methods above, for shared_job_templates/job_templates
+	// instead of shared_repos/git_repos — tx.go's own comment on why
+	// withTx and propagate are plain functions over *gen.Queries rather
+	// than generics is exactly why these are added to THIS interface and
+	// implemented by the SAME SQLStore, rather than a second, parallel
+	// pair of types.
+
+	// CreateTemplateWithProjections is CreateWithProjections for a job
+	// template definition: def's own row and one projection of it into
+	// every organization that exists, atomically. ErrNameTaken when
+	// another definition already has def.Name; *NameCollisionError on a
+	// race against the caller's own pre-flight check; ErrNotFound when
+	// def.SharedRepoID does not name an existing repository definition.
+	CreateTemplateWithProjections(ctx context.Context, def TemplateDefinition) (TemplateDefinition, error)
+	// UpdateTemplateAndPropagate is UpdateAndPropagate for a job template
+	// definition: def's own row and every existing projection's shared
+	// columns, atomically — including playbook_id, RE-RESOLVED per
+	// organization against the (possibly changed) SharedRepoID/PlaybookPath,
+	// never merely copied (ProjectedTemplateColumns' own doc comment).
+	// ErrNotFound when def.ID, or def.SharedRepoID, does not exist.
+	UpdateTemplateAndPropagate(ctx context.Context, def TemplateDefinition) (TemplateDefinition, error)
+	// DeleteTemplateWithProjections is DeleteWithProjections for a job
+	// template definition: *InUseError, naming the organization and
+	// whether a schedule or a job trigger still references the
+	// projection (SQLStore.DeleteTemplateWithProjections' own doc comment
+	// has the full inventory); ErrNotFound when id does not exist.
+	DeleteTemplateWithProjections(ctx context.Context, id uuid.UUID) error
+	// ListTemplateDefinitions returns every job template definition,
+	// oldest first.
+	ListTemplateDefinitions(ctx context.Context) ([]TemplateDefinition, error)
+	// GetTemplateDefinition reads one job template definition. ErrNotFound
+	// when it does not exist.
+	GetTemplateDefinition(ctx context.Context, id uuid.UUID) (TemplateDefinition, error)
+	// ProjectTemplateInto creates one projection of def in orgID, resolving
+	// playbook_id against orgID's own git_repos/playbooks rows. Expected to
+	// run on an org-bound ctx, exactly like ProjectInto. ErrNameTaken if
+	// orgID already has a row named def.Name.
+	ProjectTemplateInto(ctx context.Context, def TemplateDefinition, orgID uuid.UUID) error
+	// ExistingTemplateNames is ExistingNames for job_templates: every
+	// (organization, name) pair, excluding rows already a projection of
+	// exclude.
+	ExistingTemplateNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error)
+	// ResolveTemplatePlaybooksForNewPath is the organization-side half of
+	// playbook_id resolution (ResolveTemplatePlaybooks' own doc comment on
+	// Service has the full reasoning): fills in playbook_id for every one
+	// of orgID's own job_templates projections still waiting on exactly
+	// (repoID, path) — orgID's own git_repos row and the path a playbook
+	// was just registered at. Touches zero rows harmlessly when nothing is
+	// waiting on that pair.
+	ResolveTemplatePlaybooksForNewPath(ctx context.Context, orgID, repoID, playbookID uuid.UUID, path string) error
 }
 
 // Service implements the installation-admin operations on repository
@@ -190,6 +258,143 @@ func (s *Service) GetRepo(ctx context.Context, id uuid.UUID) (RepoDefinition, er
 // ListRepos returns every repository definition, oldest first.
 func (s *Service) ListRepos(ctx context.Context) ([]RepoDefinition, error) {
 	return s.store.ListDefinitions(ctx)
+}
+
+// --- job templates (Task 6) ---
+
+// CreateTemplate defines a new shared job template and projects it into
+// every existing organization at once (spec decision 4). A name already
+// used by another definition is ErrNameTaken; a name already used by some
+// organization's own, unrelated template is a *NameCollisionError naming
+// every organization that has it (spec decision 7); a schema declaring a
+// secret field, or extra vars naming a forbidden connection-security
+// variable, is ErrInvalidInput (schemaHasSecretField's own doc comment,
+// definition.go) — all checked before the definition is written at all.
+func (s *Service) CreateTemplate(ctx context.Context, in TemplateDefinitionInput) (TemplateDefinition, error) {
+	if err := validateTemplateDefinitionInput(in); err != nil {
+		return TemplateDefinition{}, err
+	}
+	existing, err := s.store.ExistingTemplateNames(ctx, uuid.Nil)
+	if err != nil {
+		return TemplateDefinition{}, fmt.Errorf("list existing template names: %w", err)
+	}
+	if colliding := CollidingOrgs(existing, in.Name); len(colliding) > 0 {
+		return TemplateDefinition{}, &NameCollisionError{Name: in.Name, Orgs: colliding}
+	}
+	def := TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: in.Name, SharedRepoID: in.SharedRepoID,
+		PlaybookPath: in.PlaybookPath, Limit: in.Limit, ExtraVars: extraVarsOrEmpty(in.ExtraVars), ExtraVarsSchema: in.ExtraVarsSchema,
+	}
+	return s.store.CreateTemplateWithProjections(ctx, def)
+}
+
+// UpdateTemplate replaces def's editable fields and propagates the shared
+// ones to every existing projection, atomically, re-resolving playbook_id
+// per organization. The same checks as CreateTemplate apply to a rename;
+// the collision check excludes id's own current projections.
+func (s *Service) UpdateTemplate(ctx context.Context, id uuid.UUID, in TemplateDefinitionInput) (TemplateDefinition, error) {
+	if err := validateTemplateDefinitionInput(in); err != nil {
+		return TemplateDefinition{}, err
+	}
+	existing, err := s.store.ExistingTemplateNames(ctx, id)
+	if err != nil {
+		return TemplateDefinition{}, fmt.Errorf("list existing template names: %w", err)
+	}
+	if colliding := CollidingOrgs(existing, in.Name); len(colliding) > 0 {
+		return TemplateDefinition{}, &NameCollisionError{Name: in.Name, Orgs: colliding}
+	}
+	def := TemplateDefinition{
+		ID: id, Name: in.Name, SharedRepoID: in.SharedRepoID,
+		PlaybookPath: in.PlaybookPath, Limit: in.Limit, ExtraVars: extraVarsOrEmpty(in.ExtraVars), ExtraVarsSchema: in.ExtraVarsSchema,
+	}
+	return s.store.UpdateTemplateAndPropagate(ctx, def)
+}
+
+// DeleteTemplate removes a job template definition and every one of its
+// projections (ErrInUse, naming the organization, while any projection is
+// still referenced by a schedule or a job trigger — spec decision 5).
+func (s *Service) DeleteTemplate(ctx context.Context, id uuid.UUID) error {
+	return s.store.DeleteTemplateWithProjections(ctx, id)
+}
+
+// ProjectAllTemplatesInto gives orgID a projection of every job template
+// definition that already exists — ProjectAllInto's own counterpart for
+// templates, the same seam for a newly created organization.
+func (s *Service) ProjectAllTemplatesInto(ctx context.Context, orgID uuid.UUID) error {
+	defs, err := s.store.ListTemplateDefinitions(ctx)
+	if err != nil {
+		return fmt.Errorf("list template definitions: %w", err)
+	}
+	for _, def := range defs {
+		if err := s.store.ProjectTemplateInto(ctx, def, orgID); err != nil {
+			return fmt.Errorf("project template definition %q into organization: %w", def.Name, err)
+		}
+	}
+	return nil
+}
+
+// GetTemplateDef reads one job template definition. ErrNotFound when it
+// does not exist.
+func (s *Service) GetTemplateDef(ctx context.Context, id uuid.UUID) (TemplateDefinition, error) {
+	return s.store.GetTemplateDefinition(ctx, id)
+}
+
+// ListTemplateDefs returns every job template definition, oldest first.
+func (s *Service) ListTemplateDefs(ctx context.Context) ([]TemplateDefinition, error) {
+	return s.store.ListTemplateDefinitions(ctx)
+}
+
+// ResolveTemplatePlaybooks is playbooks.TemplateResolver's own method —
+// internal/playbooks cannot import this package (templates/repos both sit
+// below shared in the dependency graph the layering rule draws, and a
+// cross-import back up would cycle), so playbooks.Service depends on this
+// signature as its own, narrow interface instead, exactly the shape
+// playbooks.RepoSource already uses for internal/repos.
+//
+// Called from playbooks.Service.CreateRepo right after a new (org, repo,
+// path) playbook is stored: the ORGANIZATION-side event that makes a
+// shared template's projection resolvable, which nothing reacted to before
+// this method existed (review finding on Task 6's first draft —
+// CreateTemplateWithProjections and UpdateTemplateAndPropagate only ever
+// resolved playbook_id on a DEFINITION-side event, leaving a template
+// defined before an organization had synced its matching playbook
+// permanently unresolved until the definition's next edit). A provider
+// configuring centrally before any customer has registered the matching
+// path is the normal order this feature exists for, not a corner case.
+func (s *Service) ResolveTemplatePlaybooks(ctx context.Context, orgID, repoID, playbookID uuid.UUID, path string) error {
+	return s.store.ResolveTemplatePlaybooksForNewPath(ctx, orgID, repoID, playbookID, path)
+}
+
+// validateTemplateDefinitionInput runs the checks that belong to THIS
+// package rather than the API schema layer (ErrInvalidInput's own doc
+// comment explains why a template's extra vars are different from a
+// repository definition's plain string fields): no secret-typed schema
+// field, and none of the connection-security variables
+// internal/ansiblevars reserves — the same denylist
+// internal/templates.Service.build applies to an ordinary template's extra
+// vars, reused here because a shared definition's extra vars reach every
+// organization's own job_templates row WITHOUT ever passing through that
+// service (store_sql.go writes them directly, exactly like a repository
+// projection's name/url/branch/subpath).
+func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
+	if in.ExtraVarsSchema != nil && schemaHasSecretField(in.ExtraVarsSchema.Fields) {
+		return fmt.Errorf("%w: a shared template's extra vars schema may not declare a secret field — a shared definition carries no secret by construction", ErrInvalidInput)
+	}
+	if names := ansiblevars.ForbiddenIn(extraVarsOrEmpty(in.ExtraVars)); len(names) > 0 {
+		return fmt.Errorf("%w: extra vars name a reserved variable: %s", ErrInvalidInput, strings.Join(names, ", "))
+	}
+	return nil
+}
+
+// extraVarsOrEmpty normalizes a nil extra-vars map to an empty one, the
+// same normalization internal/templates.Service.build applies, so a
+// definition created with no extra vars at all round-trips as {} rather
+// than null.
+func extraVarsOrEmpty(vars map[string]any) map[string]any {
+	if vars == nil {
+		return map[string]any{}
+	}
+	return vars
 }
 
 // defaultBranch mirrors repos.Service's own handling of an empty branch
