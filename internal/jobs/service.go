@@ -65,6 +65,15 @@ var (
 	// revocations): a second rotation would race the first.
 	ErrRotationInProgress = errors.New("a rotation of this credential is still in progress")
 	ErrHostKeyChanged     = errors.New("host key changed: jobs are blocked for the host until a connection test confirms its pinned key")
+	// ErrTemplateNotReady means the template exists but cannot be run yet:
+	// a projection of an installation-owned definition (spec v0.2f) whose
+	// playbook has not been registered in this organization. Kept distinct
+	// from ErrNotFound — app.templateLookup's own doc comment has the full
+	// reasoning — because the template is visibly sitting in the caller's
+	// own list; "not found" is what a deleted or mistyped id gets, and
+	// reporting the same thing here would be indistinguishable from that to
+	// a customer who cannot see why a template they can see does not run.
+	ErrTemplateNotReady = errors.New("template is not ready to run")
 )
 
 // Kind is what a job does.

@@ -28,7 +28,7 @@ func seedTemplate(t *testing.T, d *db.DB, slug string) (org, templateID uuid.UUI
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl, err := q.InsertTemplate(ctx, gen.InsertTemplateParams{ID: uuid.Must(uuid.NewV7()), OrgID: o.ID, Name: "deploy", PlaybookID: pb.ID, Scope: []byte(`{}`), ExtraVars: []byte(`{}`)})
+	tmpl, err := q.InsertTemplate(ctx, gen.InsertTemplateParams{ID: uuid.Must(uuid.NewV7()), OrgID: o.ID, Name: "deploy", PlaybookID: db.NullUUID(&pb.ID), Scope: []byte(`{}`), ExtraVars: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

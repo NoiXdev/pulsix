@@ -798,3 +798,96 @@ func TestSharedReposSchema(t *testing.T) {
 			"deleting a definition still projected into an organization must be refused, not cascade", deleteRule, "r")
 	}
 }
+
+// TestSharedJobTemplatesSchema is TestSharedReposSchema's own test for
+// migration 00061, the second application of the mechanism: shared_job_templates
+// must carry neither org_id nor row-level security (installation-level
+// data, the same posture shared_repos has had since 00060); job_templates.
+// shared_template_id must be nullable with ON DELETE RESTRICT (spec
+// decision 5, reported as ErrInUse before the database ever has to); and
+// job_templates.playbook_id — NOT NULL since migration 00018, for every
+// template this schema has ever held before this one — must have become
+// nullable, the one column this migration loosens rather than adds
+// (migration 00061's own comment: a projection may be written before its
+// organization has synced a matching playbook).
+func TestSharedJobTemplatesSchema(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+
+	var hasOrgID bool
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_attribute a
+			JOIN pg_class c ON c.oid = a.attrelid
+			WHERE c.relname = 'shared_job_templates' AND a.attname = 'org_id' AND NOT a.attisdropped
+		)`).Scan(&hasOrgID); err != nil {
+		t.Fatalf("check org_id column: %v", err)
+	}
+	if hasOrgID {
+		t.Error("shared_job_templates must not have an org_id column; it is installation-level, not tenant data")
+	}
+
+	var rls bool
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT c.relrowsecurity FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		WHERE c.relname = 'shared_job_templates'`).Scan(&rls); err != nil {
+		t.Fatalf("check relrowsecurity: %v", err)
+	}
+	if rls {
+		t.Error("shared_job_templates must not carry row-level security; it is visible to every organization by design")
+	}
+
+	var sharedRepoFKCount int
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM pg_constraint
+		WHERE conrelid = 'shared_job_templates'::regclass AND confrelid = 'shared_repos'::regclass`).Scan(&sharedRepoFKCount); err != nil {
+		t.Fatalf("check shared_job_templates.shared_repo_id foreign key: %v", err)
+	}
+	if sharedRepoFKCount != 1 {
+		t.Errorf("shared_job_templates -> shared_repos foreign key count = %d, want 1 — a shared template always names which shared repository its playbook lives in", sharedRepoFKCount)
+	}
+
+	var sharedRepoNullable string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_name = 'shared_job_templates' AND column_name = 'shared_repo_id'`).Scan(&sharedRepoNullable); err != nil {
+		t.Fatalf("check shared_job_templates.shared_repo_id exists: %v", err)
+	}
+	if sharedRepoNullable != "NO" {
+		t.Errorf("shared_job_templates.shared_repo_id is_nullable = %q, want NO — a path alone names nothing without the repository it is relative to", sharedRepoNullable)
+	}
+
+	var templateIDNullable string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_name = 'job_templates' AND column_name = 'shared_template_id'`).Scan(&templateIDNullable); err != nil {
+		t.Fatalf("check job_templates.shared_template_id exists: %v", err)
+	}
+	if templateIDNullable != "YES" {
+		t.Errorf("job_templates.shared_template_id is_nullable = %q, want YES — a non-projecting row names no definition", templateIDNullable)
+	}
+
+	var templateIDDeleteRule string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT confdeltype FROM pg_constraint
+		WHERE conrelid = 'job_templates'::regclass AND confrelid = 'shared_job_templates'::regclass`).Scan(&templateIDDeleteRule); err != nil {
+		t.Fatalf("check job_templates.shared_template_id foreign key: %v", err)
+	}
+	if templateIDDeleteRule != "r" {
+		t.Errorf("job_templates.shared_template_id foreign key confdeltype = %q, want %q (restrict) — "+
+			"deleting a definition still projected into an organization must be refused, not cascade", templateIDDeleteRule, "r")
+	}
+
+	var playbookIDNullable string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_name = 'job_templates' AND column_name = 'playbook_id'`).Scan(&playbookIDNullable); err != nil {
+		t.Fatalf("check job_templates.playbook_id exists: %v", err)
+	}
+	if playbookIDNullable != "YES" {
+		t.Errorf("job_templates.playbook_id is_nullable = %q, want YES — migration 00061 loosens this for a projection "+
+			"written before its organization has synced a matching playbook; an ordinary template still always resolves one "+
+			"through internal/templates/service.go's own playbooks.Get before writing", playbookIDNullable)
+	}
+}

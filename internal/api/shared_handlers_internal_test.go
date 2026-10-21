@@ -79,3 +79,37 @@ func TestMapReposErrNeverNamesAnOrganization(t *testing.T) {
 		})
 	}
 }
+
+// TestMapTemplatesErrNeverNamesAnOrganization is
+// TestMapReposErrNeverNamesAnOrganization's own test for job templates
+// (Task 6): mapTemplatesErr (template_handlers.go) backs the
+// organization-scoped job-template routes a member of ANY organization can
+// reach, and must have no case recognising shared.Service's richer errors
+// either — same risk, same reasoning, different mapper.
+func TestMapTemplatesErrNeverNamesAnOrganization(t *testing.T) {
+	orgB := uuid.Must(uuid.NewV7())
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"NameCollisionError", &shared.NameCollisionError{Name: "deploy-site", Orgs: []uuid.UUID{orgB}}},
+		{"InUseError", &shared.InUseError{OrgID: orgB, Reasons: []string{"a schedule"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapTemplatesErr(context.Background(), tc.err)
+			var se huma.StatusError
+			if !errors.As(got, &se) {
+				t.Fatalf("mapTemplatesErr(%v) = %v, want a huma.StatusError", tc.err, got)
+			}
+			if se.GetStatus() != http.StatusInternalServerError {
+				t.Errorf("mapTemplatesErr(%v) status = %d, want %d (mapTemplatesErr must not recognise a shared.* error at all)",
+					tc.err, se.GetStatus(), http.StatusInternalServerError)
+			}
+			if msg := se.Error(); strings.Contains(msg, orgB.String()) {
+				t.Errorf("mapTemplatesErr(%v) message %q names organization %s — reachable by any organization's member",
+					tc.err, msg, orgB)
+			}
+		})
+	}
+}

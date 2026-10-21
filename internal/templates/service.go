@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -62,6 +63,18 @@ var (
 	// failing a well-formed schema), so the transport can point its problem
 	// paths at body.extra_vars_schema rather than body.extra_vars.
 	ErrBadSchema = errors.New("invalid extra vars schema")
+	// ErrForbidden means the request is well-formed but refused because of
+	// who the resource belongs to, not because of anything the request
+	// could change — repos.ErrForbidden's own doc comment, the same
+	// reasoning and the same house convention (internal/tenancy.ErrForbidden,
+	// mapped to 403 by internal/api/authz.go's mapTenancyErr): spec v0.2f
+	// decision 6's case here, deleting a projected template from inside an
+	// organization. No edit to the DELETE request (which carries no content
+	// to edit) could ever make it succeed, which is what sets it apart from
+	// refuseSharedFieldChange's own cases below (a value the caller COULD
+	// fix by echoing back the current one) and is why it is its own
+	// sentinel rather than reusing ErrInvalidInput.
+	ErrForbidden = errors.New("forbidden")
 )
 
 // namePattern is the shared resource-name rule (credentials, repos, ...).
@@ -88,15 +101,30 @@ func (s Scope) Empty() bool { return s.GroupID == nil && len(s.HostIDs) == 0 }
 // the service returns (see the package comment); ExtraVarsSchema is nil
 // when the template carries no schema.
 type Template struct {
-	ID              uuid.UUID
-	OrgID           uuid.UUID
-	PlaybookID      uuid.UUID
-	Name            string
-	Scope           Scope
-	Limit           string
-	ExtraVars       map[string]any
-	ExtraVarsSchema *schema.Schema
-	CredentialID    *uuid.UUID
+	ID         uuid.UUID
+	OrgID      uuid.UUID
+	PlaybookID uuid.UUID
+	Name       string
+	// SharedTemplateID is non-nil when this row is a PROJECTION of an
+	// installation-owned definition (migration 00061, spec v0.2f decision
+	// 1): shared_job_templates.id, not composed with org_id — the
+	// definition has no org_id to compose with, repos.Repo.SharedRepoID's
+	// own reasoning. Name, PlaybookID, Limit, ExtraVars and ExtraVarsSchema
+	// then belong to the definition and are refused on write
+	// (Service.Update, spec decision 2); Scope, CredentialID and the vault
+	// credential set remain this organization's own. Nil for an ordinary,
+	// organization-created template. PlaybookID may be uuid.Nil for a
+	// projection whose organization has not synced the definition's
+	// playbook path yet — migration 00061's own comment on why
+	// job_templates.playbook_id became nullable; it is never uuid.Nil for
+	// an ordinary template, which Service.build always resolves through
+	// playbooks.Get before writing one.
+	SharedTemplateID *uuid.UUID
+	Scope            Scope
+	Limit            string
+	ExtraVars        map[string]any
+	ExtraVarsSchema  *schema.Schema
+	CredentialID     *uuid.UUID
 	// VaultCredentials is this template's own labelled vault password set
 	// (migration 00059, spec decision 1): the passwords it adds on top of
 	// its repository's base set, never the repository's own (store_sql.go's
@@ -216,7 +244,11 @@ type UpdateInput struct {
 // even with an empty slice — the same "always a full replacement, never a
 // silent no-op special case" rule Update follows).
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Template, error) {
-	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, nil, in.VaultCredentials)
+	// Create never builds a projection — a shared template's own row is
+	// written directly by internal/shared's store, never through this
+	// service (ProjectedTemplateColumns' own doc comment) — so the
+	// playbook lookup always runs (skipPlaybookCheck=false).
+	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, false, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, nil, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
@@ -233,15 +265,47 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 
 // Update validates the input and replaces an existing template's fields,
 // including its own labelled vault credential set.
+//
+// A projected template (SharedTemplateID set) refuses any attempt to
+// change name, playbook_id, limit, extra vars or their schema — spec
+// decision 2's table gives those to the installation-owned definition,
+// read-only inside every organization; only scope, CredentialID and the
+// vault credential set are this organization's to change here
+// (refuseSharedFieldChange below, repos.Service.Update's own
+// refuseSharedFieldChange and doc comment, same reasoning). For such a
+// template, build's own playbook lookup is skipped (skipPlaybookCheck):
+// refuseSharedFieldChange has already required in.PlaybookID == cur.
+// PlaybookID by the time build would run it, and cur.PlaybookID may be
+// uuid.Nil for a projection whose organization has not synced the
+// definition's playbook path yet (migration 00061) — not a real playbook
+// id a lookup could ever find, and not something this organization's edit
+// could be asked to fix.
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInput) (Template, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
 		return Template{}, err
 	}
-	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, cur.ExtraVars, in.VaultCredentials)
+	isProjection := cur.SharedTemplateID != nil
+	// Normalized the same way build() normalizes its own incoming vars
+	// (vars == nil -> {}), but BEFORE refuseSharedFieldChange compares
+	// against cur.ExtraVars (never nil once stored): a client that omits
+	// extra_vars from a PUT body entirely — leaving in.ExtraVars nil —
+	// must compare equal to a stored empty map, not be refused as a
+	// "change" that was never sent.
+	vars := in.ExtraVars
+	if vars == nil {
+		vars = map[string]any{}
+	}
+	if isProjection {
+		if err := refuseSharedFieldChange(cur, in.Name, in.PlaybookID, in.Limit, vars, in.ExtraVarsSchema); err != nil {
+			return Template{}, err
+		}
+	}
+	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, isProjection, in.Scope, in.Limit, vars, in.ExtraVarsSchema, in.CredentialID, cur.ExtraVars, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
+	t.SharedTemplateID = cur.SharedTemplateID
 	updated, err := s.store.Update(ctx, t)
 	if err != nil {
 		return Template{}, err
@@ -292,23 +356,72 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
 // allowed and a finished run keeps its template_id as a dangling reference
 // by design — the run view must tolerate a template it can no longer
 // resolve (it shows the job's own record, not the template's).
+//
+// A projected template (SharedTemplateID set) cannot be deleted from
+// inside an organization at all (spec decision 6): the next propagation
+// from the definition would simply recreate it — repos.Service.Delete's
+// own doc comment, same reasoning, same ErrForbidden (not ErrInvalidInput:
+// a DELETE carries no content to fix, so this is refused regardless of
+// what the caller sends, the distinction 754d884 drew for the repository
+// version of this exact case).
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
+	cur, err := s.store.Get(ctx, orgID, id)
+	if err != nil {
+		return err
+	}
+	if cur.SharedTemplateID != nil {
+		return fmt.Errorf("%w: this template is a projection of an installation-owned definition and cannot be deleted from inside an organization", ErrForbidden)
+	}
 	return s.store.Delete(ctx, orgID, id)
+}
+
+// refuseSharedFieldChange refuses to change any of a projected template's
+// shared columns (spec decision 2: name, playbook_id, limit, extra vars and
+// their schema belong to the installation-owned definition and are
+// read-only inside every organization). cur is the projection's current
+// row; the rest are the values Update is about to write. ExtraVars and
+// ExtraVarsSchema are compared with reflect.DeepEqual: both are read back
+// from JSON (map[string]any / *schema.Schema), and a shared definition's
+// extra vars never contain a secret-typed value (shared.
+// schemaHasSecretField refuses one at the definition's own Create/Update),
+// so there is no sealed-vs-masked-marker mismatch to account for the way
+// there would be for an ordinary template's own secret fields.
+func refuseSharedFieldChange(cur Template, name string, playbookID uuid.UUID, limit string, vars map[string]any, sc *schema.Schema) error {
+	switch {
+	case name != cur.Name:
+		return fmt.Errorf("%w: name: this template is a projection of an installation-owned definition; the installation owns its name", ErrInvalidInput)
+	case playbookID != cur.PlaybookID:
+		return fmt.Errorf("%w: playbook_id: this template is a projection of an installation-owned definition; the installation owns its playbook", ErrInvalidInput)
+	case limit != cur.Limit:
+		return fmt.Errorf("%w: limit: this template is a projection of an installation-owned definition; the installation owns its limit", ErrInvalidInput)
+	case !reflect.DeepEqual(vars, cur.ExtraVars):
+		return fmt.Errorf("%w: extra_vars: this template is a projection of an installation-owned definition; the installation owns its extra vars", ErrInvalidInput)
+	case !reflect.DeepEqual(sc, cur.ExtraVarsSchema):
+		return fmt.Errorf("%w: extra_vars_schema: this template is a projection of an installation-owned definition; the installation owns its extra vars schema", ErrInvalidInput)
+	}
+	return nil
 }
 
 // build validates an input and returns the Template to persist, with
 // timestamps left to the store. Validation order is meta (name, limit),
 // playbook, scope, credential, vault credentials, then the schema and the
 // values against it — each step naming exactly what is wrong.
-func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, stored map[string]any, vaultCredentials []VaultCredential) (Template, error) {
+// skipPlaybookCheck is true only when Update is re-affirming a projected
+// template's already-pinned playbook_id (Update's own doc comment): by the
+// time it is true, refuseSharedFieldChange has already required playbookID
+// == the stored one, which may be uuid.Nil for an unresolved projection —
+// not a real playbook id a lookup could ever find.
+func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, skipPlaybookCheck bool, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, stored map[string]any, vaultCredentials []VaultCredential) (Template, error) {
 	if err := validateMeta(name, limit); err != nil {
 		return Template{}, err
 	}
-	if _, err := s.playbooks.Get(ctx, orgID, playbookID); err != nil {
-		if errors.Is(err, playbooks.ErrNotFound) {
-			return Template{}, fmt.Errorf("%w: playbook does not exist", ErrNotFound)
+	if !skipPlaybookCheck {
+		if _, err := s.playbooks.Get(ctx, orgID, playbookID); err != nil {
+			if errors.Is(err, playbooks.ErrNotFound) {
+				return Template{}, fmt.Errorf("%w: playbook does not exist", ErrNotFound)
+			}
+			return Template{}, fmt.Errorf("look up playbook: %w", err)
 		}
-		return Template{}, fmt.Errorf("look up playbook: %w", err)
 	}
 	if err := s.validateScope(ctx, orgID, scope); err != nil {
 		return Template{}, err

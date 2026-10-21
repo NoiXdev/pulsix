@@ -107,8 +107,38 @@ func (f *fakeRepos) Get(_ context.Context, orgID, id uuid.UUID) (repos.Repo, err
 	return r, nil
 }
 
+// fakeTemplateResolver is playbooks.TemplateResolver's own fake: records
+// every call CreateRepo makes, and what it is told to return, so tests can
+// prove the organization-side resolution hook (Task 6's own review
+// finding) fires exactly when a real repo playbook is stored — and not
+// before, and not when storing one fails.
+type fakeTemplateResolver struct {
+	mu    sync.Mutex
+	calls []resolveCall
+	err   error
+}
+
+type resolveCall struct {
+	orgID, repoID, playbookID uuid.UUID
+	path                      string
+}
+
+func (f *fakeTemplateResolver) ResolveTemplatePlaybooks(_ context.Context, orgID, repoID, playbookID uuid.UUID, path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, resolveCall{orgID: orgID, repoID: repoID, playbookID: playbookID, path: path})
+	return nil
+}
+
 func newService(store *fakeStore, rs *fakeRepos) *playbooks.Service {
-	return playbooks.NewService(store, rs)
+	return newServiceWithResolver(store, rs, &fakeTemplateResolver{})
+}
+
+func newServiceWithResolver(store *fakeStore, rs *fakeRepos, resolver *fakeTemplateResolver) *playbooks.Service {
+	return playbooks.NewService(store, rs, resolver)
 }
 
 const validPlaybook = "- name: deploy\n  hosts: all\n  tasks: []\n"
@@ -174,6 +204,70 @@ func TestCreateRepoValidation(t *testing.T) {
 				t.Fatalf("CreateRepo = %v, want %v naming %q", err, tc.wantStatus, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestCreateRepoResolvesSharedTemplatePlaybooks is the organization-side
+// half of playbook_id resolution (TemplateResolver's own doc comment: a
+// review finding on Task 6's first draft, which only ever resolved
+// playbook_id on a DEFINITION-side event): storing a new repo playbook
+// must call the resolver exactly once, with this organization's id, the
+// repository id, the NEWLY STORED playbook's own id (not a zero value —
+// the resolver needs it to write it into job_templates.playbook_id) and
+// the path, in that order — CreateRepo's own doc comment on why this
+// happens after the store write succeeds, not before.
+func TestCreateRepoResolvesSharedTemplatePlaybooks(t *testing.T) {
+	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	rs := newFakeRepos(map[uuid.UUID]repos.Repo{repoID: {ID: repoID, OrgID: org}})
+	resolver := &fakeTemplateResolver{}
+	svc := newServiceWithResolver(newFakeStore(), rs, resolver)
+
+	p, err := svc.CreateRepo(ctx, org, repoID, "site.yml")
+	if err != nil {
+		t.Fatalf("CreateRepo() error = %v, want nil", err)
+	}
+	if len(resolver.calls) != 1 {
+		t.Fatalf("resolver calls = %d, want 1", len(resolver.calls))
+	}
+	call := resolver.calls[0]
+	if call.orgID != org || call.repoID != repoID || call.playbookID != p.ID || call.path != "site.yml" {
+		t.Fatalf("resolver called with %+v, want orgID=%v repoID=%v playbookID=%v path=site.yml", call, org, repoID, p.ID)
+	}
+}
+
+// TestCreateRepoNeverResolvesWhenTheStoreWriteFails proves the resolver is
+// not called at all when the playbook itself was never stored — calling it
+// anyway would ask shared.Service to resolve a playbook id that names
+// nothing.
+func TestCreateRepoNeverResolvesWhenTheStoreWriteFails(t *testing.T) {
+	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	rs := newFakeRepos(map[uuid.UUID]repos.Repo{repoID: {ID: repoID, OrgID: org}})
+	store := newFakeStore()
+	store.nextErr = errors.New("boom")
+	resolver := &fakeTemplateResolver{}
+	svc := newServiceWithResolver(store, rs, resolver)
+
+	if _, err := svc.CreateRepo(ctx, org, repoID, "site.yml"); err == nil {
+		t.Fatal("CreateRepo() error = nil, want the store's own error")
+	}
+	if len(resolver.calls) != 0 {
+		t.Fatalf("resolver calls = %d, want 0 — a playbook that was never stored has no id to resolve with", len(resolver.calls))
+	}
+}
+
+// TestCreateRepoFailsWhenResolutionFails proves a resolver error is
+// reported, not swallowed (CreateRepo's own doc comment: a caller that
+// successfully registered a playbook but silently failed to light up a
+// template waiting on it would be a harder bug to find than one that
+// surfaces here).
+func TestCreateRepoFailsWhenResolutionFails(t *testing.T) {
+	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	rs := newFakeRepos(map[uuid.UUID]repos.Repo{repoID: {ID: repoID, OrgID: org}})
+	resolver := &fakeTemplateResolver{err: errors.New("resolve boom")}
+	svc := newServiceWithResolver(newFakeStore(), rs, resolver)
+
+	if _, err := svc.CreateRepo(ctx, org, repoID, "site.yml"); err == nil || !strings.Contains(err.Error(), "resolve boom") {
+		t.Fatalf("CreateRepo() error = %v, want it to surface the resolver's own error", err)
 	}
 }
 

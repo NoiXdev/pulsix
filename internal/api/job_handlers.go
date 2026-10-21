@@ -558,6 +558,13 @@ func mapJobsErr(ctx context.Context, err error) error {
 		return huma.Error422UnprocessableEntity("nothing to retry")
 	case errors.Is(err, jobs.ErrEmptyScope):
 		return huma.Error422UnprocessableEntity("the template's scope matches no managed host")
+	case errors.Is(err, jobs.ErrTemplateNotReady):
+		// A projection of an installation-owned definition (spec v0.2f)
+		// whose playbook has not been registered in this organization yet
+		// — jobs.ErrTemplateNotReady's own doc comment on why this must
+		// not collapse into the 404 below: the template is visibly in the
+		// caller's own list, so "not found" would be undiagnosable.
+		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, jobs.ErrHostKeyChanged):
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, jobs.ErrUnpinnedHosts):

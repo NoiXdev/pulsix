@@ -125,7 +125,7 @@ func testRepos() *repos.Service {
 // drive a playbook operation (nil interface values are only a problem once
 // called), mirroring testRepos above.
 func testPlaybooks() *playbooks.Service {
-	return playbooks.NewService(nil, nil)
+	return playbooks.NewService(nil, nil, nil)
 }
 
 // testTemplates builds a *templates.Service with nil store/lookups, good

@@ -51,6 +51,13 @@ export function TemplatesPage() {
   const groupName = (id: string) => (groups.data?.groups ?? []).find((g) => g.id === id)?.name ?? id.slice(0, 8);
 
   const playbookLabel = (id: string) => {
+    // "" is the unresolved-projection case (toTemplateDTO's own comment,
+    // internal/api/template_handlers.go): this organization has not synced
+    // a matching playbook from the shared repository yet. Distinguished
+    // from "a real id this page's own playbook list does not know about"
+    // (id.slice(0, 8)) rather than falling through to the same fallback,
+    // which would otherwise render as an empty string.
+    if (id === '') return 'not synced yet';
     const p = (playbooks.data?.playbooks ?? []).find((x) => x.id === id);
     if (!p) return id.slice(0, 8);
     return p.source === 'repo' ? `repo: ${p.path ?? ''}` : p.summary || 'editor playbook';
@@ -91,14 +98,19 @@ export function TemplatesPage() {
         </GridHeader>
         {list.map((t) => (
           <GridRow key={t.id} columns={COLUMNS}>
-            <span className="truncate">
+            <span className="flex min-w-0 items-center gap-1.5">
               {canWrite ? (
                 <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(t)}>
                   {t.name}
                 </button>
               ) : (
-                <span className="font-mono text-[13px]">{t.name}</span>
+                <span className="truncate font-mono text-[13px]">{t.name}</span>
               )}
+              {/* t.shared_template_id marks a projection of an installation-
+                  owned definition (spec v0.2f decision 1) — TemplateDialog
+                  disables its name/playbook/limit/extra-vars fields, so the
+                  row needs to say why before the dialog ever opens. */}
+              {t.shared_template_id && <Pill tone="accent">Installation-managed</Pill>}
             </span>
             <span className="truncate font-mono text-xs text-muted-foreground">{playbookLabel(t.playbook_id)}</span>
             <span>{scopeChip(t, groupName)}</span>

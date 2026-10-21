@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -44,7 +45,7 @@ func (s *SQLStore) Create(ctx context.Context, t Template) (Template, error) {
 		}
 	}
 	row, err := s.q.InsertTemplate(ctx, gen.InsertTemplateParams{
-		ID: t.ID, OrgID: t.OrgID, Name: t.Name, PlaybookID: t.PlaybookID,
+		ID: t.ID, OrgID: t.OrgID, Name: t.Name, PlaybookID: nullablePlaybookID(t.PlaybookID),
 		Scope: scope, Limit: t.Limit, ExtraVars: vars,
 		ExtraVarsSchema: schemaRaw, CredentialID: db.NullUUID(t.CredentialID),
 	})
@@ -95,7 +96,7 @@ func (s *SQLStore) Update(ctx context.Context, t Template) (Template, error) {
 		}
 	}
 	row, err := s.q.UpdateTemplate(ctx, gen.UpdateTemplateParams{
-		OrgID: t.OrgID, ID: t.ID, Name: t.Name, PlaybookID: t.PlaybookID,
+		OrgID: t.OrgID, ID: t.ID, Name: t.Name, PlaybookID: nullablePlaybookID(t.PlaybookID),
 		Scope: scope, Limit: t.Limit, ExtraVars: vars,
 		ExtraVarsSchema: schemaRaw, CredentialID: db.NullUUID(t.CredentialID),
 	})
@@ -222,13 +223,35 @@ func mapWriteErr(err error, op string) error {
 	}
 }
 
+// nullablePlaybookID converts the domain's uuid.Nil-means-unresolved
+// convention (Template.PlaybookID's own doc comment) to the nullable
+// column migration 00061 made of job_templates.playbook_id. An ordinary
+// template's id is never uuid.Nil — Service.build always resolves one
+// through playbooks.Get before a Create or Update reaches this store — so
+// this only ever produces an absent value for a shared template
+// projection whose organization has not synced the definition's playbook
+// path yet.
+func nullablePlaybookID(id uuid.UUID) pgtype.UUID {
+	if id == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return db.NullUUID(&id)
+}
+
 // toTemplate decodes a row. An empty or NULL scope jsonb decodes to the
 // zero Scope — the whole organization; NULL extra_vars_schema decodes to a
-// nil *schema.Schema.
+// nil *schema.Schema; NULL playbook_id decodes to uuid.Nil (Template.
+// PlaybookID's own doc comment) and NULL shared_template_id to a nil
+// *uuid.UUID (an ordinary, non-shared template).
 func toTemplate(row gen.JobTemplate) (Template, error) {
+	playbookID := uuid.Nil
+	if p := db.UUIDPtr(row.PlaybookID); p != nil {
+		playbookID = *p
+	}
 	t := Template{
-		ID: row.ID, OrgID: row.OrgID, Name: row.Name, PlaybookID: row.PlaybookID,
-		Limit: row.Limit, CredentialID: db.UUIDPtr(row.CredentialID),
+		ID: row.ID, OrgID: row.OrgID, Name: row.Name, PlaybookID: playbookID,
+		SharedTemplateID: db.UUIDPtr(row.SharedTemplateID),
+		Limit:            row.Limit, CredentialID: db.UUIDPtr(row.CredentialID),
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if len(row.Scope) > 0 {

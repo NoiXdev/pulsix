@@ -70,6 +70,69 @@ func (q *Queries) CreateSharedRepo(ctx context.Context, arg CreateSharedRepoPara
 	return i, err
 }
 
+const createSharedTemplate = `-- name: CreateSharedTemplate :one
+
+INSERT INTO shared_job_templates (id, name, shared_repo_id, playbook_path, "limit", extra_vars, extra_vars_schema)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, name, shared_repo_id, playbook_path, "limit", extra_vars, extra_vars_schema, created_at, updated_at
+`
+
+type CreateSharedTemplateParams struct {
+	ID              uuid.UUID `json:"id"`
+	Name            string    `json:"name"`
+	SharedRepoID    uuid.UUID `json:"shared_repo_id"`
+	PlaybookPath    string    `json:"playbook_path"`
+	Lim             string    `json:"lim"`
+	ExtraVars       []byte    `json:"extra_vars"`
+	ExtraVarsSchema []byte    `json:"extra_vars_schema"`
+}
+
+// Task 6, migration 00061: the second application of this file's own
+// mechanism, for job templates. shared_job_templates' own column split
+// (name, shared_repo_id, playbook_path, limit, extra_vars,
+// extra_vars_schema) differs from shared_repos', so every statement below
+// is its own — nothing above is reused verbatim — but the shape (a
+// definition table, a bulk project-into-every-org insert, a single
+// project-into-one-org insert, a propagate loop, a delete loop with an
+// explicit dependant check first) is identical, by design: tx.go's own
+// comment is why withTx and propagate are plain functions over
+// *gen.Queries rather than generics, and the same reasoning is why these
+// queries do not try to parametrize over "which table" either.
+//
+// playbook_id is the one column that is NOT a straight copy from the
+// definition to every projection (ProjectedTemplateColumns' own doc
+// comment, definition.go): it is resolved PER ORGANIZATION, by joining
+// that organization's own projection of shared_repo_id (its own git_repos
+// row) to its own playbooks row at playbook_path. An organization whose
+// clone has not synced that path yet (or whose shared repository
+// projection does not exist at all, which should not happen but is not
+// assumed away) simply gets NULL — migration 00061's own comment on why
+// job_templates.playbook_id had to become nullable.
+func (q *Queries) CreateSharedTemplate(ctx context.Context, arg CreateSharedTemplateParams) (SharedJobTemplate, error) {
+	row := q.db.QueryRow(ctx, createSharedTemplate,
+		arg.ID,
+		arg.Name,
+		arg.SharedRepoID,
+		arg.PlaybookPath,
+		arg.Lim,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+	)
+	var i SharedJobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.SharedRepoID,
+		&i.PlaybookPath,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteProjectedRepo = `-- name: DeleteProjectedRepo :execrows
 DELETE FROM git_repos WHERE org_id = $1 AND shared_repo_id = $2::uuid
 `
@@ -103,6 +166,32 @@ func (q *Queries) DeleteProjectedRepo(ctx context.Context, arg DeleteProjectedRe
 	return result.RowsAffected(), nil
 }
 
+const deleteProjectedTemplate = `-- name: DeleteProjectedTemplate :execrows
+DELETE FROM job_templates WHERE org_id = $1 AND shared_template_id = $2::uuid
+`
+
+type DeleteProjectedTemplateParams struct {
+	OrgID            uuid.UUID `json:"org_id"`
+	SharedTemplateID uuid.UUID `json:"shared_template_id"`
+}
+
+// One organization's projection, looped over by
+// DeleteTemplateWithProjections inside one transaction — after
+// JobTemplateHasSchedule and JobTemplateHasTrigger have already refused
+// the whole call if either still names any organization's projection, and
+// after ListProjectedTemplatesForUpdate's own FOR UPDATE has held a lock
+// on every projection row since before those checks ran —
+// DeleteProjectedRepo's own locking argument, unchanged. The foreign-key
+// backstop (IsForeignKeyViolation, mapped to InUseError) covers a future
+// referencing table this method does not yet know to check.
+func (q *Queries) DeleteProjectedTemplate(ctx context.Context, arg DeleteProjectedTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectedTemplate, arg.OrgID, arg.SharedTemplateID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSharedRepo = `-- name: DeleteSharedRepo :execrows
 DELETE FROM shared_repos WHERE id = $1
 `
@@ -114,6 +203,22 @@ DELETE FROM shared_repos WHERE id = $1
 // caller ever got the order wrong.
 func (q *Queries) DeleteSharedRepo(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSharedRepo, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSharedTemplate = `-- name: DeleteSharedTemplate :execrows
+DELETE FROM shared_job_templates WHERE id = $1
+`
+
+// Only after every projection is already gone (DeleteProjectedTemplate
+// below, looped first) — shared_template_id's own ON DELETE RESTRICT
+// (migration 00061) is the backstop if a caller ever got the order wrong,
+// exactly like DeleteSharedRepo.
+func (q *Queries) DeleteSharedTemplate(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSharedTemplate, id)
 	if err != nil {
 		return 0, err
 	}
@@ -133,6 +238,27 @@ func (q *Queries) GetSharedRepo(ctx context.Context, id uuid.UUID) (SharedRepo, 
 		&i.Url,
 		&i.Branch,
 		&i.Subpath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSharedTemplate = `-- name: GetSharedTemplate :one
+SELECT id, name, shared_repo_id, playbook_path, "limit", extra_vars, extra_vars_schema, created_at, updated_at FROM shared_job_templates WHERE id = $1
+`
+
+func (q *Queries) GetSharedTemplate(ctx context.Context, id uuid.UUID) (SharedJobTemplate, error) {
+	row := q.db.QueryRow(ctx, getSharedTemplate, id)
+	var i SharedJobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.SharedRepoID,
+		&i.PlaybookPath,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -270,6 +396,146 @@ func (q *Queries) InsertProjectedRepos(ctx context.Context, arg InsertProjectedR
 	return err
 }
 
+const insertProjectedTemplate = `-- name: InsertProjectedTemplate :exec
+INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, shared_template_id)
+VALUES (
+  $1, $2, $3,
+  (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
+     WHERE g.org_id = $2::uuid AND g.shared_repo_id = $4::uuid
+       AND pb.path = $5 AND pb.source = 'repo' LIMIT 1),
+  '{}'::jsonb, $6, $7, $8, $9
+)
+`
+
+type InsertProjectedTemplateParams struct {
+	ID               uuid.UUID   `json:"id"`
+	OrgID            uuid.UUID   `json:"org_id"`
+	Name             string      `json:"name"`
+	SharedRepoID     uuid.UUID   `json:"shared_repo_id"`
+	PlaybookPath     *string     `json:"playbook_path"`
+	Lim              string      `json:"lim"`
+	ExtraVars        []byte      `json:"extra_vars"`
+	ExtraVarsSchema  []byte      `json:"extra_vars_schema"`
+	SharedTemplateID pgtype.UUID `json:"shared_template_id"`
+}
+
+// InsertProjectedTemplates' single-organization counterpart —
+// ProjectTemplateInto's own statement for projecting one already-existing
+// definition into one newly created organization, the scalar-subquery
+// mirror of the LEFT JOIN above.
+func (q *Queries) InsertProjectedTemplate(ctx context.Context, arg InsertProjectedTemplateParams) error {
+	_, err := q.db.Exec(ctx, insertProjectedTemplate,
+		arg.ID,
+		arg.OrgID,
+		arg.Name,
+		arg.SharedRepoID,
+		arg.PlaybookPath,
+		arg.Lim,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.SharedTemplateID,
+	)
+	return err
+}
+
+const insertProjectedTemplates = `-- name: InsertProjectedTemplates :exec
+INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, shared_template_id)
+SELECT i.id, o.org_id, $1, pb.id, '{}'::jsonb, $2, $3, $4, $5
+FROM unnest($6::uuid[]) WITH ORDINALITY AS i(id, n)
+JOIN unnest($7::uuid[]) WITH ORDINALITY AS o(org_id, n) ON i.n = o.n
+LEFT JOIN git_repos g ON g.org_id = o.org_id AND g.shared_repo_id = $8::uuid
+LEFT JOIN playbooks pb ON pb.org_id = o.org_id AND pb.repo_id = g.id AND pb.path = $9 AND pb.source = 'repo'
+`
+
+type InsertProjectedTemplatesParams struct {
+	Name             string      `json:"name"`
+	Lim              string      `json:"lim"`
+	ExtraVars        []byte      `json:"extra_vars"`
+	ExtraVarsSchema  []byte      `json:"extra_vars_schema"`
+	SharedTemplateID pgtype.UUID `json:"shared_template_id"`
+	Ids              []uuid.UUID `json:"ids"`
+	OrgIds           []uuid.UUID `json:"org_ids"`
+	SharedRepoID     uuid.UUID   `json:"shared_repo_id"`
+	PlaybookPath     *string     `json:"playbook_path"`
+}
+
+// One projection per organization, in the SAME transaction as the
+// definition's own CreateSharedTemplate (spec decision 4, atomic). The
+// lockstep-unnest shape InsertProjectedRepos uses for (ids, org_ids) is
+// joined here, per row, to that organization's own git_repos projection of
+// shared_repo_id and then to that organization's own playbooks row at
+// playbook_path — the per-organization playbook_id resolution this query
+// comment block's own header describes. LEFT JOIN, not JOIN: an
+// organization with no matching playbook yet still gets its row, with
+// playbook_id NULL (migration 00061 is what makes that legal). scope is
+// the projection's own (spec decision 2) and starts empty — "the whole
+// organization" — exactly like a repository projection starts with no
+// credential: the organization's to fill in, not something this statement
+// could ever know.
+// sqlc's own analyzer (not real Postgres, which does support it) does not
+// know the two-argument form of unnest, so the (ids, org_ids) pair is
+// zipped with WITH ORDINALITY instead of InsertProjectedRepos' own
+// single-call unnest(a), unnest(b) shape — equivalent, just spelled so
+// sqlc's catalog accepts it.
+func (q *Queries) InsertProjectedTemplates(ctx context.Context, arg InsertProjectedTemplatesParams) error {
+	_, err := q.db.Exec(ctx, insertProjectedTemplates,
+		arg.Name,
+		arg.Lim,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.SharedTemplateID,
+		arg.Ids,
+		arg.OrgIds,
+		arg.SharedRepoID,
+		arg.PlaybookPath,
+	)
+	return err
+}
+
+const jobTemplateHasSchedule = `-- name: JobTemplateHasSchedule :one
+SELECT EXISTS (SELECT 1 FROM schedules WHERE org_id = $1::uuid AND template_id = $2::uuid)
+`
+
+type JobTemplateHasScheduleParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	TemplateID uuid.UUID `json:"template_id"`
+}
+
+// Whether a schedule still names one organization's projection — the
+// first of the two tables DeleteTemplateWithProjections checks explicitly
+// (store_sql.go's own doc comment on that method has the full inventory,
+// including why job_template_vault_credentials is deliberately NOT checked
+// here). schedules.template_id carries its own ON DELETE CASCADE
+// (migration 00025) and would otherwise let a customer's own scheduled run
+// disappear silently along with the projection.
+func (q *Queries) JobTemplateHasSchedule(ctx context.Context, arg JobTemplateHasScheduleParams) (bool, error) {
+	row := q.db.QueryRow(ctx, jobTemplateHasSchedule, arg.OrgID, arg.TemplateID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const jobTemplateHasTrigger = `-- name: JobTemplateHasTrigger :one
+SELECT EXISTS (SELECT 1 FROM job_triggers WHERE org_id = $1::uuid AND template_id = $2::uuid)
+`
+
+type JobTemplateHasTriggerParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	TemplateID uuid.UUID `json:"template_id"`
+}
+
+// Whether a job trigger still names one organization's projection — the
+// second table DeleteTemplateWithProjections checks explicitly, beside
+// JobTemplateHasSchedule. job_triggers.template_id carries its own ON
+// DELETE CASCADE (migration 00026), the same silent-loss shape schedules
+// has.
+func (q *Queries) JobTemplateHasTrigger(ctx context.Context, arg JobTemplateHasTriggerParams) (bool, error) {
+	row := q.db.QueryRow(ctx, jobTemplateHasTrigger, arg.OrgID, arg.TemplateID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listGitRepoNamesExcludingDefinition = `-- name: ListGitRepoNamesExcludingDefinition :many
 SELECT org_id, name FROM git_repos WHERE shared_repo_id IS DISTINCT FROM $1::uuid
 `
@@ -298,6 +564,39 @@ func (q *Queries) ListGitRepoNamesExcludingDefinition(ctx context.Context, exclu
 	var items []ListGitRepoNamesExcludingDefinitionRow
 	for rows.Next() {
 		var i ListGitRepoNamesExcludingDefinitionRow
+		if err := rows.Scan(&i.OrgID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobTemplateNamesExcludingDefinition = `-- name: ListJobTemplateNamesExcludingDefinition :many
+SELECT org_id, name FROM job_templates WHERE shared_template_id IS DISTINCT FROM $1::uuid
+`
+
+type ListJobTemplateNamesExcludingDefinitionRow struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Name  string    `json:"name"`
+}
+
+// Decision 7's raw material for job templates: every organization's own
+// job_templates name, excluding rows that are already a projection of
+// exclude — ListGitRepoNamesExcludingDefinition's own comment, same
+// reasoning, different table.
+func (q *Queries) ListJobTemplateNamesExcludingDefinition(ctx context.Context, exclude uuid.UUID) ([]ListJobTemplateNamesExcludingDefinitionRow, error) {
+	rows, err := q.db.Query(ctx, listJobTemplateNamesExcludingDefinition, exclude)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJobTemplateNamesExcludingDefinitionRow
+	for rows.Next() {
+		var i ListJobTemplateNamesExcludingDefinitionRow
 		if err := rows.Scan(&i.OrgID, &i.Name); err != nil {
 			return nil, err
 		}
@@ -417,6 +716,70 @@ func (q *Queries) ListProjectedReposForUpdate(ctx context.Context, sharedRepoID 
 	return items, nil
 }
 
+const listProjectedTemplates = `-- name: ListProjectedTemplates :many
+SELECT id, org_id FROM job_templates WHERE shared_template_id = $1::uuid ORDER BY id
+`
+
+type ListProjectedTemplatesRow struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// Every organization currently holding a projection of one template
+// definition, oldest projection first — ListProjectedRepos' own comment
+// and iteration-order reasoning, unchanged.
+func (q *Queries) ListProjectedTemplates(ctx context.Context, sharedTemplateID uuid.UUID) ([]ListProjectedTemplatesRow, error) {
+	rows, err := q.db.Query(ctx, listProjectedTemplates, sharedTemplateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectedTemplatesRow
+	for rows.Next() {
+		var i ListProjectedTemplatesRow
+		if err := rows.Scan(&i.ID, &i.OrgID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectedTemplatesForUpdate = `-- name: ListProjectedTemplatesForUpdate :many
+SELECT id, org_id FROM job_templates WHERE shared_template_id = $1::uuid ORDER BY id FOR UPDATE
+`
+
+type ListProjectedTemplatesForUpdateRow struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// ListProjectedTemplates' own shape, with FOR UPDATE, for
+// DeleteTemplateWithProjections alone — ListProjectedReposForUpdate's own
+// comment and locking argument, unchanged.
+func (q *Queries) ListProjectedTemplatesForUpdate(ctx context.Context, sharedTemplateID uuid.UUID) ([]ListProjectedTemplatesForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listProjectedTemplatesForUpdate, sharedTemplateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectedTemplatesForUpdateRow
+	for rows.Next() {
+		var i ListProjectedTemplatesForUpdateRow
+		if err := rows.Scan(&i.ID, &i.OrgID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSharedRepos = `-- name: ListSharedRepos :many
 SELECT id, name, url, branch, subpath, created_at, updated_at FROM shared_repos ORDER BY id
 `
@@ -452,6 +815,96 @@ func (q *Queries) ListSharedRepos(ctx context.Context) ([]SharedRepo, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSharedTemplates = `-- name: ListSharedTemplates :many
+SELECT id, name, shared_repo_id, playbook_path, "limit", extra_vars, extra_vars_schema, created_at, updated_at FROM shared_job_templates ORDER BY id
+`
+
+// Oldest first (uuid v7 ordering) — ProjectAllTemplatesInto's raw material
+// for a newly created organization, exactly like ListSharedRepos.
+func (q *Queries) ListSharedTemplates(ctx context.Context) ([]SharedJobTemplate, error) {
+	rows, err := q.db.Query(ctx, listSharedTemplates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SharedJobTemplate
+	for rows.Next() {
+		var i SharedJobTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.SharedRepoID,
+			&i.PlaybookPath,
+			&i.Limit,
+			&i.ExtraVars,
+			&i.ExtraVarsSchema,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resolveTemplatePlaybooksForNewPath = `-- name: ResolveTemplatePlaybooksForNewPath :exec
+UPDATE job_templates jt
+SET playbook_id = $1::uuid, updated_at = now()
+FROM shared_job_templates st, git_repos g
+WHERE jt.shared_template_id = st.id
+  AND jt.org_id = $2::uuid
+  AND jt.playbook_id IS NULL
+  AND g.id = $3::uuid
+  AND g.org_id = $2::uuid
+  AND st.shared_repo_id = g.shared_repo_id
+  AND st.playbook_path = $4::text
+`
+
+type ResolveTemplatePlaybooksForNewPathParams struct {
+	PlaybookID   uuid.UUID `json:"playbook_id"`
+	OrgID        uuid.UUID `json:"org_id"`
+	RepoID       uuid.UUID `json:"repo_id"`
+	PlaybookPath string    `json:"playbook_path"`
+}
+
+// The ORGANIZATION-side half of playbook_id resolution — a review finding
+// on Task 6's first draft, which only ever resolved on a DEFINITION-side
+// event (CreateTemplateWithProjections/UpdateTemplateAndPropagate above).
+// A provider defining a shared template before any customer has synced its
+// matching playbook is the NORMAL order (configure centrally, then
+// customers catch up, spec decision 4), not an edge case, so leaving that
+// projection's playbook_id NULL until the definition's next edit — which
+// may never come — left the feature unusable on exactly its main path.
+//
+// playbooks.Service.CreateRepo calls this once a new (org, repo, path)
+// playbook is safely stored, so this organization's own shared template
+// projections waiting on exactly that pair resolve immediately, without
+// the provider touching the definition at all. repo_id is this
+// organization's OWN git_repos row (not a shared_repos definition id);
+// joining it to shared_job_templates through git_repos.shared_repo_id is
+// the same join InsertProjectedTemplate/UpdateProjectedTemplate already
+// perform, run here in the opposite direction — from a newly known
+// playbook back to every definition it satisfies, rather than from a
+// definition out to every organization.
+//
+// Touches zero rows, harmlessly, when repo_id names an ordinary
+// (non-shared) repository, or no shared template happens to use this exact
+// path: both are the common case for most playbook registrations, not an
+// error.
+func (q *Queries) ResolveTemplatePlaybooksForNewPath(ctx context.Context, arg ResolveTemplatePlaybooksForNewPathParams) error {
+	_, err := q.db.Exec(ctx, resolveTemplatePlaybooksForNewPath,
+		arg.PlaybookID,
+		arg.OrgID,
+		arg.RepoID,
+		arg.PlaybookPath,
+	)
+	return err
 }
 
 const updateProjectedRepo = `-- name: UpdateProjectedRepo :execrows
@@ -497,6 +950,55 @@ func (q *Queries) UpdateProjectedRepo(ctx context.Context, arg UpdateProjectedRe
 	return result.RowsAffected(), nil
 }
 
+const updateProjectedTemplate = `-- name: UpdateProjectedTemplate :execrows
+UPDATE job_templates SET
+  name = $1,
+  playbook_id = (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
+                   WHERE g.org_id = $2::uuid AND g.shared_repo_id = $3::uuid
+                     AND pb.path = $4 AND pb.source = 'repo' LIMIT 1),
+  "limit" = $5, extra_vars = $6, extra_vars_schema = $7, updated_at = now()
+WHERE org_id = $2::uuid AND shared_template_id = $8::uuid
+`
+
+type UpdateProjectedTemplateParams struct {
+	Name             string    `json:"name"`
+	OrgID            uuid.UUID `json:"org_id"`
+	SharedRepoID     uuid.UUID `json:"shared_repo_id"`
+	PlaybookPath     *string   `json:"playbook_path"`
+	Lim              string    `json:"lim"`
+	ExtraVars        []byte    `json:"extra_vars"`
+	ExtraVarsSchema  []byte    `json:"extra_vars_schema"`
+	SharedTemplateID uuid.UUID `json:"shared_template_id"`
+}
+
+// One organization's projection, propagating the definition's new shared
+// columns AND re-resolving playbook_id against this organization's own
+// git_repos/playbooks rows (the definition's playbook_path or
+// shared_repo_id may have just changed, so a previously-resolved — or
+// previously-NULL — playbook_id must be re-derived, not merely copied).
+// One statement per organization in a loop inside one transaction
+// (shared.SQLStore.UpdateTemplateAndPropagate calls s.d.Begin), for
+// exactly the reason UpdateProjectedRepo's own comment gives: without that
+// transaction, a failure on one organization would leave every
+// organization already updated this call on the NEW value and the rest on
+// the old one.
+func (q *Queries) UpdateProjectedTemplate(ctx context.Context, arg UpdateProjectedTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateProjectedTemplate,
+		arg.Name,
+		arg.OrgID,
+		arg.SharedRepoID,
+		arg.PlaybookPath,
+		arg.Lim,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.SharedTemplateID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateSharedRepo = `-- name: UpdateSharedRepo :one
 UPDATE shared_repos SET name = $1, url = $2, branch = $3, subpath = $4, updated_at = now()
 WHERE id = $5
@@ -534,6 +1036,52 @@ func (q *Queries) UpdateSharedRepo(ctx context.Context, arg UpdateSharedRepoPara
 		&i.Url,
 		&i.Branch,
 		&i.Subpath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateSharedTemplate = `-- name: UpdateSharedTemplate :one
+UPDATE shared_job_templates SET
+  name = $1, shared_repo_id = $2, playbook_path = $3,
+  "limit" = $4, extra_vars = $5, extra_vars_schema = $6, updated_at = now()
+WHERE id = $7
+RETURNING id, name, shared_repo_id, playbook_path, "limit", extra_vars, extra_vars_schema, created_at, updated_at
+`
+
+type UpdateSharedTemplateParams struct {
+	Name            string    `json:"name"`
+	SharedRepoID    uuid.UUID `json:"shared_repo_id"`
+	PlaybookPath    string    `json:"playbook_path"`
+	Lim             string    `json:"lim"`
+	ExtraVars       []byte    `json:"extra_vars"`
+	ExtraVarsSchema []byte    `json:"extra_vars_schema"`
+	ID              uuid.UUID `json:"id"`
+}
+
+// Run inside the same transaction as UpdateProjectedTemplate below
+// (shared.SQLStore.UpdateTemplateAndPropagate), for the same atomicity
+// reason UpdateSharedRepo's own comment gives.
+func (q *Queries) UpdateSharedTemplate(ctx context.Context, arg UpdateSharedTemplateParams) (SharedJobTemplate, error) {
+	row := q.db.QueryRow(ctx, updateSharedTemplate,
+		arg.Name,
+		arg.SharedRepoID,
+		arg.PlaybookPath,
+		arg.Lim,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.ID,
+	)
+	var i SharedJobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.SharedRepoID,
+		&i.PlaybookPath,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

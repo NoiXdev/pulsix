@@ -43,10 +43,25 @@ func NewTemplateLookup(t *templates.SQLStore, p *playbooks.SQLStore, box templat
 // or "repo:<repo-id>:<path>"). An unknown template or playbook — including
 // one belonging to another organization — is jobs.ErrNotFound, exactly what
 // the pre-adapter SQL join answered.
+//
+// A projection of an installation-owned definition (spec v0.2f) whose
+// playbook has not been registered in this organization yet carries
+// PlaybookID == uuid.Nil (templates.Template.PlaybookID's own doc comment:
+// migration 00061 is what made the column nullable in the first place) —
+// that is jobs.ErrTemplateNotReady, not jobs.ErrNotFound, even though a
+// lookup of uuid.Nil against a.playbooks would ALSO come back not-found:
+// the two cases must not collapse into the same message, because the first
+// names a template this organization can see sitting in its own list and
+// the second a row that does not exist at all. Caught here, before the
+// playbook lookup runs, rather than left to fall out of playbooks.
+// ErrNotFound's own meaning overloading in the general case.
 func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID) (jobs.TemplateRow, error) {
 	t, err := a.templates.Get(ctx, orgID, id)
 	if err != nil {
 		return jobs.TemplateRow{}, notFound(err)
+	}
+	if t.PlaybookID == uuid.Nil {
+		return jobs.TemplateRow{}, fmt.Errorf("%w: this template's playbook has not been registered in this organization yet", jobs.ErrTemplateNotReady)
 	}
 	p, err := a.playbooks.Get(ctx, orgID, t.PlaybookID)
 	if err != nil {

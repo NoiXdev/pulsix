@@ -147,6 +147,7 @@ type fixture struct {
 	svc       *templates.Service
 	org       uuid.UUID
 	playbook  uuid.UUID
+	playbook2 uuid.UUID
 	group     uuid.UUID
 	managed   uuid.UUID
 	unmanaged uuid.UUID
@@ -158,6 +159,7 @@ type fixture struct {
 func newFixture() fixture {
 	org := uuid.Must(uuid.NewV7())
 	playbook := uuid.Must(uuid.NewV7())
+	playbook2 := uuid.Must(uuid.NewV7())
 	group := uuid.Must(uuid.NewV7())
 	managed := uuid.Must(uuid.NewV7())
 	unmanaged := uuid.Must(uuid.NewV7())
@@ -166,7 +168,10 @@ func newFixture() fixture {
 	vaultCred := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	svc := templates.NewService(store,
-		fakePlaybooks{byID: map[uuid.UUID]playbooks.Playbook{playbook: {ID: playbook, OrgID: org, Source: playbooks.SourceEditor}}},
+		fakePlaybooks{byID: map[uuid.UUID]playbooks.Playbook{
+			playbook:  {ID: playbook, OrgID: org, Source: playbooks.SourceEditor},
+			playbook2: {ID: playbook2, OrgID: org, Source: playbooks.SourceEditor},
+		}},
 		fakeGroups{known: map[uuid.UUID]bool{group: true}},
 		fakeHosts{list: []hosts.Host{
 			{ID: managed, OrgID: org, Managed: true},
@@ -180,7 +185,7 @@ func newFixture() fixture {
 		testBox(),
 	)
 	return fixture{
-		store: store, svc: svc, org: org, playbook: playbook, group: group,
+		store: store, svc: svc, org: org, playbook: playbook, playbook2: playbook2, group: group,
 		managed: managed, unmanaged: unmanaged, sshCred: sshCred, gitCred: gitCred, vaultCred: vaultCred,
 	}
 }
@@ -389,6 +394,123 @@ func TestDelete(t *testing.T) {
 	}
 	if err := f.svc.Delete(ctx, f.org, created.ID); !errors.Is(err, templates.ErrNotFound) {
 		t.Fatalf("second Delete = %v, want ErrNotFound", err)
+	}
+}
+
+// --- shared template projections (v0.2f Task 6) ---
+
+// TestUpdateRefusesSharedFieldsOnAProjectedTemplateButAllowsScopeAndCredential
+// is spec decision 2's own test for job templates, the direct analogue of
+// repos' TestUpdateRefusesSharedFieldsOnAProjectedRepoButAllowsCredentialID:
+// name, playbook_id, limit and extra vars belong to the installation-owned
+// definition and must be refused on write; scope and the default SSH
+// credential are the projection's own and must still be editable.
+func TestUpdateRefusesSharedFieldsOnAProjectedTemplateButAllowsScopeAndCredential(t *testing.T) {
+	f := newFixture()
+	sharedID := uuid.Must(uuid.NewV7())
+	existing := templates.Template{
+		ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Name: "shared-tpl", PlaybookID: f.playbook,
+		Limit: "web*", ExtraVars: map[string]any{"k": "v"}, SharedTemplateID: &sharedID,
+	}
+	f.store.byID[existing.ID] = existing
+
+	cred := f.sshCred
+	updated, err := f.svc.Update(ctx, f.org, existing.ID, templates.UpdateInput{
+		Name: existing.Name, PlaybookID: existing.PlaybookID, Limit: existing.Limit, ExtraVars: existing.ExtraVars,
+		Scope: templates.Scope{HostIDs: []uuid.UUID{f.managed}}, CredentialID: &cred,
+	})
+	if err != nil {
+		t.Fatalf("Update() scope/credential on a projection error = %v, want nil", err)
+	}
+	if updated.CredentialID == nil || *updated.CredentialID != cred {
+		t.Fatalf("Update() CredentialID = %v, want %v", updated.CredentialID, cred)
+	}
+	if len(updated.Scope.HostIDs) != 1 || updated.Scope.HostIDs[0] != f.managed {
+		t.Fatalf("Update() Scope = %+v, want HostIDs=[%v]", updated.Scope, f.managed)
+	}
+
+	for _, tt := range []struct {
+		name string
+		in   templates.UpdateInput
+	}{
+		{"name", templates.UpdateInput{Name: "renamed", PlaybookID: existing.PlaybookID, Limit: existing.Limit, ExtraVars: existing.ExtraVars}},
+		{"limit", templates.UpdateInput{Name: existing.Name, PlaybookID: existing.PlaybookID, Limit: "changed", ExtraVars: existing.ExtraVars}},
+		{"extra_vars", templates.UpdateInput{Name: existing.Name, PlaybookID: existing.PlaybookID, Limit: existing.Limit, ExtraVars: map[string]any{"k": "different"}}},
+		{"playbook_id", templates.UpdateInput{Name: existing.Name, PlaybookID: f.playbook2, Limit: existing.Limit, ExtraVars: existing.ExtraVars}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := f.svc.Update(ctx, f.org, existing.ID, tt.in); !errors.Is(err, templates.ErrInvalidInput) {
+				t.Fatalf("Update() change %s on a projection error = %v, want ErrInvalidInput", tt.name, err)
+			}
+		})
+	}
+}
+
+// TestUpdateProjectedTemplateWithUnresolvedPlaybookStillAllowsScopeEdit
+// proves a projection whose playbook_id has not resolved yet (migration
+// 00061's own reason job_templates.playbook_id became nullable: an
+// organization's clone may not have synced the definition's playbook_path
+// yet) can still have its own fields edited — Update must not re-run
+// Service's ordinary playbooks.Get lookup against a PlaybookID that is not
+// a real playbook at all, which would turn every edit of an unconfigured
+// projection into a spurious "playbook does not exist".
+func TestUpdateProjectedTemplateWithUnresolvedPlaybookStillAllowsScopeEdit(t *testing.T) {
+	f := newFixture()
+	sharedID := uuid.Must(uuid.NewV7())
+	existing := templates.Template{
+		ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Name: "unresolved", PlaybookID: uuid.Nil,
+		SharedTemplateID: &sharedID, ExtraVars: map[string]any{},
+	}
+	f.store.byID[existing.ID] = existing
+
+	updated, err := f.svc.Update(ctx, f.org, existing.ID, templates.UpdateInput{
+		Name: existing.Name, PlaybookID: uuid.Nil, ExtraVars: existing.ExtraVars,
+		Scope: templates.Scope{HostIDs: []uuid.UUID{f.managed}},
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil — an unresolved projection's playbook_id must not be re-validated", err)
+	}
+	if updated.PlaybookID != uuid.Nil {
+		t.Fatalf("PlaybookID = %v, want uuid.Nil (still unresolved)", updated.PlaybookID)
+	}
+}
+
+// TestDeleteRefusesAProjectedTemplateInsideAnOrganization is spec decision
+// 6's own test for job templates, the direct analogue of repos'
+// TestDeleteRefusesAProjectedRepoInsideAnOrganization: an organization
+// cannot delete its own projection, and the refusal is ErrForbidden, not
+// ErrInvalidInput — the two sentinels must not collapse into one (754d884's
+// own fix for the repository version of this exact mistake).
+func TestDeleteRefusesAProjectedTemplateInsideAnOrganization(t *testing.T) {
+	f := newFixture()
+	sharedID := uuid.Must(uuid.NewV7())
+	existing := templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Name: "shared-tpl", PlaybookID: f.playbook, SharedTemplateID: &sharedID}
+	f.store.byID[existing.ID] = existing
+
+	err := f.svc.Delete(ctx, f.org, existing.ID)
+	if !errors.Is(err, templates.ErrForbidden) {
+		t.Fatalf("Delete() error = %v, want ErrForbidden", err)
+	}
+	if errors.Is(err, templates.ErrInvalidInput) {
+		t.Fatalf("Delete() error = %v, must not also be ErrInvalidInput — the two refusals must not share a sentinel", err)
+	}
+	if _, ok := f.store.byID[existing.ID]; !ok {
+		t.Fatal("projection deleted from the fake store by a refused Delete, want it to survive")
+	}
+}
+
+// TestDeleteOfAnOrdinaryTemplateIsUnaffected proves the SharedTemplateID
+// check added for decision 6 does not touch an ordinary template's own
+// Delete path — the regression an inline nil-check is most likely to
+// introduce if written the wrong way round.
+func TestDeleteOfAnOrdinaryTemplateIsUnaffected(t *testing.T) {
+	f := newFixture()
+	created, err := f.svc.Create(ctx, f.org, f.in())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Delete(ctx, f.org, created.ID); err != nil {
+		t.Fatalf("Delete() of an ordinary template error = %v, want nil", err)
 	}
 }
 

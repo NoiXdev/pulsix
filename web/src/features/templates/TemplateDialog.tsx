@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -80,6 +81,7 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
           vars: t.extra_vars ?? {},
           credentialId: t.credential_id ?? '',
           vaultIdentities: rowsFromIdentities(t.vault_identities),
+          sharedTemplateId: t.shared_template_id,
         }}
         playbooks={playbooks.data?.playbooks ?? []}
         credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
@@ -112,6 +114,16 @@ interface Existing {
   vars: Vars;
   credentialId: string;
   vaultIdentities: VaultIdentityRow[];
+  /** Set when this template is a projection of an installation-owned
+   * definition (spec v0.2f decisions 1, 2). Its presence, not its value, is
+   * what the form acts on: name, playbook, limit and the extra-vars schema
+   * (and the vars themselves) become read-only — templates.Service already
+   * refuses to change them on a projection (refuseSharedFieldChange,
+   * internal/templates/service.go) regardless of what this dialog sends,
+   * the same reasoning RepoDialog's own `projected` flag documents. Scope,
+   * the default SSH credential and the vault identity set stay editable:
+   * they are the projection's own. */
+  sharedTemplateId?: string;
 }
 
 function TemplateForm({
@@ -132,6 +144,14 @@ function TemplateForm({
   const toast = useToast();
   const create = useCreateTemplate(org);
   const update = useUpdateTemplate(org, existing?.id ?? '');
+  // Set means this row is a projection of an installation-owned definition
+  // (spec v0.2f decision 1): name, playbook, limit, extra vars and their
+  // schema are the definition's own, refused on write by templates.Service.
+  // Update (refuseSharedFieldChange, internal/templates/service.go)
+  // regardless of what this dialog sends, so they are disabled rather than
+  // merely validated client-side — RepoDialog's own `projected` flag, same
+  // reasoning.
+  const projected = Boolean(existing?.sharedTemplateId);
 
   const [name, setName] = useState(existing?.name ?? '');
   const [playbookId, setPlaybookId] = useState(existing?.playbookId ?? '');
@@ -198,7 +218,15 @@ function TemplateForm({
   return (
     <Dialog open onClose={onClose} size="wide" title={existing?.name ?? 'New job template'}>
       <form onSubmit={submit} className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto">
-        <div className="grid grid-cols-2 gap-3">
+        {projected && (
+          <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5">
+            <Pill tone="accent">Installation-managed</Pill>
+            <span className="text-[11px] text-muted-foreground">
+              Name, playbook, limit and extra vars belong to the installation&apos;s definition.
+            </span>
+          </div>
+        )}
+        <fieldset disabled={projected} className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="template-name">Name</Label>
             <Input id="template-name" className="font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="deploy-site" autoFocus={!existing} />
@@ -208,29 +236,32 @@ function TemplateForm({
             <Select
               id="template-playbook"
               required
+              disabled={projected}
               options={playbooks.map((p) => ({ value: p.id, label: p.source === 'repo' ? `repo: ${p.path ?? ''}` : p.summary || 'editor playbook' }))}
               value={playbookId}
               onChange={setPlaybookId}
               placeholder="Choose a playbook…"
             />
           </div>
-        </div>
+        </fieldset>
         <ScopePicker org={org} value={scope} onChange={setScope} />
-        <div className="flex flex-col gap-1">
+        <fieldset disabled={projected} className="flex flex-col gap-1">
           <Label htmlFor="template-limit">Limit pattern</Label>
           <Input id="template-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="e.g. web*:&!web-03" />
           <span className="text-[11px] text-muted-foreground">Free-form ansible limit pattern, empty = no limit.</span>
-        </div>
-        <details className="rounded-md border border-border p-3" open={!!existing?.schema}>
-          <summary className="cursor-pointer text-xs font-semibold">Extra vars schema</summary>
-          <div className="pt-3">
-            <SchemaBuilder value={schema ?? { fields: [] }} onChange={setSchema} problems={schemaProblems} nested />
-          </div>
-        </details>
+        </fieldset>
+        <fieldset disabled={projected}>
+          <details className="rounded-md border border-border p-3" open={!!existing?.schema}>
+            <summary className="cursor-pointer text-xs font-semibold">Extra vars schema</summary>
+            <div className="pt-3">
+              <SchemaBuilder value={schema ?? { fields: [] }} onChange={setSchema} problems={schemaProblems} nested />
+            </div>
+          </details>
+        </fieldset>
         {fields.length > 0 && (
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold">Extra vars</span>
-            <SchemaForm fields={fields} value={vars} onChange={setVars} problems={varProblems} idPrefix="template-vars" />
+            <SchemaForm fields={fields} value={vars} onChange={setVars} problems={varProblems} idPrefix="template-vars" disabled={projected} />
           </div>
         )}
         <div className="flex flex-col gap-1">

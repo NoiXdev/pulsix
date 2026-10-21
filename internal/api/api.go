@@ -501,6 +501,9 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// /admin/repos/definitions... — instance admin, session only (spec
 	// v0.2f decision 8: no org_id, no per-org access at all).
 	registerSharedRepoRoutes(hapi, deps)
+	// /admin/templates/definitions... — Task 6's own application of the
+	// same posture, for job templates.
+	registerSharedTemplateRoutes(hapi, deps)
 	// GET /me/activity spans every org the caller belongs to, so — like
 	// registerOrgRoutes above — it takes no org in its path and accepts no
 	// bearer credential: a token is scoped to the one org it was minted

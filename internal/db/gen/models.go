@@ -550,17 +550,18 @@ type JobEvent struct {
 }
 
 type JobTemplate struct {
-	ID              uuid.UUID   `json:"id"`
-	OrgID           uuid.UUID   `json:"org_id"`
-	Name            string      `json:"name"`
-	PlaybookID      uuid.UUID   `json:"playbook_id"`
-	Scope           []byte      `json:"scope"`
-	Limit           string      `json:"limit"`
-	ExtraVars       []byte      `json:"extra_vars"`
-	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
-	CredentialID    pgtype.UUID `json:"credential_id"`
-	CreatedAt       time.Time   `json:"created_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	ID               uuid.UUID   `json:"id"`
+	OrgID            uuid.UUID   `json:"org_id"`
+	Name             string      `json:"name"`
+	PlaybookID       pgtype.UUID `json:"playbook_id"`
+	Scope            []byte      `json:"scope"`
+	Limit            string      `json:"limit"`
+	ExtraVars        []byte      `json:"extra_vars"`
+	ExtraVarsSchema  []byte      `json:"extra_vars_schema"`
+	CredentialID     pgtype.UUID `json:"credential_id"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	SharedTemplateID pgtype.UUID `json:"shared_template_id"`
 }
 
 type JobTemplateVaultCredential struct {
@@ -807,6 +808,18 @@ type Session struct {
 	ExpiresAt   time.Time          `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	MfaAt       pgtype.Timestamptz `json:"mfa_at"`
+}
+
+type SharedJobTemplate struct {
+	ID              uuid.UUID `json:"id"`
+	Name            string    `json:"name"`
+	SharedRepoID    uuid.UUID `json:"shared_repo_id"`
+	PlaybookPath    string    `json:"playbook_path"`
+	Limit           string    `json:"limit"`
+	ExtraVars       []byte    `json:"extra_vars"`
+	ExtraVarsSchema []byte    `json:"extra_vars_schema"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type SharedRepo struct {

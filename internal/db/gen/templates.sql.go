@@ -33,7 +33,7 @@ func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) 
 }
 
 const getTemplate = `-- name: GetTemplate :one
-SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at FROM job_templates WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id FROM job_templates WHERE org_id = $1 AND id = $2
 `
 
 type GetTemplateParams struct {
@@ -59,6 +59,7 @@ func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (JobTe
 		&i.CredentialID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedTemplateID,
 	)
 	return i, err
 }
@@ -66,14 +67,14 @@ func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (JobTe
 const insertTemplate = `-- name: InsertTemplate :one
 INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id
 `
 
 type InsertTemplateParams struct {
 	ID              uuid.UUID   `json:"id"`
 	OrgID           uuid.UUID   `json:"org_id"`
 	Name            string      `json:"name"`
-	PlaybookID      uuid.UUID   `json:"playbook_id"`
+	PlaybookID      pgtype.UUID `json:"playbook_id"`
 	Scope           []byte      `json:"scope"`
 	Limit           string      `json:"limit"`
 	ExtraVars       []byte      `json:"extra_vars"`
@@ -110,12 +111,13 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		&i.CredentialID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedTemplateID,
 	)
 	return i, err
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at FROM job_templates WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id FROM job_templates WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemplate, error) {
@@ -139,6 +141,7 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemp
 			&i.CredentialID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SharedTemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -155,14 +158,14 @@ UPDATE job_templates SET
   name = $3, playbook_id = $4, scope = $5, "limit" = $6,
   extra_vars = $7, extra_vars_schema = $8, credential_id = $9, updated_at = now()
 WHERE org_id = $1 AND id = $2
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id
 `
 
 type UpdateTemplateParams struct {
 	OrgID           uuid.UUID   `json:"org_id"`
 	ID              uuid.UUID   `json:"id"`
 	Name            string      `json:"name"`
-	PlaybookID      uuid.UUID   `json:"playbook_id"`
+	PlaybookID      pgtype.UUID `json:"playbook_id"`
 	Scope           []byte      `json:"scope"`
 	Limit           string      `json:"limit"`
 	ExtraVars       []byte      `json:"extra_vars"`
@@ -197,6 +200,7 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		&i.CredentialID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedTemplateID,
 	)
 	return i, err
 }
