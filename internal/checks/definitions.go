@@ -283,7 +283,8 @@ func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in Defi
 // guarantees its UPDATE can land.
 //
 // Narrow on purpose. It bites only on a key a SHARED projection in this
-// organization already holds, at any scope. The same key at two different
+// organization already holds, at any scope on create and whenever an
+// update lands the row at org scope. The same key at two different
 // scopes stays legal otherwise — NULLS NOT DISTINCT allows it deliberately,
 // and disk org-wide alongside disk on one host with different parameters is
 // a real configuration — so widening this to a general cross-scope ban

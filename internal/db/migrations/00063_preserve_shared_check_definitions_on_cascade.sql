@@ -91,7 +91,10 @@
 --     slot is free, because of 00043's UNIQUE NULLS NOT DISTINCT. What
 --     keeps it free is checks.Service.refuseKeyHeldBySharedProjection,
 --     which refuses an organization's own check taking a key a shared
---     projection already holds at any scope. If that guard is ever
+--     projection already holds — unconditionally when a check is
+--     created, and whenever an update LANDS one at org scope, which is
+--     the only binding that can take this UPDATE's target tuple. If that
+--     guard is ever
 --     removed or narrowed, this UPDATE starts raising 23505 and aborting
 --     the customer's own DELETE FROM monitoring_groups — the exact
 --     outcome the fix exists to prevent, arriving through the fix itself.
