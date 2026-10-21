@@ -224,10 +224,15 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 	if err != nil {
 		return nil, fmt.Errorf("claim job: %w", err)
 	}
+	job := toJob(row)
+	if job.Kind == KindRun {
+		if err := q.recordClaimVaultIdentities(ctx, tx, job); err != nil {
+			return nil, fmt.Errorf("record vault identities: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit claim: %w", err)
 	}
-	job := toJob(row)
 	claim := &Claim{Token: ""}
 	if err := q.buildPayload(db.WithOrgScope(ctx, job.OrgID), job, &claim.Job); err != nil {
 		if failErr := q.failJob(ctx, job.ID, err); failErr != nil {
@@ -246,6 +251,83 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 	q.streams.register(job.ID, job.OrgID, token, job.Attempts, job.CreatedAt, q.now())
 	return claim, nil
 }
+
+// recordClaimVaultIdentities writes job's resolved vault identity set
+// (backlog 2.91) through tx — the SAME transaction claim's own ClaimJob
+// UPDATE runs in — so the row this transaction commits as 'running' can
+// never be observed without its record already alongside it. identities is
+// always a JSON array, non-nil, never a bare "null": an inline playbook, or
+// a repository and template that name no vault at all, is a real empty
+// record, not a missing one (migration 00064's own comment).
+//
+// A resolution failure (an unresolvable template or repository) is
+// swallowed rather than aborting the claim: buildPayload resolves the exact
+// same thing again moments later, after commit, and fails the claimed job
+// through the ordinary terminal path when it genuinely cannot be built.
+// Aborting the claim here instead would roll the whole transaction back and
+// leave the row stuck at 'queued' — reclaimed and retried forever, since
+// nothing would ever mark it done. Only a failure of the UPDATE itself
+// (the actual write to this transaction's own row) is treated as fatal,
+// because that one has no second chance to run.
+func (q *SQLQueue) recordClaimVaultIdentities(ctx context.Context, tx pgx.Tx, job Job) error {
+	identities, err := q.resolveClaimVaultIdentities(ctx, job)
+	if err != nil {
+		return nil //nolint:nilerr // best-effort; see the function's own comment
+	}
+	b, err := json.Marshal(identities)
+	if err != nil {
+		return fmt.Errorf("encode vault identities: %w", err)
+	}
+	if err := gen.New(tx).RecordVaultIdentities(ctx, gen.RecordVaultIdentitiesParams{ID: job.ID, Identities: b}); err != nil {
+		return fmt.Errorf("persist resolved vault identities: %w", err)
+	}
+	return nil
+}
+
+// resolveClaimVaultIdentities is resolveVaultIdentities' own merge (the
+// repository's and template's labelled sets, the template winning a label
+// collision — spec decision 2) without opening any secret: this runs ahead
+// of the claim's commit, while the row's lock is held, and a vault
+// credential's OpenSecret call has no business inside that window.
+// buildPayload re-resolves the identical merge after commit to actually
+// reveal the secrets the worker needs; the two calls can only disagree if
+// the repository or template changes in the instant between them, which is
+// not the drift this backlog row is about (that is a repository edited
+// days later, long after this job is no longer "claiming").
+//
+// The return value is always non-nil: an inline playbook, or a repo and
+// template naming no vault identity, resolves to an empty slice — a real
+// answer, not "nothing to report" — so the only nil this ever returns
+// travels with a non-nil error.
+func (q *SQLQueue) resolveClaimVaultIdentities(ctx context.Context, job Job) ([]VaultIdentity, error) {
+	if job.TemplateID == nil {
+		return []VaultIdentity{}, nil
+	}
+	scoped := db.WithOrgScope(ctx, job.OrgID)
+	tmpl, err := q.templates.TemplateLookup(scoped, job.OrgID, *job.TemplateID)
+	if err != nil {
+		return nil, fmt.Errorf("look up template: %w", err)
+	}
+	repoID, _, isRepo := parsePlaybookRef(playbookRef(tmpl))
+	if !isRepo {
+		return []VaultIdentity{}, nil
+	}
+	if q.repos == nil {
+		return nil, fmt.Errorf("repo playbook %s: no repo source wired", repoID)
+	}
+	repo, err := q.repos.Get(scoped, job.OrgID, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo %s: %w", repoID, err)
+	}
+	if len(repo.VaultIdentities) == 0 && len(tmpl.VaultIdentities) == 0 {
+		return []VaultIdentity{}, nil
+	}
+	if q.vaultResolver == nil {
+		return nil, fmt.Errorf("repo playbook %s: no vault resolver wired", repoID)
+	}
+	return q.vaultResolver.ResolveVaultIdentities(repo.VaultIdentities, tmpl.VaultIdentities), nil
+}
+
 func (q *SQLQueue) newToken() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := io.ReadFull(q.rand, buf); err != nil {

@@ -4229,6 +4229,8 @@ export interface components {
             /** @description The schedule or webhook trigger that started the job */
             trigger_ref?: string;
             vault_identities: components["schemas"]["JobVaultIdentityDTO"][] | null;
+            /** @enum {string} */
+            vault_identities_source: "recorded" | "computed";
             worker_name?: string;
             zone_id: string;
         };

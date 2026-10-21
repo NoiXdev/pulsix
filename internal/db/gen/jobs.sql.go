@@ -95,7 +95,7 @@ WHERE id = (
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities
 `
 
 type ClaimJobParams struct {
@@ -144,6 +144,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.RotationCredentialID,
 		&i.TriggerRef,
 		&i.RunGroupReported,
+		&i.ResolvedVaultIdentities,
 	)
 	return i, err
 }
@@ -172,7 +173,7 @@ const createJob = `-- name: CreateJob :one
 INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
                   depends_on, rotation_credential_id, trigger_ref)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities
 `
 
 type CreateJobParams struct {
@@ -234,6 +235,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.RotationCredentialID,
 		&i.TriggerRef,
 		&i.RunGroupReported,
+		&i.ResolvedVaultIdentities,
 	)
 	return i, err
 }
@@ -312,7 +314,7 @@ func (q *Queries) FailExhaustedStaleJob(ctx context.Context, arg FailExhaustedSt
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, u.display_name AS actor_name, w.name AS worker_name,
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
@@ -327,32 +329,33 @@ type GetJobParams struct {
 }
 
 type GetJobRow struct {
-	ID                   uuid.UUID          `json:"id"`
-	OrgID                uuid.UUID          `json:"org_id"`
-	ZoneID               uuid.UUID          `json:"zone_id"`
-	Kind                 string             `json:"kind"`
-	TemplateID           pgtype.UUID        `json:"template_id"`
-	HostIds              []uuid.UUID        `json:"host_ids"`
-	Status               string             `json:"status"`
-	WorkerID             pgtype.UUID        `json:"worker_id"`
-	ClaimedAt            pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt            pgtype.Timestamptz `json:"started_at"`
-	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
-	Stats                []byte             `json:"stats"`
-	Error                string             `json:"error"`
-	RunGroupID           uuid.UUID          `json:"run_group_id"`
-	Trigger              string             `json:"trigger"`
-	ActorID              pgtype.UUID        `json:"actor_id"`
-	Payload              []byte             `json:"payload"`
-	CreatedAt            time.Time          `json:"created_at"`
-	Attempts             int32              `json:"attempts"`
-	DependsOn            pgtype.UUID        `json:"depends_on"`
-	RotationCredentialID pgtype.UUID        `json:"rotation_credential_id"`
-	TriggerRef           pgtype.UUID        `json:"trigger_ref"`
-	RunGroupReported     bool               `json:"run_group_reported"`
-	ActorName            *string            `json:"actor_name"`
-	WorkerName           *string            `json:"worker_name"`
-	TemplateName         *string            `json:"template_name"`
+	ID                      uuid.UUID          `json:"id"`
+	OrgID                   uuid.UUID          `json:"org_id"`
+	ZoneID                  uuid.UUID          `json:"zone_id"`
+	Kind                    string             `json:"kind"`
+	TemplateID              pgtype.UUID        `json:"template_id"`
+	HostIds                 []uuid.UUID        `json:"host_ids"`
+	Status                  string             `json:"status"`
+	WorkerID                pgtype.UUID        `json:"worker_id"`
+	ClaimedAt               pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz `json:"finished_at"`
+	Stats                   []byte             `json:"stats"`
+	Error                   string             `json:"error"`
+	RunGroupID              uuid.UUID          `json:"run_group_id"`
+	Trigger                 string             `json:"trigger"`
+	ActorID                 pgtype.UUID        `json:"actor_id"`
+	Payload                 []byte             `json:"payload"`
+	CreatedAt               time.Time          `json:"created_at"`
+	Attempts                int32              `json:"attempts"`
+	DependsOn               pgtype.UUID        `json:"depends_on"`
+	RotationCredentialID    pgtype.UUID        `json:"rotation_credential_id"`
+	TriggerRef              pgtype.UUID        `json:"trigger_ref"`
+	RunGroupReported        bool               `json:"run_group_reported"`
+	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
+	ActorName               *string            `json:"actor_name"`
+	WorkerName              *string            `json:"worker_name"`
+	TemplateName            *string            `json:"template_name"`
 }
 
 // Scoped by org_id in the WHERE clause, not only relying on RLS (see
@@ -392,6 +395,7 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.RotationCredentialID,
 		&i.TriggerRef,
 		&i.RunGroupReported,
+		&i.ResolvedVaultIdentities,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
@@ -589,7 +593,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities FROM jobs
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -671,6 +675,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.RotationCredentialID,
 			&i.TriggerRef,
 			&i.RunGroupReported,
+			&i.ResolvedVaultIdentities,
 		); err != nil {
 			return nil, err
 		}
@@ -752,6 +757,29 @@ func (q *Queries) PinRepoHostKey(ctx context.Context, arg PinRepoHostKeyParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordVaultIdentities = `-- name: RecordVaultIdentities :exec
+UPDATE jobs SET resolved_vault_identities = $1::jsonb WHERE id = $2
+`
+
+type RecordVaultIdentitiesParams struct {
+	Identities []byte    `json:"identities"`
+	ID         uuid.UUID `json:"id"`
+}
+
+// The claim-time record backlog 2.91 exists for: called from the same
+// transaction ClaimJob's UPDATE runs in (internal/jobs/queue_sql.go's
+// claim), so a job this transaction commits as 'running' can never be
+// read back without its resolved vault identity set already committed
+// alongside it. identities is always a JSON array, even an empty one — see
+// migration 00064's own comment for why NULL (never called) and '[]'
+// (called, nothing to decrypt) must stay distinguishable. Never called
+// again after this: a run's own history does not change after the run
+// that made it, and nothing else about this column is ever written.
+func (q *Queries) RecordVaultIdentities(ctx context.Context, arg RecordVaultIdentitiesParams) error {
+	_, err := q.db.Exec(ctx, recordVaultIdentities, arg.Identities, arg.ID)
+	return err
 }
 
 const requeueStaleJobs = `-- name: RequeueStaleJobs :many

@@ -1075,6 +1075,161 @@ func TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel(t *testin
 	}
 }
 
+// TestQueueClaimRecordsVaultIdentitiesImmuneToALaterRepoEdit is backlog
+// 2.91's own reason for existing, driven at the store level rather than
+// through the API's DTOs: a run is claimed with the repository's and
+// template's vault identities as they stand right then; the repository is
+// edited afterward (a different credential under the SAME label — the
+// drift the old recompute-on-read code could never tell apart from the
+// original); and the job row's own stored record must still read what the
+// run actually received, not today's configuration. The API-level
+// equivalent (TestRunDetailStillShowsTheClaimedVaultIdentitiesAfterARepoEdit
+// in internal/api) is the one that also proves the HTTP response reads this
+// record instead of recomputing; this one pins that the record itself is
+// correct and durable once the queue's claim writes it.
+func TestQueueClaimRecordsVaultIdentitiesImmuneToALaterRepoEdit(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-vault-record-org")
+	box := crypto.NewBox(testBoxKey("jobs-vault-record-claim-key-0123"))
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+
+	scoped := db.WithOrgScope(ctx, org)
+	zone, err := hostsSvc.CreateZone(scoped, org, "z1", "Zone 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostCred, err := credsSvc.Create(scoped, org, credentials.CreateInput{
+		Name: "host-login", Kind: credentials.KindSSHKey, Username: "ansible",
+		Material: credentials.Material{Generate: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCred, err := credsSvc.Create(scoped, org, credentials.CreateInput{
+		Name: "prod-vault-old", Kind: credentials.KindVaultPassword, Material: credentials.Material{Password: "old-passphrase"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCred, err := credsSvc.Create(scoped, org, credentials.CreateInput{
+		Name: "prod-vault-new", Kind: credentials.KindVaultPassword, Material: credentials.Material{Password: "new-passphrase"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{Name: "web1", Address: "10.0.0.1", ZoneID: zone.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sshSvc.SetHostSSH(scoped, org, host.ID, sshconf.HostSSHInput{
+		CredentialID: &hostCred.ID, Port: 22, BastionMode: sshconf.ModeInherit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	grp, err := invSvc.CreateGroup(scoped, org, inventory.GroupInput{Name: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invSvc.Assign(scoped, org, grp.ID, host.ID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	templateStore := templates.NewSQLStore(d)
+	playbooksStore := playbooks.NewSQLStore(d)
+	lookup := app.NewTemplateLookup(templateStore, playbooksStore, box)
+	resolver := jobs.NewScopeResolver(invSvc, invSvc, hostsSvc)
+	jobStore := jobs.NewSQLStore(d)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
+	svc := jobs.NewService(jobStore, queue, lookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+
+	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
+	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
+	queue.SetVaultResolver(vaultResolverAdapter{})
+	sharedSvc := shared.NewService(shared.NewSQLStore(d))
+	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, sharedSvc)
+	templatesSvc := templates.NewService(templateStore, playbooksSvc, invSvc, hostsSvc, credsSvc, box)
+
+	repo, err := reposSvc.Create(scoped, org, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/acme/infra.git",
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: oldCred.ID, Label: "prod"}},
+	})
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	pb, err := playbooksSvc.CreateRepo(scoped, org, repo.ID, "site.yml")
+	if err != nil {
+		t.Fatalf("create repo playbook: %v", err)
+	}
+	tmpl, err := templatesSvc.Create(scoped, org, templates.CreateInput{
+		Name: "deploy", PlaybookID: pb.ID, Scope: templates.Scope{GroupID: &grp.ID},
+	})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	created, err := svc.EnqueueRun(scoped, org, tmpl.ID, nil)
+	if err != nil {
+		t.Fatalf("EnqueueRun: %v", err)
+	}
+	jobID := created[0].ID
+
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{zone.ID}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	if got := claim.Job.GetId(); got != jobID.String() {
+		t.Fatalf("claimed %s, want %s", got, jobID)
+	}
+
+	// What the claim itself shipped: the old credential, under "prod".
+	shipped := claim.Job.GetVaultIdentities()
+	if len(shipped) != 1 || shipped[0].GetCredentialId() != oldCred.ID.String() || shipped[0].GetLabel() != "prod" {
+		t.Fatalf("claim's own vault_identities = %v, want one entry {label: \"prod\", credential_id: %q}", shipped, oldCred.ID)
+	}
+
+	// The repository is edited after the claim: the SAME label "prod" now
+	// names a different credential — the exact drift the old
+	// recompute-on-read code could never distinguish from "this is what the
+	// run always had".
+	if _, err := reposSvc.Update(scoped, org, repo.ID, repos.UpdateInput{
+		Name: repo.Name, URL: repo.URL, Branch: repo.Branch,
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: newCred.ID, Label: "prod"}},
+	}); err != nil {
+		t.Fatalf("update repo: %v", err)
+	}
+
+	// The job's own stored record must still read the credential the run
+	// was actually given — not the repository's current one.
+	got, err := jobStore.GetJob(scoped, org, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if !got.VaultIdentitiesRecorded {
+		t.Fatal("VaultIdentitiesRecorded = false, want true: the claim already committed a record")
+	}
+	if len(got.ResolvedVaultIdentities) != 1 || got.ResolvedVaultIdentities[0].CredentialID != oldCred.ID || got.ResolvedVaultIdentities[0].Label != "prod" {
+		t.Fatalf("stored ResolvedVaultIdentities = %+v, want one entry {label: \"prod\", credential_id: %s} (the OLD credential, unaffected by the later edit)", got.ResolvedVaultIdentities, oldCred.ID)
+	}
+
+	// A fresh resolution against the repository's CURRENT configuration
+	// would instead name the new credential — proof this test's setup
+	// really did change something, not merely re-asserted the original.
+	live, err := reposSvc.Get(scoped, org, repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live.VaultIdentities) != 1 || live.VaultIdentities[0].CredentialID != newCred.ID {
+		t.Fatalf("repository's live vault identities = %+v, want the NEW credential (setup check)", live.VaultIdentities)
+	}
+}
+
 func keysOf(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

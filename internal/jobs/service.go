@@ -210,6 +210,21 @@ type Job struct {
 	// the box before insert and the queue opens it at claim time; the
 	// stored form is a base64 JSON string. Never logged, never served.
 	Payload json.RawMessage
+	// VaultIdentitiesRecorded reports whether ResolvedVaultIdentities was
+	// actually written at claim time (backlog 2.91), as opposed to the
+	// column simply being empty because there was nothing to decrypt. A run
+	// still queued, one claimed before migration 00064 existed, and a job
+	// cancelled before it was ever claimed all read false — the only honest
+	// answer for those is today's configuration, not a stored one that was
+	// never made.
+	VaultIdentitiesRecorded bool
+	// ResolvedVaultIdentities is the run's vault identity set exactly as
+	// claim time resolved it (internal/jobs/queue_sql.go's claim), valid
+	// only when VaultIdentitiesRecorded is true. Reading it instead of
+	// recomputing from the repository's and template's current
+	// configuration is the whole point: an edit made after the run changes
+	// nothing this slice says.
+	ResolvedVaultIdentities []VaultIdentity
 }
 
 // Event is one run event a worker streamed in, as stored in job_events.
