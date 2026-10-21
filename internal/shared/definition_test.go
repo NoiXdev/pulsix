@@ -130,3 +130,42 @@ func TestNameCollisionErrorMatchesErrNameTaken(t *testing.T) {
 		t.Fatal("errors.Is(NameCollisionError, ErrNameTaken) = false, want true")
 	}
 }
+
+// TestNameCollisionErrorMessage pins the exact Error() text — never
+// composed in a test until now, even though mapSharedErr
+// (internal/api/shared_handlers.go) never calls it directly either (it
+// re-derives a sentence from Name/Orgs instead); this exists purely so a
+// future reader changing the format sees a failing test, not a silent
+// drift from what this comment documents.
+func TestNameCollisionErrorMessage(t *testing.T) {
+	err := &shared.NameCollisionError{Name: "ansible-base", Orgs: []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}}
+	want := `name "ansible-base" is already used by 2 organization(s)`
+	if got := err.Error(); got != want {
+		t.Fatalf("NameCollisionError.Error() = %q, want %q", got, want)
+	}
+}
+
+// TestInUseErrorMessageAndUnwrap is NameCollisionError's own pair of tests
+// for the other richer sentinel (spec decision 5): both of Error()'s
+// branches (a named reason, and the backstop with none at all — a
+// foreign-key violation caught with nothing explicit to name, InUseError's
+// own doc comment) and that errors.Is still matches ErrInUse through
+// Unwrap.
+func TestInUseErrorMessageAndUnwrap(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+
+	named := &shared.InUseError{OrgID: org, Reasons: []string{"a job trigger", "a playbook"}}
+	wantNamed := "organization " + org.String() + ": a job trigger, a playbook still reference this definition's projection"
+	if got := named.Error(); got != wantNamed {
+		t.Fatalf("InUseError.Error() with reasons = %q, want %q", got, wantNamed)
+	}
+	if !errors.Is(named, shared.ErrInUse) {
+		t.Fatal("errors.Is(InUseError, ErrInUse) = false, want true")
+	}
+
+	bare := &shared.InUseError{OrgID: org}
+	wantBare := "organization " + org.String() + " still has a dependant referencing this definition's projection"
+	if got := bare.Error(); got != wantBare {
+		t.Fatalf("InUseError.Error() with no reasons = %q, want %q", got, wantBare)
+	}
+}

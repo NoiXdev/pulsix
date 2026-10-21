@@ -891,3 +891,95 @@ func TestSharedJobTemplatesSchema(t *testing.T) {
 			"through internal/templates/service.go's own playbooks.Get before writing", playbookIDNullable)
 	}
 }
+
+// TestSharedCheckDefinitionsSchema is TestSharedJobTemplatesSchema's own test
+// for migration 00062, the third and last application of the mechanism:
+// shared_check_definitions must carry neither org_id nor row-level security
+// (installation-level data, the same posture shared_repos and
+// shared_job_templates already have); check_definitions.shared_definition_id
+// must be nullable with ON DELETE RESTRICT, the same shape the other two
+// kinds' own projection column carries; and origin's own CHECK constraint
+// must now admit 'shared' alongside 'seed' and 'custom' — the one column
+// this migration widens rather than adds, verified here by reading the
+// constraint back from the live catalog rather than trusting that the
+// DROP/ADD in the migration file did what it says.
+func TestSharedCheckDefinitionsSchema(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+
+	var hasOrgID bool
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_attribute a
+			JOIN pg_class c ON c.oid = a.attrelid
+			WHERE c.relname = 'shared_check_definitions' AND a.attname = 'org_id' AND NOT a.attisdropped
+		)`).Scan(&hasOrgID); err != nil {
+		t.Fatalf("check org_id column: %v", err)
+	}
+	if hasOrgID {
+		t.Error("shared_check_definitions must not have an org_id column; it is installation-level, not tenant data")
+	}
+
+	var rls bool
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT c.relrowsecurity FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		WHERE c.relname = 'shared_check_definitions'`).Scan(&rls); err != nil {
+		t.Fatalf("check relrowsecurity: %v", err)
+	}
+	if rls {
+		t.Error("shared_check_definitions must not carry row-level security; it is visible to every organization by design")
+	}
+
+	var sharedDefIDNullable string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT is_nullable FROM information_schema.columns
+		WHERE table_name = 'check_definitions' AND column_name = 'shared_definition_id'`).Scan(&sharedDefIDNullable); err != nil {
+		t.Fatalf("check check_definitions.shared_definition_id exists: %v", err)
+	}
+	if sharedDefIDNullable != "YES" {
+		t.Errorf("check_definitions.shared_definition_id is_nullable = %q, want YES — a non-projecting row names no definition", sharedDefIDNullable)
+	}
+
+	var deleteRule string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT confdeltype FROM pg_constraint
+		WHERE conrelid = 'check_definitions'::regclass AND confrelid = 'shared_check_definitions'::regclass`).Scan(&deleteRule); err != nil {
+		t.Fatalf("check check_definitions.shared_definition_id foreign key: %v", err)
+	}
+	if deleteRule != "r" {
+		t.Errorf("check_definitions.shared_definition_id foreign key confdeltype = %q, want %q (restrict) — "+
+			"deleting a definition still projected into an organization must be refused, not cascade", deleteRule, "r")
+	}
+
+	var originCheckDef string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		WHERE conrelid = 'check_definitions'::regclass AND conname = 'check_definitions_origin_check'`).Scan(&originCheckDef); err != nil {
+		t.Fatalf("check check_definitions_origin_check exists: %v", err)
+	}
+	if !strings.Contains(originCheckDef, "'shared'") {
+		t.Errorf("check_definitions_origin_check = %q, want it to admit 'shared' alongside 'seed' and 'custom'", originCheckDef)
+	}
+
+	// Pins the brief's own first structural claim: nothing in this schema
+	// references check_definitions by foreign key, so DeleteWithProjections
+	// for this kind (internal/shared) has no dependant table to check before
+	// removing a projection — check_samples and check_current are keyed by
+	// (org_id, host_id, check_key), not by check_definitions.id, exactly so
+	// editing or deleting a definition never orphans or rewrites history
+	// (migration 00043's own Definition doc comment). If this count is ever
+	// non-zero, internal/shared's delete path needs an explicit check for
+	// that new table, the same way 00060/00061 added theirs for their own
+	// referencing tables.
+	var referencingFKCount int
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM pg_constraint WHERE confrelid = 'check_definitions'::regclass AND contype = 'f'`).Scan(&referencingFKCount); err != nil {
+		t.Fatalf("count foreign keys referencing check_definitions: %v", err)
+	}
+	if referencingFKCount != 0 {
+		t.Errorf("foreign keys referencing check_definitions = %d, want 0 — a new referencing table means "+
+			"shared.SQLStore's check-definition delete path needs its own explicit dependant check, the same way "+
+			"git_repos and job_templates already have theirs", referencingFKCount)
+	}
+}

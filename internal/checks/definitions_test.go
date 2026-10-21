@@ -437,6 +437,164 @@ func TestUpdateDefinitionRefusesChangingASeededRowsKeyOrPlugin(t *testing.T) {
 	}
 }
 
+// TestUpdateDefinitionRefusesChangingASharedRowsKeyPluginParamsOrInterval is
+// TestUpdateDefinitionRefusesChangingASeededRowsKeyOrPlugin's own test for a
+// PROJECTED definition (origin = "shared", spec v0.2f decision 2,
+// migration 00062): key, plugin, params and interval belong to the
+// installation-owned definition and are refused — a WIDER refusal than a
+// seeded row's (which only fixes key and plugin, not interval/params) —
+// while binding_kind, group_id, host_id and enabled stay ordinary, mutable
+// columns, the OPPOSITE of what decision 2 gives a repository or job
+// template's own projection.
+func TestUpdateDefinitionRefusesChangingASharedRowsKeyPluginParamsOrInterval(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	org := uuid.Must(uuid.NewV7())
+	sharedDefID := uuid.Must(uuid.NewV7())
+	id := uuid.Must(uuid.NewV7())
+	store.defsByID[id] = checks.Definition{
+		ID: id, OrgID: org, Key: "disk-data", Plugin: checks.PluginDisk, Interval: 5 * time.Minute,
+		Enabled: true, Origin: "shared", BindingKind: checks.BindingOrg, SharedDefinitionID: &sharedDefID,
+	}
+
+	cases := []struct {
+		name string
+		in   checks.DefinitionInput
+	}{
+		{"key", checks.DefinitionInput{Key: "disk-data-2", Plugin: checks.PluginDisk, Interval: 5 * time.Minute, BindingKind: checks.BindingOrg}},
+		{"plugin", checks.DefinitionInput{Key: "disk-data", Plugin: checks.PluginMemory, Interval: 5 * time.Minute, BindingKind: checks.BindingOrg}},
+		{"interval", checks.DefinitionInput{Key: "disk-data", Plugin: checks.PluginDisk, Interval: 10 * time.Minute, BindingKind: checks.BindingOrg}},
+		{"params", checks.DefinitionInput{
+			Key: "disk-data", Plugin: checks.PluginDisk, Interval: 5 * time.Minute, BindingKind: checks.BindingOrg,
+			Params: map[string]any{"mounts": []string{"/data"}},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := svc.UpdateDefinition(ctx, org, id, tc.in); !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("changing a shared row's %s: err = %v, want ErrInvalidInput", tc.name, err)
+			}
+			got, err := svc.GetDefinition(ctx, org, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Key != "disk-data" || got.Plugin != checks.PluginDisk || got.Interval != 5*time.Minute {
+				t.Fatalf("definition after a refused edit = %+v, want it untouched", got)
+			}
+		})
+	}
+
+	// Rebinding to a group and disabling it IS allowed — decision 2 gives
+	// the binding to the projection, not the definition.
+	group := uuid.Must(uuid.NewV7())
+	updated, err := svc.UpdateDefinition(ctx, org, id, checks.DefinitionInput{
+		Key: "disk-data", Plugin: checks.PluginDisk, Interval: 5 * time.Minute, Enabled: false,
+		BindingKind: checks.BindingGroup, GroupID: &group,
+	})
+	if err != nil {
+		t.Fatalf("rebinding/disabling a shared row must be allowed: %v", err)
+	}
+	if updated.Enabled || updated.BindingKind != checks.BindingGroup || updated.GroupID == nil || *updated.GroupID != group {
+		t.Fatalf("updated = %+v, want the new binding and enabled=false applied", updated)
+	}
+	if updated.Origin != "shared" || updated.SharedDefinitionID == nil || *updated.SharedDefinitionID != sharedDefID {
+		t.Fatalf("updated origin/SharedDefinitionID = %q/%v, want them to survive the edit unchanged", updated.Origin, updated.SharedDefinitionID)
+	}
+}
+
+// TestUpdateDefinitionAcceptsParamsEchoedBackAsTheSameValue proves
+// paramsEqual's own reasoning: a client that merely echoes a GET response's
+// params back on a PUT (common for a form that round-trips the full row)
+// must not be refused as "changing" the installation-owned params, even
+// when one side is a nil map and the other an explicit empty one.
+func TestUpdateDefinitionAcceptsParamsEchoedBackAsTheSameValue(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	org := uuid.Must(uuid.NewV7())
+	sharedDefID := uuid.Must(uuid.NewV7())
+	id := uuid.Must(uuid.NewV7())
+	store.defsByID[id] = checks.Definition{
+		ID: id, OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute,
+		Enabled: true, Origin: "shared", Params: nil, BindingKind: checks.BindingOrg, SharedDefinitionID: &sharedDefID,
+	}
+
+	if _, err := svc.UpdateDefinition(ctx, org, id, checks.DefinitionInput{
+		Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: true,
+		BindingKind: checks.BindingOrg, Params: map[string]any{},
+	}); err != nil {
+		t.Fatalf("UpdateDefinition() with an empty-map echo of a nil params = %v, want nil", err)
+	}
+}
+
+// TestDeleteDefinitionRefusesAProjectedRow is
+// repos.Service.Delete's own test (spec v0.2f decision 6), ported here: a
+// projected check definition cannot be deleted from inside an organization
+// — the next propagation from the definition would simply recreate it — and
+// the refusal is ErrForbidden, not ErrInvalidInput, since no change to the
+// DELETE request (which carries none) could ever make it succeed.
+func TestDeleteDefinitionRefusesAProjectedRow(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	org := uuid.Must(uuid.NewV7())
+	sharedDefID := uuid.Must(uuid.NewV7())
+	id := uuid.Must(uuid.NewV7())
+	store.defsByID[id] = checks.Definition{
+		ID: id, OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute,
+		Enabled: true, Origin: "shared", BindingKind: checks.BindingOrg, SharedDefinitionID: &sharedDefID,
+	}
+
+	if err := svc.DeleteDefinition(ctx, org, id); !errors.Is(err, checks.ErrForbidden) {
+		t.Fatalf("DeleteDefinition() on a projected row = %v, want ErrForbidden", err)
+	}
+	if _, err := svc.GetDefinition(ctx, org, id); err != nil {
+		t.Fatalf("GetDefinition() after a refused delete = %v, want the row still to exist", err)
+	}
+}
+
+// TestDeleteDefinitionStillAllowsASeededRow proves the shared-origin refusal
+// above is scoped to origin == "shared" specifically, not to every
+// non-custom row: DeleteDefinition's own doc comment is explicit that a
+// seeded row deletes like any other.
+func TestDeleteDefinitionStillAllowsASeededRow(t *testing.T) {
+	svc := checks.NewService(newFakeStore())
+	org := uuid.Must(uuid.NewV7())
+	if err := svc.SeedForOrg(ctx, org); err != nil {
+		t.Fatal(err)
+	}
+	defs, err := svc.ListDefinitions(ctx, org)
+	if err != nil || len(defs) == 0 {
+		t.Fatalf("ListDefinitions() = %v, %v, want the seed set", defs, err)
+	}
+	if err := svc.DeleteDefinition(ctx, org, defs[0].ID); err != nil {
+		t.Fatalf("DeleteDefinition() on a seeded row = %v, want nil", err)
+	}
+}
+
+// TestValidateDefinitionShapeIsWhatInternalSharedCallsDirectly exercises
+// checks.ValidateDefinitionShape on its own, independent of
+// normalizeDefinition/a binding — this is the exact entry point
+// internal/shared.Service calls for its own, installation-owned check
+// definitions (shared.validateCheckDefinitionInput), so its own contract
+// (default an empty key to the plugin name, refuse an unsupported plugin,
+// refuse an out-of-range interval, apply the plugin's own parameter schema)
+// is pinned here directly rather than only indirectly through
+// normalizeDefinition's own tests.
+func TestValidateDefinitionShapeIsWhatInternalSharedCallsDirectly(t *testing.T) {
+	key, err := checks.ValidateDefinitionShape(checks.PluginCPU, "", nil, time.Minute)
+	if err != nil || key != "cpu" {
+		t.Fatalf("ValidateDefinitionShape(cpu, \"\", ...) = (%q, %v), want (\"cpu\", nil)", key, err)
+	}
+	if _, err := checks.ValidateDefinitionShape("nonsense", "k", nil, time.Minute); !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("ValidateDefinitionShape with an unsupported plugin error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := checks.ValidateDefinitionShape(checks.PluginCPU, "k", nil, 5*time.Second); !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("ValidateDefinitionShape with a too-short interval error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := checks.ValidateDefinitionShape(checks.PluginService, "k", nil, time.Minute); !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("ValidateDefinitionShape(service, no units) error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestDeleteDefinition(t *testing.T) {
 	svc := checks.NewService(newFakeStore())
 	org := uuid.Must(uuid.NewV7())

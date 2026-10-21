@@ -28,13 +28,19 @@ const (
 )
 
 // Origin distinguishes a row the seed set created from one an operator
-// created. Only the former is ever restricted (see UpdateDefinition):
+// created, and — since migration 00062, spec v0.2f decision 2 — from one
+// that is a projection of an installation-owned definition. Only the first
+// and third are ever restricted (see UpdateDefinition/DeleteDefinition):
 // origin itself is never caller-supplied, so there is no exported type for
 // it — CreateDefinition always stamps originCustom, SeedForOrg always
-// stamps originSeed.
+// stamps originSeed, and internal/shared always stamps originShared when it
+// writes a projection directly (bypassing this package's Store entirely,
+// the same way it bypasses internal/repos and internal/templates for their
+// own projections).
 const (
 	originSeed   = "seed"
 	originCustom = "custom"
+	originShared = "shared"
 )
 
 // The four plugins this milestone ships (spec's Decisions table: "Plugin
@@ -66,14 +72,25 @@ const (
 // by Key, not ID: editing or deleting a definition must not orphan or
 // rewrite history the operator is currently looking at on a graph.
 type Definition struct {
-	ID, OrgID            uuid.UUID
-	Key, Plugin          string
-	Params               map[string]any
-	Interval             time.Duration
-	Enabled              bool
-	Origin               string // "seed" | "custom"
-	BindingKind          BindingKind
-	GroupID, HostID      *uuid.UUID
+	ID, OrgID       uuid.UUID
+	Key, Plugin     string
+	Params          map[string]any
+	Interval        time.Duration
+	Enabled         bool
+	Origin          string // "seed" | "custom" | "shared"
+	BindingKind     BindingKind
+	GroupID, HostID *uuid.UUID
+	// SharedDefinitionID is non-nil when this row is a PROJECTION of an
+	// installation-owned definition (migration 00062, spec v0.2f decision
+	// 1): shared_check_definitions.id, not composed with org_id — the
+	// definition has no org_id to compose with, repos.Repo.SharedRepoID's
+	// own doc comment, unchanged reasoning. Key, Plugin, Params and
+	// Interval then belong to the definition and are refused on write
+	// (UpdateDefinition, spec decision 2); BindingKind, GroupID, HostID and
+	// Enabled remain this organization's own — the OPPOSITE split from a
+	// repository or job template, where the binding is what stays
+	// editable. Nil for an ordinary seed or custom definition.
+	SharedDefinitionID   *uuid.UUID
 	CreatedAt, UpdatedAt time.Time
 }
 
@@ -164,26 +181,47 @@ func validateParams(plugin string, params map[string]any) error {
 	return nil
 }
 
+// ValidateDefinitionShape validates and normalizes the four columns spec
+// decision 2 gives a check definition's installation-owned half — plugin,
+// key, params and interval — independently of any binding. normalizeDefinition
+// below calls this for an organization's own definition (which additionally
+// needs the binding this function knows nothing about); internal/shared
+// calls it too, for its own installation-owned check definitions, which
+// bypass this package's Store entirely when writing a projection (the same
+// way shared.Service bypasses internal/templates for a shared template's
+// extra vars) but still need the identical plugin set, key pattern and
+// per-plugin parameter schema applied before anything is written. Exported
+// specifically so internal/shared does not re-derive or duplicate any of
+// the three — "Reuse, do not copy" (task-7-brief).
+func ValidateDefinitionShape(plugin, key string, params map[string]any, interval time.Duration) (normalizedKey string, err error) {
+	plugin = strings.TrimSpace(plugin)
+	if !supportedPlugins[plugin] {
+		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, got %q", ErrInvalidInput, plugin)
+	}
+	normalizedKey = strings.TrimSpace(key)
+	if normalizedKey == "" {
+		normalizedKey = plugin // "key defaults to the plugin name" (spec's Data model)
+	}
+	if !keyPattern.MatchString(normalizedKey) {
+		return "", fmt.Errorf("%w: key must match %s", ErrInvalidInput, keyPattern.String())
+	}
+	if interval < minInterval || interval > maxInterval {
+		return "", fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, minInterval, maxInterval)
+	}
+	if err := validateParams(plugin, params); err != nil {
+		return "", err
+	}
+	return normalizedKey, nil
+}
+
 // normalizeDefinition validates in into a definition's mutable fields; id,
 // org, origin and the timestamps are the caller's (CreateDefinition,
 // UpdateDefinition, SeedForOrg each set them their own way).
 func normalizeDefinition(in DefinitionInput) (Definition, error) {
 	var d Definition
 	plugin := strings.TrimSpace(in.Plugin)
-	if !supportedPlugins[plugin] {
-		return d, fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, got %q", ErrInvalidInput, plugin)
-	}
-	key := strings.TrimSpace(in.Key)
-	if key == "" {
-		key = plugin // "key defaults to the plugin name" (spec's Data model)
-	}
-	if !keyPattern.MatchString(key) {
-		return d, fmt.Errorf("%w: key must match %s", ErrInvalidInput, keyPattern.String())
-	}
-	if in.Interval < minInterval || in.Interval > maxInterval {
-		return d, fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, minInterval, maxInterval)
-	}
-	if err := validateParams(plugin, in.Params); err != nil {
+	key, err := ValidateDefinitionShape(plugin, in.Key, in.Params, in.Interval)
+	if err != nil {
 		return d, err
 	}
 	switch in.BindingKind {
@@ -258,16 +296,86 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 	if existing.Origin == originSeed && (d.Key != existing.Key || d.Plugin != existing.Plugin) {
 		return Definition{}, fmt.Errorf("%w: a seeded definition's key and plugin are fixed; copy it to change them", ErrInvalidInput)
 	}
-	d.ID, d.OrgID, d.Origin = id, orgID, existing.Origin
+	// A projected definition (origin = "shared", spec v0.2f decision 2):
+	// key, plugin, params and interval belong to the installation-owned
+	// definition and are refused here, the same way repos.Service.Update's
+	// own refuseSharedFieldChange refuses name/url/branch/subpath on a
+	// projected repository — except the SET of refused columns is the
+	// OPPOSITE one, because decision 2 gives a check definition's binding to
+	// the projection, not the definition (task-7-brief's own reasoning: a
+	// group or host is the customer's own data the installation cannot
+	// know, so the binding is something the customer fills in, like a
+	// credential). BindingKind, GroupID, HostID and Enabled stay ordinary,
+	// mutable columns even on a projected row, exactly as they already are
+	// on a seeded one.
+	if existing.Origin == originShared {
+		if err := refuseSharedDefinitionFieldChange(existing, d); err != nil {
+			return Definition{}, err
+		}
+	}
+	d.ID, d.OrgID, d.Origin, d.SharedDefinitionID = id, orgID, existing.Origin, existing.SharedDefinitionID
 	return s.store.UpdateDefinition(ctx, d)
 }
 
-// DeleteDefinition removes the definition identified by (orgID, id),
-// seeded or not — disabling (UpdateDefinition with Enabled: false) is how
-// the GUI offers to turn a seeded check off while still showing that it
-// exists; deleting it outright is a deliberate, available action, not one
-// this task's brief restricts.
+// refuseSharedDefinitionFieldChange refuses to change any of a projected
+// check definition's shared columns (spec decision 2: key, plugin, params
+// and interval belong to the installation-owned definition and are
+// read-only inside every organization) — repos.refuseSharedFieldChange's
+// own doc comment and shape, for check_definitions' own, different column
+// split. next is the value UpdateDefinition is about to write, already
+// normalized by normalizeDefinition/ValidateDefinitionShape; cur is the
+// projection's current row.
+func refuseSharedDefinitionFieldChange(cur, next Definition) error {
+	switch {
+	case next.Key != cur.Key:
+		return fmt.Errorf("%w: key: this check is a projection of an installation-owned definition; the installation owns its key", ErrInvalidInput)
+	case next.Plugin != cur.Plugin:
+		return fmt.Errorf("%w: plugin: this check is a projection of an installation-owned definition; the installation owns its plugin", ErrInvalidInput)
+	case next.Interval != cur.Interval:
+		return fmt.Errorf("%w: interval_seconds: this check is a projection of an installation-owned definition; the installation owns its interval", ErrInvalidInput)
+	case !paramsEqual(cur.Params, next.Params):
+		return fmt.Errorf("%w: params: this check is a projection of an installation-owned definition; the installation owns its parameters", ErrInvalidInput)
+	}
+	return nil
+}
+
+// paramsEqual compares two params maps the way a client-visible round trip
+// does, not by Go identity: both sides are normalized through marshalParams
+// (nil -> "{}", the same normalization store_sql.go already applies before
+// writing either one to the database) and then compared as JSON text, which
+// encoding/json always emits with sorted map keys — so two maps with the
+// same key/value pairs compare equal regardless of iteration order, and a
+// client that merely echoes a GET response's own params: {} back on a PUT
+// is never mistaken for one that tried to change them.
+func paramsEqual(a, b map[string]any) bool {
+	aj, errA := marshalParams(a)
+	bj, errB := marshalParams(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return string(aj) == string(bj)
+}
+
+// DeleteDefinition removes the definition identified by (orgID, id), seeded
+// or not — disabling (UpdateDefinition with Enabled: false) is how the GUI
+// offers to turn a seeded check off while still showing that it exists;
+// deleting it outright is a deliberate, available action, not one this
+// task's brief restricts.
+//
+// A projected definition (origin = "shared") cannot be deleted from inside
+// an organization at all (spec decision 6): the next propagation from the
+// definition would simply recreate it. ErrForbidden, not ErrInvalidInput —
+// repos.Service.Delete's own doc comment on why that distinction matters:
+// no change to this DELETE's content (it carries none) could ever make it
+// succeed, because the refusal is about who owns the row.
 func (s *Service) DeleteDefinition(ctx context.Context, orgID, id uuid.UUID) error {
+	cur, err := s.store.GetDefinition(ctx, orgID, id)
+	if err != nil {
+		return err
+	}
+	if cur.Origin == originShared {
+		return fmt.Errorf("%w: this check is a projection of an installation-owned definition and cannot be deleted from inside an organization", ErrForbidden)
+	}
 	return s.store.DeleteDefinition(ctx, orgID, id)
 }
 

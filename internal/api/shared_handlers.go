@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -371,6 +372,185 @@ func registerSharedTemplateRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, id.String(), "deleted shared job template definition")
 		return &okOutput{}, nil
 	}, withAudit("deleteTemplateDefinition", "shared_job_template"))
+}
+
+// --- check definitions (Task 7) ---
+//
+// The same shape as the repository and job template definition DTOs and
+// routes above, the third kind reusing the same instance-admin mechanism
+// (requireInstanceAdmin, mapSharedErr) rather than a third, parallel set of
+// helpers.
+
+// checkDefinitionDefDTO is the installation-owned half of a shared check
+// definition (spec v0.2f decision 2): key, plugin, params and interval —
+// every organization's own checkDefinitionDTO (check_handlers.go) echoes
+// these read-only once shared_definition_id is set. No binding, no enabled
+// flag — those are the projection's own, per decision 2's table for check
+// definitions specifically (the OPPOSITE split from a repository or job
+// template, where the binding is what the projection keeps). Named
+// checkDefinitionDefDTO, not checkDefinitionDTO, because that name is
+// already taken by check_handlers.go's own organization-scoped DTO for a
+// very different shape (it carries a binding; this one never does).
+type checkDefinitionDefDTO struct {
+	ID              string         `json:"id"`
+	Key             string         `json:"key"`
+	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service"`
+	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
+	IntervalSeconds int            `json:"interval_seconds"`
+}
+
+func toCheckDefinitionDefDTO(d shared.CheckDefinition) checkDefinitionDefDTO {
+	params := d.Params
+	if params == nil {
+		params = map[string]any{}
+	}
+	return checkDefinitionDefDTO{
+		ID: d.ID.String(), Key: d.Key, Plugin: d.Plugin, Params: params,
+		IntervalSeconds: int(d.Interval / time.Second),
+	}
+}
+
+type checkDefinitionDefListOutput struct {
+	Body struct {
+		Definitions []checkDefinitionDefDTO `json:"definitions"`
+	}
+}
+
+type checkDefinitionDefGetInput struct {
+	ID string `path:"id"`
+}
+
+type checkDefinitionDefDetailOutput struct {
+	Body struct {
+		Definition checkDefinitionDefDTO `json:"definition"`
+	}
+}
+
+// checkDefinitionDefBody is the editable shape both create and update take —
+// repoDefinitionBody's own doc comment, same convention: shared.
+// CheckDefinitionInput itself enforces no format rules of its own at THIS
+// layer (plugin, key and params all go through
+// checks.ValidateDefinitionShape inside shared.Service instead — the one
+// validator every write funnels through, the same "one validator, one
+// message" principle check_handlers.go's own checkDefinitionBody states for
+// an organization's own definition). Key is optional on create (defaults to
+// the plugin name, same as an organization's own) but — like
+// check_handlers.go's own body — not defaulted away on an update by this
+// schema; shared.Service.UpdateCheckDefinition enforces that the same way
+// checks.Service.UpdateDefinition already does.
+type checkDefinitionDefBody struct {
+	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on inside every organization. Defaults to the plugin name on create."`
+	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service"`
+	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, service a required units list; cpu and memory take none"`
+	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`
+}
+
+type checkDefinitionDefCreateInput struct {
+	Body checkDefinitionDefBody
+}
+
+type checkDefinitionDefUpdateInput struct {
+	ID   string `path:"id"`
+	Body checkDefinitionDefBody
+}
+
+func checkDefinitionDefDetail(d shared.CheckDefinition) *checkDefinitionDefDetailOutput {
+	out := &checkDefinitionDefDetailOutput{}
+	out.Body.Definition = toCheckDefinitionDefDTO(d)
+	return out
+}
+
+func toCheckDefinitionInput(b checkDefinitionDefBody) shared.CheckDefinitionInput {
+	return shared.CheckDefinitionInput{
+		Key: b.Key, Plugin: b.Plugin, Params: b.Params, Interval: time.Duration(b.IntervalSeconds) * time.Second,
+	}
+}
+
+// registerSharedCheckRoutes wires the installation admin's own CRUD over
+// check definitions — registerSharedRepoRoutes' own doc comment, same gate,
+// same per-verb 403 reasoning (TestCheckDefinitionRoutesRequireInstanceAdmin),
+// same root-API registration (no {org} in the path, no bearer token
+// admitted).
+func registerSharedCheckRoutes(hapi huma.API, deps Deps) {
+	huma.Get(hapi, "/api/v1/admin/checks/definitions", func(ctx context.Context, _ *struct{}) (*checkDefinitionDefListOutput, error) {
+		if _, err := requireInstanceAdmin(ctx); err != nil {
+			return nil, err
+		}
+		list, err := deps.Shared.ListCheckDefs(ctx)
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		out := &checkDefinitionDefListOutput{}
+		out.Body.Definitions = make([]checkDefinitionDefDTO, len(list))
+		for i, d := range list {
+			out.Body.Definitions[i] = toCheckDefinitionDefDTO(d)
+		}
+		return out, nil
+	})
+
+	huma.Post(hapi, "/api/v1/admin/checks/definitions", func(ctx context.Context, in *checkDefinitionDefCreateInput) (*checkDefinitionDefDetailOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Shared.CreateCheckDefinition(ctx, toCheckDefinitionInput(in.Body))
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, d.ID.String(), "created shared check definition "+d.Key)
+		return checkDefinitionDefDetail(d), nil
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createCheckDefinition", "shared_check_definition"))
+
+	huma.Get(hapi, "/api/v1/admin/checks/definitions/{id}", func(ctx context.Context, in *checkDefinitionDefGetInput) (*checkDefinitionDefDetailOutput, error) {
+		if _, err := requireInstanceAdmin(ctx); err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "check definition id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Shared.GetCheckDef(ctx, id)
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		return checkDefinitionDefDetail(d), nil
+	})
+
+	huma.Put(hapi, "/api/v1/admin/checks/definitions/{id}", func(ctx context.Context, in *checkDefinitionDefUpdateInput) (*checkDefinitionDefDetailOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "check definition id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Shared.UpdateCheckDefinition(ctx, id, toCheckDefinitionInput(in.Body))
+		if err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, d.ID.String(), "updated shared check definition "+d.Key)
+		return checkDefinitionDefDetail(d), nil
+	}, withAudit("updateCheckDefinition", "shared_check_definition"))
+
+	huma.Delete(hapi, "/api/v1/admin/checks/definitions/{id}", func(ctx context.Context, in *checkDefinitionDefGetInput) (*okOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, err := parseUUID(in.ID, "check definition id")
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Shared.DeleteCheckDefinition(ctx, id); err != nil {
+			return nil, mapSharedErr(ctx, deps, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, id.String(), "deleted shared check definition")
+		return &okOutput{}, nil
+	}, withAudit("deleteCheckDefinition", "shared_check_definition"))
 }
 
 // mapSharedErr converts shared.Service sentinels into HTTP errors for the

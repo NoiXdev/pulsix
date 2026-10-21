@@ -396,3 +396,163 @@ WHERE jt.shared_template_id = st.id
   AND g.org_id = @org_id::uuid
   AND st.shared_repo_id = g.shared_repo_id
   AND st.playbook_path = @playbook_path::text;
+
+-- Task 7, migration 00062: the third and last application of this file's
+-- own mechanism, for check definitions. shared_check_definitions' own
+-- column split (key, plugin, params, interval_seconds) differs from the
+-- other two kinds', and UNLIKE BOTH of them, nothing about this one needs
+-- per-organization resolution at write time: a check definition's binding
+-- (binding_kind, group_id, host_id) and whether it is enabled are entirely
+-- the PROJECTION's own (spec decision 2) — never derived from the
+-- definition, in either direction — so ProjectedCheckColumns
+-- (internal/shared/definition.go) is a pure function of the definition
+-- alone, exactly like ProjectedRepoColumns, not ProjectedTemplateColumns'
+-- narrower shape.
+--
+-- A fresh projection's binding defaults to ('org', NULL, NULL) with
+-- enabled = true — the SAME default internal/checks.SeedDefinitions()
+-- already uses for the built-in "Linux base" set: organization-wide and
+-- immediately active, needing no per-organization state to be a complete,
+-- runnable row (unlike a repository's credential or a template's resolved
+-- playbook_id). The organization is free to narrow the binding to a group
+-- or a host, or disable it, through the ordinary
+-- PUT /orgs/{org}/checks/{id} — the same write path an organization's own
+-- custom definitions already use, since binding_kind/group_id/host_id/
+-- enabled are the projection's columns on every row regardless of origin.
+-- This is also why check definitions need no organization-side resolution
+-- trigger the way ResolveTemplatePlaybooksForNewPath exists for job
+-- templates above: there is no per-organization state for a check
+-- definition's projection to wait on in the first place.
+
+-- name: CreateSharedCheckDefinition :one
+INSERT INTO shared_check_definitions (id, key, plugin, params, interval_seconds)
+VALUES (@id, @key, @plugin, @params::jsonb, @interval_seconds)
+RETURNING *;
+
+-- name: GetSharedCheckDefinition :one
+SELECT * FROM shared_check_definitions WHERE id = @id;
+
+-- name: ListSharedCheckDefinitions :many
+-- Oldest first (uuid v7 ordering) — ProjectAllCheckDefinitionsInto's raw
+-- material for a newly created organization, exactly like ListSharedRepos.
+SELECT * FROM shared_check_definitions ORDER BY id;
+
+-- name: UpdateSharedCheckDefinition :one
+-- Run inside the same transaction as UpdateProjectedCheckDefinition below
+-- (shared.SQLStore.UpdateCheckDefinitionAndPropagate), for the same
+-- atomicity reason UpdateSharedRepo's own comment gives.
+UPDATE shared_check_definitions SET
+  key = @key, plugin = @plugin, params = @params::jsonb, interval_seconds = @interval_seconds, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: DeleteSharedCheckDefinition :execrows
+-- Only after every projection is already gone (DeleteProjectedCheckDefinition
+-- below, looped first) — shared_definition_id's own ON DELETE RESTRICT
+-- (migration 00062) is the backstop if a caller ever got the order wrong,
+-- exactly like DeleteSharedRepo.
+DELETE FROM shared_check_definitions WHERE id = @id;
+
+-- name: ListCheckDefinitionKeysAtOrgScopeExcludingDefinition :many
+-- Decision 7's raw material for check definitions, narrower than
+-- ListGitRepoNamesExcludingDefinition/ListJobTemplateNamesExcludingDefinition:
+-- a fresh projection ALWAYS lands at binding_kind = 'org', group_id and
+-- host_id NULL (this file's own comment block above), so that is the only
+-- scope a newly-created or newly-renamed shared definition could ever
+-- collide at on the common path, and it is what the preflight check in
+-- shared.Service.CreateCheckDefinition/UpdateCheckDefinition compares a
+-- candidate key against.
+--
+-- This is NOT a complete collision oracle, and is documented here as a
+-- known, accepted gap rather than a bug: an organization that has since
+-- REBOUND its own projection to a group or a host (an ordinary write
+-- through PUT /orgs/{org}/checks/{id}, which this package never sees) now
+-- sits at a DIFFERENT (binding_kind, group_id, host_id) scope this query
+-- does not examine, so propagating a renamed key to THAT organization could
+-- still collide there without this preflight predicting it. The
+-- authoritative check is, as always, the database's own UNIQUE constraint
+-- (migration 00043); UpdateProjectedCheckDefinition's own unique-violation
+-- branch (store_sql.go) is the backstop that turns a collision at a rebound
+-- scope into the same *NameCollisionError this preflight produces for the
+-- common case, one organization at a time, exactly the role
+-- collisionFromRace already plays for repositories' own, narrower race
+-- window. Reported as a finding about Task 2's mechanism (task-7-report.md):
+-- CollidingOrgs/ExistingNames model a single flat (org, name) scope, which
+-- fits a repository or a job template exactly (every projection of either
+-- one always lives at the same scope), but not a check definition, whose
+-- scope is itself a customer-editable column.
+SELECT org_id, key FROM check_definitions
+WHERE binding_kind = 'org' AND group_id IS NULL AND host_id IS NULL
+  AND shared_definition_id IS DISTINCT FROM @exclude::uuid;
+
+-- name: InsertProjectedCheckDefinitions :exec
+-- One projection per organization, in the SAME transaction as the
+-- definition's own CreateSharedCheckDefinition (spec decision 4, atomic) —
+-- InsertProjectedRepos' own lockstep-unnest shape, unchanged. binding_kind,
+-- group_id and host_id are literal ('org', NULL, NULL) rather than columns
+-- this statement reads from anywhere else — this file's own comment block
+-- above explains why a check definition needs no per-organization
+-- resolution at all, unlike InsertProjectedTemplates' own LEFT JOIN.
+-- origin is the literal 'shared' migration 00062 added to the CHECK
+-- constraint.
+INSERT INTO check_definitions (
+  id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, shared_definition_id
+)
+SELECT unnest(@ids::uuid[]), unnest(@org_ids::uuid[]), @key, @plugin, @params::jsonb, @interval_seconds,
+       true, 'shared', 'org', NULL, NULL, @shared_definition_id;
+
+-- name: InsertProjectedCheckDefinition :exec
+-- InsertProjectedCheckDefinitions' single-organization counterpart —
+-- ProjectCheckDefinitionInto's own statement for projecting one
+-- already-existing definition into one newly created organization.
+INSERT INTO check_definitions (
+  id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, shared_definition_id
+)
+VALUES (@id, @org_id, @key, @plugin, @params::jsonb, @interval_seconds, true, 'shared', 'org', NULL, NULL, @shared_definition_id);
+
+-- name: ListProjectedCheckDefinitions :many
+-- Every organization currently holding a projection of one check
+-- definition, oldest projection first — ListProjectedRepos' own comment and
+-- iteration-order reasoning, unchanged.
+SELECT id, org_id FROM check_definitions WHERE shared_definition_id = @shared_definition_id::uuid ORDER BY id;
+
+-- name: ListProjectedCheckDefinitionsForUpdate :many
+-- ListProjectedCheckDefinitions' own shape, with FOR UPDATE, for
+-- DeleteCheckDefinitionWithProjections. UNLIKE git_repos and job_templates,
+-- nothing in this schema references check_definitions by foreign key at all
+-- (migration 00062's own comment, re-derived from the live catalog, not
+-- merely grepped: check_samples and check_current are deliberately keyed by
+-- (org_id, host_id, check_key), never by check_definitions.id), so this
+-- lock protects nothing today — DeleteCheckDefinitionWithProjections has no
+-- dependant table to check before removing a projection, a legitimately
+-- simpler case than the other two kinds, not an oversight. Kept anyway, for
+-- the same reason ListProjectedReposForUpdate's own lock argument gives: a
+-- future table that DOES reference check_definitions must find this call
+-- already holding the row before it can check anything, not a second
+-- migration away from being safe to add.
+SELECT id, org_id FROM check_definitions WHERE shared_definition_id = @shared_definition_id::uuid ORDER BY id FOR UPDATE;
+
+-- name: UpdateProjectedCheckDefinition :execrows
+-- One organization's projection, propagating the definition's new shared
+-- columns (key, plugin, params, interval_seconds — spec decision 2) onto
+-- it. Deliberately does NOT touch binding_kind, group_id, host_id or
+-- enabled: those are the projection's own, set by the organization itself
+-- through the ordinary PUT /orgs/{org}/checks/{id}, and must survive a
+-- provider's edit to the definition untouched — UpdateProjectedRepo's own
+-- comment on why credential_id is left out of ITS SET list, same
+-- reasoning, different columns. A unique violation here is
+-- ListCheckDefinitionKeysAtOrgScopeExcludingDefinition's own documented
+-- backstop for an organization that has rebound its projection away from
+-- the default ('org', NULL, NULL) scope; store_sql.go's Go caller turns it
+-- into a single-organization *NameCollisionError.
+UPDATE check_definitions SET
+  key = @key, plugin = @plugin, params = @params::jsonb, interval_seconds = @interval_seconds, updated_at = now()
+WHERE org_id = @org_id AND shared_definition_id = @shared_definition_id::uuid;
+
+-- name: DeleteProjectedCheckDefinition :execrows
+-- One organization's projection, looped over by
+-- DeleteCheckDefinitionWithProjections inside one transaction — after
+-- ListProjectedCheckDefinitionsForUpdate's own FOR UPDATE has held a lock on
+-- every projection row, even though (this file's own comment above)
+-- nothing currently references check_definitions to be caught by it.
+DELETE FROM check_definitions WHERE org_id = @org_id AND shared_definition_id = @shared_definition_id::uuid;

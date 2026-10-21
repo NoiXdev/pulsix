@@ -107,7 +107,13 @@ func toDefinition(r gen.CheckDefinition) (Definition, error) {
 		Interval: time.Duration(r.IntervalSeconds) * time.Second,
 		Enabled:  r.Enabled, Origin: r.Origin, BindingKind: BindingKind(r.BindingKind),
 		GroupID: db.UUIDPtr(r.GroupID), HostID: db.UUIDPtr(r.HostID),
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		// SharedDefinitionID is never written by CreateCheckDefinition/
+		// UpdateCheckDefinition (neither statement's column list mentions
+		// it) — only internal/shared's own InsertProjectedCheckDefinition(s)
+		// set it, directly in SQL, exactly like SharedRepoID/SharedTemplateID
+		// on the other two kinds.
+		SharedDefinitionID: db.UUIDPtr(r.SharedDefinitionID),
+		CreatedAt:          r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 	if len(r.Params) > 0 {
 		if err := json.Unmarshal(r.Params, &d.Params); err != nil {

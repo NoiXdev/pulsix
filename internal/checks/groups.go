@@ -48,6 +48,14 @@ var (
 	// (org_id, binding_kind, group_id, host_id, key) NULLS NOT DISTINCT
 	// constraint definitions.go's Store extension enforces.
 	ErrKeyTaken = errors.New("key already in use at this scope")
+	// ErrForbidden means the request is well-formed but refused because of
+	// who the resource belongs to, not because of anything the request
+	// could change — spec v0.2f decision 6's own case: deleting a projected
+	// check definition from inside an organization. repos.ErrForbidden's
+	// own doc comment, unchanged reasoning: no edit to the request would
+	// ever make it succeed, which is what sets this apart from
+	// ErrInvalidInput.
+	ErrForbidden = errors.New("forbidden")
 )
 
 // maxGroupNameRunes bounds a group's name, the same shape maintenance

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -190,12 +190,19 @@ describe('SharedResourcesPage', () => {
         new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
       'GET /api/v1/admin/templates/definitions': () =>
         new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
+      'GET /api/v1/admin/checks/definitions': () =>
+        new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
     });
     renderPage();
-    // Both sections are independent queries behind the same gate (Task 6's
-    // own doc comment on SharedResourcesPage), so a non-admin sees the
-    // access-denied state from each of them, not merely one.
-    expect(await screen.findAllByText('You do not have access')).toHaveLength(2);
+    // All three sections are independent queries behind the same gate
+    // (Task 6's own doc comment on SharedResourcesPage, extended by Task 7
+    // for the third kind), so a non-admin sees the access-denied state from
+    // each of them, not merely one or two. The third section's own query
+    // (TemplateDefinitionsSection fires two requests — its own and
+    // useRepoDefinitions' reused one — ahead of it) settles slightly later
+    // than the default 1000ms findBy* timeout under load, so this waits
+    // longer rather than racing it.
+    await waitFor(() => expect(screen.getAllByText('You do not have access')).toHaveLength(3), { timeout: 3000 });
   });
 });
 
@@ -363,5 +370,150 @@ describe('SharedResourcesPage — job template definitions (v0.2f Task 6)', () =
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Delete deploy-site' }));
     expect(await screen.findByText('No shared job template definitions yet.')).toBeInTheDocument();
+  });
+});
+
+// v0.2f Task 7, the third and last application of RepoDefinitionsSection's
+// own shape: check definitions. UNLIKE repositories and job templates, a
+// check definition's own delete never refuses with 409 at all (spec
+// decision 5 has nothing to block on for this kind — internal/shared's own
+// doc comment on DeleteCheckDefinitionWithProjections), so this block has no
+// "shows which organization and what blocks a delete" test to mirror; every
+// other test mirrors the template block one-for-one.
+describe('SharedResourcesPage — check definitions (v0.2f Task 7)', () => {
+  const checkDef = (over: Record<string, unknown> = {}) => ({
+    id: 'c1', key: 'disk-data', plugin: 'disk', params: {}, interval_seconds: 300, ...over,
+  });
+
+  it('lists check definitions', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': { definitions: [checkDef()] },
+    });
+    renderPage();
+    expect(await screen.findByText('disk-data')).toBeInTheDocument();
+    expect(screen.getByText('disk')).toBeInTheDocument();
+    expect(screen.getByText('300s')).toBeInTheDocument();
+  });
+
+  it('creates a check definition, projected into every organization by the server', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    const definitions: Record<string, unknown>[] = [];
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': () => ({ definitions }),
+      'POST /api/v1/admin/checks/definitions': (req: MockRequest) => {
+        posted = req.body;
+        const created = checkDef({ id: 'c9', ...(req.body as Record<string, unknown>) });
+        definitions.push(created);
+        return { definition: created };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add check definition' }));
+    await user.type(screen.getByLabelText('Key'), 'cpu-watch');
+    await pickOption(screen, 'Plugin', { value: 'memory' });
+    await user.clear(screen.getByLabelText('Interval (seconds)'));
+    await user.type(screen.getByLabelText('Interval (seconds)'), '60');
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+
+    expect(await screen.findByText('cpu-watch')).toBeInTheDocument();
+    expect(posted).toMatchObject({ key: 'cpu-watch', plugin: 'memory', interval_seconds: 60 });
+    expect(await screen.findByText('Check definition memory created')).toBeInTheDocument();
+  });
+
+  it('does not submit while the required fields are empty', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': { definitions: [] },
+      'POST /api/v1/admin/checks/definitions': () => {
+        posts += 1;
+        return { definition: checkDef() };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add check definition' }));
+    await pickOption(screen, 'Plugin', { value: 'service' });
+    await user.clear(screen.getByLabelText('Interval (seconds)'));
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+    // Two refusals at once: the cleared interval, and "service" with no
+    // units at all — the same shape internal/checks.validateParams enforces
+    // server-side, refused client-side before the round trip here too.
+    expect(await screen.findAllByText('required')).toHaveLength(2);
+    expect(posts).toBe(0);
+  });
+
+  it('edits a definition, propagating its interval to every projection', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': { definitions: [checkDef()] },
+      'PUT /api/v1/admin/checks/definitions/c1': (req: MockRequest) => {
+        put = req.body;
+        return { definition: checkDef({ interval_seconds: 600 }) };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'disk-data' }));
+    const dialog = await screen.findByRole('dialog', { name: 'disk-data' });
+    const interval = within(dialog).getByLabelText('Interval (seconds)');
+    await user.clear(interval);
+    await user.type(interval, '600');
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(put).toEqual({ key: 'disk-data', plugin: 'disk', interval_seconds: 600, params: {} });
+    expect(await screen.findByText('Check definition disk saved')).toBeInTheDocument();
+  });
+
+  // Spec decision 7, Task 7's own application: a name collision names the
+  // colliding organizations, to an instance admin only.
+  it('shows which organizations already use a key when creating a definition collides', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': { definitions: [] },
+      'POST /api/v1/admin/checks/definitions': () =>
+        new Response(JSON.stringify({ detail: 'name "cpu" is already used by acme, widget-co' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add check definition' }));
+    await user.type(screen.getByLabelText('Key'), 'cpu');
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('name "cpu" is already used by acme, widget-co');
+  });
+
+  it('deletes a definition — nothing in the schema can ever block it (spec decision 5 has no dependant for this kind)', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let deleted = false;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': () => ({ definitions: deleted ? [] : [checkDef()] }),
+      'DELETE /api/v1/admin/checks/definitions/c1': () => {
+        deleted = true;
+        return {};
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Delete disk-data' }));
+    expect(await screen.findByText('No shared check definitions yet.')).toBeInTheDocument();
   });
 });

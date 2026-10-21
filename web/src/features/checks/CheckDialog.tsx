@@ -56,10 +56,24 @@ export interface CheckDialogProps {
  * editable right here: an operator who cannot retune a seeded check's
  * interval without cloning it is exactly who the spec's "see and edit"
  * decision was written for.
+ *
+ * A SHARED definition (spec v0.2f decisions 1, 2; migration 00062) is wider
+ * than a seeded one, not narrower: key, plugin, interval AND params all
+ * belong to the installation-owned definition and are shown read-only
+ * (internal/checks refuseSharedDefinitionFieldChange refuses all four), only
+ * Copy offered to make an independent custom definition instead — while the
+ * binding (org/group/host) and whether it is enabled stay fully editable
+ * right here, the OPPOSITE split from a repository or job template, where
+ * the binding is what gets disabled.
  */
 export function CheckDialog({ org, check, copy = false, groups, onClose }: CheckDialogProps) {
   const editing = !!check && !copy;
   const seeded = editing && check.origin === 'seed';
+  const shared = editing && check.origin === 'shared';
+  // Both seeded and shared rows show key/plugin read-only; a shared row ALSO
+  // fixes interval and params, which a seeded row leaves fully editable
+  // (checks.Service.UpdateDefinition's own, narrower seed restriction).
+  const sharedOrSeeded = seeded || shared;
   const create = useCreateCheck(org);
   const update = useUpdateCheck(org, check?.id ?? '');
 
@@ -137,7 +151,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               id="check-plugin"
               options={PLUGINS.map(([value, label]) => ({ value, label }))}
               value={plugin}
-              disabled={seeded}
+              disabled={sharedOrSeeded}
               onChange={(v) => setPlugin(v as CheckPlugin)}
             />
           </div>
@@ -147,7 +161,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               id="check-key"
               className="font-mono"
               value={key}
-              disabled={seeded}
+              disabled={sharedOrSeeded}
               required={editing}
               // keyPattern, internal/checks/definitions.go — so the
               // refusal arrives before the round trip, and so whitespace
@@ -172,6 +186,12 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             binding and enabled state are editable here.
           </p>
         )}
+        {shared && (
+          <p className="text-[11px] text-muted-foreground">
+            This check is managed by the installation; its key, plugin, interval and parameters are fixed here. Copy it to change any of
+            them — its binding and enabled state are this organization&apos;s own and stay editable here.
+          </p>
+        )}
         {copy && (
           <p className="text-[11px] text-muted-foreground">
             A copy needs either a key of its own or a narrower binding than the row it came from: a narrower scope with the same key is what
@@ -186,6 +206,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               className={TEXTAREA}
               value={units}
               required
+              disabled={shared}
               placeholder="sshd"
               onChange={(e) => setUnits(e.target.value)}
             />
@@ -194,7 +215,14 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         {plugin === 'disk' && (
           <>
             <Label htmlFor="check-mounts">Mounts (one per line, empty means every mount)</Label>
-            <textarea id="check-mounts" className={TEXTAREA} value={mounts} placeholder="/&#10;/var" onChange={(e) => setMounts(e.target.value)} />
+            <textarea
+              id="check-mounts"
+              className={TEXTAREA}
+              value={mounts}
+              disabled={shared}
+              placeholder="/&#10;/var"
+              onChange={(e) => setMounts(e.target.value)}
+            />
           </>
         )}
         <div className="grid grid-cols-2 gap-3">
@@ -219,6 +247,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               min={10}
               max={86400}
               required
+              disabled={shared}
               value={interval}
               onChange={(e) => setInterval(e.target.value)}
             />

@@ -89,6 +89,11 @@ export function ChecksPage() {
   async function onDelete(c: CheckDefinition) {
     const seeded = c.origin === 'seed' ? ' It ships with every organization and will not come back on its own.' : '';
     if (!confirm(`Delete check ${c.key}? The hosts it reaches stop measuring it.${seeded}`)) return;
+    // c.origin === 'shared' never reaches here: canWrite's own Delete button
+    // is not rendered for a projection (spec v0.2f decision 6 — the server
+    // would refuse it with 403 anyway, but offering a button that always
+    // fails is the same mistake RepoDialog's own `repo && !projected` guard
+    // avoids).
     try {
       await remove.mutateAsync(c.id);
     } catch (err) {
@@ -134,14 +139,22 @@ export function ChecksPage() {
                   <Button type="button" variant="ghost" aria-label={`Edit ${c.key}`} onClick={() => setEditing({ check: c })}>
                     Edit
                   </Button>
-                  {c.origin === 'seed' && (
+                  {(c.origin === 'seed' || c.origin === 'shared') && (
                     <Button type="button" variant="ghost" aria-label={`Copy ${c.key}`} onClick={() => setEditing({ check: c, copy: true })}>
                       Copy
                     </Button>
                   )}
-                  <Button type="button" variant="destructive" aria-label={`Delete ${c.key}`} onClick={() => void onDelete(c)}>
-                    Delete
-                  </Button>
+                  {/* A projection of an installation-owned definition cannot
+                      be deleted from inside an organization (spec v0.2f
+                      decision 6) — the server refuses with 403 regardless,
+                      but offering a button that always fails is the mistake
+                      RepoDialog.tsx's own `repo && !projected` guard exists
+                      to avoid. */}
+                  {c.origin !== 'shared' && (
+                    <Button type="button" variant="destructive" aria-label={`Delete ${c.key}`} onClick={() => void onDelete(c)}>
+                      Delete
+                    </Button>
+                  )}
                 </>
               )}
             </span>

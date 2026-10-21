@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -714,6 +715,294 @@ func encodeTemplateDefinitionColumns(vars map[string]any, sc *schema.Schema) (va
 		}
 	}
 	return varsRaw, schemaRaw, nil
+}
+
+// --- check definitions (Task 7) ---
+
+// CreateCheckDefinitionWithProjections inserts def's own row and one
+// projection of it into every organization that exists, inside a single
+// transaction — CreateWithProjections' own doc comment, unchanged
+// reasoning, for check definitions. Every projection gets the SAME literal
+// binding ('org', nil, nil) and enabled = true, written directly by
+// InsertProjectedCheckDefinitions (queries/shared.sql) rather than resolved
+// per organization — this is the one place check definitions are simpler
+// than job templates, not merely different from them (ProjectedCheckColumns'
+// own doc comment).
+func (s *SQLStore) CreateCheckDefinitionWithProjections(ctx context.Context, def CheckDefinition) (CheckDefinition, error) {
+	var created CheckDefinition
+	err := withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		key, plugin, params, interval := ProjectedCheckColumns(def)
+		paramsRaw, err := marshalCheckParams(params)
+		if err != nil {
+			return err
+		}
+		intervalSeconds := int32(interval / time.Second) //nolint:gosec // bounded to [10s, 24h] by checks.ValidateDefinitionShape
+		row, err := q.CreateSharedCheckDefinition(ctx, gen.CreateSharedCheckDefinitionParams{
+			ID: def.ID, Key: key, Plugin: plugin, Params: paramsRaw, IntervalSeconds: intervalSeconds,
+		})
+		if err != nil {
+			if db.IsUniqueViolation(err) {
+				return ErrNameTaken
+			}
+			return fmt.Errorf("create shared check definition: %w", err)
+		}
+
+		orgIDs, err := q.ListOrganizationIDs(ctx)
+		if err != nil {
+			return fmt.Errorf("list organizations: %w", err)
+		}
+		if len(orgIDs) > 0 {
+			ids := make([]uuid.UUID, len(orgIDs))
+			for i := range orgIDs {
+				ids[i] = uuid.Must(uuid.NewV7())
+			}
+			if err := q.InsertProjectedCheckDefinitions(ctx, gen.InsertProjectedCheckDefinitionsParams{
+				Ids: ids, OrgIds: orgIDs, Key: key, Plugin: plugin, Params: paramsRaw, IntervalSeconds: intervalSeconds,
+				SharedDefinitionID: db.NullUUID(&def.ID),
+			}); err != nil {
+				if db.IsUniqueViolation(err) {
+					return collisionFromCheckDefinitionRace(ctx, q, def.ID, key)
+				}
+				return fmt.Errorf("insert projected check definitions: %w", err)
+			}
+		}
+
+		created = toCheckDefinition(row)
+		return nil
+	})
+	if err != nil {
+		return CheckDefinition{}, err
+	}
+	return created, nil
+}
+
+// collisionFromCheckDefinitionRace is collisionFromRace for check
+// definitions — same reasoning, different table and narrower scope
+// (ListCheckDefinitionKeysAtOrgScopeExcludingDefinition's own doc comment
+// on why it only examines the ('org', nil, nil) slice): an organization
+// created after Service.CreateCheckDefinition's pre-flight
+// ExistingCheckDefinitionNames check ran, already carrying key on a row of
+// its own at that scope.
+func collisionFromCheckDefinitionRace(ctx context.Context, q *gen.Queries, excludeDef uuid.UUID, key string) error {
+	rows, err := q.ListCheckDefinitionKeysAtOrgScopeExcludingDefinition(ctx, excludeDef)
+	if err != nil {
+		return fmt.Errorf("re-check colliding organizations: %w", err)
+	}
+	existing := make([]OrgName, len(rows))
+	for i, r := range rows {
+		existing[i] = OrgName{OrgID: r.OrgID, Name: r.Key}
+	}
+	if colliding := CollidingOrgs(existing, key); len(colliding) > 0 {
+		return &NameCollisionError{Name: key, Orgs: colliding}
+	}
+	return ErrNameTaken
+}
+
+// UpdateCheckDefinitionAndPropagate updates def's own row and loops
+// UpdateProjectedCheckDefinition over every organization currently holding a
+// projection of it, all inside one transaction — UpdateAndPropagate's own
+// doc comment and Review Focus 2 reasoning, unchanged.
+// UpdateProjectedCheckDefinition itself never touches binding_kind,
+// group_id, host_id or enabled (that query's own doc comment): those stay
+// exactly as each organization last set them, regardless of what the
+// definition's own edit changes.
+func (s *SQLStore) UpdateCheckDefinitionAndPropagate(ctx context.Context, def CheckDefinition) (CheckDefinition, error) {
+	var updated CheckDefinition
+	err := withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		key, plugin, params, interval := ProjectedCheckColumns(def)
+		paramsRaw, err := marshalCheckParams(params)
+		if err != nil {
+			return err
+		}
+		intervalSeconds := int32(interval / time.Second) //nolint:gosec // bounded to [10s, 24h] by checks.ValidateDefinitionShape
+		row, err := q.UpdateSharedCheckDefinition(ctx, gen.UpdateSharedCheckDefinitionParams{
+			ID: def.ID, Key: key, Plugin: plugin, Params: paramsRaw, IntervalSeconds: intervalSeconds,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			if db.IsUniqueViolation(err) {
+				return ErrNameTaken
+			}
+			return fmt.Errorf("update shared check definition: %w", err)
+		}
+
+		projections, err := q.ListProjectedCheckDefinitions(ctx, def.ID)
+		if err != nil {
+			return fmt.Errorf("list projected check definitions: %w", err)
+		}
+		if err := propagate(projections, func(p gen.ListProjectedCheckDefinitionsRow) error {
+			orgID := p.OrgID
+			if _, err := q.UpdateProjectedCheckDefinition(ctx, gen.UpdateProjectedCheckDefinitionParams{
+				OrgID: orgID, SharedDefinitionID: def.ID, Key: key, Plugin: plugin, Params: paramsRaw, IntervalSeconds: intervalSeconds,
+			}); err != nil {
+				if db.IsUniqueViolation(err) {
+					// ListCheckDefinitionKeysAtOrgScopeExcludingDefinition's
+					// own doc comment: this organization's projection has
+					// moved off the default scope this package's own
+					// pre-flight check examines, and the database's own
+					// UNIQUE constraint is what actually caught the
+					// collision at whatever scope it now sits at.
+					return &NameCollisionError{Name: key, Orgs: []uuid.UUID{orgID}}
+				}
+				return fmt.Errorf("propagate to organization %s: %w", orgID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		updated = toCheckDefinition(row)
+		return nil
+	})
+	if err != nil {
+		return CheckDefinition{}, err
+	}
+	return updated, nil
+}
+
+// DeleteCheckDefinitionWithProjections removes every projection of id and
+// then id itself, atomically. UNLIKE DeleteWithProjections/
+// DeleteTemplateWithProjections there is no dependant-table loop here at
+// all: migration 00062's own comment (re-derived from the live catalog, not
+// merely grepped) establishes that nothing in this schema references
+// check_definitions by foreign key — check_samples and check_current are
+// deliberately keyed by (org_id, host_id, check_key), never by
+// check_definitions.id (migration 00043's own Definition doc comment: "must
+// not orphan or rewrite history the operator is currently looking at on a
+// graph"). So this never returns *InUseError; if a future migration adds
+// such a table, its own explicit check belongs here, the same way
+// DeleteWithProjections/DeleteTemplateWithProjections each added theirs.
+func (s *SQLStore) DeleteCheckDefinitionWithProjections(ctx context.Context, id uuid.UUID) error {
+	return withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		projections, err := q.ListProjectedCheckDefinitionsForUpdate(ctx, id)
+		if err != nil {
+			return fmt.Errorf("list projected check definitions: %w", err)
+		}
+
+		if err := propagate(projections, func(p gen.ListProjectedCheckDefinitionsForUpdateRow) error {
+			if _, err := q.DeleteProjectedCheckDefinition(ctx, gen.DeleteProjectedCheckDefinitionParams{OrgID: p.OrgID, SharedDefinitionID: id}); err != nil {
+				if db.IsForeignKeyViolation(err) {
+					// Backstop only, for a future referencing table this
+					// method does not yet know to check — DeleteProjectedRepo's
+					// own comment, unchanged reasoning. Unreachable today:
+					// this method's own doc comment above.
+					return &InUseError{OrgID: p.OrgID}
+				}
+				return fmt.Errorf("delete projected check definition in organization %s: %w", p.OrgID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		n, err := q.DeleteSharedCheckDefinition(ctx, id)
+		if err != nil {
+			return fmt.Errorf("delete shared check definition: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// ListCheckDefinitions returns every check definition, oldest first.
+func (s *SQLStore) ListCheckDefinitions(ctx context.Context) ([]CheckDefinition, error) {
+	rows, err := gen.New(s.d).ListSharedCheckDefinitions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list shared check definitions: %w", err)
+	}
+	out := make([]CheckDefinition, len(rows))
+	for i, r := range rows {
+		out[i] = toCheckDefinition(r)
+	}
+	return out, nil
+}
+
+// GetCheckDefinition reads one check definition. ErrNotFound when it does
+// not exist.
+func (s *SQLStore) GetCheckDefinition(ctx context.Context, id uuid.UUID) (CheckDefinition, error) {
+	row, err := gen.New(s.d).GetSharedCheckDefinition(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CheckDefinition{}, ErrNotFound
+		}
+		return CheckDefinition{}, fmt.Errorf("get shared check definition: %w", err)
+	}
+	return toCheckDefinition(row), nil
+}
+
+// ProjectCheckDefinitionInto creates one projection of def in orgID, at the
+// default ('org', nil, nil) binding, enabled — a single statement, not
+// wrapped in its own transaction, ProjectInto's own reasoning unchanged.
+// Expected to run on an org-bound ctx.
+func (s *SQLStore) ProjectCheckDefinitionInto(ctx context.Context, def CheckDefinition, orgID uuid.UUID) error {
+	key, plugin, params, interval := ProjectedCheckColumns(def)
+	paramsRaw, err := marshalCheckParams(params)
+	if err != nil {
+		return err
+	}
+	err = gen.New(s.d).InsertProjectedCheckDefinition(ctx, gen.InsertProjectedCheckDefinitionParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Key: key, Plugin: plugin, Params: paramsRaw,
+		IntervalSeconds:    int32(interval / time.Second), //nolint:gosec // bounded to [10s, 24h] by checks.ValidateDefinitionShape
+		SharedDefinitionID: db.NullUUID(&def.ID),
+	})
+	if err != nil {
+		if db.IsUniqueViolation(err) {
+			return ErrNameTaken
+		}
+		return fmt.Errorf("insert projected check definition: %w", err)
+	}
+	return nil
+}
+
+// ExistingCheckDefinitionNames returns every organization's check_definitions
+// key at the default ('org', nil, nil) scope, excluding rows that are
+// already a projection of exclude — ListCheckDefinitionKeysAtOrgScopeExcludingDefinition's
+// own doc comment on why this scope and no other.
+func (s *SQLStore) ExistingCheckDefinitionNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error) {
+	rows, err := gen.New(s.d).ListCheckDefinitionKeysAtOrgScopeExcludingDefinition(ctx, exclude)
+	if err != nil {
+		return nil, fmt.Errorf("list existing check definition keys: %w", err)
+	}
+	out := make([]OrgName, len(rows))
+	for i, r := range rows {
+		out[i] = OrgName{OrgID: r.OrgID, Name: r.Key}
+	}
+	return out, nil
+}
+
+// marshalCheckParams encodes a definition's params for storage — the same
+// nil-becomes-"{}" normalization internal/checks/store_sql.go's own
+// marshalParams applies, duplicated rather than imported: that function is
+// unexported, and this package otherwise never needs anything else from
+// internal/checks besides the one exported validator
+// (checks.ValidateDefinitionShape) service.go already calls.
+func marshalCheckParams(params map[string]any) ([]byte, error) {
+	if params == nil {
+		return []byte("{}"), nil
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("encode check definition params: %w", err)
+	}
+	return raw, nil
+}
+
+// toCheckDefinition decodes one gen.SharedCheckDefinition row.
+func toCheckDefinition(r gen.SharedCheckDefinition) CheckDefinition {
+	d := CheckDefinition{
+		ID: r.ID, Key: r.Key, Plugin: r.Plugin, Interval: time.Duration(r.IntervalSeconds) * time.Second,
+	}
+	if len(r.Params) > 0 {
+		_ = json.Unmarshal(r.Params, &d.Params) //nolint:errcheck // written by this same package's own marshalCheckParams; see toTemplateDefinition's own precedent for why a malformed value here would be a thing this package itself wrote, not caller input
+	}
+	if d.Params == nil {
+		d.Params = map[string]any{}
+	}
+	return d
 }
 
 // toTemplateDefinition decodes one gen.SharedJobTemplate row.

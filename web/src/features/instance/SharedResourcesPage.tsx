@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { GitBranch, ListPlus, Trash2 } from 'lucide-react';
+import { Activity, GitBranch, ListPlus, Trash2 } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -23,10 +23,24 @@ import {
   useTemplateDefinitions,
   useUpdateTemplateDefinition,
 } from '../../api/hooks/useSharedTemplateDefinitions.ts';
-import type { RepoDefinition, RepoDefinitionInput, TemplateDefinition, TemplateDefinitionInput } from '../../api/types.ts';
+import {
+  useCheckDefinitions,
+  useCreateCheckDefinition,
+  useDeleteCheckDefinition,
+  useUpdateCheckDefinition,
+} from '../../api/hooks/useSharedCheckDefinitions.ts';
+import type {
+  CheckDefinitionDef,
+  CheckDefinitionDefInput,
+  RepoDefinition,
+  RepoDefinitionInput,
+  TemplateDefinition,
+  TemplateDefinitionInput,
+} from '../../api/types.ts';
 
 const REPO_COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1.3fr) 110px minmax(0, 0.9fr) 90px';
 const TEMPLATE_COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1.1fr) 110px 90px';
+const CHECK_COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 1fr) 90px';
 
 /**
  * SharedResourcesPage is where an instance admin defines the provider's own
@@ -49,12 +63,14 @@ const TEMPLATE_COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1.1fr) 110
  * exactly as SmtpSettingsPage's own doc comment says of itself — the
  * definitions are instance-wide, not this organization's.
  *
- * Two independent sections, not one combined list: Task 5's own report
+ * Three independent sections, not one combined list: Task 5's own report
  * named this the extension point ("the title 'Shared resources' vs. the one
  * table's own 'repository definitions' framing already leaves room for
- * that") rather than a page restructure, and that held — RepoDefinitions
- * and TemplateDefinitions below are self-contained, each with its own
- * query, dialog and delete button, composed here rather than sharing state.
+ * that") rather than a page restructure, and that held through Task 6
+ * (job templates) and now Task 7 (check definitions) — RepoDefinitions,
+ * TemplateDefinitions and CheckDefinitions below are self-contained, each
+ * with its own query, dialog and delete button, composed here rather than
+ * sharing state.
  */
 export function SharedResourcesPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -66,6 +82,7 @@ export function SharedResourcesPage() {
       </div>
       <RepoDefinitionsSection />
       <TemplateDefinitionsSection />
+      <CheckDefinitionsSection />
     </>
   );
 }
@@ -530,6 +547,279 @@ function TemplateDefinitionDialog({
         <p className="text-[11px] text-muted-foreground">
           Projected into every organization as a read-only template; each one supplies its own scope and SSH
           credential here, not on this definition. Extra vars and their schema are set through the API for now.
+        </p>
+        {formError && (
+          <p role="alert" className="text-xs text-destructive">
+            {formError}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
+            {definition ? 'Save definition' : 'Create definition'}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+// --- check definitions (Task 7) ---
+//
+// The third and last application of RepoDefinitionsSection's own shape: a
+// check definition's shared half (spec decision 2) is key, plugin, params
+// and interval — read-only inside every organization once projected
+// (CheckDialog.tsx's own `shared` guard). UNLIKE the other two kinds, the
+// binding (org/group/host) and whether it is enabled are NEVER on this
+// dialog at all: decision 2 gives both to the projection, not the
+// definition, for check definitions specifically — the organization fills
+// them in itself through the ordinary Checks page, the same way it already
+// does for a seeded row.
+//
+// Params editing is deliberately limited to the "service" plugin's units
+// list here, the one parameter an instance admin is likely to set when
+// defining a shared check — the same scope limitation
+// TemplateDefinitionDialog draws around extra vars (a definition created
+// without one still works; the server defaults params to {}), rather than
+// re-hosting CheckDialog.tsx's own full per-plugin params editor
+// (disk mounts included) for a dialog that otherwise has no per-organization
+// state to show at all.
+
+/** DeleteDefinitionButton's own doc comment, same reasoning, different
+ * table — except a check definition's own delete NEVER refuses with 409 at
+ * all (spec decision 5 has nothing to block on: nothing in the schema
+ * references check_definitions, internal/shared's own doc comment on
+ * DeleteCheckDefinitionWithProjections), so the confirmation below says so
+ * rather than warning about a dependant that can never exist. */
+function DeleteCheckDefinitionButton({ definition }: { definition: CheckDefinitionDef }) {
+  const toast = useToast();
+  const remove = useDeleteCheckDefinition();
+  return (
+    <span className="flex justify-end">
+      <Button
+        type="button"
+        variant="ghost"
+        aria-label={`Delete ${definition.key}`}
+        disabled={remove.isPending}
+        onClick={async () => {
+          if (!confirm(`Delete check definition ${definition.key}? This removes it from every organization.`)) return;
+          try {
+            await remove.mutateAsync(definition.id);
+            toast.show(`Check definition ${definition.key} deleted`);
+          } catch (err) {
+            toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+          }
+        }}
+      >
+        <Trash2 size={13} />
+      </Button>
+    </span>
+  );
+}
+
+function CheckDefinitionsSection() {
+  const definitions = useCheckDefinitions();
+  const [dialog, setDialog] = useState<'new' | CheckDefinitionDef | null>(null);
+
+  const guard = useQueryGuard(definitions);
+  if (guard) return guard;
+  if (!definitions.data) return <QueryLoading />;
+  const list = definitions.data.definitions ?? [];
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <span className="text-[13px] text-muted-foreground">
+          {list.length} check definitions · projected into every organization at the default org-wide binding, read-only there
+        </span>
+        <Button variant="primary" onClick={() => setDialog('new')}>
+          <Activity size={15} /> Add check definition
+        </Button>
+      </div>
+      <Card>
+        <GridHeader columns={CHECK_COLUMNS}>
+          <span>Key</span>
+          <span>Plugin</span>
+          <span>Interval</span>
+          <span>Actions</span>
+        </GridHeader>
+        {list.map((d) => (
+          <GridRow key={d.id} columns={CHECK_COLUMNS}>
+            <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(d)}>
+              {d.key}
+            </button>
+            <span className="truncate text-xs">{d.plugin}</span>
+            <span className="truncate text-xs text-muted-foreground">{d.interval_seconds}s</span>
+            <DeleteCheckDefinitionButton definition={d} />
+          </GridRow>
+        ))}
+        {list.length === 0 && (
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">No shared check definitions yet.</p>
+        )}
+      </Card>
+      {dialog === 'new' ? (
+        <CheckDefinitionDialog onClose={() => setDialog(null)} />
+      ) : dialog ? (
+        <CheckDefinitionDialog definition={dialog} onClose={() => setDialog(null)} />
+      ) : null}
+    </>
+  );
+}
+
+interface CheckDefinitionFormValues {
+  key: string;
+  plugin: string;
+  intervalSeconds: string;
+  units: string;
+}
+
+const CHECK_PLUGINS: [string, string][] = [
+  ['cpu', 'CPU'],
+  ['memory', 'Memory'],
+  ['disk', 'Disk'],
+  ['service', 'Service units'],
+];
+
+/** lines turns a textarea's content into the string list the API takes —
+ * CheckDialog.tsx's own helper, duplicated rather than imported: that
+ * module's own export surface is the dialog component, not this one helper,
+ * and the function is three lines. */
+function lines(text: string): string[] {
+  return text.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+/** validateDefinitionInput's own doc comment, same reasoning, different
+ * bounds — mirroring checkDefinitionDefBody's own lack of format
+ * constraints (internal/api/shared_handlers.go): checks.ValidateDefinitionShape
+ * is the one validator every write funnels through, so this form only
+ * refuses what would otherwise submit an empty, guaranteed-400 request. */
+function validateCheckDefinitionInput(values: CheckDefinitionFormValues): Partial<Record<keyof CheckDefinitionFormValues, string>> {
+  const errors: Partial<Record<keyof CheckDefinitionFormValues, string>> = {};
+  if (values.key.length > 63) errors.key = 'must be 63 characters or fewer';
+  const interval = Number(values.intervalSeconds);
+  if (!values.intervalSeconds || Number.isNaN(interval)) errors.intervalSeconds = 'required';
+  else if (interval < 10 || interval > 86400) errors.intervalSeconds = 'must be between 10 and 86400';
+  if (values.plugin === 'service' && lines(values.units).length === 0) errors.units = 'required';
+  return errors;
+}
+
+/**
+ * CheckDefinitionDialog creates or edits one installation-owned check
+ * definition. No binding, no enabled flag — decision 2 keeps both on the
+ * projection, which the organization edits through its own Checks page
+ * (CheckDialog.tsx), never here.
+ */
+function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefinitionDef; onClose: () => void }) {
+  const toast = useToast();
+  const create = useCreateCheckDefinition();
+  const update = useUpdateCheckDefinition(definition?.id ?? '');
+  const [values, setValues] = useState<CheckDefinitionFormValues>(
+    definition
+      ? {
+          key: definition.key, plugin: definition.plugin, intervalSeconds: String(definition.interval_seconds),
+          units: Array.isArray(definition.params?.units) ? (definition.params.units as string[]).join('\n') : '',
+        }
+      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '' },
+  );
+  const [errors, setErrors] = useState<Partial<Record<keyof CheckDefinitionFormValues, string>>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function params(): Record<string, unknown> {
+    return values.plugin === 'service' ? { units: lines(values.units) } : {};
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+    const fieldErrors = validateCheckDefinitionInput(values);
+    setErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) return;
+    const body: CheckDefinitionDefInput = {
+      ...(values.key !== '' ? { key: values.key } : {}),
+      plugin: values.plugin, interval_seconds: Number(values.intervalSeconds), params: params(),
+    };
+    try {
+      if (definition) await update.mutateAsync(body);
+      else await create.mutateAsync(body);
+      toast.show(definition ? `Check definition ${body.plugin} saved` : `Check definition ${body.plugin} created`);
+      onClose();
+    } catch (err) {
+      // RepoDefinitionDialog's own doc comment, same reasoning: decision 7's
+      // collision message names every colliding organization, shown whole
+      // rather than routed to one field.
+      setFormError(err instanceof Error ? err.message : 'Saving failed');
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose} title={definition ? definition.key : 'New check definition'}>
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="check-def-plugin">Plugin</Label>
+            <Select
+              id="check-def-plugin"
+              options={CHECK_PLUGINS.map(([value, label]) => ({ value, label }))}
+              value={values.plugin}
+              onChange={(v) => setValues((cur) => ({ ...cur, plugin: v }))}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="check-def-key">Key</Label>
+            <Input
+              id="check-def-key"
+              className="font-mono"
+              value={values.key}
+              placeholder={values.plugin}
+              onChange={(e) => setValues((cur) => ({ ...cur, key: e.target.value.trim() }))}
+              aria-invalid={errors.key ? true : undefined}
+            />
+            {errors.key && (
+              <span role="alert" className="text-[11px] text-destructive">
+                {errors.key}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="check-def-interval">Interval (seconds)</Label>
+          <Input
+            id="check-def-interval"
+            type="number"
+            min={10}
+            max={86400}
+            value={values.intervalSeconds}
+            onChange={(e) => setValues((cur) => ({ ...cur, intervalSeconds: e.target.value }))}
+            aria-invalid={errors.intervalSeconds ? true : undefined}
+          />
+          {errors.intervalSeconds && (
+            <span role="alert" className="text-[11px] text-destructive">
+              {errors.intervalSeconds}
+            </span>
+          )}
+        </div>
+        {values.plugin === 'service' && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="check-def-units">Units (one per line)</Label>
+            <textarea
+              id="check-def-units"
+              className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
+              value={values.units}
+              placeholder="sshd"
+              onChange={(e) => setValues((cur) => ({ ...cur, units: e.target.value }))}
+            />
+            {errors.units && (
+              <span role="alert" className="text-[11px] text-destructive">
+                {errors.units}
+              </span>
+            )}
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          Projected into every organization at the default org-wide binding, enabled — each one may rebind it to a
+          monitoring group or a host, or disable it, from its own Checks page; neither is set here.
         </p>
         {formError && (
           <p role="alert" className="text-xs text-destructive">

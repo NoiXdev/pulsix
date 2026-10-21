@@ -241,20 +241,21 @@ type CheckCurrent struct {
 }
 
 type CheckDefinition struct {
-	ID              uuid.UUID   `json:"id"`
-	OrgID           uuid.UUID   `json:"org_id"`
-	Key             string      `json:"key"`
-	Plugin          string      `json:"plugin"`
-	Params          []byte      `json:"params"`
-	IntervalSeconds int32       `json:"interval_seconds"`
-	Enabled         bool        `json:"enabled"`
-	Origin          string      `json:"origin"`
-	BindingKind     string      `json:"binding_kind"`
-	GroupID         pgtype.UUID `json:"group_id"`
-	HostID          pgtype.UUID `json:"host_id"`
-	CreatedBy       pgtype.UUID `json:"created_by"`
-	CreatedAt       time.Time   `json:"created_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
+	ID                 uuid.UUID   `json:"id"`
+	OrgID              uuid.UUID   `json:"org_id"`
+	Key                string      `json:"key"`
+	Plugin             string      `json:"plugin"`
+	Params             []byte      `json:"params"`
+	IntervalSeconds    int32       `json:"interval_seconds"`
+	Enabled            bool        `json:"enabled"`
+	Origin             string      `json:"origin"`
+	BindingKind        string      `json:"binding_kind"`
+	GroupID            pgtype.UUID `json:"group_id"`
+	HostID             pgtype.UUID `json:"host_id"`
+	CreatedBy          pgtype.UUID `json:"created_by"`
+	CreatedAt          time.Time   `json:"created_at"`
+	UpdatedAt          time.Time   `json:"updated_at"`
+	SharedDefinitionID pgtype.UUID `json:"shared_definition_id"`
 }
 
 type CheckEvalCursor struct {
@@ -808,6 +809,16 @@ type Session struct {
 	ExpiresAt   time.Time          `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	MfaAt       pgtype.Timestamptz `json:"mfa_at"`
+}
+
+type SharedCheckDefinition struct {
+	ID              uuid.UUID `json:"id"`
+	Key             string    `json:"key"`
+	Plugin          string    `json:"plugin"`
+	Params          []byte    `json:"params"`
+	IntervalSeconds int32     `json:"interval_seconds"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type SharedJobTemplate struct {

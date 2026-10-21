@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/api/v1/admin/checks/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin checks definitions */
+        get: operations["get-api-v1-admin-checks-definitions"];
+        put?: never;
+        /** Post API v1 admin checks definitions */
+        post: operations["createCheckDefinition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/checks/definitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin checks definitions by ID */
+        get: operations["get-api-v1-admin-checks-definitions-by-id"];
+        /** Put API v1 admin checks definitions by ID */
+        put: operations["updateCheckDefinition"];
+        post?: never;
+        /** Delete API v1 admin checks definitions by ID */
+        delete: operations["deleteCheckDefinition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/repos/definitions": {
         parameters: {
             query?: never;
@@ -3063,18 +3100,70 @@ export interface components {
             interval_seconds: number;
             key: string;
             /**
-             * @description seed rows ship with every organization; their key and plugin are fixed
+             * @description seed rows ship with every organization; shared rows are a projection of an installation-owned definition (spec v0.2f) — both fix key, plugin, params and interval, copy it (seed) or ask an instance admin to edit the definition (shared) to change them
              * @enum {string}
              */
-            origin: "seed" | "custom";
+            origin: "seed" | "custom" | "shared";
             /** @description Plugin parameters; {} for a plugin that takes none */
             params: {
                 [key: string]: unknown;
             };
             /** @enum {string} */
             plugin: "cpu" | "memory" | "disk" | "service";
+            shared_definition_id?: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        CheckDefinitionDefBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckDefinitionDefBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description How often the check runs, between 10 and 86400 seconds
+             */
+            interval_seconds: number;
+            /** @description Lower-case identifier a narrower scope overrides on inside every organization. Defaults to the plugin name on create. */
+            key?: string;
+            /** @description disk takes an optional mounts list, service a required units list; cpu and memory take none */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** @description One of cpu, memory, disk, service */
+            plugin: string;
+        };
+        CheckDefinitionDefDTO: {
+            id: string;
+            /** Format: int64 */
+            interval_seconds: number;
+            key: string;
+            /** @description Plugin parameters; {} for a plugin that takes none */
+            params: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            plugin: "cpu" | "memory" | "disk" | "service";
+        };
+        CheckDefinitionDefDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckDefinitionDefDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            definition: components["schemas"]["CheckDefinitionDefDTO"];
+        };
+        CheckDefinitionDefListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckDefinitionDefListOutputBody.json
+             */
+            readonly $schema?: string;
+            definitions: components["schemas"]["CheckDefinitionDefDTO"][] | null;
         };
         CheckListOutputBody: {
             /**
@@ -5953,6 +6042,165 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "get-api-v1-admin-checks-definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckDefinitionDefListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createCheckDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckDefinitionDefBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckDefinitionDefDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-checks-definitions-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckDefinitionDefDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateCheckDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckDefinitionDefBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckDefinitionDefDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteCheckDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-admin-repos-definitions": {
         parameters: {
             query?: never;

@@ -72,13 +72,26 @@ type checkDefinitionDTO struct {
 	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
 	IntervalSeconds int            `json:"interval_seconds"`
 	Enabled         bool           `json:"enabled"`
-	Origin          string         `json:"origin" enum:"seed,custom" doc:"seed rows ship with every organization; their key and plugin are fixed"`
+	Origin          string         `json:"origin" enum:"seed,custom,shared" doc:"seed rows ship with every organization; shared rows are a projection of an installation-owned definition (spec v0.2f) — both fix key, plugin, params and interval, copy it (seed) or ask an instance admin to edit the definition (shared) to change them"`
 	BindingKind     string         `json:"binding_kind" enum:"org,group,host"`
 	GroupID         string         `json:"group_id,omitempty"`
 	HostID          string         `json:"host_id,omitempty"`
 	HostName        string         `json:"host_name,omitempty" doc:"The bound host's name, for a host-bound definition; absent otherwise, and absent for a host this organization can no longer read"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	// SharedDefinitionID is set when this row is a projection of an
+	// installation-owned definition (spec v0.2f decisions 1, 2;
+	// checks.Definition.SharedDefinitionID), absent for an ordinary seed or
+	// custom definition. The GUI uses it to mark the row as
+	// installation-managed and disable key/plugin/params/interval, which
+	// checks.Service already refuses to change on a projection
+	// (refuseSharedDefinitionFieldChange) — this field only lets the UI say
+	// so before the user tries and is refused. binding_kind, group_id,
+	// host_id and enabled stay editable regardless of this field: decision 2
+	// gives the binding to the projection, not the definition, for check
+	// definitions specifically (the OPPOSITE split from a repository or job
+	// template, where the binding is what stays editable).
+	SharedDefinitionID string    `json:"shared_definition_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // checkDefinitionBody is the create/update shape. It deliberately carries
@@ -149,6 +162,9 @@ func toCheckDefinitionDTO(d checks.Definition) checkDefinitionDTO {
 	}
 	if d.HostID != nil {
 		dto.HostID = d.HostID.String()
+	}
+	if d.SharedDefinitionID != nil {
+		dto.SharedDefinitionID = d.SharedDefinitionID.String()
 	}
 	return dto
 }
@@ -478,6 +494,12 @@ func mapChecksErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict("a monitoring group with this name already exists")
 	case errors.Is(err, checks.ErrKeyTaken):
 		return huma.Error409Conflict("a check with this key already exists at this scope")
+	case errors.Is(err, checks.ErrForbidden):
+		// spec v0.2f decision 6: a projected check definition cannot be
+		// deleted from inside an organization. repos.ErrForbidden's own
+		// mapping (repo_handlers.go's mapReposErr), same reasoning: not a
+		// value the caller could fix, so 403, not 400.
+		return huma.Error403Forbidden(err.Error())
 	}
 	slog.ErrorContext(ctx, "unmapped checks error", "err", err)
 	return huma.Error500InternalServerError("internal error")
