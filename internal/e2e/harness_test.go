@@ -282,6 +282,19 @@ type gitServer struct {
 // serves fetches from it, authenticating the deploy key.
 func startGitServer(t *testing.T, deployKey ssh.PublicKey) *gitServer {
 	t.Helper()
+	return startGitServerAuthorizing(t, deployKey)
+}
+
+// startGitServerAuthorizing is startGitServer's general form: it serves the
+// identical fixture repository but authenticates ANY of the given deploy
+// keys, not just one. The shared-repository scenario
+// (shared_resources_test.go) needs this: spec v0.2f decision 3 is that a
+// shared repository definition carries no credential at all, and each
+// organization supplies its own — so two organizations cloning the exact
+// same url must be able to authenticate with two different keys against
+// the one upstream, neither aware of the other's.
+func startGitServerAuthorizing(t *testing.T, deployKeys ...ssh.PublicKey) *gitServer {
+	t.Helper()
 	bare := materializeFixtureRepo(t)
 	srv := &glssh.Server{
 		Handler: func(sess glssh.Session) {
@@ -293,7 +306,12 @@ func startGitServer(t *testing.T, deployKey ssh.PublicKey) *gitServer {
 			runGitUploadPack(sess, bare)
 		},
 		PublicKeyHandler: func(_ glssh.Context, key glssh.PublicKey) bool {
-			return deployKey != nil && bytes.Equal(key.Marshal(), deployKey.Marshal())
+			for _, k := range deployKeys {
+				if k != nil && bytes.Equal(key.Marshal(), k.Marshal()) {
+					return true
+				}
+			}
+			return false
 		},
 	}
 	srv.AddHostKey(newKeyPair(t).signer)
