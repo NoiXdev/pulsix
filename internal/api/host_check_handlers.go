@@ -137,7 +137,7 @@ type hostCheckDTO struct {
 	Params          map[string]any      `json:"params"`
 	IntervalSeconds int                 `json:"interval_seconds"`
 	Enabled         bool                `json:"enabled" doc:"false means the winning scope turned this check off; it is listed so the GUI can show where"`
-	Origin          string              `json:"origin" enum:"seed,custom"`
+	Origin          string              `json:"origin" enum:"seed,custom,shared"`
 	Source          string              `json:"source" enum:"org,group,host" doc:"The scope the winning definition is bound at"`
 	SourceID        string              `json:"source_id,omitempty" doc:"The group or host it is bound to; absent for an organization-bound check"`
 	SourceName      string              `json:"source_name,omitempty"`

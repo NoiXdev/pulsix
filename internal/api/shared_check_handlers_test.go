@@ -304,6 +304,14 @@ func TestCheckDefinitionCollisionNamesOrganizationToInstanceAdmin(t *testing.T) 
 	if !strings.Contains(body, "check-collision-victim-org") {
 		t.Fatalf("collision response body = %q, want it to name organization check-collision-victim-org", body)
 	}
+	// Review finding: naming the organization is not enough for check
+	// definitions specifically — its own collision may sit at a binding the
+	// organization configured, invisible on that organization's own
+	// org-wide list. The scope must reach the instance admin too, not just
+	// the organization.
+	if !strings.Contains(body, "scope") {
+		t.Fatalf("collision response body = %q, want it to name the scope the collision is at", body)
+	}
 }
 
 // TestOrgScopedCheckRoutesNeverLeakAnotherOrgsIdentity is
@@ -397,5 +405,180 @@ func TestOrgScopedCheckRoutesNeverLeakAnotherOrgsIdentity(t *testing.T) {
 				t.Fatalf("response #%d body contains organization B's identity %q: %s", i, identity, body)
 			}
 		}
+	}
+}
+
+// TestDeletingABoundMonitoringGroupThroughTheRealAPIPreservesTheProjection
+// is migration 00063's own fix, proven through the REAL HTTP stack rather
+// than only against raw SQL (internal/db/schema_test.go's own
+// TestDeletingABoundGroupPreservesASharedProjectionAtOrgScope proves the
+// trigger mechanism itself) — a review's Critical finding: deleting a
+// monitoring group a customer has rebound a shared projection to CASCADES
+// (migration 00043) and never reaches checks.Service.DeleteDefinition's own
+// origin == "shared" refusal at all, because the delete happens against
+// monitoring_groups, not check_definitions. This drives the exact customer
+// actions end to end — define a shared check, rebind the org's own
+// projection to a real monitoring group through PUT, delete that group
+// through the real DELETE /orgs/{org}/monitoring-groups/{id} route — and
+// asserts the projection SURVIVES, rebound to org scope, not merely that
+// the group's own delete returned 200.
+func TestDeletingABoundMonitoringGroupThroughTheRealAPIPreservesTheProjection(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("check-cascade-group-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+
+	owner := s.SeedUser("check-cascade-group-owner@example.test", "correct horse battery")
+	orgSlug := "check-cascade-group-org"
+	s.SeedOrg(orgSlug, owner)
+	ownerClient := s.LoginAs(owner)
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+"/api/v1/admin/checks/definitions", map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300,
+	})
+	var created checkDefinitionDefDetailBody
+	if err := json.Unmarshal([]byte(mustReadBody(t, resp)), &created); err != nil {
+		t.Fatal(err)
+	}
+	defID := created.Definition.ID
+
+	resp = requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/checks", nil)
+	var checks markedCheckListBody
+	decodeInto(t, resp, &checks)
+	projected, ok := findProjectedCheck(checks, defID)
+	if !ok {
+		t.Fatalf("org checks = %+v, want a projection of %s", checks.Checks, defID)
+	}
+
+	groupResp := postJSON(t, ownerClient, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/monitoring-groups", map[string]any{
+		"name": "web-fleet", "selector": "role=web", "priority": 0,
+	})
+	if groupResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create monitoring group: %d %s", groupResp.StatusCode, mustReadBody(t, groupResp))
+	}
+	var group struct {
+		Group struct {
+			ID string `json:"id"`
+		} `json:"group"`
+	}
+	if err := json.Unmarshal([]byte(mustReadBody(t, groupResp)), &group); err != nil {
+		t.Fatal(err)
+	}
+
+	// The customer rebinds their own projection to the group — exactly the
+	// write this task's own feature added, exercised here through the real
+	// route rather than a direct SQL UPDATE.
+	resp = requestJSON(t, ownerClient, http.MethodPut, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/checks/"+projected.ID, map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300,
+		"binding_kind": "group", "group_id": group.Group.ID,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rebind the projection to the group: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var rebound markedCheckBody
+	decodeInto(t, resp, &rebound)
+	if rebound.Check.BindingKind != "group" {
+		t.Fatalf("rebound.Check.BindingKind = %q, want group", rebound.Check.BindingKind)
+	}
+
+	// The customer now deletes the group through the real route — their own
+	// action, on their own fleet, which must succeed.
+	resp = requestJSON(t, ownerClient, http.MethodDelete, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/monitoring-groups/"+group.Group.ID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete the monitoring group: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	// The projection must still exist, rebound to org scope — not merely
+	// that the group's own delete returned 200.
+	resp = requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/checks/"+projected.ID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get the projection after its group was deleted: %d %s, want 200 (it must survive)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var afterDelete markedCheckBody
+	decodeInto(t, resp, &afterDelete)
+	if afterDelete.Check.BindingKind != "org" || afterDelete.Check.SharedDefinitionID != defID {
+		t.Fatalf("projection after its group was deleted = %+v, want binding_kind=org and the SAME shared_definition_id %s", afterDelete.Check, defID)
+	}
+}
+
+// TestDeletingABoundHostThroughTheRealAPIPreservesTheProjection is
+// TestDeletingABoundMonitoringGroupThroughTheRealAPIPreservesTheProjection's
+// own test for a host binding — the second call site the review's Critical
+// named (hosts.Service.DeleteHost), proven through the real
+// DELETE /orgs/{org}/hosts/{id} route.
+func TestDeletingABoundHostThroughTheRealAPIPreservesTheProjection(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("check-cascade-host-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+
+	owner := s.SeedUser("check-cascade-host-owner@example.test", "correct horse battery")
+	orgSlug := "check-cascade-host-org"
+	s.SeedOrg(orgSlug, owner)
+	ownerClient := s.LoginAs(owner)
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+"/api/v1/admin/checks/definitions", map[string]any{
+		"key": "cpu-watch", "plugin": "cpu", "interval_seconds": 60,
+	})
+	var created checkDefinitionDefDetailBody
+	if err := json.Unmarshal([]byte(mustReadBody(t, resp)), &created); err != nil {
+		t.Fatal(err)
+	}
+	defID := created.Definition.ID
+
+	resp = requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/checks", nil)
+	var checks markedCheckListBody
+	decodeInto(t, resp, &checks)
+	projected, ok := findProjectedCheck(checks, defID)
+	if !ok {
+		t.Fatalf("org checks = %+v, want a projection of %s", checks.Checks, defID)
+	}
+
+	zonesResp := requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/zones", nil)
+	var zones struct {
+		Zones []struct {
+			ID string `json:"id"`
+		} `json:"zones"`
+	}
+	decodeInto(t, zonesResp, &zones)
+	if len(zones.Zones) == 0 {
+		t.Fatal("expected a default zone")
+	}
+	hostResp := postJSON(t, ownerClient, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/hosts", map[string]any{
+		"name": "web-1", "address": "10.0.0.1", "zone_id": zones.Zones[0].ID, "managed": true,
+	})
+	if hostResp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed host: %d %s", hostResp.StatusCode, mustReadBody(t, hostResp))
+	}
+	var host struct {
+		Host struct {
+			ID string `json:"id"`
+		} `json:"host"`
+	}
+	if err := json.Unmarshal([]byte(mustReadBody(t, hostResp)), &host); err != nil {
+		t.Fatal(err)
+	}
+
+	resp = requestJSON(t, ownerClient, http.MethodPut, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/checks/"+projected.ID, map[string]any{
+		"key": "cpu-watch", "plugin": "cpu", "interval_seconds": 60,
+		"binding_kind": "host", "host_id": host.Host.ID,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rebind the projection to the host: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = requestJSON(t, ownerClient, http.MethodDelete, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/hosts/"+host.Host.ID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete the host: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/checks/"+projected.ID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get the projection after its host was deleted: %d %s, want 200 (it must survive)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var afterDelete markedCheckBody
+	decodeInto(t, resp, &afterDelete)
+	if afterDelete.Check.BindingKind != "org" || afterDelete.Check.SharedDefinitionID != defID {
+		t.Fatalf("projection after its host was deleted = %+v, want binding_kind=org and the SAME shared_definition_id %s", afterDelete.Check, defID)
 	}
 }

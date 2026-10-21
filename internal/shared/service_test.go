@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -616,6 +617,28 @@ func TestCreateTemplateRefusesASecretFieldNestedInARepeater(t *testing.T) {
 	}
 }
 
+// TestCreateTemplateRefusesASecretFieldNestedInAnObject is
+// TestCreateTemplateRefusesASecretFieldNestedInARepeater's own test for
+// schemaHasSecretField's OTHER recursive branch (f.Fields, an object's own
+// nested fields) — the repeater test above exercises f.Item only, and
+// neither test previously covered both of the function's two recursion
+// paths.
+func TestCreateTemplateRefusesASecretFieldNestedInAnObject(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	_, err := svc.CreateTemplate(ctx, shared.TemplateDefinitionInput{
+		Name: "deploy-site", SharedRepoID: uuid.Must(uuid.NewV7()), PlaybookPath: "site.yml",
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{{
+			Name: "database", Type: schema.TypeObject,
+			Fields: []schema.Field{{Name: "password", Type: schema.TypeSecret}},
+		}}},
+	})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("CreateTemplate() with a secret field nested in an object error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestCreateTemplateRefusesAForbiddenExtraVarName(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)
@@ -844,21 +867,32 @@ func TestCreateCheckDefinitionCallsCreateCheckDefinitionWithProjectionsOnce(t *t
 	}
 }
 
-// TestCreateCheckDefinitionDefaultsAnEmptyKeyToThePluginName proves
-// Service.CreateCheckDefinition applies the SAME key-defaulting rule an
-// organization's own checks.Service.CreateDefinition does (both now funnel
-// through checks.ValidateDefinitionShape) — "key defaults to the plugin
-// name" is the spec's own rule for every check definition, shared or not.
-func TestCreateCheckDefinitionDefaultsAnEmptyKeyToThePluginName(t *testing.T) {
+// TestCreateCheckDefinitionDefaultsAnEmptyKeyBeforeCheckingReservedKeys
+// proves Service.CreateCheckDefinition applies the SAME key-defaulting rule
+// an organization's own checks.Service.CreateDefinition does (both now
+// funnel through checks.ValidateDefinitionShape) — "key defaults to the
+// plugin name" is the spec's own rule for every check definition, shared or
+// not. It cannot be proven by a SUCCESSFUL create here, the way the
+// equivalent test for an ordinary organization-owned definition can:
+// internal/checks.SeedDefinitions() uses the plugin name as the key for
+// every one of today's four plugins, so defaulting an empty key for any of
+// them always produces a reservedSeedKeys hit (reservedSeedKeys' own doc
+// comment explains why that refusal cannot depend on whether any
+// organization exists to collide with). What this test proves instead:
+// defaulting still RUNS before the reserved-key check, rather than the key
+// reaching that check as empty — pinned by asserting the refusal names the
+// DEFAULTED key "cpu", not "", which is what a regression that skipped
+// checks.ValidateDefinitionShape's own normalization would produce.
+func TestCreateCheckDefinitionDefaultsAnEmptyKeyBeforeCheckingReservedKeys(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)
 
-	got, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Plugin: "cpu", Interval: 60 * time.Second})
-	if err != nil {
-		t.Fatalf("CreateCheckDefinition() error = %v, want nil", err)
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Plugin: "cpu", Interval: 60 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("CreateCheckDefinition() with an empty key on plugin cpu error = %v, want ErrInvalidInput (reserved)", err)
 	}
-	if got.Key != "cpu" {
-		t.Fatalf("CreateCheckDefinition() Key = %q, want %q (defaulted from plugin)", got.Key, "cpu")
+	if !strings.Contains(err.Error(), `"cpu"`) {
+		t.Fatalf(`CreateCheckDefinition() error = %q, want it to name the DEFAULTED key "cpu"`, err)
 	}
 }
 
@@ -892,6 +926,30 @@ func TestCreateCheckDefinitionRefusesMalformedServiceParams(t *testing.T) {
 	}
 }
 
+// TestCreateCheckDefinitionAcceptsExplicitParams is
+// TestCreateCheckDefinitionRefusesMalformedServiceParams' own positive
+// case: the "service" plugin's own required, non-empty params, carried all
+// the way through — nothing else in this package's own test suite supplies
+// a non-nil Params to Create/UpdateCheckDefinition, so checkParamsOrEmpty's
+// pass-through branch (as opposed to its nil-becomes-{} default) had no
+// direct test before this one.
+func TestCreateCheckDefinitionAcceptsExplicitParams(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	got, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{
+		Key: "sshd-watch", Plugin: "service", Interval: 60 * time.Second,
+		Params: map[string]any{"units": []string{"sshd"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckDefinition() error = %v, want nil", err)
+	}
+	units, _ := got.Params["units"].([]string)
+	if len(units) != 1 || units[0] != "sshd" {
+		t.Fatalf("CreateCheckDefinition() Params = %+v, want {units: [sshd]} carried through unchanged", got.Params)
+	}
+}
+
 func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)
@@ -902,13 +960,53 @@ func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 	}
 }
 
+// TestCreateCheckDefinitionRefusesAReservedSeedKeyEvenWithNoOrganizations
+// is the review's own Important finding, fixed and pinned here: cpu,
+// memory, disk and service are refused OUTRIGHT, not merely when some
+// organization happens to already collide — store.checkDefinitionNames is
+// deliberately left empty (the fresh-install / every-organization-deleted
+// case ExistingCheckDefinitionNames alone cannot protect, since there is
+// nothing for it to compare against) and the refusal must still fire.
+func TestCreateCheckDefinitionRefusesAReservedSeedKeyEvenWithNoOrganizations(t *testing.T) {
+	for _, key := range []string{"cpu", "memory", "disk", "service"} {
+		t.Run(key, func(t *testing.T) {
+			store := newFakeStore() // store.checkDefinitionNames is nil — nothing to collide with
+			svc := shared.NewService(store)
+
+			_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Key: key, Plugin: "cpu", Interval: 60 * time.Second})
+			if !errors.Is(err, shared.ErrInvalidInput) {
+				t.Fatalf("CreateCheckDefinition(key=%q) error = %v, want ErrInvalidInput", key, err)
+			}
+			if len(store.createCheckDefCalls) != 0 {
+				t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 0 for a reserved key", len(store.createCheckDefCalls))
+			}
+		})
+	}
+}
+
+// TestUpdateCheckDefinitionRefusesAReservedSeedKey is the same refusal on a
+// rename — a shared definition created under a safe key must not be
+// renamed into a reserved one later, which would reach the identical
+// half-provisioning window on the next organization created.
+func TestUpdateCheckDefinitionRefusesAReservedSeedKey(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second}
+	svc := shared.NewService(store)
+
+	_, err := svc.UpdateCheckDefinition(ctx, id, shared.CheckDefinitionInput{Key: "memory", Plugin: "disk", Interval: 300 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("UpdateCheckDefinition() renaming to a reserved key error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestCreateCheckDefinitionRefusesACollidingKey(t *testing.T) {
 	store := newFakeStore()
 	orgA := uuid.Must(uuid.NewV7())
-	store.checkDefinitionNames = []shared.OrgName{{OrgID: orgA, Name: "cpu"}}
+	store.checkDefinitionNames = []shared.OrgName{{OrgID: orgA, Name: "disk-data"}}
 	svc := shared.NewService(store)
 
-	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Key: "cpu", Plugin: "cpu", Interval: 60 * time.Second})
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Key: "disk-data", Plugin: "disk", Interval: 60 * time.Second})
 	if err == nil {
 		t.Fatal("CreateCheckDefinition() error = nil, want a collision")
 	}
@@ -921,6 +1019,9 @@ func TestCreateCheckDefinitionRefusesACollidingKey(t *testing.T) {
 	}
 	if !reflect.DeepEqual(collision.Orgs, []uuid.UUID{orgA}) {
 		t.Fatalf("NameCollisionError.Orgs = %v, want [%v]", collision.Orgs, orgA)
+	}
+	if collision.Scope == "" {
+		t.Fatal("NameCollisionError.Scope = \"\", want it to name the organization-wide scope (review finding: a bare org list leaves the provider no route to the truth for a non-org-scope collision)")
 	}
 	if len(store.createCheckDefCalls) != 0 {
 		t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 0 after a collision", len(store.createCheckDefCalls))
@@ -957,6 +1058,9 @@ func TestUpdateCheckDefinitionRefusesACollidingKey(t *testing.T) {
 	if !reflect.DeepEqual(collision.Orgs, []uuid.UUID{orgB}) {
 		t.Fatalf("NameCollisionError.Orgs = %v, want [%v]", collision.Orgs, orgB)
 	}
+	if collision.Scope == "" {
+		t.Fatal("NameCollisionError.Scope = \"\", want it to name the organization-wide scope")
+	}
 	if len(store.updateCheckDefCalls) != 0 {
 		t.Fatalf("UpdateCheckDefinitionAndPropagate called %d times, want 0 after a collision", len(store.updateCheckDefCalls))
 	}
@@ -966,7 +1070,7 @@ func TestUpdateCheckDefinitionPropagatesNotFound(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)
 
-	_, err := svc.UpdateCheckDefinition(ctx, uuid.Must(uuid.NewV7()), shared.CheckDefinitionInput{Plugin: "cpu", Interval: 60 * time.Second})
+	_, err := svc.UpdateCheckDefinition(ctx, uuid.Must(uuid.NewV7()), shared.CheckDefinitionInput{Key: "disk-data", Plugin: "cpu", Interval: 60 * time.Second})
 	if !errors.Is(err, shared.ErrNotFound) {
 		t.Fatalf("UpdateCheckDefinition() error = %v, want ErrNotFound", err)
 	}

@@ -8,11 +8,13 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -981,5 +983,170 @@ func TestSharedCheckDefinitionsSchema(t *testing.T) {
 		t.Errorf("foreign keys referencing check_definitions = %d, want 0 — a new referencing table means "+
 			"shared.SQLStore's check-definition delete path needs its own explicit dependant check, the same way "+
 			"git_repos and job_templates already have theirs", referencingFKCount)
+	}
+}
+
+// seedMonitoringGroupForCascadeTest and seedHostForCascadeTest are this
+// file's own minimal fixtures — check_definitions.group_id/host_id's own
+// composite FKs need a real monitoring_groups/hosts row to reference, and
+// nothing above already builds one of either.
+func seedMonitoringGroupForCascadeTest(t *testing.T, d *db.DB, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(context.Background(),
+		`INSERT INTO monitoring_groups (id, org_id, name, selector, priority) VALUES ($1, $2, 'g', 'true', 0)`,
+		id, orgID); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func seedHostForCascadeTest(t *testing.T, d *db.DB, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	zoneID := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx,
+		`INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'z', 'z')`, zoneID, orgID); err != nil {
+		t.Fatal(err)
+	}
+	hostID := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx,
+		`INSERT INTO hosts (id, org_id, zone_id, name, facts) VALUES ($1, $2, $3, 'h', '{}'::jsonb)`,
+		hostID, orgID, zoneID); err != nil {
+		t.Fatal(err)
+	}
+	return hostID
+}
+
+func seedCheckDefinitionForCascadeTest(
+	t *testing.T, d *db.DB, orgID uuid.UUID, key, bindingKind string, groupID, hostID *uuid.UUID, origin string,
+) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(context.Background(),
+		`INSERT INTO check_definitions (id, org_id, key, plugin, interval_seconds, binding_kind, group_id, host_id, origin)
+		 VALUES ($1, $2, $3, 'cpu', 60, $4, $5, $6, $7)`,
+		id, orgID, key, bindingKind, groupID, hostID, origin); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func checkDefinitionBindingNow(t *testing.T, d *db.DB, id uuid.UUID) (bindingKind string, groupID, hostID *uuid.UUID, exists bool) {
+	t.Helper()
+	var gid, hid *uuid.UUID
+	err := d.Pool().QueryRow(context.Background(),
+		`SELECT binding_kind, group_id, host_id FROM check_definitions WHERE id = $1`, id).Scan(&bindingKind, &gid, &hid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, nil, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bindingKind, gid, hid, true
+}
+
+// TestDeletingABoundGroupPreservesASharedProjectionAtOrgScope is migration
+// 00063's own test, for the Critical a review found after this task's own
+// implementation: check_definitions.group_id is ON DELETE CASCADE off
+// monitoring_groups (migration 00043), and nothing about that cascade knows
+// or cares whether the row it is about to remove is a customer's own
+// definition or an installation-owned projection — so a customer rebinding
+// a shared projection to a group (this task's own feature) and then
+// deleting that group would otherwise silently and permanently destroy the
+// provider's check for that one organization, with checks.Service.
+// DeleteDefinition's own origin == "shared" refusal never in the call path
+// at all (the delete happens against monitoring_groups, not
+// check_definitions). Migration 00063's trigger is what this test proves:
+// the shared row survives, rebound to the default ('org', nil, nil) scope
+// it was born at — not merely that the group's own delete succeeded.
+//
+// An ordinary CUSTOM check bound to the same group is seeded alongside the
+// shared one specifically to prove the trigger's WHEN (origin = 'shared')
+// clause does not change that row's own, already-correct behaviour: it
+// still cascades away with the group, exactly as migration 00043's own
+// comment says it should ("deleting a group or host takes its bindings
+// with it").
+func TestDeletingABoundGroupPreservesASharedProjectionAtOrgScope(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d)
+	group := seedMonitoringGroupForCascadeTest(t, d, org)
+
+	sharedID := seedCheckDefinitionForCascadeTest(t, d, org, "disk-data", "group", &group, nil, "shared")
+	customID := seedCheckDefinitionForCascadeTest(t, d, org, "custom-check", "group", &group, nil, "custom")
+
+	if _, err := d.Pool().Exec(context.Background(), `DELETE FROM monitoring_groups WHERE id = $1`, group); err != nil {
+		t.Fatalf("delete the bound group: %v", err)
+	}
+
+	bindingKind, groupID, _, exists := checkDefinitionBindingNow(t, d, sharedID)
+	if !exists {
+		t.Fatal("the shared projection was deleted along with its group, want it to survive rebound to org scope")
+	}
+	if bindingKind != "org" || groupID != nil {
+		t.Fatalf("shared projection after its group was deleted = (binding_kind=%q, group_id=%v), want (org, nil)", bindingKind, groupID)
+	}
+
+	if _, _, _, exists := checkDefinitionBindingNow(t, d, customID); exists {
+		t.Fatal("the ORDINARY custom check bound to the same group survived its deletion, want it to still cascade away unchanged")
+	}
+}
+
+// TestDeletingABoundHostPreservesASharedProjectionAtOrgScope is
+// TestDeletingABoundGroupPreservesASharedProjectionAtOrgScope's own test for
+// a host binding — check_definitions.host_id carries the identical ON
+// DELETE CASCADE off hosts (migration 00043), and hosts.Service.DeleteHost
+// is the second call site the brief's own Go-only audit missed for the same
+// reason: the cascade never reaches checks.Service.DeleteDefinition either.
+func TestDeletingABoundHostPreservesASharedProjectionAtOrgScope(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d)
+	host := seedHostForCascadeTest(t, d, org)
+
+	sharedID := seedCheckDefinitionForCascadeTest(t, d, org, "cpu-watch", "host", nil, &host, "shared")
+
+	if _, err := d.Pool().Exec(context.Background(), `DELETE FROM hosts WHERE id = $1`, host); err != nil {
+		t.Fatalf("delete the bound host: %v", err)
+	}
+
+	bindingKind, _, hostID, exists := checkDefinitionBindingNow(t, d, sharedID)
+	if !exists {
+		t.Fatal("the shared projection was deleted along with its host, want it to survive rebound to org scope")
+	}
+	if bindingKind != "org" || hostID != nil {
+		t.Fatalf("shared projection after its host was deleted = (binding_kind=%q, host_id=%v), want (org, nil)", bindingKind, hostID)
+	}
+}
+
+// TestDeletingTheOrganizationStillRemovesSharedProjections is the trigger's
+// own negative case, and the one a naive fix (gating on pg_trigger_depth()
+// alone, rather than checking whether the organization itself survives)
+// would have gotten wrong: check_definitions.org_id is ALSO ON DELETE
+// CASCADE off organizations, nested inside the identical trigger depth a
+// group or host cascade reaches, and MUST be allowed to actually remove
+// every row — rebinding instead of deleting here would leave orphaned
+// check_definitions rows referencing a deleted organization, which
+// Postgres does not independently re-verify once an application trigger
+// has suppressed part of a cascade (reproduced once, by hand, while
+// developing this migration, before the EXISTS-based condition replaced
+// the depth-only one — see 00063's own migration comment for the full
+// story).
+func TestDeletingTheOrganizationStillRemovesSharedProjections(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d)
+	group := seedMonitoringGroupForCascadeTest(t, d, org)
+
+	groupBound := seedCheckDefinitionForCascadeTest(t, d, org, "disk-data", "group", &group, nil, "shared")
+	orgBound := seedCheckDefinitionForCascadeTest(t, d, org, "org-scope-shared", "org", nil, nil, "shared")
+
+	if _, err := d.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id = $1`, org); err != nil {
+		t.Fatalf("delete the organization: %v", err)
+	}
+
+	for _, id := range []uuid.UUID{groupBound, orgBound} {
+		if _, _, _, exists := checkDefinitionBindingNow(t, d, id); exists {
+			t.Fatalf("check definition %s survived its own organization's deletion, want it gone — rebinding only "+
+				"applies when the organization itself is still there to rebind within", id)
+		}
 	}
 }

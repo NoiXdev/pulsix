@@ -576,9 +576,17 @@ func registerSharedCheckRoutes(hapi huma.API, deps Deps) {
 func mapSharedErr(ctx context.Context, deps Deps, err error) error {
 	var coll *shared.NameCollisionError
 	if errors.As(err, &coll) {
-		return huma.Error409Conflict(fmt.Sprintf(
-			"name %q is already used by %s", coll.Name, strings.Join(resolveOrgLabels(ctx, deps, coll.Orgs), ", "),
-		))
+		msg := fmt.Sprintf("name %q is already used by %s", coll.Name, strings.Join(resolveOrgLabels(ctx, deps, coll.Orgs), ", "))
+		// coll.Scope is set only for check definitions (NameCollisionError's
+		// own doc comment) — a review finding: without it, an instance
+		// admin reading "already used by acme" would naturally check
+		// acme's own organization-WIDE check list, which can be empty even
+		// though acme is exactly the colliding organization, when the
+		// collision is at a group or host scope acme itself configured.
+		if coll.Scope != "" {
+			msg += ", at " + coll.Scope
+		}
+		return huma.Error409Conflict(msg)
 	}
 	var inUse *shared.InUseError
 	if errors.As(err, &inUse) {

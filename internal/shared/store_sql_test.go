@@ -3,6 +3,7 @@ package shared_test
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/shared"
 )
 
@@ -892,6 +894,34 @@ func TestSQLStoreCreateTemplateWithProjectionsRefusesAMissingRepoDefinition(t *t
 	}
 }
 
+// TestSQLStoreCreateTemplateWithProjectionsRoundTripsAnExtraVarsSchema
+// proves toTemplateDefinition's ExtraVarsSchema branch, through a real
+// Postgres jsonb column — every other template-definition test in this file
+// creates one with no schema at all (ExtraVarsSchema stays nil throughout),
+// so GetTemplateDefinition's own schema-decoding path had no direct test.
+func TestSQLStoreCreateTemplateWithProjectionsRoundTripsAnExtraVarsSchema(t *testing.T) {
+	d := testdb.Open(t)
+	store := shared.NewSQLStore(d)
+	repoDef := seedSharedRepoDef(t, d, "infra-for-tpl-schema-roundtrip")
+
+	sc := &schema.Schema{Fields: []schema.Field{{Name: "region", Type: schema.TypeString}}}
+	def, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site-schema", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+		ExtraVarsSchema: sc,
+	})
+	if err != nil {
+		t.Fatalf("CreateTemplateWithProjections() error = %v, want nil", err)
+	}
+
+	got, err := store.GetTemplateDefinition(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("GetTemplateDefinition() error = %v", err)
+	}
+	if got.ExtraVarsSchema == nil || len(got.ExtraVarsSchema.Fields) != 1 || got.ExtraVarsSchema.Fields[0].Name != "region" {
+		t.Fatalf("GetTemplateDefinition() ExtraVarsSchema = %+v, want the one field round-tripped through Postgres", got.ExtraVarsSchema)
+	}
+}
+
 func TestSQLStoreExistingTemplateNamesExcludesOwnProjections(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -1180,6 +1210,49 @@ func TestSQLStoreProjectTemplateIntoRefusesACollidingName(t *testing.T) {
 	}
 }
 
+// TestSQLStoreListTemplateDefinitionsReturnsEveryDefinition is
+// TestSQLStoreListDefinitionsReturnsEveryDefinition's own test for job
+// templates, the second of the three kinds never directly exercised at the
+// store level before this review round.
+func TestSQLStoreListTemplateDefinitionsReturnsEveryDefinition(t *testing.T) {
+	d := testdb.Open(t)
+	store := shared.NewSQLStore(d)
+	repoDef := seedSharedRepoDef(t, d, "infra-for-tpl-list")
+
+	defA, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site-list-a", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("seed a: %v", err)
+	}
+	defB, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site-list-b", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("seed b: %v", err)
+	}
+
+	list, err := store.ListTemplateDefinitions(ctx)
+	if err != nil {
+		t.Fatalf("ListTemplateDefinitions() error = %v, want nil", err)
+	}
+	foundA, foundB := false, false
+	for _, d := range list {
+		if d.ID == defA.ID {
+			foundA = true
+			if d.Name != "deploy-site-list-a" || d.SharedRepoID != repoDef.ID || d.PlaybookPath != "site.yml" {
+				t.Fatalf("listed definition a = %+v, want the values it was created with", d)
+			}
+		}
+		if d.ID == defB.ID {
+			foundB = true
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("ListTemplateDefinitions() = %+v, want both seeded definitions present", list)
+	}
+}
+
 func TestSQLStoreProjectIntoRefusesACollidingName(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -1196,6 +1269,53 @@ func TestSQLStoreProjectIntoRefusesACollidingName(t *testing.T) {
 
 	if err := store.ProjectInto(ctx, def, org); !errors.Is(err, shared.ErrNameTaken) {
 		t.Fatalf("ProjectInto() error = %v, want ErrNameTaken", err)
+	}
+}
+
+// TestSQLStoreListDefinitionsReturnsEveryDefinition proves
+// SQLStore.ListDefinitions itself, directly — the real store method, never
+// exercised by a direct test in this package before this review round
+// (Service.ListRepos' own fake-backed test never reaches this package's
+// real SQL, and internal/api's own tests, which DO exercise it end to end
+// through GET /admin/repos/definitions, do not credit the coverage back to
+// this package — part of why internal/shared's own coverage gate read
+// lower than what the code actually does). TestSQLStoreListCheckDefinitionsReturnsEveryDefinition's
+// own doc comment, same reasoning, for the first of the three kinds.
+func TestSQLStoreListDefinitionsReturnsEveryDefinition(t *testing.T) {
+	d := testdb.Open(t)
+	store := shared.NewSQLStore(d)
+
+	defA, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra-list-a", URL: "https://git.example.com/a.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("seed a: %v", err)
+	}
+	defB, err := store.CreateWithProjections(ctx, shared.RepoDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "infra-list-b", URL: "https://git.example.com/b.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatalf("seed b: %v", err)
+	}
+
+	list, err := store.ListDefinitions(ctx)
+	if err != nil {
+		t.Fatalf("ListDefinitions() error = %v, want nil", err)
+	}
+	foundA, foundB := false, false
+	for _, d := range list {
+		if d.ID == defA.ID {
+			foundA = true
+			if d.Name != "infra-list-a" || d.URL != "https://git.example.com/a.git" || d.Branch != "main" {
+				t.Fatalf("listed definition a = %+v, want the values it was created with", d)
+			}
+		}
+		if d.ID == defB.ID {
+			foundB = true
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("ListDefinitions() = %+v, want both seeded definitions present", list)
 	}
 }
 
@@ -1326,6 +1446,49 @@ func TestSQLStoreCreateCheckDefinitionWithProjectionsRefusesADuplicateDefinition
 	})
 	if !errors.Is(err, shared.ErrNameTaken) {
 		t.Fatalf("CreateCheckDefinitionWithProjections() error = %v, want ErrNameTaken", err)
+	}
+}
+
+// TestSQLStoreCreateCheckDefinitionWithProjectionsRoundTripsNonEmptyParams
+// proves marshalCheckParams/toCheckDefinition's non-empty path through a
+// real Postgres jsonb column, not only the always-empty {} every other
+// store-level check-definition test in this file uses — the "service"
+// plugin's own required, non-empty units list, carried through the
+// definition's own row AND every projection it writes.
+func TestSQLStoreCreateCheckDefinitionWithProjectionsRoundTripsNonEmptyParams(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-check-params-roundtrip")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "sshd-watch", Plugin: "service", Interval: 60 * time.Second,
+		Params: map[string]any{"units": []string{"sshd", "cron"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckDefinitionWithProjections() error = %v, want nil", err)
+	}
+
+	got, err := store.GetCheckDefinition(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("GetCheckDefinition() error = %v", err)
+	}
+	units, _ := got.Params["units"].([]any)
+	if len(units) != 2 || units[0] != "sshd" || units[1] != "cron" {
+		t.Fatalf("GetCheckDefinition() Params = %+v, want {units: [sshd, cron]} round-tripped through Postgres", got.Params)
+	}
+
+	_, _, _, intervalSeconds, _, _, _, _ := checkDefinitionProjectionRow(t, d, org, def.ID)
+	if intervalSeconds != 60 {
+		t.Fatalf("projection interval = %d, want 60", intervalSeconds)
+	}
+	var projParamsRaw []byte
+	if err := d.Pool().QueryRow(ctx, `SELECT params FROM check_definitions WHERE org_id = $1 AND shared_definition_id = $2`, org, def.ID).
+		Scan(&projParamsRaw); err != nil {
+		t.Fatalf("read projection params: %v", err)
+	}
+	if !strings.Contains(string(projParamsRaw), "sshd") {
+		t.Fatalf("projection params = %s, want it to contain the propagated units list", projParamsRaw)
 	}
 }
 
@@ -1495,6 +1658,14 @@ func TestUpdateCheckDefinitionAndPropagateCatchesACollisionAtAReboundScope(t *te
 	}
 	if !reflect.DeepEqual(collision.Orgs, []uuid.UUID{org}) {
 		t.Fatalf("NameCollisionError.Orgs = %v, want [%v]", collision.Orgs, org)
+	}
+	// Review finding: the backstop does not know the exact scope without an
+	// extra query, so it must say plainly that it is NOT necessarily the
+	// organization-wide one — the one fact that stops an instance admin
+	// from checking org's own org-wide list, finding nothing, and
+	// concluding the message is wrong rather than incomplete.
+	if !strings.Contains(collision.Scope, "not necessarily the organization-wide one") {
+		t.Fatalf("NameCollisionError.Scope = %q, want it to say the scope is not necessarily the organization-wide one", collision.Scope)
 	}
 }
 
