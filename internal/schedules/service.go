@@ -288,6 +288,14 @@ func failureReason(err error) string {
 		return "every targeted host has a changed host key"
 	case errors.Is(err, jobs.ErrNotFound), errors.Is(err, templates.ErrNotFound):
 		return "the job template no longer exists"
+	// A projection of an installation-owned definition (spec v0.2f) whose
+	// playbook has not been registered in this organization yet
+	// (jobs.ErrTemplateNotReady's own doc comment) — distinct from the
+	// "no longer exists" case above: the template IS there, the tick just
+	// cannot run it yet, which is worth recording precisely rather than
+	// falling through to the value-free default below.
+	case errors.Is(err, jobs.ErrTemplateNotReady):
+		return "the template's playbook has not been registered in this organization yet"
 	case errors.As(err, &ve), errors.Is(err, templates.ErrInvalidInput):
 		return "the schedule's overrides no longer match the template"
 	}

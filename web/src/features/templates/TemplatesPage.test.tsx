@@ -501,6 +501,56 @@ describe('TemplatesPage', () => {
       expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
     });
 
+    // Review finding: Save used to stay disabled whenever playbookId was
+    // empty, with no exception for a projection — but empty IS a
+    // projection's normal state right after its definition is created,
+    // before this organization has synced the matching playbook (spec
+    // decision 4). That blocked the one thing this dialog still lets the
+    // organization edit here at all: its own scope and default SSH
+    // credential (decision 2). Asserting the button is merely enabled
+    // would not have caught the original bug — the bug was that clicking
+    // it did nothing, because it could never be clicked — so this attempts
+    // the save and asserts the exact PUT body that reaches the server,
+    // including playbook_id staying "" (the server's own Update already
+    // accepts that unchanged on a projection; internal/api/
+    // shared_template_handlers_test.go's own end-to-end test proves the
+    // 200).
+    it('saves a projection with an unresolved playbook, sending its own scope and credential', async () => {
+      const user = userEvent.setup();
+      let put: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': ORG,
+        'GET /api/v1/orgs/acme/job-templates': {
+          templates: [template({ shared_template_id: 'def-1', playbook_id: '', limit: 'web*' })],
+        },
+        'GET /api/v1/orgs/acme/job-templates/t1': {
+          template: template({ shared_template_id: 'def-1', playbook_id: '', limit: 'web*' }),
+        },
+        'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+        'GET /api/v1/orgs/acme/inventory/groups': { groups: [groupRow] },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+        'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+          put = req.body;
+          return { template: template({ shared_template_id: 'def-1', playbook_id: '', limit: 'web*', credential_id: 'c1' }) };
+        },
+      });
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+      const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+
+      const saveButton = within(dialog).getByRole('button', { name: 'Save template' });
+      expect(saveButton).not.toBeDisabled();
+
+      // The projection's own field, still editable with an unresolved
+      // playbook.
+      await pickOption(screen, 'Default SSH credential', { value: 'c1' });
+      await user.click(saveButton);
+
+      await screen.findByText('Template deploy-site saved');
+      expect(put).toMatchObject({ name: 'deploy-site', playbook_id: '', limit: 'web*', credential_id: 'c1' });
+    });
+
     it('keeps every shared field editable for an ordinary, non-projected template', async () => {
       const user = userEvent.setup();
       mockApi({

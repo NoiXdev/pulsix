@@ -156,6 +156,27 @@ func TestRunNowRecordsAFailure(t *testing.T) {
 	}
 }
 
+// TestRunNowRecordsAnUnresolvedSharedTemplateDistinctly is
+// TestRunNowRecordsAFailure's own test for jobs.ErrTemplateNotReady (v0.2f
+// Task 6 review): a tick against a shared template projection whose
+// playbook has not synced yet must record THIS failureReason case, not
+// fall through to the value-free default ("could not enqueue the run (see
+// the manager log)") that every ordinary enqueue failure share.Service
+// does not otherwise recognize would have produced.
+func TestRunNowRecordsAnUnresolvedSharedTemplateDistinctly(t *testing.T) {
+	w := newWorld(t)
+	s, _ := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	w.runs.err = jobs.ErrTemplateNotReady
+	if _, err := w.svc.RunNow(ctx, w.org, s.ID, w.actor); !errors.Is(err, jobs.ErrTemplateNotReady) {
+		t.Fatalf("RunNow = %v", err)
+	}
+	runs, _ := w.svc.Runs(ctx, w.org, s.ID, 10)
+	if len(runs) != 1 || runs[0].Outcome != schedules.OutcomeFailed ||
+		runs[0].Reason != "the template's playbook has not been registered in this organization yet" {
+		t.Fatalf("runs = %+v, want the precise ErrTemplateNotReady reason, not the value-free default", runs)
+	}
+}
+
 func TestListReturnsTheLatestRunPerSchedule(t *testing.T) {
 	w := newWorld(t)
 	s, _ := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))

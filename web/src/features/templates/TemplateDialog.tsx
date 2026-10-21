@@ -297,7 +297,26 @@ function TemplateForm({
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={!playbookId || create.isPending || update.isPending}>
+          <Button
+            type="submit"
+            variant="primary"
+            // An ordinary template genuinely cannot be created or saved
+            // without a playbook — the Select above is `required` for
+            // exactly that case, and this guard backs it up for browsers
+            // that do not block submission on an unfilled required field.
+            // A PROJECTION is different: playbookId empty is its NORMAL
+            // state right after the definition is created, before this
+            // organization has synced the matching playbook (spec decision
+            // 4; internal/templates/service.go's own Update already
+            // accepts an empty playbook_id unchanged on a projection,
+            // exactly the case refuseSharedFieldChange exists to allow).
+            // Blocking Save here would also block the one thing this
+            // dialog still lets the organization edit on a projection —
+            // scope, the default SSH credential, the vault identity set —
+            // which decision 2 gives them and decision 4 says they must be
+            // able to fill in before any sync happens at all.
+            disabled={(!playbookId && !projected) || create.isPending || update.isPending}
+          >
             {existing ? 'Save template' : 'Create template'}
           </Button>
         </div>

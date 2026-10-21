@@ -235,6 +235,24 @@ func TestReceiveDisabledRateLimitedSkippedAndFailed(t *testing.T) {
 	}
 }
 
+// TestReceiveRecordsAnUnresolvedSharedTemplateDistinctly is
+// failureReason's own test for jobs.ErrTemplateNotReady (v0.2f Task 6
+// review): a webhook against a shared template projection whose playbook
+// has not synced yet must record THIS failureReason case, not fall through
+// to the value-free default ("could not enqueue (see the manager log)").
+func TestReceiveRecordsAnUnresolvedSharedTemplateDistinctly(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, _ := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+
+	rw.runs.err = jobs.ErrTemplateNotReady
+	if res, _ := rw.svc.Receive(ctx, rw.signed(t, c, `{}`)); res.Outcome != triggers.OutcomeFailed {
+		t.Fatalf("enqueue failure = %+v", res)
+	}
+	if last := rw.rec.deliveries[len(rw.rec.deliveries)-1]; last.Reason != "the template's playbook has not been registered in this organization yet" {
+		t.Fatalf("failure reason = %q, want the precise ErrTemplateNotReady reason, not the value-free default", last.Reason)
+	}
+}
+
 func TestReceiveRepoSyncAndTestCall(t *testing.T) {
 	rw := newReceiveWorld(t)
 	// PresetPulsix, not PresetGitLab: Task 9 review Minor 3 (fixed on this

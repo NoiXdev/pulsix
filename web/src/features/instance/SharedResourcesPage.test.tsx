@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { SharedResourcesPage } from './SharedResourcesPage.tsx';
 
 const ADMIN = {
@@ -187,8 +188,180 @@ describe('SharedResourcesPage', () => {
       'GET /api/v1/auth/me': { ...ADMIN, instance_admin: false },
       'GET /api/v1/admin/repos/definitions': () =>
         new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
+      'GET /api/v1/admin/templates/definitions': () =>
+        new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
     });
     renderPage();
-    expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+    // Both sections are independent queries behind the same gate (Task 6's
+    // own doc comment on SharedResourcesPage), so a non-admin sees the
+    // access-denied state from each of them, not merely one.
+    expect(await screen.findAllByText('You do not have access')).toHaveLength(2);
+  });
+});
+
+// v0.2f Task 6, ruled in after Task 5 shipped: the instance-admin half of
+// job templates was API-only (only TemplateDialog.tsx's read-only marker
+// existed). This section is RepoDefinitionsSection's own test block,
+// mirrored one-for-one for templates — the extension point Task 5's own
+// report named ("the title 'Shared resources' vs. the one table's own
+// 'repository definitions' framing already leaves room for that"), which
+// held: SharedResourcesPage.tsx needed no restructuring, only a second,
+// independent section.
+describe('SharedResourcesPage — job template definitions (v0.2f Task 6)', () => {
+  const repoDef = (over: Record<string, unknown> = {}) => ({
+    id: 'r1', name: 'infra-base', url: 'https://git.example/provider/infra-base.git', branch: 'main', subpath: '', ...over,
+  });
+  const tplDef = (over: Record<string, unknown> = {}) => ({
+    id: 't1', name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml', limit: '', extra_vars: {}, ...over,
+  });
+
+  it('lists job template definitions, naming the repository they resolve against', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [tplDef({ limit: 'web*' })] },
+    });
+    renderPage();
+    expect(await screen.findByText('deploy-site')).toBeInTheDocument();
+    // The repository column resolves the id to the OTHER section's own
+    // name, not the raw id — proving the two sections, independent as they
+    // are, still read from the same repository list. "infra-base" appears
+    // twice by design: once as the repo section's own row, once as the
+    // template row's resolved repository column.
+    expect(await screen.findAllByText('infra-base')).toHaveLength(2);
+    expect(screen.getByText('site.yml')).toBeInTheDocument();
+    expect(screen.getByText('web*')).toBeInTheDocument();
+  });
+
+  it('creates a job template definition, projected into every organization by the server', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    const definitions: Record<string, unknown>[] = [];
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': () => ({ definitions }),
+      'POST /api/v1/admin/templates/definitions': (req: MockRequest) => {
+        posted = req.body;
+        const created = tplDef({ id: 't9', ...(req.body as Record<string, unknown>) });
+        definitions.push(created);
+        return { definition: created };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add job template definition' }));
+    await user.type(screen.getByLabelText('Name'), 'deploy-site');
+    await pickOption(screen, 'Shared repository', { value: 'r1' });
+    await user.type(screen.getByLabelText('Playbook path'), 'site.yml');
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+
+    expect(await screen.findByText('deploy-site')).toBeInTheDocument();
+    expect(posted).toMatchObject({ name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml' });
+    expect(await screen.findByText('Job template definition deploy-site created')).toBeInTheDocument();
+  });
+
+  it('does not submit while the required fields are empty', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'POST /api/v1/admin/templates/definitions': () => {
+        posts += 1;
+        return { definition: tplDef() };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add job template definition' }));
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+    expect(await screen.findAllByText('required')).toHaveLength(3);
+    expect(posts).toBe(0);
+  });
+
+  it('edits a definition, propagating its limit to every projection', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [tplDef()] },
+      'PUT /api/v1/admin/templates/definitions/t1': (req: MockRequest) => {
+        put = req.body;
+        return { definition: tplDef({ limit: 'web*' }) };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.type(within(dialog).getByLabelText('Limit pattern'), 'web*');
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(put).toEqual({ name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml', limit: 'web*' });
+    expect(await screen.findByText('Job template definition deploy-site saved')).toBeInTheDocument();
+  });
+
+  // Spec decision 7, Task 6's own application: a name collision names the
+  // colliding organizations, to an instance admin only.
+  it('shows which organizations already use a name when creating a definition collides', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'POST /api/v1/admin/templates/definitions': () =>
+        new Response(JSON.stringify({ detail: 'name "deploy-site" is already used by acme, widget-co' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add job template definition' }));
+    await user.type(screen.getByLabelText('Name'), 'deploy-site');
+    await pickOption(screen, 'Shared repository', { value: 'r1' });
+    await user.type(screen.getByLabelText('Playbook path'), 'site.yml');
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('name "deploy-site" is already used by acme, widget-co');
+  });
+
+  // Spec decision 5, Task 6's own application: a definition a customer's
+  // schedule or job trigger still references refuses to delete, naming the
+  // organization and what still references it.
+  it('shows which organization and what blocks a delete', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [tplDef()] },
+      'DELETE /api/v1/admin/templates/definitions/t1': () =>
+        new Response(JSON.stringify({ detail: 'organization acme: a schedule still references this definition\'s projection' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderPage();
+    await screen.findByText('deploy-site');
+    await user.click(screen.getByRole('button', { name: 'Delete deploy-site' }));
+    expect(await screen.findByText("organization acme: a schedule still references this definition's projection")).toBeInTheDocument();
+    // Refused, not removed: the row is still there.
+    expect(screen.getByText('deploy-site')).toBeInTheDocument();
+  });
+
+  it('deletes a definition that nothing references', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let deleted = false;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': () => ({ definitions: deleted ? [] : [tplDef()] }),
+      'DELETE /api/v1/admin/templates/definitions/t1': () => {
+        deleted = true;
+        return {};
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Delete deploy-site' }));
+    expect(await screen.findByText('No shared job template definitions yet.')).toBeInTheDocument();
   });
 });

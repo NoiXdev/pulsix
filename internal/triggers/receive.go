@@ -346,6 +346,11 @@ func failureReason(err error) string {
 		return "every targeted host has a changed host key"
 	case errors.Is(err, jobs.ErrNoZone):
 		return "the organization has no default zone"
+	// schedules/service.go's own case, same sentinel, same reasoning: a
+	// projection of an installation-owned definition (spec v0.2f) whose
+	// playbook has not synced in this organization yet.
+	case errors.Is(err, jobs.ErrTemplateNotReady):
+		return "the template's playbook has not been registered in this organization yet"
 	}
 	return "could not enqueue (see the manager log)"
 }

@@ -51,6 +51,16 @@ export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
 export type RepoDefinition = components['schemas']['RepoDefinitionDTO'];
 export type RepoDefinitionInput = components['schemas']['RepoDefinitionBody'];
 
+// TemplateDefinition is the same idea as RepoDefinition, for job templates
+// (v0.2f Task 6, SharedResourcesPage): name, the shared repository it
+// resolves its playbook against, the playbook's path within that
+// repository, limit, extra vars and their schema — read-only inside every
+// organization once projected (TemplateDTO's own shared_template_id names
+// the projection). One body shape for both verbs here too
+// (templateDefinitionBody, internal/api/shared_handlers.go).
+export type TemplateDefinition = components['schemas']['TemplateDefinitionDTO'];
+export type TemplateDefinitionInput = components['schemas']['TemplateDefinitionBody'];
+
 // RepoUpdateInput/TemplateUpdateInput exist only so REPO_BODY_FIELDS and
 // TEMPLATE_BODY_FIELDS (features/repos/validate.ts, features/templates/vars.ts)
 // can be keyed off BOTH bodies' fields, not just the Create one: the Create
