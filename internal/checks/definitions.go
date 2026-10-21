@@ -253,8 +253,55 @@ func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in Defi
 	if err != nil {
 		return Definition{}, err
 	}
+	if origin == originCustom {
+		if err := s.refuseKeyHeldBySharedProjection(ctx, orgID, d.Key); err != nil {
+			return Definition{}, err
+		}
+	}
 	d.ID, d.OrgID, d.Origin = s.newID(), orgID, origin
 	return s.store.CreateDefinition(ctx, d)
+}
+
+// refuseKeyHeldBySharedProjection keeps a shared projection's organization-
+// scope slot reserved, because migration 00063's trigger needs it free.
+//
+// That trigger rebinds a projection to ('org', nil, nil) when the group or
+// host it was bound to is deleted, so a customer deleting their own group
+// does not destroy the provider's check. But check_definitions carries
+// UNIQUE NULLS NOT DISTINCT (org_id, binding_kind, group_id, host_id, key),
+// so the rebind only succeeds while that slot is free. A customer who
+// rebinds the projection to a group and then creates their own check with
+// the same key at organization scope takes it — and the next deletion of
+// that group fails on 23505, aborting DELETE FROM monitoring_groups and
+// leaving them unable to remove their own group, with an error naming a
+// table they never touched.
+//
+// Refusing here rather than coping there is deliberate: by the time the
+// trigger runs, the only choices left are failing the customer's delete or
+// silently dropping the provider's check, and both are worse than refusing
+// a key up front. Migration 00063's comment names this function as what
+// guarantees its UPDATE can land.
+//
+// Narrow on purpose. It bites only on a key a SHARED projection in this
+// organization already holds, at any scope. The same key at two different
+// scopes stays legal otherwise — NULLS NOT DISTINCT allows it deliberately,
+// and disk org-wide alongside disk on one host with different parameters is
+// a real configuration — so widening this to a general cross-scope ban
+// would change behaviour for ordinary checks that have nothing to do with
+// shared resources. Seeded rows skip the check: SeedForOrg writes only the
+// reserved keys, which validateCheckDefinitionInput already refuses to a
+// shared definition, so the two sets cannot meet.
+func (s *Service) refuseKeyHeldBySharedProjection(ctx context.Context, orgID uuid.UUID, key string) error {
+	defs, err := s.store.ListDefinitions(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("list definitions to check shared keys: %w", err)
+	}
+	for _, d := range defs {
+		if d.Origin == originShared && d.Key == key {
+			return fmt.Errorf("%w: key %q belongs to a check the installation owns here; its organization-wide slot stays reserved so the check can return to it", ErrInvalidInput, key)
+		}
+	}
+	return nil
 }
 
 // CreateDefinition validates in and stores a new, operator-created check
@@ -310,6 +357,15 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 	// on a seeded one.
 	if existing.Origin == originShared {
 		if err := refuseSharedDefinitionFieldChange(existing, d); err != nil {
+			return Definition{}, err
+		}
+	}
+	if existing.Origin == originCustom && d.Key != existing.Key {
+		// Renaming an ordinary check ONTO a shared projection's key takes
+		// the same reserved slot creating one there would — see
+		// refuseKeyHeldBySharedProjection. Only a changed key can do it, so
+		// an ordinary update that leaves the key alone pays nothing.
+		if err := s.refuseKeyHeldBySharedProjection(ctx, orgID, d.Key); err != nil {
 			return Definition{}, err
 		}
 	}

@@ -85,6 +85,20 @@
 -- enabled to the projection regardless of binding, and a customer who had
 -- disabled a check before deleting its group should not have it silently
 -- re-enabled by losing the binding that triggered this.
+-- Two limits worth knowing before trusting this trigger:
+--
+--   - The UPDATE below can only land while the ('org', NULL, NULL, key)
+--     slot is free, because of 00043's UNIQUE NULLS NOT DISTINCT. What
+--     keeps it free is checks.Service.refuseKeyHeldBySharedProjection,
+--     which refuses an organization's own check taking a key a shared
+--     projection already holds at any scope. If that guard is ever
+--     removed or narrowed, this UPDATE starts raising 23505 and aborting
+--     the customer's own DELETE FROM monitoring_groups — the exact
+--     outcome the fix exists to prevent, arriving through the fix itself.
+--   - A row-level trigger does not fire on TRUNCATE. Nothing in this
+--     product truncates check_definitions, so this is a note for whoever
+--     one day writes something that does, not a live gap.
+--
 -- +goose StatementBegin
 CREATE FUNCTION preserve_shared_check_definition_on_cascade() RETURNS trigger AS $$
 BEGIN
