@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -66,6 +67,28 @@ type fakeStore struct {
 	// needs to prove the call reaches the store with the right arguments.
 	resolveTemplatePlaybooksCalls    []resolveTemplatePlaybooksCall
 	forceResolveTemplatePlaybooksErr error
+
+	// --- check definitions (Task 7), the same shape as the repo/template
+	// fields above ---
+	checkDefs                  map[uuid.UUID]shared.CheckDefinition
+	checkDefinitionNames       []shared.OrgName
+	existingCheckDefExcludes   []uuid.UUID
+	createCheckDefCalls        []shared.CheckDefinition
+	updateCheckDefCalls        []shared.CheckDefinition
+	deleteCheckDefCalls        []uuid.UUID
+	projectCheckDefCalls       []projectCheckDefCall
+	forceExistingCheckDefsErr  error
+	forceCreateCheckDefErr     error
+	forceUpdateCheckDefErr     error
+	forceDeleteCheckDefErr     error
+	forceListCheckDefsErr      error
+	forceProjectCheckDefErrOrg *uuid.UUID
+	forceProjectCheckDefErr    error
+}
+
+type projectCheckDefCall struct {
+	def   shared.CheckDefinition
+	orgID uuid.UUID
 }
 
 type resolveTemplatePlaybooksCall struct {
@@ -87,6 +110,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		defs:         map[uuid.UUID]shared.RepoDefinition{},
 		templateDefs: map[uuid.UUID]shared.TemplateDefinition{},
+		checkDefs:    map[uuid.UUID]shared.CheckDefinition{},
 	}
 }
 
@@ -247,6 +271,78 @@ func (f *fakeStore) ResolveTemplatePlaybooksForNewPath(_ context.Context, orgID,
 		orgID: orgID, repoID: repoID, playbookID: playbookID, path: path,
 	})
 	return nil
+}
+
+// --- check definitions (Task 7): the same fake shape as the repo/template
+// methods above, the third kind reusing the same tx.go mechanism.
+
+func (f *fakeStore) CreateCheckDefinitionWithProjections(_ context.Context, def shared.CheckDefinition) (shared.CheckDefinition, error) {
+	if f.forceCreateCheckDefErr != nil {
+		return shared.CheckDefinition{}, f.forceCreateCheckDefErr
+	}
+	f.createCheckDefCalls = append(f.createCheckDefCalls, def)
+	f.checkDefs[def.ID] = def
+	return def, nil
+}
+
+func (f *fakeStore) UpdateCheckDefinitionAndPropagate(_ context.Context, def shared.CheckDefinition) (shared.CheckDefinition, error) {
+	if f.forceUpdateCheckDefErr != nil {
+		return shared.CheckDefinition{}, f.forceUpdateCheckDefErr
+	}
+	if _, ok := f.checkDefs[def.ID]; !ok {
+		return shared.CheckDefinition{}, shared.ErrNotFound
+	}
+	f.updateCheckDefCalls = append(f.updateCheckDefCalls, def)
+	f.checkDefs[def.ID] = def
+	return def, nil
+}
+
+func (f *fakeStore) DeleteCheckDefinitionWithProjections(_ context.Context, id uuid.UUID) error {
+	if f.forceDeleteCheckDefErr != nil {
+		return f.forceDeleteCheckDefErr
+	}
+	if _, ok := f.checkDefs[id]; !ok {
+		return shared.ErrNotFound
+	}
+	f.deleteCheckDefCalls = append(f.deleteCheckDefCalls, id)
+	delete(f.checkDefs, id)
+	return nil
+}
+
+func (f *fakeStore) ListCheckDefinitions(_ context.Context) ([]shared.CheckDefinition, error) {
+	if f.forceListCheckDefsErr != nil {
+		return nil, f.forceListCheckDefsErr
+	}
+	out := make([]shared.CheckDefinition, 0, len(f.checkDefs))
+	for _, d := range f.checkDefs {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID.String() < out[j].ID.String() })
+	return out, nil
+}
+
+func (f *fakeStore) GetCheckDefinition(_ context.Context, id uuid.UUID) (shared.CheckDefinition, error) {
+	d, ok := f.checkDefs[id]
+	if !ok {
+		return shared.CheckDefinition{}, shared.ErrNotFound
+	}
+	return d, nil
+}
+
+func (f *fakeStore) ProjectCheckDefinitionInto(_ context.Context, def shared.CheckDefinition, orgID uuid.UUID) error {
+	if f.forceProjectCheckDefErrOrg != nil && *f.forceProjectCheckDefErrOrg == orgID {
+		return f.forceProjectCheckDefErr
+	}
+	f.projectCheckDefCalls = append(f.projectCheckDefCalls, projectCheckDefCall{def: def, orgID: orgID})
+	return nil
+}
+
+func (f *fakeStore) ExistingCheckDefinitionNames(_ context.Context, exclude uuid.UUID) ([]shared.OrgName, error) {
+	f.existingCheckDefExcludes = append(f.existingCheckDefExcludes, exclude)
+	if f.forceExistingCheckDefsErr != nil {
+		return nil, f.forceExistingCheckDefsErr
+	}
+	return f.checkDefinitionNames, nil
 }
 
 // --- CreateRepo ---
@@ -721,6 +817,248 @@ func TestResolveTemplatePlaybooksPropagatesAStoreError(t *testing.T) {
 	err := svc.ResolveTemplatePlaybooks(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), "site.yml")
 	if !errors.Is(err, store.forceResolveTemplatePlaybooksErr) {
 		t.Fatalf("ResolveTemplatePlaybooks() error = %v, want %v", err, store.forceResolveTemplatePlaybooksErr)
+	}
+}
+
+// --- check definitions (Task 7) ---
+
+func TestCreateCheckDefinitionCallsCreateCheckDefinitionWithProjectionsOnce(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	got, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{
+		Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckDefinition() error = %v, want nil", err)
+	}
+	if len(store.createCheckDefCalls) != 1 {
+		t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 1", len(store.createCheckDefCalls))
+	}
+	call := store.createCheckDefCalls[0]
+	if call.Key != "disk-data" || call.Plugin != "disk" || call.Interval != 300*time.Second {
+		t.Fatalf("CreateCheckDefinitionWithProjections called with %+v, want the input's own values", call)
+	}
+	if got.Params == nil {
+		t.Fatal("CreateCheckDefinition() Params = nil, want a non-nil empty map by default")
+	}
+}
+
+// TestCreateCheckDefinitionDefaultsAnEmptyKeyToThePluginName proves
+// Service.CreateCheckDefinition applies the SAME key-defaulting rule an
+// organization's own checks.Service.CreateDefinition does (both now funnel
+// through checks.ValidateDefinitionShape) — "key defaults to the plugin
+// name" is the spec's own rule for every check definition, shared or not.
+func TestCreateCheckDefinitionDefaultsAnEmptyKeyToThePluginName(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	got, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Plugin: "cpu", Interval: 60 * time.Second})
+	if err != nil {
+		t.Fatalf("CreateCheckDefinition() error = %v, want nil", err)
+	}
+	if got.Key != "cpu" {
+		t.Fatalf("CreateCheckDefinition() Key = %q, want %q (defaulted from plugin)", got.Key, "cpu")
+	}
+}
+
+func TestCreateCheckDefinitionRefusesAnUnsupportedPlugin(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Plugin: "nonsense", Interval: 60 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("CreateCheckDefinition() with an unsupported plugin error = %v, want ErrInvalidInput", err)
+	}
+	if len(store.createCheckDefCalls) != 0 {
+		t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 0 after invalid input", len(store.createCheckDefCalls))
+	}
+}
+
+// TestCreateCheckDefinitionRefusesMalformedServiceParams proves
+// checks.ValidateDefinitionShape's own per-plugin parameter schema — the
+// "service" plugin requires a non-empty units list — is enforced here too,
+// not only for an organization's own definition: a shared definition is
+// written directly into every organization's check_definitions row,
+// bypassing internal/checks.Service entirely, so this package is the only
+// place left to catch it.
+func TestCreateCheckDefinitionRefusesMalformedServiceParams(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Plugin: "service", Interval: 60 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("CreateCheckDefinition() with no units error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Plugin: "cpu", Interval: 5 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("CreateCheckDefinition() with a too-short interval error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestCreateCheckDefinitionRefusesACollidingKey(t *testing.T) {
+	store := newFakeStore()
+	orgA := uuid.Must(uuid.NewV7())
+	store.checkDefinitionNames = []shared.OrgName{{OrgID: orgA, Name: "cpu"}}
+	svc := shared.NewService(store)
+
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Key: "cpu", Plugin: "cpu", Interval: 60 * time.Second})
+	if err == nil {
+		t.Fatal("CreateCheckDefinition() error = nil, want a collision")
+	}
+	if !errors.Is(err, shared.ErrNameTaken) {
+		t.Fatalf("CreateCheckDefinition() error = %v, want errors.Is(_, ErrNameTaken)", err)
+	}
+	var collision *shared.NameCollisionError
+	if !errors.As(err, &collision) {
+		t.Fatalf("CreateCheckDefinition() error = %v, want *NameCollisionError", err)
+	}
+	if !reflect.DeepEqual(collision.Orgs, []uuid.UUID{orgA}) {
+		t.Fatalf("NameCollisionError.Orgs = %v, want [%v]", collision.Orgs, orgA)
+	}
+	if len(store.createCheckDefCalls) != 0 {
+		t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 0 after a collision", len(store.createCheckDefCalls))
+	}
+}
+
+func TestUpdateCheckDefinitionExcludesItsOwnProjectionsFromTheCollisionCheck(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second}
+	svc := shared.NewService(store)
+
+	if _, err := svc.UpdateCheckDefinition(ctx, id, shared.CheckDefinitionInput{Key: "disk-data-v2", Plugin: "disk", Interval: 300 * time.Second}); err != nil {
+		t.Fatalf("UpdateCheckDefinition() error = %v, want nil", err)
+	}
+	if len(store.existingCheckDefExcludes) != 1 || store.existingCheckDefExcludes[0] != id {
+		t.Fatalf("ExistingCheckDefinitionNames excludes = %v, want exactly [%v]", store.existingCheckDefExcludes, id)
+	}
+}
+
+func TestUpdateCheckDefinitionRefusesACollidingKey(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second}
+	orgB := uuid.Must(uuid.NewV7())
+	store.checkDefinitionNames = []shared.OrgName{{OrgID: orgB, Name: "taken"}}
+	svc := shared.NewService(store)
+
+	_, err := svc.UpdateCheckDefinition(ctx, id, shared.CheckDefinitionInput{Key: "taken", Plugin: "disk", Interval: 300 * time.Second})
+	var collision *shared.NameCollisionError
+	if !errors.As(err, &collision) {
+		t.Fatalf("UpdateCheckDefinition() error = %v, want *NameCollisionError", err)
+	}
+	if !reflect.DeepEqual(collision.Orgs, []uuid.UUID{orgB}) {
+		t.Fatalf("NameCollisionError.Orgs = %v, want [%v]", collision.Orgs, orgB)
+	}
+	if len(store.updateCheckDefCalls) != 0 {
+		t.Fatalf("UpdateCheckDefinitionAndPropagate called %d times, want 0 after a collision", len(store.updateCheckDefCalls))
+	}
+}
+
+func TestUpdateCheckDefinitionPropagatesNotFound(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	_, err := svc.UpdateCheckDefinition(ctx, uuid.Must(uuid.NewV7()), shared.CheckDefinitionInput{Plugin: "cpu", Interval: 60 * time.Second})
+	if !errors.Is(err, shared.ErrNotFound) {
+		t.Fatalf("UpdateCheckDefinition() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteCheckDefinitionDelegatesToTheStore(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data"}
+	svc := shared.NewService(store)
+
+	if err := svc.DeleteCheckDefinition(ctx, id); err != nil {
+		t.Fatalf("DeleteCheckDefinition() error = %v, want nil", err)
+	}
+	if len(store.deleteCheckDefCalls) != 1 || store.deleteCheckDefCalls[0] != id {
+		t.Fatalf("DeleteCheckDefinitionWithProjections calls = %v, want [%v]", store.deleteCheckDefCalls, id)
+	}
+}
+
+// TestDeleteCheckDefinitionPropagatesNotFound proves Service.DeleteCheckDefinition
+// is a plain delegation to the store with nothing else to add — unlike
+// DeleteRepo/DeleteTemplate, which may return *InUseError, this one never
+// does (the brief's own point 1, verified structurally: nothing references
+// check_definitions, so there is no dependant check whose error this method
+// would ever need to pass through untouched; ErrNotFound is the only
+// sentinel exercised here).
+func TestDeleteCheckDefinitionPropagatesNotFound(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	if err := svc.DeleteCheckDefinition(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, shared.ErrNotFound) {
+		t.Fatalf("DeleteCheckDefinition() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestProjectAllCheckDefinitionsIntoProjectsEveryDefinition(t *testing.T) {
+	store := newFakeStore()
+	idA, idB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store.checkDefs[idA] = shared.CheckDefinition{ID: idA, Key: "disk-data"}
+	store.checkDefs[idB] = shared.CheckDefinition{ID: idB, Key: "cpu-high"}
+	org := uuid.Must(uuid.NewV7())
+	svc := shared.NewService(store)
+
+	if err := svc.ProjectAllCheckDefinitionsInto(ctx, org); err != nil {
+		t.Fatalf("ProjectAllCheckDefinitionsInto() error = %v, want nil", err)
+	}
+	if len(store.projectCheckDefCalls) != 2 {
+		t.Fatalf("ProjectCheckDefinitionInto called %d times, want 2 (one per definition)", len(store.projectCheckDefCalls))
+	}
+	for _, c := range store.projectCheckDefCalls {
+		if c.orgID != org {
+			t.Fatalf("ProjectCheckDefinitionInto org = %v, want %v", c.orgID, org)
+		}
+	}
+}
+
+func TestProjectAllCheckDefinitionsIntoPropagatesAFailureForOneDefinition(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data"}
+	org := uuid.Must(uuid.NewV7())
+	store.forceProjectCheckDefErrOrg = &org
+	store.forceProjectCheckDefErr = shared.ErrNameTaken
+	svc := shared.NewService(store)
+
+	if err := svc.ProjectAllCheckDefinitionsInto(ctx, org); !errors.Is(err, shared.ErrNameTaken) {
+		t.Fatalf("ProjectAllCheckDefinitionsInto() error = %v, want ErrNameTaken", err)
+	}
+}
+
+func TestGetCheckDefNotFound(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+
+	if _, err := svc.GetCheckDef(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, shared.ErrNotFound) {
+		t.Fatalf("GetCheckDef() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListCheckDefsReturnsEveryDefinition(t *testing.T) {
+	store := newFakeStore()
+	idA, idB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store.checkDefs[idA] = shared.CheckDefinition{ID: idA, Key: "disk-data"}
+	store.checkDefs[idB] = shared.CheckDefinition{ID: idB, Key: "cpu-high"}
+	svc := shared.NewService(store)
+
+	got, err := svc.ListCheckDefs(ctx)
+	if err != nil {
+		t.Fatalf("ListCheckDefs() error = %v, want nil", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListCheckDefs() = %v, want 2 definitions", got)
 	}
 }
 

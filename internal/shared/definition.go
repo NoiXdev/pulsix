@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -127,6 +128,49 @@ type TemplateDefinitionInput struct {
 // return value than ProjectedRepoColumns' four.
 func ProjectedTemplateColumns(def TemplateDefinition) (name, limit string, extraVars map[string]any, extraVarsSchema *schema.Schema) {
 	return def.Name, def.Limit, def.ExtraVars, def.ExtraVarsSchema
+}
+
+// CheckDefinition is the installation-owned half of a shared check
+// definition (spec decision 2): key, plugin, params and interval are the
+// provider's own and read-only inside every organization once projected
+// (internal/checks.Definition.SharedDefinitionID names the projection).
+// binding_kind, group_id, host_id and enabled stay on the projection in
+// every row, origin or not — this type carries none of them, unlike
+// RepoDefinition/TemplateDefinition, which both carry the binding their own
+// kind leaves editable. Unlike those two types this one also carries no
+// Name: a check definition never had one to begin with (migration 00062's
+// own comment) — Key has always played that role, both as the identifier a
+// narrower scope overrides on (migration 00043) and as what decision 7's
+// collision check matches against here.
+type CheckDefinition struct {
+	ID       uuid.UUID
+	Key      string
+	Plugin   string
+	Params   map[string]any
+	Interval time.Duration
+}
+
+// CheckDefinitionInput is a CheckDefinition's editable fields, taken by both
+// Service.CreateCheckDefinition and Service.UpdateCheckDefinition —
+// RepoDefinitionInput's own full-replacement shape.
+type CheckDefinitionInput struct {
+	Key      string
+	Plugin   string
+	Params   map[string]any
+	Interval time.Duration
+}
+
+// ProjectedCheckColumns returns the shared columns a check_definitions
+// projection of def must carry — ProjectedRepoColumns' own doc comment,
+// Task 7's analogous function for check definitions' own, different split.
+// A PURE function of def, same shape as ProjectedRepoColumns: unlike a job
+// template's playbook_id, nothing here needs per-organization state to
+// resolve (task-7-brief's own reasoning, and this package's
+// queries/shared.sql comment block on check definitions, for why no
+// organization-side trigger is needed the way migration 00061 needed one
+// for job_templates.playbook_id).
+func ProjectedCheckColumns(def CheckDefinition) (key, plugin string, params map[string]any, interval time.Duration) {
+	return def.Key, def.Plugin, def.Params, def.Interval
 }
 
 // schemaHasSecretField reports whether fields declares a TypeSecret field,

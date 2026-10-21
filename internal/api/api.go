@@ -504,6 +504,9 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// /admin/templates/definitions... — Task 6's own application of the
 	// same posture, for job templates.
 	registerSharedTemplateRoutes(hapi, deps)
+	// /admin/checks/definitions... — Task 7's own application of the same
+	// posture, for check definitions, the third and last kind.
+	registerSharedCheckRoutes(hapi, deps)
 	// GET /me/activity spans every org the caller belongs to, so — like
 	// registerOrgRoutes above — it takes no org in its path and accepts no
 	// bearer credential: a token is scoped to the one org it was minted

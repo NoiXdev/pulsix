@@ -21,7 +21,7 @@ INSERT INTO check_definitions (
   $6, $7, $8, $9,
   $10, $11
 )
-RETURNING id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at
+RETURNING id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at, shared_definition_id
 `
 
 type CreateCheckDefinitionParams struct {
@@ -68,6 +68,7 @@ func (q *Queries) CreateCheckDefinition(ctx context.Context, arg CreateCheckDefi
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedDefinitionID,
 	)
 	return i, err
 }
@@ -142,7 +143,7 @@ func (q *Queries) DeleteMonitoringGroup(ctx context.Context, arg DeleteMonitorin
 }
 
 const getCheckDefinition = `-- name: GetCheckDefinition :one
-SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at FROM check_definitions WHERE org_id = $1 AND id = $2
+SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at, shared_definition_id FROM check_definitions WHERE org_id = $1 AND id = $2
 `
 
 type GetCheckDefinitionParams struct {
@@ -168,6 +169,7 @@ func (q *Queries) GetCheckDefinition(ctx context.Context, arg GetCheckDefinition
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedDefinitionID,
 	)
 	return i, err
 }
@@ -286,7 +288,7 @@ func (q *Queries) ListCheckCurrent(ctx context.Context, arg ListCheckCurrentPara
 }
 
 const listCheckDefinitions = `-- name: ListCheckDefinitions :many
-SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at FROM check_definitions WHERE org_id = $1 ORDER BY key
+SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at, shared_definition_id FROM check_definitions WHERE org_id = $1 ORDER BY key
 `
 
 func (q *Queries) ListCheckDefinitions(ctx context.Context, orgID uuid.UUID) ([]CheckDefinition, error) {
@@ -313,6 +315,7 @@ func (q *Queries) ListCheckDefinitions(ctx context.Context, orgID uuid.UUID) ([]
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SharedDefinitionID,
 		); err != nil {
 			return nil, err
 		}
@@ -436,7 +439,7 @@ SET key = $1, plugin = $2, params = $3::jsonb,
     binding_kind = $6, group_id = $7, host_id = $8,
     updated_at = now()
 WHERE org_id = $9 AND id = $10
-RETURNING id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at
+RETURNING id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at, shared_definition_id
 `
 
 type UpdateCheckDefinitionParams struct {
@@ -485,6 +488,7 @@ func (q *Queries) UpdateCheckDefinition(ctx context.Context, arg UpdateCheckDefi
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedDefinitionID,
 	)
 	return i, err
 }

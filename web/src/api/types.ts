@@ -139,6 +139,17 @@ export type CheckDefinition = components['schemas']['CheckDefinitionDTO'];
 export type CheckDefinitionInput = components['schemas']['CheckDefinitionBody'];
 export type CheckPlugin = CheckDefinition['plugin'];
 export type CheckBindingKind = CheckDefinition['binding_kind'];
+
+// CheckDefinitionDef is the installation-owned half of a shared check
+// definition (v0.2f Task 7, SharedResourcesPage): key, plugin, params and
+// interval — read-only inside every organization once projected
+// (CheckDefinition's own shared_definition_id names the projection). No
+// binding, no enabled flag: decision 2 keeps both on the projection for
+// check definitions specifically, the OPPOSITE split from
+// RepoDefinition/TemplateDefinition above. One body shape for both verbs
+// here too (checkDefinitionDefBody, internal/api/shared_handlers.go).
+export type CheckDefinitionDef = components['schemas']['CheckDefinitionDefDTO'];
+export type CheckDefinitionDefInput = components['schemas']['CheckDefinitionDefBody'];
 export type MonitoringGroup = components['schemas']['MonitoringGroupDTO'];
 export type MonitoringGroupInput = components['schemas']['MonitoringGroupBody'];
 export type MonitoringGroupPreviewHost = components['schemas']['PreviewHostDTO'];

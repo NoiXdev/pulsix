@@ -2,7 +2,9 @@ package shared_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1194,5 +1196,424 @@ func TestSQLStoreProjectIntoRefusesACollidingName(t *testing.T) {
 
 	if err := store.ProjectInto(ctx, def, org); !errors.Is(err, shared.ErrNameTaken) {
 		t.Fatalf("ProjectInto() error = %v, want ErrNameTaken", err)
+	}
+}
+
+// --- check definitions (Task 7) ---
+
+// seedOtherCheckDefinition inserts an ordinary, non-projection
+// check_definitions row directly, bound org-wide — the raw material
+// decision 7's collision check must see, at the exact scope a fresh
+// projection always lands at.
+func seedOtherCheckDefinition(t *testing.T, d *db.DB, orgID uuid.UUID, key string) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`INSERT INTO check_definitions (id, org_id, key, plugin, interval_seconds, binding_kind, origin)
+		 VALUES ($1, $2, $3, 'cpu', 60, 'org', 'custom')`,
+		id, orgID, key); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// seedMonitoringGroupForCheck creates a bare monitoring group — raw material
+// for rebinding a check definition's projection away from the default org
+// scope, the state TestUpdateCheckDefinitionAndPropagateNeverTouchesAnOrganizationsOwnBinding
+// and its collision-backstop counterpart below both need.
+func seedMonitoringGroupForCheck(t *testing.T, d *db.DB, orgID uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`INSERT INTO monitoring_groups (id, org_id, name, selector, priority) VALUES ($1, $2, $3, 'true', 0)`,
+		id, orgID, name); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// rebindCheckDefinitionProjection moves one organization's own projection of
+// defID to a group binding directly — standing in for the ordinary
+// PUT /orgs/{org}/checks/{id} write a customer makes through checks.Service,
+// which this package's own store never calls (shared.SQLStore bypasses
+// internal/checks entirely, the same way it bypasses internal/repos and
+// internal/templates).
+func rebindCheckDefinitionProjection(t *testing.T, d *db.DB, orgID, defID, groupID uuid.UUID) {
+	t.Helper()
+	if _, err := d.Exec(db.WithOrgScope(ctx, orgID),
+		`UPDATE check_definitions SET binding_kind = 'group', group_id = $3, enabled = false WHERE org_id = $1 AND shared_definition_id = $2`,
+		orgID, defID, groupID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// checkDefinitionProjectionRow reads one organization's projection of defID
+// directly — store_sql.go's own methods are what is under test, so
+// assertions read the table underneath them rather than through the store.
+func checkDefinitionProjectionRow(t *testing.T, d *db.DB, orgID, defID uuid.UUID) (
+	id uuid.UUID, key, plugin string, intervalSeconds int32, enabled bool, bindingKind string, groupID *uuid.UUID, origin string,
+) {
+	t.Helper()
+	var gid pgtype.UUID
+	err := d.Pool().QueryRow(ctx,
+		`SELECT id, key, plugin, interval_seconds, enabled, binding_kind, group_id, origin
+		 FROM check_definitions WHERE org_id = $1 AND shared_definition_id = $2`,
+		orgID, defID).Scan(&id, &key, &plugin, &intervalSeconds, &enabled, &bindingKind, &gid, &origin)
+	if err != nil {
+		t.Fatalf("read check definition projection for org %s: %v", orgID, err)
+	}
+	groupID = db.UUIDPtr(gid)
+	return
+}
+
+func countCheckDefinitionProjections(t *testing.T, d *db.DB, defID uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM check_definitions WHERE shared_definition_id = $1`, defID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestSQLStoreCreateCheckDefinitionWithProjectionsProjectsIntoEveryOrg(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	orgA := seedOrg(t, q, "shared-check-create-a")
+	orgB := seedOrg(t, q, "shared-check-create-b")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckDefinitionWithProjections() error = %v, want nil", err)
+	}
+
+	for _, org := range []uuid.UUID{orgA, orgB} {
+		_, key, plugin, intervalSeconds, enabled, bindingKind, groupID, origin := checkDefinitionProjectionRow(t, d, org, def.ID)
+		if key != "disk-data" || plugin != "disk" || intervalSeconds != 300 {
+			t.Fatalf("org %s projection = (key=%q, plugin=%q, interval=%d), want the definition's own values", org, key, plugin, intervalSeconds)
+		}
+		// Every fresh projection lands at the SAME default binding
+		// ('org', nil, nil), enabled — this file's own queries/shared.sql
+		// comment block: unlike a repository's credential or a template's
+		// playbook_id, a check definition's binding needs no per-organization
+		// state to be complete and immediately runnable.
+		if !enabled || bindingKind != "org" || groupID != nil {
+			t.Fatalf("org %s projection = (enabled=%v, binding=%q, group=%v), want (true, org, nil) by default", org, enabled, bindingKind, groupID)
+		}
+		if origin != "shared" {
+			t.Fatalf("org %s projection origin = %q, want shared", org, origin)
+		}
+	}
+	if n := countCheckDefinitionProjections(t, d, def.ID); n != 2 {
+		t.Fatalf("countCheckDefinitionProjections() = %d, want 2", n)
+	}
+}
+
+func TestSQLStoreCreateCheckDefinitionWithProjectionsRefusesADuplicateDefinitionKey(t *testing.T) {
+	d := testdb.Open(t)
+	store := shared.NewSQLStore(d)
+
+	if _, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "dup-check-key", Plugin: "cpu", Interval: 60 * time.Second,
+	}); err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+
+	_, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "dup-check-key", Plugin: "memory", Interval: 60 * time.Second,
+	})
+	if !errors.Is(err, shared.ErrNameTaken) {
+		t.Fatalf("CreateCheckDefinitionWithProjections() error = %v, want ErrNameTaken", err)
+	}
+}
+
+func TestSQLStoreExistingCheckDefinitionNamesExcludesOwnProjections(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	orgA := seedOrg(t, q, "shared-check-existing-a")
+	seedOrg(t, q, "shared-check-existing-b")
+	orgC := seedOrg(t, q, "shared-check-existing-c")
+	seedOtherCheckDefinition(t, d, orgC, "unrelated-check")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+
+	all, err := store.ExistingCheckDefinitionNames(ctx, uuid.Nil)
+	if err != nil {
+		t.Fatalf("ExistingCheckDefinitionNames(uuid.Nil) error = %v", err)
+	}
+	if !containsOrgName(all, orgA, "disk-data") || !containsOrgName(all, orgC, "unrelated-check") {
+		t.Fatalf("ExistingCheckDefinitionNames(uuid.Nil) = %v, want every organization's own row, projections included", all)
+	}
+
+	excluded, err := store.ExistingCheckDefinitionNames(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("ExistingCheckDefinitionNames(def.ID) error = %v", err)
+	}
+	if containsOrgName(excluded, orgA, "disk-data") {
+		t.Fatalf("ExistingCheckDefinitionNames(def.ID) = %v, want def's own projections excluded", excluded)
+	}
+	if !containsOrgName(excluded, orgC, "unrelated-check") {
+		t.Fatalf("ExistingCheckDefinitionNames(def.ID) = %v, want the unrelated row still present", excluded)
+	}
+}
+
+func TestUpdateCheckDefinitionPropagatesToEveryProjectionOrNone(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org1 := seedOrg(t, q, "check-propagate-org-1")
+	org2 := seedOrg(t, q, "check-propagate-org-2")
+	org3 := seedOrg(t, q, "check-propagate-org-3")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+
+	// org2 already has its OWN, unrelated check bound org-wide and named
+	// "disk-data-v2" — the exact key this call is about to rename the
+	// definition to, at the exact scope the propagation will try to write.
+	seedOtherCheckDefinition(t, d, org2, "disk-data-v2")
+
+	_, err = store.UpdateCheckDefinitionAndPropagate(ctx, shared.CheckDefinition{
+		ID: def.ID, Key: "disk-data-v2", Plugin: "disk", Interval: 600 * time.Second,
+	})
+	if !errors.Is(err, shared.ErrNameTaken) {
+		t.Fatalf("UpdateCheckDefinitionAndPropagate() error = %v, want errors.Is(_, ErrNameTaken)", err)
+	}
+
+	got, err := store.GetCheckDefinition(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("GetCheckDefinition() error = %v", err)
+	}
+	if got.Key != "disk-data" || got.Interval != 300*time.Second {
+		t.Fatalf("GetCheckDefinition() = %+v, want the PREVIOUS key/interval untouched", got)
+	}
+	for _, org := range []uuid.UUID{org1, org2, org3} {
+		_, key, _, intervalSeconds, _, _, _, _ := checkDefinitionProjectionRow(t, d, org, def.ID)
+		if key != "disk-data" || intervalSeconds != 300 {
+			t.Fatalf("organization %s projection = (key=%q, interval=%d), want the PREVIOUS values — a failed propagation must never leave some organizations on the new value", org, key, intervalSeconds)
+		}
+	}
+	if n := countCheckDefinitionProjections(t, d, def.ID); n != 3 {
+		t.Fatalf("countCheckDefinitionProjections() = %d, want 3", n)
+	}
+}
+
+// TestUpdateCheckDefinitionAndPropagateNeverTouchesAnOrganizationsOwnBinding
+// is the proof behind this task's own finding about Task 2's mechanism
+// (task-7-report.md): check_definitions' projection carries columns
+// (binding_kind, group_id, host_id, enabled) that are the ORGANIZATION's,
+// never the definition's, even though they live in the same row as the
+// shared columns a definition edit propagates. One organization rebinds its
+// own projection to a monitoring group and disables it — an ordinary write
+// this package's own store never makes, standing in for
+// PUT /orgs/{org}/checks/{id} — and a provider's unrelated edit to the
+// definition's key/plugin/interval must propagate WITHOUT reverting either
+// one.
+func TestUpdateCheckDefinitionAndPropagateNeverTouchesAnOrganizationsOwnBinding(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "check-propagate-preserves-binding")
+	group := seedMonitoringGroupForCheck(t, d, org, "web-fleet")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+	rebindCheckDefinitionProjection(t, d, org, def.ID, group)
+
+	if _, err := store.UpdateCheckDefinitionAndPropagate(ctx, shared.CheckDefinition{
+		ID: def.ID, Key: "disk-data-v2", Plugin: "disk", Interval: 600 * time.Second,
+	}); err != nil {
+		t.Fatalf("UpdateCheckDefinitionAndPropagate() error = %v, want nil", err)
+	}
+
+	_, key, _, intervalSeconds, enabled, bindingKind, groupID, _ := checkDefinitionProjectionRow(t, d, org, def.ID)
+	if key != "disk-data-v2" || intervalSeconds != 600 {
+		t.Fatalf("projection = (key=%q, interval=%d), want the definition's NEW values propagated", key, intervalSeconds)
+	}
+	if enabled || bindingKind != "group" || groupID == nil || *groupID != group {
+		t.Fatalf("projection = (enabled=%v, binding=%q, group=%v), want the organization's OWN rebinding (false, group, %v) left untouched by the definition's edit", enabled, bindingKind, groupID, group)
+	}
+}
+
+// TestUpdateCheckDefinitionAndPropagateCatchesACollisionAtAReboundScope is
+// queries/shared.sql's own documented gap, proven for real: an organization
+// rebinds its projection to a group BEFORE the provider renames the
+// definition to a key that only collides at that group's own scope (not at
+// the default 'org' scope ExistingCheckDefinitionNames' preflight checks),
+// and the UNIQUE constraint still catches it — turned into a
+// *NameCollisionError naming exactly that one organization, the backstop
+// collisionFromCheckDefinitionRace's own doc comment describes.
+func TestUpdateCheckDefinitionAndPropagateCatchesACollisionAtAReboundScope(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "check-propagate-rebound-collision")
+	group := seedMonitoringGroupForCheck(t, d, org, "db-fleet")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+	rebindCheckDefinitionProjection(t, d, org, def.ID, group)
+
+	// org's own, unrelated check bound to the SAME group under the key the
+	// rename is about to collide with — invisible to
+	// ExistingCheckDefinitionNames' preflight, which only ever examines the
+	// ('org', nil, nil) scope.
+	otherID := uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(db.WithOrgScope(ctx, org),
+		`INSERT INTO check_definitions (id, org_id, key, plugin, interval_seconds, binding_kind, group_id, origin)
+		 VALUES ($1, $2, 'taken-at-group-scope', 'cpu', 60, 'group', $3, 'custom')`,
+		otherID, org, group); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.UpdateCheckDefinitionAndPropagate(ctx, shared.CheckDefinition{
+		ID: def.ID, Key: "taken-at-group-scope", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	var collision *shared.NameCollisionError
+	if !errors.As(err, &collision) {
+		t.Fatalf("UpdateCheckDefinitionAndPropagate() error = %v, want *NameCollisionError from the database's own UNIQUE constraint", err)
+	}
+	if !reflect.DeepEqual(collision.Orgs, []uuid.UUID{org}) {
+		t.Fatalf("NameCollisionError.Orgs = %v, want [%v]", collision.Orgs, org)
+	}
+}
+
+func TestDeleteCheckDefinitionWithProjectionsRemovesDefinitionAndProjectionsWhenUnused(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	seedOrg(t, q, "shared-check-delete-clean-a")
+	seedOrg(t, q, "shared-check-delete-clean-b")
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+	if n := countCheckDefinitionProjections(t, d, def.ID); n != 2 {
+		t.Fatalf("countCheckDefinitionProjections() before delete = %d, want 2", n)
+	}
+
+	if err := store.DeleteCheckDefinitionWithProjections(ctx, def.ID); err != nil {
+		t.Fatalf("DeleteCheckDefinitionWithProjections() error = %v, want nil — nothing in this schema references check_definitions (migration 00062's own comment)", err)
+	}
+	if _, gerr := store.GetCheckDefinition(ctx, def.ID); !errors.Is(gerr, shared.ErrNotFound) {
+		t.Fatalf("GetCheckDefinition() after delete = %v, want ErrNotFound", gerr)
+	}
+	if n := countCheckDefinitionProjections(t, d, def.ID); n != 0 {
+		t.Fatalf("countCheckDefinitionProjections() = %d, want 0 — the projections must go with the definition", n)
+	}
+}
+
+func TestSQLStoreProjectCheckDefinitionIntoANewOrganization(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+
+	newOrg := seedOrg(t, q, "shared-check-project-into-new")
+	if err := store.ProjectCheckDefinitionInto(ctx, def, newOrg); err != nil {
+		t.Fatalf("ProjectCheckDefinitionInto() error = %v, want nil", err)
+	}
+
+	_, key, plugin, intervalSeconds, enabled, bindingKind, groupID, origin := checkDefinitionProjectionRow(t, d, newOrg, def.ID)
+	if key != "disk-data" || plugin != "disk" || intervalSeconds != 300 {
+		t.Fatalf("new organization's projection = (key=%q, plugin=%q, interval=%d), want the definition's own values", key, plugin, intervalSeconds)
+	}
+	if !enabled || bindingKind != "org" || groupID != nil || origin != "shared" {
+		t.Fatalf("new organization's projection = (enabled=%v, binding=%q, group=%v, origin=%q), want (true, org, nil, shared)", enabled, bindingKind, groupID, origin)
+	}
+}
+
+// TestSQLStoreListCheckDefinitionsReturnsEveryDefinition proves
+// SQLStore.ListCheckDefinitions itself, directly — the real store method,
+// not Service.ListCheckDefs' own fake-backed test in service_test.go, which
+// never reaches this package's real SQL at all. Repos and templates share
+// the same gap (neither SQLStore.ListDefinitions nor
+// SQLStore.ListTemplateDefinitions has an equivalent direct test either),
+// so this is scoped to what Task 7 itself added rather than a sweep across
+// all three kinds — task-7-report.md's own note on internal/shared's
+// coverage gate names the other two as a carried-forward gap for Task 8.
+func TestSQLStoreListCheckDefinitionsReturnsEveryDefinition(t *testing.T) {
+	d := testdb.Open(t)
+	store := shared.NewSQLStore(d)
+
+	idA, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed a: %v", err)
+	}
+	idB, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "cpu-high", Plugin: "cpu", Interval: 60 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed b: %v", err)
+	}
+
+	list, err := store.ListCheckDefinitions(ctx)
+	if err != nil {
+		t.Fatalf("ListCheckDefinitions() error = %v, want nil", err)
+	}
+	foundA, foundB := false, false
+	for _, d := range list {
+		if d.ID == idA.ID {
+			foundA = true
+			if d.Key != "disk-data" || d.Plugin != "disk" || d.Interval != 300*time.Second {
+				t.Fatalf("listed definition a = %+v, want the values it was created with", d)
+			}
+		}
+		if d.ID == idB.ID {
+			foundB = true
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("ListCheckDefinitions() = %+v, want both seeded definitions present", list)
+	}
+}
+
+func TestSQLStoreProjectCheckDefinitionIntoRefusesACollidingKey(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+
+	def, err := store.CreateCheckDefinitionWithProjections(ctx, shared.CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("seed CreateCheckDefinitionWithProjections: %v", err)
+	}
+	org := seedOrg(t, q, "shared-check-project-collide")
+	seedOtherCheckDefinition(t, d, org, "disk-data")
+
+	if err := store.ProjectCheckDefinitionInto(ctx, def, org); !errors.Is(err, shared.ErrNameTaken) {
+		t.Fatalf("ProjectCheckDefinitionInto() error = %v, want ErrNameTaken", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
+	"github.com/noixdev/pulsix/internal/checks"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer (Task 4),
@@ -161,6 +162,61 @@ type Store interface {
 	// was just registered at. Touches zero rows harmlessly when nothing is
 	// waiting on that pair.
 	ResolveTemplatePlaybooksForNewPath(ctx context.Context, orgID, repoID, playbookID uuid.UUID, path string) error
+
+	// --- check definitions (Task 7) ---
+	//
+	// The same seven-method shape above, for shared_check_definitions/
+	// check_definitions instead of shared_repos/git_repos or
+	// shared_job_templates/job_templates — tx.go's own comment, unchanged
+	// reasoning, is why these are added to THIS interface and implemented
+	// by the SAME SQLStore rather than a third, parallel pair of types.
+	// There is no ResolveCheckDefinitionPlaybooksForNewPath-equivalent: a
+	// check definition's binding needs no per-organization resolution at
+	// all (queries/shared.sql's own comment block on check definitions).
+
+	// CreateCheckDefinitionWithProjections is CreateWithProjections for a
+	// check definition: def's own row and one projection of it — binding
+	// ('org', nil, nil), enabled true, origin "shared" — into every
+	// organization that exists, atomically. ErrNameTaken when another
+	// definition already has def.Key; *NameCollisionError on a race against
+	// the caller's own pre-flight check.
+	CreateCheckDefinitionWithProjections(ctx context.Context, def CheckDefinition) (CheckDefinition, error)
+	// UpdateCheckDefinitionAndPropagate is UpdateAndPropagate for a check
+	// definition: def's own row and every existing projection's shared
+	// columns (key, plugin, params, interval_seconds), atomically — NEVER
+	// binding_kind, group_id, host_id or enabled, which stay exactly as
+	// each organization last set them (UpdateProjectedCheckDefinition's own
+	// doc comment). ErrNotFound when def.ID does not exist.
+	UpdateCheckDefinitionAndPropagate(ctx context.Context, def CheckDefinition) (CheckDefinition, error)
+	// DeleteCheckDefinitionWithProjections is DeleteWithProjections for a
+	// check definition. UNLIKE repositories and job templates there is no
+	// dependant table to check first — nothing in this schema references
+	// check_definitions by foreign key (migration 00062's own comment) — so
+	// this never returns *InUseError; ErrNotFound when id does not exist.
+	DeleteCheckDefinitionWithProjections(ctx context.Context, id uuid.UUID) error
+	// ListCheckDefinitions returns every check definition, oldest first.
+	ListCheckDefinitions(ctx context.Context) ([]CheckDefinition, error)
+	// GetCheckDefinition reads one check definition. ErrNotFound when it
+	// does not exist.
+	GetCheckDefinition(ctx context.Context, id uuid.UUID) (CheckDefinition, error)
+	// ProjectCheckDefinitionInto creates one projection of def in orgID —
+	// ProjectInto's own single-organization, single-definition shape.
+	// Expected to run on an org-bound ctx, exactly like ProjectInto.
+	// ErrNameTaken if orgID already has a definition named def.Key at the
+	// default ('org', nil, nil) scope (not expected for a brand-new
+	// organization, which cannot yet own any row at all, but handled rather
+	// than assumed away).
+	ProjectCheckDefinitionInto(ctx context.Context, def CheckDefinition, orgID uuid.UUID) error
+	// ExistingCheckDefinitionNames returns every (organization, key) pair at
+	// the default ('org', nil, nil) scope — decision 7's raw material for
+	// check definitions, matched against a candidate key by the pure
+	// CollidingOrgs, excluding rows already a projection of exclude.
+	// Documented as an intentionally incomplete preflight (not every
+	// organization's projection still sits at this scope) by
+	// queries/shared.sql's own comment on the query this delegates to; the
+	// per-row propagate loop's own unique-violation catch is the
+	// authoritative backstop for a projection that has moved elsewhere.
+	ExistingCheckDefinitionNames(ctx context.Context, exclude uuid.UUID) ([]OrgName, error)
 }
 
 // Service implements the installation-admin operations on repository
@@ -405,4 +461,118 @@ func defaultBranch(b string) string {
 		return DefaultBranch
 	}
 	return b
+}
+
+// --- check definitions (Task 7) ---
+
+// CreateCheckDefinition defines a new shared check definition and projects
+// it into every existing organization at once (spec decision 4), at the
+// default ('org', nil, nil) binding, enabled — CreateRepo's own doc
+// comment, same ordering (validate shape, pre-flight collision check, then
+// write) and the same two collision cases. validateCheckDefinitionInput
+// applies the same plugin/key/params/interval rules
+// checks.ValidateDefinitionShape already enforces for an organization's own
+// definition — "Reuse, do not copy".
+func (s *Service) CreateCheckDefinition(ctx context.Context, in CheckDefinitionInput) (CheckDefinition, error) {
+	key, err := validateCheckDefinitionInput(in)
+	if err != nil {
+		return CheckDefinition{}, err
+	}
+	existing, err := s.store.ExistingCheckDefinitionNames(ctx, uuid.Nil)
+	if err != nil {
+		return CheckDefinition{}, fmt.Errorf("list existing check definition keys: %w", err)
+	}
+	if colliding := CollidingOrgs(existing, key); len(colliding) > 0 {
+		return CheckDefinition{}, &NameCollisionError{Name: key, Orgs: colliding}
+	}
+	def := CheckDefinition{
+		ID: uuid.Must(uuid.NewV7()), Key: key, Plugin: strings.TrimSpace(in.Plugin),
+		Params: checkParamsOrEmpty(in.Params), Interval: in.Interval,
+	}
+	return s.store.CreateCheckDefinitionWithProjections(ctx, def)
+}
+
+// UpdateCheckDefinition replaces def's editable fields and propagates the
+// shared ones to every existing projection (spec decision 2), atomically.
+// The same checks as CreateCheckDefinition apply to a rename; the collision
+// check excludes id's own current projections.
+func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in CheckDefinitionInput) (CheckDefinition, error) {
+	key, err := validateCheckDefinitionInput(in)
+	if err != nil {
+		return CheckDefinition{}, err
+	}
+	existing, err := s.store.ExistingCheckDefinitionNames(ctx, id)
+	if err != nil {
+		return CheckDefinition{}, fmt.Errorf("list existing check definition keys: %w", err)
+	}
+	if colliding := CollidingOrgs(existing, key); len(colliding) > 0 {
+		return CheckDefinition{}, &NameCollisionError{Name: key, Orgs: colliding}
+	}
+	def := CheckDefinition{
+		ID: id, Key: key, Plugin: strings.TrimSpace(in.Plugin),
+		Params: checkParamsOrEmpty(in.Params), Interval: in.Interval,
+	}
+	return s.store.UpdateCheckDefinitionAndPropagate(ctx, def)
+}
+
+// DeleteCheckDefinition removes a check definition and every one of its
+// projections. UNLIKE DeleteRepo/DeleteTemplate this never returns
+// *InUseError: nothing in this schema references check_definitions at all
+// (migration 00062's own comment, and this package's own
+// TestDeleteCheckDefinitionWithProjectionsHasNoDependantToCheck).
+func (s *Service) DeleteCheckDefinition(ctx context.Context, id uuid.UUID) error {
+	return s.store.DeleteCheckDefinitionWithProjections(ctx, id)
+}
+
+// ProjectAllCheckDefinitionsInto gives orgID a projection of every check
+// definition that already exists — ProjectAllInto's own counterpart for
+// check definitions, the same seam for a newly created organization.
+func (s *Service) ProjectAllCheckDefinitionsInto(ctx context.Context, orgID uuid.UUID) error {
+	defs, err := s.store.ListCheckDefinitions(ctx)
+	if err != nil {
+		return fmt.Errorf("list check definitions: %w", err)
+	}
+	for _, def := range defs {
+		if err := s.store.ProjectCheckDefinitionInto(ctx, def, orgID); err != nil {
+			return fmt.Errorf("project check definition %q into organization: %w", def.Key, err)
+		}
+	}
+	return nil
+}
+
+// GetCheckDef reads one check definition. ErrNotFound when it does not
+// exist.
+func (s *Service) GetCheckDef(ctx context.Context, id uuid.UUID) (CheckDefinition, error) {
+	return s.store.GetCheckDefinition(ctx, id)
+}
+
+// ListCheckDefs returns every check definition, oldest first.
+func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) {
+	return s.store.ListCheckDefinitions(ctx)
+}
+
+// validateCheckDefinitionInput runs checks.ValidateDefinitionShape — the
+// plugin set, the key pattern (defaulting an empty key to the plugin name,
+// same as an organization's own create) and each plugin's own parameter
+// schema — and re-wraps any failure under THIS package's own ErrInvalidInput
+// rather than letting checks.ErrInvalidInput escape: mapSharedErr
+// (internal/api/shared_handlers.go) only recognizes shared.ErrInvalidInput,
+// the same reason validateTemplateDefinitionInput exists for a shared
+// template's extra vars.
+func validateCheckDefinitionInput(in CheckDefinitionInput) (string, error) {
+	key, err := checks.ValidateDefinitionShape(in.Plugin, in.Key, in.Params, in.Interval)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return key, nil
+}
+
+// checkParamsOrEmpty normalizes a nil params map to an empty one —
+// extraVarsOrEmpty's own doc comment, same reasoning, so a definition
+// created with no params at all round-trips as {} rather than null.
+func checkParamsOrEmpty(params map[string]any) map[string]any {
+	if params == nil {
+		return map[string]any{}
+	}
+	return params
 }

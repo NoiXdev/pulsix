@@ -78,6 +78,27 @@ describe('ChecksPage', () => {
     expect(screen.queryByRole('button', { name: 'Copy disk-data' })).not.toBeInTheDocument();
   });
 
+  // Task 7 (v0.2f): a projection of an installation-owned definition
+  // (origin "shared") offers Copy — the same reason a seeded row does,
+  // since key/plugin/params/interval are fixed here — but, UNLIKE a seeded
+  // row, never Delete: spec decision 6 refuses that from inside an
+  // organization outright, and offering a button that always 403s is
+  // exactly the mistake RepoDialog.tsx's own projected-repo guard avoids.
+  it('offers Copy but never Delete on a shared (installation-managed) definition', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [check({ id: 'c8', key: 'disk-data', plugin: 'disk', origin: 'shared', shared_definition_id: 'sd1' })],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: 'Copy disk-data' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit disk-data' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete disk-data' })).not.toBeInTheDocument();
+  });
+
   it('shows a viewer the definitions but no write affordances', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
@@ -354,6 +375,55 @@ describe('ChecksPage', () => {
     expect(screen.getByRole('tab', { name: 'Monitoring groups' })).toBeInTheDocument();
   });
 
+  // Task 7 (v0.2f decision 2): a shared definition's key, plugin, interval
+  // and params are read-only here (the installation's own), but its binding
+  // and enabled flag are the OPPOSITE of a repository/job template's own
+  // split — this organization's to edit, every time, regardless of origin.
+  // Asserting only the disabled attributes would have missed the exact
+  // regression Task 6's own report named (a guard that blocks Save on
+  // exactly the fields a customer is supposed to be able to send), so this
+  // actually clicks Save and asserts the PUT body reaches the server.
+  it('keeps a shared definition fully read-only on its own fields while letting the organization rebind and disable it', async () => {
+    const user = userEvent.setup();
+    let put: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [
+          check({
+            id: 'c10', key: 'disk-data', plugin: 'disk', interval_seconds: 300,
+            origin: 'shared', shared_definition_id: 'sd1', binding_kind: 'org',
+          }),
+        ],
+      },
+      'PUT /api/v1/orgs/acme/checks/c10': (req: MockRequest) => {
+        put = req.body as Record<string, unknown>;
+        return { check: check({ id: 'c10' }) };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    expect(screen.getByLabelText('Key')).toBeDisabled();
+    expect(screen.getByLabelText('Plugin')).toBeDisabled();
+    expect(screen.getByLabelText('Interval (seconds)')).toBeDisabled();
+    expect(screen.getByText(/managed by the installation/)).toBeInTheDocument();
+
+    // Rebinding to a group and disabling it — the organization's own,
+    // always-editable half (spec decision 2's opposite split for checks).
+    await pickOption(screen, 'Binds to', { value: 'group' });
+    await user.click(screen.getByLabelText('Enabled'));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(put).toEqual({
+        plugin: 'disk', key: 'disk-data', params: {}, interval_seconds: 300, enabled: false,
+        binding_kind: 'group', group_id: 'g1',
+      }),
+    );
+  });
+
   it('copies a seeded definition into a custom one whose key can change', async () => {
     const user = userEvent.setup();
     let posted: Record<string, unknown> | undefined;
@@ -379,6 +449,41 @@ describe('ChecksPage', () => {
 
     await waitFor(() =>
       expect(posted).toMatchObject({ key: 'service-app', plugin: 'service', params: { units: ['sshd'] }, binding_kind: 'org' }),
+    );
+  });
+
+  // Task 7 (v0.2f): Copy is new for a SHARED row (seeded rows already had
+  // it) — this is the create path, so none of the shared-only disabling
+  // applies: key, plugin, interval and params all become editable, exactly
+  // like copying a seeded row already does.
+  it('copies a shared definition into a custom one whose key and interval can change', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [check({ id: 'c11', key: 'disk-data', plugin: 'disk', interval_seconds: 300, origin: 'shared', shared_definition_id: 'sd1' })],
+      },
+      'POST /api/v1/orgs/acme/checks': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return { check: check({ id: 'c12', origin: 'custom' }) };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Copy disk-data' }));
+    expect(screen.getByLabelText('Key')).not.toBeDisabled();
+    expect(screen.getByLabelText('Plugin')).not.toBeDisabled();
+    expect(screen.getByLabelText('Interval (seconds)')).not.toBeDisabled();
+    await user.clear(screen.getByLabelText('Key'));
+    await user.type(screen.getByLabelText('Key'), 'disk-data-copy');
+    await user.clear(screen.getByLabelText('Interval (seconds)'));
+    await user.type(screen.getByLabelText('Interval (seconds)'), '120');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(posted).toMatchObject({ key: 'disk-data-copy', plugin: 'disk', interval_seconds: 120, binding_kind: 'org' }),
     );
   });
 });
