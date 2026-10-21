@@ -178,7 +178,25 @@ SELECT EXISTS (SELECT 1 FROM playbooks WHERE org_id = @org_id::uuid AND repo_id 
 -- organization would leave every organization already updated this call
 -- on the NEW value and everyone after it on the old one (Review Focus 2's
 -- exact "two new and one old").
-UPDATE git_repos SET name = @name, url = @url, branch = @branch, subpath = @subpath, updated_at = now()
+--
+-- @url_changed also clears the git-server key pin (ssh_host_key,
+-- ssh_host_public_key) when true — a whole-branch review finding:
+-- repos.Service.Update already does this on the single-row path when an
+-- organization's own repository's url changes ("the pin pins the server
+-- the url names"), but this propagating path used to leave every
+-- projection's pin untouched regardless. A provider moving a shared
+-- repository to a new host would otherwise leave every organization
+-- pinned to the OLD server forever — PinRepoHostKey only writes
+-- WHERE ssh_host_key IS NULL, so a stale pin never heals on its own, and
+-- every customer would have to clear it by hand, exactly the
+-- per-organization repetition this feature exists to remove. CASE rather
+-- than a second statement: one round trip per organization, not two, and
+-- no window where a concurrent read could see the new url with the old
+-- pin still attached.
+UPDATE git_repos SET name = @name, url = @url, branch = @branch, subpath = @subpath,
+    ssh_host_key = CASE WHEN @url_changed::bool THEN NULL ELSE ssh_host_key END,
+    ssh_host_public_key = CASE WHEN @url_changed::bool THEN NULL ELSE ssh_host_public_key END,
+    updated_at = now()
 WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;
 
 -- name: DeleteProjectedRepo :execrows
@@ -199,6 +217,23 @@ WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;
 -- transaction around the loop is what rolls back any organization's row
 -- already deleted this call when a later one is refused.
 DELETE FROM git_repos WHERE org_id = @org_id AND shared_repo_id = @shared_repo_id::uuid;
+
+-- name: SharedRepoHasTemplate :one
+-- Whether any job template DEFINITION resolves its playbook against this
+-- repository definition — shared_job_templates.shared_repo_id (migration
+-- 00061:24) is NOT NULL REFERENCES shared_repos (id) ON DELETE RESTRICT,
+-- and a whole-branch review found that DeleteWithProjections checked every
+-- PER-ORGANIZATION dependant (job triggers, playbooks) but not this one,
+-- the single dependant that lives at the INSTALLATION level instead of
+-- inside an organization. Without this check, deleting a repository
+-- definition a template definition still references hit that RESTRICT
+-- directly, wrapped with no sentinel, and mapSharedErr fell through to a
+-- bare 500 — instead of spec decision 5's promised named refusal. Checked
+-- BEFORE the per-organization loop (DeleteWithProjections, store_sql.go):
+-- cheaper than discovering it only after every organization's projection
+-- row is already gone, and it guards something the per-organization checks
+-- cannot see at all.
+SELECT name FROM shared_job_templates WHERE shared_repo_id = @shared_repo_id::uuid LIMIT 1;
 
 -- Task 6, migration 00061: the second application of this file's own
 -- mechanism, for job templates. shared_job_templates' own column split

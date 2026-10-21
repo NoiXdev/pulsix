@@ -282,7 +282,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// spec decision 4) the moment it is created, through whichever of the
 	// two paths created it — POST /orgs (tenancy.Service.CreateOrg) or the
 	// first-run wizard (setup.Service.Complete) — both bound to the same
-	// five hooks, chained (ChainOrgCreatedHooks, checks_ports.go) since
+	// six hooks, chained (ChainOrgCreatedHooks, checks_ports.go) since
 	// SetOrgCreatedHook only ever holds one, so neither path can produce an
 	// organization the other would have given a zone, a check seed set, a
 	// rule seed set or either definition kind's own projection.

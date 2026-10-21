@@ -78,11 +78,15 @@ type Deps struct {
 	// Repos is the git repository registry; see registerRepoRoutes.
 	Repos *repos.Service
 	// Shared is the installation-owned definition/projection mechanism
-	// (spec v0.2f, decisions 1, 2, 4, 5, 7, 8): an instance admin's own
-	// CRUD over repository definitions, each projected into every
-	// organization as an ordinary repos.Repo (Task 3's SharedRepoID). See
-	// registerSharedRepoRoutes (shared_handlers.go) — every route it wires
-	// is instance-admin-only; nothing org-scoped calls this field.
+	// (spec v0.2f, decisions 1, 2, 4, 5, 7, 8): an instance admin's own CRUD
+	// over all three kinds of definition — repositories, job templates and
+	// check definitions — each projected into every organization as an
+	// ordinary repos.Repo, templates.Template or checks.Definition (their
+	// own SharedRepoID/SharedTemplateID/SharedDefinitionID marker). See
+	// registerSharedRepoRoutes, registerSharedTemplateRoutes and
+	// registerSharedCheckRoutes (shared_handlers.go) — every route any of
+	// the three wires is instance-admin-only; nothing org-scoped calls this
+	// field.
 	Shared *shared.Service
 	// Playbooks stores repo and editor playbooks; see registerPlaybookRoutes.
 	Playbooks *playbooks.Service

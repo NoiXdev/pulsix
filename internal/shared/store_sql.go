@@ -147,7 +147,23 @@ func collisionFromRace(ctx context.Context, q *gen.Queries, excludeDef uuid.UUID
 func (s *SQLStore) UpdateAndPropagate(ctx context.Context, def RepoDefinition) (RepoDefinition, error) {
 	var updated RepoDefinition
 	err := withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		// Read the definition's CURRENT url before overwriting it — the one
+		// fact UpdateSharedRepo's own RETURNING (the row AFTER the write)
+		// cannot give back, and the one fact UpdateProjectedRepo needs to
+		// know whether to clear every projection's git-server key pin (see
+		// its own query comment, queries/shared.sql, for why: a url change
+		// unpins the server the OLD url named, the same rule
+		// repos.Service.Update already applies on the single-row path).
+		before, err := q.GetSharedRepo(ctx, def.ID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("get shared repo: %w", err)
+		}
+
 		name, url, branch, subpath := ProjectedRepoColumns(def)
+		urlChanged := before.Url != url
 		row, err := q.UpdateSharedRepo(ctx, gen.UpdateSharedRepoParams{
 			ID: def.ID, Name: name, Url: url, Branch: branch, Subpath: subpath,
 		})
@@ -169,6 +185,7 @@ func (s *SQLStore) UpdateAndPropagate(ctx context.Context, def RepoDefinition) (
 			orgID := p.OrgID
 			n, err := q.UpdateProjectedRepo(ctx, gen.UpdateProjectedRepoParams{
 				OrgID: orgID, SharedRepoID: def.ID, Name: name, Url: url, Branch: branch, Subpath: subpath,
+				UrlChanged: urlChanged,
 			})
 			if err != nil {
 				if db.IsUniqueViolation(err) {
@@ -240,6 +257,18 @@ func (s *SQLStore) UpdateAndPropagate(ctx context.Context, def RepoDefinition) (
 //     own design gave this table its cascade in the first place) — a
 //     repository with vault passwords configured must still be deletable,
 //     and its passwords go with it.
+//   - shared_job_templates.shared_repo_id (migration 00061:24): NOT NULL
+//     REFERENCES shared_repos ON DELETE RESTRICT. UNLIKE the three above,
+//     this one does not live inside any organization at all — it is
+//     another DEFINITION, at the installation level, which is exactly why
+//     a whole-branch review found it missing from this list: every other
+//     dependant here is discovered by looping over id's own projections,
+//     and a template definition is not a projection of anything. Checked
+//     EXPLICITLY, via SharedRepoHasTemplate, before that per-organization
+//     loop even starts — without it, this RESTRICT surfaced as a bare
+//     foreign-key violation with no sentinel attached, and mapSharedErr's
+//     unmapped-error branch turned it into a 500 instead of the named
+//     refusal spec decision 5 promises.
 //
 // jobs (run history) carries no foreign key to git_repos at all — verified
 // by reading every migration that mentions git_repos — so there is
@@ -253,6 +282,16 @@ func (s *SQLStore) UpdateAndPropagate(ctx context.Context, def RepoDefinition) (
 // see its own query comment (queries/shared.sql) for the locking argument.
 func (s *SQLStore) DeleteWithProjections(ctx context.Context, id uuid.UUID) error {
 	return withTx(ctx, s.d, func(ctx context.Context, q *gen.Queries) error {
+		// The one dependant that is not a per-organization projection at
+		// all (see this method's own doc comment above) — checked first,
+		// before the per-organization loop below does any work that would
+		// otherwise need rolling back for a definition-level refusal.
+		if tplName, err := q.SharedRepoHasTemplate(ctx, id); err == nil {
+			return fmt.Errorf("%w: job template definition %q still resolves its playbook against this repository definition", ErrInUse, tplName)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("check shared job template dependants: %w", err)
+		}
+
 		projections, err := q.ListProjectedReposForUpdate(ctx, id)
 		if err != nil {
 			return fmt.Errorf("list projected repos: %w", err)

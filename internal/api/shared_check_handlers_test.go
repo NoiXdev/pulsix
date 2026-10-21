@@ -582,3 +582,232 @@ func TestDeletingABoundHostThroughTheRealAPIPreservesTheProjection(t *testing.T)
 		t.Fatalf("projection after its host was deleted = %+v, want binding_kind=org and the SAME shared_definition_id %s", afterDelete.Check, defID)
 	}
 }
+
+// TestOrgCreationProjectsAnExistingSharedCheckDefinition is a whole-branch
+// review's own finding: ProjectAllCheckDefinitionsInto has exactly ONE
+// production call site (internal/app/app.go's own ChainOrgCreatedHooks),
+// and no test outside internal/shared's own unit tests ever drove it
+// through a real organization-creation route. Deleting that one argument
+// from app.go would leave the whole suite green while every organization
+// created afterwards silently received no shared check definitions at all
+// — decision 4 broken for one of the three kinds, with nothing to catch
+// it. This proves the real POST /orgs route, through apitest's own hook
+// wiring (which must match app.go's, not drift from it), actually projects
+// a check definition created BEFORE the organization existed — decision
+// 4's "creating an organization projects every existing definition into
+// it," for this kind specifically, exercised for real rather than assumed
+// from the two OTHER kinds already having their own such test.
+func TestOrgCreationProjectsAnExistingSharedCheckDefinition(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("check-proj-on-create-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+"/api/v1/admin/checks/definitions", map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create shared check definition: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created checkDefinitionDefDetailBody
+	if err := json.Unmarshal([]byte(mustReadBody(t, resp)), &created); err != nil {
+		t.Fatal(err)
+	}
+	defID := created.Definition.ID
+
+	owner := s.SeedUser("check-proj-on-create-owner@example.test", "correct horse battery")
+	ownerClient := s.LoginAs(owner)
+	resp = postJSON(t, ownerClient, s.HTTP.URL+"/api/v1/orgs", map[string]any{
+		"slug": "check-proj-on-create-org", "name": "Check Proj On Create Org",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create org: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/check-proj-on-create-org/checks", nil)
+	var checks markedCheckListBody
+	decodeInto(t, resp, &checks)
+	if _, ok := findProjectedCheck(checks, defID); !ok {
+		t.Fatalf("checks in the brand-new organization = %+v, want a projection of the pre-existing shared definition %s", checks.Checks, defID)
+	}
+}
+
+// TestRebindingACustomCheckOntoASharedProjectionsOrgSlotIsRefused is the
+// whole-branch review's own finding: migration 00063's trigger rebinds a
+// shared projection to ('org', nil, nil) when the group or host it was
+// bound to is deleted, and checks.Service.refuseKeyHeldBySharedProjection
+// keeps that slot free — but the old call site only ran the guard when the
+// UPDATE changed the key, so a customer's own check could take the slot by
+// REBINDING to org scope with its key left alone. This drives the full
+// five-step sequence through the real routes and the real migration 00063
+// trigger — nothing short of the real database can prove step 5, since
+// that is where the trigger's own UPDATE either lands cleanly or raises
+// 23505:
+//
+//  1. the customer's OWN check "disk-data", bound to a host — created
+//     BEFORE the shared definition exists, so the create-time guard
+//     (which blocks a new row at ANY scope once a shared projection holds
+//     the key) never saw it.
+//  2. the provider defines the shared "disk-data" check; the preflight
+//     collision check only looks at org-scope rows, so the customer's
+//     host-bound row is invisible to it and the projection lands at org
+//     scope with no reported collision.
+//  3. the customer rebinds the SHARED projection to a monitoring group,
+//     freeing the ('org', nil, nil, "disk-data") slot.
+//  4. the customer rebinds their OWN check from the host to org scope,
+//     same key — must now be REFUSED (400), where before this fix it
+//     silently took the slot.
+//  5. the customer deletes the group — before the fix this aborted with a
+//     500 (mapChecksErr has no case for the trigger's own 23505, and
+//     DeleteGroup never even reaches it under the old, working sequence);
+//     with step 4 correctly refused, the slot is never taken and this
+//     delete succeeds, landing the shared projection back at org scope.
+func TestRebindingACustomCheckOntoASharedProjectionsOrgSlotIsRefused(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("check-rebind-slot-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+
+	owner := s.SeedUser("check-rebind-slot-owner@example.test", "correct horse battery")
+	orgSlug := "check-rebind-slot-org"
+	s.SeedOrg(orgSlug, owner)
+	ownerClient := s.LoginAs(owner)
+
+	// Step 1: the customer's own check, host-bound, BEFORE any shared
+	// definition of the same key exists.
+	zonesResp := requestJSON(t, ownerClient, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/zones", nil)
+	var zones struct {
+		Zones []struct {
+			ID string `json:"id"`
+		} `json:"zones"`
+	}
+	decodeInto(t, zonesResp, &zones)
+	if len(zones.Zones) == 0 {
+		t.Fatal("expected a default zone")
+	}
+	hostResp := postJSON(t, ownerClient, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/hosts", map[string]any{
+		"name": "web-1", "address": "10.0.0.1", "zone_id": zones.Zones[0].ID, "managed": true,
+	})
+	if hostResp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed host: %d %s", hostResp.StatusCode, mustReadBody(t, hostResp))
+	}
+	var host struct {
+		Host struct {
+			ID string `json:"id"`
+		} `json:"host"`
+	}
+	if err := json.Unmarshal([]byte(mustReadBody(t, hostResp)), &host); err != nil {
+		t.Fatal(err)
+	}
+
+	ownChecksBase := s.HTTP.URL + "/api/v1/orgs/" + orgSlug + "/checks"
+	customResp := postJSON(t, ownerClient, ownChecksBase, map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300,
+		"binding_kind": "host", "host_id": host.Host.ID,
+	})
+	if customResp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed the customer's own host-bound check: %d %s", customResp.StatusCode, mustReadBody(t, customResp))
+	}
+	var custom markedCheckBody
+	if err := json.Unmarshal([]byte(mustReadBody(t, customResp)), &custom); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 2: the provider's shared definition, same key — the preflight
+	// never sees the customer's host-bound row, so this succeeds with no
+	// reported collision.
+	defResp := postJSON(t, adminClient, s.HTTP.URL+"/api/v1/admin/checks/definitions", map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300,
+	})
+	if defResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create shared check definition: %d %s", defResp.StatusCode, mustReadBody(t, defResp))
+	}
+	var created checkDefinitionDefDetailBody
+	if err := json.Unmarshal([]byte(mustReadBody(t, defResp)), &created); err != nil {
+		t.Fatal(err)
+	}
+	defID := created.Definition.ID
+
+	listResp := requestJSON(t, ownerClient, http.MethodGet, ownChecksBase, nil)
+	var checks markedCheckListBody
+	decodeInto(t, listResp, &checks)
+	projected, ok := findProjectedCheck(checks, defID)
+	if !ok {
+		t.Fatalf("org checks = %+v, want a projection of %s", checks.Checks, defID)
+	}
+	if projected.BindingKind != "org" {
+		t.Fatalf("fresh projection binding_kind = %q, want org", projected.BindingKind)
+	}
+
+	// Step 3: the customer rebinds the SHARED projection to a monitoring
+	// group, freeing the org-scope slot its key needs back.
+	groupResp := postJSON(t, ownerClient, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/monitoring-groups", map[string]any{
+		"name": "web-fleet", "selector": "role=web", "priority": 0,
+	})
+	if groupResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create monitoring group: %d %s", groupResp.StatusCode, mustReadBody(t, groupResp))
+	}
+	var group struct {
+		Group struct {
+			ID string `json:"id"`
+		} `json:"group"`
+	}
+	if err := json.Unmarshal([]byte(mustReadBody(t, groupResp)), &group); err != nil {
+		t.Fatal(err)
+	}
+	rebindSharedResp := requestJSON(t, ownerClient, http.MethodPut, ownChecksBase+"/"+projected.ID, map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300,
+		"binding_kind": "group", "group_id": group.Group.ID,
+	})
+	if rebindSharedResp.StatusCode != http.StatusOK {
+		t.Fatalf("rebind the shared projection to the group: %d %s", rebindSharedResp.StatusCode, mustReadBody(t, rebindSharedResp))
+	}
+
+	// Step 4: rebinding the CUSTOMER'S OWN check to org scope, key
+	// unchanged, must now be refused — this is the exact gap the fix
+	// closes. t.Errorf rather than t.Fatalf here and below, deliberately:
+	// this test is also what proves the SYMPTOM the bug report opens
+	// with — without the fix this assertion fails, but so does step 5's
+	// below it (the trigger's own 23505 surfacing as a 500 through
+	// mapChecksErr), and a Fatalf here would stop the test before ever
+	// reaching that second, customer-visible failure.
+	rebindCustomResp := requestJSON(t, ownerClient, http.MethodPut, ownChecksBase+"/"+custom.Check.ID, map[string]any{
+		"key": "disk-data", "plugin": "disk", "interval_seconds": 300, "binding_kind": "org",
+	})
+	if rebindCustomResp.StatusCode != http.StatusBadRequest {
+		t.Errorf("rebinding the customer's own check onto the shared key's org slot: %d %s, want 400", rebindCustomResp.StatusCode, mustReadBody(t, rebindCustomResp))
+	}
+
+	// The customer's own check must still be exactly where it was — a
+	// refused update never partially writes.
+	getCustomResp := requestJSON(t, ownerClient, http.MethodGet, ownChecksBase+"/"+custom.Check.ID, nil)
+	var afterRefusal markedCheckBody
+	decodeInto(t, getCustomResp, &afterRefusal)
+	if afterRefusal.Check.BindingKind != "host" {
+		t.Errorf("customer's own check after a refused rebind = %+v, want it still bound to the host", afterRefusal.Check)
+	}
+
+	// Step 5: deleting the group must now succeed — the slot the trigger
+	// needs was never taken. Without the fix, step 4 above silently let the
+	// customer's own check take the org-scope slot, and this delete is
+	// where that damage actually surfaces: the trigger's UPDATE collides,
+	// 23505 aborts DELETE FROM monitoring_groups, and mapChecksErr (no case
+	// for a unique violation) turns it into a bare 500 — the customer can
+	// no longer remove their own group, with nothing naming a cause.
+	deleteGroupResp := requestJSON(t, ownerClient, http.MethodDelete, s.HTTP.URL+"/api/v1/orgs/"+orgSlug+"/monitoring-groups/"+group.Group.ID, nil)
+	if deleteGroupResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete the monitoring group: %d %s, want 200 (the fix must let this succeed)", deleteGroupResp.StatusCode, mustReadBody(t, deleteGroupResp))
+	}
+
+	// The shared projection must have survived, rebound back to org scope
+	// by the trigger.
+	getProjectedResp := requestJSON(t, ownerClient, http.MethodGet, ownChecksBase+"/"+projected.ID, nil)
+	if getProjectedResp.StatusCode != http.StatusOK {
+		t.Fatalf("get the shared projection after its group was deleted: %d %s, want 200", getProjectedResp.StatusCode, mustReadBody(t, getProjectedResp))
+	}
+	var afterGroupDelete markedCheckBody
+	decodeInto(t, getProjectedResp, &afterGroupDelete)
+	if afterGroupDelete.Check.BindingKind != "org" || afterGroupDelete.Check.SharedDefinitionID != defID {
+		t.Fatalf("shared projection after its group was deleted = %+v, want binding_kind=org and the SAME shared_definition_id %s", afterGroupDelete.Check, defID)
+	}
+}

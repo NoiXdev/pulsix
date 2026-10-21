@@ -325,7 +325,16 @@ function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefini
 // sizeable feature (features/inventory/schema/SchemaBuilder.tsx) that nothing
 // here needs to re-host: a definition created without one, then given one
 // through a follow-up PUT this dialog does not need to produce, still works
-// — the server defaults extra_vars to {} and the schema to absent either way.
+// — the server defaults extra_vars to {} and the schema to absent either
+// way, on CREATE. Both PUTs are full replaces, though, and a review found
+// the gap that comment did not cover: submit() used to build its body from
+// only the fields this form renders, so EDITING the limit (or any other
+// rendered field) silently cleared extra vars and their schema a provider
+// had set through the API, for every organization's projection, in the
+// same transaction. TemplateDefinitionDialog below now rounds both back
+// through the form's submitted body unchanged instead of defaulting them —
+// still not editable here (that is backlog work, not this fix), but no
+// longer destroyed by an edit that never touched them.
 
 /** DeleteDefinitionButton's own doc comment, same reasoning, different
  * table: a schedule, trigger or (for a template) nothing-else-new blocks
@@ -506,8 +515,18 @@ function TemplateDefinitionDialog({
     const fieldErrors = validateTemplateDefinitionInput(values);
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
+    // extra_vars/extra_vars_schema are not rendered by this form (the doc
+    // comment above explains why), so they round-trip from the definition
+    // this dialog was opened with rather than defaulting to {} / absent —
+    // the same stored value a GET already returned, sent back unchanged
+    // rather than cleared by a PUT that never touched it. A brand-new
+    // definition (no `definition` prop) has no stored value to round-trip,
+    // so it still gets exactly the create-time default the comment above
+    // describes.
     const body: TemplateDefinitionInput = {
       name: values.name, shared_repo_id: values.sharedRepoId, playbook_path: values.playbookPath, limit: values.limit,
+      extra_vars: definition?.extra_vars ?? {},
+      ...(definition?.extra_vars_schema ? { extra_vars_schema: definition.extra_vars_schema } : {}),
     };
     try {
       if (definition) await update.mutateAsync(body);
@@ -585,7 +604,15 @@ function TemplateDefinitionDialog({
 // without one still works; the server defaults params to {}), rather than
 // re-hosting CheckDialog.tsx's own full per-plugin params editor
 // (disk mounts included) for a dialog that otherwise has no per-organization
-// state to show at all.
+// state to show at all. That comment reasoned about CREATE; a review found
+// the gap it did not cover — this is a full-replace PUT on EDIT too, and
+// params() used to return {} for every plugin but "service" regardless, so
+// saving a "disk" definition's interval (the one field this dialog renders
+// for it) silently cleared its stored mounts allow-list for every
+// organization's projection in the same transaction. params() below now
+// rounds an unrendered plugin's stored params back through unchanged
+// instead, the same fix TemplateDefinitionDialog's own body applies to
+// extra vars.
 
 /** DeleteDefinitionButton's own doc comment, same reasoning, different
  * table — except a check definition's own delete NEVER refuses with 409 at
@@ -727,7 +754,16 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
   const [formError, setFormError] = useState<string | null>(null);
 
   function params(): Record<string, unknown> {
-    return values.plugin === 'service' ? { units: lines(values.units) } : {};
+    if (values.plugin === 'service') return { units: lines(values.units) };
+    // disk's optional "mounts" (and any other non-"service" plugin's own
+    // params, cpu/memory excepted since they never take any) are not
+    // rendered by this form. Round-trip the stored value unchanged while
+    // the plugin itself is unchanged — switching plugins away from what
+    // params() was written against would carry over a shape the new
+    // plugin's own validation refuses anyway, so {} is still right there,
+    // exactly as it is for a brand-new definition with nothing stored yet.
+    if (definition && definition.plugin === values.plugin) return definition.params ?? {};
+    return {};
   }
 
   async function submit(e: FormEvent) {

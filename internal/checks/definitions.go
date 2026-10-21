@@ -360,11 +360,25 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 			return Definition{}, err
 		}
 	}
-	if existing.Origin == originCustom && d.Key != existing.Key {
-		// Renaming an ordinary check ONTO a shared projection's key takes
-		// the same reserved slot creating one there would — see
-		// refuseKeyHeldBySharedProjection. Only a changed key can do it, so
-		// an ordinary update that leaves the key alone pays nothing.
+	// Whole-branch review finding: the slot refuseKeyHeldBySharedProjection
+	// protects is a BINDING (org scope), not a key by itself, but this used
+	// to call the guard only when the key changed
+	// (existing.Origin == originCustom && d.Key != existing.Key) — so a
+	// customer who left the key alone and instead rebound their own check
+	// FROM a group or host TO org scope took the slot with nobody checking
+	// at all (TestUpdateDefinitionRefusesRebindingOntoASharedKeysOrgSlot's
+	// own doc comment walks the five-step sequence that reaches it). The
+	// only tuple migration 00063's trigger ever rebinds a shared projection
+	// onto is ('org', nil, nil, key), so a row landing anywhere else can
+	// never collide with it regardless of its key — which is why this is
+	// gated on d.BindingKind == BindingOrg rather than running for every
+	// update: a group- or host-bound row costs nothing extra, and neither
+	// does an ordinary edit that leaves an already org-scoped row at org
+	// scope under the same key it already had, since nothing about that
+	// could newly create a collision that was not already ruled out the
+	// last time this row was written at this scope.
+	if existing.Origin == originCustom && d.BindingKind == BindingOrg &&
+		(d.Key != existing.Key || existing.BindingKind != BindingOrg) {
 		if err := s.refuseKeyHeldBySharedProjection(ctx, orgID, d.Key); err != nil {
 			return Definition{}, err
 		}

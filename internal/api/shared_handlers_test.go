@@ -308,6 +308,54 @@ func TestRepoDefinitionInUseNamesOrganizationToInstanceAdmin(t *testing.T) {
 	}
 }
 
+// TestRepoDefinitionInUseByTemplateDefinitionReturns409NamingIt is a
+// whole-branch review's own finding, through the real HTTP stack:
+// shared_job_templates.shared_repo_id is NOT NULL REFERENCES shared_repos
+// ON DELETE RESTRICT, and this dependant lives at the INSTALLATION level —
+// a template DEFINITION, not anything inside an organization, so no
+// organization needs to exist at all to reproduce it. Before the fix, this
+// DELETE hit that RESTRICT with no sentinel attached and mapSharedErr's
+// unmapped-error branch returned a bare 500; the fix gives it the same
+// typed, named refusal decision 5 promises for every other dependant.
+func TestRepoDefinitionInUseByTemplateDefinitionReturns409NamingIt(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("def-inuse-template-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+
+	reposBase := s.HTTP.URL + "/api/v1/admin/repos/definitions"
+	resp := postJSON(t, adminClient, reposBase, map[string]any{
+		"name": "infra-blocked-by-template", "url": "https://git.example.com/provider/infra.git",
+	})
+	var repoCreated repoDefinitionDetailBody
+	if err := json.Unmarshal([]byte(mustReadBody(t, resp)), &repoCreated); err != nil {
+		t.Fatal(err)
+	}
+	repoDefID := repoCreated.Definition.ID
+
+	resp = postJSON(t, adminClient, s.HTTP.URL+"/api/v1/admin/templates/definitions", map[string]any{
+		"name": "deploy-site", "shared_repo_id": repoDefID, "playbook_path": "site.yml",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create shared template definition: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = requestJSON(t, adminClient, http.MethodDelete, reposBase+"/"+repoDefID, nil)
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("delete repo definition a template definition references: %d %s, want 409", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "deploy-site") {
+		t.Fatalf("in-use response body = %q, want it to name the blocking template definition deploy-site", body)
+	}
+
+	// Refused, not removed: a follow-up GET must still find it.
+	resp = requestJSON(t, adminClient, http.MethodGet, reposBase+"/"+repoDefID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get repo definition after a refused delete: %d %s, want 200 (it must still exist)", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
 // TestOrgScopedRepoRoutesNeverLeakAnotherOrgsIdentity is Task 4's Review
 // Focus 3, the hard half: a member of organization A provokes every
 // organization-scoped repository path reachable from org A, and none of
