@@ -41,9 +41,9 @@ RETURNING *;
 DELETE FROM credentials WHERE org_id = $1 AND id = $2;
 
 -- name: ListCredentialUsage :many
--- How many jump hosts, hosts and repositories reference each credential,
--- for the "used by" column. Inventory groups never reference credentials
--- directly.
+-- How many jump hosts, hosts, repositories and job templates reference each
+-- credential, for the "used by" column. Inventory groups never reference
+-- credentials directly.
 --
 -- Repositories were missing here while git_repos.credential_id already
 -- carried a foreign key, so deleting a credential a repository still used
@@ -52,11 +52,33 @@ DELETE FROM credentials WHERE org_id = $1 AND id = $2;
 -- vault column added the second such reference and made the gap worth
 -- closing: both are counted, because for this column what matters is
 -- whether anything at all still points at the credential.
+--
+-- v0.2e reopened the same gap one layer down: migration 00059 added
+-- git_repo_vault_credentials and job_template_vault_credentials (a
+-- repository's or template's own labelled vault identity set), and neither
+-- was added here. A vault credential used only through a labelled identity
+-- read as unused and then refused to delete on the link tables' own
+-- foreign keys (store_sql.go's DeleteCredential already maps that
+-- violation to ErrInUse — the bug was never seeing it coming here). repos
+-- folds git_repo_vault_credentials in by repo id, not by row: a repository
+-- that is both the old bridge's write (vault_credential_id, 2.92's history)
+-- and its own backfilled link-table row for the same credential — the
+-- normal shape for any repository saved before that fix shipped — must
+-- still count once, not twice. templates has no such double-reference to
+-- fold (job templates have no equivalent single-slot column), but still
+-- dedupes by template id in case one template ever names the same
+-- credential under two labels.
 SELECT c.id,
   (SELECT count(*) FROM bastions b WHERE b.org_id = c.org_id AND b.credential_id = c.id)::int AS bastions,
   (SELECT count(*) FROM host_ssh h WHERE h.org_id = c.org_id AND h.credential_id = c.id)::int AS hosts,
-  (SELECT count(*) FROM git_repos r WHERE r.org_id = c.org_id
-     AND (r.credential_id = c.id OR r.vault_credential_id = c.id))::int AS repos
+  (SELECT count(*) FROM (
+     SELECT r.id FROM git_repos r WHERE r.org_id = c.org_id
+       AND (r.credential_id = c.id OR r.vault_credential_id = c.id)
+     UNION
+     SELECT gv.repo_id FROM git_repo_vault_credentials gv WHERE gv.org_id = c.org_id AND gv.credential_id = c.id
+   ) AS used_repos)::int AS repos,
+  (SELECT count(DISTINCT tv.template_id) FROM job_template_vault_credentials tv
+     WHERE tv.org_id = c.org_id AND tv.credential_id = c.id)::int AS templates
 FROM credentials c
 WHERE c.org_id = $1;
 

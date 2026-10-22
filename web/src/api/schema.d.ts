@@ -3319,6 +3319,8 @@ export interface components {
             hosts: number;
             /** Format: int64 */
             repos: number;
+            /** Format: int64 */
+            templates: number;
         };
         EffectiveRuleDTO: {
             check_key: string;

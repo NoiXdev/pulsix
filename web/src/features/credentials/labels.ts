@@ -22,11 +22,17 @@ export function usageLabel(c: CredentialLike): string {
   const parts: string[] = [];
   if (c.used_by.hosts) parts.push(plural(c.used_by.hosts, 'host'));
   if (c.used_by.bastions) parts.push(plural(c.used_by.bastions, 'jump host'));
-  // Repositories count in either slot — as the checkout's credential or
-  // as its vault password. Without this the column said "unused" for a
-  // credential a repository still held, and the delete it invited came
-  // back refused.
+  // Repositories count in any of three places — the checkout's credential,
+  // the legacy single vault password slot, or a labelled vault identity.
+  // Without this the column said "unused" for a credential a repository
+  // still held, and the delete it invited came back refused; the labelled
+  // identity set (2.89) reopened the same gap until the server's own count
+  // picked it up too.
   if (c.used_by.repos) parts.push(plural(c.used_by.repos, 'repository'));
+  // A job template's own labelled vault identity set is a separate
+  // reference from any repository's — naming it "repository" here would
+  // misdescribe which resource is actually holding the credential.
+  if (c.used_by.templates) parts.push(plural(c.used_by.templates, 'template'));
   return parts.join(' · ') || 'unused';
 }
 

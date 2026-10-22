@@ -243,8 +243,10 @@ type DeleteRouteSeveritiesParams struct {
 // the INSERT's ON CONFLICT DO NOTHING skipped re-adding it while the DELETE,
 // running after rather than before, removed it anyway. Two statements sent
 // in sequence on the caller's own transaction (replaceSelections,
-// store_sql.go) remove the ambiguity: the DELETE commits before the INSERT
-// ever runs.
+// store_sql.go) remove the ambiguity: the DELETE is ordered before the
+// INSERT, which is what a data-modifying WITH could not guarantee — it
+// does not commit before the INSERT runs, or before anything else; both
+// commit together, when the whole transaction does.
 func (q *Queries) DeleteRouteSeverities(ctx context.Context, arg DeleteRouteSeveritiesParams) error {
 	_, err := q.db.Exec(ctx, deleteRouteSeverities, arg.OrgID, arg.RouteID)
 	return err
@@ -487,8 +489,10 @@ type InsertRouteSeveritiesParams struct {
 // one-per-row shape; ON CONFLICT DO NOTHING absorbs a value repeated twice
 // in the same call, the same defensive reason InsertCheckItems' own comment
 // gives — it is no longer asked to also absorb a row DeleteRouteSeverities
-// has not gotten to yet, since that statement already ran and committed its
-// own effect by the time this one starts. An empty array is a legal no-op
+// has not gotten to yet, since that statement already ran by the time this
+// one starts — ordered by the two being sent in sequence on the caller's
+// own transaction, not because it committed first; both commit together,
+// when that transaction does. An empty array is a legal no-op
 // that leaves the selection cleared to nothing, which is exactly what
 // "replace with zero severities" means.
 func (q *Queries) InsertRouteSeverities(ctx context.Context, arg InsertRouteSeveritiesParams) error {

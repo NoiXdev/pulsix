@@ -18,11 +18,17 @@ import (
 type credentialUsageDTO struct {
 	Bastions int `json:"bastions"`
 	Hosts    int `json:"hosts"`
-	// Repos counts repositories naming the credential in either slot —
-	// as the checkout's credential or as its vault password. Without it
-	// the column said "unused" for a credential a repository still held,
-	// right up to a delete that failed on the foreign key instead.
+	// Repos counts repositories naming the credential in any of three
+	// places (see credentials.Usage.Repos's own comment) — its checkout
+	// credential, its legacy vault password slot, or its labelled vault
+	// identity set — deduplicated by repository. Without the first two the
+	// column said "unused" for a credential a repository still held, right
+	// up to a delete that failed on the foreign key instead; v0.2e's
+	// labelled identities reopened the same gap until this counted them too.
 	Repos int `json:"repos"`
+	// Templates counts job templates whose own labelled vault identity set
+	// names the credential.
+	Templates int `json:"templates"`
 }
 
 type credentialDTO struct {
@@ -53,7 +59,7 @@ func toCredentialDTO(deps Deps, c credentials.Credential, usage credentials.Usag
 		ID: c.ID.String(), Name: c.Name, Kind: string(c.Kind), Username: c.Username,
 		PublicKey: credentials.AuthorizedKey(c, orgSlug), Fingerprint: c.Fingerprint, KeyType: c.KeyType,
 		ExpiresAt: c.ExpiresAt, Expired: expired, ExpiresSoon: soon,
-		UsedBy:    credentialUsageDTO{Bastions: usage.Bastions, Hosts: usage.Hosts, Repos: usage.Repos},
+		UsedBy:    credentialUsageDTO{Bastions: usage.Bastions, Hosts: usage.Hosts, Repos: usage.Repos, Templates: usage.Templates},
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
