@@ -111,3 +111,57 @@ func TestSQLStoreReplaceVaultCredentialsRollsBackOnPartialFailure(t *testing.T) 
 		t.Fatalf("got %+v after a failed replace, want the previous set %+v left untouched", got, want)
 	}
 }
+
+// TestListOrgVaultCredentialsGroupsByTemplate (2.94): the bulk query
+// templates.Service.List now runs instead of one ListVaultCredentials call
+// per row must group every organization's rows back onto the right
+// template, leave a template with none out of the result entirely (a map
+// miss, same as ListVaultCredentials' own empty-slice return), and never
+// leak another organization's rows in.
+func TestListOrgVaultCredentialsGroupsByTemplate(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedTemplatesOrg(t, q, "tmpl-vault-bulk-org")
+	other := seedTemplatesOrg(t, q, "tmpl-vault-bulk-other")
+	scoped, scopedOther := db.WithOrgScope(ctx, org), db.WithOrgScope(ctx, other)
+	playbookID, otherPlaybookID := seedEditorPlaybook(t, d, org), seedEditorPlaybook(t, d, other)
+	store := templates.NewSQLStore(d)
+
+	withCreds, err := store.Create(scoped, templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: org, PlaybookID: playbookID, Name: "deploy"})
+	if err != nil {
+		t.Fatalf("Create deploy: %v", err)
+	}
+	bare, err := store.Create(scoped, templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: org, PlaybookID: playbookID, Name: "patch"})
+	if err != nil {
+		t.Fatalf("Create patch: %v", err)
+	}
+	otherTmpl, err := store.Create(scopedOther, templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: other, PlaybookID: otherPlaybookID, Name: "deploy"})
+	if err != nil {
+		t.Fatalf("Create other org's template: %v", err)
+	}
+	credA, credB := seedTemplateVaultCredential(t, d, org, "team a"), seedTemplateVaultCredential(t, d, org, "team b")
+	credOther := seedTemplateVaultCredential(t, d, other, "other org vault")
+	if err := store.ReplaceVaultCredentials(scoped, org, withCreds.ID,
+		[]templates.VaultCredential{{CredentialID: credA, Label: "team-a"}, {CredentialID: credB, Label: "team-b"}}); err != nil {
+		t.Fatalf("ReplaceVaultCredentials deploy: %v", err)
+	}
+	if err := store.ReplaceVaultCredentials(scopedOther, other, otherTmpl.ID,
+		[]templates.VaultCredential{{CredentialID: credOther, Label: "default"}}); err != nil {
+		t.Fatalf("ReplaceVaultCredentials other org: %v", err)
+	}
+
+	got, err := store.ListOrgVaultCredentials(scoped, org)
+	if err != nil {
+		t.Fatalf("ListOrgVaultCredentials: %v", err)
+	}
+	want := []templates.VaultCredential{{CredentialID: credA, Label: "team-a"}, {CredentialID: credB, Label: "team-b"}}
+	if !reflect.DeepEqual(got[withCreds.ID], want) {
+		t.Fatalf("deploy = %+v, want %+v", got[withCreds.ID], want)
+	}
+	if _, ok := got[bare.ID]; ok {
+		t.Fatalf("patch must be absent (no vault credentials), got %+v", got[bare.ID])
+	}
+	if _, ok := got[otherTmpl.ID]; ok {
+		t.Fatalf("another organization's template must not appear: %+v", got)
+	}
+}

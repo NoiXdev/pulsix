@@ -56,6 +56,25 @@ func (f *fakeStore) ListRepoVaultIdentities(_ context.Context, _, repoID uuid.UU
 	return out, nil
 }
 
+// ListOrgRepoVaultIdentities is ListRepoVaultIdentities for every
+// repository at once, standing in for the real store's bulk query
+// (backlog 2.94) the same way ReplaceRepoVaultIdentities stands in for
+// the real one's transaction.
+func (f *fakeStore) ListOrgRepoVaultIdentities(_ context.Context, _ uuid.UUID) (map[uuid.UUID][]repos.VaultIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[uuid.UUID][]repos.VaultIdentity, len(f.identities))
+	for repoID, identities := range f.identities {
+		if len(identities) == 0 {
+			continue
+		}
+		stored := make([]repos.VaultIdentity, len(identities))
+		copy(stored, identities)
+		out[repoID] = stored
+	}
+	return out, nil
+}
+
 func (f *fakeStore) Create(_ context.Context, r repos.Repo) (repos.Repo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -660,6 +679,47 @@ func TestCreateAndUpdateVaultIdentitiesRoundTrip(t *testing.T) {
 		if id.Label == "staging" {
 			t.Fatalf("staging must be gone, got %+v", got.VaultIdentities)
 		}
+	}
+}
+
+// TestListAttachesEachRepositorysOwnVaultIdentities (2.94): List used to
+// call ListRepoVaultIdentities once per row; the bulk
+// ListOrgRepoVaultIdentities it now calls instead must still land each
+// repository's own set on the right row — not another repository's, and
+// not leak one repository's identities onto one that has none.
+func TestListAttachesEachRepositorysOwnVaultIdentities(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	prod, staging := vaultPasswordCred(), vaultPasswordCred()
+	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{prod.ID: prod, staging.ID: staging})
+	store := newFakeStore()
+	svc := newService(store, creds, &fakeEnqueuer{})
+
+	withIdentities, err := svc.Create(ctx, org, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/infra",
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: prod.ID, Label: "prod"}, {CredentialID: staging.ID, Label: "staging"}},
+	})
+	if err != nil {
+		t.Fatalf("Create (with identities): %v", err)
+	}
+	bare, err := svc.Create(ctx, org, repos.CreateInput{Name: "docs", URL: "https://git.example.com/docs"})
+	if err != nil {
+		t.Fatalf("Create (bare): %v", err)
+	}
+
+	list, err := svc.List(ctx, org)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byID := map[uuid.UUID]repos.Repo{}
+	for _, r := range list {
+		byID[r.ID] = r
+	}
+	want := []repos.VaultIdentity{{CredentialID: prod.ID, Label: "prod"}, {CredentialID: staging.ID, Label: "staging"}}
+	if got := byID[withIdentities.ID].VaultIdentities; !reflect.DeepEqual(got, want) {
+		t.Fatalf("infra's VaultIdentities = %+v, want %+v", got, want)
+	}
+	if got := byID[bare.ID].VaultIdentities; len(got) != 0 {
+		t.Fatalf("docs's VaultIdentities = %+v, want none — must not pick up infra's set", got)
 	}
 }
 

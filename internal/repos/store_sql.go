@@ -167,6 +167,22 @@ func (s *SQLStore) ListRepoVaultIdentities(ctx context.Context, orgID, repoID uu
 	return out, nil
 }
 
+// ListOrgRepoVaultIdentities is ListRepoVaultIdentities for the whole
+// organization in one query (backlog 2.94), grouped by repo id; a
+// repository absent from the result has no vault passwords, the same as
+// ListRepoVaultIdentities returning an empty slice for it.
+func (s *SQLStore) ListOrgRepoVaultIdentities(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultIdentity, error) {
+	rows, err := s.q.ListOrgRepoVaultCredentials(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list org repo vault credentials: %w", err)
+	}
+	out := map[uuid.UUID][]VaultIdentity{}
+	for _, r := range rows {
+		out[r.RepoID] = append(out[r.RepoID], VaultIdentity{CredentialID: r.CredentialID, Label: r.Label})
+	}
+	return out, nil
+}
+
 // vaultIdentityArrays splits a slice of VaultIdentity into the two parallel
 // arrays InsertRepoVaultCredentials needs — built from the same slice in
 // one pass, so the two arrays are always the same length and the query's

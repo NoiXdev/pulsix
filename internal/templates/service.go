@@ -180,6 +180,10 @@ type Store interface {
 	// ListVaultCredentials returns a template's own labelled vault password
 	// set, in label order.
 	ListVaultCredentials(ctx context.Context, orgID, templateID uuid.UUID) ([]VaultCredential, error)
+	// ListOrgVaultCredentials is ListVaultCredentials for every template of
+	// the organization in one call, keyed by template id (backlog 2.94):
+	// List calls this once instead of once per row.
+	ListOrgVaultCredentials(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultCredential, error)
 }
 
 // Sealer is the slice of crypto.Box the service needs: secret-typed extra
@@ -339,13 +343,15 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
 	if err != nil {
 		return nil, err
 	}
+	// One query for the whole organization (backlog 2.94), not one per
+	// row.
+	byTemplate, err := s.store.ListOrgVaultCredentials(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list template vault credentials: %w", err)
+	}
 	out := make([]Template, len(list))
 	for i, t := range list {
-		items, err := s.store.ListVaultCredentials(ctx, orgID, t.ID)
-		if err != nil {
-			return nil, fmt.Errorf("list template vault credentials: %w", err)
-		}
-		t.VaultCredentials = items
+		t.VaultCredentials = byTemplate[t.ID]
 		out[i] = masked(t)
 	}
 	return out, nil

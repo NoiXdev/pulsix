@@ -206,6 +206,23 @@ func (s *SQLStore) ListVaultCredentials(ctx context.Context, orgID, templateID u
 	return out, nil
 }
 
+// ListOrgVaultCredentials is ListVaultCredentials for every template of
+// the organization in one query (backlog 2.94), grouped by template id;
+// Service.List otherwise called ListVaultCredentials once per row it was
+// about to return. A template absent from the result has no added vault
+// passwords, the same as ListVaultCredentials returning an empty slice.
+func (s *SQLStore) ListOrgVaultCredentials(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultCredential, error) {
+	rows, err := s.q.ListOrgTemplateVaultCredentials(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list org template vault credentials: %w", err)
+	}
+	out := map[uuid.UUID][]VaultCredential{}
+	for _, r := range rows {
+		out[r.TemplateID] = append(out[r.TemplateID], VaultCredential{CredentialID: r.CredentialID, Label: r.Label})
+	}
+	return out, nil
+}
+
 // mapWriteErr maps the unique (org_id, name) constraint to ErrNameTaken and
 // the composite foreign keys to ErrNotFound (a playbook or credential
 // deleted between the service's check and this write — the same "invisible,

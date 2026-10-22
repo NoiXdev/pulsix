@@ -49,6 +49,21 @@ func (f *fakeStore) ListVaultCredentials(_ context.Context, _, templateID uuid.U
 	return out, nil
 }
 
+// ListOrgVaultCredentials is ListVaultCredentials for every template at
+// once, standing in for the real store's bulk query (backlog 2.94).
+func (f *fakeStore) ListOrgVaultCredentials(_ context.Context, _ uuid.UUID) (map[uuid.UUID][]templates.VaultCredential, error) {
+	out := make(map[uuid.UUID][]templates.VaultCredential, len(f.vault))
+	for templateID, items := range f.vault {
+		if len(items) == 0 {
+			continue
+		}
+		stored := make([]templates.VaultCredential, len(items))
+		copy(stored, items)
+		out[templateID] = stored
+	}
+	return out, nil
+}
+
 func (f *fakeStore) Create(_ context.Context, t templates.Template) (templates.Template, error) {
 	if f.nextErr != nil {
 		err := f.nextErr
@@ -532,6 +547,42 @@ func TestList(t *testing.T) {
 	}
 	if len(list) != 2 || list[0].Name != "a-first" || list[1].Name != "b-second" {
 		t.Fatalf("list = %+v, want the org's two templates ordered by name", list)
+	}
+}
+
+// TestListAttachesEachTemplatesOwnVaultCredentials (2.94): List used to
+// call ListVaultCredentials once per row; the bulk ListOrgVaultCredentials
+// it now calls instead must still land each template's own set on the
+// right row — not another template's, and not leak one template's
+// credentials onto one that has none.
+func TestListAttachesEachTemplatesOwnVaultCredentials(t *testing.T) {
+	f := newFixture()
+	withCreds, err := f.svc.Create(ctx, f.org, templates.CreateInput{
+		Name: "deploy", PlaybookID: f.playbook,
+		VaultCredentials: []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a"}},
+	})
+	if err != nil {
+		t.Fatalf("Create (with credentials): %v", err)
+	}
+	bare, err := f.svc.Create(ctx, f.org, templates.CreateInput{Name: "patch", PlaybookID: f.playbook})
+	if err != nil {
+		t.Fatalf("Create (bare): %v", err)
+	}
+
+	list, err := f.svc.List(ctx, f.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[uuid.UUID]templates.Template{}
+	for _, tmpl := range list {
+		byID[tmpl.ID] = tmpl
+	}
+	want := []templates.VaultCredential{{CredentialID: f.vaultCred, Label: "team-a"}}
+	if got := byID[withCreds.ID].VaultCredentials; !reflect.DeepEqual(got, want) {
+		t.Fatalf("deploy's VaultCredentials = %+v, want %+v", got, want)
+	}
+	if got := byID[bare.ID].VaultCredentials; len(got) != 0 {
+		t.Fatalf("patch's VaultCredentials = %+v, want none — must not pick up deploy's set", got)
 	}
 }
 
