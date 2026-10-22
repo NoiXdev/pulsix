@@ -354,6 +354,14 @@ type Store interface {
 	// GroupSummaries aggregates the run jobs of each given run group
 	// (groups without run jobs are absent from the map).
 	GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]GroupSummary, error)
+	// ReserveRunGroup is RunRequest.IdempotencyKey's claim (backlog 2.60):
+	// the first call for (orgID, idempotencyKey) reserves candidate as the
+	// occurrence's run group and reports reserved true; every later call for
+	// the same key reports reserved false and returns that first candidate
+	// back, whatever this call's own candidate was. EnqueueRunWith uses
+	// reserved to decide whether to actually create jobs or hand back the
+	// ones the winning call already created.
+	ReserveRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string, candidate uuid.UUID) (groupID uuid.UUID, reserved bool, err error)
 }
 
 // Claim is one claimed job ready to ship to a worker, with the binding
@@ -570,50 +578,47 @@ func (s *Service) newID() uuid.UUID {
 // share. limit is the run's effective limit pattern ("" = none): the scope
 // resolution gates zones on it — a zone the limit matches no host of gets
 // no job, a run left with zero jobs overall fails with ErrEmptyScope —
-// while each surviving zone's job keeps the zone's full host list.
-func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]Job, error) {
-	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
+// while each surviving zone's job keeps the zone's full host list. group is
+// every created job's run_group_id: EnqueueRunWith passes its own fresh id
+// for an unkeyed request, or the id ReserveRunGroup already claimed for a
+// keyed one — this function never generates its own.
+//
+// alreadyDone is non-nil only for a keyed request whose key was already
+// claimed by an earlier call (EnqueueRunWith): the jobs that earlier call
+// itself created, by zone. A zone alreadyDone already covers gets no second
+// job — the ordinary retry this key exists to catch (an earlier call that
+// enqueued every zone, then whatever should have recorded that succeeding
+// failed) ends up creating nothing at all here, returning alreadyDone as-is.
+// A zone it does NOT cover still gets one: the earlier call may have been
+// interrupted partway through a multi-zone enqueue (a manager shutdown
+// mid-loop), and treating "some jobs already exist" as "this occurrence is
+// fully handled" would silently leave its other zones un-enqueued forever.
+// When alreadyDone is non-empty and the scope now fails to resolve at all
+// (ErrEmptyScope, ErrHostKeyChanged, ErrAllHostsExcluded, an unpinned-host
+// refusal — the live inventory can simply have changed between attempts),
+// alreadyDone is returned instead of propagating that failure: the
+// occurrence already has a result, and this is still a replay of it.
+func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, limit string, req RunRequest, group uuid.UUID, alreadyDone []Job) ([]Job, error) {
+	targets, err := s.resolveRunTargets(ctx, orgID, scope, limit, req)
 	if err != nil {
+		if len(alreadyDone) > 0 {
+			return alreadyDone, nil
+		}
 		return nil, err
 	}
-	if len(targets) == 0 {
-		return nil, ErrEmptyScope
+
+	done := make(map[uuid.UUID]bool, len(alreadyDone))
+	for _, j := range alreadyDone {
+		done[j.ZoneID] = true
 	}
-	// Block on mismatch (spec §5): hosts whose latest connection test
-	// reports a changed host key are excluded from the scope — a run must
-	// never SSH into a host whose key stopped matching its pin. When that
-	// empties the whole scope the enqueue fails with ErrHostKeyChanged.
-	if s.keyGuard != nil {
-		targets, err = s.excludeKeyChanged(ctx, orgID, targets)
-		if err != nil {
-			return nil, err
-		}
-		if len(targets) == 0 {
-			return nil, ErrHostKeyChanged
-		}
-	}
-	// Exclusion runs after the key-changed guard: when a key change and
-	// the maintenance exclusion together empty the scope, the enqueue
-	// reports ErrAllHostsExcluded (schedules record it as
-	// skipped_maintenance) even though some of the dropped hosts were
-	// actually excluded for a changed key, not for maintenance.
-	if len(req.ExcludeHosts) > 0 {
-		if targets = excludeHosts(targets, req.ExcludeHosts); len(targets) == 0 {
-			return nil, ErrAllHostsExcluded
-		}
-	}
-	// Refuse unpinned hosts (backlog 2.44) when the organization requires
-	// them: the run's whole scope is refused, naming the hosts without a
-	// full pin, so an operator can pin (or exclude) instead of silently
-	// running against untrusted keys.
-	if err := s.refuseUnpinnedHosts(ctx, orgID, zoneTargetIDs(targets)); err != nil {
-		return nil, err
-	}
-	group := s.newID()
+
 	now := s.now()
 	tmplID := templateID
-	out := make([]Job, 0, len(targets))
+	out := append([]Job{}, alreadyDone...) //nolint:gocritic // alreadyDone is this call's own slice, never reused by its caller
 	for _, t := range targets {
+		if done[t.ZoneID] {
+			continue
+		}
 		j := Job{
 			ID: s.newID(), OrgID: orgID, ZoneID: t.ZoneID,
 			Kind: KindRun, TemplateID: &tmplID, HostIDs: t.HostIDs,
@@ -630,6 +635,42 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 		out = append(out, j)
 	}
 	return out, nil
+}
+
+// resolveRunTargets resolves the scope and applies every guard
+// enqueueRunScope itself used to apply inline, in order: the scope itself
+// (ErrEmptyScope), the changed-host-key block (spec §5, ErrHostKeyChanged),
+// the maintenance exclusion (ErrAllHostsExcluded — after the key-changed
+// guard, so a key change and an exclusion together emptying the scope still
+// reports ErrAllHostsExcluded even though some dropped hosts were actually
+// excluded for a changed key, not maintenance), and the unpinned-hosts
+// refusal (backlog 2.44).
+func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]ZoneTargets, error) {
+	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, ErrEmptyScope
+	}
+	if s.keyGuard != nil {
+		targets, err = s.excludeKeyChanged(ctx, orgID, targets)
+		if err != nil {
+			return nil, err
+		}
+		if len(targets) == 0 {
+			return nil, ErrHostKeyChanged
+		}
+	}
+	if len(req.ExcludeHosts) > 0 {
+		if targets = excludeHosts(targets, req.ExcludeHosts); len(targets) == 0 {
+			return nil, ErrAllHostsExcluded
+		}
+	}
+	if err := s.refuseUnpinnedHosts(ctx, orgID, zoneTargetIDs(targets)); err != nil {
+		return nil, err
+	}
+	return targets, nil
 }
 
 // zoneTargetIDs collects the deduplicated host ids across the per-zone
@@ -967,7 +1008,7 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor})
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, s.newID(), nil)
 }
 
 // failedHostIDs intersects the stats' failed/unreachable host ids with the

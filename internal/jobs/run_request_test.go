@@ -210,6 +210,183 @@ func TestEnqueueRunWithPropagatesTemplateLookupError(t *testing.T) {
 	}
 }
 
+// TestEnqueueRunWithIsIdempotentPerKey is backlog 2.60's load-bearing
+// guarantee: the schedule ticker's write-back (due_sql.go's processRow)
+// commits its enqueue in a separate transaction from the schedule_runs row
+// and next_run_at advance it then writes. A failure between those two steps
+// leaves the occurrence due, and the next tick decides it again — decide.go
+// calls EnqueueRunWith a second time with the SAME IdempotencyKey (the
+// schedule and the due instant are unchanged, since the write-back never
+// advanced either). Without the reservation this adds, that second call
+// would create a second run group for the same occurrence — a duplicate
+// playbook run against the customer's servers. With it, the retry is a
+// no-op that hands back the first attempt's own jobs.
+func TestEnqueueRunWithIsIdempotentPerKey(t *testing.T) {
+	svc, store, org, templateID := runFixture(t)
+	scheduleID := uuid.Must(uuid.NewV7())
+	key := "schedule:" + scheduleID.String() + ":2026-09-18T10:00:00Z"
+	req := jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &scheduleID, IdempotencyKey: key}
+
+	first, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if err != nil {
+		t.Fatalf("first EnqueueRunWith: %v", err)
+	}
+	if len(first) != 2 || len(store.jobs) != 2 {
+		t.Fatalf("after the first call: created = %d, stored = %d, want 2 and 2 (one job per zone)", len(first), len(store.jobs))
+	}
+
+	second, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if err != nil {
+		t.Fatalf("retried EnqueueRunWith: %v", err)
+	}
+	if len(store.jobs) != 2 {
+		t.Fatalf("stored jobs after the retry = %d, want still 2 — the retry must create nothing", len(store.jobs))
+	}
+	if len(second) != len(first) {
+		t.Fatalf("replayed jobs = %d, want %d (the first attempt's own)", len(second), len(first))
+	}
+	for _, j := range second {
+		if j.RunGroupID != first[0].RunGroupID {
+			t.Fatalf("replayed job's group = %s, want %s (the first attempt's)", j.RunGroupID, first[0].RunGroupID)
+		}
+	}
+
+	// A different occurrence of the same schedule — a different due instant
+	// — must still get its own group: the key is per occurrence, not per
+	// schedule, so it must not collapse every run of a schedule into one.
+	key2 := "schedule:" + scheduleID.String() + ":2026-09-18T11:00:00Z"
+	third, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &scheduleID, IdempotencyKey: key2})
+	if err != nil {
+		t.Fatalf("different-occurrence EnqueueRunWith: %v", err)
+	}
+	if len(store.jobs) != 4 {
+		t.Fatalf("stored jobs after a different occurrence = %d, want 4", len(store.jobs))
+	}
+	if third[0].RunGroupID == first[0].RunGroupID {
+		t.Fatal("a different occurrence reused the first one's run group")
+	}
+}
+
+// TestEnqueueRunWithoutAKeyIsNeverDeduped is the control: RunNow, manual runs,
+// webhook deliveries and retries leave IdempotencyKey empty on purpose (each
+// click or delivery is deliberately its own occurrence), so two identical
+// requests must each get their own run group.
+func TestEnqueueRunWithoutAKeyIsNeverDeduped(t *testing.T) {
+	svc, store, org, templateID := runFixture(t)
+	ref := uuid.Must(uuid.NewV7())
+	req := jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &ref}
+
+	first, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if err != nil {
+		t.Fatalf("first EnqueueRunWith: %v", err)
+	}
+	second, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if err != nil {
+		t.Fatalf("second EnqueueRunWith: %v", err)
+	}
+	if len(store.jobs) != 4 {
+		t.Fatalf("stored jobs = %d, want 4 (two independent calls, two groups)", len(store.jobs))
+	}
+	if second[0].RunGroupID == first[0].RunGroupID {
+		t.Fatal("two unkeyed calls must never share a run group")
+	}
+}
+
+// TestEnqueueRunWithRetryFillsInZonesAPartialAttemptMissed covers the case
+// in between TestEnqueueRunWithIsIdempotentPerKey's full replay and
+// TestEnqueueRunWithRetriesIntoAnAlreadyReservedEmptyGroup's empty one: the
+// first attempt's multi-zone enqueue is interrupted after creating zone1's
+// job but before zone2's (a manager shutdown mid-loop is the realistic
+// cause). The retry must create zone2's missing job — reusing the same
+// group — not treat "zone1 already has a job" as "this occurrence is done"
+// and silently leave zone2 un-enqueued forever, and not create a second job
+// for zone1 either.
+func TestEnqueueRunWithRetryFillsInZonesAPartialAttemptMissed(t *testing.T) {
+	store := newFakeStore()
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	tmpl := &fakeTemplates{byID: map[uuid.UUID]jobs.TemplateRow{
+		templateID: {ID: templateID, OrgID: org, Scope: json.RawMessage(`{"group_id":null,"host_ids":[]}`)},
+	}}
+	zone1, zone2 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	res := &fakeResolver{targets: []jobs.ZoneTargets{
+		{ZoneID: zone1, HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
+		{ZoneID: zone2, HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
+	}}
+	svc := newService(store, &fakeQueue{}, tmpl, res, &fakeHosts{})
+	scheduleID := uuid.Must(uuid.NewV7())
+	key := "schedule:" + scheduleID.String() + ":2026-09-18T10:00:00Z"
+	req := jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &scheduleID, IdempotencyKey: key}
+
+	store.failCreateForZone = zone2
+	if _, err := svc.EnqueueRunWith(ctx, org, templateID, req); err == nil {
+		t.Fatal("first attempt: want the simulated zone2 failure to propagate, got nil")
+	}
+	if len(store.jobs) != 1 {
+		t.Fatalf("stored jobs after the interrupted first attempt = %d, want 1 (zone1 only)", len(store.jobs))
+	}
+
+	store.failCreateForZone = uuid.Nil
+	created, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(store.jobs) != 2 {
+		t.Fatalf("stored jobs after the retry = %d, want 2 (zone1's survives, zone2's now created)", len(store.jobs))
+	}
+	if len(created) != 2 {
+		t.Fatalf("retry returned %d jobs, want 2 (both zones, not just the one it created this time)", len(created))
+	}
+	zones := map[uuid.UUID]bool{}
+	group := uuid.Nil
+	for _, j := range created {
+		zones[j.ZoneID] = true
+		if group == uuid.Nil {
+			group = j.RunGroupID
+		} else if j.RunGroupID != group {
+			t.Fatalf("job %s has group %s, want every job of this occurrence sharing one group %s", j.ID, j.RunGroupID, group)
+		}
+	}
+	if !zones[zone1] || !zones[zone2] {
+		t.Fatalf("zones covered = %v, want both %s and %s", zones, zone1, zone2)
+	}
+}
+
+// TestEnqueueRunWithRetriesIntoAnAlreadyReservedEmptyGroup covers the other
+// half of the reservation: the first attempt claims the key but fails before
+// creating any job at all (an empty scope here — a dead template lookup or a
+// transient store error would do the same). The claim must not wedge the
+// key shut: a retry with the scope now resolving has to actually enqueue
+// into the group the first attempt reserved, not silently report success
+// with nothing created.
+func TestEnqueueRunWithRetriesIntoAnAlreadyReservedEmptyGroup(t *testing.T) {
+	store := newFakeStore()
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	tmpl := &fakeTemplates{byID: map[uuid.UUID]jobs.TemplateRow{
+		templateID: {ID: templateID, OrgID: org, Scope: json.RawMessage(`{"group_id":null,"host_ids":[]}`)},
+	}}
+	res := &fakeResolver{}
+	svc := newService(store, &fakeQueue{}, tmpl, res, &fakeHosts{})
+	scheduleID := uuid.Must(uuid.NewV7())
+	key := "schedule:" + scheduleID.String() + ":2026-09-18T10:00:00Z"
+	req := jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &scheduleID, IdempotencyKey: key}
+
+	if _, err := svc.EnqueueRunWith(ctx, org, templateID, req); !errors.Is(err, jobs.ErrEmptyScope) {
+		t.Fatalf("first attempt = %v, want ErrEmptyScope", err)
+	}
+	if len(store.jobs) != 0 {
+		t.Fatalf("stored jobs after the failed attempt = %d, want 0", len(store.jobs))
+	}
+
+	res.targets = []jobs.ZoneTargets{{ZoneID: uuid.Must(uuid.NewV7()), HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}}}
+	created, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(created) != 1 || len(store.jobs) != 1 {
+		t.Fatalf("retry created = %d, stored = %d, want 1 and 1", len(created), len(store.jobs))
+	}
+}
+
 func TestRunRequestValidateRejectsMismatchedTriggerRef(t *testing.T) {
 	svc, _, org, templateID := runFixture(t)
 	ref := uuid.Must(uuid.NewV7())

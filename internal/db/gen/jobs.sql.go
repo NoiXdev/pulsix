@@ -864,6 +864,40 @@ func (q *Queries) RequeueWorkerJobs(ctx context.Context, arg RequeueWorkerJobsPa
 	return items, nil
 }
 
+const reserveRunGroup = `-- name: ReserveRunGroup :one
+INSERT INTO job_idempotency_keys (org_id, idempotency_key, run_group_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, idempotency_key)
+DO UPDATE SET run_group_id = job_idempotency_keys.run_group_id
+RETURNING run_group_id, (xmax = 0) AS reserved
+`
+
+type ReserveRunGroupParams struct {
+	OrgID          uuid.UUID `json:"org_id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	RunGroupID     uuid.UUID `json:"run_group_id"`
+}
+
+type ReserveRunGroupRow struct {
+	RunGroupID uuid.UUID `json:"run_group_id"`
+	Reserved   bool      `json:"reserved"`
+}
+
+// The idempotency claim (migration 00067): the first caller for (org, key)
+// inserts and gets its own candidate group id back; every later caller for
+// the same key hits the conflict and gets the FIRST caller's group id back
+// instead — the DO UPDATE is a no-op (it sets the column to its own current
+// value) chosen only so ON CONFLICT still RETURNINGs a row, since DO NOTHING
+// would return none. (xmax = 0) is the standard way to tell the two apart in
+// one round trip: a freshly inserted row's xmax is still unset, an updated
+// row's is not, regardless of whether the update actually changed anything.
+func (q *Queries) ReserveRunGroup(ctx context.Context, arg ReserveRunGroupParams) (ReserveRunGroupRow, error) {
+	row := q.db.QueryRow(ctx, reserveRunGroup, arg.OrgID, arg.IdempotencyKey, arg.RunGroupID)
+	var i ReserveRunGroupRow
+	err := row.Scan(&i.RunGroupID, &i.Reserved)
+	return i, err
+}
+
 const updateRepoSyncState = `-- name: UpdateRepoSyncState :execrows
 UPDATE git_repos SET last_sync = $1, last_sync_error = $2
 WHERE org_id = $3 AND id = $4
