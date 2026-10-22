@@ -41,8 +41,19 @@ SELECT * FROM schedule_runs WHERE org_id = @org_id AND schedule_id = @schedule_i
 ORDER BY decided_at DESC, id DESC LIMIT @lim;
 
 -- name: LatestScheduleRuns :many
-SELECT DISTINCT ON (schedule_id) * FROM schedule_runs WHERE org_id = @org_id
-ORDER BY schedule_id, decided_at DESC, id DESC;
+-- One row per schedule of the org (the list's "Last" column): a LATERAL
+-- join against schedules, one index descent per schedule on
+-- schedule_runs_schedule_idx (org_id, schedule_id, decided_at DESC), costs
+-- O(schedules) — the DISTINCT ON this replaced scanned every run the
+-- organization had ever recorded to produce the same result (backlog 2.61).
+SELECT r.* FROM schedules AS s
+CROSS JOIN LATERAL (
+  SELECT * FROM schedule_runs
+  WHERE org_id = s.org_id AND schedule_id = s.id
+  ORDER BY decided_at DESC, id DESC
+  LIMIT 1
+) AS r
+WHERE s.org_id = @org_id;
 
 -- name: LockDueSchedules :many
 -- The ticker's due scan: runs in a raw-pool transaction without

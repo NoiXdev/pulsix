@@ -115,6 +115,29 @@ func TestPauseAndResume(t *testing.T) {
 	}
 }
 
+// TestResumeOnAnActiveScheduleIsANoOp is backlog 2.61: Resume used to
+// recompute next_run_at from now unconditionally, so calling it on a
+// schedule that was never paused — an idempotent retry of the same API
+// call resending it is the realistic way this happens — could jump an
+// already-due occurrence forward from now, silently skipping it. An active
+// schedule's next_run_at must come back exactly as it was.
+func TestResumeOnAnActiveScheduleIsANoOp(t *testing.T) {
+	w := newWorld(t)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := *s.NextRunAt
+	w.now = w.now.Add(time.Hour) // time passes; a due occurrence is now overdue
+	r, err := w.svc.Resume(ctx, w.org, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Paused || r.NextRunAt == nil || !r.NextRunAt.Equal(want) {
+		t.Fatalf("resumed an active schedule = %+v, want next_run_at unchanged at %v", r, want)
+	}
+}
+
 func TestRunNowEnqueuesWithRevealedOverridesAndRecordsTheRun(t *testing.T) {
 	w := newWorld(t)
 	in := validInput(w.templateID)
@@ -153,6 +176,97 @@ func TestRunNowRecordsAFailure(t *testing.T) {
 	runs, _ := w.svc.Runs(ctx, w.org, s.ID, 10)
 	if len(runs) != 1 || runs[0].Outcome != schedules.OutcomeFailed || runs[0].Reason != "the template's scope resolves to no host" {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+// TestRunNowReportsSuccessEvenWhenRecordRunFails is backlog 2.61: the
+// enqueue already happened — the operator's run now REALLY started — by the
+// time RecordRun's own failure could occur, so returning an error here used
+// to tell the operator the call failed when it had not, inviting a retry
+// that fires the template a second time (RunNow carries no idempotency key;
+// unlike the ticker's retried decision, a second RunNow call is a genuine
+// second run). The fix logs the bookkeeping failure and still reports the
+// real outcome: the jobs RunNow actually created.
+func TestRunNowReportsSuccessEvenWhenRecordRunFails(t *testing.T) {
+	w := newWorld(t)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.store.recordRunErr = errors.New("db down")
+	created, err := w.svc.RunNow(ctx, w.org, s.ID, w.actor)
+	if err != nil {
+		t.Fatalf("RunNow = %v, want nil: the enqueue succeeded, only its bookkeeping row failed", err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("created = %d, want 1", len(created))
+	}
+	if len(w.runs.requests) != 1 {
+		t.Fatalf("enqueue attempts = %d, want 1 — an operator who sees success has no reason to retry, and must not be invited to", len(w.runs.requests))
+	}
+}
+
+// TestRunNowReturnsTheEnqueueFailureEvenWhenRecordRunAlsoFails: when the
+// enqueue itself fails, that is the error the operator needs to see — a
+// bookkeeping failure on top of it must not replace it with a generic
+// "record run" error that hides what actually happened.
+func TestRunNowReturnsTheEnqueueFailureEvenWhenRecordRunAlsoFails(t *testing.T) {
+	w := newWorld(t)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.runs.err = jobs.ErrEmptyScope
+	w.store.recordRunErr = errors.New("db down")
+	if _, err := w.svc.RunNow(ctx, w.org, s.ID, w.actor); !errors.Is(err, jobs.ErrEmptyScope) {
+		t.Fatalf("RunNow = %v, want the original enqueue failure (ErrEmptyScope), not a bookkeeping one", err)
+	}
+}
+
+// TestRunNowTrimsRunHistory is backlog 2.61: RunNow used to insert a
+// schedule_runs row without ever applying the ticker's own retention trim
+// (TrimScheduleRuns / keepRuns), so a schedule "run now"d repeatedly, never
+// through the ticker, never trimmed at all.
+func TestRunNowTrimsRunHistory(t *testing.T) {
+	w := newWorld(t)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.RunNow(ctx, w.org, s.ID, w.actor); err != nil {
+		t.Fatal(err)
+	}
+	if w.store.trimCalls != 1 {
+		t.Fatalf("TrimRuns calls = %d, want 1", w.store.trimCalls)
+	}
+}
+
+// TestRunsClampsAnOutOfRangeLimit is backlog 2.61: Runs used to pass its
+// limit straight to the store, relying entirely on the API's own clamp
+// (schedule_handlers.go's clampListLimit) — Runs is itself an exported
+// entry point, reachable without going through that handler.
+func TestRunsClampsAnOutOfRangeLimit(t *testing.T) {
+	w := newWorld(t)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 150; i++ {
+		at := w.now.Add(time.Duration(i) * time.Minute)
+		if err := w.store.RecordRun(ctx, schedules.Run{
+			ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ScheduleID: s.ID, DueAt: at, DecidedAt: at, Outcome: schedules.OutcomeTriggered,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runs, err := w.svc.Runs(ctx, w.org, s.ID, 0); err != nil || len(runs) != 50 {
+		t.Fatalf("Runs(limit=0) = %d runs, %v, want the default of 50", len(runs), err)
+	}
+	if runs, err := w.svc.Runs(ctx, w.org, s.ID, 10000); err != nil || len(runs) != 100 {
+		t.Fatalf("Runs(limit=10000) = %d runs, %v, want clamped to 100", len(runs), err)
+	}
+	if runs, err := w.svc.Runs(ctx, w.org, s.ID, -5); err != nil || len(runs) != 50 {
+		t.Fatalf("Runs(limit=-5) = %d runs, %v, want the default of 50", len(runs), err)
 	}
 }
 

@@ -378,6 +378,181 @@ func TestProcessRowRecoversAPanicOutsideDecide(t *testing.T) {
 	}
 }
 
+// TestRetriedOccurrenceAfterAWriteBackFailureEnqueuesOnlyOnce is backlog
+// 2.60's central regression: due_sql.go's processRow commits decide's
+// enqueue (through the real Service.Decide, so occurrenceKey's wiring is
+// exercised exactly as production runs it) BEFORE its own savepoint ever
+// opens. If something fails between those two points — here, a panic
+// standing in for a write error or a crashed manager, the same class
+// processRow's own recover already catches — the row is left due with no
+// schedule_runs row and no next_run_at advance to show for the enqueue that
+// already happened. The next tick decides the SAME occurrence again (same
+// schedule, same still-unchanged next_run_at) and must not create a second
+// run group for it: that would be a duplicate playbook run against the
+// customer's servers, recorded as a fresh "triggered" decision for work
+// that, from the jobs service's point of view, already ran.
+//
+// fakeRuns models the real ledger (job_idempotency_keys) at the RunEnqueuer
+// boundary: the real mechanism itself — the ON CONFLICT round trip and its
+// org scoping — is covered directly against Postgres in
+// internal/jobs/idempotency_store_test.go; this test is schedules' own
+// responsibility, that decide.go/service.go compute and send the SAME key
+// for a retried decision of an unchanged due occurrence.
+func TestRetriedOccurrenceAfterAWriteBackFailureEnqueuesOnlyOnce(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-retry-dup")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	dueAt := now.Add(-time.Minute)
+
+	sch, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "retry-dup",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runs := &fakeRuns{}
+	svc := schedules.NewService(st, &fakeTemplates{}, runs, &fakeAudit{}, func() time.Time { return now }, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store := schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	attempt := 0
+	decide := func(ctx context.Context, s schedules.Schedule) schedules.Decision {
+		attempt++
+		d := svc.Decide(ctx, s, now, 2*15*time.Second)
+		if attempt == 1 {
+			// Stands in for a write-back failure AFTER decide's own enqueue
+			// already committed (a write error, a crashed manager):
+			// processRow's own recover (due_sql.go) catches this exactly
+			// like it would catch a real one, leaving the row due with
+			// nothing written back.
+			panic("simulated write-back failure after a successful enqueue")
+		}
+		return d
+	}
+
+	if _, err := store.ProcessDue(context.Background(), now, 50, decide); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	var firstRuns int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, sch.ID).Scan(&firstRuns); err != nil || firstRuns != 0 {
+		t.Fatalf("schedule_runs after the panicked write-back = %d, %v, want 0 (nothing written back)", firstRuns, err)
+	}
+	var nextAfterFirst *time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT next_run_at FROM schedules WHERE id = $1`, sch.ID).Scan(&nextAfterFirst); err != nil {
+		t.Fatal(err)
+	}
+	if nextAfterFirst == nil || !nextAfterFirst.Equal(dueAt) {
+		t.Fatalf("next_run_at after the panicked write-back = %v, want unchanged (%v): still due for the retry", nextAfterFirst, dueAt)
+	}
+	if len(runs.requests) != 1 || runs.requests[0].IdempotencyKey == "" {
+		t.Fatalf("enqueue requests after the first attempt = %+v, want exactly one with a non-empty IdempotencyKey", runs.requests)
+	}
+
+	// The retry: the row is still due, so the next tick decides the SAME
+	// occurrence again.
+	if _, err := store.ProcessDue(context.Background(), now, 50, decide); err != nil {
+		t.Fatalf("second batch: %v", err)
+	}
+	var secondRuns int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, sch.ID).Scan(&secondRuns); err != nil || secondRuns != 1 {
+		t.Fatalf("schedule_runs after the retry = %d, %v, want exactly 1 (the retry's own write-back, now successful)", secondRuns, err)
+	}
+
+	if len(runs.requests) != 2 {
+		t.Fatalf("enqueue requests = %d, want 2 (the panic-interrupted attempt, then the retry)", len(runs.requests))
+	}
+	if runs.requests[1].IdempotencyKey != runs.requests[0].IdempotencyKey {
+		t.Fatalf("idempotency keys = %q then %q, want equal: same schedule, same due instant, since the write-back never advanced it", runs.requests[0].IdempotencyKey, runs.requests[1].IdempotencyKey)
+	}
+	// The assertion that actually matters: however many times enqueue was
+	// CALLED, only one run group ever exists for this occurrence — the
+	// retry replayed the first attempt's, it did not mint a second one.
+	if len(runs.groups) != 1 {
+		t.Fatalf("distinct run groups for the occurrence = %d, want 1 — a second one is the duplicate playbook run backlog 2.60 exists to prevent", len(runs.groups))
+	}
+}
+
+// TestProcessDueReportsRowsDecidedNotRowsLockedWhenTheDeadlineCutsItShort is
+// backlog 2.60's ticker-spin fix: Ticker.Tick (ticker.go) treats a batch
+// that comes back with fewer than batchSize decided as "no more work, wait
+// for the next tick interval" and a full batchSize as "there may be more,
+// start another batch immediately". Before this fix, ProcessDue reported
+// how many rows it had LOCKED, not how many it actually got to decide
+// before its own deadline — so a batch that locked a full, busy-looking
+// batchSize rows but only managed to decide the first one or two before the
+// deadline cut it short still reported batchSize, indistinguishable from a
+// batch that genuinely finished one. Tick then started a fresh batch at
+// once instead of backing off, hammering whatever made the first batch slow
+// (a starved pool, an overloaded database) instead of giving it the rest of
+// the tick interval to recover.
+//
+// Two due rows and limit == 2 (standing in for batchSize): row1's own
+// decide sleeps well past the deadline — guaranteeing ctx is already done
+// by the time the loop reaches row2's own ctx.Err() check, deterministically,
+// rather than racing real DB round-trip latency against the deadline — so
+// the batch locks 2 rows but only ever gets to decide 1. The fix must
+// report 1, not 2; row2 must never even be decided.
+func TestProcessDueReportsRowsDecidedNotRowsLockedWhenTheDeadlineCutsItShort(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-spin")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	dueAt1 := now.Add(-2 * time.Second)
+	dueAt2 := now.Add(-1 * time.Second) // sorts after row1 by next_run_at
+
+	row1, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "spin-row1",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "spin-row2",
+		Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+		Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const deadline = 100 * time.Millisecond
+	nextRun := now.Add(time.Hour)
+	decide := func(ctx context.Context, s schedules.Schedule) schedules.Decision {
+		if s.ID == row1.ID {
+			// Ignoring ctx on purpose, like the equivalent sleep in
+			// TestProcessDueKeepsAlreadyEnqueuedRowsWhenTheBatchDeadlineIsExceeded:
+			// by the time this returns, real wall-clock time has
+			// definitely passed the deadline, so row2's own ctx.Err()
+			// check (the top of ProcessDue's loop) is guaranteed to see it
+			// expired — no race against how long row1's own write-back
+			// happens to take.
+			time.Sleep(3 * deadline)
+		} else {
+			t.Error("row2 must never be decided: the deadline should have stopped the loop before reaching it")
+		}
+		return schedules.Decision{
+			Run:       schedules.Run{ID: uuid.Must(uuid.NewV7()), OrgID: s.OrgID, ScheduleID: s.ID, DueAt: now, DecidedAt: now, Outcome: schedules.OutcomeTriggered},
+			NextRunAt: &nextRun,
+		}
+	}
+
+	tctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	n, err := schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil))).ProcessDue(tctx, now, 2, decide)
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue reported %d rows decided, want 1 (it locked 2, but the deadline cut the batch short after row1) — Ticker.Tick's own \"n < batchSize\" check relies on this to avoid starting another batch immediately", n)
+	}
+}
+
 // TestLockDueSchedulesDoesNotBlockRunNow isolates the lock-mode half of
 // fix round 1's Important #3: FOR NO KEY UPDATE (unlike the previous FOR
 // UPDATE) does not conflict with the FOR KEY SHARE a schedule_runs

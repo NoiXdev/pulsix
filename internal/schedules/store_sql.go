@@ -133,6 +133,13 @@ func (st *SQLStore) RecordRun(ctx context.Context, r Run) error {
 	return insertRun(ctx, st.q, r)
 }
 
+func (st *SQLStore) TrimRuns(ctx context.Context, orgID, scheduleID uuid.UUID, keep int) error {
+	if err := st.q.TrimScheduleRuns(ctx, gen.TrimScheduleRunsParams{OrgID: orgID, ScheduleID: scheduleID, Keep: int32(keep)}); err != nil { //nolint:gosec // keep is schedules.keepRuns, a small constant
+		return fmt.Errorf("trim schedule runs: %w", err)
+	}
+	return nil
+}
+
 func (st *SQLStore) Runs(ctx context.Context, orgID, scheduleID uuid.UUID, limit int) ([]Run, error) {
 	rows, err := st.q.ListScheduleRuns(ctx, gen.ListScheduleRunsParams{OrgID: orgID, ScheduleID: scheduleID, Lim: int32(limit)}) //nolint:gosec // limit is clamped by the API (≤ 100)
 	if err != nil {

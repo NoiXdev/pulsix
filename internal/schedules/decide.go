@@ -156,7 +156,7 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 		}
 	}
 
-	created, err := s.enqueue(ctx, sch, nil, exclude)
+	created, err := s.enqueue(ctx, sch, nil, exclude, &run.DueAt)
 	if errors.Is(err, jobs.ErrAllHostsExcluded) {
 		// The scope changed between the guard's check and the enqueue.
 		decision.Run.Outcome, decision.Run.Reason = OutcomeSkippedMaintenance, "every targeted host is in a maintenance window"
