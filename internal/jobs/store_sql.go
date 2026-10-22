@@ -141,6 +141,18 @@ func (s *SQLStore) CreateJob(ctx context.Context, j Job, payload json.RawMessage
 	return nil
 }
 
+// ReserveRunGroup implements the Store capability backing
+// RunRequest.IdempotencyKey (migration 00067, backlog 2.60): see
+// ReserveRunGroup's own doc comment in jobs.sql for how the ON CONFLICT
+// round trip tells a fresh claim from a replay in one statement.
+func (s *SQLStore) ReserveRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string, candidate uuid.UUID) (uuid.UUID, bool, error) {
+	row, err := s.q.ReserveRunGroup(ctx, gen.ReserveRunGroupParams{OrgID: orgID, IdempotencyKey: idempotencyKey, RunGroupID: candidate})
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("reserve run group: %w", err)
+	}
+	return row.RunGroupID, row.Reserved, nil
+}
+
 func (s *SQLStore) GetJob(ctx context.Context, orgID, id uuid.UUID) (Job, error) {
 	row, err := s.q.GetJob(ctx, gen.GetJobParams{OrgID: orgID, ID: id})
 	if err != nil {

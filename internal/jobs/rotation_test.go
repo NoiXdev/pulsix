@@ -159,6 +159,13 @@ func (s *rotationOnlyStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.U
 	return false, nil
 }
 
+// ReserveRunGroup is unused by every test built on this fake: rotation,
+// bastion-key-claim and host-key-enforcement enqueues never set
+// RunRequest.IdempotencyKey, so EnqueueRunWith never calls it.
+func (s *rotationOnlyStore) ReserveRunGroup(context.Context, uuid.UUID, string, uuid.UUID) (uuid.UUID, bool, error) {
+	return uuid.Nil, false, errors.New("ReserveRunGroup not implemented by rotationOnlyStore")
+}
+
 func (s *rotationOnlyStore) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {
 	return nil, nil
 }
@@ -556,4 +563,8 @@ func (plainRotationStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.UUI
 
 func (plainRotationStore) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {
 	return nil, nil
+}
+
+func (plainRotationStore) ReserveRunGroup(context.Context, uuid.UUID, string, uuid.UUID) (uuid.UUID, bool, error) {
+	return uuid.Nil, false, errors.New("ReserveRunGroup not implemented by plainRotationStore")
 }

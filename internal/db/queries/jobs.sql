@@ -4,6 +4,21 @@ INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
+-- name: ReserveRunGroup :one
+-- The idempotency claim (migration 00067): the first caller for (org, key)
+-- inserts and gets its own candidate group id back; every later caller for
+-- the same key hits the conflict and gets the FIRST caller's group id back
+-- instead — the DO UPDATE is a no-op (it sets the column to its own current
+-- value) chosen only so ON CONFLICT still RETURNINGs a row, since DO NOTHING
+-- would return none. (xmax = 0) is the standard way to tell the two apart in
+-- one round trip: a freshly inserted row's xmax is still unset, an updated
+-- row's is not, regardless of whether the update actually changed anything.
+INSERT INTO job_idempotency_keys (org_id, idempotency_key, run_group_id)
+VALUES (@org_id, @idempotency_key, @run_group_id)
+ON CONFLICT (org_id, idempotency_key)
+DO UPDATE SET run_group_id = job_idempotency_keys.run_group_id
+RETURNING run_group_id, (xmax = 0) AS reserved;
+
 -- name: GetJob :one
 -- Scoped by org_id in the WHERE clause, not only relying on RLS (see
 -- GetZone's comment in hosts.sql): a job belonging to a different

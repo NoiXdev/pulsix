@@ -45,10 +45,38 @@ type fakeStore struct {
 	activeErr       error
 
 	summaries map[uuid.UUID]jobs.GroupSummary
+
+	// idempotency models job_idempotency_keys (migration 00067): keyed by
+	// "org|key", the first ReserveRunGroup call for a pair wins and every
+	// later call for the same pair gets its group id back instead.
+	idempotency map[string]uuid.UUID
+	reserveErr  error
+	// failCreateForZone makes CreateJob fail only for this one zone — a
+	// stand-in for a multi-zone enqueue interrupted partway through (a
+	// manager shutdown between two zones' CreateJob calls), rather than
+	// nextErr's "every call fails".
+	failCreateForZone uuid.UUID
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{jobs: map[uuid.UUID]storedJob{}, cancelled: map[uuid.UUID]jobs.Status{}}
+	return &fakeStore{jobs: map[uuid.UUID]storedJob{}, cancelled: map[uuid.UUID]jobs.Status{}, idempotency: map[string]uuid.UUID{}}
+}
+
+// ReserveRunGroup is the in-memory equivalent of the real ON CONFLICT round
+// trip: a mutex-guarded map lookup-or-insert gives the same "first caller
+// wins" semantics the real unique (org_id, idempotency_key) constraint does.
+func (f *fakeStore) ReserveRunGroup(_ context.Context, orgID uuid.UUID, key string, candidate uuid.UUID) (uuid.UUID, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reserveErr != nil {
+		return uuid.Nil, false, f.reserveErr
+	}
+	k := orgID.String() + "|" + key
+	if g, ok := f.idempotency[k]; ok {
+		return g, false, nil
+	}
+	f.idempotency[k] = candidate
+	return candidate, true, nil
 }
 
 // hostKeyPair generates a host key and returns its fingerprint and
@@ -71,6 +99,9 @@ func (f *fakeStore) CreateJob(_ context.Context, j jobs.Job, payload json.RawMes
 	defer f.mu.Unlock()
 	if f.nextErr != nil {
 		return f.nextErr
+	}
+	if f.failCreateForZone != uuid.Nil && j.ZoneID == f.failCreateForZone {
+		return errors.New("simulated interruption creating this zone's job")
 	}
 	f.jobs[j.ID] = storedJob{j: j, payload: payload}
 	return nil
@@ -101,6 +132,9 @@ func (f *fakeStore) ListJobs(_ context.Context, orgID uuid.UUID, filter jobs.Fil
 			continue
 		}
 		if filter.ZoneID != nil && s.j.ZoneID != *filter.ZoneID {
+			continue
+		}
+		if filter.RunGroupID != nil && s.j.RunGroupID != *filter.RunGroupID {
 			continue
 		}
 		out = append(out, s.j)
