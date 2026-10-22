@@ -45,8 +45,8 @@ func TestInvalid(t *testing.T) {
 		// U+0085 (NEL) is category Cc and is Unicode White_Space, so
 		// Go's TrimSpace strips it — this lands on the whitespace half of
 		// the merged check, not the Cc/Cf half, unlike the BOM below.
-		{"leading NEL", "prod", "leading or trailing whitespace"},
-		{"trailing NEL", "prod", "leading or trailing whitespace"},
+		{"leading NEL", "\u0085prod", "leading or trailing whitespace"},
+		{"trailing NEL", "prod\u0085", "leading or trailing whitespace"},
 		// U+FEFF (BYTE ORDER MARK) is category Cf. JavaScript's String.trim()
 		// strips it as whitespace (the client used to reject this on that
 		// accident alone); Go's strings.TrimSpace does not, so before this
@@ -60,8 +60,8 @@ func TestInvalid(t *testing.T) {
 		// other than the bytes it actually is, which matters here more than
 		// anywhere else in this codebase: this form's whole job is telling
 		// an operator which password opens which file.
-		{"bidi override mid-label", "pro‮d", "control or format"},
-		{"bidi override leading", "‮prod", "control or format"},
+		{"bidi override mid-label", "pro\u202ed", "control or format"},
+		{"bidi override leading", "\u202eprod", "control or format"},
 		{"overlong is not this package's concern", strings.Repeat("a", 1000), ""},
 		{"umlauts are fine", "prod-ä", ""},
 		{"valid", "prod", ""},
@@ -93,11 +93,11 @@ func TestInvalid(t *testing.T) {
 // message regardless of which of its two conditions fired.
 func TestInvalidReportsTheSameMessageRegardlessOfWhichCheckCaught(t *testing.T) {
 	labels := []string{
-		"prod",      // NEL, leading: TrimSpace half of the merged check
-		"prod",      // NEL, trailing: same half
+		"\u0085prod", // NEL, leading: TrimSpace half of the merged check
+		"prod\u0085", // NEL, trailing: same half
 		"\ufeffprod", // BOM, leading: Cc/Cf half of the merged check
 		"prod\ufeff", // BOM, trailing: same half
-		"prod",      // NEL, mid-label: not whitespace-adjacent, lands on the Cc/Cf half instead
+		"pro\u0085d", // NEL, mid-label: not whitespace-adjacent, lands on the Cc/Cf half instead
 		"pro\ufeffd", // BOM, mid-label: Cc/Cf half, same as the leading/trailing BOM cases
 	}
 	want := vaultlabel.Invalid(labels[0])
