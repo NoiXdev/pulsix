@@ -69,8 +69,10 @@ DELETE FROM alert_routes WHERE org_id = @org_id AND id = @id;
 -- the INSERT's ON CONFLICT DO NOTHING skipped re-adding it while the DELETE,
 -- running after rather than before, removed it anyway. Two statements sent
 -- in sequence on the caller's own transaction (replaceSelections,
--- store_sql.go) remove the ambiguity: the DELETE commits before the INSERT
--- ever runs.
+-- store_sql.go) remove the ambiguity: the DELETE is ordered before the
+-- INSERT, which is what a data-modifying WITH could not guarantee — it
+-- does not commit before the INSERT runs, or before anything else; both
+-- commit together, when the whole transaction does.
 DELETE FROM alert_route_severities WHERE org_id = @org_id AND route_id = @route_id;
 
 -- name: InsertRouteSeverities :exec
@@ -78,8 +80,10 @@ DELETE FROM alert_route_severities WHERE org_id = @org_id AND route_id = @route_
 -- one-per-row shape; ON CONFLICT DO NOTHING absorbs a value repeated twice
 -- in the same call, the same defensive reason InsertCheckItems' own comment
 -- gives — it is no longer asked to also absorb a row DeleteRouteSeverities
--- has not gotten to yet, since that statement already ran and committed its
--- own effect by the time this one starts. An empty array is a legal no-op
+-- has not gotten to yet, since that statement already ran by the time this
+-- one starts — ordered by the two being sent in sequence on the caller's
+-- own transaction, not because it committed first; both commit together,
+-- when that transaction does. An empty array is a legal no-op
 -- that leaves the selection cleared to nothing, which is exactly what
 -- "replace with zero severities" means.
 INSERT INTO alert_route_severities (org_id, route_id, severity)
