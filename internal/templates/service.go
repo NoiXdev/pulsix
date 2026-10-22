@@ -168,6 +168,15 @@ type CredentialLookup interface {
 // a reference to a playbook or credential that does not exist in the
 // organization (the composite foreign keys) returns ErrNotFound.
 type Store interface {
+	// InTx runs fn inside one organization-scoped write transaction: every
+	// store call fn makes with the context it is handed joins that
+	// transaction, and all of them commit together or none do. Create and
+	// Update need it because a template's row and its labelled vault
+	// credential set are two statements that must land as one — a failure
+	// between them used to leave a template stored with none of the vault
+	// passwords its request named, which does not fail at save time but
+	// at the next run (backlog 2.95, the same split repos.Service had).
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, t Template) (Template, error)
 	Get(ctx context.Context, orgID, id uuid.UUID) (Template, error)
 	List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
@@ -256,12 +265,21 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err != nil {
 		return Template{}, err
 	}
-	created, err := s.store.Create(ctx, t)
-	if err != nil {
+	var created Template
+	// One transaction for both writes: a template and the vault passwords
+	// its request named are one fact, and half of it is worse than none
+	// (backlog 2.95).
+	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		if created, err = s.store.Create(ctx, t); err != nil {
+			return err
+		}
+		if err := s.store.ReplaceVaultCredentials(ctx, orgID, created.ID, in.VaultCredentials); err != nil {
+			return fmt.Errorf("store template vault credentials: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return Template{}, err
-	}
-	if err := s.store.ReplaceVaultCredentials(ctx, orgID, created.ID, in.VaultCredentials); err != nil {
-		return Template{}, fmt.Errorf("store template vault credentials: %w", err)
 	}
 	created.VaultCredentials = in.VaultCredentials
 	return masked(created), nil
@@ -310,12 +328,18 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		return Template{}, err
 	}
 	t.SharedTemplateID = cur.SharedTemplateID
-	updated, err := s.store.Update(ctx, t)
-	if err != nil {
+	var updated Template
+	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		if updated, err = s.store.Update(ctx, t); err != nil {
+			return err
+		}
+		if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {
+			return fmt.Errorf("store template vault credentials: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return Template{}, err
-	}
-	if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {
-		return Template{}, fmt.Errorf("store template vault credentials: %w", err)
 	}
 	updated.VaultCredentials = in.VaultCredentials
 	return masked(updated), nil

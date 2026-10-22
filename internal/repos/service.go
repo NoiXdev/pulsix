@@ -175,6 +175,16 @@ type JobEnqueuer interface {
 // ErrNotFound, a name clash ErrNameTaken, and deleting a referenced repo
 // ErrInUse.
 type Store interface {
+	// InTx runs fn inside one organization-scoped write transaction: every
+	// store call fn makes with the context it is handed joins that
+	// transaction, and all of them commit together or none do. Create and
+	// Update need it because a repository's row and its labelled vault
+	// identity set are two statements that must land as one — a failure
+	// between them used to leave a repository stored with none of the
+	// vault passwords its request named, which does not fail at save time
+	// but at the next run, as a decryption error with nothing visibly
+	// wrong with the configuration (backlog 2.95).
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, r Repo) (Repo, error)
 	Get(ctx context.Context, orgID, id uuid.UUID) (Repo, error)
 	List(ctx context.Context, orgID uuid.UUID) ([]Repo, error)
@@ -217,21 +227,32 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
-	created, err := s.store.Create(ctx, Repo{
-		ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
-		Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
-		CredentialID:      in.CredentialID,
-		VaultCredentialID: in.VaultCredentialID,
-	})
-	if err != nil {
+	var created Repo
+	// One transaction for both writes: a repository and the vault
+	// passwords its request named are one fact, and half of it is worse
+	// than none (backlog 2.95).
+	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		created, err = s.store.Create(ctx, Repo{
+			ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
+			Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
+			CredentialID:      in.CredentialID,
+			VaultCredentialID: in.VaultCredentialID,
+		})
+		if err != nil {
+			return err
+		}
+		// validate above already refuses a non-nil in.VaultCredentialID
+		// (backlog 2.92: the bridge that used to turn it into a
+		// synthesized {label: "default"} entry here is retired), so
+		// VaultIdentities is always the whole truth by this point — no
+		// merge needed.
+		if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, in.VaultIdentities); err != nil {
+			return fmt.Errorf("store repo vault identities: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return Repo{}, err
-	}
-	// validate above already refuses a non-nil in.VaultCredentialID
-	// (backlog 2.92: the bridge that used to turn it into a synthesized
-	// {label: "default"} entry here is retired), so VaultIdentities is
-	// always the whole truth by this point — no merge needed.
-	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, in.VaultIdentities); err != nil {
-		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
 	}
 	created.VaultIdentities = in.VaultIdentities
 	return created, nil
@@ -315,15 +336,21 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if next.URL != cur.URL {
 		next.SSHHostKey, next.SSHHostPublicKey = "", ""
 	}
-	updated, err := s.store.Update(ctx, next)
-	if err != nil {
+	var updated Repo
+	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		if updated, err = s.store.Update(ctx, next); err != nil {
+			return err
+		}
+		// validate above already refuses a non-nil in.VaultCredentialID
+		// (backlog 2.92), so VaultIdentities is always the whole truth
+		// here — the same reasoning Create's own comment gives.
+		if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, in.VaultIdentities); err != nil {
+			return fmt.Errorf("store repo vault identities: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return Repo{}, err
-	}
-	// validate above already refuses a non-nil in.VaultCredentialID
-	// (backlog 2.92), so VaultIdentities is always the whole truth here —
-	// the same reasoning Create's own comment gives.
-	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, in.VaultIdentities); err != nil {
-		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
 	}
 	updated.VaultIdentities = in.VaultIdentities
 	return updated, nil
