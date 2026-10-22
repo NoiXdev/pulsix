@@ -23,4 +23,14 @@ breaking:
     # proto actually needs guarded is wire compatibility between a manager
     # and a worker deployed as separate images at different versions, which
     # is exactly what WIRE_JSON's reserved-number-and-name rules check.
+    #
+    # Backlog 2.98 revisited this choice (2026-10-22) and kept it: WIRE_JSON
+    # gives up FILE's source-level checks for every other message and
+    # service here too (FIELD_SAME_NAME, message/service rename rules), not
+    # only for the field this comment was written to unblock. This file is
+    # still one service and a dozen messages a reviewer reads in full for
+    # any proto change — small enough that a renamed field or message going
+    # unflagged is a reviewer catching it, not a tool. Worth revisiting
+    # again once that stops being true (more services, multiple files,
+    # proto changes a reviewer no longer reads end to end), not before.
     - WIRE_JSON
