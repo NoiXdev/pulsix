@@ -46,14 +46,23 @@ ORDER BY created_at DESC, id DESC LIMIT @lim;
 -- outcome write panicked -- used to be re-claimed forever, re-sending the
 -- same message every two minutes. The number is deliberately far above
 -- MaxAttempts: this only bounds a loop no Go-side decision ever reaches.
+-- FailStuckNotificationDeliveries ends a row that reaches it.
+--
+-- The lease is written and compared with the DATABASE's clock, not the
+-- claiming manager's (backlog 2.80). Every manager has its own wall clock
+-- and they drift: a manager running ahead judged another's fresh lease
+-- already expired and re-claimed a row that was still being sent,
+-- delivering the same message twice. The database is the one clock they
+-- all share, so the lease is the one thing that must not be measured
+-- anywhere else.
 UPDATE notification_deliveries AS d
-SET locked_until = @lease_until::timestamptz, attempts = d.attempts + 1
+SET locked_until = now() + @lease::interval, attempts = d.attempts + 1
 FROM notification_channels AS c
 WHERE c.org_id = d.org_id AND c.id = d.channel_id
   AND d.id IN (
     SELECT p.id FROM notification_deliveries AS p
-    WHERE p.status = 'pending' AND p.next_attempt_at <= @now::timestamptz
-      AND (p.locked_until IS NULL OR p.locked_until <= @now::timestamptz)
+    WHERE p.status = 'pending' AND p.next_attempt_at <= now()
+      AND (p.locked_until IS NULL OR p.locked_until <= now())
       AND p.attempts < 20
     ORDER BY p.next_attempt_at
     LIMIT @lim
@@ -69,12 +78,32 @@ UPDATE notification_deliveries SET status = 'sent', sent_at = @at, locked_until 
 WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pending';
 
 -- name: RetryNotificationDelivery :execrows
-UPDATE notification_deliveries SET next_attempt_at = @next_attempt_at, locked_until = NULL, last_error = @last_error
+-- The backoff is a DURATION, measured from the database's clock like the
+-- lease above (backlog 2.80). Writing an absolute instant from the
+-- claiming manager's clock while the claim compares against the
+-- database's would let a manager running behind schedule a retry that is
+-- already due the moment it lands.
+UPDATE notification_deliveries SET next_attempt_at = now() + @retry_in::interval, locked_until = NULL, last_error = @last_error
 WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pending';
 
 -- name: FailNotificationDelivery :execrows
 UPDATE notification_deliveries SET status = 'failed', locked_until = NULL, last_error = @last_error
 WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pending';
+
+-- name: FailStuckNotificationDeliveries :execrows
+-- The backstop's exit (backlog 2.80). ClaimNotificationDeliveries refuses
+-- a row at attempts >= 20, which stops the re-claim loop but leaves the
+-- row 'pending' for ever: never claimed again, never failed, and
+-- TrimNotificationDeliveries only ever removes finished rows, so it
+-- accumulates in the channel's delivery log and reads as a message still
+-- on its way. Failing it is the honest end state — the backstop is only
+-- reached when the outcome write never landed often enough that nothing
+-- can be concluded but that this message is not getting through.
+UPDATE notification_deliveries
+SET status = 'failed', locked_until = NULL, last_error = @last_error
+WHERE status = 'pending' AND attempts >= 20
+  AND (locked_until IS NULL OR locked_until <= now())
+RETURNING id;
 
 -- name: TrimNotificationDeliveries :exec
 -- Keeps the newest 500 finished rows of a channel; pending ones are never

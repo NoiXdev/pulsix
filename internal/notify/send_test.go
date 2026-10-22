@@ -203,3 +203,76 @@ func TestSendRefusesBrokenChannels(t *testing.T) {
 		t.Fatal("Permanent(nil) must stay nil")
 	}
 }
+
+// TestWebhookErrorsNeverCarryTheURLsSecrets is backlog 2.80's redaction
+// gap. redactURL exists because url.Error repeats the whole request URL
+// in its text and a webhook URL routinely carries a shared secret — in a
+// query parameter, which every chat tool's incoming-webhook URL uses, or
+// in userinfo. Nothing pinned either shape, nor the redirect path, where
+// the error comes from the client's own CheckRedirect rather than the
+// transport. A delivery's last_error is shown in the GUI and kept in the
+// database, so a leak here is a stored one.
+func TestWebhookErrorsNeverCarryTheURLsSecrets(t *testing.T) {
+	const secret = "s3cr3t-webhook-token"
+
+	// A listener that is closed again, so the transport always fails.
+	dead := httptest.NewServer(&receiver{})
+	deadURL := dead.URL
+	dead.Close()
+
+	// A live receiver that answers 302 to somewhere else: the client
+	// refuses to follow, and the error is ErrRedirect wrapped by
+	// url.Error — a different path through redactURL than a dial failure.
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://elsewhere.example.test/", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{name: "token in the query string", url: deadURL + "/hook?token=" + secret},
+		{name: "token in the path", url: deadURL + "/hook/" + secret},
+		{name: "redirect refused, token in the query string", url: redirector.URL + "/hook?token=" + secret},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			ch := webhookChannel(t, w, c.url, "", false)
+			err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil).Send(ctx, ch, uuid.Must(uuid.NewV7()), notify.Event{Kind: notify.EventTest})
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			// What the delivery row stores is this text, bounded and
+			// single-lined by errorText — which can shorten it but
+			// never add to it, so checking here is checking the row.
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("the error carries the URL's secret: %s", err)
+			}
+		})
+	}
+}
+
+// TestWebhookURLWithUserinfoIsRefusedAtSaveTime records why the redaction
+// tests above have no userinfo case: a URL carrying a user name or
+// password never reaches the sender at all, because validation rejects it
+// when the channel is saved. That is the stronger guarantee of the two —
+// a secret that was never stored cannot leak out of an error — and it is
+// worth a test of its own, since removing the check would silently move
+// the burden onto redaction, which the backlog row assumed was already
+// carrying it (backlog 2.80).
+func TestWebhookURLWithUserinfoIsRefusedAtSaveTime(t *testing.T) {
+	w := newWorld(t)
+	in := webhookInput("hook with userinfo")
+	url := "https://user:s3cr3t@hooks.example.test/x"
+	in.Webhook.URL = &url
+	in.Webhook.SigningSecret = nil
+	_, err := w.svc.CreateChannel(ctx, w.org, w.actor, in)
+	if err == nil {
+		t.Fatal("a webhook URL with userinfo was accepted")
+	}
+	if !strings.Contains(err.Error(), "user name or password") {
+		t.Fatalf("err = %v, want the userinfo refusal", err)
+	}
+}

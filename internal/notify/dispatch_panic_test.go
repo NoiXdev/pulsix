@@ -27,7 +27,7 @@ type panickingQueue struct {
 	completed  atomic.Int64
 }
 
-func (q *panickingQueue) Claim(context.Context, time.Time, time.Duration, int) ([]notify.Claimed, error) {
+func (q *panickingQueue) Claim(context.Context, time.Duration, int) ([]notify.Claimed, error) {
 	if q.claims.Add(1); q.panicClaim {
 		panic("claim exploded")
 	}
@@ -46,8 +46,10 @@ func (q *panickingQueue) Complete(context.Context, notify.Claimed, time.Time) er
 	return nil
 }
 
-func (q *panickingQueue) Retry(context.Context, notify.Claimed, time.Time, string) error { return nil }
-func (q *panickingQueue) Fail(context.Context, notify.Claimed, string) error             { return nil }
+func (q *panickingQueue) Retry(context.Context, notify.Claimed, time.Duration, string) error {
+	return nil
+}
+func (q *panickingQueue) Fail(context.Context, notify.Claimed, string) error { return nil }
 
 type okSender struct{}
 
@@ -102,3 +104,7 @@ func TestDispatcherDeliverSurvivesAPanickingOutcomeWrite(t *testing.T) {
 		t.Fatal("the outcome write was supposed to panic")
 	}
 }
+
+// FailStuck satisfies notify.DeliveryQueue; these tests seed their rows
+// directly and never exercise the claim backstop.
+func (q *panickingQueue) FailStuck(context.Context) (int64, error) { return 0, nil }

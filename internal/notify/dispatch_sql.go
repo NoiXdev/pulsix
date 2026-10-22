@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
@@ -19,9 +21,14 @@ func NewDeliverySQLStore(d *db.DB) *DeliverySQLStore {
 	return &DeliverySQLStore{q: gen.New(d.Pool())}
 }
 
-func (st *DeliverySQLStore) Claim(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]Claimed, error) {
+// Claim implements DeliveryQueue. It passes only the lease's LENGTH: when
+// the lease starts and whether another manager's has expired are both
+// decided by the database's clock, the one clock every manager shares
+// (see ClaimNotificationDeliveries in notifications.sql, backlog 2.80).
+func (st *DeliverySQLStore) Claim(ctx context.Context, lease time.Duration, limit int) ([]Claimed, error) {
 	rows, err := st.q.ClaimNotificationDeliveries(ctx, gen.ClaimNotificationDeliveriesParams{
-		LeaseUntil: now.Add(lease), Now: now, Lim: int32(limit), //nolint:gosec // limit is dispatchBatch
+		Lease: pgtype.Interval{Microseconds: lease.Microseconds(), Valid: true},
+		Lim:   int32(limit), //nolint:gosec // limit is dispatchBatch
 	})
 	if err != nil {
 		return nil, fmt.Errorf("claim notification deliveries: %w", err)
@@ -48,13 +55,16 @@ func (st *DeliverySQLStore) Complete(ctx context.Context, c Claimed, at time.Tim
 	return st.trim(ctx, c)
 }
 
-func (st *DeliverySQLStore) Retry(ctx context.Context, c Claimed, next time.Time, errText string) error {
+// Retry implements DeliveryQueue. in is how long to wait, not when to
+// run: the database adds it to its own clock (backlog 2.80).
+func (st *DeliverySQLStore) Retry(ctx context.Context, c Claimed, in time.Duration, errText string) error {
 	if _, err := st.q.RetryNotificationDelivery(ctx, gen.RetryNotificationDeliveryParams{
-		NextAttemptAt: next, LastError: errText, OrgID: c.Delivery.OrgID, ID: c.Delivery.ID, Attempts: int32(c.Delivery.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
+		RetryIn:   pgtype.Interval{Microseconds: in.Microseconds(), Valid: true},
+		LastError: errText, OrgID: c.Delivery.OrgID, ID: c.Delivery.ID, Attempts: int32(c.Delivery.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
 	}); err != nil {
-		return fmt.Errorf("reschedule notification delivery: %w", err)
+		return fmt.Errorf("retry notification delivery: %w", err)
 	}
-	return nil
+	return st.trim(ctx, c)
 }
 
 func (st *DeliverySQLStore) Fail(ctx context.Context, c Claimed, errText string) error {
@@ -64,6 +74,19 @@ func (st *DeliverySQLStore) Fail(ctx context.Context, c Claimed, errText string)
 		return fmt.Errorf("fail notification delivery: %w", err)
 	}
 	return st.trim(ctx, c)
+}
+
+// FailStuck implements DeliveryQueue: see the interface's doc comment and
+// FailStuckNotificationDeliveries in notifications.sql. It runs on the raw
+// pool without pulsix.org_id, like the claim it complements — a stuck row
+// belongs to no particular organization's request.
+func (st *DeliverySQLStore) FailStuck(ctx context.Context) (int64, error) {
+	n, err := st.q.FailStuckNotificationDeliveries(ctx,
+		"gave up: the delivery was claimed repeatedly without ever recording an outcome")
+	if err != nil {
+		return 0, fmt.Errorf("fail stuck notification deliveries: %w", err)
+	}
+	return n, nil
 }
 
 // trim keeps a channel's newest keepDeliveries finished rows.
