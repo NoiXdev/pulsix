@@ -84,3 +84,22 @@ WHERE d.org_id = sqlc.arg(org_id) AND d.trigger_id = sqlc.arg(trigger_id)
 -- name: ListTriggerDeliveries :many
 SELECT * FROM trigger_deliveries WHERE org_id = sqlc.arg(org_id) AND trigger_id = sqlc.arg(trigger_id)
 ORDER BY at DESC, id DESC LIMIT sqlc.arg(lim);
+
+-- name: NoteDeliveryRateLimited :exec
+-- Receive's own per-address budget is checked after InsertTriggerDelivery
+-- above already recorded a hidden outcome's real reason; when the budget
+-- is spent, the sender's actual answer becomes 429, so the row needs to
+-- say so too, or an operator reading it alone sees only the stale
+-- original reason. Matched by (trigger, outcome, minute) — the same key
+-- the throttle index dedups new inserts on — so repeated failures from
+-- one address, which is exactly how a budget gets spent, land on the one
+-- row every one of those calls shares, not a fresh id of their own that
+-- was itself deduplicated away. The "not already noted" guard keeps a
+-- second, third, ... call in the same minute from appending the same
+-- sentence again.
+UPDATE trigger_deliveries
+SET reason = CASE WHEN reason = '' THEN 'also answered 429 (address rate limit spent)'
+                  ELSE reason || '; also answered 429 (address rate limit spent)' END
+WHERE org_id = sqlc.arg(org_id) AND trigger_id = sqlc.arg(trigger_id) AND outcome = sqlc.arg(outcome)::text
+  AND trigger_delivery_minute(at) = trigger_delivery_minute(sqlc.arg(at)::timestamptz)
+  AND reason NOT LIKE '%address rate limit spent%';

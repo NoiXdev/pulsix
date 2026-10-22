@@ -325,6 +325,43 @@ func (q *Queries) ListTriggers(ctx context.Context, arg ListTriggersParams) ([]J
 	return items, nil
 }
 
+const noteDeliveryRateLimited = `-- name: NoteDeliveryRateLimited :exec
+UPDATE trigger_deliveries
+SET reason = CASE WHEN reason = '' THEN 'also answered 429 (address rate limit spent)'
+                  ELSE reason || '; also answered 429 (address rate limit spent)' END
+WHERE org_id = $1 AND trigger_id = $2 AND outcome = $3::text
+  AND trigger_delivery_minute(at) = trigger_delivery_minute($4::timestamptz)
+  AND reason NOT LIKE '%address rate limit spent%'
+`
+
+type NoteDeliveryRateLimitedParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	TriggerID uuid.UUID `json:"trigger_id"`
+	Outcome   string    `json:"outcome"`
+	At        time.Time `json:"at"`
+}
+
+// Receive's own per-address budget is checked after InsertTriggerDelivery
+// above already recorded a hidden outcome's real reason; when the budget
+// is spent, the sender's actual answer becomes 429, so the row needs to
+// say so too, or an operator reading it alone sees only the stale
+// original reason. Matched by (trigger, outcome, minute) — the same key
+// the throttle index dedups new inserts on — so repeated failures from
+// one address, which is exactly how a budget gets spent, land on the one
+// row every one of those calls shares, not a fresh id of their own that
+// was itself deduplicated away. The "not already noted" guard keeps a
+// second, third, ... call in the same minute from appending the same
+// sentence again.
+func (q *Queries) NoteDeliveryRateLimited(ctx context.Context, arg NoteDeliveryRateLimitedParams) error {
+	_, err := q.db.Exec(ctx, noteDeliveryRateLimited,
+		arg.OrgID,
+		arg.TriggerID,
+		arg.Outcome,
+		arg.At,
+	)
+	return err
+}
+
 const resolveTrigger = `-- name: ResolveTrigger :one
 SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision FROM job_triggers WHERE id = $1
 `

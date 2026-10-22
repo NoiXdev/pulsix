@@ -65,6 +65,20 @@ type recording struct {
 	// recordErr, when set, makes RecordDelivery fail after still
 	// recording the attempt — for TestReceiveKeepsTheRunWhenRecordingTheDeliveryFails.
 	recordErr error
+	// rateLimitNotes records every NoteRateLimited call, for
+	// TestReceiveNotesTheOriginalDeliveryRowOnceTheAddressBudgetIsSpent.
+	rateLimitNotes []rateLimitNote
+}
+
+type rateLimitNote struct {
+	orgID, triggerID uuid.UUID
+	outcome          triggers.Outcome
+	at               time.Time
+}
+
+func (r *recording) NoteRateLimited(_ context.Context, orgID, triggerID uuid.UUID, outcome triggers.Outcome, at time.Time) error {
+	r.rateLimitNotes = append(r.rateLimitNotes, rateLimitNote{orgID, triggerID, outcome, at})
+	return nil
 }
 
 func (r *recording) TakeToken(context.Context, uuid.UUID, uuid.UUID, triggers.RateLimit, time.Time) (bool, time.Duration, error) {
@@ -324,6 +338,45 @@ func TestReceiveLimitsFailedCallsPerSourceAddress(t *testing.T) {
 	other.SourceIP = netip.MustParseAddr("192.0.2.9")
 	if res, _ := rw.svc.Receive(ctx, other); res.Outcome != triggers.OutcomeNotFound {
 		t.Fatalf("another address = %+v", res)
+	}
+}
+
+// TestReceiveNotesTheOriginalDeliveryRowOnceTheAddressBudgetIsSpent (2.70):
+// once the per-address budget is spent, the sender sees 429 even though
+// finish() already recorded the real refusal (rejected_auth here); without
+// the note, the delivery row an operator reads would permanently disagree
+// with what the sender was actually told.
+func TestReceiveNotesTheOriginalDeliveryRowOnceTheAddressBudgetIsSpent(t *testing.T) {
+	rw := newReceiveWorld(t)
+	rw.withIPLimit(1)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	badSig := rw.signed(t, c, `{"ref":"v1"}`)
+	badSig.Body = []byte(`{"ref":"v2"}`)
+	badSig.SourceIP = netip.MustParseAddr("203.0.113.9")
+
+	// The first call spends the one-call budget and is answered on its own
+	// merits.
+	if res, err := rw.svc.Receive(ctx, badSig); err != nil || res.Outcome != triggers.OutcomeRejectedAuth {
+		t.Fatalf("first call = %+v, %v", res, err)
+	}
+	if len(rw.rec.rateLimitNotes) != 0 {
+		t.Fatalf("no note expected before the budget is spent: %+v", rw.rec.rateLimitNotes)
+	}
+
+	// The second call from the same address exhausts the budget.
+	res, err := rw.svc.Receive(ctx, badSig)
+	if err != nil || res.Outcome != triggers.OutcomeRateLimited {
+		t.Fatalf("second call = %+v, %v", res, err)
+	}
+	if len(rw.rec.rateLimitNotes) != 1 {
+		t.Fatalf("rate limit notes = %+v, want exactly one", rw.rec.rateLimitNotes)
+	}
+	note := rw.rec.rateLimitNotes[0]
+	if note.orgID != rw.org || note.triggerID != c.Trigger.ID || note.outcome != triggers.OutcomeRejectedAuth {
+		t.Fatalf("note = %+v, want the real (pre-budget) outcome rejected_auth for this trigger/org", note)
 	}
 }
 

@@ -223,6 +223,64 @@ func TestThrottledDuplicateSkipsTrim(t *testing.T) {
 	}
 }
 
+// TestNoteRateLimitedAmendsTheThrottledRowOnce (2.70): once the per-address
+// budget is spent, Receive's answer to the sender disagrees with whatever
+// finish() already wrote for the real refusal unless that row is amended.
+// NoteRateLimited must find the one row trigger_deliveries_throttle_idx
+// already deduplicated repeated rejected_auth calls onto — not a row of
+// its own, since by the time a budget is spent there almost always isn't
+// one — and amending it twice (two calls landing on the same minute, the
+// way repeated rejections do) must not append the note twice.
+func TestNoteRateLimitedAmendsTheThrottledRowOnce(t *testing.T) {
+	d := testdb.Open(t)
+	org, tmpl := seedTemplate(t, d, "trig-note-rl")
+	st := triggers.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+		t.Fatal(err)
+	}
+	// A second rejection in the same minute, as repeated failures from one
+	// address produce: deduplicated by the throttle index, same as
+	// TestThrottledDuplicateSkipsTrim already covers — nothing new to
+	// amend by its own (fresh) id either.
+	second := at.Add(30 * time.Second)
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: second, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.NoteRateLimited(scoped, org, in.ID, triggers.OutcomeRejectedAuth, second); err != nil {
+		t.Fatalf("NoteRateLimited: %v", err)
+	}
+	// A later call in the same minute (the next rejection after the budget
+	// is already spent) must not append the note a second time.
+	if err := st.NoteRateLimited(scoped, org, in.ID, triggers.OutcomeRejectedAuth, second.Add(10*time.Second)); err != nil {
+		t.Fatalf("NoteRateLimited (second call): %v", err)
+	}
+
+	list, err := st.Deliveries(scoped, org, in.ID, 50)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("rows = %d, %v; want the one throttled row", len(list), err)
+	}
+	if list[0].Reason != "also answered 429 (address rate limit spent)" {
+		t.Fatalf("reason = %q, want exactly one note appended once", list[0].Reason)
+	}
+
+	// A different outcome, or a different minute, must never match: there
+	// is no row to confuse this one with.
+	if err := st.NoteRateLimited(scoped, org, in.ID, triggers.OutcomeDisabled, second); err != nil {
+		t.Fatalf("NoteRateLimited (no matching row): %v", err)
+	}
+	list, _ = st.Deliveries(scoped, org, in.ID, 50)
+	if len(list) != 1 || list[0].Reason != "also answered 429 (address rate limit spent)" {
+		t.Fatalf("an outcome with no stored row must be a harmless no-op: %+v", list)
+	}
+}
+
 func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 	d := testdb.Open(t)
 	org, tmpl := seedTemplate(t, d, "trig-deliveries")

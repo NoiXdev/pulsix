@@ -220,6 +220,20 @@ func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery, _ bool) erro
 	return nil
 }
 
+// NoteRateLimited is NoteDeliveryRateLimited (see its own comment): a
+// no-op UPDATE matching no row is expected whenever outcome never has a
+// stored row (OutcomeNotFound) or the owning org/trigger are the zero
+// value (no trigger was ever resolved for this call), so it is never
+// treated as an error here.
+func (st *SQLStore) NoteRateLimited(ctx context.Context, orgID, triggerID uuid.UUID, outcome Outcome, at time.Time) error {
+	if err := st.q.NoteDeliveryRateLimited(ctx, gen.NoteDeliveryRateLimitedParams{
+		OrgID: orgID, TriggerID: triggerID, Outcome: string(outcome), At: at,
+	}); err != nil {
+		return fmt.Errorf("note rate-limited delivery: %w", err)
+	}
+	return nil
+}
+
 // cidrsOrEmpty keeps allow_cidrs NOT NULL: a nil slice would bind NULL.
 func cidrsOrEmpty(p []netip.Prefix) []netip.Prefix {
 	if p == nil {
