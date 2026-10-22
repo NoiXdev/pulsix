@@ -126,6 +126,19 @@ func TestPolicyChecksEmbeddedIPv4(t *testing.T) {
 		{"2002:a9fe:a9fe::", false, "6to4, embeds the metadata address"},
 		{"2002:a00:1::", true, "6to4, embeds a private address"},
 		{"fec0::1", false, "deprecated site-local, defence in depth"},
+		// Teredo (RFC 4380, backlog 2.76): the client's embedded IPv4 is
+		// stored as its bitwise complement. complement(169.254.169.254) =
+		// (0x56,0x01,0x56,0x01); complement(10.0.0.1) = (0xf5,0xff,0xff,0xfe).
+		// Server address and port (the other 2001::/32 bits, here all zero)
+		// are irrelevant to what Check actually reaches.
+		{"2001::5601:5601", false, "Teredo, embeds (complemented) the metadata address"},
+		{"2001::f5ff:fffe", true, "Teredo, embeds (complemented) a private address"},
+		// ISATAP (RFC 5214): the interface identifier (the low 64 bits, any
+		// network prefix) is 0000:5EFE or 0200:5EFE followed by the plain
+		// embedded IPv4 — unlike Teredo, not obfuscated.
+		{"2001:db8:1:1:0:5efe:a9fe:a9fe", false, "ISATAP (0000:5EFE), embeds the metadata address"},
+		{"2001:db8:1:1:200:5efe:a00:1", true, "ISATAP (0200:5EFE), embeds a private address"},
+		{"2001:db8:1:1::1", true, "an ordinary address under the same /64 as the ISATAP cases, no interface-id match"},
 	}
 	p := outbound.NewPolicy(nil)
 	for _, c := range cases {
