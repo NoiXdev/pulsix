@@ -10,7 +10,7 @@ import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
-import { useCreateTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
+import { useCreateTemplate, useDeleteTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
 import { SchemaForm } from '../inventory/schema/SchemaForm.tsx';
 import { SchemaBuilder } from '../inventory/schema/SchemaBuilder.tsx';
 import { problemsFromError } from '../inventory/schema/paths.ts';
@@ -144,6 +144,7 @@ function TemplateForm({
   const toast = useToast();
   const create = useCreateTemplate(org);
   const update = useUpdateTemplate(org, existing?.id ?? '');
+  const remove = useDeleteTemplate(org);
   // Set means this row is a projection of an installation-owned definition
   // (spec v0.2f decision 1): name, playbook, limit, extra vars and their
   // schema are the definition's own, refused on write by templates.Service.
@@ -293,32 +294,53 @@ function TemplateForm({
             {error}
           </p>
         )}
-        <div className="flex justify-end gap-2">
-          <Button type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            // An ordinary template genuinely cannot be created or saved
-            // without a playbook — the Select above is `required` for
-            // exactly that case, and this guard backs it up for browsers
-            // that do not block submission on an unfilled required field.
-            // A PROJECTION is different: playbookId empty is its NORMAL
-            // state right after the definition is created, before this
-            // organization has synced the matching playbook (spec decision
-            // 4; internal/templates/service.go's own Update already
-            // accepts an empty playbook_id unchanged on a projection,
-            // exactly the case refuseSharedFieldChange exists to allow).
-            // Blocking Save here would also block the one thing this
-            // dialog still lets the organization edit on a projection —
-            // scope, the default SSH credential, the vault identity set —
-            // which decision 2 gives them and decision 4 says they must be
-            // able to fill in before any sync happens at all.
-            disabled={(!playbookId && !projected) || create.isPending || update.isPending}
-          >
-            {existing ? 'Save template' : 'Create template'}
-          </Button>
+        <div className="flex items-center justify-between gap-2">
+          {existing && !projected && (
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={remove.isPending}
+              onClick={async () => {
+                if (!confirm(`Delete template ${existing.name}?`)) return;
+                try {
+                  await remove.mutateAsync(existing.id);
+                  toast.show(`Template ${existing.name} deleted`);
+                  onClose();
+                } catch (err) {
+                  toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+                }
+              }}
+            >
+              Delete
+            </Button>
+          )}
+          <div className="flex gap-2">
+            <Button type="button" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              // An ordinary template genuinely cannot be created or saved
+              // without a playbook — the Select above is `required` for
+              // exactly that case, and this guard backs it up for browsers
+              // that do not block submission on an unfilled required field.
+              // A PROJECTION is different: playbookId empty is its NORMAL
+              // state right after the definition is created, before this
+              // organization has synced the matching playbook (spec decision
+              // 4; internal/templates/service.go's own Update already
+              // accepts an empty playbook_id unchanged on a projection,
+              // exactly the case refuseSharedFieldChange exists to allow).
+              // Blocking Save here would also block the one thing this
+              // dialog still lets the organization edit on a projection —
+              // scope, the default SSH credential, the vault identity set —
+              // which decision 2 gives them and decision 4 says they must be
+              // able to fill in before any sync happens at all.
+              disabled={(!playbookId && !projected) || create.isPending || update.isPending}
+            >
+              {existing ? 'Save template' : 'Create template'}
+            </Button>
+          </div>
         </div>
       </form>
       {/* Sibling of the <form> above, not inside it — see HostSshCard.tsx's

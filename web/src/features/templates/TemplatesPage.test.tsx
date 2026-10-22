@@ -181,6 +181,97 @@ describe('TemplatesPage', () => {
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
   });
 
+  // Backlog 2.56: useDeleteTemplate (useTemplates.ts) existed with nothing
+  // calling it — the API already cascades a template delete to its
+  // schedules and webhook triggers, but the dialog had no delete action at
+  // all. Mirrors RepoDialog.tsx's own confirm-then-delete pattern.
+  it('deletes a template after confirmation', async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    window.confirm = () => true;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template() },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'DELETE /api/v1/orgs/acme/job-templates/t1': () => {
+        deleted = true;
+        return new Response(null, { status: 200 });
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await screen.findByText('Template deploy-site deleted');
+    expect(deleted).toBe(true);
+    expect(screen.queryByRole('dialog', { name: 'deploy-site' })).not.toBeInTheDocument();
+  });
+
+  it('surfaces a toast instead of an unhandled rejection when delete fails', async () => {
+    const user = userEvent.setup();
+    window.confirm = () => true;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template() },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'DELETE /api/v1/orgs/acme/job-templates/t1': () =>
+        new Response(JSON.stringify({ detail: 'template still referenced' }), { status: 409 }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent('template still referenced');
+    // The dialog stays open — a failed delete must not act as if it succeeded.
+    expect(screen.getByRole('dialog', { name: 'deploy-site' })).toBeInTheDocument();
+  });
+
+  it('declines to delete without confirmation', async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    window.confirm = () => false;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template() },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'DELETE /api/v1/orgs/acme/job-templates/t1': () => {
+        deleted = true;
+        return new Response(null, { status: 200 });
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(deleted).toBe(false);
+    expect(screen.getByRole('dialog', { name: 'deploy-site' })).toBeInTheDocument();
+  });
+
+  it('offers no delete action when creating a new template', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Add template' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New job template' });
+    expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
   it('shows an unchanged secret display-only and keeps it with a keep marker on the PUT', async () => {
     const user = userEvent.setup();
     let put: unknown;
@@ -496,8 +587,10 @@ describe('TemplatesPage', () => {
       expect(within(dialog).getByLabelText('Limit pattern')).toHaveValue('web*');
 
       // The organization's own scope stays editable; no delete action is
-      // offered (pre-existing: this GUI wires no delete button for any
-      // template yet, projected or not).
+      // offered for a projection — templates.Service.Delete refuses it
+      // outright (ErrForbidden), the same reasoning RepoDialog's own
+      // `projected` flag already applies to repositories (backlog 2.56
+      // added the equivalent button for an ordinary template).
       expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
     });
 
