@@ -150,11 +150,21 @@ type Sealer interface {
 type Usage struct {
 	Bastions int
 	Hosts    int
-	// Repos counts repositories naming the credential in EITHER slot —
-	// as the checkout's own credential or as its vault password. The
-	// column answers "is anything still pointing at this", and for a
-	// delete that is one question, not two.
+	// Repos counts repositories naming the credential in any of three
+	// places — the checkout's own credential, its single legacy vault
+	// password slot, or its labelled vault identity set
+	// (git_repo_vault_credentials, migration 00059) — deduplicated by
+	// repository, not by reference: a repository carrying both the legacy
+	// slot and a matching labelled identity for the same credential (2.92's
+	// history — the normal shape for any repository saved before that fix)
+	// still counts once. The column answers "is anything still pointing at
+	// this", and for a delete that is one question, not two or three.
 	Repos int
+	// Templates counts job templates whose own labelled vault identity set
+	// (job_template_vault_credentials, migration 00059) names the
+	// credential, deduplicated by template in case one template ever adds
+	// the same credential under two labels.
+	Templates int
 }
 
 // Store persists credentials. Every lookup that finds nothing returns
