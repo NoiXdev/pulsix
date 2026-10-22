@@ -71,30 +71,47 @@ type Result struct {
 // senders that share its address, as every caller does behind a reverse
 // proxy whose address is not in PULSIX_TRUSTED_PROXIES (final review I1).
 func (s *Service) Receive(ctx context.Context, req Request) (Result, error) {
-	res, err := s.receive(ctx, req)
+	res, d, err := s.receive(ctx, req)
 	if err != nil || req.Test || s.d.IPLimit == nil || !res.Outcome.hidden() {
 		return res, err
 	}
 	if !s.d.IPLimit.Allow(req.SourceIP) {
+		// receive (via finish) already recorded the real reason this call
+		// was refused — rejected_ip, rejected_auth or disabled —
+		// trigger_deliveries_throttle_idx keeps at most one such row per
+		// trigger, outcome and minute, so repeated failures from this
+		// address land on the very row being amended here. Without this,
+		// the sender's actual answer (429, below) would disagree with what
+		// an operator reads in that row, which still names the pre-budget
+		// reason and nothing about the address limit that actually decided
+		// the call. NoteRateLimited matches on (org, trigger, outcome,
+		// minute) rather than d.ID precisely because the id this call
+		// minted for d is almost always the very insert that got
+		// deduplicated into an earlier call's row within the same minute —
+		// by the id it generated itself, there would usually be nothing to
+		// find.
+		if noteErr := s.d.Store.NoteRateLimited(db.WithOrgScope(ctx, d.OrgID), d.OrgID, d.TriggerID, res.Outcome, d.At); noteErr != nil {
+			s.d.Log.ErrorContext(ctx, "note rate-limited delivery failed", "trigger", d.TriggerID, "org", d.OrgID, "err", noteErr)
+		}
 		return Result{Outcome: OutcomeRateLimited, RetryAfter: s.d.IPLimit.Window()}, nil
 	}
 	return res, nil
 }
 
-func (s *Service) receive(ctx context.Context, req Request) (Result, error) {
+func (s *Service) receive(ctx context.Context, req Request) (Result, Delivery, error) {
 	id, err := uuid.Parse(req.TriggerID)
 	if err != nil {
-		return Result{Outcome: OutcomeNotFound}, nil
+		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	t, sealed, err := s.d.Store.Resolve(ctx, id)
 	if errors.Is(err, ErrNotFound) {
-		return Result{Outcome: OutcomeNotFound}, nil
+		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	if err != nil {
-		return Result{}, err
+		return Result{}, Delivery{}, err
 	}
 	if t.Kind != req.Kind {
-		return Result{Outcome: OutcomeNotFound}, nil
+		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	ctx = db.WithOrgScope(ctx, t.OrgID)
 	now := s.d.Now()
@@ -117,15 +134,17 @@ func (s *Service) receive(ctx context.Context, req Request) (Result, error) {
 		// ever answer existing ids, so the fault hides behind the uniform
 		// 404 and goes to the log (final review minor 9). Faults after the
 		// signature check may answer 500 — that caller knows the secret.
+		// Nothing is recorded (OutcomeNotFound never is), so there is no
+		// row for the caller to later amend either.
 		s.d.Log.ErrorContext(ctx, "open webhook trigger secret", "trigger", t.ID, "org", t.OrgID, "err", err)
-		return Result{Outcome: OutcomeNotFound}, nil
+		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	if !verify(t, string(secret), req.Header, req.Body, now) {
 		return s.finish(ctx, d, Result{Outcome: OutcomeRejectedAuth}, "", true)
 	}
 	ok, wait, err := s.d.Store.TakeToken(ctx, t.OrgID, t.ID, t.RateLimit, now)
 	if err != nil {
-		return Result{}, err
+		return Result{}, d, err
 	}
 	if !ok {
 		return s.finish(ctx, d, Result{Outcome: OutcomeRateLimited, RetryAfter: wait}, "", true)
@@ -165,7 +184,7 @@ func (s *Service) TestCall(ctx context.Context, orgID, id uuid.UUID, body []byte
 		SourceIP: netip.MustParseAddr("127.0.0.1"), Test: true})
 }
 
-func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body []byte) (Result, error) {
+func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body []byte) (Result, Delivery, error) {
 	ov, field, err := s.mapPayload(ctx, t, body)
 	if err != nil {
 		if errors.Is(err, errMappingCompile) {
@@ -173,14 +192,14 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the trigger's mapping is invalid (see the manager log)", false)
 		}
 		if field == "" {
-			return Result{}, err
+			return Result{}, d, err
 		}
 		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field, true)
 	}
 	if t.OnActive == OnActiveSkip {
 		active, err := s.d.Runs.HasActiveRun(ctx, t.OrgID, *t.TemplateID)
 		if err != nil {
-			return Result{}, err
+			return Result{}, d, err
 		}
 		if active {
 			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a run of the template is still active", false)
@@ -205,11 +224,11 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 	return s.finish(ctx, d, Result{Outcome: OutcomeTriggered, RunID: &runID}, "", false)
 }
 
-func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, error) {
+func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, Delivery, error) {
 	if t.OnActive == OnActiveSkip {
 		active, err := s.d.Runs.HasActiveSync(ctx, t.OrgID, *t.RepoID)
 		if err != nil {
-			return Result{}, err
+			return Result{}, d, err
 		}
 		if active {
 			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a sync of the repository is still active", false)
@@ -270,7 +289,7 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	return templates.Overrides{}, "", err
 }
 
-func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason string, throttle bool) (Result, error) {
+func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason string, throttle bool) (Result, Delivery, error) {
 	d.Outcome = res.Outcome
 	switch {
 	case d.Reason == "":
@@ -288,7 +307,7 @@ func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason str
 		// duplicate run (Task 10 review, Minor 6).
 		s.d.Log.ErrorContext(ctx, "record delivery failed", "trigger", d.TriggerID, "org", d.OrgID, "outcome", res.Outcome, "err", err)
 	}
-	return res, nil
+	return res, d, nil
 }
 
 // firstSegment returns path up to (not including) its first "." or "[", so

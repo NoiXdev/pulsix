@@ -31,6 +31,16 @@ type Store interface {
 	Resolve(ctx context.Context, id uuid.UUID) (Trigger, []byte, error)
 	TakeToken(ctx context.Context, orgID, id uuid.UUID, rl RateLimit, now time.Time) (bool, time.Duration, error)
 	RecordDelivery(ctx context.Context, d Delivery, throttle bool) error
+	// NoteRateLimited amends an already-recorded delivery row to say the
+	// per-address budget was spent after that row's own outcome was
+	// decided (Receive's own comment on why). It matches on (org, trigger,
+	// outcome, minute) — the same key trigger_deliveries_throttle_idx
+	// dedups on — rather than a specific delivery id, since the id the
+	// caller minted for its own attempt is usually the very one that got
+	// deduplicated into an earlier call's row. A call with nothing to
+	// amend (no such row — outcome, say, OutcomeNotFound never has one) is
+	// a harmless no-op, not an error.
+	NoteRateLimited(ctx context.Context, orgID, triggerID uuid.UUID, outcome Outcome, at time.Time) error
 }
 
 type TemplateChecker interface {

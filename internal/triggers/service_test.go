@@ -141,6 +141,10 @@ func (f *fakeStore) TakeToken(context.Context, uuid.UUID, uuid.UUID, triggers.Ra
 
 func (f *fakeStore) RecordDelivery(context.Context, triggers.Delivery, bool) error { return nil }
 
+func (f *fakeStore) NoteRateLimited(context.Context, uuid.UUID, uuid.UUID, triggers.Outcome, time.Time) error {
+	return nil
+}
+
 type fakeTemplates struct {
 	byID map[uuid.UUID]templates.Template
 	// opts records the options every ValidateOverrides call received.
