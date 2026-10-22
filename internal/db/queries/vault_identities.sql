@@ -19,6 +19,18 @@ SELECT credential_id, label FROM git_repo_vault_credentials
 WHERE org_id = @org_id AND repo_id = @repo_id
 ORDER BY label COLLATE "C";
 
+-- name: ListOrgRepoVaultCredentials :many
+-- Every repository's labelled vault passwords, one query for the whole
+-- organization (backlog 2.94): repos.Service.List otherwise called
+-- ListRepoVaultCredentials once per row it was about to return — an N+1
+-- query pattern on every repository listing. The repo_id column is what
+-- lets the caller group rows back by repository; the per-repository
+-- COLLATE "C" label order ListRepoVaultCredentials keeps is preserved by
+-- ordering on (repo_id, label) together.
+SELECT repo_id, credential_id, label FROM git_repo_vault_credentials
+WHERE org_id = @org_id
+ORDER BY repo_id, label COLLATE "C";
+
 -- name: DeleteRepoVaultCredentials :exec
 -- The first half of replacing a repository's set; InsertRepoVaultCredentials
 -- is the second. Two statements, never one data-modifying WITH — a CTE's
@@ -57,6 +69,13 @@ SELECT @org_id, @repo_id, unnest(@credential_ids::uuid[]), unnest(@labels::text[
 SELECT credential_id, label FROM job_template_vault_credentials
 WHERE org_id = @org_id AND template_id = @template_id
 ORDER BY label COLLATE "C";
+
+-- name: ListOrgTemplateVaultCredentials :many
+-- ListOrgRepoVaultCredentials' own shape and own reason, for
+-- templates.Service.List's equivalent N+1 (backlog 2.94).
+SELECT template_id, credential_id, label FROM job_template_vault_credentials
+WHERE org_id = @org_id
+ORDER BY template_id, label COLLATE "C";
 
 -- name: DeleteTemplateVaultCredentials :exec
 -- DeleteRepoVaultCredentials' own shape and own reason, for the template's

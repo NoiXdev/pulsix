@@ -191,6 +191,10 @@ type Store interface {
 	// ListRepoVaultIdentities returns a repository's labelled vault
 	// password set, in label order.
 	ListRepoVaultIdentities(ctx context.Context, orgID, repoID uuid.UUID) ([]VaultIdentity, error)
+	// ListOrgRepoVaultIdentities is ListRepoVaultIdentities for every
+	// repository of the organization in one call, keyed by repo id
+	// (backlog 2.94): List calls this once instead of once per row.
+	ListOrgRepoVaultIdentities(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultIdentity, error)
 }
 
 // Service implements the repository registry.
@@ -286,12 +290,16 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Repo, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One query for the whole organization (backlog 2.94), not one per
+	// row: a map miss (a repository with no vault passwords) is a nil
+	// slice, the same zero value ListRepoVaultIdentities itself returns
+	// for an empty set.
+	byRepo, err := s.store.ListOrgRepoVaultIdentities(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list repo vault identities: %w", err)
+	}
 	for i := range list {
-		identities, err := s.store.ListRepoVaultIdentities(ctx, orgID, list[i].ID)
-		if err != nil {
-			return nil, fmt.Errorf("list repo vault identities: %w", err)
-		}
-		list[i].VaultIdentities = identities
+		list[i].VaultIdentities = byRepo[list[i].ID]
 	}
 	return list, nil
 }

@@ -227,6 +227,61 @@ func TestStoreRoundTripVaultIdentitiesStayPerTemplate(t *testing.T) {
 	}
 }
 
+// TestListOrgRepoVaultIdentitiesGroupsByRepo (2.94): the bulk query
+// repos.Service.List now runs instead of one ListRepoVaultIdentities call
+// per row must group every organization's rows back onto the right
+// repository, leave a repository with no vault passwords out of the
+// result entirely (not an empty slice entry — repos.Service.List relies
+// on that: a map miss there already reads as "none", same as
+// ListRepoVaultIdentities' own empty-slice return), and never leak
+// another organization's rows in.
+func TestListOrgRepoVaultIdentitiesGroupsByRepo(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "vault-org-bulk")
+	other := seedOrg(t, q, "vault-org-bulk-other")
+	scoped, scopedOther := db.WithOrgScope(ctx, org), db.WithOrgScope(ctx, other)
+	store := repos.NewSQLStore(d)
+
+	withIdentities, err := store.Create(scoped, repos.Repo{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra", URL: "https://git.example.com/infra.git"})
+	if err != nil {
+		t.Fatalf("Create infra: %v", err)
+	}
+	bare, err := store.Create(scoped, repos.Repo{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "docs", URL: "https://git.example.com/docs.git"})
+	if err != nil {
+		t.Fatalf("Create docs: %v", err)
+	}
+	otherRepo, err := store.Create(scopedOther, repos.Repo{ID: uuid.Must(uuid.NewV7()), OrgID: other, Name: "infra", URL: "https://git.example.com/other-infra.git"})
+	if err != nil {
+		t.Fatalf("Create other org's repo: %v", err)
+	}
+	credProd, credStaging := seedVaultCredential(t, d, org, "prod vault"), seedVaultCredential(t, d, org, "staging vault")
+	credOther := seedVaultCredential(t, d, other, "other org vault")
+	if err := store.ReplaceRepoVaultIdentities(scoped, org, withIdentities.ID,
+		[]repos.VaultIdentity{{CredentialID: credProd, Label: "prod"}, {CredentialID: credStaging, Label: "staging"}}); err != nil {
+		t.Fatalf("ReplaceRepoVaultIdentities infra: %v", err)
+	}
+	if err := store.ReplaceRepoVaultIdentities(scopedOther, other, otherRepo.ID,
+		[]repos.VaultIdentity{{CredentialID: credOther, Label: "default"}}); err != nil {
+		t.Fatalf("ReplaceRepoVaultIdentities other org: %v", err)
+	}
+
+	got, err := store.ListOrgRepoVaultIdentities(scoped, org)
+	if err != nil {
+		t.Fatalf("ListOrgRepoVaultIdentities: %v", err)
+	}
+	want := []repos.VaultIdentity{{CredentialID: credProd, Label: "prod"}, {CredentialID: credStaging, Label: "staging"}}
+	if !reflect.DeepEqual(got[withIdentities.ID], want) {
+		t.Fatalf("infra = %+v, want %+v", got[withIdentities.ID], want)
+	}
+	if _, ok := got[bare.ID]; ok {
+		t.Fatalf("docs must be absent (no vault passwords), got %+v", got[bare.ID])
+	}
+	if _, ok := got[otherRepo.ID]; ok {
+		t.Fatalf("another organization's repository must not appear: %+v", got)
+	}
+}
+
 // TestStoreRoundTripVaultIdentitiesReplaceDropsStaleLabels proves Replace is
 // a true replacement, not an append: labels present before a second call
 // but absent from it are gone, the way UpdateCheckRule's own replace-a-set

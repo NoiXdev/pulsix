@@ -112,6 +112,79 @@ func (q *Queries) InsertTemplateVaultCredentials(ctx context.Context, arg Insert
 	return err
 }
 
+const listOrgRepoVaultCredentials = `-- name: ListOrgRepoVaultCredentials :many
+SELECT repo_id, credential_id, label FROM git_repo_vault_credentials
+WHERE org_id = $1
+ORDER BY repo_id, label COLLATE "C"
+`
+
+type ListOrgRepoVaultCredentialsRow struct {
+	RepoID       uuid.UUID `json:"repo_id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	Label        string    `json:"label"`
+}
+
+// Every repository's labelled vault passwords, one query for the whole
+// organization (backlog 2.94): repos.Service.List otherwise called
+// ListRepoVaultCredentials once per row it was about to return — an N+1
+// query pattern on every repository listing. The repo_id column is what
+// lets the caller group rows back by repository; the per-repository
+// COLLATE "C" label order ListRepoVaultCredentials keeps is preserved by
+// ordering on (repo_id, label) together.
+func (q *Queries) ListOrgRepoVaultCredentials(ctx context.Context, orgID uuid.UUID) ([]ListOrgRepoVaultCredentialsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgRepoVaultCredentials, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgRepoVaultCredentialsRow
+	for rows.Next() {
+		var i ListOrgRepoVaultCredentialsRow
+		if err := rows.Scan(&i.RepoID, &i.CredentialID, &i.Label); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrgTemplateVaultCredentials = `-- name: ListOrgTemplateVaultCredentials :many
+SELECT template_id, credential_id, label FROM job_template_vault_credentials
+WHERE org_id = $1
+ORDER BY template_id, label COLLATE "C"
+`
+
+type ListOrgTemplateVaultCredentialsRow struct {
+	TemplateID   uuid.UUID `json:"template_id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	Label        string    `json:"label"`
+}
+
+// ListOrgRepoVaultCredentials' own shape and own reason, for
+// templates.Service.List's equivalent N+1 (backlog 2.94).
+func (q *Queries) ListOrgTemplateVaultCredentials(ctx context.Context, orgID uuid.UUID) ([]ListOrgTemplateVaultCredentialsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgTemplateVaultCredentials, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgTemplateVaultCredentialsRow
+	for rows.Next() {
+		var i ListOrgTemplateVaultCredentialsRow
+		if err := rows.Scan(&i.TemplateID, &i.CredentialID, &i.Label); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRepoVaultCredentials = `-- name: ListRepoVaultCredentials :many
 
 SELECT credential_id, label FROM git_repo_vault_credentials
