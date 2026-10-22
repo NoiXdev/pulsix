@@ -23,6 +23,19 @@ import (
 // an invitation request or a notification dispatcher — forever.
 const sessionTimeout = 30 * time.Second
 
+// sessionDeadline is when the whole SMTP conversation must be over: the
+// caller's own deadline when it is the nearer one, otherwise now plus
+// sessionTimeout. Pulled out of deliver so both branches are testable
+// without waiting out a real 30-second session or making the constant
+// injectable for the tests' sake alone (backlog 2.79).
+func sessionDeadline(ctx context.Context, now time.Time) time.Time {
+	deadline := now.Add(sessionTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		return d
+	}
+	return deadline
+}
+
 // ErrNotConfigured means the instance has no outbound mail settings at all.
 // It is a state, not a delivery failure: callers that can do without mail
 // (an invitation, whose link the administrator can hand over instead) tell
@@ -132,7 +145,20 @@ func (Discard) Send(context.Context, string, string, string) error { return nil 
 // no TLS is attempted at all, matching a test server that offers none.
 // InsecureSkipVerify is never set — the certificate is always verified
 // against settings.Host.
-func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, body string) error {
+func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, body string) (err error) {
+	// The AfterFunc below ends a blocked read by pushing the connection's
+	// deadline to now, which surfaces as a plain "i/o timeout" with
+	// nothing left to say the cause was the caller going away. Carry the
+	// context's own error alongside the transport one so errors.Is finds
+	// it, and a dispatcher can tell "we are shutting down" apart from
+	// "the mail server failed" (backlog 2.79). ctx.Err() is the CALLER's
+	// cancellation or deadline only — sessionTimeout lives on dctx, so a
+	// session that simply ran long still reports as the timeout it is.
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = fmt.Errorf("%w (%w)", err, ctx.Err())
+		}
+	}()
 	if settings.Host == "" {
 		return ErrNotConfigured
 	}
@@ -144,10 +170,7 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 			return errHeaderInjection
 		}
 	}
-	deadline := time.Now().Add(sessionTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
+	deadline := sessionDeadline(ctx, time.Now())
 	dctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
@@ -211,7 +234,7 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 	if err != nil {
 		return fmt.Errorf("data: %w", err)
 	}
-	if _, err := w.Write(buildMessage(settings.From, strings.Join(to, ", "), subject, body)); err != nil {
+	if _, err := w.Write(buildMessage(settings.From, to, subject, body)); err != nil {
 		return fmt.Errorf("write message: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -245,11 +268,11 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 // additionally refused control characters at validation
 // (tenancy.ValidateOrgName); this is the second line of defence. The
 // addresses are checked for line breaks by deliver before this runs.
-func buildMessage(from, to, subject, body string) []byte {
+func buildMessage(from string, to []string, subject, body string) []byte {
 	subject = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(subject)
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
+	b.WriteString(foldAddressHeader("To", to))
 	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
@@ -258,4 +281,42 @@ func buildMessage(from, to, subject, body string) []byte {
 	b.WriteString(body)
 	b.WriteString("\r\n")
 	return []byte(b.String())
+}
+
+// maxHeaderLine is RFC 5322 §2.1.1's hard limit: a line, excluding its
+// CRLF, must not exceed 998 characters. A channel with enough recipients
+// used to produce a To: header well past it on one unfolded line, which a
+// strict server may reject outright and a lenient one may truncate —
+// silently dropping recipients from a notification (backlog 2.79).
+const maxHeaderLine = 998
+
+// foldAddressHeader renders an address list as a folded header field,
+// returning it with its trailing CRLF. Folding is RFC 5322 §2.2.3: a
+// continuation line begins with whitespace, and the receiver unfolds it
+// back into one logical field. Each line is kept under maxHeaderLine; a
+// single address longer than that is still emitted whole on its own line
+// rather than split, because splitting inside an address would corrupt
+// it — too long and intact beats short and wrong.
+func foldAddressHeader(name string, addrs []string) string {
+	if len(addrs) == 0 {
+		return name + ": \r\n"
+	}
+	var b strings.Builder
+	line := name + ":"
+	for i, a := range addrs {
+		piece := " " + a
+		if i < len(addrs)-1 {
+			piece += ","
+		}
+		// Fold before this address when adding it would pass the limit,
+		// never on the first one of a line (which would loop forever on
+		// an over-long single address).
+		if line != name+":" && len(line)+len(piece) > maxHeaderLine {
+			b.WriteString(line + "\r\n")
+			line = ""
+		}
+		line += piece
+	}
+	b.WriteString(line + "\r\n")
+	return b.String()
 }
