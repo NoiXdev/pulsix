@@ -22,25 +22,41 @@
  * not — a disagreement neither trim implementation was ever asked to
  * settle. internal/vaultlabel/vaultlabel_test.go carries the fuller
  * character table this file's regex is checked against.
+ *
+ * Widening the rule to category Cc/Cf (above) closed the accept/reject
+ * gap — both sides refuse U+FEFF and U+0085 (NEL) now — but left a second,
+ * smaller one (backlog 2.97): trim() and strings.TrimSpace still disagree
+ * about which of those two characters counts as whitespace (ECMAScript's
+ * WhiteSpace production includes the BOM and excludes NEL; Unicode's
+ * White_Space property, which Go's TrimSpace follows, is the other way
+ * around), so which of the two checks below actually caught a given label
+ * used to decide the reported reason. WHITESPACE_OR_CONTROL_OR_FORMAT is
+ * the fix: one message for both conditions, so the report depends only on
+ * whether the label is rejected, never on which trim() implementation did
+ * the rejecting.
  */
 
 export const MAX_VAULT_LABEL_LENGTH = 100;
+
+const WHITESPACE_OR_CONTROL_OR_FORMAT =
+  "label has leading or trailing whitespace, or contains a Unicode control or format character (for example a newline, carriage return, byte-order mark, or bidirectional-override character) — either of which ansible.cfg could read as more than one label or display as something other than what it is";
 
 /** invalidVaultLabel reports why label cannot be written into ansible.cfg's
  * vault_identity_list, or '' when it is fine. */
 export function invalidVaultLabel(label: string): string {
   if (label === '') return 'label is empty';
-  if (label.trim() !== label) return 'label has leading or trailing whitespace';
-  if (/[,@]/.test(label)) {
-    return "label contains a comma or '@', either of which ansible.cfg would read as more than one label";
-  }
   // \p{Cc} (control) and \p{Cf} (format, invisible by design — the
   // byte-order mark and bidirectional-override characters are both in it)
   // are the JavaScript equivalent of Go's unicode.IsControl(r) ||
   // unicode.In(r, unicode.Cf); the `u` flag is required for \p{} property
   // escapes and for correct matching of the astral-plane Cf characters.
-  if (/[\p{Cc}\p{Cf}]/u.test(label)) {
-    return "label contains a Unicode control or format character (for example a newline, carriage return, byte-order mark, or bidirectional-override character), which ansible.cfg could read as more than one label or which could make the label display as something other than what it is";
+  // Checked together with trim() (see WHITESPACE_OR_CONTROL_OR_FORMAT's own
+  // comment on why neither check alone decides the reported message).
+  if (label.trim() !== label || /[\p{Cc}\p{Cf}]/u.test(label)) {
+    return WHITESPACE_OR_CONTROL_OR_FORMAT;
+  }
+  if (/[,@]/.test(label)) {
+    return "label contains a comma or '@', either of which ansible.cfg would read as more than one label";
   }
   // Runes, not UTF-16 code units: the server counts with Go's
   // utf8.RuneCountInString (internal/repos/vault.go's own comment, matching

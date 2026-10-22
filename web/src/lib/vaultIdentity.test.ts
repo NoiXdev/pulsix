@@ -11,51 +11,55 @@ import { invalidVaultLabel } from './vaultIdentity.ts';
 // whitespace) — a three-way disagreement the two copies were never meant to
 // have. Both sides now reject on the rule itself (any Unicode control or
 // format character), not as a side effect of either language's trim.
+//
+// Backlog 2.97 closed the smaller disagreement that widening left behind:
+// trim() and strings.TrimSpace still disagree about which of U+0085 (NEL)
+// and U+FEFF counts as whitespace (ECMAScript's WhiteSpace production
+// includes the BOM and excludes NEL; Go's TrimSpace, following Unicode's
+// White_Space property, is the other way around), so which of the two
+// checks caught a given label used to decide the reported reason — the
+// exact same wording difference the BOM case below used to carry. Both
+// checks now share one message (WHITESPACE_OR_CONTROL_OR_FORMAT), so every
+// case below asserts the full merged wording, not a substring that would
+// still pass if the two halves disagreed again.
 describe('invalidVaultLabel', () => {
+  const MERGED = 'label has leading or trailing whitespace, or contains a Unicode control or format character';
   const cases: Array<[string, string]> = [
     ['', 'label is empty'],
-    [' prod', 'leading or trailing whitespace'],
-    ['prod ', 'leading or trailing whitespace'],
+    [' prod', MERGED],
+    ['prod ', MERGED],
     ['prod,staging', 'comma'],
     ['prod@file', "'@'"],
-    ['prod\nhost_key_checking = False', 'control or format'],
-    ['prod\rx', 'control or format'],
-    // U+FEFF (BYTE ORDER MARK) in the middle of a label: not caught by the
-    // leading/trailing whitespace check, so this is the new rule's own
-    // catch — see the dedicated case below for the leading position, which
-    // the whitespace check intercepts first on this side.
-    ['pro﻿d', 'control or format'],
+    ['prod\nhost_key_checking = False', MERGED],
+    ['prod\rx', MERGED],
+    // U+0085 (NEL): Unicode White_Space, so trim() strips it — the
+    // whitespace half of the merged check, same reported message as the
+    // plain-space cases above.
+    ['prod', MERGED],
+    ['prod', MERGED],
+    // U+FEFF (BYTE ORDER MARK): ECMAScript's trim() also strips a leading
+    // or trailing one (unlike Go's TrimSpace — see vaultlabel_test.go's
+    // own "leading BOM" case, which lands on the Cc/Cf half instead), so
+    // the leading/trailing positions and the mid-label position below
+    // reach the merged check by different halves — and now report the
+    // exact same message either way, which is the fix.
+    ['﻿prod', MERGED],
+    ['prod﻿', MERGED],
+    ['pro﻿d', MERGED],
     // U+202E (RIGHT-TO-LEFT OVERRIDE), category Cf — renders everything
     // after it right-to-left, which can make a label display as something
     // other than what it is on the one screen whose whole job is naming
     // which password opens which file. Unlike U+FEFF, ECMAScript's
     // trim() does not treat it as whitespace, so both the leading and the
-    // mid-label position land on the new rule here.
-    ['‮prod', 'control or format'],
-    ['pro‮d', 'control or format'],
+    // mid-label position land on the Cc/Cf half here.
+    ['‮prod', MERGED],
+    ['pro‮d', MERGED],
   ];
   for (const [label, want] of cases) {
     it(`rejects ${JSON.stringify(label)} for ${JSON.stringify(want)}`, () => {
       expect(invalidVaultLabel(label)).toContain(want);
     });
   }
-
-  // A leading/trailing U+FEFF is the one case where the client and the
-  // server, now that both reject it, still don't reject it for the SAME
-  // stated reason: ECMAScript's String.trim() is specified to strip U+FEFF
-  // as whitespace, so it never reaches this function's new regex at all —
-  // it is caught by the pre-existing whitespace check instead, same as
-  // today. Go's strings.TrimSpace does not share that quirk (see
-  // internal/vaultlabel/vaultlabel_test.go's own "leading BOM" case, which
-  // DOES land on the new rule there). Both sides still refuse the label,
-  // which is what the finding this fixes was actually about — the message
-  // text naming a different reason for one specific position is a
-  // property of the two languages' trim() built-ins disagreeing about
-  // what counts as whitespace, not something this file's own rule controls.
-  it('still refuses a leading or trailing BOM, via the pre-existing whitespace check', () => {
-    expect(invalidVaultLabel('﻿prod')).toContain('whitespace');
-    expect(invalidVaultLabel('prod﻿')).toContain('whitespace');
-  });
 
   it('accepts a plain label', () => {
     expect(invalidVaultLabel('prod')).toBe('');

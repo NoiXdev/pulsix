@@ -35,6 +35,23 @@ import (
 	"unicode"
 )
 
+// whitespaceOrControlOrFormat is the merged message for both the trim
+// check and the Cc/Cf check below (backlog 2.97): strings.TrimSpace and
+// JavaScript's String.trim() (web/src/lib/vaultIdentity.ts's own mirror)
+// disagree about which of U+0085 (NEL) and U+FEFF (the byte-order mark)
+// counts as whitespace — Go's TrimSpace follows Unicode's White_Space
+// property, which includes NEL but excludes the BOM; ECMAScript's trim()
+// follows its own WhiteSpace production, which is the other way around.
+// Both ends still refuse both characters (NEL and the BOM are each
+// category Cc or Cf, so whichever trim misses one, the Cc/Cf check below
+// catches it), but which of the two checks actually fired used to decide
+// the reported reason — "leading or trailing whitespace" from one side,
+// "control or format character" from the other, for the very same input.
+// One shared message for both conditions, rather than one each, makes the
+// report depend only on whether the label is rejected, never on which of
+// two trim() implementations happened to do the rejecting.
+const whitespaceOrControlOrFormat = "label has leading or trailing whitespace, or contains a Unicode control or format character (for example a newline, carriage return, byte-order mark, or bidirectional-override character) — either of which ansible.cfg could read as more than one label or display as something other than what it is"
+
 // Invalid reports why label cannot be written into ansible.cfg's
 // vault_identity_list, or "" when it is fine. This package intentionally
 // does not bound length: a long label is not unsafe to render, only
@@ -46,12 +63,10 @@ func Invalid(label string) string {
 	switch {
 	case label == "":
 		return "label is empty"
-	case strings.TrimSpace(label) != label:
-		return "label has leading or trailing whitespace"
+	case strings.TrimSpace(label) != label, strings.ContainsFunc(label, isControlOrFormat):
+		return whitespaceOrControlOrFormat
 	case strings.ContainsAny(label, ",@"):
 		return "label contains a comma or '@', either of which ansible.cfg would read as more than one label"
-	case strings.ContainsFunc(label, isControlOrFormat):
-		return "label contains a Unicode control or format character (for example a newline, carriage return, byte-order mark, or bidirectional-override character), which ansible.cfg could read as more than one label or which could make the label display as something other than what it is"
 	default:
 		return ""
 	}
