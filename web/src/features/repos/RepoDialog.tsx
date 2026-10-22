@@ -20,7 +20,7 @@ export interface RepoDialogProps {
   /** A repo to edit; absent means create. sshHostKey is the git server
    * key pin the last sync observed (SHA256:…), absent while unpinned. */
   repo?: {
-    id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string; vault_credential_id?: string;
+    id: string; name: string; url: string; branch: string; subpath: string; credential_id?: string;
     vault_identities?: VaultIdentity[] | null; ssh_host_key?: string; pin_state?: string;
     /** Set when this repository is a projection of an installation-owned
      * definition (spec v0.2f decisions 1, 2). Its presence, not its value,
@@ -39,12 +39,11 @@ export interface RepoDialogProps {
 }
 
 /** Who asked a credential picker to open AddCredentialDialog: the single
- * Credential field, the legacy single Vault password field, or one row of
- * the Vault identities list (named by its own row key, since there can be
- * any number of those). Only one such request exists at a time — the
- * dialog mount below is a sibling of every picker, not owned by any one of
- * them. */
-type AddingCredential = { field: 'credential'; name: string } | { field: 'vault'; name: string } | { field: 'vault-identity'; rowKey: string; name: string };
+ * Credential field, or one row of the Vault identities list (named by its
+ * own row key, since there can be any number of those). Only one such
+ * request exists at a time — the dialog mount below is a sibling of every
+ * picker, not owned by any one of them. */
+type AddingCredential = { field: 'credential'; name: string } | { field: 'vault-identity'; rowKey: string; name: string };
 
 type FieldErrors = Partial<Record<keyof RepoFormValues, string>>;
 
@@ -69,7 +68,6 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
     repo ? { name: repo.name, url: repo.url, branch: repo.branch, subpath: repo.subpath } : { name: '', url: '', branch: '', subpath: '' },
   );
   const [credentialId, setCredentialId] = useState(repo?.credential_id ?? '');
-  const [vaultCredentialId, setVaultCredentialId] = useState(repo?.vault_credential_id ?? '');
   const [vaultRows, setVaultRows] = useState<VaultIdentityRow[]>(() => rowsFromIdentities(repo?.vault_identities));
   const [vaultErrors, setVaultErrors] = useState<Record<string, string>>({});
   const [pinnedKey, setPinnedKey] = useState(repo?.ssh_host_key ?? '');
@@ -77,9 +75,8 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
   const [formError, setFormError] = useState<string | null>(null);
   // Which field asked for a new credential, and what was typed into it
   // before it did — null means the create dialog is closed. One mount
-  // point for the Credential field, the legacy Vault password field and
-  // every row of the Vault identities list, since only one can be open at
-  // a time.
+  // point for the Credential field and every row of the Vault identities
+  // list, since only one can be open at a time.
   const [addingCredential, setAddingCredential] = useState<AddingCredential | null>(null);
 
   function setValue(key: keyof RepoFormValues) {
@@ -127,7 +124,6 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
     const body = {
       name: values.name, url: values.url, branch: values.branch || 'main',
       subpath: values.subpath, credential_id: credentialId || undefined,
-      vault_credential_id: vaultCredentialId || undefined,
       vault_identities: identitiesForBody(vaultRows),
     };
     try {
@@ -177,44 +173,6 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           />
           <span className="text-[11px] text-muted-foreground">Deploy key or token the checkout authenticates with.</span>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="repo-vault-credential">Vault password</Label>
-          {/* No hint here: every row is a vault_password credential (the
-              server refuses any other kind for this field), so a kind hint
-              would only ever repeat "Ansible Vault password" — decoration,
-              not disambiguation (Move 2). */}
-          <Select
-            id="repo-vault-credential"
-            options={credentials.filter((c) => c.kind === 'vault_password').map((c) => ({ value: c.id, label: c.name }))}
-            value={vaultCredentialId}
-            onChange={setVaultCredentialId}
-            placeholder="— none —"
-            disabled={vaultRows.length > 0}
-            create={
-              canCreateCredential && vaultRows.length === 0
-                ? { label: 'New credential…', onSelect: (text) => setAddingCredential({ field: 'vault', name: text }) }
-                : undefined
-            }
-          />
-          {/* Two secrets, two fields: one reaches the repository, the
-              other its contents. Only vault_password credentials are
-              offered — the server refuses anything else here, and a
-              deploy key accepted as a vault password would fail far
-              from its cause, as Ansible's own "decryption failed".
-              Disabled rather than hidden once a Vault identities row
-              exists: legacyVaultIdentities (service.go) ignores this
-              field entirely once the list is non-empty, so leaving it
-              editable would let an operator believe changing it still
-              does something. It stays visible and keeps showing its
-              stored value — still useful to see on a repository the
-              00059 backfill populated — rather than disappearing and
-              silently discarding what is on the row. */}
-          <span className="text-[11px] text-muted-foreground">
-            {vaultRows.length > 0
-              ? 'Ignored while any Vault identity below is set — only the identities list is sent to a run.'
-              : "Passphrase Ansible needs for this repository's encrypted files."}
-          </span>
-        </div>
         <VaultIdentitiesField
           rows={vaultRows}
           onChange={setVaultRows}
@@ -222,7 +180,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           canCreateCredential={canCreateCredential}
           errors={vaultErrors}
           onRequestCreate={(row, text) => setAddingCredential({ field: 'vault-identity', rowKey: row.key, name: text })}
-          help="Labelled vault passwords a run receives. Replaces the Vault password above the moment one row exists — the two are never combined."
+          help="Labelled vault passwords a run receives."
         />
         {repo && (
           <div className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5">
@@ -315,7 +273,6 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
             // though `addingCredential` cannot change mid-callback.
             const adding = addingCredential;
             if (adding.field === 'credential') setCredentialId(id);
-            else if (adding.field === 'vault') setVaultCredentialId(id);
             else setVaultRows((rows) => rows.map((r) => (r.key === adding.rowKey ? { ...r, credentialId: id } : r)));
           }}
         />

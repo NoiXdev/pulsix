@@ -723,140 +723,121 @@ func TestListAttachesEachRepositorysOwnVaultIdentities(t *testing.T) {
 	}
 }
 
-// TestCreateBridgesLegacyVaultCredentialIntoTheDefaultLabel is the write-
-// time bridge (the review that followed the claim path's own task): a
-// repository configured only through the old single VaultCredentialID slot
-// must still produce a usable link row, labelled "default" — the same
-// label migration 00059's backfill uses — or its runs silently lose their
-// vault password now that the claim path reads only the link table. The
-// two inputs are never merged: identities, when given at all, are the
-// whole truth and the legacy field is stored but inert beside them.
-func TestCreateBridgesLegacyVaultCredentialIntoTheDefaultLabel(t *testing.T) {
-	org := uuid.Must(uuid.NewV7())
-	legacyCred, explicitCred := vaultPasswordCred(), vaultPasswordCred()
-	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{legacyCred.ID: legacyCred, explicitCred.ID: explicitCred})
-
-	cases := []struct {
-		name              string
-		repoName          string
-		vaultCredentialID *uuid.UUID
-		identities        []repos.VaultIdentity
-		want              []repos.VaultIdentity
-	}{
-		{
-			name:              "legacy field alone synthesizes the default label",
-			repoName:          "infra-legacy-only",
-			vaultCredentialID: &legacyCred.ID,
-			identities:        nil,
-			want:              []repos.VaultIdentity{{CredentialID: legacyCred.ID, Label: "default"}},
-		},
-		{
-			name:              "identities alongside the legacy field win outright",
-			repoName:          "infra-both",
-			vaultCredentialID: &legacyCred.ID,
-			identities:        []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}},
-			want:              []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}},
-		},
-		{
-			name:              "identities alone, no legacy field: unchanged",
-			repoName:          "infra-identities-only",
-			vaultCredentialID: nil,
-			identities:        []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}},
-			want:              []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}},
-		},
-		{
-			name:              "neither given: no vault identities",
-			repoName:          "infra-neither",
-			vaultCredentialID: nil,
-			identities:        nil,
-			want:              nil,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			store := newFakeStore()
-			svc := newService(store, creds, &fakeEnqueuer{})
-			created, err := svc.Create(ctx, org, repos.CreateInput{
-				Name: tc.repoName, URL: "https://git.example.com/x",
-				VaultCredentialID: tc.vaultCredentialID, VaultIdentities: tc.identities,
-			})
-			if err != nil {
-				t.Fatalf("Create: %v", err)
-			}
-			if !sameVaultIdentities(created.VaultIdentities, tc.want) {
-				t.Fatalf("created.VaultIdentities = %+v, want %+v", created.VaultIdentities, tc.want)
-			}
-			got, err := svc.Get(ctx, org, created.ID)
-			if err != nil {
-				t.Fatalf("Get: %v", err)
-			}
-			if !sameVaultIdentities(got.VaultIdentities, tc.want) {
-				t.Fatalf("Get.VaultIdentities = %+v, want %+v", got.VaultIdentities, tc.want)
-			}
-		})
-	}
-}
-
-// sameVaultIdentities compares ignoring the nil-vs-empty-slice distinction:
-// repos.Service.Create/Update echo the input slice as-is (possibly nil),
-// while a round trip through the store normalizes to a non-nil empty slice
-// (fakeStore.ListRepoVaultIdentities' own make([]repos.VaultIdentity, 0)) —
-// a storage-layer detail unrelated to what this test is pinning.
-func sameVaultIdentities(a, b []repos.VaultIdentity) bool {
-	if len(a) == 0 && len(b) == 0 {
-		return true
-	}
-	return reflect.DeepEqual(a, b)
-}
-
-// TestUpdateClearingIdentitiesButKeepingTheLegacyFieldReactivatesTheBridge
-// is the brief's own warning: Update is where this is easiest to get
-// wrong. A repository created with both an explicit identity set and a
-// (then inert) legacy VaultCredentialID, then edited down to no explicit
-// identities while the legacy field is left untouched, must not end up
-// stranded with zero vault identities — the legacy field "wakes up" and
-// synthesizes the default row, exactly as it would have on a fresh Create.
-func TestUpdateClearingIdentitiesButKeepingTheLegacyFieldReactivatesTheBridge(t *testing.T) {
+// TestCreateAndUpdateRefuseVaultCredentialID (2.92): the write-time bridge
+// that used to turn a posted vault_credential_id into a synthesized
+// {label: "default"} entry is retired — the condition for retiring it (a
+// VaultIdentities editor in the product's UI) is met. Both Create and
+// Update now refuse the field outright with ErrInvalidInput rather than
+// silently accepting and ignoring it, whether or not vault_identities is
+// also given.
+func TestCreateAndUpdateRefuseVaultCredentialID(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	legacyCred, explicitCred := vaultPasswordCred(), vaultPasswordCred()
 	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{legacyCred.ID: legacyCred, explicitCred.ID: explicitCred})
 	store := newFakeStore()
 	svc := newService(store, creds, &fakeEnqueuer{})
 
-	created, err := svc.Create(ctx, org, repos.CreateInput{
-		Name: "infra", URL: "https://git.example.com/x",
-		VaultCredentialID: &legacyCred.ID,
-		VaultIdentities:   []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}},
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	wantAfterCreate := []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}}
-	if !reflect.DeepEqual(created.VaultIdentities, wantAfterCreate) {
-		t.Fatalf("after create, VaultIdentities = %+v, want %+v (the legacy field must stay inert)", created.VaultIdentities, wantAfterCreate)
+	for _, tc := range []struct {
+		name       string
+		identities []repos.VaultIdentity
+	}{
+		{name: "legacy field alone"},
+		{name: "legacy field alongside identities", identities: []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}}},
+	} {
+		if _, err := svc.Create(ctx, org, repos.CreateInput{
+			Name: "infra-" + tc.name, URL: "https://git.example.com/x",
+			VaultCredentialID: &legacyCred.ID, VaultIdentities: tc.identities,
+		}); !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), "vault_identities") {
+			t.Errorf("Create(%s) = %v, want ErrInvalidInput naming vault_identities", tc.name, err)
+		}
 	}
 
-	// The PUT clears the explicit identities but leaves VaultCredentialID
-	// exactly as it was — a plausible "I only meant to remove the extra
-	// password" edit, not a deliberate opt-out of vault entirely.
-	updated, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{
-		Name: "infra", URL: created.URL,
-		VaultCredentialID: &legacyCred.ID,
-		VaultIdentities:   nil,
+	// A repository that legitimately has no vault_credential_id at all
+	// must still create and update normally — only a non-nil value is
+	// refused.
+	created, err := svc.Create(ctx, org, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.com/x",
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: explicitCred.ID, Label: "prod"}},
 	})
 	if err != nil {
-		t.Fatalf("Update: %v", err)
+		t.Fatalf("Create with no legacy field: %v", err)
 	}
-	wantAfterUpdate := []repos.VaultIdentity{{CredentialID: legacyCred.ID, Label: "default"}}
-	if !reflect.DeepEqual(updated.VaultIdentities, wantAfterUpdate) {
-		t.Fatalf("after update, VaultIdentities = %+v, want %+v (the repository must not be stranded with none)", updated.VaultIdentities, wantAfterUpdate)
+	if _, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{
+		Name: created.Name, URL: created.URL, VaultCredentialID: &legacyCred.ID, VaultIdentities: created.VaultIdentities,
+	}); !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), "vault_identities") {
+		t.Fatalf("Update with the legacy field = %v, want ErrInvalidInput naming vault_identities", err)
 	}
-	got, err := svc.Get(ctx, org, created.ID)
+	// An update that leaves the field out entirely (the RepoDialog's own
+	// behaviour post-2.92: it never sends it) must go through.
+	updated, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{
+		Name: created.Name, URL: created.URL, VaultIdentities: created.VaultIdentities,
+	})
 	if err != nil {
-		t.Fatalf("Get: %v", err)
+		t.Fatalf("Update with no legacy field: %v", err)
 	}
-	if !reflect.DeepEqual(got.VaultIdentities, wantAfterUpdate) {
-		t.Fatalf("Get after update = %+v, want %+v", got.VaultIdentities, wantAfterUpdate)
+	if !reflect.DeepEqual(updated.VaultIdentities, created.VaultIdentities) {
+		t.Fatalf("updated.VaultIdentities = %+v, want %+v unchanged", updated.VaultIdentities, created.VaultIdentities)
+	}
+}
+
+// TestSavingALegacyOnlyRepositoryKeepsItsVaultPassword (2.92's own
+// required test): a repository configured only through the retired
+// vault_credential_id field — the exact shape migration 00059's backfill
+// or an earlier call through the (now-removed) bridge produced, before
+// this fix ever shipped — must keep its resolved vault password across a
+// save made the way the real RepoDialog now makes one: it never sends
+// vault_credential_id, and it resubmits whatever vault_identities it most
+// recently read (the editor round-trips the set, it does not invent one).
+// The precondition is built directly through the store, the way the real
+// data already looks, rather than by calling Create with identities
+// already attached — svc.Create/Update cannot produce this shape anymore,
+// which is exactly why "nothing is lost" needs its own test instead of
+// resting on Create's own round trip.
+func TestSavingALegacyOnlyRepositoryKeepsItsVaultPassword(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	legacyCred := vaultPasswordCred()
+	creds := newFakeCreds(map[uuid.UUID]credentials.Credential{legacyCred.ID: legacyCred})
+	store := newFakeStore()
+	svc := newService(store, creds, &fakeEnqueuer{})
+
+	// Built directly through the store: a row with only VaultCredentialID
+	// set, plus the link-table row the bridge (or the migration's backfill)
+	// would already have written for it — never through svc.Create, which
+	// now refuses the legacy field outright.
+	repoID := uuid.Must(uuid.NewV7())
+	if _, err := store.Create(ctx, repos.Repo{
+		ID: repoID, OrgID: org, Name: "infra", URL: "https://git.example.com/x", Branch: "main",
+		VaultCredentialID: &legacyCred.ID,
+	}); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+	if err := store.ReplaceRepoVaultIdentities(ctx, org, repoID, []repos.VaultIdentity{{CredentialID: legacyCred.ID, Label: "default"}}); err != nil {
+		t.Fatalf("seed ReplaceRepoVaultIdentities: %v", err)
+	}
+
+	before, err := svc.Get(ctx, org, repoID)
+	if err != nil {
+		t.Fatalf("Get before save: %v", err)
+	}
+	wantIdentities := []repos.VaultIdentity{{CredentialID: legacyCred.ID, Label: "default"}}
+	if !reflect.DeepEqual(before.VaultIdentities, wantIdentities) {
+		t.Fatalf("precondition: VaultIdentities = %+v, want %+v", before.VaultIdentities, wantIdentities)
+	}
+
+	// A save from the UI: vault_credential_id is never sent (the field is
+	// gone from RepoDialog); vault_identities is whatever the editor most
+	// recently read, here the set Get just returned, unchanged by the user.
+	updated, err := svc.Update(ctx, org, repoID, repos.UpdateInput{
+		Name: before.Name, URL: before.URL, Branch: before.Branch, VaultIdentities: before.VaultIdentities,
+	})
+	if err != nil {
+		t.Fatalf("Update (save from the UI): %v", err)
+	}
+
+	resolved := repos.ResolveVaultIdentities(updated.VaultIdentities, nil)
+	wantResolved := []repos.VaultIdentity{{CredentialID: legacyCred.ID, Label: "default", FromTemplate: false}}
+	if !reflect.DeepEqual(resolved, wantResolved) {
+		t.Fatalf("resolved identities after the save = %+v, want %+v — the vault password must survive", resolved, wantResolved)
 	}
 }
 

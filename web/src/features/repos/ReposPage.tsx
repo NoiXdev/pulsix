@@ -119,7 +119,7 @@ export function ReposPage() {
           org={org}
           repo={{
             id: dialog.id, name: dialog.name, url: dialog.url, branch: dialog.branch, subpath: dialog.subpath,
-            credential_id: dialog.credential_id, vault_credential_id: dialog.vault_credential_id,
+            credential_id: dialog.credential_id,
             vault_identities: dialog.vault_identities,
             ssh_host_key: dialog.ssh_host_key, pin_state: dialog.pin_state,
             shared_repo_id: dialog.shared_repo_id,

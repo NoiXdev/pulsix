@@ -445,6 +445,44 @@ func TestRepoVaultIdentitiesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRepoCreateAndUpdateRefuseVaultCredentialID (2.92): the single
+// vault_credential_id field stays on the request body (so a client sending
+// it gets this 400, rather than huma silently dropping an undeclared
+// field), but the service refuses it on every write now that the
+// VaultIdentities editor is the only way to configure a repository's vault
+// password.
+func TestRepoCreateAndUpdateRefuseVaultCredentialID(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("repo-vault-legacy-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("repo-vault-legacy", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/repo-vault-legacy/repos"
+	credLegacy := seedVaultCredentialForRepo(t, s, org, "legacy-vault")
+
+	resp := postJSON(t, c, base, map[string]any{
+		"name": "infra", "url": "https://git.example.com/acme/infra.git", "vault_credential_id": credLegacy,
+	})
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "vault_identities") {
+		t.Fatalf("create with vault_credential_id: %d %s, want 400 naming vault_identities", resp.StatusCode, body)
+	}
+
+	resp = postJSON(t, c, base, map[string]any{"name": "infra", "url": "https://git.example.com/acme/infra.git"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	var created repoBody
+	decodeInto(t, resp, &created)
+
+	resp = requestJSON(t, c, http.MethodPut, base+"/"+created.Repo.ID, map[string]any{
+		"name": "infra", "url": created.Repo.URL, "vault_credential_id": credLegacy,
+	})
+	body = mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "vault_identities") {
+		t.Fatalf("update with vault_credential_id: %d %s, want 400 naming vault_identities", resp.StatusCode, body)
+	}
+}
+
 // TestRepoVaultIdentityLabelValidation is the brief's Step 2/3: one case per
 // character class rejected (status and message), plus a duplicate label, a
 // wrong-kind credential and an unknown credential.
