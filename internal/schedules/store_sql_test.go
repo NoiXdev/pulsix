@@ -2,6 +2,7 @@ package schedules_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,4 +114,64 @@ func TestStoreRoundTripAndConstraints(t *testing.T) {
 func withID(s schedules.Schedule) schedules.Schedule {
 	s.ID = uuid.Must(uuid.NewV7())
 	return s
+}
+
+// TestRunsBetweenFiltersByDueAtAndUsesItsOwnIndex (2.86, the index half):
+// ListScheduleRunsBetween (the calendar's past occurrences and the
+// digest's week) filters org_id + a due_at range. Before migration 00066,
+// schedule_runs only indexed (org_id, schedule_id, decided_at DESC) —
+// built for the per-schedule runs list, not this one — so every call
+// scanned the organization's whole run history. This proves both halves:
+// the query still returns exactly the rows in range (not fewer, not more,
+// not a different order), and the new index the migration adds is the one
+// Postgres actually has to use it.
+func TestRunsBetweenFiltersByDueAtAndUsesItsOwnIndex(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-runs-between")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	sch, err := st.Create(scoped, schedules.Schedule{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "Nightly", Mode: schedules.ModeCron, Cron: "0 3 * * *",
+		Timezone: "UTC", Guards: schedules.Guards{Overlap: schedules.OverlapSkip, CatchUp: schedules.CatchUp{Window: "1h"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := gen.New(d.Pool())
+	insertRun := func(due time.Time, outcome string) {
+		t.Helper()
+		if err := q.InsertScheduleRun(ctx, gen.InsertScheduleRunParams{
+			ID: uuid.Must(uuid.NewV7()), OrgID: org, ScheduleID: sch.ID, DueAt: due, DecidedAt: due, Outcome: outcome, Reason: "",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC)
+	inRangeA := time.Date(2026, 9, 2, 3, 0, 0, 0, time.UTC)
+	inRangeB := time.Date(2026, 9, 3, 3, 0, 0, 0, time.UTC)
+	after := time.Date(2026, 9, 10, 3, 0, 0, 0, time.UTC)
+	insertRun(before, "triggered")
+	insertRun(inRangeA, "triggered")
+	insertRun(inRangeB, "failed")
+	insertRun(after, "triggered")
+
+	got, err := st.RunsBetween(scoped, org, inRangeA, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[0].DueAt.Equal(inRangeA) || !got[1].DueAt.Equal(inRangeB) {
+		t.Fatalf("RunsBetween[%s, %s) = %+v, want exactly inRangeA then inRangeB", inRangeA, after, got)
+	}
+
+	// The index itself, not the planner's choice to use it: with a handful
+	// of rows a real planner rightly prefers a seq scan regardless of what
+	// indexes exist, so asserting on EXPLAIN's chosen plan here would be
+	// testing Postgres's cost estimator on toy data, not this migration.
+	var indexDef string
+	if err := d.Pool().QueryRow(ctx, `SELECT indexdef FROM pg_indexes WHERE tablename = 'schedule_runs' AND indexname = 'schedule_runs_org_due_idx'`).Scan(&indexDef); err != nil {
+		t.Fatalf("schedule_runs_org_due_idx missing (migration 00066): %v", err)
+	}
+	if !strings.Contains(indexDef, "org_id") || !strings.Contains(indexDef, "due_at") {
+		t.Fatalf("index definition = %q, want it to cover (org_id, due_at)", indexDef)
+	}
 }

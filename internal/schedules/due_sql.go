@@ -17,15 +17,16 @@ import (
 )
 
 // rowWriteTimeout bounds one row's write-back (its savepoint, run insert,
-// schedule advance and trim) once decide has already returned. These are
-// a handful of statements on a connection the batch's own transaction
-// already holds, not a fresh pool acquisition, so a bound this generous
-// only guards against a genuinely stuck driver or network — never against
-// ordinary pool contention, which is what the batch's own decide/enqueue
-// deadline is for (see ProcessDue). Fix round 2, New Important: this
-// write-back must never be abandoned merely because that deadline has
-// passed — by the time decide has returned, the row's enqueue may already
-// have happened.
+// schedule advance and trim) once decide has already returned, and —
+// since backlog 2.86 — the batch's own final commit and deferred rollback
+// too. These are a handful of statements on a connection the batch's own
+// transaction already holds, not a fresh pool acquisition, so a bound
+// this generous only guards against a genuinely stuck driver or network —
+// never against ordinary pool contention, which is what the batch's own
+// decide/enqueue deadline is for (see ProcessDue). Fix round 2, New
+// Important: this write-back must never be abandoned merely because that
+// deadline has passed — by the time decide has returned, the row's
+// enqueue may already have happened.
 const rowWriteTimeout = 10 * time.Second
 
 // DueSQLStore is the ticker's store: one raw-pool transaction per batch,
@@ -90,12 +91,23 @@ func NewDueSQLStore(d *db.DB, rand io.Reader, log *slog.Logger) *DueSQLStore {
 // New Important). processRow now writes each decided row back on
 // context.WithoutCancel(ctx), under its own short rowWriteTimeout, and
 // the final commit below does the same.
+//
+// Both the deferred rollback and the final commit bound that detached
+// context with rowWriteTimeout too (backlog 2.86), the same pairing the
+// digest ticker's own ProcessDue uses for its equivalent pair
+// (digest_ticker.go): a plain context.WithoutCancel(ctx) with no timeout
+// at all waits forever on an unresponsive database, which is exactly what
+// makes App.Close hang rather than time out.
 func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int, decide func(ctx context.Context, s Schedule) Decision) (int, error) {
 	tx, err := st.d.Pool().Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin schedule tick: %w", err)
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	defer func() {
+		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rowWriteTimeout)
+		defer cancel()
+		tx.Rollback(rbCtx) //nolint:errcheck // no-op once committed
+	}()
 	q := gen.New(tx)
 	rows, err := q.LockDueSchedules(ctx, gen.LockDueSchedulesParams{Now: now, Lim: int32(limit)}) //nolint:gosec // limit is batchSize
 	if err != nil {
@@ -114,7 +126,9 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 		}
 		st.processRow(ctx, tx, r, now, decide)
 	}
-	if err := tx.Commit(context.WithoutCancel(ctx)); err != nil {
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rowWriteTimeout)
+	defer cancel()
+	if err := tx.Commit(commitCtx); err != nil {
 		return 0, fmt.Errorf("commit schedule tick: %w", err)
 	}
 	return len(rows), nil
