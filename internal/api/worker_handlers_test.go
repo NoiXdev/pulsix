@@ -223,6 +223,32 @@ func TestRevokeWorkerAuditsAFailedRequeue(t *testing.T) {
 	}
 }
 
+// TestRevokeUnknownWorkerWritesNoAuditEvent is the companion review finding
+// to TestRevokeWorkerAuditsAFailedRequeue: Revoke's own store write (not
+// the requeue step after it) can also fail — unknown id, wrong
+// organization, an RLS or database error — in which case it returns a
+// zero Worker{} and nothing was ever revoked. Recording an event
+// unconditionally on any error from Revoke would write "revoked worker "
+// (an empty name) into the activity feed for a worker nobody touched,
+// which is worse than the gap the direct-record call exists to close.
+func TestRevokeUnknownWorkerWritesNoAuditEvent(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("workers-revoke-404@example.test", "correct horse battery")
+	s.SeedOrg("workers-revoke-404", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/workers-revoke-404"
+
+	resp := postJSON(t, c, base+"/workers/"+uuid.NewString()+"/revoke", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("revoke of an unknown worker: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	body := mustReadBody(t, requestJSON(t, c, http.MethodGet, base+"/activity?limit=100", nil))
+	if strings.Contains(body, `"POST revokeWorker"`) {
+		t.Fatalf("no worker was ever revoked; the activity feed must not record one: %s", body)
+	}
+}
+
 func TestWorkerEnrollmentRefusals(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("workers-refuse@example.test", "correct horse battery")

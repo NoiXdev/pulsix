@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/workers"
@@ -138,26 +139,37 @@ func registerWorkerRoutes(hapi huma.API, deps Deps) {
 		}
 		w, res, err := deps.Workers.Revoke(ctx, scope.OrgID, id)
 		if err != nil {
-			// Revoke's own store write (marking the worker revoked) already
-			// committed by this point — only the job-requeue step that
-			// follows it failed (see the service method's own doc comment).
-			// auditMiddleware records nothing for a non-2xx response (by
-			// design: "only mutating calls that succeeded are recorded",
-			// see its own comment), which would otherwise leave this real,
-			// already-committed mutation with no trace beyond the slog line
-			// mapWorkersErr emits for an unmapped error. Recording it
-			// directly, instead of through setAuditObject, is what actually
-			// closes that gap rather than just moving a call that the
-			// middleware would discard anyway.
-			recordAuditFailure(ctx, deps, scope.OrgID, scope.UserID, "POST revokeWorker", "worker", id.String(),
-				fmt.Sprintf("revoked worker %s but requeueing its jobs failed: %v", w.Name, err))
+			// Revoke returns a zero Worker{} (w.ID == uuid.Nil) when its own
+			// store write never happened at all — not found, wrong
+			// organization, an RLS or database error — and only a non-zero
+			// w, carrying the id that was actually revoked, once that write
+			// committed and the job-requeue step after it is what failed
+			// (see the service method's own doc comment). Recording an
+			// event unconditionally here would write "revoked worker "
+			// (w.Name empty) into the activity feed for a worker nobody
+			// touched on every 404 this handler answers — inventing a
+			// revocation is worse than the gap this recording exists to
+			// close. auditMiddleware records nothing for a non-2xx response
+			// by design ("only mutating calls that succeeded are recorded",
+			// see its own comment), which is why a REAL committed mutation
+			// still needs this direct call: not every error here is one.
+			if w.ID != uuid.Nil {
+				recordAuditFailure(ctx, deps, scope.OrgID, scope.UserID, "POST revokeWorker", "worker", id.String(),
+					fmt.Sprintf("revoked worker %s but requeueing its jobs failed: %v", w.Name, err))
+			}
 			return nil, mapWorkersErr(ctx, err)
+		}
+		// The zone slug is resolved before the event is recorded, and a
+		// failure degrades to an empty one rather than failing the
+		// request: the revoke above already committed, and failing here
+		// would make auditMiddleware's status < 300 gate discard the event
+		// setAuditObject is about to set — reopening the exact gap this
+		// handler exists to close, over what is display-only metadata.
+		zoneSlug, zerr := deps.Workers.ZoneSlug(ctx, scope.OrgID, w.ZoneID)
+		if zerr != nil {
+			slog.ErrorContext(ctx, "resolve zone slug for revoke response", "err", zerr, "worker", id)
 		}
 		setAuditObject(ctx, id.String(), fmt.Sprintf("revoked worker %s (%d stream(s) closed, %d job(s) requeued, %d ended)", w.Name, res.Streams, res.Requeued, res.Ended))
-		zoneSlug, err := deps.Workers.ZoneSlug(ctx, scope.OrgID, w.ZoneID)
-		if err != nil {
-			return nil, mapWorkersErr(ctx, err)
-		}
 		out := &workerRevokeOutput{}
 		out.Body.Worker = toWorkerDTO(workers.View{Worker: w, ZoneSlug: zoneSlug})
 		out.Body.StreamsClosed, out.Body.JobsRequeued, out.Body.JobsEnded = res.Streams, res.Requeued, res.Ended

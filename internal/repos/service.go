@@ -302,8 +302,16 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		}
 	}
 	next := cur
-	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID, next.VaultCredentialID =
-		in.Name, in.URL, branch, in.Subpath, in.CredentialID, in.VaultCredentialID
+	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID =
+		in.Name, in.URL, branch, in.Subpath, in.CredentialID
+	// next.VaultCredentialID is deliberately left as cur's own value, not
+	// overwritten with in.VaultCredentialID: validate above already refuses
+	// a non-nil in.VaultCredentialID, so writing it through here would NULL
+	// out a repository's legacy column on its very first save after this
+	// fix — exactly the evidence backlog 2.93 wants kept intact until a
+	// release has shipped with nothing writing it, which is also what
+	// repoDTO's own VaultCredentialID comment (repo_handlers.go) promises a
+	// reader: "a value written before that fix still reads back here".
 	if next.URL != cur.URL {
 		next.SSHHostKey, next.SSHHostPublicKey = "", ""
 	}

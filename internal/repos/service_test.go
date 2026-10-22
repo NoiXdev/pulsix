@@ -839,6 +839,14 @@ func TestSavingALegacyOnlyRepositoryKeepsItsVaultPassword(t *testing.T) {
 	if !reflect.DeepEqual(resolved, wantResolved) {
 		t.Fatalf("resolved identities after the save = %+v, want %+v — the vault password must survive", resolved, wantResolved)
 	}
+	// The legacy column itself (backlog 2.93's evidence that nothing but
+	// the bridge, or a pre-2.92 release, ever wrote it) must also survive:
+	// Update's own in.VaultCredentialID is always nil here (validate
+	// refuses anything else), and nil is not "clear the column" — it means
+	// "this request said nothing about it".
+	if updated.VaultCredentialID == nil || *updated.VaultCredentialID != legacyCred.ID {
+		t.Fatalf("VaultCredentialID after the save = %v, want it unchanged at %s", updated.VaultCredentialID, legacyCred.ID)
+	}
 }
 
 // TestVaultIdentityLabelValidation is the brief's Step 2/3: one case per
