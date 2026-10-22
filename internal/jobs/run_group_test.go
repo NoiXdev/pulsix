@@ -455,3 +455,71 @@ func TestRunGroupSinkPanicStillFinishesTheJob(t *testing.T) {
 		t.Fatalf("status = %s, payload = %s; a panicking sink must be treated like a sink error", status, payload)
 	}
 }
+
+// TestStatelessErrorJobsHostsAreNotCountedAsOK is backlog 2.81's central
+// inaccuracy. Hosts sums cardinality(host_ids) over every job of the
+// group, while HostsFailed only ever counted names the worker put in the
+// stats lists — and a job that ends error or cancelled has no per-host
+// stats at all (the worker never got as far as a recap). Its hosts
+// therefore landed in neither failure list and HostsOK, being
+// Hosts - HostsFailed, absorbed every one of them: a run group whose jobs
+// all died at the worker rendered as "N hosts (ok N, changed 0, failed 0)"
+// under a "failed" result. HostsNoResult counts them for what they are —
+// hosts this run never reached a verdict on — and HostsOK no longer claims
+// them.
+func TestStatelessErrorJobsHostsAreNotCountedAsOK(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-noresult")
+	_, _, js := w.runGroup(t, 2)
+	if err := w.q.Finish(context.Background(), js[0].ID, StatusSucceeded,
+		map[string]any{"ok_hosts": []string{js[0].HostIDs[0].String()}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	// The worker died before any recap: a terminal status and no stats.
+	if err := w.q.Finish(context.Background(), js[1].ID, StatusError, nil, "the worker went away"); err != nil {
+		t.Fatal(err)
+	}
+	got := w.sink.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("reports = %d, want 1", len(got))
+	}
+	r := got[0]
+	if r.Status != StatusFailed {
+		t.Fatalf("group status = %q, want failed", r.Status)
+	}
+	if r.Hosts != 2 || r.HostsNoResult != 1 || r.HostsFailed != 0 || r.HostsOK() != 1 {
+		t.Fatalf("hosts = %d, no result = %d, failed = %d, ok = %d; want 2/1/0/1 — the errored job's host is not an OK host",
+			r.Hosts, r.HostsNoResult, r.HostsFailed, r.HostsOK())
+	}
+}
+
+// TestStatsHostsOutsideTheJobsTargetsAreNotCounted pins the other half of
+// backlog 2.81. The stats lists carry host UUIDs only where the claim's
+// connection map named one; a host the claim does not name — an implicit
+// localhost task — stays a bare name (internal/worker/runner/stats.go).
+// Counting every distinct element of those lists therefore mixed two
+// different universes with cardinality(host_ids): a failing localhost
+// added one to HostsFailed and subtracted one from HostsOK, and enough of
+// them could drive HostsFailed past the run's real host count entirely.
+// RetryFailed already intersects the same lists against the job's own
+// targets (failedHostIDs); the group's aggregate now does too.
+func TestStatsHostsOutsideTheJobsTargetsAreNotCounted(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-stray")
+	_, _, js := w.runGroup(t, 1)
+	if err := w.q.Finish(context.Background(), js[0].ID, StatusFailed, map[string]any{
+		"failed_hosts":  []string{js[0].HostIDs[0].String(), "localhost"},
+		"changed_hosts": []string{"localhost", uuid.Must(uuid.NewV7()).String()},
+	}, "a task failed"); err != nil {
+		t.Fatal(err)
+	}
+	got := w.sink.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("reports = %d, want 1", len(got))
+	}
+	r := got[0]
+	// changed names a bare localhost and a uuid belonging to no job of this
+	// group; failed names the real host plus that same localhost.
+	if r.Hosts != 1 || r.HostsFailed != 1 || r.HostsChanged != 0 || r.HostsNoResult != 0 || r.HostsOK() != 0 {
+		t.Fatalf("hosts = %d, failed = %d, changed = %d, no result = %d, ok = %d; want 1/1/0/0/0",
+			r.Hosts, r.HostsFailed, r.HostsChanged, r.HostsNoResult, r.HostsOK())
+	}
+}

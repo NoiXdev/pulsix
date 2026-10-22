@@ -116,7 +116,15 @@ func renderEmail(ev Event) (subject, body string) {
 		line("Template", name(ev.Template))
 		if r := ev.Run; r != nil {
 			line("Result", r.Result)
-			line("Hosts", fmt.Sprintf("%d (ok %d, changed %d, failed %d)", r.Hosts, r.HostsOK, r.HostsChanged, r.HostsFailed))
+			hosts := fmt.Sprintf("%d (ok %d, changed %d, failed %d)", r.Hosts, r.HostsOK, r.HostsChanged, r.HostsFailed)
+			if r.HostsNoResult > 0 {
+				// Only when there are any: the ordinary run says nothing
+				// about a count that is always zero, and a reader who
+				// does see it is being told something real — the run
+				// never learned how these hosts fared (backlog 2.81).
+				hosts += fmt.Sprintf(", no result %d", r.HostsNoResult)
+			}
+			line("Hosts", hosts)
 			if r.StartedAt != nil {
 				line("Started", r.StartedAt.UTC().Format(time.RFC1123))
 			}

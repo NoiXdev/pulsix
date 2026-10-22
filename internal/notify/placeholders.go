@@ -241,6 +241,9 @@ var placeholderFields = map[string]func(Event) (any, bool){
 	"run.hosts_ok":      func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.HostsOK }) },
 	"run.hosts_changed": func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.HostsChanged }) },
 	"run.hosts_failed":  func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.HostsFailed }) },
+	"run.hosts_no_result": func(ev Event) (any, bool) {
+		return runField(ev.Run, func(r RunSummary) any { return r.HostsNoResult })
+	},
 	"run.duration_seconds": func(ev Event) (any, bool) {
 		return runField(ev.Run, func(r RunSummary) any { return r.DurationSeconds })
 	},
