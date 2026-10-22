@@ -42,10 +42,25 @@ type Claimed struct {
 
 // DeliveryQueue is the bypass-scoped queue store the dispatcher drives.
 type DeliveryQueue interface {
-	Claim(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]Claimed, error)
+	// Claim leases up to limit due deliveries for lease's duration. Only
+	// the LENGTH is passed: when the lease starts, and whether another
+	// manager's has run out, are the database's to judge — a manager's
+	// own wall clock drifts against its peers', and a manager running
+	// ahead used to re-claim a row still being sent (backlog 2.80).
+	Claim(ctx context.Context, lease time.Duration, limit int) ([]Claimed, error)
 	Complete(ctx context.Context, c Claimed, at time.Time) error
-	Retry(ctx context.Context, c Claimed, next time.Time, errText string) error
+	// Retry reschedules the delivery after in. A duration, not an
+	// instant, for the same reason Claim takes only a lease length: the
+	// queue's timing belongs to the database's clock, not to whichever
+	// manager happens to be holding the row (backlog 2.80).
+	Retry(ctx context.Context, c Claimed, in time.Duration, errText string) error
 	Fail(ctx context.Context, c Claimed, errText string) error
+	// FailStuck ends the rows the claim's attempts backstop has shut out.
+	// Without it they stay 'pending' for ever — never claimed again,
+	// never failed, and the trim only removes finished rows, so they
+	// accumulate in the log reading as messages still on their way
+	// (backlog 2.80). Reports how many it ended.
+	FailStuck(ctx context.Context) (int64, error)
 }
 
 // Sender delivers one event through one channel (ChannelSender).
@@ -123,9 +138,17 @@ func (d *Dispatcher) tickSafely(ctx context.Context) {
 // Tick sends every due delivery, one claimed batch at a time (the batch in
 // parallel), until a batch comes back smaller than dispatchBatch.
 func (d *Dispatcher) Tick(ctx context.Context) (int, error) {
+	// Once per tick, not per batch: the sweep is about rows the claim can
+	// never hand out, so repeating it inside the batch loop would only
+	// re-scan what the first pass already ended.
+	if n, err := d.queue.FailStuck(ctx); err != nil {
+		d.log.ErrorContext(ctx, "fail stuck notification deliveries", "err", err)
+	} else if n > 0 {
+		d.log.WarnContext(ctx, "ended notification deliveries that exhausted the claim backstop", "count", n)
+	}
 	total := 0
 	for {
-		claimed, err := d.queue.Claim(ctx, d.now(), leaseFor, dispatchBatch)
+		claimed, err := d.queue.Claim(ctx, leaseFor, dispatchBatch)
 		if err != nil {
 			return total, err
 		}
@@ -163,9 +186,28 @@ func (d *Dispatcher) deliver(ctx context.Context, c Claimed) {
 		}
 	}()
 	sendErr := d.send(ctx, c)
-	// The outcome is recorded even when ctx ended meanwhile (shutdown):
-	// the send already happened or not; the lease would otherwise make
-	// another manager repeat a completed send.
+	// A send the shutdown itself cut short has an unknown outcome, and
+	// recording one would be a guess in the worst direction: a retry
+	// writes a misleading last_error, and on the final attempt the switch
+	// below reaches Fail and declares a message the receiver may well
+	// have accepted permanently undeliverable — because the manager
+	// restarted, nothing else. That is exactly the position a crash
+	// leaves the row in, and the queue already answers it with the lease:
+	// record nothing, let the lease expire, and another manager picks the
+	// row up with its attempt count untouched (backlog 2.80).
+	//
+	// Gated on the dispatcher's own context, which is authoritative about
+	// shutdown. A send that failed for a real reason while the context
+	// happened to end is also left to its lease — safe, since the lease
+	// only delays the retry it would have scheduled anyway.
+	if sendErr != nil && ctx.Err() != nil {
+		d.log.InfoContext(context.WithoutCancel(ctx), "notification send interrupted by shutdown; leaving the delivery to its lease",
+			"delivery", c.Delivery.ID, "org", c.Delivery.OrgID, "attempts", c.Delivery.Attempts, "err", sendErr)
+		return
+	}
+	// Past that, the outcome is recorded even when ctx ends meanwhile:
+	// the send already happened or not, and the lease would otherwise
+	// make another manager repeat a completed send.
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	var err error
@@ -175,7 +217,7 @@ func (d *Dispatcher) deliver(ctx context.Context, c Claimed) {
 	case IsPermanent(sendErr) || c.Delivery.Attempts >= MaxAttempts:
 		err = d.queue.Fail(wctx, c, errorText(sendErr))
 	default:
-		err = d.queue.Retry(wctx, c, d.now().Add(retryDelay(c.Delivery.Attempts)), errorText(sendErr))
+		err = d.queue.Retry(wctx, c, retryDelay(c.Delivery.Attempts), errorText(sendErr))
 	}
 	if err != nil {
 		d.log.ErrorContext(wctx, "record notification delivery", "delivery", c.Delivery.ID, "org", c.Delivery.OrgID, "err", err)

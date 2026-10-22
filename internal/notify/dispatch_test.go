@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -17,7 +18,7 @@ import (
 
 type outcome struct {
 	kind    string // complete, retry, fail
-	next    time.Time
+	in      time.Duration
 	errText string
 }
 
@@ -29,7 +30,7 @@ type fakeQueue struct {
 	claimErr error
 }
 
-func (q *fakeQueue) Claim(_ context.Context, _ time.Time, _ time.Duration, limit int) ([]notify.Claimed, error) {
+func (q *fakeQueue) Claim(_ context.Context, _ time.Duration, limit int) ([]notify.Claimed, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.claimErr != nil {
@@ -55,8 +56,8 @@ func (q *fakeQueue) Complete(_ context.Context, c notify.Claimed, _ time.Time) e
 	return q.record(c, outcome{kind: "complete"})
 }
 
-func (q *fakeQueue) Retry(_ context.Context, c notify.Claimed, next time.Time, errText string) error {
-	return q.record(c, outcome{kind: "retry", next: next, errText: errText})
+func (q *fakeQueue) Retry(_ context.Context, c notify.Claimed, in time.Duration, errText string) error {
+	return q.record(c, outcome{kind: "retry", in: in, errText: errText})
 }
 
 func (q *fakeQueue) Fail(_ context.Context, c notify.Claimed, errText string) error {
@@ -121,8 +122,10 @@ func TestDispatcherOutcomes(t *testing.T) {
 			t.Errorf("delivery %s: %+v, want %s", id, got, kind)
 		}
 	}
-	// Attempt 2 failed: the next try is 2 minutes later (30 s × 4).
-	if got := q.outcomes[transient.Delivery.ID]; !got.next.Equal(now.Add(2*time.Minute)) || got.errText != "the endpoint answered 503" {
+	// Attempt 2 failed: the next try is 2 minutes later (30 s × 4). The
+	// dispatcher hands the queue that DELAY, not an instant computed from
+	// its own clock (backlog 2.80).
+	if got := q.outcomes[transient.Delivery.ID]; got.in != 2*time.Minute || got.errText != "the endpoint answered 503" {
 		t.Fatalf("retry = %+v", got)
 	}
 	if got := q.outcomes[disabled.Delivery.ID]; got.errText != "the channel is disabled" {
@@ -165,3 +168,59 @@ func TestDispatcherRunStopsWithTheContext(t *testing.T) {
 		t.Fatalf("ticks = %d", ticks)
 	}
 }
+
+// TestShutdownDoesNotFailOrRetryAnInterruptedSend is backlog 2.80. A
+// graceful shutdown cancels the context the in-flight sends run on, and
+// deliver then recorded that cancellation as an ordinary outcome: a
+// retry, or — on the last attempt — a *permanent failure*. A message the
+// receiver may well have accepted was therefore marked failed and never
+// sent again, purely because the manager restarted at the wrong moment.
+//
+// The outcome of a send cut short this way is genuinely unknown, which is
+// the same position a crash leaves the row in, and the queue already has
+// an answer for that: the lease. Recording nothing lets the lease expire
+// and another manager pick the row up, with its attempt count untouched.
+func TestShutdownDoesNotFailOrRetryAnInterruptedSend(t *testing.T) {
+	now := time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)
+	// Attempts == MaxAttempts: before the fix this was the row the
+	// shutdown failed outright.
+	lastTry := claimed(notify.MaxAttempts, true, `{"kind":"test"}`)
+	midway := claimed(2, true, `{"kind":"test"}`)
+	q := &fakeQueue{pending: []notify.Claimed{lastTry, midway}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// The sender behaves like a real one interrupted by shutdown: it
+	// reports the context's own error (what internal/outbound and
+	// internal/mail now both surface — backlog 2.79).
+	s := &cancelAwareSender{ctx: ctx, cancel: cancel}
+
+	if _, err := notify.NewDispatcher(q, s, time.Second, func() time.Time { return now }, nil, quiet()).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, c := range []notify.Claimed{lastTry, midway} {
+		if o, ok := q.outcomes[c.Delivery.ID]; ok {
+			t.Fatalf("a send interrupted by shutdown recorded %q; it must leave the row to its lease, so the attempt is not spent and the message is not declared failed", o.kind)
+		}
+	}
+}
+
+// cancelAwareSender cancels the dispatcher's context on its first call —
+// standing in for a shutdown arriving mid-send — and returns the context
+// error every send then sees.
+type cancelAwareSender struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (s *cancelAwareSender) Send(ctx context.Context, _ notify.Channel, _ uuid.UUID, _ notify.Event) error {
+	s.once.Do(s.cancel)
+	<-s.ctx.Done()
+	return fmt.Errorf("post to the endpoint: %w", ctx.Err())
+}
+
+// FailStuck satisfies notify.DeliveryQueue; these tests seed their rows
+// directly and never exercise the claim backstop.
+func (q *fakeQueue) FailStuck(context.Context) (int64, error) { return 0, nil }

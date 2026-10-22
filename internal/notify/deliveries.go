@@ -42,6 +42,12 @@ type Delivery struct {
 type DeliveryLog interface {
 	InsertDelivery(ctx context.Context, d Delivery) error
 	ListDeliveries(ctx context.Context, orgID, channelID uuid.UUID, limit int) ([]Delivery, error)
+	// TrimDeliveries keeps a channel's newest keep finished rows. The
+	// dispatcher trims on every outcome it records, but a "Send test"
+	// writes its row straight to the log without going through the
+	// dispatcher at all — so a channel an operator only ever tests grew
+	// its log without bound (backlog 2.80).
+	TrimDeliveries(ctx context.Context, orgID, channelID uuid.UUID, keep int) error
 }
 
 // SendTest sends the sample event (as kind test) through the channel right
@@ -87,6 +93,11 @@ func (s *Service) SendTest(ctx context.Context, org OrgRef, channelID uuid.UUID)
 	defer cancel()
 	if err := s.d.Deliveries.InsertDelivery(insertCtx, d); err != nil {
 		return Delivery{}, err
+	}
+	// The row is already recorded, so a trim failure must not turn a
+	// completed test into an error for the operator: log it and move on.
+	if err := s.d.Deliveries.TrimDeliveries(insertCtx, org.ID, ch.ID, keepDeliveries); err != nil {
+		s.d.Log.ErrorContext(insertCtx, "trim the channel's delivery log after a test send", "channel", ch.ID, "org", org.ID, "err", err)
 	}
 	return d, nil
 }

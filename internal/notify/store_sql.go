@@ -90,6 +90,19 @@ func (st *SQLStore) DeleteChannel(ctx context.Context, orgID, id uuid.UUID) erro
 	return nil
 }
 
+// TrimDeliveries implements DeliveryLog: the same retention the
+// dispatcher applies on every outcome, reachable for the "Send test"
+// path, which writes its row without going through the dispatcher
+// (backlog 2.80).
+func (st *SQLStore) TrimDeliveries(ctx context.Context, orgID, channelID uuid.UUID, keep int) error {
+	if err := st.q.TrimNotificationDeliveries(ctx, gen.TrimNotificationDeliveriesParams{
+		OrgID: orgID, ChannelID: channelID, Keep: int32(keep), //nolint:gosec // keep is keepDeliveries
+	}); err != nil {
+		return fmt.Errorf("trim notification deliveries: %w", err)
+	}
+	return nil
+}
+
 func (st *SQLStore) InsertDelivery(ctx context.Context, d Delivery) error {
 	if _, err := st.q.InsertNotificationDelivery(ctx, gen.InsertNotificationDeliveryParams{
 		ID: d.ID, OrgID: d.OrgID, ChannelID: d.ChannelID, EventKey: d.EventKey, EventKind: string(d.EventKind),

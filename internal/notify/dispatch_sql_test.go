@@ -106,30 +106,50 @@ func TestDeliveryBackoffAndFinalFailure(t *testing.T) {
 	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
 	id := queueDelivery(t, d, ch, "test:retry", now)
 	sender := &countingSender{err: context.DeadlineExceeded}
-	clock := now
-	disp := notify.NewDispatcher(notify.NewDeliverySQLStore(d), sender, time.Second, func() time.Time { return clock }, nil, nil)
+	disp := notify.NewDispatcher(notify.NewDeliverySQLStore(d), sender, time.Second, func() time.Time { return now }, nil, nil)
 	delays := []time.Duration{30 * time.Second, 2 * time.Minute, 8 * time.Minute, 32 * time.Minute, 128 * time.Minute}
 	for attempt := 1; attempt <= notify.MaxAttempts; attempt++ {
+		// The backoff is measured from the DATABASE's clock now (backlog
+		// 2.80), so the expected next_attempt_at is bracketed by the
+		// database's own now() either side of the tick rather than
+		// computed from a clock the queue no longer consults.
+		before := dbNow(t, d)
 		if _, err := disp.Tick(ctx); err != nil {
 			t.Fatal(err)
 		}
+		after := dbNow(t, d)
 		status, attempts, lastErr, next := deliveryRow(t, d, id)
 		if attempts != attempt || lastErr != context.DeadlineExceeded.Error() {
 			t.Fatalf("attempt %d: attempts %d, last error %q", attempt, attempts, lastErr)
 		}
 		if attempt < notify.MaxAttempts {
-			if status != "pending" || !next.Equal(clock.Add(delays[attempt-1])) {
-				t.Fatalf("attempt %d: %s, next %s", attempt, status, next)
+			lo, hi := before.Add(delays[attempt-1]), after.Add(delays[attempt-1])
+			if status != "pending" || next.Before(lo) || next.After(hi) {
+				t.Fatalf("attempt %d: %s, next %s, want a %s backoff (within %s..%s)", attempt, status, next, delays[attempt-1], lo, hi)
 			}
 			// Not due yet: a tick right now claims nothing.
 			if n, _ := disp.Tick(ctx); n != 0 {
 				t.Fatalf("attempt %d: a delivery was claimed before its backoff ended", attempt)
 			}
-			clock = next
+			// Let the backoff elapse the only way the queue can see it.
+			if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET next_attempt_at = now() WHERE id = $1`, id); err != nil {
+				t.Fatal(err)
+			}
 		} else if status != "failed" {
 			t.Fatalf("after %d attempts: %s, want failed", attempt, status)
 		}
 	}
+}
+
+// dbNow reads the database's clock — the one the delivery queue measures
+// its lease and backoff against (backlog 2.80).
+func dbNow(t *testing.T, d *db.DB) time.Time {
+	t.Helper()
+	var at time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT now()`).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	return at
 }
 
 // TestExpiredLeaseIsReclaimedAndALateCompletionIsFenced: a manager that
@@ -142,14 +162,21 @@ func TestExpiredLeaseIsReclaimedAndALateCompletionIsFenced(t *testing.T) {
 	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
 	id := queueDelivery(t, d, ch, "test:lease", now)
 	st := notify.NewDeliverySQLStore(d)
-	first, err := st.Claim(ctx, now, 2*time.Minute, 8)
+	first, err := st.Claim(ctx, 2*time.Minute, 8)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first claim = %v, %v", first, err)
 	}
-	if again, _ := st.Claim(ctx, now.Add(time.Minute), 2*time.Minute, 8); len(again) != 0 {
+	if again, _ := st.Claim(ctx, 2*time.Minute, 8); len(again) != 0 {
 		t.Fatal("a leased row was claimed twice")
 	}
-	second, err := st.Claim(ctx, now.Add(3*time.Minute), 2*time.Minute, 8)
+	// The lease runs on the database's clock now (backlog 2.80), so
+	// "time passed" is expressed as the row's real state rather than by
+	// advancing a clock the claim no longer consults — which is also the
+	// only way a second manager could ever see it.
+	if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET locked_until = now() - interval '1 minute' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.Claim(ctx, 2*time.Minute, 8)
 	if err != nil || len(second) != 1 || second[0].Delivery.Attempts != 2 {
 		t.Fatalf("claim after the lease = %+v, %v", second, err)
 	}
@@ -227,7 +254,7 @@ func TestClaimHasAnAttemptsBackstop(t *testing.T) {
 	if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET attempts = 20, locked_until = $2 WHERE id = $1`, at, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := notify.NewDeliverySQLStore(d).Claim(ctx, now, 2*time.Minute, 10)
+	got, err := notify.NewDeliverySQLStore(d).Claim(ctx, 2*time.Minute, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,5 +264,46 @@ func TestClaimHasAnAttemptsBackstop(t *testing.T) {
 			ids[i] = c.Delivery.ID
 		}
 		t.Fatalf("claimed %v, want only the row below the backstop (%s)", ids, below)
+	}
+}
+
+// TestABackstoppedDeliveryIsEndedInsteadOfStayingPendingForEver is
+// backlog 2.80. ClaimNotificationDeliveries refuses a row once attempts
+// reaches 20 — the backstop that bounds the re-claim loop for a row whose
+// outcome write never lands. That stops the loop but leaves the row
+// 'pending' for ever: the claim will not take it again, nothing fails it,
+// and TrimNotificationDeliveries only removes finished rows, so it stays
+// in the channel's delivery log reading as a message still on its way.
+// The dispatcher now ends these rows once per tick.
+func TestABackstoppedDeliveryIsEndedInsteadOfStayingPendingForEver(t *testing.T) {
+	d := testdb.Open(t)
+	now := time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)
+	ch := seedChannel(t, d, seedOrg(t, d, "dispatch-backstop"))
+
+	stuck := queueDelivery(t, d, ch, "test:"+uuid.NewString(), now.Add(-time.Minute))
+	if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET attempts = 20 WHERE id = $1`, stuck); err != nil {
+		t.Fatal(err)
+	}
+	// A healthy row beside it, to prove the sweep ends only the stuck one.
+	fine := queueDelivery(t, d, ch, "test:"+uuid.NewString(), now.Add(-time.Minute))
+
+	sender := &countingSender{}
+	disp := notify.NewDispatcher(notify.NewDeliverySQLStore(d), sender, time.Second, func() time.Time { return now }, nil, nil)
+	if _, err := disp.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	status, attempts, lastErr, _ := deliveryRow(t, d, stuck)
+	if status != string(notify.DeliveryFailed) {
+		t.Fatalf("the backstopped delivery is %q with %d attempts; want failed, not pending for ever", status, attempts)
+	}
+	if lastErr == "" {
+		t.Fatal("the backstopped delivery was failed without saying why")
+	}
+	if sender.sends[stuck] != 0 {
+		t.Fatalf("the backstopped delivery was sent %d more times", sender.sends[stuck])
+	}
+	if status, _, _, _ := deliveryRow(t, d, fine); status != string(notify.DeliverySent) {
+		t.Fatalf("the healthy delivery beside it is %q, want sent — the sweep must not touch it", status)
 	}
 }

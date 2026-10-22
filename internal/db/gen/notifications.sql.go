@@ -31,16 +31,16 @@ func (q *Queries) AdvanceNotificationDigest(ctx context.Context, arg AdvanceNoti
 
 const claimNotificationDeliveries = `-- name: ClaimNotificationDeliveries :many
 UPDATE notification_deliveries AS d
-SET locked_until = $1::timestamptz, attempts = d.attempts + 1
+SET locked_until = now() + $1::interval, attempts = d.attempts + 1
 FROM notification_channels AS c
 WHERE c.org_id = d.org_id AND c.id = d.channel_id
   AND d.id IN (
     SELECT p.id FROM notification_deliveries AS p
-    WHERE p.status = 'pending' AND p.next_attempt_at <= $2::timestamptz
-      AND (p.locked_until IS NULL OR p.locked_until <= $2::timestamptz)
+    WHERE p.status = 'pending' AND p.next_attempt_at <= now()
+      AND (p.locked_until IS NULL OR p.locked_until <= now())
       AND p.attempts < 20
     ORDER BY p.next_attempt_at
-    LIMIT $3
+    LIMIT $2
     FOR UPDATE SKIP LOCKED
   )
 RETURNING d.id, d.org_id, d.channel_id, d.event_key, d.event_kind, d.payload, d.attempts, d.created_at,
@@ -48,9 +48,8 @@ RETURNING d.id, d.org_id, d.channel_id, d.event_key, d.event_kind, d.payload, d.
 `
 
 type ClaimNotificationDeliveriesParams struct {
-	LeaseUntil time.Time `json:"lease_until"`
-	Now        time.Time `json:"now"`
-	Lim        int32     `json:"lim"`
+	Lease pgtype.Interval `json:"lease"`
+	Lim   int32           `json:"lim"`
 }
 
 type ClaimNotificationDeliveriesRow struct {
@@ -81,8 +80,17 @@ type ClaimNotificationDeliveriesRow struct {
 // outcome write panicked -- used to be re-claimed forever, re-sending the
 // same message every two minutes. The number is deliberately far above
 // MaxAttempts: this only bounds a loop no Go-side decision ever reaches.
+// FailStuckNotificationDeliveries ends a row that reaches it.
+//
+// The lease is written and compared with the DATABASE's clock, not the
+// claiming manager's (backlog 2.80). Every manager has its own wall clock
+// and they drift: a manager running ahead judged another's fresh lease
+// already expired and re-claimed a row that was still being sent,
+// delivering the same message twice. The database is the one clock they
+// all share, so the lease is the one thing that must not be measured
+// anywhere else.
 func (q *Queries) ClaimNotificationDeliveries(ctx context.Context, arg ClaimNotificationDeliveriesParams) ([]ClaimNotificationDeliveriesRow, error) {
-	rows, err := q.db.Query(ctx, claimNotificationDeliveries, arg.LeaseUntil, arg.Now, arg.Lim)
+	rows, err := q.db.Query(ctx, claimNotificationDeliveries, arg.Lease, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +281,30 @@ func (q *Queries) FailNotificationDelivery(ctx context.Context, arg FailNotifica
 		arg.ID,
 		arg.Attempts,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failStuckNotificationDeliveries = `-- name: FailStuckNotificationDeliveries :execrows
+UPDATE notification_deliveries
+SET status = 'failed', locked_until = NULL, last_error = $1
+WHERE status = 'pending' AND attempts >= 20
+  AND (locked_until IS NULL OR locked_until <= now())
+RETURNING id
+`
+
+// The backstop's exit (backlog 2.80). ClaimNotificationDeliveries refuses
+// a row at attempts >= 20, which stops the re-claim loop but leaves the
+// row 'pending' for ever: never claimed again, never failed, and
+// TrimNotificationDeliveries only ever removes finished rows, so it
+// accumulates in the channel's delivery log and reads as a message still
+// on its way. Failing it is the honest end state — the backstop is only
+// reached when the outcome write never landed often enough that nothing
+// can be concluded but that this message is not getting through.
+func (q *Queries) FailStuckNotificationDeliveries(ctx context.Context, lastError string) (int64, error) {
+	result, err := q.db.Exec(ctx, failStuckNotificationDeliveries, lastError)
 	if err != nil {
 		return 0, err
 	}
@@ -737,21 +769,26 @@ func (q *Queries) NotifyScheduleContext(ctx context.Context, arg NotifyScheduleC
 }
 
 const retryNotificationDelivery = `-- name: RetryNotificationDelivery :execrows
-UPDATE notification_deliveries SET next_attempt_at = $1, locked_until = NULL, last_error = $2
+UPDATE notification_deliveries SET next_attempt_at = now() + $1::interval, locked_until = NULL, last_error = $2
 WHERE org_id = $3 AND id = $4 AND attempts = $5 AND status = 'pending'
 `
 
 type RetryNotificationDeliveryParams struct {
-	NextAttemptAt time.Time `json:"next_attempt_at"`
-	LastError     string    `json:"last_error"`
-	OrgID         uuid.UUID `json:"org_id"`
-	ID            uuid.UUID `json:"id"`
-	Attempts      int32     `json:"attempts"`
+	RetryIn   pgtype.Interval `json:"retry_in"`
+	LastError string          `json:"last_error"`
+	OrgID     uuid.UUID       `json:"org_id"`
+	ID        uuid.UUID       `json:"id"`
+	Attempts  int32           `json:"attempts"`
 }
 
+// The backoff is a DURATION, measured from the database's clock like the
+// lease above (backlog 2.80). Writing an absolute instant from the
+// claiming manager's clock while the claim compares against the
+// database's would let a manager running behind schedule a retry that is
+// already due the moment it lands.
 func (q *Queries) RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (int64, error) {
 	result, err := q.db.Exec(ctx, retryNotificationDelivery,
-		arg.NextAttemptAt,
+		arg.RetryIn,
 		arg.LastError,
 		arg.OrgID,
 		arg.ID,
