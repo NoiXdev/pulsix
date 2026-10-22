@@ -22,7 +22,18 @@
 UPDATE worker_enrollments
 SET worker_id = NULL
 WHERE worker_id IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM workers w WHERE w.id = worker_enrollments.worker_id);
+  AND NOT EXISTS (
+    SELECT 1 FROM workers w
+    -- Correlated on BOTH columns, because the constraint below is
+    -- composite: a worker_id naming a real worker in a DIFFERENT
+    -- organization satisfies an id-only check and would then fail
+    -- ADD CONSTRAINT anyway, which is the upgrade abort this cleanup
+    -- exists to prevent. Unreachable today — MarkWorkerEnrollmentUsed
+    -- scopes its write by the enrollment's own org_id — so this mirrors
+    -- the target rather than fixing a known row.
+    WHERE w.org_id = worker_enrollments.org_id
+      AND w.id = worker_enrollments.worker_id
+  );
 
 ALTER TABLE worker_enrollments
   ADD CONSTRAINT worker_enrollments_worker_fk
