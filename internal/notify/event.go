@@ -79,12 +79,17 @@ type NamedRef struct {
 // RunSummary is a finished run group: its result (succeeded, failed,
 // cancelled), host counts from the stored per-host results, and timing.
 type RunSummary struct {
-	ID              uuid.UUID  `json:"id"`
-	Result          string     `json:"result"`
-	Hosts           int        `json:"hosts"`
-	HostsOK         int        `json:"hosts_ok"`
-	HostsChanged    int        `json:"hosts_changed"`
-	HostsFailed     int        `json:"hosts_failed"`
+	ID           uuid.UUID `json:"id"`
+	Result       string    `json:"result"`
+	Hosts        int       `json:"hosts"`
+	HostsOK      int       `json:"hosts_ok"`
+	HostsChanged int       `json:"hosts_changed"`
+	HostsFailed  int       `json:"hosts_failed"`
+	// HostsNoResult counts targeted hosts the run reached no per-host
+	// verdict on, because the job covering them ended without a recap
+	// (backlog 2.81). They are excluded from HostsOK rather than counted
+	// as fine, so hosts_ok + hosts_failed + hosts_no_result == hosts.
+	HostsNoResult   int        `json:"hosts_no_result"`
 	StartedAt       *time.Time `json:"started_at,omitempty"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`
 	DurationSeconds int64      `json:"duration_seconds"`

@@ -17,7 +17,8 @@ import (
 
 // RunGroupResult summarises a run group whose jobs are all terminal.
 // Host counts come from the per-host results the worker stored in each
-// job's stats (changed_hosts, failed_hosts, unreachable_hosts).
+// job's stats (changed_hosts, failed_hosts, unreachable_hosts), counted
+// only for hosts the job itself targeted — see HostsChanged.
 type RunGroupResult struct {
 	OrgID, GroupID uuid.UUID
 	// FirstJobID is the group's oldest job: the run view link.
@@ -27,13 +28,34 @@ type RunGroupResult struct {
 	TriggerRef *uuid.UUID
 	// Status aggregates the jobs: failed when any failed or errored,
 	// otherwise cancelled when any was cancelled, otherwise succeeded.
-	Status                                 Status
-	Jobs, Hosts, HostsChanged, HostsFailed int
-	StartedAt, FinishedAt                  *time.Time
+	Status Status
+	// Jobs is the group's job count and Hosts the targeted hosts across
+	// all of them (the sum of their host_ids).
+	Jobs, Hosts int
+	// HostsChanged and HostsFailed count DISTINCT hosts of the group that
+	// the workers' stats lists name AND that the reporting job actually
+	// targeted. The intersection matters: those lists carry host UUIDs
+	// only where the claim's connection map named one, and a host it does
+	// not name — an implicit localhost task — stays a bare name
+	// (internal/worker/runner/stats.go). Counting the lists raw mixed
+	// those names into a total meant to be comparable with Hosts, which
+	// counts host_ids. RetryFailed's failedHostIDs intersects the same
+	// lists for the same reason (backlog 2.81).
+	HostsChanged, HostsFailed int
+	// HostsNoResult counts the targeted hosts of jobs that produced no
+	// per-host stats at all — a job that ended error or cancelled never
+	// got as far as a recap. They are neither OK nor failed: this run
+	// reached no verdict on them. Without this, HostsOK absorbed them and
+	// a group whose every job died at the worker reported "N hosts (ok N,
+	// failed 0)" under a failed result (backlog 2.81).
+	HostsNoResult         int
+	StartedAt, FinishedAt *time.Time
 }
 
-// HostsOK is the number of targeted hosts that did not fail.
-func (r RunGroupResult) HostsOK() int { return max(r.Hosts-r.HostsFailed, 0) }
+// HostsOK is the number of targeted hosts this run reached a verdict on
+// and that verdict was not a failure. Hosts a job never reported on
+// (HostsNoResult) are excluded rather than assumed fine.
+func (r RunGroupResult) HostsOK() int { return max(r.Hosts-r.HostsFailed-r.HostsNoResult, 0) }
 
 // RunGroupSink receives each finished run group exactly once per terminal
 // transition that completes it; ctx carries the finishing transaction, so
@@ -52,6 +74,21 @@ func (q *SQLQueue) SetRunGroupSink(sink RunGroupSink) { q.runGroups = sink }
 // runGroupQuery reads a run group inside the finishing transaction.
 // jsonb_typeof guards the stats lists: a worker that found no host in a
 // state writes JSON null there (a nil Go slice), not an empty array.
+//
+// The changed and failed counts intersect each job's lists with that
+// job's OWN host_ids (backlog 2.81): the lists carry bare host names
+// wherever the claim's connection map did not supply a uuid, and those
+// names must not be counted into a total compared against host_ids.
+// pg_input_is_valid screens an element before the cast, since a bare name
+// is not a uuid and the cast alone would error the whole statement — and
+// an errored statement here aborts the finishing transaction.
+//
+// no_result sums the targeted hosts of jobs whose five per-host stats
+// lists are ALL empty — the shape of a job that ended error or cancelled
+// without a recap. Deliberately keyed on the absence of stats rather than
+// on status: a job that marked itself failed but died before writing a
+// recap has reached no per-host verdict either, and status alone would
+// read it as one.
 const runGroupQuery = `
 WITH g AS (
   SELECT id, status, host_ids, started_at, finished_at, created_at, template_id, trigger, trigger_ref, stats
@@ -59,9 +96,12 @@ WITH g AS (
 ),
 lists AS (
   SELECT
+    host_ids,
     CASE WHEN jsonb_typeof(stats->'changed_hosts') = 'array' THEN stats->'changed_hosts' ELSE '[]'::jsonb END AS changed,
     (CASE WHEN jsonb_typeof(stats->'failed_hosts') = 'array' THEN stats->'failed_hosts' ELSE '[]'::jsonb END) ||
-    (CASE WHEN jsonb_typeof(stats->'unreachable_hosts') = 'array' THEN stats->'unreachable_hosts' ELSE '[]'::jsonb END) AS failed
+    (CASE WHEN jsonb_typeof(stats->'unreachable_hosts') = 'array' THEN stats->'unreachable_hosts' ELSE '[]'::jsonb END) AS failed,
+    (CASE WHEN jsonb_typeof(stats->'ok_hosts') = 'array' THEN stats->'ok_hosts' ELSE '[]'::jsonb END) ||
+    (CASE WHEN jsonb_typeof(stats->'skipped_hosts') = 'array' THEN stats->'skipped_hosts' ELSE '[]'::jsonb END) AS unremarkable
   FROM g
 )
 SELECT
@@ -70,8 +110,12 @@ SELECT
   (SELECT count(*) FROM g WHERE status IN ('failed', 'error')),
   (SELECT count(*) FROM g WHERE status = 'cancelled'),
   (SELECT COALESCE(sum(cardinality(host_ids)), 0) FROM g),
-  (SELECT count(DISTINCT h) FROM lists, jsonb_array_elements_text(lists.changed) AS h),
-  (SELECT count(DISTINCT h) FROM lists, jsonb_array_elements_text(lists.failed) AS h),
+  (SELECT count(DISTINCT h) FROM lists, jsonb_array_elements_text(lists.changed) AS h
+     WHERE pg_input_is_valid(h, 'uuid') AND h::uuid = ANY(lists.host_ids)),
+  (SELECT count(DISTINCT h) FROM lists, jsonb_array_elements_text(lists.failed) AS h
+     WHERE pg_input_is_valid(h, 'uuid') AND h::uuid = ANY(lists.host_ids)),
+  (SELECT COALESCE(sum(cardinality(host_ids)), 0) FROM lists
+     WHERE jsonb_array_length(changed) = 0 AND jsonb_array_length(failed) = 0 AND jsonb_array_length(unremarkable) = 0),
   (SELECT min(started_at) FROM g),
   (SELECT max(finished_at) FROM g),
   (SELECT id FROM g ORDER BY created_at, id LIMIT 1),
@@ -170,7 +214,7 @@ func (q *SQLQueue) readAndClaimRunGroup(ctx context.Context, r RunGroupResult, o
 	var total, terminal, failed, cancelled int
 	var first *uuid.UUID
 	if err := q.db.QueryRow(ctx, runGroupQuery, orgID, groupID).Scan(
-		&total, &terminal, &failed, &cancelled, &r.Hosts, &r.HostsChanged, &r.HostsFailed,
+		&total, &terminal, &failed, &cancelled, &r.Hosts, &r.HostsChanged, &r.HostsFailed, &r.HostsNoResult,
 		&r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef,
 	); err != nil {
 		return r, false, fmt.Errorf("read group: %w", err)
