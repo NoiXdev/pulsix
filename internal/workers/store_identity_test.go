@@ -200,6 +200,93 @@ func TestLookupSerialSeesRevocationAndRenewals(t *testing.T) {
 	}
 }
 
+// TestEnrollmentOutlivesDeletedWorker proves the new worker_enrollments ->
+// workers foreign key (00065) is SET NULL, not CASCADE: an enrollment
+// record is how a worker joined, which is worth keeping after the worker
+// itself is gone, so deleting the worker must leave the enrollment row in
+// place with worker_id cleared rather than deleting it too.
+func TestEnrollmentOutlivesDeletedWorker(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "enroll-outlives")
+	zone := seedZone(t, q, org, "default")
+	store := workers.NewSQLStore(d)
+
+	secret := bytes.Repeat([]byte{4}, 32)
+	hash := sha256.Sum256(secret)
+	e, err := store.CreateEnrollment(db.WithOrgScope(ctx, org), workers.Enrollment{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Name: "fra-1", ExpiresAt: time.Now().Add(time.Hour)}, hash[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.Enroll(ctx, e.ID, func(got workers.Enrollment, h []byte) (workers.Worker, workers.Certificate, error) {
+		id := uuid.Must(uuid.NewV7())
+		serial := big.NewInt(8001)
+		return workers.Worker{ID: id, OrgID: org, ZoneID: zone, Name: got.Name, CertSerial: serial, Status: workers.StatusActive},
+			workers.Certificate{Serial: serial, OrgID: org, WorkerID: id, NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var workerID uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `SELECT worker_id FROM worker_enrollments WHERE id = $1`, e.ID).Scan(&workerID); err != nil {
+		t.Fatalf("worker_id before delete: %v", err)
+	}
+	if workerID != w.ID {
+		t.Fatalf("worker_id = %v, want %v", workerID, w.ID)
+	}
+
+	if err := store.Delete(ctx, org, w.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	var stillThere bool
+	var nullWorkerID *uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `SELECT true, worker_id FROM worker_enrollments WHERE id = $1`, e.ID).Scan(&stillThere, &nullWorkerID); err != nil {
+		t.Fatalf("enrollment row must survive its worker's deletion: %v", err)
+	}
+	if !stillThere {
+		t.Fatal("enrollment row deleted along with its worker — want it to outlive it")
+	}
+	if nullWorkerID != nil {
+		t.Fatalf("worker_id after delete = %v, want NULL (SET NULL, not left dangling)", *nullWorkerID)
+	}
+}
+
+// TestWorkerEnrollmentForeignWorkerRejected proves the composite foreign key
+// (org_id, worker_id) rejects an enrollment pointed at another
+// organization's worker, the same cross-tenant guard every other composite
+// FK in this schema provides.
+func TestWorkerEnrollmentForeignWorkerRejected(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	orgA := seedOrg(t, q, "enroll-fk-a")
+	orgB := seedOrg(t, q, "enroll-fk-b")
+	zoneA := seedZone(t, q, orgA, "default")
+	zoneB := seedZone(t, q, orgB, "default")
+	store := workers.NewSQLStore(d)
+	svc := workers.NewService(store)
+	foreignWorker, err := svc.Register(ctx, orgB, workers.RegisterInput{ZoneID: zoneB, Name: "fra-1", CertSerial: big.NewInt(8101)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secret := bytes.Repeat([]byte{7}, 32)
+	hash := sha256.Sum256(secret)
+	// A regular enrollment in orgA's own zone, so its (org_id, zone_id) FK
+	// is satisfied; what's under test is the separate (org_id, worker_id)
+	// FK, isolated here by pointing worker_id at org B's worker directly
+	// rather than through the org-scoped redeem path (which could never
+	// reach another org's worker in the first place).
+	e, err := store.CreateEnrollment(db.WithOrgScope(ctx, orgA), workers.Enrollment{ID: uuid.Must(uuid.NewV7()), OrgID: orgA, ZoneID: zoneA, Name: "x"}, hash[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE worker_enrollments SET worker_id = $1 WHERE id = $2`, foreignWorker.ID, e.ID); err == nil {
+		t.Fatal("pointing worker_id at another organization's worker must violate the composite foreign key")
+	}
+}
+
 func TestStoreRevokeAndViewDetails(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
