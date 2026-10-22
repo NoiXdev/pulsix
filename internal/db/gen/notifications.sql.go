@@ -524,6 +524,42 @@ func (q *Queries) ListNotificationDigestChannels(ctx context.Context, orgID uuid
 	return items, nil
 }
 
+const listOrgScheduleNotifyEvents = `-- name: ListOrgScheduleNotifyEvents :many
+SELECT schedule_id, events FROM schedule_notifications WHERE org_id = $1
+`
+
+type ListOrgScheduleNotifyEventsRow struct {
+	ScheduleID uuid.UUID `json:"schedule_id"`
+	Events     []string  `json:"events"`
+}
+
+// Every (schedule, events) row of the organization, for the schedules list
+// (GUI "Notify" column, backlog 2.73): one query for the whole org rather
+// than one per schedule row, same reasoning 2.94 gives for keeping a list
+// endpoint's per-row work to a single round trip. The caller unions each
+// schedule's rows into its set of distinct categories — a schedule can
+// have several channels, each with its own events, which is why this is
+// :many and not a pre-aggregated array.
+func (q *Queries) ListOrgScheduleNotifyEvents(ctx context.Context, orgID uuid.UUID) ([]ListOrgScheduleNotifyEventsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgScheduleNotifyEvents, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgScheduleNotifyEventsRow
+	for rows.Next() {
+		var i ListOrgScheduleNotifyEventsRow
+		if err := rows.Scan(&i.ScheduleID, &i.Events); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listScheduleNotifications = `-- name: ListScheduleNotifications :many
 SELECT n.channel_id, n.events, c.name AS channel_name, c.kind AS channel_kind
 FROM schedule_notifications AS n

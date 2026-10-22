@@ -1,11 +1,30 @@
 package notify
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 )
+
+// fakeRuleStore backs TestOrgScheduleCategoriesUnionsAcrossChannels: a
+// minimal RuleStore that only needs to answer OrgScheduleCategories, since
+// that is the one Service method under test here. rows is keyed by
+// schedule id, exactly what the real store returns (one org per call).
+type fakeRuleStore struct {
+	rows map[uuid.UUID][][]string
+}
+
+func (f fakeRuleStore) ScheduleRules(context.Context, uuid.UUID, uuid.UUID) ([]ChannelRule, error) {
+	return nil, nil
+}
+func (f fakeRuleStore) ReplaceScheduleRules(context.Context, uuid.UUID, uuid.UUID, []ChannelRule) error {
+	return nil
+}
+func (f fakeRuleStore) OrgScheduleCategories(context.Context, uuid.UUID) (map[uuid.UUID][][]string, error) {
+	return f.rows, nil
+}
 
 func TestMergeAndSplitRules(t *testing.T) {
 	a, b, c := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -64,5 +83,39 @@ func TestMergeRulesDeduplicatesCategories(t *testing.T) {
 	views := splitRules([]ChannelRule{{ChannelID: a, ChannelName: "a", Events: []Category{CategoryFailure, CategoryFailure}}})
 	if len(views) != 1 || len(views[0].Channels) != 1 {
 		t.Fatalf("views = %+v, want the channel named once", views)
+	}
+}
+
+// TestOrgScheduleCategoriesUnionsAcrossChannels (2.73): a schedule with
+// several channels, each listening to different categories, must report
+// the union of all of them, in canonical order and without duplicates — a
+// schedule with no rows at all must not appear in the result (so the
+// schedules list can treat "absent" as "no notify rules", matching what
+// json:"notify_on,omitempty" already does for an empty slice).
+func TestOrgScheduleCategoriesUnionsAcrossChannels(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	withRules, noRules := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	svc := NewService(Deps{Rules: fakeRuleStore{rows: map[uuid.UUID][][]string{
+		withRules: {
+			{"failure", "change"},
+			{"change", "skipped"}, // "change" repeated across channels
+		},
+	}}})
+	got, err := svc.OrgScheduleCategories(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Category{CategoryFailure, CategoryChange, CategorySkipped}
+	if cats := got[withRules]; len(cats) != len(want) {
+		t.Fatalf("categories = %+v, want %+v", cats, want)
+	} else {
+		for i, c := range want {
+			if cats[i] != c {
+				t.Fatalf("categories = %+v, want %+v (canonical order)", cats, want)
+			}
+		}
+	}
+	if _, ok := got[noRules]; ok {
+		t.Fatalf("a schedule with no rows must not appear in the result: %+v", got)
 	}
 }

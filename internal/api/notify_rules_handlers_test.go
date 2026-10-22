@@ -88,3 +88,57 @@ func TestScheduleNotificationRules(t *testing.T) {
 		t.Fatalf("deliveries = %+v, want one queued run.finished", log.Deliveries)
 	}
 }
+
+// TestScheduleListNotifyOn (2.73): the schedules list surfaces each
+// schedule's configured notify categories as notify_on, instead of making
+// the GUI call GET .../notifications once per row to learn the same thing.
+// A schedule with no rules at all must report an empty (omitted) list.
+func TestScheduleListNotifyOn(t *testing.T) {
+	f := newRunFixture(t, "notify-on-list")
+	hook := map[string]any{"kind": "webhook", "name": "ops hook", "webhook": map[string]any{"url": "https://hooks.example.test/x"}}
+	resp := postJSON(t, f.adminC, f.channelsURL(), hook)
+	var ch struct {
+		Channel channelOut `json:"channel"`
+	}
+	decodeInto(t, resp, &ch)
+
+	resp = postJSON(t, f.operatorC, f.schedulesURL(), f.scheduleBody("With rules"))
+	var withRules struct {
+		Schedule struct{ ID string } `json:"schedule"`
+	}
+	decodeInto(t, resp, &withRules)
+	resp = postJSON(t, f.operatorC, f.schedulesURL(), f.scheduleBody("Without rules"))
+	var withoutRules struct {
+		Schedule struct{ ID string } `json:"schedule"`
+	}
+	decodeInto(t, resp, &withoutRules)
+
+	rulesURL := f.schedulesURL() + "/" + withRules.Schedule.ID + "/notifications"
+	body := map[string]any{"rules": []map[string]any{
+		{"on": "skipped", "channels": []string{ch.Channel.ID}},
+		{"on": "failure", "channels": []string{ch.Channel.ID}},
+	}}
+	if resp := requestJSON(t, f.operatorC, http.MethodPut, rulesURL, body); resp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, resp))
+	}
+
+	var list struct {
+		Schedules []struct {
+			ID       string   `json:"id"`
+			NotifyOn []string `json:"notify_on"`
+		} `json:"schedules"`
+	}
+	decodeInto(t, requestJSON(t, f.operatorC, http.MethodGet, f.schedulesURL(), nil), &list)
+	byID := map[string][]string{}
+	for _, s := range list.Schedules {
+		byID[s.ID] = s.NotifyOn
+	}
+	// Canonical order (failure, change, success, skipped), not insertion
+	// order (skipped was set before failure above).
+	if got := byID[withRules.Schedule.ID]; len(got) != 2 || got[0] != "failure" || got[1] != "skipped" {
+		t.Fatalf("notify_on for the ruled schedule = %+v, want [failure skipped]", got)
+	}
+	if got, ok := byID[withoutRules.Schedule.ID]; ok && len(got) != 0 {
+		t.Fatalf("notify_on for the ruleless schedule = %+v, want empty", got)
+	}
+}

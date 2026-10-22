@@ -5432,6 +5432,7 @@ export interface components {
             name: string;
             /** Format: date-time */
             next_run_at?: string;
+            notify_on?: string[] | null;
             paused: boolean;
             /** Format: int64 */
             revision: number;

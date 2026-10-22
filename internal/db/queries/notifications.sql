@@ -102,6 +102,16 @@ DELETE FROM schedule_notifications WHERE org_id = @org_id AND schedule_id = @sch
 INSERT INTO schedule_notifications (org_id, schedule_id, channel_id, events)
 VALUES (@org_id, @schedule_id, @channel_id, @events);
 
+-- name: ListOrgScheduleNotifyEvents :many
+-- Every (schedule, events) row of the organization, for the schedules list
+-- (GUI "Notify" column, backlog 2.73): one query for the whole org rather
+-- than one per schedule row, same reasoning 2.94 gives for keeping a list
+-- endpoint's per-row work to a single round trip. The caller unions each
+-- schedule's rows into its set of distinct categories — a schedule can
+-- have several channels, each with its own events, which is why this is
+-- :many and not a pre-aggregated array.
+SELECT schedule_id, events FROM schedule_notifications WHERE org_id = @org_id;
+
 -- name: NotifyRuleChannels :many
 -- The enabled channels a schedule's rules route any of the categories to.
 SELECT n.channel_id

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/cronexpr"
+	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/schedules"
 )
 
@@ -51,9 +52,15 @@ type scheduleDTO struct {
 	NextRunAt   *time.Time      `json:"next_run_at,omitempty"`
 	LastRunAt   *time.Time      `json:"last_run_at,omitempty"`
 	LastRun     *scheduleRunDTO `json:"last_run,omitempty"`
-	Revision    int64           `json:"revision"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	// NotifyOn lists the distinct categories (failure, change, success,
+	// skipped) any of the schedule's notify rules cover, in canonical
+	// order; empty when it has none. The schedules list's "Notify" column
+	// (backlog 2.73) reads this instead of a per-row
+	// GET .../notifications call.
+	NotifyOn  []string  `json:"notify_on,omitempty"`
+	Revision  int64     `json:"revision"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ScheduleBody is the create/update body (exported so huma flattens it,
@@ -70,7 +77,7 @@ type ScheduleBody struct {
 	ExtraVars  map[string]any `json:"extra_vars,omitempty"`
 }
 
-func toScheduleDTO(s schedules.Schedule, last *schedules.Run) scheduleDTO {
+func toScheduleDTO(s schedules.Schedule, last *schedules.Run, notifyOn []notify.Category) scheduleDTO {
 	dto := scheduleDTO{
 		ID: s.ID.String(), TemplateID: s.TemplateID.String(), Name: s.Name, Mode: string(s.Mode),
 		Cron: s.Cron, Description: cronexpr.Describe(s.Cron), Timezone: s.Timezone,
@@ -86,6 +93,9 @@ func toScheduleDTO(s schedules.Schedule, last *schedules.Run) scheduleDTO {
 	if last != nil {
 		r := toScheduleRunDTO(*last)
 		dto.LastRun = &r
+	}
+	for _, c := range notifyOn {
+		dto.NotifyOn = append(dto.NotifyOn, string(c))
 	}
 	return dto
 }

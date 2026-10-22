@@ -49,15 +49,28 @@ const base = {
 
 describe('SchedulesPage', () => {
   it('lists schedules with template, cron, human text and last result', async () => {
-    mockApi({ ...base, 'GET /api/v1/orgs/acme/schedules': { schedules: [schedule(), schedule({ id: 's2', name: 'DB monitor user', paused: true, next_run_at: null })] } });
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/schedules': {
+        schedules: [
+          schedule({ notify_on: ['failure', 'skipped'] }),
+          schedule({ id: 's2', name: 'DB monitor user', paused: true, next_run_at: null, notify_on: [] }),
+        ],
+      },
+    });
     renderPage();
     const row = (await screen.findByText('Nightly OS patching')).closest('[data-row]') as HTMLElement;
     expect(within(row).getByText('0 3 * * 2,4')).toBeInTheDocument();
     expect(within(row).getByText('Tue, Thu at 03:00')).toBeInTheDocument();
     expect(within(row).getByText('patch-all')).toBeInTheDocument();
     expect(within(row).getByText('triggered')).toBeInTheDocument();
+    // 2.73: the list itself shows each schedule's notify categories,
+    // instead of only the schedule panel.
+    expect(within(row).getByText('failure')).toBeInTheDocument();
+    expect(within(row).getByText('skipped')).toBeInTheDocument();
     const paused = (screen.getByText('DB monitor user')).closest('[data-row]') as HTMLElement;
     expect(within(paused).getByText('paused')).toBeInTheDocument();
+    expect(within(paused).queryByText('failure')).not.toBeInTheDocument();
   });
 
   it('creates a schedule in simple mode and shows the next five occurrences', async () => {
