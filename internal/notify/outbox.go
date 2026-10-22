@@ -27,6 +27,31 @@ import (
 // and (org, key, channel) is unique, so a retried source never enqueues
 // twice. Every write runs in its own savepoint: a notification failure
 // rolls back only the notification, never the fact.
+//
+// Two limits of that guarantee, neither of them stated plainly anywhere
+// else (backlog 2.87):
+//
+// A run group completed by a CANCEL is the one source that is NOT inside
+// its fact's transaction. CancelJob commits a queued job's
+// queued -> cancelled transition as a standalone statement, and
+// SQLQueue.recordCancelledRunGroup then opens its own write transaction to
+// notice that the cancel completed the group (internal/jobs/run_group.go).
+// A crash between the two loses that run.finished with nothing to retry
+// it: the job is already terminal, so no later path revisits the group.
+// Merging them is not a matter of wrapping the caller — db.beginOrg always
+// begins a fresh pool transaction rather than joining one bound to the
+// context, so a nested WithWriteTx would take a second connection and its
+// claimRunGroupReport UPDATE could block on the row lock the outer
+// transaction already holds on the same job.
+//
+// run.finished is AT-MOST-ONCE, not at-least-once, by an explicit ruling
+// and not by accident: the report claim (claimRunGroupReport) commits with
+// the job's terminal transition, while a sink failure rolls back only the
+// sink's savepoint. So a group is reported to the sink at most once, and
+// when that one call fails the notification is logged and dropped rather
+// than retried. The alternative — failing the finish — wedges the job in
+// running and, for a scheduled template, makes the overlap guard skip
+// every later occurrence. Losing one notification is the cheaper loss.
 type Outbox struct {
 	db        *db.DB
 	publicURL string
