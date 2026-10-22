@@ -17,9 +17,11 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	mu   sync.Mutex
-	byID map[uuid.UUID]schedules.Schedule
-	runs []schedules.Run
+	mu           sync.Mutex
+	byID         map[uuid.UUID]schedules.Schedule
+	runs         []schedules.Run
+	recordRunErr error
+	trimCalls    int
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{byID: map[uuid.UUID]schedules.Schedule{}} }
@@ -115,7 +117,41 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 func (f *fakeStore) RecordRun(_ context.Context, r schedules.Run) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.recordRunErr != nil {
+		return f.recordRunErr
+	}
 	f.runs = append(f.runs, r)
+	return nil
+}
+
+// TrimRuns keeps the newest keep runs of the schedule, decided_at then id
+// descending — mirroring TrimScheduleRuns' own tie-break (store_sql.go) so
+// a test asserting trim survivors against this fake matches the real store.
+func (f *fakeStore) TrimRuns(_ context.Context, orgID, scheduleID uuid.UUID, keep int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trimCalls++
+	var mine, others []schedules.Run
+	for _, r := range f.runs {
+		if r.OrgID == orgID && r.ScheduleID == scheduleID {
+			mine = append(mine, r)
+		} else {
+			others = append(others, r)
+		}
+	}
+	sort.Slice(mine, func(i, j int) bool {
+		if !mine[i].DecidedAt.Equal(mine[j].DecidedAt) {
+			return mine[i].DecidedAt.After(mine[j].DecidedAt)
+		}
+		return mine[i].ID.String() > mine[j].ID.String()
+	})
+	if len(mine) > keep {
+		mine = mine[:keep]
+	}
+	kept := make([]schedules.Run, 0, len(others)+len(mine))
+	kept = append(kept, others...)
+	kept = append(kept, mine...)
+	f.runs = kept
 	return nil
 }
 
@@ -207,6 +243,13 @@ type fakeRuns struct {
 	targets    []uuid.UUID
 	targetsErr error
 	summaries  map[uuid.UUID]jobs.GroupSummary
+	// groups models jobs' job_idempotency_keys ledger (migration 00067) at
+	// the RunEnqueuer boundary: a request carrying IdempotencyKey gets the
+	// SAME group back on every later call with the same key, instead of a
+	// fresh one, the way the real store's ReserveRunGroup does. Requests
+	// without a key (every test that predates backlog 2.60, and RunNow)
+	// keep the single shared f.group every call reused before.
+	groups map[string]uuid.UUID
 }
 
 func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
@@ -216,10 +259,23 @@ func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID
 		return nil, f.err
 	}
 	f.requests = append(f.requests, req)
-	if f.group == uuid.Nil {
-		f.group = uuid.Must(uuid.NewV7())
+	group := f.group
+	switch {
+	case req.IdempotencyKey != "":
+		if f.groups == nil {
+			f.groups = map[string]uuid.UUID{}
+		}
+		if g, ok := f.groups[req.IdempotencyKey]; ok {
+			group = g
+		} else {
+			group = uuid.Must(uuid.NewV7())
+			f.groups[req.IdempotencyKey] = group
+		}
+	case f.group == uuid.Nil:
+		group = uuid.Must(uuid.NewV7())
+		f.group = group
 	}
-	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: f.group, Trigger: req.Trigger}}, nil
+	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: group, Trigger: req.Trigger}}, nil
 }
 
 func (f *fakeRuns) GroupSummaries(_ context.Context, _ uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]jobs.GroupSummary, error) {

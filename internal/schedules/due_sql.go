@@ -45,6 +45,18 @@ const rowWriteTimeout = 10 * time.Second
 // next_run_at advances were rolled back too, so the next tick re-fired
 // every one of them, forever, if the bad row's failure was persistent
 // (e.g. corrupt stored JSON) rather than transient.
+//
+// decide's enqueue is NOT inside that savepoint, and cannot be: it commits
+// through the jobs service's own transaction, on its own connection, before
+// processRow ever opens the row's savepoint (backlog 2.60). A failure
+// between that commit and this savepoint's own — a write error, a panic
+// recovered above, a crashed manager — leaves the row due with no
+// schedule_runs row to show for it, and the next tick decides it again.
+// That retried decision calls the exact same enqueue (occurrenceKey,
+// service.go): jobs.RunRequest.IdempotencyKey makes the second attempt a
+// no-op that replays the first one's run group (migration 00067) rather
+// than starting a second one, so the at-least-once retry below is safe at
+// the one point it would otherwise double a customer's playbook run.
 type DueSQLStore struct {
 	d      *db.DB
 	rand   io.Reader
@@ -113,6 +125,16 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 	if err != nil {
 		return 0, fmt.Errorf("lock due schedules: %w", err)
 	}
+	// decided counts rows actually started, not rows locked (len(rows)):
+	// Tick's own loop (ticker.go) uses this count to tell "a full batch,
+	// probably more due" from "the deadline cut this one short" — the two
+	// used to be indistinguishable, since a deadline hit after locking a
+	// full batchSize rows but before deciding all of them still reported
+	// len(rows), i.e. batchSize, the same as a batch that actually finished
+	// (backlog 2.60: Tick's own "n < batchSize" then started a fresh batch
+	// immediately instead of waiting for the next tick interval, hammering
+	// whatever made the batch slow in the first place).
+	decided := len(rows)
 	for i, r := range rows {
 		if ctx.Err() != nil {
 			// The batch's own deadline (or the manager's shutdown) is
@@ -122,6 +144,7 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 			// one line here beats one per remaining row.
 			st.log.WarnContext(context.WithoutCancel(ctx), "schedule batch deadline reached; leaving the remaining rows due for the next tick",
 				"decided", i, "remaining", len(rows)-i)
+			decided = i
 			break
 		}
 		st.processRow(ctx, tx, r, now, decide)
@@ -131,7 +154,7 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 	if err := tx.Commit(commitCtx); err != nil {
 		return 0, fmt.Errorf("commit schedule tick: %w", err)
 	}
-	return len(rows), nil
+	return decided, nil
 }
 
 // processRow decides one locked row on ctx (the batch's decide/enqueue
@@ -152,13 +175,21 @@ func (st *DueSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int,
 // leave the other rows in the batch, and the batch's own commit,
 // unaffected.
 //
-// Any failure — decode, decide, or a write — simply leaves the row as it
-// was: neither its run nor its next_run_at advance, so the row stays due
-// and the next tick's SKIP LOCKED retries it, the same at-least-once
-// guarantee a failed commit already gives (global-constraints.md, "Ticker
-// atomicity is at-least-once"). The one exception is a row that never
-// decodes at all (see decideOne): that failure is deterministic, not
-// transient, so the row is stopped instead of retried forever.
+// Any failure — decode, decide, or a write — leaves the row's own tables
+// (schedule_runs, schedules.next_run_at) exactly as they were, so the row
+// stays due and the next tick's SKIP LOCKED retries it, the same
+// at-least-once guarantee a failed commit already gives
+// (global-constraints.md, "Ticker atomicity is at-least-once"). That
+// guarantee is NOT "nothing happened": when decide already enqueued before
+// the failure, the enqueue itself stands — it committed in the jobs
+// service's own transaction, which this function never touches — and only
+// its bookkeeping here is missing. The retry this produces decides the same
+// occurrence again and reaches the same enqueue call with the same
+// occurrenceKey, which is exactly what RunRequest.IdempotencyKey (migration
+// 00067, backlog 2.60) turns into a no-op instead of a second, duplicate
+// run. The one exception is a row that never decodes at all (see
+// decideOne): that failure is deterministic, not transient, so the row is
+// stopped instead of retried forever.
 func (st *DueSQLStore) processRow(ctx context.Context, tx pgx.Tx, r gen.Schedule, now time.Time, decide func(ctx context.Context, s Schedule) Decision) {
 	defer func() {
 		if rec := recover(); rec != nil {

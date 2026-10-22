@@ -175,3 +175,67 @@ func TestRunsBetweenFiltersByDueAtAndUsesItsOwnIndex(t *testing.T) {
 		t.Fatalf("index definition = %q, want it to cover (org_id, due_at)", indexDef)
 	}
 }
+
+// TestLatestRunsPicksTheNewestPerScheduleNotAcrossSchedules is backlog
+// 2.61: LatestScheduleRuns was rewritten from a DISTINCT ON over the whole
+// organization's run history to a LATERAL join against schedules, one
+// index descent per schedule — this pins that the rewrite still returns
+// exactly one row per schedule, the NEWEST one by (decided_at, id), and
+// never a different schedule's row or the wrong schedule's older run. Three
+// schedules, several runs each, interleaved decided_at values across
+// schedules so a join that accidentally mixed rows between schedules (or
+// picked the oldest instead of the newest) would be caught.
+func TestLatestRunsPicksTheNewestPerScheduleNotAcrossSchedules(t *testing.T) {
+	d := testdb.Open(t)
+	org, templateID := seedTemplate(t, d, "sched-latest-per-schedule")
+	st := schedules.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	q := gen.New(d.Pool())
+
+	mkSchedule := func(name string) schedules.Schedule {
+		s, err := st.Create(scoped, schedules.Schedule{
+			ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: name, Mode: schedules.ModeCron, Cron: "0 3 * * *",
+			Timezone: "UTC", Guards: schedules.Guards{Overlap: schedules.OverlapSkip, CatchUp: schedules.CatchUp{Window: "1h"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	a, b, c := mkSchedule("latest-a"), mkSchedule("latest-b"), mkSchedule("latest-c")
+
+	insertRun := func(sched schedules.Schedule, at time.Time, outcome string) uuid.UUID {
+		t.Helper()
+		id := uuid.Must(uuid.NewV7())
+		if err := q.InsertScheduleRun(ctx, gen.InsertScheduleRunParams{
+			ID: id, OrgID: org, ScheduleID: sched.ID, DueAt: at, DecidedAt: at, Outcome: outcome, Reason: "",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	// Interleaved so schedule c's own newest run (hour 5) sits between two
+	// of schedule a's older runs (hours 1 and 10) in decided_at order — a
+	// join that mixed rows across schedules would plausibly still pass a
+	// looser test than this one.
+	insertRun(a, base.Add(1*time.Hour), "triggered")
+	wantC := insertRun(c, base.Add(5*time.Hour), "triggered")
+	wantA := insertRun(a, base.Add(10*time.Hour), "triggered")
+	insertRun(b, base.Add(2*time.Hour), "failed")
+	wantB := insertRun(b, base.Add(3*time.Hour), "triggered")
+
+	latest, err := st.LatestRuns(scoped, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest) != 3 {
+		t.Fatalf("latest = %d schedules, want 3", len(latest))
+	}
+	for sched, want := range map[uuid.UUID]uuid.UUID{a.ID: wantA, b.ID: wantB, c.ID: wantC} {
+		got, ok := latest[sched]
+		if !ok || got.ID != want {
+			t.Fatalf("latest[%s] = %+v, want run %s", sched, got, want)
+		}
+	}
+}

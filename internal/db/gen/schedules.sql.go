@@ -181,10 +181,21 @@ func (q *Queries) InsertScheduleRun(ctx context.Context, arg InsertScheduleRunPa
 }
 
 const latestScheduleRuns = `-- name: LatestScheduleRuns :many
-SELECT DISTINCT ON (schedule_id) id, org_id, schedule_id, due_at, decided_at, outcome, reason, job_group_id FROM schedule_runs WHERE org_id = $1
-ORDER BY schedule_id, decided_at DESC, id DESC
+SELECT r.id, r.org_id, r.schedule_id, r.due_at, r.decided_at, r.outcome, r.reason, r.job_group_id FROM schedules AS s
+CROSS JOIN LATERAL (
+  SELECT id, org_id, schedule_id, due_at, decided_at, outcome, reason, job_group_id FROM schedule_runs
+  WHERE org_id = s.org_id AND schedule_id = s.id
+  ORDER BY decided_at DESC, id DESC
+  LIMIT 1
+) AS r
+WHERE s.org_id = $1
 `
 
+// One row per schedule of the org (the list's "Last" column): a LATERAL
+// join against schedules, one index descent per schedule on
+// schedule_runs_schedule_idx (org_id, schedule_id, decided_at DESC), costs
+// O(schedules) — the DISTINCT ON this replaced scanned every run the
+// organization had ever recorded to produce the same result (backlog 2.61).
 func (q *Queries) LatestScheduleRuns(ctx context.Context, orgID uuid.UUID) ([]ScheduleRun, error) {
 	rows, err := q.db.Query(ctx, latestScheduleRuns, orgID)
 	if err != nil {

@@ -27,7 +27,13 @@ const (
 	minBatchDeadline    = 10 * time.Second
 )
 
-// DueStore locks due schedules and writes back one decision each.
+// DueStore locks due schedules and writes back one decision each. The
+// returned int is how many rows it actually started deciding — not how many
+// it locked (limit may lock more than it gets to before its own deadline
+// cuts the batch short): Tick's own loop relies on that distinction to tell
+// "a full batch, there may be more" from "the batch ran out of time",
+// treating the latter the same as an ordinary error — stop and wait for the
+// next tick interval — rather than retrying immediately (backlog 2.60).
 type DueStore interface {
 	ProcessDue(ctx context.Context, now time.Time, limit int, decide func(ctx context.Context, s Schedule) Decision) (int, error)
 }
@@ -97,13 +103,26 @@ func (t *Ticker) tickSafely(ctx context.Context) {
 }
 
 // Tick decides every due schedule, one locked batch at a time, until a
-// batch comes back smaller than batchSize. Each batch's own context is
-// bounded to batchDeadlineFactor × tick, but at least minBatchDeadline
-// (fix round 1, Important #3): a batch that cannot complete in that time
-// — most likely a starved pool connection — fails fast instead of holding
-// its row locks (and the connection a blocked HTTP handler needs)
-// indefinitely; the same rows are still due on the next tick, the same
-// at-least-once guarantee a failed commit already gives.
+// batch comes back smaller than batchSize — meaning it actually decided
+// fewer than batchSize rows, not merely that it locked fewer (DueStore's own
+// doc comment). Each batch's own context is bounded to batchDeadlineFactor ×
+// tick, but at least minBatchDeadline (fix round 1, Important #3): a batch
+// that cannot complete in that time — most likely a starved pool connection
+// — fails fast instead of holding its row locks (and the connection a
+// blocked HTTP handler needs) indefinitely; the same rows are still due on
+// the next tick, the same at-least-once guarantee a failed commit already
+// gives.
+//
+// A batch cut short by its own deadline reports fewer than batchSize
+// decided for exactly that reason, which is what stops this loop from
+// starting another batch immediately: before backlog 2.60's fix,
+// ProcessDue reported how many rows it had LOCKED, which was still
+// batchSize even when the deadline cut the batch short mid-row — so a
+// batch that failed to keep up looked identical to one that cleanly
+// finished a full, busy batch, and this loop re-tried it at once instead of
+// backing off to the next tick interval, hammering whatever made the first
+// batch slow (a starved pool, an overloaded database) instead of giving it
+// room to recover.
 func (t *Ticker) Tick(ctx context.Context) (int, error) {
 	total := 0
 	for {
