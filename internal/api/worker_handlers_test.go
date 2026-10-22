@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
@@ -114,14 +116,18 @@ func TestWorkerEnrollmentAndRevocation(t *testing.T) {
 	}
 	var revoked struct {
 		Worker struct {
-			Status string `json:"status"`
+			Status   string `json:"status"`
+			ZoneSlug string `json:"zone_slug"`
 		} `json:"worker"`
 		StreamsClosed *int `json:"streams_closed"`
 		JobsRequeued  *int `json:"jobs_requeued"`
 		JobsEnded     *int `json:"jobs_ended"`
 	}
 	decodeInto(t, resp, &revoked)
-	if revoked.Worker.Status != "revoked" || revoked.StreamsClosed == nil || revoked.JobsRequeued == nil || revoked.JobsEnded == nil {
+	// 2.65: the revoke response's worker object used to leave zone_slug
+	// empty (View{Worker: w} with no ZoneSlug set) even though the schema
+	// requires one, same as every other worker DTO.
+	if revoked.Worker.Status != "revoked" || revoked.Worker.ZoneSlug != "default" || revoked.StreamsClosed == nil || revoked.JobsRequeued == nil || revoked.JobsEnded == nil {
 		t.Fatalf("revoke response = %+v", revoked)
 	}
 	leaf, _ := pem.Decode(res.CertPEM)
@@ -166,6 +172,54 @@ func TestWorkerEnrollmentAndRevocation(t *testing.T) {
 		if strings.Contains(body, token) || strings.Contains(body, secret) {
 			t.Fatalf("the activity feed leaks an enrollment token: %s", body)
 		}
+	}
+}
+
+// failingRequeuer always refuses, so Revoke's own store write (which
+// commits before this hook even runs) can be told apart from the
+// requeue step that follows it.
+type failingRequeuer struct{}
+
+func (failingRequeuer) RequeueWorkerJobs(context.Context, uuid.UUID, uuid.UUID, string) (int, int, error) {
+	return 0, 0, errors.New("requeue boom")
+}
+
+// TestRevokeWorkerAuditsAFailedRequeue (2.65): Revoke's store write commits
+// the revocation before the job-requeue step that follows it; when that
+// step fails, the handler answers 500 — but the revoke itself already
+// happened, and auditMiddleware records nothing for a non-2xx response (see
+// its own comment), so without the handler's own direct record that real
+// mutation would leave no trace at all beyond an ERROR log line.
+func TestRevokeWorkerAuditsAFailedRequeue(t *testing.T) {
+	s := apitest.New(t, func(s *apitest.Server) {
+		s.Deps.Workers.SetRevokeHooks(nil, failingRequeuer{})
+	})
+	owner := s.SeedUser("workers-revoke-fail@example.test", "correct horse battery")
+	org := s.SeedOrg("workers-revoke-fail", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/workers-revoke-fail"
+	zones, err := s.Deps.Hosts.ListZones(db.WithOrgScope(context.Background(), org), org)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones: %v", err)
+	}
+	w, err := s.Deps.Workers.Register(context.Background(), org, workers.RegisterInput{ZoneID: zones[0].ID, Name: "fra-1", CertSerial: big.NewInt(9001)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := postJSON(t, c, base+"/workers/"+w.ID.String()+"/revoke", nil)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("revoke with a failing requeue hook: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	list, err := s.Deps.Workers.List(context.Background(), org)
+	if err != nil || len(list) != 1 || list[0].Status != workers.StatusRevoked {
+		t.Fatalf("the worker must still be revoked despite the requeue failure: %+v, %v", list, err)
+	}
+
+	body := mustReadBody(t, requestJSON(t, c, http.MethodGet, base+"/activity?limit=100", nil))
+	if !strings.Contains(body, `"POST revokeWorker"`) || !strings.Contains(body, "requeue") {
+		t.Fatalf("activity feed lacks the failed-requeue revoke event: %s", body)
 	}
 }
 

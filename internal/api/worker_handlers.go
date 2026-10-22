@@ -138,11 +138,28 @@ func registerWorkerRoutes(hapi huma.API, deps Deps) {
 		}
 		w, res, err := deps.Workers.Revoke(ctx, scope.OrgID, id)
 		if err != nil {
+			// Revoke's own store write (marking the worker revoked) already
+			// committed by this point — only the job-requeue step that
+			// follows it failed (see the service method's own doc comment).
+			// auditMiddleware records nothing for a non-2xx response (by
+			// design: "only mutating calls that succeeded are recorded",
+			// see its own comment), which would otherwise leave this real,
+			// already-committed mutation with no trace beyond the slog line
+			// mapWorkersErr emits for an unmapped error. Recording it
+			// directly, instead of through setAuditObject, is what actually
+			// closes that gap rather than just moving a call that the
+			// middleware would discard anyway.
+			recordAuditFailure(ctx, deps, scope.OrgID, scope.UserID, "POST revokeWorker", "worker", id.String(),
+				fmt.Sprintf("revoked worker %s but requeueing its jobs failed: %v", w.Name, err))
 			return nil, mapWorkersErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), fmt.Sprintf("revoked worker %s (%d stream(s) closed, %d job(s) requeued, %d ended)", w.Name, res.Streams, res.Requeued, res.Ended))
+		zoneSlug, err := deps.Workers.ZoneSlug(ctx, scope.OrgID, w.ZoneID)
+		if err != nil {
+			return nil, mapWorkersErr(ctx, err)
+		}
 		out := &workerRevokeOutput{}
-		out.Body.Worker = toWorkerDTO(workers.View{Worker: w})
+		out.Body.Worker = toWorkerDTO(workers.View{Worker: w, ZoneSlug: zoneSlug})
 		out.Body.StreamsClosed, out.Body.JobsRequeued, out.Body.JobsEnded = res.Streams, res.Requeued, res.Ended
 		return out, nil
 	}, withAudit("revokeWorker", "worker"))

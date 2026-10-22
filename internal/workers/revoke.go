@@ -89,6 +89,36 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.store.Delete(ctx, orgID, id)
 }
 
+// zoneSlugs maps every zone of orgID to its slug, for ListView and ZoneSlug
+// to join in by zone id.
+func (s *Service) zoneSlugs(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]string, error) {
+	slugs := map[uuid.UUID]string{}
+	if s.zones == nil {
+		return slugs, nil
+	}
+	zones, err := s.zones.ListZones(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list zones: %w", err)
+	}
+	for _, z := range zones {
+		slugs[z.ID] = z.Slug
+	}
+	return slugs, nil
+}
+
+// ZoneSlug resolves one zone's slug. Revoke returns a bare Worker rather
+// than a View (ListView's join of worker + zone + online state + current
+// job), so the revoke response — which still has to carry a zone_slug, the
+// same schema every other worker DTO does — looks it up explicitly here
+// instead of pulling in the rest of View's joins it does not need.
+func (s *Service) ZoneSlug(ctx context.Context, orgID, zoneID uuid.UUID) (string, error) {
+	slugs, err := s.zoneSlugs(ctx, orgID)
+	if err != nil {
+		return "", err
+	}
+	return slugs[zoneID], nil
+}
+
 // ListView is the Workers page: every worker with its zone, online state
 // (seen within OnlineWindow), certificate expiry and current job.
 func (s *Service) ListView(ctx context.Context, orgID uuid.UUID) ([]View, error) {
@@ -100,15 +130,9 @@ func (s *Service) ListView(ctx context.Context, orgID uuid.UUID) ([]View, error)
 	if err != nil {
 		return nil, err
 	}
-	slugs := map[uuid.UUID]string{}
-	if s.zones != nil {
-		zones, err := s.zones.ListZones(ctx, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("list zones: %w", err)
-		}
-		for _, z := range zones {
-			slugs[z.ID] = z.Slug
-		}
+	slugs, err := s.zoneSlugs(ctx, orgID)
+	if err != nil {
+		return nil, err
 	}
 	now := s.now()
 	out := make([]View, len(list))

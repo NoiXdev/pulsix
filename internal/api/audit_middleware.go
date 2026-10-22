@@ -151,6 +151,30 @@ func setAuditObject(ctx context.Context, objectID, summary string) {
 	}
 }
 
+// recordAuditFailure records an audit event directly through deps.Audit,
+// bypassing auditMiddleware's own success-only gate (ctx.Status() < 300 —
+// see its comment). It exists for the rare handler whose underlying mutation
+// can partially commit before the request as a whole fails: ordinarily "the
+// request failed" and "nothing changed" are the same fact, and the
+// middleware's gate is right to treat them that way, but a handler that
+// knows otherwise — its own write already committed — needs its own way to
+// say so, since the gate itself cannot tell the difference between "nothing
+// happened" and "something happened, then something else failed".
+//
+// orgID and userID are passed explicitly rather than read off the request's
+// audit carrier (setAuditScope's normal path): a handler reaching for this
+// already has its resolved Scope in hand from requireOrg, and the carrier's
+// own fields are about to be read by a middleware pass that will throw this
+// event's summary away regardless (same gate, same reason).
+func recordAuditFailure(ctx context.Context, deps Deps, orgID, userID uuid.UUID, action, objectType, objectID, summary string) {
+	if err := deps.Audit.Record(db.WithOrgScope(ctx, orgID), audit.Event{
+		OrgID: &orgID, ActorID: &userID, ActorKind: actorKind(ctx),
+		Action: action, ObjectType: objectType, ObjectID: objectID, Summary: summary,
+	}); err != nil {
+		slog.ErrorContext(ctx, "audit: failed to record event", "err", err, "action", action)
+	}
+}
+
 // actorKind reports how the current request was authenticated, for an
 // event's ActorKind: "token" for a bearer API token (auth.Principal.TokenID
 // is set exactly when auth.Tokens.Resolve produced the principal — see its
