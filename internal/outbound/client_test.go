@@ -229,3 +229,53 @@ func TestNewClientDefaultsTheTimeout(t *testing.T) {
 		t.Fatalf("timeout = %s", c.Timeout)
 	}
 }
+
+// TestClientFallsBackToAnotherResolvedAddress is backlog 2.79. The dialer
+// checks the policy against EVERY address a name resolves to and refuses
+// the destination unless all of them pass — then dialled only the first
+// one. A receiver whose name carries an AAAA record the manager cannot
+// reach and an A record it can was therefore simply unreachable, even
+// though the working address had already been checked and approved. Since
+// every address in the list has passed the policy, trying the next one
+// after a dial failure cannot reach anywhere the first one was not already
+// allowed to.
+func TestClientFallsBackToAnotherResolvedAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	port := srv.URL[strings.LastIndex(srv.URL, ":")+1:]
+	// ::1 first, where nothing listens on this port; the server is on
+	// 127.0.0.1. Both are inside the policy's loopback range.
+	r := &fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("::1"), netip.MustParseAddr("127.0.0.1")}}
+	resp, err := outbound.NewClient(loopbackOnly(), 5*time.Second, r).Get("http://hooks.example.test:" + port + "/x")
+	if err != nil {
+		t.Fatalf("the second resolved address serves this request, so it must not fail: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+}
+
+// TestClientReportsEveryAddressWhenNoneConnects pins the other side of the
+// fallback: when no resolved address accepts the connection, the error
+// names them all rather than only the one the old code happened to try,
+// so an operator reading a delivery's last error sees the whole picture.
+func TestClientReportsEveryAddressWhenNoneConnects(t *testing.T) {
+	// A port nothing listens on: taken from a listener closed right away.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	r := &fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("::1"), netip.MustParseAddr("127.0.0.1")}}
+	_, err = outbound.NewClient(loopbackOnly(), 5*time.Second, r).Get(fmt.Sprintf("http://hooks.example.test:%d/x", port))
+	if err == nil {
+		t.Fatal("want a dial error, got none")
+	}
+	if !strings.Contains(err.Error(), "::1") || !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("error names only some addresses: %v", err)
+	}
+}
