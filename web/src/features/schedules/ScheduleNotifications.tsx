@@ -1,14 +1,10 @@
 import { useState } from 'react';
 import { Button } from '../../ui/button.tsx';
-import { Pill, type Tone } from '../../ui/badge.tsx';
+import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { type NotifyRuleInput, useChannels, useScheduleNotifications, useSetScheduleNotifications } from '../../api/hooks/useNotifications.ts';
-
-type Category = NotifyRuleInput['on'];
-const CATEGORIES: Category[] = ['failure', 'change', 'success', 'skipped'];
-const LABEL: Record<Category, string> = { failure: 'on failure', change: 'on change', success: 'on success', skipped: 'skipped / missed' };
-const TONE: Record<Category, Tone> = { failure: 'crit', change: 'warn', success: 'ok', skipped: 'unknown' };
+import { CATEGORIES, CATEGORY_LABEL as LABEL, CATEGORY_TONE as TONE, type Category } from './notifyCategory.ts';
 
 type Matrix = Record<string, Category[]>;
 

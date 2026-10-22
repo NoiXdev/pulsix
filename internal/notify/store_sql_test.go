@@ -64,3 +64,57 @@ func TestChannelStoreRoundTripAndIsolation(t *testing.T) {
 		t.Fatalf("second delete = %v", err)
 	}
 }
+
+// TestOrgScheduleCategoriesGroupsRowsBySchedule (2.73): one query for the
+// whole org must return every schedule's rows grouped correctly, so the
+// service layer's union lands on the right schedule rather than mixing two
+// schedules' categories together. newOutboxWorld's schedule has failure and
+// change on one channel and skipped on two others (one disabled) — this
+// store method does not care about a channel's enabled state, the same as
+// ScheduleRules it is modeled on: it is reporting what is configured, not
+// what would actually fire.
+func TestOrgScheduleCategoriesGroupsRowsBySchedule(t *testing.T) {
+	w := newOutboxWorld(t, "notify-categories")
+	st := notify.NewSQLStore(w.d)
+	scoped := db.WithOrgScope(ctx, w.org)
+
+	// A second, ruleless schedule in the same org must not appear at all.
+	q := gen.New(w.d.Pool())
+	inline := "- hosts: all\n  tasks: []\n"
+	pb, err := q.CreatePlaybook(ctx, gen.CreatePlaybookParams{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Inline: &inline, Source: "editor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := q.InsertTemplate(ctx, gen.InsertTemplateParams{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Name: "no-notify", PlaybookID: db.NullUUID(&pb.ID), Scope: []byte(`{}`), ExtraVars: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := q.CreateSchedule(ctx, gen.CreateScheduleParams{
+		ID: uuid.Must(uuid.NewV7()), OrgID: w.org, TemplateID: tmpl.ID, Name: "Bare", Mode: "cron", Cron: "0 4 * * *",
+		Timezone: "UTC", Guards: []byte(`{"overlap":"skip","catch_up":{"enabled":false,"window":"1h"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.OrgScheduleCategories(scoped, w.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, ok := got[w.schedule]
+	if !ok {
+		t.Fatalf("schedule %s missing from %+v", w.schedule, got)
+	}
+	seen := map[string]bool{}
+	for _, events := range rows {
+		for _, e := range events {
+			seen[e] = true
+		}
+	}
+	if len(seen) != 3 || !seen["failure"] || !seen["change"] || !seen["skipped"] {
+		t.Fatalf("categories seen for %s = %+v, want failure, change, skipped", w.schedule, seen)
+	}
+	if _, ok := got[bare.ID]; ok {
+		t.Fatalf("a schedule with no notify rules must not appear: %+v", got)
+	}
+}

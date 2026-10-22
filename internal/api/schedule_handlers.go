@@ -136,6 +136,13 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapSchedulesErr(ctx, err)
 		}
+		// One call for the whole list's notify_on column (backlog 2.73),
+		// not one per row — the same reasoning 2.94 gives for keeping a
+		// list endpoint's per-row work to a single round trip.
+		notifyOn, err := deps.Notify.OrgScheduleCategories(ctx, scope.OrgID)
+		if err != nil {
+			return nil, mapSchedulesErr(ctx, err)
+		}
 		out := &scheduleListOutput{}
 		out.Body.Schedules = make([]scheduleDTO, len(list))
 		for i, s := range list {
@@ -143,7 +150,7 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 			if r, ok := latest[s.ID]; ok {
 				last = &r
 			}
-			out.Body.Schedules[i] = toScheduleDTO(s, last)
+			out.Body.Schedules[i] = toScheduleDTO(s, last, notifyOn[s.ID])
 		}
 		return out, nil
 	})
@@ -327,7 +334,11 @@ func scheduleInput(b ScheduleBody) (schedules.Input, error) {
 
 func scheduleOut(s schedules.Schedule) *scheduleOutput {
 	out := &scheduleOutput{ETag: revisionETag(s.Revision)}
-	out.Body.Schedule = toScheduleDTO(s, nil)
+	// notify_on is the list endpoint's column (backlog 2.73); a single
+	// schedule's own notify rules are read live through
+	// GET .../notifications (the detail panel's ScheduleNotifications),
+	// not duplicated here.
+	out.Body.Schedule = toScheduleDTO(s, nil, nil)
 	return out
 }
 

@@ -132,6 +132,23 @@ func (st *SQLStore) ScheduleRules(ctx context.Context, orgID, scheduleID uuid.UU
 	return out, nil
 }
 
+// OrgScheduleCategories reads every (schedule, events) row of the
+// organization's schedule_notifications in one query (backlog 2.73),
+// grouping the raw per-channel event arrays by schedule id; Service's own
+// OrgScheduleCategories unions them into the distinct categories each
+// schedule's rules cover.
+func (st *SQLStore) OrgScheduleCategories(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][][]string, error) {
+	rows, err := st.q.ListOrgScheduleNotifyEvents(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list org schedule notify events: %w", err)
+	}
+	out := map[uuid.UUID][][]string{}
+	for _, r := range rows {
+		out[r.ScheduleID] = append(out[r.ScheduleID], r.Events)
+	}
+	return out, nil
+}
+
 // ReplaceScheduleRules swaps a schedule's rules in one transaction. A
 // foreign key violation means a channel that is not the organization's
 // (the schedule's existence is the caller's check).

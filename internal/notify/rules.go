@@ -42,6 +42,12 @@ type ChannelRef struct {
 type RuleStore interface {
 	ScheduleRules(ctx context.Context, orgID, scheduleID uuid.UUID) ([]ChannelRule, error)
 	ReplaceScheduleRules(ctx context.Context, orgID, scheduleID uuid.UUID, rules []ChannelRule) error
+	// OrgScheduleCategories lists every schedule of the organization that
+	// has at least one notify rule, each with the raw per-channel event
+	// categories it stores (one []string per channel row — a schedule can
+	// have several). OrgScheduleCategories (the Service method) unions
+	// these per schedule; the store stays a plain read.
+	OrgScheduleCategories(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][][]string, error)
 }
 
 const maxRules = 16
@@ -109,6 +115,38 @@ func (s *Service) ScheduleRules(ctx context.Context, orgID, scheduleID uuid.UUID
 		return nil, err
 	}
 	return splitRules(stored), nil
+}
+
+// OrgScheduleCategories reports, for every schedule of the organization
+// that has at least one notify rule, the distinct categories any of its
+// channels are told about — in canonical order, the same order
+// splitRules keeps rules in. It is the schedules list's "Notify" column
+// (backlog 2.73): one call for the whole list rather than one per
+// schedule row.
+func (s *Service) OrgScheduleCategories(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]Category, error) {
+	raw, err := s.d.Rules.OrgScheduleCategories(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID][]Category, len(raw))
+	for scheduleID, rows := range raw {
+		have := map[Category]bool{}
+		for _, events := range rows {
+			for _, e := range events {
+				if c, ok := ParseCategory(e); ok {
+					have[c] = true
+				}
+			}
+		}
+		var cats []Category
+		for _, c := range Categories() {
+			if have[c] {
+				cats = append(cats, c)
+			}
+		}
+		out[scheduleID] = cats
+	}
+	return out, nil
 }
 
 // SetScheduleRules replaces a schedule's rules and returns them as

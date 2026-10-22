@@ -13,9 +13,10 @@ import { may } from '../../lib/roles.ts';
 import { ScheduleCalendar } from '../calendar/ScheduleCalendar.tsx';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 import { OUTCOME_TONE } from './outcome.ts';
+import { CATEGORY_LABEL, CATEGORY_TONE, type Category } from './notifyCategory.ts';
 import { relative } from './simple.ts';
 
-const COLUMNS = '90px minmax(0, 1.2fr) minmax(0, 1fr) 90px 120px';
+const COLUMNS = '90px minmax(0, 1.2fr) minmax(0, 1fr) 90px 150px 90px';
 
 /** SchedulesPage is the Scheduler artboard (spec 2026-09-18 §2): every
  * schedule of the organization with status, template, timetable, next run
@@ -88,6 +89,7 @@ export function SchedulesPage() {
             <span>Schedule</span>
             <span>Cron</span>
             <span>Next</span>
+            <span>Notify</span>
             <span>Last</span>
           </GridHeader>
           {list.map((s) => (
@@ -105,6 +107,17 @@ export function SchedulesPage() {
                   {s.description && <span className="truncate text-[11px] text-muted-foreground">{s.description}</span>}
                 </span>
                 <span className="text-xs text-muted-foreground">{s.paused ? '—' : relative(s.next_run_at, now)}</span>
+                <span className="flex flex-wrap gap-1">
+                  {(s.notify_on ?? []).length === 0 ? (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  ) : (
+                    (s.notify_on as Category[]).map((c) => (
+                      <span key={c} title={CATEGORY_LABEL[c]}>
+                        <Pill tone={CATEGORY_TONE[c]}>{c}</Pill>
+                      </span>
+                    ))
+                  )}
+                </span>
                 <span>{s.last_run ? <Pill tone={OUTCOME_TONE[s.last_run.outcome] ?? 'unknown'}>{s.last_run.outcome}</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
               </GridRow>
             </div>
