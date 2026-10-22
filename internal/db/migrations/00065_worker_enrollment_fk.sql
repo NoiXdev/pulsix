@@ -11,6 +11,19 @@
 -- FK's default SET NULL clears every column in the FK, which would also
 -- null out org_id — itself NOT NULL — and abort the delete. Naming
 -- worker_id clears only that column.
+--
+-- A plain ADD CONSTRAINT validates every existing row, and worker_id has
+-- had no foreign key since 00027 while workers.Delete has always been
+-- reachable (revoke.go) — on any installation where a worker was deleted
+-- while an enrollment still named it, the dangling worker_id would fail
+-- validation and abort this migration outright. Nulling those rows first
+-- matches the ON DELETE SET NULL chosen above: the cleanup this migration
+-- does once is the same thing the constraint will do going forward.
+UPDATE worker_enrollments
+SET worker_id = NULL
+WHERE worker_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM workers w WHERE w.id = worker_enrollments.worker_id);
+
 ALTER TABLE worker_enrollments
   ADD CONSTRAINT worker_enrollments_worker_fk
   FOREIGN KEY (org_id, worker_id) REFERENCES workers (org_id, id) ON DELETE SET NULL (worker_id);
