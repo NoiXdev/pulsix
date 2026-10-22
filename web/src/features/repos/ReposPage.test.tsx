@@ -209,29 +209,6 @@ describe('ReposPage', () => {
     expect(screen.getByRole('option', { name: /New credential/ })).toBeInTheDocument();
   });
 
-  // v0.4g Task 7 fix round, Important 2: AddCredentialDialog defaults Kind
-  // to ssh_key, which Vault password's own filter (vault_password only)
-  // excludes — without initialKind, a credential created from this row
-  // would show as "(unavailable)" in the very field that just made it.
-  it('opens the credential dialog with Vault password already chosen from that create row', async () => {
-    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/orgs/acme': ADMIN_ORG,
-      'GET /api/v1/orgs/acme/repos': { repos: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
-    });
-    renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Add repository' }));
-
-    await user.click(screen.getByLabelText('Vault password'));
-    await user.keyboard('prod-vault');
-    await user.click(screen.getByRole('option', { name: /New credential/ }));
-
-    const addDialog = await screen.findByRole('dialog', { name: 'Add credential' });
-    expect(within(addDialog).getByLabelText('Name')).toHaveValue('prod-vault');
-    expect(within(addDialog).getByLabelText('Kind')).toHaveValue('Ansible Vault password');
-  });
-
   it('shows the server-mirror validation message at the field without a round trip', async () => {
     const user = userEvent.setup();
     const posted: unknown[] = [];
@@ -427,8 +404,9 @@ describe('ReposPage', () => {
     });
   });
 
-  // v0.2e Task 5: a repository's own labelled vault password set, beside
-  // the legacy single Vault password field.
+  // v0.2e Task 5: a repository's own labelled vault password set — the
+  // only way to configure one from v0.2e on (backlog 2.92 retired the
+  // legacy single Vault password field this dialog used to also show).
   describe('vault identities', () => {
     it('adds vault identity rows, each with a label and a credential picker, and posts them', async () => {
       const user = userEvent.setup();
@@ -544,40 +522,40 @@ describe('ReposPage', () => {
       expect(put).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
     });
 
-    // Review item 1: legacyVaultIdentities (internal/repos/service.go)
-    // ignores vault_credential_id the moment any identity row exists — a
-    // repository configured only through the legacy Vault password field,
-    // then given one identity row, loses that password from every run even
-    // though the field still shows it as set. The dialog must stop
-    // presenting that field as live the moment a row is added.
-    it('disables the legacy Vault password field once a vault identity row is added, and still saves the identity', async () => {
+    // Backlog 2.92: the dialog no longer shows or sends vault_credential_id
+    // at all. A repository configured only through that retired field
+    // before this fix shipped — migration 00059's backfill or the
+    // now-removed write-time bridge already gave it the matching
+    // vault_identities row, which is what the GET response below
+    // reproduces — must keep its resolved vault password across a save:
+    // the dialog loads the identities it was given and resubmits them
+    // unchanged, the same as any other unrelated-field edit.
+    it("keeps a legacy-configured repository's vault password on an unrelated save", async () => {
       const user = userEvent.setup();
       let put: unknown;
       mockApi({
         'GET /api/v1/orgs/acme': ORG,
-        'GET /api/v1/orgs/acme/repos': { repos: [repo({ vault_credential_id: 'c3' })] },
-        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd, vaultStaging] },
+        'GET /api/v1/orgs/acme/repos': {
+          repos: [repo({ vault_credential_id: 'c3', vault_identities: [{ credential_id: 'c3', label: 'default' }] })],
+        },
+        'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey, vaultProd] },
         'PUT /api/v1/orgs/acme/repos/r1': (req: MockRequest) => {
           put = req.body;
-          return { repo: repo({ vault_credential_id: 'c3' }) };
+          return { repo: repo({ branch: 'release' }) };
         },
       });
       renderPage();
       await user.click(await screen.findByRole('button', { name: 'infra' }));
       const dialog = await screen.findByRole('dialog', { name: 'infra' });
-      const vaultSelect = within(dialog).getByLabelText('Vault password');
-      expect(vaultSelect).toHaveValue('vault-prod');
-      expect(vaultSelect).not.toBeDisabled();
+      expect(within(dialog).queryByLabelText('Vault password')).not.toBeInTheDocument();
 
-      await user.click(within(dialog).getByRole('button', { name: 'Add vault password' }));
-      await user.type(within(dialog).getByLabelText('Vault identity 1 label'), 'staging');
-      await pickOption(screen, 'Vault identity 1 credential', { value: 'c4' });
-
-      expect(vaultSelect).toBeDisabled();
-      expect(within(dialog).getByText(/Ignored while any Vault identity below is set/)).toBeInTheDocument();
-
+      const branch = within(dialog).getByLabelText('Branch');
+      await user.clear(branch);
+      await user.type(branch, 'release');
       await user.click(within(dialog).getByRole('button', { name: 'Save repository' }));
-      expect(put).toMatchObject({ vault_identities: [{ label: 'staging', credential_id: 'c4' }] });
+
+      expect(put).toMatchObject({ vault_identities: [{ label: 'default', credential_id: 'c3' }] });
+      expect(put).not.toHaveProperty('vault_credential_id');
     });
   });
 });

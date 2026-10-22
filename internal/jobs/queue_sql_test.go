@@ -943,16 +943,18 @@ func TestQueueFinishCompletesTheRepoKeyPin(t *testing.T) {
 	}
 }
 
-// TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel is the
-// write-time bridge's own regression test: a repository configured only
-// through the old single VaultCredentialID column — the only vault control
-// the product's web UI has today (RepoDialog.tsx has no VaultIdentities
-// editor) — must still decrypt on a real claim. Through the real
-// repos.Service, not a fake, so repos.Service.Create's bridge
-// (legacyVaultIdentities) is what is actually under test, on the
-// workerpb.Job the claim produces, not an intermediate. This is the
-// regression the coordinator found: before the bridge, this resolved to
-// zero vault identities, silently.
+// TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel outlived
+// the write-time bridge it was first written to pin (repos.Service.Create's
+// legacyVaultIdentities, removed by backlog 2.92): the bridge used to turn
+// a posted VaultCredentialID into a synthesized {label: "default"} link row
+// so a repository configured only through the old column would not
+// silently claim with zero vault identities. The service no longer writes
+// that row at all — VaultCredentialID is refused outright — but a
+// repository that already has the row (migration 00059's backfill, or an
+// earlier write through the bridge before 2.92 shipped) must still claim
+// correctly, which is what this test now pins: the repo row is built
+// directly through the store, the shape real pre-2.92 data already has,
+// rather than through repos.Service.Create, which would refuse it.
 func TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -1026,14 +1028,22 @@ func TestQueueClaimLegacyVaultCredentialAloneResolvesToTheDefaultLabel(t *testin
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, sharedSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, invSvc, hostsSvc, credsSvc, box)
 
-	repo, err := reposSvc.Create(scoped, org, repos.CreateInput{
-		Name: "infra", URL: "https://git.example.com/acme/infra.git",
-		// The legacy field alone — no VaultIdentities — is exactly what
-		// RepoDialog.tsx still sends today.
+	// Built directly through the store, not reposSvc.Create — which now
+	// refuses a non-nil VaultCredentialID outright (backlog 2.92) — to
+	// reproduce the shape a repository saved before that fix already has:
+	// the legacy column set, and the "default"-labelled link row the
+	// now-removed bridge (or migration 00059's backfill) already wrote for
+	// it.
+	repoStore := repos.NewSQLStore(d)
+	repo, err := repoStore.Create(scoped, repos.Repo{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra", URL: "https://git.example.com/acme/infra.git", Branch: "main",
 		VaultCredentialID: &vaultCred.ID,
 	})
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
+	}
+	if err := repoStore.ReplaceRepoVaultIdentities(scoped, org, repo.ID, []repos.VaultIdentity{{CredentialID: vaultCred.ID, Label: "default"}}); err != nil {
+		t.Fatalf("seed repo vault identities: %v", err)
 	}
 	pb, err := playbooksSvc.CreateRepo(scoped, org, repo.ID, "site.yml")
 	if err != nil {

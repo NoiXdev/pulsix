@@ -226,46 +226,15 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err != nil {
 		return Repo{}, err
 	}
-	identities := legacyVaultIdentities(in.VaultCredentialID, in.VaultIdentities)
-	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, identities); err != nil {
+	// validate above already refuses a non-nil in.VaultCredentialID
+	// (backlog 2.92: the bridge that used to turn it into a synthesized
+	// {label: "default"} entry here is retired), so VaultIdentities is
+	// always the whole truth by this point — no merge needed.
+	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, created.ID, in.VaultIdentities); err != nil {
 		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
 	}
-	created.VaultIdentities = identities
+	created.VaultIdentities = in.VaultIdentities
 	return created, nil
-}
-
-// legacyVaultIdentities is the write-time bridge for VaultCredentialID, the
-// single-password slot the claim path (internal/jobs) stopped reading once
-// it moved to this link table (ListRepoVaultIdentities) — a repository
-// configured solely through the old field would otherwise go silently
-// passwordless on every run. The two inputs are never merged;
-// VaultIdentities, whenever it is non-empty, is the whole truth:
-//
-//   - identities given: returned as-is; VaultCredentialID is still stored
-//     on the row (an additive column, spec decision 5) but contributes
-//     nothing to what a run receives.
-//   - identities empty, VaultCredentialID set: synthesizes the one-entry
-//     "default" set — the exact label migration 00059's backfill used, so
-//     a repository configured this way and a migrated one are
-//     indistinguishable to the claim path.
-//   - both empty: no vault identities.
-//
-// This is temporary scaffolding, not a second permanent source of truth.
-// The condition for retiring it — a VaultIdentities editor in the product's
-// UI, so freezing this write path (refusing VaultCredentialID once anything
-// is set) would not break the only working way to configure a repository's
-// vault password — is now met: RepoDialog.tsx's VaultIdentitiesField edits
-// the labelled set directly. Backlog 2.92 tracks removing this bridge (and
-// 2.93 dropping the now-write-only VaultCredentialID column once a release
-// has shipped without it).
-func legacyVaultIdentities(vaultCredentialID *uuid.UUID, identities []VaultIdentity) []VaultIdentity {
-	if len(identities) > 0 {
-		return identities
-	}
-	if vaultCredentialID != nil {
-		return []VaultIdentity{{CredentialID: *vaultCredentialID, Label: "default"}}
-	}
-	return identities
 }
 
 // Get returns one repository, with its vault identity set attached,
@@ -342,11 +311,13 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err != nil {
 		return Repo{}, err
 	}
-	identities := legacyVaultIdentities(in.VaultCredentialID, in.VaultIdentities)
-	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, identities); err != nil {
+	// validate above already refuses a non-nil in.VaultCredentialID
+	// (backlog 2.92), so VaultIdentities is always the whole truth here —
+	// the same reasoning Create's own comment gives.
+	if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, in.VaultIdentities); err != nil {
 		return Repo{}, fmt.Errorf("store repo vault identities: %w", err)
 	}
-	updated.VaultIdentities = identities
+	updated.VaultIdentities = in.VaultIdentities
 	return updated, nil
 }
 
@@ -437,7 +408,20 @@ func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUI
 // with encrypted vars" (no git credential, but a vault password) silently
 // skip vault validation entirely. Fixed here: the git credential's own
 // absence short-circuits only its own check now, never the two below it.
+//
+// vaultCredentialID itself is refused outright whenever it is set (backlog
+// 2.92): the single-password slot's write-time bridge into VaultIdentities
+// (legacyVaultIdentities, now removed) is retired now that the condition
+// for retiring it — a VaultIdentities editor in the product's UI — is met
+// (RepoDialog.tsx's VaultIdentitiesField, 2.89's Task 5). The field stays
+// on CreateInput/UpdateInput, and on the API's request body, specifically
+// so a client still sending it gets this 400 naming the replacement
+// instead of huma silently dropping an undeclared field — "refused with a
+// reason" rather than "silently ignored" is the whole point.
 func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, vaultCredentialID *uuid.UUID, name, url, branch, subpath string, vaultIdentities []VaultIdentity) error {
+	if vaultCredentialID != nil {
+		return fmt.Errorf("%w: vault_credential_id no longer accepts a write; configure the repository's vault password through vault_identities instead", ErrInvalidInput)
+	}
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%w: invalid name: must be lowercase letters, digits, dots, underscores or hyphens (1–63 characters), starting with a letter or digit", ErrInvalidInput)
 	}
@@ -451,9 +435,6 @@ func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, v
 		return fmt.Errorf("%w: invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no \"..\"", ErrInvalidInput)
 	}
 	if err := s.validateGitCredential(ctx, orgID, credentialID); err != nil {
-		return err
-	}
-	if err := s.validateVaultCredential(ctx, orgID, vaultCredentialID); err != nil {
 		return err
 	}
 	return s.validateVaultIdentities(ctx, orgID, vaultIdentities)
@@ -485,8 +466,9 @@ func (s *Service) validateGitCredential(ctx context.Context, orgID uuid.UUID, cr
 // must be unique within the set — the table's own PRIMARY KEY (repo_id,
 // label) would otherwise turn a duplicate into a 500 from the store instead
 // of a 400 naming the mistake. Each credential must exist and be a
-// vault_password credential, the same rule validateVaultCredential applies
-// to the single VaultCredentialID slot beside this set.
+// vault_password credential (validateVaultCredential, below) — the only
+// place that check still runs now that the legacy single VaultCredentialID
+// slot no longer accepts a write at all (backlog 2.92).
 func (s *Service) validateVaultIdentities(ctx context.Context, orgID uuid.UUID, identities []VaultIdentity) error {
 	seen := make(map[string]bool, len(identities))
 	for _, identity := range identities {
@@ -505,12 +487,14 @@ func (s *Service) validateVaultIdentities(ctx context.Context, orgID uuid.UUID, 
 	return nil
 }
 
-// validateVaultCredential refuses anything but a vault_password in the
-// repository's vault slot. The kinds are not interchangeable and the
-// failure of a wrong one is remote from its cause: a git_token accepted
-// here would be written out as a password file, Ansible would try to
-// decrypt with it, and the operator would see "decryption failed" with
-// nothing pointing back at the repository form.
+// validateVaultCredential refuses anything but a vault_password credential —
+// called once per entry of the labelled vault identity set (the legacy,
+// single VaultCredentialID slot this used to also validate is refused
+// outright before reaching here; see validate's own comment). The kinds are
+// not interchangeable and the failure of a wrong one is remote from its
+// cause: a git_token accepted here would be written out as a password
+// file, Ansible would try to decrypt with it, and the operator would see
+// "decryption failed" with nothing pointing back at the repository form.
 func (s *Service) validateVaultCredential(ctx context.Context, orgID uuid.UUID, id *uuid.UUID) error {
 	if id == nil {
 		return nil

@@ -64,15 +64,17 @@ type repoDTO struct {
 	Branch       string `json:"branch"`
 	Subpath      string `json:"subpath"`
 	CredentialID string `json:"credential_id,omitempty"`
-	// VaultCredentialID names the vault_password credential Ansible needs
-	// for this repository's encrypted files, absent when it has none. A
-	// second field rather than a second use of CredentialID: one secret
-	// reaches the repository, the other its contents.
+	// VaultCredentialID is read-only history (backlog 2.92): a value
+	// written before that fix still reads back here, absent for a
+	// repository that never had one, but repos.Service refuses it on every
+	// Create/Update now — vault_identities is the only way to set a
+	// repository's vault password. The column itself stays (dropping it is
+	// backlog 2.93, which waits for a shipped release); this field goes
+	// away with it.
 	VaultCredentialID string `json:"vault_credential_id,omitempty"`
 	// VaultIdentities is this repository's own labelled vault password set
-	// (spec decision 1, migration 00059), superseding the single
-	// VaultCredentialID above for anything v0.2e onward writes. 4b resolves
-	// it against the job template's own on a run.
+	// (spec decision 1, migration 00059), the only way to write one from
+	// v0.2e on. 4b resolves it against the job template's own on a run.
 	VaultIdentities []vaultIdentityDTO `json:"vault_identities"`
 	// SSHHostKey is the git server's pinned host-key fingerprint (backlog
 	// 2.41), absent while the repository is unpinned (trust on first use).
@@ -166,10 +168,15 @@ type repoDetailOutput struct {
 type repoCreateInput struct {
 	Org  string `path:"org"`
 	Body struct {
-		Name              string             `json:"name" minLength:"1" maxLength:"63"`
-		URL               string             `json:"url" minLength:"1" maxLength:"500"`
-		Branch            string             `json:"branch,omitempty" maxLength:"100"`
-		Subpath           string             `json:"subpath,omitempty" maxLength:"200"`
+		Name    string `json:"name" minLength:"1" maxLength:"63"`
+		URL     string `json:"url" minLength:"1" maxLength:"500"`
+		Branch  string `json:"branch,omitempty" maxLength:"100"`
+		Subpath string `json:"subpath,omitempty" maxLength:"200"`
+		// VaultCredentialID stays on the schema deliberately (backlog
+		// 2.92), even though repos.Service refuses a non-empty value with
+		// a 400 on every write: dropping the field here would make huma
+		// silently ignore it instead, which would read to an old client as
+		// "accepted and applied" when it was neither.
 		CredentialID      string             `json:"credential_id,omitempty"`
 		VaultCredentialID string             `json:"vault_credential_id,omitempty"`
 		VaultIdentities   []vaultIdentityDTO `json:"vault_identities,omitempty"`
@@ -180,10 +187,11 @@ type repoUpdateInput struct {
 	Org  string `path:"org"`
 	ID   string `path:"id"`
 	Body struct {
-		Name              string             `json:"name" minLength:"1" maxLength:"63"`
-		URL               string             `json:"url" minLength:"1" maxLength:"500"`
-		Branch            string             `json:"branch,omitempty" maxLength:"100"`
-		Subpath           string             `json:"subpath,omitempty" maxLength:"200"`
+		Name    string `json:"name" minLength:"1" maxLength:"63"`
+		URL     string `json:"url" minLength:"1" maxLength:"500"`
+		Branch  string `json:"branch,omitempty" maxLength:"100"`
+		Subpath string `json:"subpath,omitempty" maxLength:"200"`
+		// See repoCreateInput's own comment on VaultCredentialID.
 		CredentialID      string             `json:"credential_id,omitempty"`
 		VaultCredentialID string             `json:"vault_credential_id,omitempty"`
 		VaultIdentities   []vaultIdentityDTO `json:"vault_identities,omitempty"`
