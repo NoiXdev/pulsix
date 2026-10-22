@@ -1,6 +1,7 @@
 package templates_test
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"testing"
@@ -233,5 +234,53 @@ func TestSQLStoreForeignKeysRejectCrossOrgReferences(t *testing.T) {
 		ID: uuid.Must(uuid.NewV7()), OrgID: org, PlaybookID: localPlaybook, Name: "cred-foreign", CredentialID: &otherCred,
 	}); !errors.Is(err, templates.ErrNotFound) {
 		t.Fatalf("foreign credential = %v, want ErrNotFound", err)
+	}
+}
+
+// failingVaultStore is the real SQL store with one write made to fail:
+// everything, including InTx, goes to Postgres, so a rollback here is a
+// real rollback and not a fake's bookkeeping.
+type failingVaultStore struct {
+	*templates.SQLStore
+	err error
+}
+
+func (s failingVaultStore) ReplaceVaultCredentials(context.Context, uuid.UUID, uuid.UUID, []templates.VaultCredential) error {
+	return s.err
+}
+
+// TestATemplateAndItsVaultCredentialsLandTogetherOrNotAtAll is backlog
+// 2.95 for templates: the row names repositories, but templates.Service
+// had the identical split from the identical v0.2e work — Create wrote
+// the template row and then its labelled vault credential set as two
+// separate statements. A failure in between left a template stored with
+// none of the vault passwords its request named, which shows up not at
+// save time but as a decryption failure on the next run.
+func TestATemplateAndItsVaultCredentialsLandTogetherOrNotAtAll(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedTemplatesOrg(t, gen.New(d.Pool()), "tmpl-atomic")
+	playbookID := seedEditorPlaybook(t, d, org)
+	cred := seedTemplateVaultCredential(t, d, org, "prod vault")
+	real := templates.NewSQLStore(d)
+	store := failingVaultStore{SQLStore: real, err: errors.New("the connection went away")}
+	// The real credential store, so the service's own validation of the
+	// named vault credential runs for real and the failure under test is
+	// the store write, not a short-circuit before it.
+	svc := templates.NewService(store, playbooks.NewSQLStore(d), nil, nil, credentials.NewSQLStore(d), crypto.NewBox(testBoxKey("tmpl-atomic-key-1234")))
+
+	scoped := db.WithOrgScope(ctx, org)
+	if _, err := svc.Create(scoped, org, templates.CreateInput{
+		Name: "deploy", PlaybookID: playbookID,
+		VaultCredentials: []templates.VaultCredential{{CredentialID: cred, Label: "prod"}},
+	}); err == nil {
+		t.Fatal("want the vault credential write's failure")
+	}
+
+	list, err := real.List(scoped, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("%d templates survived a failed vault credential write: the row and its vault passwords must land together or not at all", len(list))
 	}
 }

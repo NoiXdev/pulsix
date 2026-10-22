@@ -64,6 +64,14 @@ func (f *fakeStore) ListOrgVaultCredentials(_ context.Context, _ uuid.UUID) (map
 	return out, nil
 }
 
+// InTx runs fn straight through: this fake keeps its state in maps with
+// no rollback, so it can model the service CALLING for a transaction but
+// not what one does. The rollback is pinned against real Postgres in
+// store_sql_test.go (backlog 2.95).
+func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 func (f *fakeStore) Create(_ context.Context, t templates.Template) (templates.Template, error) {
 	if f.nextErr != nil {
 		err := f.nextErr

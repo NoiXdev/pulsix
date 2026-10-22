@@ -29,6 +29,15 @@ type SQLStore struct {
 // NewSQLStore builds the store.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 
+// InTx implements Store: one organization-scoped write transaction that
+// every store call made with the context it passes to fn joins, since
+// this store's *db.DB picks a bound transaction up from the context
+// (db.WithWriteTx). Nested use is not supported — db.beginOrg always
+// begins a fresh pool transaction rather than joining one already bound.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.d.WithWriteTx(ctx, orgID, fn)
+}
+
 func (s *SQLStore) Create(ctx context.Context, t Template) (Template, error) {
 	scope, err := json.Marshal(t.Scope)
 	if err != nil {

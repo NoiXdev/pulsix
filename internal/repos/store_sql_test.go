@@ -12,6 +12,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/shared"
 )
@@ -352,3 +353,60 @@ func TestSQLStoreHostKeyPin(t *testing.T) {
 		t.Fatalf("cross-org unpin = %v, want ErrNotFound", err)
 	}
 }
+
+// failingIdentityStore is the real SQL store with one write made to fail:
+// everything, including InTx, goes to Postgres, so a rollback here is a
+// real rollback and not a fake's bookkeeping.
+type failingIdentityStore struct {
+	*repos.SQLStore
+	err error
+}
+
+func (s failingIdentityStore) ReplaceRepoVaultIdentities(context.Context, uuid.UUID, uuid.UUID, []repos.VaultIdentity) error {
+	return s.err
+}
+
+// TestARepositoryAndItsVaultIdentitiesLandTogetherOrNotAtAll is backlog
+// 2.95. Create wrote the repository row and then its labelled vault
+// identity set as two separate statements — each atomic on its own,
+// neither atomic with the other. A failure in between (a dropped
+// connection, a crashed manager) left a repository stored with none of
+// the vault passwords its request named, while the caller got an error
+// and would reasonably assume nothing was stored. Worse, the damage is
+// invisible at save time: it first shows up as a decryption failure on
+// the next run, with nothing wrong-looking in the configuration.
+func TestARepositoryAndItsVaultIdentitiesLandTogetherOrNotAtAll(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "repo-atomic")
+	cred := seedVaultCredential(t, d, org, "prod vault")
+	real := repos.NewSQLStore(d)
+	store := failingIdentityStore{SQLStore: real, err: errors.New("the connection went away")}
+	svc := repos.NewService(store, credentialsSource(d), noSync{})
+
+	_, err := svc.Create(db.WithOrgScope(ctx, org), org, repos.CreateInput{
+		Name: "infra", URL: "https://git.example.test/infra.git",
+		VaultIdentities: []repos.VaultIdentity{{CredentialID: cred, Label: "prod"}},
+	})
+	if err == nil {
+		t.Fatal("want the identity write's failure")
+	}
+
+	list, lerr := real.List(db.WithOrgScope(ctx, org), org)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(list) != 0 {
+		t.Fatalf("%d repositories survived a failed identity write: the row and its vault passwords must land together or not at all", len(list))
+	}
+}
+
+// noSync satisfies repos.JobEnqueuer for a test that never syncs.
+type noSync struct{}
+
+func (noSync) EnqueueSync(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) (jobs.Job, error) {
+	return jobs.Job{}, nil
+}
+
+// credentialsSource is the real credential store, so the service's own
+// validation of the named vault credential runs for real too.
+func credentialsSource(d *db.DB) repos.CredentialSource { return credentials.NewSQLStore(d) }
