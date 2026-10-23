@@ -130,7 +130,10 @@ func TestDigestTicker(t *testing.T) {
 	if !ok || sum.Timezone != "Europe/Berlin" || !sum.To.Equal(now.Add(-30*time.Second)) || !sum.From.Equal(sum.To.AddDate(0, 0, -7)) {
 		t.Fatalf("on-time digest = %+v, %v", sum, ok)
 	}
-	if _, sent := outbox.sums[late]; sent || q.handled[late] != nil {
+	// A late digest reports ErrDigestSkipped rather than nil since
+	// backlog 2.82: the store has to tell "we passed this week over"
+	// from "we sent it", because only the second may stamp last_period.
+	if _, sent := outbox.sums[late]; sent || !errors.Is(q.handled[late], notify.ErrDigestSkipped) {
 		t.Fatalf("a digest two days late must be skipped (and advanced), got sent=%v err=%v", sent, q.handled[late])
 	}
 	q.due = []notify.DueDigest{{OrgID: broken, Occurrence: now}}

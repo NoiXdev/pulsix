@@ -14,16 +14,23 @@ import (
 )
 
 const advanceNotificationDigest = `-- name: AdvanceNotificationDigest :exec
-UPDATE notification_digests SET next_run_at = $1, last_period = $2
+UPDATE notification_digests
+SET next_run_at = $1,
+    last_period = COALESCE($2::text, last_period),
+    retry_after = NULL
 WHERE org_id = $3
 `
 
 type AdvanceNotificationDigestParams struct {
 	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
-	LastPeriod string             `json:"last_period"`
+	LastPeriod *string            `json:"last_period"`
 	OrgID      uuid.UUID          `json:"org_id"`
 }
 
+// last_period is the record of what was DELIVERED, so a NULL leaves it
+// as it is: a digest skipped for being more than a day late advances
+// next_run_at like any other, but must not claim to have sent the week
+// it skipped (backlog 2.82).
 func (q *Queries) AdvanceNotificationDigest(ctx context.Context, arg AdvanceNotificationDigestParams) error {
 	_, err := q.db.Exec(ctx, advanceNotificationDigest, arg.NextRunAt, arg.LastPeriod, arg.OrgID)
 	return err
@@ -197,6 +204,25 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 	return i, err
 }
 
+const delayNotificationDigest = `-- name: DelayNotificationDigest :exec
+UPDATE notification_digests SET retry_after = $1
+WHERE org_id = $2
+`
+
+type DelayNotificationDigestParams struct {
+	RetryAfter pgtype.Timestamptz `json:"retry_after"`
+	OrgID      uuid.UUID          `json:"org_id"`
+}
+
+// Holds a digest whose attempt failed out of the due scan until
+// retry_after, so the organizations behind it get their turn (backlog
+// 2.82). next_run_at is untouched: it names the occurrence the message
+// is about, not when to try again.
+func (q *Queries) DelayNotificationDigest(ctx context.Context, arg DelayNotificationDigestParams) error {
+	_, err := q.db.Exec(ctx, delayNotificationDigest, arg.RetryAfter, arg.OrgID)
+	return err
+}
+
 const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
 DELETE FROM notification_channels WHERE org_id = $1 AND id = $2
 `
@@ -343,7 +369,7 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 }
 
 const getNotificationDigest = `-- name: GetNotificationDigest :one
-SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at FROM notification_digests WHERE org_id = $1
+SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at, retry_after FROM notification_digests WHERE org_id = $1
 `
 
 func (q *Queries) GetNotificationDigest(ctx context.Context, orgID uuid.UUID) (NotificationDigest, error) {
@@ -358,6 +384,7 @@ func (q *Queries) GetNotificationDigest(ctx context.Context, orgID uuid.UUID) (N
 		&i.NextRunAt,
 		&i.LastPeriod,
 		&i.UpdatedAt,
+		&i.RetryAfter,
 	)
 	return i, err
 }
@@ -642,8 +669,10 @@ func (q *Queries) ListScheduleNotifications(ctx context.Context, arg ListSchedul
 }
 
 const lockDueDigests = `-- name: LockDueDigests :many
-SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at FROM notification_digests
-WHERE enabled AND next_run_at <= $1::timestamptz
+SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at, retry_after FROM notification_digests
+WHERE enabled
+  AND next_run_at <= $1::timestamptz
+  AND (retry_after IS NULL OR retry_after <= $1::timestamptz)
 ORDER BY next_run_at
 LIMIT $2
 FOR NO KEY UPDATE SKIP LOCKED
@@ -655,7 +684,10 @@ type LockDueDigestsParams struct {
 }
 
 // The digest ticker's due scan: raw pool, bypass policy, every org, SKIP
-// LOCKED like the schedule ticker.
+// LOCKED like the schedule ticker. retry_after holds a row whose last
+// attempt failed out of the scan for a while, so a persistently failing
+// organization cannot keep the oldest next_run_at and crowd every
+// healthy one out of the batch (backlog 2.82).
 func (q *Queries) LockDueDigests(ctx context.Context, arg LockDueDigestsParams) ([]NotificationDigest, error) {
 	rows, err := q.db.Query(ctx, lockDueDigests, arg.Now, arg.Lim)
 	if err != nil {
@@ -674,6 +706,7 @@ func (q *Queries) LockDueDigests(ctx context.Context, arg LockDueDigestsParams) 
 			&i.NextRunAt,
 			&i.LastPeriod,
 			&i.UpdatedAt,
+			&i.RetryAfter,
 		); err != nil {
 			return nil, err
 		}
@@ -886,7 +919,7 @@ INSERT INTO notification_digests (org_id, enabled, weekday, at_time, timezone, n
 VALUES ($1, $2, $3, $4, $5, $6, now())
 ON CONFLICT (org_id) DO UPDATE SET enabled = EXCLUDED.enabled, weekday = EXCLUDED.weekday,
   at_time = EXCLUDED.at_time, timezone = EXCLUDED.timezone, next_run_at = EXCLUDED.next_run_at, updated_at = now()
-RETURNING org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at
+RETURNING org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at, retry_after
 `
 
 type UpsertNotificationDigestParams struct {
@@ -917,6 +950,7 @@ func (q *Queries) UpsertNotificationDigest(ctx context.Context, arg UpsertNotifi
 		&i.NextRunAt,
 		&i.LastPeriod,
 		&i.UpdatedAt,
+		&i.RetryAfter,
 	)
 	return i, err
 }

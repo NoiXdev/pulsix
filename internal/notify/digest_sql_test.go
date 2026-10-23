@@ -3,6 +3,7 @@ package notify_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,7 +71,11 @@ func TestDigestStoreTickAndOutbox(t *testing.T) {
 	if _, err := w.d.Pool().Exec(ctx, `UPDATE notification_digests SET timezone = 'Mars/Olympus' WHERE org_id = $1`, w.org); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ticker(time.Date(2026, 10, 5, 8, 1, 0, 0, time.UTC), fixedBuilder{sum: week}).Tick(ctx); err != nil {
+	// Past the failed attempt's retry window (digestRetryDelay, backlog
+	// 2.82): the tick above failed to build, so the row is held out of
+	// the due scan for a while. Nothing is sent meanwhile, and the
+	// broken settings are caught on the next scan that reaches it.
+	if _, err := ticker(time.Date(2026, 10, 5, 8, 16, 0, 0, time.UTC), fixedBuilder{sum: week}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var enabled bool
@@ -205,3 +210,186 @@ func TestDigestStoreCommitsAfterAHandleSlowerThanTheWriteTimeout(t *testing.T) {
 // slowHandle exceeds digestWriteTimeout (10s, unexported), the budget one
 // row's write-back gets once handle has returned.
 const slowHandle = 11 * time.Second
+
+// TestADigestSkippedForBeingLateIsNotRecordedAsSent is backlog 2.82. A
+// digest more than maxDigestLate overdue is skipped on purpose — the
+// manager was down and the week it covers has passed — and the ticker
+// signalled that by returning nil from handle, which processOne could
+// not tell from a successful send. So the row advanced to next week AND
+// stamped last_period with an occurrence nothing was ever sent for.
+// last_period is the record of what WAS delivered; a skipped period
+// must leave it alone while next_run_at still moves on.
+func TestADigestSkippedForBeingLateIsNotRecordedAsSent(t *testing.T) {
+	w := newOutboxWorld(t, "digest-late")
+	scoped := db.WithOrgScope(ctx, w.org)
+	store := notify.NewSQLStore(w.d)
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	svc := notify.NewService(notify.Deps{Channels: store, Digests: store, Now: func() time.Time { return now }})
+	if _, err := svc.SetDigest(scoped, w.org, notify.DigestInput{
+		Enabled: true, Weekday: "mon", Time: "08:00", Timezone: "UTC", Channels: []uuid.UUID{w.chA.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	due := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+
+	// First, a real send, so last_period holds something a wrong write
+	// would visibly overwrite.
+	week := notify.DigestSummary{Schedules: []notify.DigestSchedule{{Name: "Nightly", Runs: 2}}}
+	ticker := func(at time.Time) *notify.DigestTicker {
+		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet()), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return at }, nil, quiet())
+	}
+	if n, err := ticker(due.Add(30 * time.Second)).Tick(ctx); err != nil || n != 1 {
+		t.Fatalf("the first Tick = %d, %v", n, err)
+	}
+	sent := (notify.DueDigest{Occurrence: due}).Key()
+	if got := lastPeriod(t, w); got != sent {
+		t.Fatalf("last_period after a real send = %q, want %q", got, sent)
+	}
+
+	// Now the next occurrence comes due while the manager is away for
+	// two days, so the tick that finally runs is past maxDigestLate.
+	nextDue := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+	queuedBefore := len(w.queued(t))
+	if n, err := ticker(nextDue.Add(48 * time.Hour)).Tick(ctx); err != nil || n != 1 {
+		t.Fatalf("the late Tick = %d, %v", n, err)
+	}
+	if got := len(w.queued(t)); got != queuedBefore {
+		t.Fatalf("a skipped digest queued %d new messages", got-queuedBefore)
+	}
+	// It moved on — the skipped week is not retried for ever...
+	after, err := svc.Digest(scoped, w.org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.NextRunAt == nil || !after.NextRunAt.After(nextDue) {
+		t.Fatalf("next_run_at = %v, want it advanced past the skipped occurrence", after.NextRunAt)
+	}
+	// ...but it did not claim to have sent it.
+	if got := lastPeriod(t, w); got != sent {
+		t.Fatalf("last_period = %q, want it still %q: nothing was sent for the skipped week", got, sent)
+	}
+}
+
+func lastPeriod(t *testing.T, w *outboxWorld) string {
+	t.Helper()
+	var period string
+	if err := w.d.Pool().QueryRow(ctx, `SELECT last_period FROM notification_digests WHERE org_id = $1`, w.org).Scan(&period); err != nil {
+		t.Fatal(err)
+	}
+	return period
+}
+
+// TestAFailingDigestDoesNotStarveTheOthers is backlog 2.82. LockDueDigests
+// orders by next_run_at and takes the oldest digestBatch rows. A digest
+// whose build keeps failing never advances, so it keeps the oldest
+// next_run_at and is re-selected on every tick — and with digestBatch
+// such organizations, no healthy one ever gets a slot. Each jam only
+// clears when the stuck rows pass maxDigestLate, by which point the
+// healthy digests behind them are themselves too late to send: they are
+// skipped, silently, for that week.
+//
+// Two organizations and a batch of one reproduce it exactly: the
+// failing one is due first, so without a retry delay the healthy one is
+// never reached.
+func TestAFailingDigestDoesNotStarveTheOthers(t *testing.T) {
+	w := newOutboxWorld(t, "digest-starve")
+	other := seedOrg(t, w.d, "digest-starve-other")
+	store := notify.NewSQLStore(w.d)
+	due := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+
+	// The failing organization is due a minute earlier, so it sorts
+	// first on every scan.
+	setDigest(t, w.d, store, w.org, due.Add(-time.Minute))
+	setDigest(t, w.d, store, other, due)
+
+	handled := map[uuid.UUID]int{}
+	st := notify.NewDigestSQLStore(w.d, quiet())
+	run := func(now time.Time) {
+		t.Helper()
+		if _, err := st.ProcessDue(ctx, now, 1, func(_ context.Context, _ pgx.Tx, d notify.DueDigest) error {
+			handled[d.OrgID]++
+			if d.OrgID == w.org {
+				return errors.New("this organization's digest cannot be built")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now := due.Add(time.Minute)
+	run(now)
+	if handled[w.org] != 1 || handled[other] != 0 {
+		t.Fatalf("after the first tick: failing = %d, healthy = %d; want the failing one taken first", handled[w.org], handled[other])
+	}
+	// The very next tick, no clock movement to speak of: the healthy
+	// organization must now get the slot.
+	run(now.Add(time.Second))
+	if handled[other] != 1 {
+		t.Fatalf("the healthy digest was never reached: failing = %d, healthy = %d", handled[w.org], handled[other])
+	}
+}
+
+// setDigest writes an enabled weekly digest for org due at next.
+func setDigest(t *testing.T, d *db.DB, store *notify.SQLStore, org uuid.UUID, next time.Time) {
+	t.Helper()
+	ch := seedChannel(t, d, org)
+	svc := notify.NewService(notify.Deps{Channels: store, Digests: store, Now: func() time.Time { return next.AddDate(0, 0, -1) }})
+	if _, err := svc.SetDigest(db.WithOrgScope(ctx, org), org, notify.DigestInput{
+		Enabled: true, Weekday: "mon", Time: "08:00", Timezone: "UTC", Channels: []uuid.UUID{ch.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE notification_digests SET next_run_at = $2 WHERE org_id = $1`, org, next); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTwoDigestTickersDoNotDoubleSendAPeriod is backlog 2.82. Several
+// managers each run a digest ticker, so two can scan the same instant.
+// Two mechanisms are supposed to stop a period going out twice —
+// LockDueDigests' FOR NO KEY UPDATE SKIP LOCKED, and the outbox's
+// unique (org, event_key, channel) with the occurrence in the key —
+// but nothing proved it, and a double-sent weekly digest is the kind
+// of thing nobody notices until a customer asks why they got two.
+func TestTwoDigestTickersDoNotDoubleSendAPeriod(t *testing.T) {
+	w := newOutboxWorld(t, "digest-concurrent")
+	store := notify.NewSQLStore(w.d)
+	due := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+	setDigest(t, w.d, store, w.org, due)
+	now := due.Add(30 * time.Second)
+
+	week := notify.DigestSummary{Schedules: []notify.DigestSchedule{{Name: "Nightly", Runs: 2}}}
+	ticker := func() *notify.DigestTicker {
+		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet()), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return now }, nil, quiet())
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errs[i] = ticker().Tick(ctx)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("ticker %d: %v", i, err)
+		}
+	}
+
+	key := (notify.DueDigest{Occurrence: due}).Key()
+	var n int
+	if err := w.d.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM notification_deliveries WHERE org_id = $1 AND event_key = $2`, w.org, key).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("the period %s was queued %d times, want exactly 1", key, n)
+	}
+}

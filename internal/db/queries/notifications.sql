@@ -193,9 +193,14 @@ INSERT INTO notification_digest_channels (org_id, channel_id) VALUES (@org_id, @
 
 -- name: LockDueDigests :many
 -- The digest ticker's due scan: raw pool, bypass policy, every org, SKIP
--- LOCKED like the schedule ticker.
+-- LOCKED like the schedule ticker. retry_after holds a row whose last
+-- attempt failed out of the scan for a while, so a persistently failing
+-- organization cannot keep the oldest next_run_at and crowd every
+-- healthy one out of the batch (backlog 2.82).
 SELECT * FROM notification_digests
-WHERE enabled AND next_run_at <= @now::timestamptz
+WHERE enabled
+  AND next_run_at <= @now::timestamptz
+  AND (retry_after IS NULL OR retry_after <= @now::timestamptz)
 ORDER BY next_run_at
 LIMIT @lim
 FOR NO KEY UPDATE SKIP LOCKED;
@@ -208,5 +213,20 @@ WHERE d.org_id = @org_id AND c.enabled
 ORDER BY d.channel_id;
 
 -- name: AdvanceNotificationDigest :exec
-UPDATE notification_digests SET next_run_at = @next_run_at, last_period = @last_period
+-- last_period is the record of what was DELIVERED, so a NULL leaves it
+-- as it is: a digest skipped for being more than a day late advances
+-- next_run_at like any other, but must not claim to have sent the week
+-- it skipped (backlog 2.82).
+UPDATE notification_digests
+SET next_run_at = @next_run_at,
+    last_period = COALESCE(sqlc.narg(last_period)::text, last_period),
+    retry_after = NULL
+WHERE org_id = @org_id;
+
+-- name: DelayNotificationDigest :exec
+-- Holds a digest whose attempt failed out of the due scan until
+-- retry_after, so the organizations behind it get their turn (backlog
+-- 2.82). next_run_at is untouched: it names the occurrence the message
+-- is about, not when to try again.
+UPDATE notification_digests SET retry_after = @retry_after
 WHERE org_id = @org_id;

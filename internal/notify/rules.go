@@ -52,6 +52,15 @@ type RuleStore interface {
 
 const maxRules = 16
 
+// maxRuleChannels bounds the channels ONE rule may name, matching the
+// digest's own maxDigestChannels. The bound used to exist only as the
+// HTTP layer's maxItems tag (backlog 2.82), which left it in the
+// transport: every other caller of SetScheduleRules could name
+// thousands of channels, each a stored row and a delivery per matching
+// event. It is per rule, not across the set — naming the same full
+// list for failures and for changes is one stored row per channel.
+const maxRuleChannels = 20
+
 // mergeRules folds per-category rules into one entry per channel, in the
 // order channels first appear; categories are kept in canonical order.
 func mergeRules(rules []Rule) ([]ChannelRule, error) {
@@ -66,6 +75,9 @@ func mergeRules(rules []Rule) ([]ChannelRule, error) {
 		}
 		if len(r.Channels) == 0 {
 			return nil, fmt.Errorf("%w: the %s rule names no channel", ErrInvalidInput, r.On)
+		}
+		if len(r.Channels) > maxRuleChannels {
+			return nil, fmt.Errorf("%w: the %s rule names %d channels; at most %d", ErrInvalidInput, r.On, len(r.Channels), maxRuleChannels)
 		}
 		for _, ch := range r.Channels {
 			if byChannel[ch] == nil {

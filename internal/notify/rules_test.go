@@ -119,3 +119,35 @@ func TestOrgScheduleCategoriesUnionsAcrossChannels(t *testing.T) {
 		t.Fatalf("a schedule with no rows must not appear in the result: %+v", got)
 	}
 }
+
+// TestMergeRulesBoundsChannelsPerRule is backlog 2.82. The number of
+// RULES was bounded in the service (maxRules), but the channels inside
+// one rule only by the HTTP layer's maxItems tag — so the bound lived
+// in the transport, and any other caller of SetScheduleRules could set
+// a rule naming thousands of channels, each of which becomes a stored
+// row and a delivery per event. The service owns its own rules.
+func TestMergeRulesBoundsChannelsPerRule(t *testing.T) {
+	channels := make([]uuid.UUID, maxRuleChannels+1)
+	for i := range channels {
+		channels[i] = uuid.Must(uuid.NewV7())
+	}
+	if _, err := mergeRules([]Rule{{On: CategoryFailure, Channels: channels}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("mergeRules with %d channels = %v, want ErrInvalidInput", len(channels), err)
+	}
+	if _, err := mergeRules([]Rule{{On: CategoryFailure, Channels: channels[:maxRuleChannels]}}); err != nil {
+		t.Fatalf("mergeRules with exactly %d channels = %v, want it accepted", maxRuleChannels, err)
+	}
+	// The bound is per rule, not across the whole set: two rules may
+	// each name a full list, and the same channel in both is one
+	// stored row.
+	merged, err := mergeRules([]Rule{
+		{On: CategoryFailure, Channels: channels[:maxRuleChannels]},
+		{On: CategoryChange, Channels: channels[:maxRuleChannels]},
+	})
+	if err != nil {
+		t.Fatalf("two full rules = %v, want them accepted", err)
+	}
+	if len(merged) != maxRuleChannels {
+		t.Fatalf("merged = %d channel rules, want %d", len(merged), maxRuleChannels)
+	}
+}

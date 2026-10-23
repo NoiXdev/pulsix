@@ -674,6 +674,7 @@ type NotificationDigest struct {
 	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
 	LastPeriod string             `json:"last_period"`
 	UpdatedAt  time.Time          `json:"updated_at"`
+	RetryAfter pgtype.Timestamptz `json:"retry_after"`
 }
 
 type NotificationDigestChannel struct {

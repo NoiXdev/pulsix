@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -30,8 +31,14 @@ import (
 // from the batch deadline so a deadline hit while building a *later*
 // digest cannot discard a write an earlier one already earned.
 const (
-	DefaultDigestTick   = time.Minute
-	maxDigestLate       = 24 * time.Hour
+	DefaultDigestTick = time.Minute
+	maxDigestLate     = 24 * time.Hour
+	// digestRetryDelay holds a failed digest out of the due scan before
+	// it is tried again. Fixed rather than growing: the point is to let
+	// the rows behind it through, which one delay already achieves, and
+	// a row that keeps failing is given up on anyway once it passes
+	// maxDigestLate (backlog 2.82).
+	digestRetryDelay    = 15 * time.Minute
 	digestBatch         = 20
 	batchDeadlineFactor = 4
 	minBatchDeadline    = 10 * time.Second
@@ -62,6 +69,9 @@ type DigestEnqueuer interface {
 // DigestQueue locks due digests and advances each one whose handle
 // succeeds (DigestSQLStore).
 type DigestQueue interface {
+	// ProcessDue runs handle for every due digest. A handle returning
+	// ErrDigestSkipped advanced nothing of its own and sent nothing:
+	// move the row on, but do not record the occurrence as delivered.
 	ProcessDue(ctx context.Context, now time.Time, limit int, handle func(ctx context.Context, tx pgx.Tx, d DueDigest) error) (int, error)
 }
 
@@ -161,7 +171,7 @@ func (t *DigestTicker) Tick(ctx context.Context) (int, error) {
 	return t.queue.ProcessDue(batchCtx, now, digestBatch, func(ctx context.Context, tx pgx.Tx, d DueDigest) error {
 		if now.Sub(d.Occurrence) > maxDigestLate {
 			t.log.WarnContext(ctx, "weekly digest more than a day late; skipping it", "org", d.OrgID, "due", d.Occurrence)
-			return nil
+			return ErrDigestSkipped
 		}
 		from, to, err := digestPeriod(d.Occurrence, d.Timezone)
 		if err != nil {
@@ -320,12 +330,35 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 	// handle has returned: the write-back's own budget starts here.
 	wctx, cancel := writeCtx(ctx)
 	defer cancel()
-	if handleErr != nil {
+	// ErrDigestSkipped is not a failure: the occurrence is deliberately
+	// passed over (too late to be worth sending), so the row advances
+	// like a successful one. What it must NOT do is stamp last_period,
+	// which records what was DELIVERED — leaving it is the difference
+	// between "we sent this week" and "we gave up on it" (backlog
+	// 2.82). A nil period keeps the stored value.
+	skipped := errors.Is(handleErr, ErrDigestSkipped)
+	if handleErr != nil && !skipped {
 		_ = sp.Rollback(wctx)
-		st.log.ErrorContext(wctx, "weekly digest failed; retrying next tick", "org", r.OrgID, "err", handleErr)
+		st.log.ErrorContext(wctx, "weekly digest failed", "org", r.OrgID, "retry_after", digestRetryDelay, "err", handleErr)
+		// On the OUTER transaction, not the savepoint: the savepoint
+		// has just been rolled back, so a write there would go with it.
+		// Holding this row out of the next few scans is what keeps one
+		// organization whose build fails persistently from carrying the
+		// oldest next_run_at into every batch and crowding out every
+		// healthy one (backlog 2.82).
+		if err := gen.New(tx).DelayNotificationDigest(wctx, gen.DelayNotificationDigestParams{
+			RetryAfter: db.NullTime(ptr(now.Add(digestRetryDelay))), OrgID: r.OrgID,
+		}); err != nil {
+			st.log.ErrorContext(wctx, "delay weekly digest retry", "org", r.OrgID, "err", err)
+		}
 		return
 	}
-	if err := gen.New(sp).AdvanceNotificationDigest(wctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: due.Key(), OrgID: r.OrgID}); err != nil {
+	period := due.Key()
+	var lastPeriod *string
+	if !skipped {
+		lastPeriod = &period
+	}
+	if err := gen.New(sp).AdvanceNotificationDigest(wctx, gen.AdvanceNotificationDigestParams{NextRunAt: db.NullTime(&next), LastPeriod: lastPeriod, OrgID: r.OrgID}); err != nil {
 		_ = sp.Rollback(wctx)
 		st.log.ErrorContext(wctx, "advance weekly digest", "org", r.OrgID, "err", err)
 		return
@@ -334,3 +367,16 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 		st.log.ErrorContext(wctx, "commit digest savepoint", "org", r.OrgID, "err", err)
 	}
 }
+
+// ErrDigestSkipped is how handle tells a DigestQueue that it
+// deliberately passed an occurrence over rather than failing at it:
+// advance the row like a success, but leave last_period naming
+// whatever was last actually DELIVERED (backlog 2.82). It is part of
+// the DigestQueue contract, not an internal signal — an implementation
+// that treats it as an ordinary failure records a skipped week as a
+// failed one and retries it for ever.
+var ErrDigestSkipped = errors.New("digest skipped")
+
+// ptr is the address of a value, for the nullable parameters the
+// generated queries take.
+func ptr[T any](v T) *T { return &v }
