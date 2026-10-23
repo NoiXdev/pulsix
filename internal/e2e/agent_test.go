@@ -459,11 +459,31 @@ func waitForFacts(t *testing.T, w agentWorld, hostID string) hostRead {
 
 // serialOf reads the serial of the certificate persisted in dir — the
 // handle the manager knows an agent by, and what a renewal changes.
+//
+// It WAITS for the identity rather than reading once (backlog 2.103).
+// The manager lists an agent from inside the Enroll RPC — agentapi's
+// Service.Enroll calls Agents.Register before it returns the signed
+// certificate — so waitForAgent is satisfied strictly BEFORE the agent
+// has the response, let alone before SaveEnrollment has written the
+// four files. A single read in that window finds an empty or
+// half-written directory, which is how TestAgentEnrollmentGate failed
+// under the parallel group and passed alone. The wait is bounded and
+// reports the last reason, so a directory that never fills still fails
+// — saying which of the two cases it is.
 func serialOf(t *testing.T, dir string) string {
 	t.Helper()
-	id, err := agent.LoadIdentity(dir)
-	if err != nil || id == nil {
-		t.Fatalf("load identity from %s: %v", dir, err)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		id, why, err := agent.LoadIdentityDetail(dir)
+		if err != nil {
+			t.Fatalf("load identity from %s: %v", dir, err)
+		}
+		if id != nil {
+			return id.Leaf().SerialNumber.String()
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("no usable identity in %s after 30s: %s", dir, why)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return id.Leaf().SerialNumber.String()
 }

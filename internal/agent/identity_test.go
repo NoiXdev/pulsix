@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -286,4 +287,118 @@ func TestIdentityReplaceIsSafeAgainstConcurrentHandshakeReads(t *testing.T) {
 	}
 	close(stop)
 	<-done
+}
+
+// TestLoadIdentityDetailSeparatesAbsentFromUnreadable is backlog 2.103.
+// LoadIdentity collapses "the files are not there" and "the files are
+// there and do not parse" into (nil, nil) on purpose — a corrupt
+// identity must re-enrol rather than wedge the agent — but nothing
+// could tell the two apart, so every caller that REPORTED the outcome
+// reported the same thing for both. The agent logged "no valid agent
+// identity; enrollment path" whether it was a first start or a
+// truncated certificate file, which is the difference an operator
+// watching an agent re-enrol over and over actually needs.
+func TestLoadIdentityDetailSeparatesAbsentFromUnreadable(t *testing.T) {
+	writeGarbage := func(t *testing.T, dir string, names ...string) {
+		t.Helper()
+		for _, n := range names {
+			if err := os.WriteFile(filepath.Join(dir, n), []byte("garbage"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		setup   func(t *testing.T, dir string)
+		usable  bool
+		wantWhy []string // substrings the reason must carry
+	}{
+		{
+			name: "a usable identity has no reason to report",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				key, csrPEM := newTestKey(t)
+				certPEM, caPEM := issueAgentCert(t, csrPEM)
+				if err := SaveEnrollment(dir, key, certPEM, caPEM, "host-1"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			usable: true,
+		},
+		{
+			name:    "an empty directory",
+			setup:   func(t *testing.T, dir string) { t.Helper() },
+			wantWhy: []string{certFileName, keyFileName, "neither"},
+		},
+		{
+			name: "a key with no certificate",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if _, err := LoadOrGenerateKey(filepath.Join(dir, keyFileName)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantWhy: []string{certFileName, "not there"},
+		},
+		{
+			name:    "files that do not parse",
+			setup:   func(t *testing.T, dir string) { t.Helper(); writeGarbage(t, dir, certFileName, keyFileName) },
+			wantWhy: []string{"did not parse"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir)
+
+			id, why, err := LoadIdentityDetail(dir)
+			if err != nil {
+				t.Fatalf("LoadIdentityDetail: %v", err)
+			}
+			if tc.usable {
+				if id == nil || why != "" {
+					t.Fatalf("LoadIdentityDetail on a usable identity = %v, %q; want an identity and no reason", id, why)
+				}
+				return
+			}
+			if id != nil {
+				t.Fatalf("LoadIdentityDetail = %v, want no identity", id)
+			}
+			for _, want := range tc.wantWhy {
+				if !strings.Contains(why, want) {
+					t.Fatalf("reason %q does not mention %q", why, want)
+				}
+			}
+
+			// The collapsing contract LoadIdentity's own caller relies
+			// on is unchanged: still (nil, nil), never an error.
+			plain, err := LoadIdentity(dir)
+			if plain != nil || err != nil {
+				t.Fatalf("LoadIdentity = %v, %v; want nil, nil — the re-enrol behaviour depends on it", plain, err)
+			}
+		})
+	}
+}
+
+// TestLoadIdentityDetailDistinguishesTheTwoFailures pins the thing the
+// e2e helper could not say: the two unusable cases must not produce the
+// same sentence.
+func TestLoadIdentityDetailDistinguishesTheTwoFailures(t *testing.T) {
+	absent := t.TempDir()
+	corrupt := t.TempDir()
+	for _, f := range []string{certFileName, keyFileName} {
+		if err := os.WriteFile(filepath.Join(corrupt, f), []byte("garbage"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, absentWhy, err := LoadIdentityDetail(absent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, corruptWhy, err := LoadIdentityDetail(corrupt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absentWhy == "" || corruptWhy == "" || absentWhy == corruptWhy {
+		t.Fatalf("absent = %q, corrupt = %q; the two must each say something, and not the same thing", absentWhy, corruptWhy)
+	}
 }

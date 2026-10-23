@@ -196,7 +196,7 @@ func (l *Loop) checksTicker(d time.Duration) checks.Ticker { return l.ticker(d) 
 // and then holds the stream; an invalid or missing identity enrolls (the
 // token is the credential) or fails with the remediation error.
 func (l *Loop) Run(ctx context.Context) error {
-	id, err := LoadIdentity(l.cfg.DataDir)
+	id, why, err := LoadIdentityDetail(l.cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("load agent identity from %s: %w", l.cfg.DataDir, err)
 	}
@@ -205,7 +205,15 @@ func (l *Loop) Run(ctx context.Context) error {
 		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval,
 		"config_interval", l.cfg.ConfigInterval)
 	if !id.Valid(l.now()) {
-		l.log.InfoContext(ctx, "no valid agent identity; enrollment path", "data_dir", l.cfg.DataDir)
+		// why says WHICH of the two unusable cases this is (backlog
+		// 2.103). Both re-enrol, so the agent behaves the same either
+		// way — but an operator watching an agent re-enrol repeatedly
+		// needs to know whether its files are missing or whether they
+		// are there and unreadable, and the line used to read
+		// identically for both. It is empty when the identity loaded
+		// and merely expired or lacks the org SAN, which Valid also
+		// refuses.
+		l.log.InfoContext(ctx, "no valid agent identity; enrollment path", "data_dir", l.cfg.DataDir, "reason", identityReason(id, why))
 	}
 
 	// The scheduler runs for the whole process lifetime, independent of
@@ -392,4 +400,18 @@ func probeWritable(dir string) error {
 	name := f.Name()
 	_ = f.Close()
 	return os.Remove(name)
+}
+
+// identityReason turns LoadIdentityDetail's reason into one an operator
+// can act on, covering the third case it does not speak to: an identity
+// that loaded fine and is simply not valid any more.
+func identityReason(id *Identity, why string) string {
+	switch {
+	case why != "":
+		return why
+	case id == nil:
+		return "no identity on disk"
+	default:
+		return "the identity on disk is no longer valid"
+	}
 }

@@ -66,23 +66,43 @@ type identityMeta struct {
 // never regenerated); only real I/O errors (a directory that cannot be
 // read) propagate.
 func LoadIdentity(dir string) (*Identity, error) {
+	id, _, err := LoadIdentityDetail(dir)
+	return id, err
+}
+
+// LoadIdentityDetail is LoadIdentity plus the reason dir holds no usable
+// identity — "" when it holds one (backlog 2.103).
+//
+// LoadIdentity collapses "the files are not there" and "the files are
+// there and do not parse" into (nil, nil) deliberately, and that must
+// not change: the enrollment path depends on a corrupt identity
+// re-enrolling rather than wedging the agent. But a caller that REPORTS
+// the outcome needs the difference. Without it the agent logged the
+// same line on a first start and on a truncated certificate file, which
+// is exactly the question an operator watching an agent re-enrol over
+// and over starts with.
+//
+// The reason is for a human to read, not for a caller to branch on:
+// anything that wants to act on the distinction should ask for a
+// narrower predicate rather than matching this text.
+func LoadIdentityDetail(dir string) (*Identity, string, error) {
 	certPEM, err := readOptional(filepath.Join(dir, certFileName))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	keyPEM, err := readOptional(filepath.Join(dir, keyFileName))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if certPEM == nil || keyPEM == nil {
-		return nil, nil
+		return nil, missingFiles(certPEM == nil, keyPEM == nil), nil
 	}
 	id, err := identityFromPEM(dir, certPEM, keyPEM)
 	if err != nil {
 		// Unparseable identity files read as absent: the enrollment path
 		// re-enrolls (reusing the key when it still parses) instead of
 		// failing the agent on disk corruption.
-		return nil, nil
+		return nil, fmt.Sprintf("%s and %s are there but did not parse: %v", certFileName, keyFileName, err), nil
 	}
 	// The host id rides agent.json; a missing or corrupt meta leaves it
 	// empty — the certificate is still usable, the id is bookkeeping.
@@ -92,7 +112,22 @@ func LoadIdentity(dir string) (*Identity, error) {
 			id.hostID = meta.HostID
 		}
 	}
-	return id, nil
+	return id, "", nil
+}
+
+// missingFiles names which of the two halves is absent. Which one it is
+// matters to whoever reads it: a key with no certificate is an
+// enrollment that was cut short and will reuse that key, while neither
+// present is a first start.
+func missingFiles(noCert, noKey bool) string {
+	switch {
+	case noCert && noKey:
+		return fmt.Sprintf("neither %s nor %s is there", certFileName, keyFileName)
+	case noCert:
+		return fmt.Sprintf("%s is not there (the key is)", certFileName)
+	default:
+		return fmt.Sprintf("%s is not there (the certificate is)", keyFileName)
+	}
 }
 
 // SaveEnrollment persists a fresh enrollment, key first: the private key
