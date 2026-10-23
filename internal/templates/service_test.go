@@ -833,3 +833,88 @@ func TestVaultCredentialLabelValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateRefusesAMalformedAnsibleMarker is backlog 2.71(a). A nested
+// object with a key starting with "__ansible" that is not a well-formed
+// marker makes Ansible's JSON load of the run's extra-vars file fail.
+// Until now the only checks at save time were on TOP-LEVEL names
+// (ansiblevars.ForbiddenIn), so such a template saved happily and the
+// failure arrived at run time — as the worker's YAML guard tripping,
+// which reads as a quoting error in a document the operator never
+// wrote. The marker check is cheap and belongs where the mistake is
+// made.
+func TestCreateRefusesAMalformedAnsibleMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		vars map[string]any
+		want bool // true: must be refused
+	}{
+		{
+			name: "a well-formed unsafe marker is legitimate and must still save",
+			vars: map[string]any{"greeting": map[string]any{"__ansible_unsafe": "{{ not_rendered }}"}},
+		},
+		{
+			name: "a well-formed vault marker likewise",
+			vars: map[string]any{"secret": map[string]any{"__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n3030"}},
+		},
+		{
+			name: "a marker carrying a second key cannot be loaded",
+			vars: map[string]any{"greeting": map[string]any{"__ansible_unsafe": "hi", "extra": 1}},
+			want: true,
+		},
+		{
+			name: "a marker whose value is not a string cannot be loaded",
+			vars: map[string]any{"greeting": map[string]any{"__ansible_unsafe": 7}},
+			want: true,
+		},
+		{
+			name: "an unknown __ansible key cannot be loaded",
+			vars: map[string]any{"greeting": map[string]any{"__ansible_made_up": "hi"}},
+			want: true,
+		},
+		{
+			name: "and it is found however deep it sits",
+			vars: map[string]any{"a": []any{map[string]any{"b": map[string]any{"__ansible_unsafe": "hi", "c": 2}}}},
+			want: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture()
+			in := f.in()
+			in.ExtraVars = tc.vars
+			_, err := f.svc.Create(ctx, f.org, in)
+			if !tc.want {
+				if err != nil {
+					t.Fatalf("Create = %v, want it saved", err)
+				}
+				return
+			}
+			var ve *schema.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("Create = %v, want a validation error naming the variable", err)
+			}
+			if len(ve.Problems) != 1 || !strings.Contains(ve.Problems[0].Message, "__ansible") {
+				t.Fatalf("problems = %+v, want one naming the marker", ve.Problems)
+			}
+		})
+	}
+}
+
+// TestUpdateRefusesAMalformedAnsibleMarker: the same gate on the edit
+// path — a template saved before this check existed must not be allowed
+// to keep a broken marker through an unrelated edit.
+func TestUpdateRefusesAMalformedAnsibleMarker(t *testing.T) {
+	f := newFixture()
+	created, err := f.svc.Create(ctx, f.org, f.in())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.svc.Update(ctx, f.org, created.ID, templates.UpdateInput{
+		Name: created.Name, PlaybookID: created.PlaybookID, Scope: created.Scope,
+		ExtraVars: map[string]any{"greeting": map[string]any{"__ansible_unsafe": "hi", "extra": 1}},
+	})
+	var ve *schema.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("Update = %v, want a validation error", err)
+	}
+}

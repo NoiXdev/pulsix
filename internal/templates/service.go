@@ -28,8 +28,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -479,6 +481,23 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, p
 	// arguments) are reserved for the worker (re-review N1).
 	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {
 		return Template{}, forbiddenProblems(names)
+	}
+	// ForbiddenIn only looks at TOP-LEVEL names. A nested object with a
+	// key starting with "__ansible" that is not a well-formed marker is
+	// what makes Ansible's JSON load of the run's extra-vars file fail,
+	// and the worker's YAML guard then stops the run rather than letting
+	// it proceed with every unsafe marker silently dropped. That failure
+	// is unreadable where it lands — a parse error in a document the
+	// operator never wrote — so it belongs here, where the mistake is
+	// made (backlog 2.71). Checked before sealing, which replaces secret
+	// values with markers of its own.
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		if err := ansiblevars.CheckMarkers(vars[name]); err != nil {
+			return Template{}, &schema.ValidationError{Problems: []schema.Problem{{
+				Path:    name,
+				Message: fmt.Sprintf("Ansible could not load this: %v", err),
+			}}}
+		}
 	}
 	if sc != nil {
 		if sc.Fields == nil {

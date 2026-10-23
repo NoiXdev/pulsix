@@ -349,8 +349,38 @@ func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, 
 	default:
 		// Anything else (1: ansible error, 5: bad options, 250: internal
 		// error, ...) is an infrastructure failure of the run itself.
+		if reason := extraVarsLoadFailure(stderr); reason != "" {
+			return worker.StatusError, nil, reason
+		}
 		return worker.StatusError, nil, fmt.Sprintf("ansible-runner exited with code %d", rc)
 	}
+}
+
+// extraVarsLoadFailure recognises the one failure the extra-vars guard
+// is there to cause, and names it (backlog 2.71). ansible-core loads
+// "-e @file" as JSON and, when that fails for any reason, silently
+// re-reads the file as YAML — where every {"__ansible_unsafe": …}
+// marker becomes a plain dict whose strings are templated. The guard
+// (extraVarsGuardVar, inventory.go) is a key YAML also refuses, written
+// as the document's FIRST member, so a failed JSON load fails the run
+// instead of running a webhook's lookup.
+//
+// What reached the operator was "ansible-runner exited with code 1" —
+// this branch dropped stderr — while the run log carried Ansible's own
+// YAML complaint pointing at the guard's column, with the hint "Colons
+// in unquoted values must be followed by a non-space character".
+// Neither says what is actually wrong, and the hint sends the reader
+// looking for a quoting mistake in a document they did not write.
+//
+// Matching on the guard's name is sound precisely because it is ours:
+// it appears in the error only because it is the first thing on the
+// line Ansible quotes, and it is in no playbook or inventory of the
+// operator's own.
+func extraVarsLoadFailure(stderr string) string {
+	if !strings.Contains(stderr, extraVarsGuardVar) {
+		return ""
+	}
+	return "the run's extra vars are not a document Ansible can load as JSON, so the run was stopped rather than run with the values re-read as YAML; check the template's extra vars for an object with a key starting with \"__ansible\" that is not exactly {\"__ansible_unsafe\": \"<text>\"} or {\"__ansible_vault\": \"<text>\"}"
 }
 
 // failedOrUnreachable reports whether the recap carries host failures.

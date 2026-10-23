@@ -465,3 +465,39 @@ func TestSummarizeMapsAnsiblePlaybookExitCodes(t *testing.T) {
 		})
 	}
 }
+
+// TestSummarizeNamesAFailedExtraVarsLoad is backlog 2.71(b). The
+// extra-vars file carries a guard key YAML cannot parse, so a document
+// Ansible fails to load as JSON fails the run instead of silently
+// falling back to YAML and dropping every unsafe marker. What the
+// operator then saw was "ansible-runner exited with code 1" — the
+// stderr, carrying Ansible's own YAML complaint about the guard, was
+// dropped on this branch — and in the run log, a parse error pointing
+// at the guard's column with the hint "Colons in unquoted values must
+// be followed by a non-space character". Neither names the real cause:
+// the run's extra vars are not a document Ansible can load.
+func TestSummarizeNamesAFailedExtraVarsLoad(t *testing.T) {
+	guardErr := "ERROR! We were unable to read either as JSON nor YAML, these are the errors we got from each:\n" +
+		"JSON: Expecting value: line 1 column 1 (char 0)\n" +
+		"Syntax Error while loading YAML.\n  mapping values are not allowed in this context\n\n" +
+		"The error appears to be in '/work/env/extravars': line 1, column 28\n" +
+		`{"pulsix_extravars_guard": {"json-only: this key is longer than …`
+
+	status, stats, errText := summarize(1, nil, nil, guardErr, nil)
+	if status != worker.StatusError || stats != nil {
+		t.Fatalf("summarize = %s, %v; want an error with no stats", status, stats)
+	}
+	if !strings.Contains(errText, "extra vars") {
+		t.Fatalf("errText = %q; it must name the extra vars as the cause, not just the exit code", errText)
+	}
+	if strings.Contains(errText, "Colons in unquoted values") {
+		t.Fatalf("errText = %q; it must not repeat Ansible's misleading hint", errText)
+	}
+
+	// An unrelated failure keeps the plain exit-code reason: the guard
+	// is the only thing this branch recognises.
+	_, _, other := summarize(5, nil, nil, "ERROR! the playbook could not be found", nil)
+	if strings.Contains(other, "extra vars") {
+		t.Fatalf("an unrelated failure reported %q", other)
+	}
+}
