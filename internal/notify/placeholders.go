@@ -273,11 +273,20 @@ var placeholderFields = map[string]func(Event) (any, bool){
 		return formatTime(ev.Decision.DueAt), true
 	},
 
+	// Both ends print with the organization's own offset, not in UTC
+	// (backlog 2.88). A body may carry these next to digest.period, and
+	// period names the organization's local dates: in UTC these two
+	// dated the week a day early for an organization east of UTC and a
+	// day late for one west of it, leaving a consumer joining the three
+	// no way to tell which week was meant. The instant is unchanged —
+	// RFC 3339 with an offset is as absolute as one with a Z — so a
+	// consumer that only parses the timestamp sees no difference, while
+	// one that reads the date off it now agrees with the label.
 	"digest.from": func(ev Event) (any, bool) {
-		return digestField(ev.Digest, func(d DigestSummary) any { return formatTime(d.From) })
+		return digestField(ev.Digest, func(d DigestSummary) any { return formatTimeIn(d.From, digestLocation(&d)) })
 	},
 	"digest.to": func(ev Event) (any, bool) {
-		return digestField(ev.Digest, func(d DigestSummary) any { return formatTime(d.To) })
+		return digestField(ev.Digest, func(d DigestSummary) any { return formatTimeIn(d.To, digestLocation(&d)) })
 	},
 	"digest.timezone": func(ev Event) (any, bool) {
 		return digestField(ev.Digest, func(d DigestSummary) any { return d.Timezone })
@@ -305,7 +314,15 @@ var placeholderFields = map[string]func(Event) (any, bool){
 	},
 }
 
+// formatTime writes an instant as RFC 3339 in UTC: the right default for
+// a field with no organization attached to it, where a reader has no zone
+// to expect and UTC is the one everyone can convert from.
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// formatTimeIn writes the same instant with loc's offset, for the fields
+// that sit beside an organization-local label and must date the same way
+// it does (backlog 2.88).
+func formatTimeIn(t time.Time, loc *time.Location) string { return t.In(loc).Format(time.RFC3339) }
 
 func refField(r *NamedRef, get func(NamedRef) any) (any, bool) {
 	if r == nil {

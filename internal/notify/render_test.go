@@ -629,3 +629,84 @@ func TestAlertBatchIsValidatedLikeEveryOtherKind(t *testing.T) {
 		t.Fatalf("checkBodyTemplate(%q, true) = %v, want ErrInvalidInput — alerts.count renders empty for every other kind", err, bad)
 	}
 }
+
+// TestDigestFromAndToAgreeWithThePeriodLabel is backlog 2.88. A custom
+// webhook body can carry {{digest.from}}, {{digest.to}} and
+// {{digest.period}} side by side, and the three disagreed: from and to
+// went through formatTime, which forces .UTC(), while period formats
+// each end in the organization's own zone. For an organization far
+// enough from UTC that its local date differs at the digest's due
+// instant, a consumer joining the two got dates one day apart from the
+// period it was told the message covers — and no way to tell which was
+// meant.
+//
+// The event arrives at the renderer through the delivery payload's JSON,
+// which is where a time.Time's named Location is flattened to a bare
+// numeric offset, so the test round-trips it the same way rather than
+// handing the renderer a value the dispatcher could never produce.
+func TestDigestFromAndToAgreeWithThePeriodLabel(t *testing.T) {
+	for _, zone := range []string{"Pacific/Auckland", "America/Los_Angeles"} {
+		t.Run(zone, func(t *testing.T) {
+			// A Monday 08:00 local occurrence in Auckland is still Sunday
+			// in UTC; a Monday 20:00 local one in Los Angeles has already
+			// rolled into Tuesday there. Either way the UTC date differs
+			// from the organization's.
+			hour := 8
+			if zone == "America/Los_Angeles" {
+				hour = 20
+			}
+			local := time.Date(2026, 7, 6, hour, 0, 0, 0, mustLoadLocation(t, zone))
+			from, to, err := digestPeriod(local.UTC(), zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := sampleEvent()
+			ev.Kind, ev.Digest.From, ev.Digest.To, ev.Digest.Timezone = EventDigest, from, to, zone
+
+			raw, err := json.Marshal(ev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded Event
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
+
+			body, err := renderWebhookBody(`{"from":"{{digest.from}}","to":"{{digest.to}}","period":"{{digest.period}}"}`, decoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct{ From, To, Period string }
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("%v: %s", err, body)
+			}
+
+			// The period label is the contract the other two must meet:
+			// whatever calendar dates it names, from and to must carry
+			// the same ones.
+			wantFrom, wantTo := from.Format("2 Jan"), to.Format("2 Jan 2006")
+			if got.Period != wantFrom+" – "+wantTo {
+				t.Fatalf("period = %q, want %q", got.Period, wantFrom+" – "+wantTo)
+			}
+			parsedFrom, err := time.Parse(time.RFC3339, got.From)
+			if err != nil {
+				t.Fatalf("from = %q is not RFC 3339: %v", got.From, err)
+			}
+			parsedTo, err := time.Parse(time.RFC3339, got.To)
+			if err != nil {
+				t.Fatalf("to = %q is not RFC 3339: %v", got.To, err)
+			}
+			if d := parsedFrom.Format("2 Jan"); d != wantFrom {
+				t.Fatalf("digest.from = %q dates to %s, but digest.period says the week starts %s", got.From, d, wantFrom)
+			}
+			if d := parsedTo.Format("2 Jan 2006"); d != wantTo {
+				t.Fatalf("digest.to = %q dates to %s, but digest.period says the week ends %s", got.To, d, wantTo)
+			}
+			// The instant itself must be untouched — only how it is
+			// written down changes.
+			if !parsedFrom.Equal(from) || !parsedTo.Equal(to) {
+				t.Fatalf("the instants moved: from %s/%s, to %s/%s", parsedFrom, from, parsedTo, to)
+			}
+		})
+	}
+}
