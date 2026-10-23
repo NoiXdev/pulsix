@@ -44,6 +44,7 @@ WHERE c.org_id = d.org_id AND c.id = d.channel_id
     FOR UPDATE SKIP LOCKED
   )
 RETURNING d.id, d.org_id, d.channel_id, d.event_key, d.event_kind, d.payload, d.attempts, d.created_at,
+  d.pending_recipients,
   c.kind AS channel_kind, c.name AS channel_name, c.config AS channel_config, c.enabled AS channel_enabled
 `
 
@@ -53,18 +54,19 @@ type ClaimNotificationDeliveriesParams struct {
 }
 
 type ClaimNotificationDeliveriesRow struct {
-	ID             uuid.UUID `json:"id"`
-	OrgID          uuid.UUID `json:"org_id"`
-	ChannelID      uuid.UUID `json:"channel_id"`
-	EventKey       string    `json:"event_key"`
-	EventKind      string    `json:"event_kind"`
-	Payload        []byte    `json:"payload"`
-	Attempts       int32     `json:"attempts"`
-	CreatedAt      time.Time `json:"created_at"`
-	ChannelKind    string    `json:"channel_kind"`
-	ChannelName    string    `json:"channel_name"`
-	ChannelConfig  []byte    `json:"channel_config"`
-	ChannelEnabled bool      `json:"channel_enabled"`
+	ID                uuid.UUID `json:"id"`
+	OrgID             uuid.UUID `json:"org_id"`
+	ChannelID         uuid.UUID `json:"channel_id"`
+	EventKey          string    `json:"event_key"`
+	EventKind         string    `json:"event_kind"`
+	Payload           []byte    `json:"payload"`
+	Attempts          int32     `json:"attempts"`
+	CreatedAt         time.Time `json:"created_at"`
+	PendingRecipients []string  `json:"pending_recipients"`
+	ChannelKind       string    `json:"channel_kind"`
+	ChannelName       string    `json:"channel_name"`
+	ChannelConfig     []byte    `json:"channel_config"`
+	ChannelEnabled    bool      `json:"channel_enabled"`
 }
 
 // The dispatcher's claim: runs on the raw pool without pulsix.org_id
@@ -107,6 +109,7 @@ func (q *Queries) ClaimNotificationDeliveries(ctx context.Context, arg ClaimNoti
 			&i.Payload,
 			&i.Attempts,
 			&i.CreatedAt,
+			&i.PendingRecipients,
 			&i.ChannelKind,
 			&i.ChannelName,
 			&i.ChannelConfig,
@@ -478,7 +481,7 @@ func (q *Queries) ListNotificationChannels(ctx context.Context, orgID uuid.UUID)
 }
 
 const listNotificationDeliveries = `-- name: ListNotificationDeliveries :many
-SELECT id, org_id, channel_id, event_key, event_kind, payload, status, attempts, next_attempt_at, locked_until, last_error, created_at, sent_at FROM notification_deliveries WHERE org_id = $1 AND channel_id = $2
+SELECT id, org_id, channel_id, event_key, event_kind, payload, status, attempts, next_attempt_at, locked_until, last_error, created_at, sent_at, pending_recipients FROM notification_deliveries WHERE org_id = $1 AND channel_id = $2
 ORDER BY created_at DESC, id DESC LIMIT $3
 `
 
@@ -511,6 +514,7 @@ func (q *Queries) ListNotificationDeliveries(ctx context.Context, arg ListNotifi
 			&i.LastError,
 			&i.CreatedAt,
 			&i.SentAt,
+			&i.PendingRecipients,
 		); err != nil {
 			return nil, err
 		}
@@ -769,16 +773,19 @@ func (q *Queries) NotifyScheduleContext(ctx context.Context, arg NotifyScheduleC
 }
 
 const retryNotificationDelivery = `-- name: RetryNotificationDelivery :execrows
-UPDATE notification_deliveries SET next_attempt_at = now() + $1::interval, locked_until = NULL, last_error = $2
-WHERE org_id = $3 AND id = $4 AND attempts = $5 AND status = 'pending'
+UPDATE notification_deliveries
+SET next_attempt_at = now() + $1::interval, locked_until = NULL, last_error = $2,
+    pending_recipients = COALESCE($3::text[], pending_recipients)
+WHERE org_id = $4 AND id = $5 AND attempts = $6 AND status = 'pending'
 `
 
 type RetryNotificationDeliveryParams struct {
-	RetryIn   pgtype.Interval `json:"retry_in"`
-	LastError string          `json:"last_error"`
-	OrgID     uuid.UUID       `json:"org_id"`
-	ID        uuid.UUID       `json:"id"`
-	Attempts  int32           `json:"attempts"`
+	RetryIn           pgtype.Interval `json:"retry_in"`
+	LastError         string          `json:"last_error"`
+	PendingRecipients []string        `json:"pending_recipients"`
+	OrgID             uuid.UUID       `json:"org_id"`
+	ID                uuid.UUID       `json:"id"`
+	Attempts          int32           `json:"attempts"`
 }
 
 // The backoff is a DURATION, measured from the database's clock like the
@@ -786,10 +793,15 @@ type RetryNotificationDeliveryParams struct {
 // claiming manager's clock while the claim compares against the
 // database's would let a manager running behind schedule a retry that is
 // already due the moment it lands.
+// pending_recipients narrows the NEXT attempt to the recipients this one
+// did not reach (backlog 2.74). NULL leaves it as it was -- a webhook, or
+// an e-mail failure that reached nobody in particular, keeps whatever the
+// row already said.
 func (q *Queries) RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (int64, error) {
 	result, err := q.db.Exec(ctx, retryNotificationDelivery,
 		arg.RetryIn,
 		arg.LastError,
+		arg.PendingRecipients,
 		arg.OrgID,
 		arg.ID,
 		arg.Attempts,

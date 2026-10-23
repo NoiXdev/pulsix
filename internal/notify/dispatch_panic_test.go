@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/noixdev/pulsix/internal/notify"
 )
 
@@ -46,14 +44,14 @@ func (q *panickingQueue) Complete(context.Context, notify.Claimed, time.Time) er
 	return nil
 }
 
-func (q *panickingQueue) Retry(context.Context, notify.Claimed, time.Duration, string) error {
+func (q *panickingQueue) Retry(context.Context, notify.Claimed, time.Duration, string, []string) error {
 	return nil
 }
 func (q *panickingQueue) Fail(context.Context, notify.Claimed, string) error { return nil }
 
 type okSender struct{}
 
-func (okSender) Send(context.Context, notify.Channel, uuid.UUID, notify.Event) error { return nil }
+func (okSender) Send(context.Context, notify.Claimed, notify.Event) error { return nil }
 
 // TestDispatcherRunSurvivesAPanickingClaim is the first half of the final
 // review's Important #6. DigestTicker.Run and schedules.Ticker.Run both

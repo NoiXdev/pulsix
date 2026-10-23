@@ -36,6 +36,12 @@ type Delivery struct {
 	LastError            string
 	CreatedAt            time.Time
 	SentAt               *time.Time
+	// PendingRecipients narrows an e-mail retry to the addresses the
+	// previous attempt did not reach. Empty means "the channel's own
+	// list" — what a first attempt and every pre-2.74 row mean. Only a
+	// retry after a partial failure sets it, and a webhook never does:
+	// one destination leaves nothing to narrow.
+	PendingRecipients []string
 }
 
 // DeliveryLog records and lists deliveries (org-scoped).
@@ -73,7 +79,10 @@ func (s *Service) SendTest(ctx context.Context, org OrgRef, channelID uuid.UUID)
 	}
 	id := s.newID()
 	sendCtx, cancel := context.WithTimeout(ctx, testSendTimeout)
-	sendErr := s.d.Sender.Send(sendCtx, ch, id, ev)
+	// A test send is its own one-off delivery: no queue row behind it and
+	// so no narrowing — the channel's full recipient list, which is what
+	// an operator testing a channel wants to confirm reaches everyone.
+	sendErr := s.d.Sender.Send(sendCtx, Claimed{Channel: ch, Delivery: Delivery{ID: id, OrgID: org.ID, ChannelID: ch.ID}}, ev)
 	cancel()
 	d := Delivery{
 		ID: id, OrgID: org.ID, ChannelID: ch.ID, EventKey: "test:" + id.String(), EventKind: EventTest,

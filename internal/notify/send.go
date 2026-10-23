@@ -69,14 +69,22 @@ func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time
 
 // Send delivers ev through ch. deliveryID travels as X-Pulsix-Delivery so
 // a receiver can drop the duplicate an at-least-once retry may produce.
-func (s *ChannelSender) Send(ctx context.Context, ch Channel, deliveryID uuid.UUID, ev Event) error {
+func (s *ChannelSender) Send(ctx context.Context, c Claimed, ev Event) error {
+	ch, deliveryID := c.Channel, c.Delivery.ID
 	switch ch.Kind {
 	case KindEmail:
 		var cfg EmailConfig
 		if err := json.Unmarshal(ch.Config, &cfg); err != nil {
 			return Permanent(fmt.Errorf("decode e-mail channel: %w", err))
 		}
-		return s.sendEmail(ctx, cfg, ev)
+		// A retry after a partial send goes only to the addresses that
+		// attempt did not reach; everything else goes to the channel's
+		// own list (backlog 2.74).
+		to := cfg.Recipients
+		if len(c.Delivery.PendingRecipients) > 0 {
+			to = c.Delivery.PendingRecipients
+		}
+		return s.sendEmail(ctx, to, ev)
 	case KindWebhook:
 		w, err := s.openWebhook(ch)
 		if err != nil {
@@ -87,7 +95,7 @@ func (s *ChannelSender) Send(ctx context.Context, ch Channel, deliveryID uuid.UU
 	return Permanent(fmt.Errorf("unknown channel kind %q", ch.Kind))
 }
 
-func (s *ChannelSender) sendEmail(ctx context.Context, cfg EmailConfig, ev Event) error {
+func (s *ChannelSender) sendEmail(ctx context.Context, to []string, ev Event) error {
 	ok, err := s.mail.Configured(ctx)
 	if err != nil {
 		return fmt.Errorf("check outgoing mail: %w", err)
@@ -98,7 +106,7 @@ func (s *ChannelSender) sendEmail(ctx context.Context, cfg EmailConfig, ev Event
 	subject, body := renderEmail(ev)
 	ctx, cancel := context.WithTimeout(ctx, emailTimeout)
 	defer cancel()
-	if err := s.mail.SendMany(ctx, cfg.Recipients, subject, body); err != nil {
+	if err := s.mail.SendMany(ctx, to, subject, body); err != nil {
 		if errors.Is(err, mail.ErrNotConfigured) {
 			return Permanent(ErrMailUnavailable)
 		}

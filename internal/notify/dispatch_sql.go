@@ -39,6 +39,7 @@ func (st *DeliverySQLStore) Claim(ctx context.Context, lease time.Duration, limi
 			Delivery: Delivery{
 				ID: r.ID, OrgID: r.OrgID, ChannelID: r.ChannelID, EventKey: r.EventKey, EventKind: EventKind(r.EventKind),
 				Payload: r.Payload, Status: DeliveryPending, Attempts: int(r.Attempts), CreatedAt: r.CreatedAt,
+				PendingRecipients: r.PendingRecipients,
 			},
 			Channel: Channel{ID: r.ChannelID, OrgID: r.OrgID, Kind: Kind(r.ChannelKind), Name: r.ChannelName, Enabled: r.ChannelEnabled, Config: r.ChannelConfig},
 		}
@@ -57,10 +58,11 @@ func (st *DeliverySQLStore) Complete(ctx context.Context, c Claimed, at time.Tim
 
 // Retry implements DeliveryQueue. in is how long to wait, not when to
 // run: the database adds it to its own clock (backlog 2.80).
-func (st *DeliverySQLStore) Retry(ctx context.Context, c Claimed, in time.Duration, errText string) error {
+func (st *DeliverySQLStore) Retry(ctx context.Context, c Claimed, in time.Duration, errText string, pending []string) error {
 	if _, err := st.q.RetryNotificationDelivery(ctx, gen.RetryNotificationDeliveryParams{
-		RetryIn:   pgtype.Interval{Microseconds: in.Microseconds(), Valid: true},
-		LastError: errText, OrgID: c.Delivery.OrgID, ID: c.Delivery.ID, Attempts: int32(c.Delivery.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
+		RetryIn:           pgtype.Interval{Microseconds: in.Microseconds(), Valid: true},
+		PendingRecipients: pending,
+		LastError:         errText, OrgID: c.Delivery.OrgID, ID: c.Delivery.ID, Attempts: int32(c.Delivery.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
 	}); err != nil {
 		return fmt.Errorf("retry notification delivery: %w", err)
 	}

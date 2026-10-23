@@ -69,6 +69,7 @@ WHERE c.org_id = d.org_id AND c.id = d.channel_id
     FOR UPDATE SKIP LOCKED
   )
 RETURNING d.id, d.org_id, d.channel_id, d.event_key, d.event_kind, d.payload, d.attempts, d.created_at,
+  d.pending_recipients,
   c.kind AS channel_kind, c.name AS channel_name, c.config AS channel_config, c.enabled AS channel_enabled;
 
 -- name: CompleteNotificationDelivery :execrows
@@ -83,7 +84,13 @@ WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pendi
 -- claiming manager's clock while the claim compares against the
 -- database's would let a manager running behind schedule a retry that is
 -- already due the moment it lands.
-UPDATE notification_deliveries SET next_attempt_at = now() + @retry_in::interval, locked_until = NULL, last_error = @last_error
+-- pending_recipients narrows the NEXT attempt to the recipients this one
+-- did not reach (backlog 2.74). NULL leaves it as it was -- a webhook, or
+-- an e-mail failure that reached nobody in particular, keeps whatever the
+-- row already said.
+UPDATE notification_deliveries
+SET next_attempt_at = now() + @retry_in::interval, locked_until = NULL, last_error = @last_error,
+    pending_recipients = COALESCE(sqlc.narg(pending_recipients)::text[], pending_recipients)
 WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pending';
 
 -- name: FailNotificationDelivery :execrows

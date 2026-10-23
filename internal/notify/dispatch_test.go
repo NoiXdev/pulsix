@@ -56,7 +56,7 @@ func (q *fakeQueue) Complete(_ context.Context, c notify.Claimed, _ time.Time) e
 	return q.record(c, outcome{kind: "complete"})
 }
 
-func (q *fakeQueue) Retry(_ context.Context, c notify.Claimed, in time.Duration, errText string) error {
+func (q *fakeQueue) Retry(_ context.Context, c notify.Claimed, in time.Duration, errText string, pending []string) error {
 	return q.record(c, outcome{kind: "retry", in: in, errText: errText})
 }
 
@@ -72,7 +72,8 @@ type scriptedSender struct {
 	calls   int
 }
 
-func (s *scriptedSender) Send(_ context.Context, _ notify.Channel, id uuid.UUID, _ notify.Event) error {
+func (s *scriptedSender) Send(_ context.Context, cl notify.Claimed, _ notify.Event) error {
+	id := cl.Delivery.ID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -215,7 +216,7 @@ type cancelAwareSender struct {
 	once   sync.Once
 }
 
-func (s *cancelAwareSender) Send(ctx context.Context, _ notify.Channel, _ uuid.UUID, _ notify.Event) error {
+func (s *cancelAwareSender) Send(ctx context.Context, _ notify.Claimed, _ notify.Event) error {
 	s.once.Do(s.cancel)
 	<-s.ctx.Done()
 	return fmt.Errorf("post to the endpoint: %w", ctx.Err())

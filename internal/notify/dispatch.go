@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/noixdev/pulsix/internal/mail"
 )
 
 // Queue tuning (spec §5): at most MaxAttempts claims per message, then
@@ -53,7 +53,10 @@ type DeliveryQueue interface {
 	// instant, for the same reason Claim takes only a lease length: the
 	// queue's timing belongs to the database's clock, not to whichever
 	// manager happens to be holding the row (backlog 2.80).
-	Retry(ctx context.Context, c Claimed, in time.Duration, errText string) error
+	// Retry reschedules the delivery after in, and narrows the next
+	// attempt to pending when it is non-empty (backlog 2.74); nil leaves
+	// the row's current narrowing alone.
+	Retry(ctx context.Context, c Claimed, in time.Duration, errText string, pending []string) error
 	Fail(ctx context.Context, c Claimed, errText string) error
 	// FailStuck ends the rows the claim's attempts backstop has shut out.
 	// Without it they stay 'pending' for ever — never claimed again,
@@ -63,9 +66,17 @@ type DeliveryQueue interface {
 	FailStuck(ctx context.Context) (int64, error)
 }
 
-// Sender delivers one event through one channel (ChannelSender).
+// Sender delivers one event for one claimed delivery (ChannelSender). It
+// takes the whole claim rather than the channel alone because the
+// delivery carries what this ATTEMPT is for — notably which recipients an
+// e-mail retry still owes (backlog 2.74) — and that is not a property of
+// the channel.
+//
+// A sender that reached some recipients and not others returns an error
+// satisfying errors.As for *mail.PartialError; the dispatcher narrows the
+// next attempt to what it names.
 type Sender interface {
-	Send(ctx context.Context, ch Channel, deliveryID uuid.UUID, ev Event) error
+	Send(ctx context.Context, c Claimed, ev Event) error
 }
 
 // Dispatcher sends queued deliveries. Several managers may run one each:
@@ -217,11 +228,24 @@ func (d *Dispatcher) deliver(ctx context.Context, c Claimed) {
 	case IsPermanent(sendErr) || c.Delivery.Attempts >= MaxAttempts:
 		err = d.queue.Fail(wctx, c, errorText(sendErr))
 	default:
-		err = d.queue.Retry(wctx, c, retryDelay(c.Delivery.Attempts), errorText(sendErr))
+		err = d.queue.Retry(wctx, c, retryDelay(c.Delivery.Attempts), errorText(sendErr), stillOwed(sendErr))
 	}
 	if err != nil {
 		d.log.ErrorContext(wctx, "record notification delivery", "delivery", c.Delivery.ID, "org", c.Delivery.OrgID, "err", err)
 	}
+}
+
+// stillOwed reads a partial send's remaining recipients off the error, so
+// the retry goes only to them instead of to the whole channel again
+// (backlog 2.74). nil for anything else — a webhook, or a failure that
+// says nothing about individual recipients — which leaves the row's
+// current narrowing untouched.
+func stillOwed(err error) []string {
+	var partial *mail.PartialError
+	if errors.As(err, &partial) {
+		return partial.Failed
+	}
+	return nil
 }
 
 func (d *Dispatcher) send(ctx context.Context, c Claimed) (err error) {
@@ -238,5 +262,5 @@ func (d *Dispatcher) send(ctx context.Context, c Claimed) (err error) {
 	if err := json.Unmarshal(c.Delivery.Payload, &ev); err != nil {
 		return Permanent(errors.New("the stored message does not decode"))
 	}
-	return d.sender.Send(ctx, c.Channel, c.Delivery.ID, ev)
+	return d.sender.Send(ctx, c, ev)
 }

@@ -3,6 +3,7 @@ package notify_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/notify"
 )
 
@@ -21,7 +23,8 @@ type countingSender struct {
 	err   error
 }
 
-func (c *countingSender) Send(_ context.Context, _ notify.Channel, id uuid.UUID, _ notify.Event) error {
+func (c *countingSender) Send(_ context.Context, cl notify.Claimed, _ notify.Event) error {
+	id := cl.Delivery.ID
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.sends == nil {
@@ -305,5 +308,85 @@ func TestABackstoppedDeliveryIsEndedInsteadOfStayingPendingForEver(t *testing.T)
 	}
 	if status, _, _, _ := deliveryRow(t, d, fine); status != string(notify.DeliverySent) {
 		t.Fatalf("the healthy delivery beside it is %q, want sent — the sweep must not touch it", status)
+	}
+}
+
+// partialSender reports a partial e-mail send: it records the recipients
+// of every attempt and fails the first one for `reject`, exactly as
+// internal/mail does when a server refuses one mailbox out of a list.
+type partialSender struct {
+	mu       sync.Mutex
+	attempts [][]string
+	reject   string
+	done     bool
+}
+
+func (s *partialSender) Send(_ context.Context, c notify.Claimed, _ notify.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var cfg notify.EmailConfig
+	if err := json.Unmarshal(c.Channel.Config, &cfg); err != nil {
+		return err
+	}
+	to := cfg.Recipients
+	if len(c.Delivery.PendingRecipients) > 0 {
+		to = c.Delivery.PendingRecipients
+	}
+	s.attempts = append(s.attempts, append([]string(nil), to...))
+	if s.done {
+		return nil
+	}
+	s.done = true
+	return &mail.PartialError{Failed: []string{s.reject}, Err: errors.New("550 no such mailbox")}
+}
+
+// TestARetryAfterAPartialSendGoesOnlyToTheRecipientsStillOwed is backlog
+// 2.74's retry half. A delivery is one row for a channel's whole
+// recipient list, so one refused mailbox failed the delivery and the next
+// attempt went to EVERYONE again — the recipients the server had already
+// accepted received the same alert on every attempt until the delivery
+// gave up. internal/mail now reports who is still owed the message, and
+// the retry is narrowed to exactly them.
+func TestARetryAfterAPartialSendGoesOnlyToTheRecipientsStillOwed(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "dispatch-partial")
+	cfg, err := json.Marshal(notify.EmailConfig{Recipients: []string{"ops@example.test", "gone@example.test", "dba@example.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := notify.NewSQLStore(d).CreateChannel(db.WithOrgScope(ctx, org), notify.Channel{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: notify.KindEmail, Name: "ops partial", Enabled: true, Config: cfg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := queueDelivery(t, d, ch, "test:partial", time.Now().Add(-time.Minute))
+
+	sender := &partialSender{reject: "gone@example.test"}
+	disp := notify.NewDispatcher(notify.NewDeliverySQLStore(d), sender, time.Second, time.Now, nil, nil)
+	if _, err := disp.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The backoff is the database's now; make the row due again.
+	if _, err := d.Pool().Exec(ctx, `UPDATE notification_deliveries SET next_attempt_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := disp.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(sender.attempts))
+	}
+	if len(sender.attempts[0]) != 3 {
+		t.Fatalf("first attempt went to %v, want the channel's whole list", sender.attempts[0])
+	}
+	if len(sender.attempts[1]) != 1 || sender.attempts[1][0] != "gone@example.test" {
+		t.Fatalf("the retry went to %v; it must go only to the recipient still owed the message, not to the two who already received it", sender.attempts[1])
+	}
+	if status, _, _, _ := deliveryRow(t, d, id); status != string(notify.DeliverySent) {
+		t.Fatalf("status after the successful retry = %q, want sent", status)
 	}
 }

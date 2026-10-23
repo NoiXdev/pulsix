@@ -649,19 +649,20 @@ type NotificationChannel struct {
 }
 
 type NotificationDelivery struct {
-	ID            uuid.UUID          `json:"id"`
-	OrgID         uuid.UUID          `json:"org_id"`
-	ChannelID     uuid.UUID          `json:"channel_id"`
-	EventKey      string             `json:"event_key"`
-	EventKind     string             `json:"event_kind"`
-	Payload       []byte             `json:"payload"`
-	Status        string             `json:"status"`
-	Attempts      int32              `json:"attempts"`
-	NextAttemptAt time.Time          `json:"next_attempt_at"`
-	LockedUntil   pgtype.Timestamptz `json:"locked_until"`
-	LastError     string             `json:"last_error"`
-	CreatedAt     time.Time          `json:"created_at"`
-	SentAt        pgtype.Timestamptz `json:"sent_at"`
+	ID                uuid.UUID          `json:"id"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ChannelID         uuid.UUID          `json:"channel_id"`
+	EventKey          string             `json:"event_key"`
+	EventKind         string             `json:"event_kind"`
+	Payload           []byte             `json:"payload"`
+	Status            string             `json:"status"`
+	Attempts          int32              `json:"attempts"`
+	NextAttemptAt     time.Time          `json:"next_attempt_at"`
+	LockedUntil       pgtype.Timestamptz `json:"locked_until"`
+	LastError         string             `json:"last_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+	SentAt            pgtype.Timestamptz `json:"sent_at"`
+	PendingRecipients []string           `json:"pending_recipients"`
 }
 
 type NotificationDigest struct {
