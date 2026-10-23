@@ -32,7 +32,7 @@ func TestPolicyCheck(t *testing.T) {
 		{"fd00:ec2::254", false},
 		{"::ffff:127.0.0.1", false}, // IPv4-mapped loopback is loopback
 	}
-	p := outbound.NewPolicy(nil)
+	p := outbound.NewPolicy(nil, nil)
 	for _, c := range cases {
 		err := p.Check(netip.MustParseAddr(c.addr))
 		if c.allowed && err != nil {
@@ -45,7 +45,7 @@ func TestPolicyCheck(t *testing.T) {
 }
 
 func TestPolicyAllowlistReadmitsBlockedRanges(t *testing.T) {
-	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
+	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, nil)
 	if err := p.Check(netip.MustParseAddr("127.0.0.1")); err != nil {
 		t.Fatalf("allowlisted loopback refused: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestPolicyAllowlistReadmitsBlockedRanges(t *testing.T) {
 }
 
 func TestBlockedErrorNamesAddressAndReason(t *testing.T) {
-	err := outbound.NewPolicy(nil).Check(netip.MustParseAddr("169.254.169.254"))
+	err := outbound.NewPolicy(nil, nil).Check(netip.MustParseAddr("169.254.169.254"))
 	if err == nil || err.Error() != "destination address is not allowed: 169.254.169.254 is link-local (allow it with PULSIX_NOTIFY_ALLOW_CIDRS)" {
 		t.Fatalf("error = %v", err)
 	}
@@ -88,7 +88,7 @@ func TestPolicyRefusesZonedAddresses(t *testing.T) {
 			// case that Go itself refuses to parse.
 			continue
 		}
-		if err := outbound.NewPolicy(nil).Check(a); !errors.Is(err, outbound.ErrBlocked) {
+		if err := outbound.NewPolicy(nil, nil).Check(a); !errors.Is(err, outbound.ErrBlocked) {
 			t.Errorf("Check(%s) = %v, want ErrBlocked", c, err)
 		}
 	}
@@ -99,7 +99,7 @@ func TestPolicyRefusesZonedAddresses(t *testing.T) {
 // one — proving the zone refusal in Check happens before the allowlist
 // loop, not as a fallback inside it.
 func TestPolicyAllowlistCannotReadmitAZonedAddress(t *testing.T) {
-	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("::/0")})
+	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("::/0")}, nil)
 	if err := p.Check(netip.MustParseAddr("::1%lo0")); !errors.Is(err, outbound.ErrBlocked) {
 		t.Fatalf("Check(::1%%lo0) with a ::/0 allowlist = %v, want ErrBlocked", err)
 	}
@@ -140,7 +140,7 @@ func TestPolicyChecksEmbeddedIPv4(t *testing.T) {
 		{"2001:db8:1:1:200:5efe:a00:1", true, "ISATAP (0200:5EFE), embeds a private address"},
 		{"2001:db8:1:1::1", true, "an ordinary address under the same /64 as the ISATAP cases, no interface-id match"},
 	}
-	p := outbound.NewPolicy(nil)
+	p := outbound.NewPolicy(nil, nil)
 	for _, c := range cases {
 		err := p.Check(netip.MustParseAddr(c.addr))
 		if c.allowed && err != nil {
@@ -156,7 +156,7 @@ func TestPolicyChecksEmbeddedIPv4(t *testing.T) {
 // through the same Policy, allowlist included — an operator who allowed a
 // private range should not have NAT64/6to4 access to it refused.
 func TestPolicyEmbeddedIPv4RespectsAllowlist(t *testing.T) {
-	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("169.254.169.254/32")})
+	p := outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("169.254.169.254/32")}, nil)
 	if err := p.Check(netip.MustParseAddr("64:ff9b::a9fe:a9fe")); err != nil {
 		t.Fatalf("allowlisted embedded address refused: %v", err)
 	}

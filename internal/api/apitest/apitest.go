@@ -383,7 +383,7 @@ func WithRestrictiveNotifyPolicy() Option {
 		store := notify.NewSQLStore(s.DB)
 		s.Deps.Notify = notify.NewService(notify.Deps{
 			Channels: store, Deliveries: store, Digests: store, Box: box, Mail: s.Mail,
-			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil), 5*time.Second, nil), time.Now),
+			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil, nil), 5*time.Second, nil), time.Now),
 			PublicURL: s.PublicURL, Now: time.Now, Rand: rand.Reader,
 		})
 	}
@@ -573,7 +573,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	notifySvc := notify.NewService(notify.Deps{
 		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: crypto.NewBox(testMasterKey), Mail: s.Mail,
 		Sender: notify.NewChannelSender(crypto.NewBox(testMasterKey), s.Mail,
-			outbound.NewClient(outbound.NewPolicy(loopback), 5*time.Second, nil), time.Now),
+			outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now),
 		PublicURL: publicURL, Now: time.Now, Rand: rand.Reader,
 	})
 	// The maintenance service (v0.2d): group windows resolve through the

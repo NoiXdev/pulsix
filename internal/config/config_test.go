@@ -464,3 +464,38 @@ func TestNotifyAllowCIDRs(t *testing.T) {
 		t.Fatalf("a host name must be refused naming the variable, got %v", err)
 	}
 }
+
+// TestNotifyNAT64Prefixes is backlog 2.76's config half. Only the six
+// prefix lengths RFC 6052 §2.2 defines an address layout for are
+// accepted: a length it says nothing about has no defined embedding, so
+// Pulsix would be reading four octets out of an address and calling
+// them a destination nobody encoded there — and then judging THAT
+// instead of the one a dial reaches. Refusing at startup says so once,
+// to the operator, instead of silently mis-checking every webhook.
+func TestNotifyNAT64Prefixes(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@localhost:5432/db",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cfg, err := config.Load(env(base))
+	if err != nil || len(cfg.NotifyNAT64Prefixes) != 0 {
+		t.Fatalf("default: %v, %v", cfg.NotifyNAT64Prefixes, err)
+	}
+	base["PULSIX_NOTIFY_NAT64_PREFIXES"] = "2001:db8:122::/48, 64:ff9b:1::/96"
+	cfg, err = config.Load(env(base))
+	if err != nil || len(cfg.NotifyNAT64Prefixes) != 2 || cfg.NotifyNAT64Prefixes[0].String() != "2001:db8:122::/48" {
+		t.Fatalf("parsed: %v, %v", cfg.NotifyNAT64Prefixes, err)
+	}
+	for _, bad := range []string{
+		"2001:db8::/44",      // not one of the six lengths
+		"10.0.0.0/8",         // IPv4 has no embedding to read
+		"2001:db8:122::/129", // not a prefix at all
+		"not-a-prefix",
+	} {
+		base["PULSIX_NOTIFY_NAT64_PREFIXES"] = bad
+		if _, err := config.Load(env(base)); err == nil || !strings.Contains(err.Error(), "PULSIX_NOTIFY_NAT64_PREFIXES") {
+			t.Fatalf("%q must be refused naming the variable, got %v", bad, err)
+		}
+	}
+}

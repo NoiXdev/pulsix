@@ -463,7 +463,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// PULSIX_NOTIFY_ALLOW_CIDRS admits them. The sender is shared by the
 	// dispatcher below and the synchronous "Send test".
 	notifySender := notify.NewChannelSender(box, mailer,
-		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs), outbound.DefaultTimeout, nil), time.Now)
+		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs, cfg.NotifyNAT64Prefixes), outbound.DefaultTimeout, nil), time.Now)
 	notifyStore := notify.NewSQLStore(appDB)
 	notifySvc := notify.NewService(notify.Deps{
 		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: box, Mail: mailer, Sender: notifySender,

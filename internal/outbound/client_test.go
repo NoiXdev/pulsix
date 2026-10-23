@@ -31,7 +31,7 @@ func (f *fakeResolver) LookupNetIP(context.Context, string, string) ([]netip.Add
 }
 
 func loopbackOnly() outbound.Policy {
-	return outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")})
+	return outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}, nil)
 }
 
 func TestClientDialsTheResolvedAddress(t *testing.T) {
@@ -68,7 +68,7 @@ func TestClientRefusesBlockedDestinations(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := outbound.NewClient(outbound.NewPolicy(nil), time.Second, c.resolver).Get(c.url)
+			_, err := outbound.NewClient(outbound.NewPolicy(nil, nil), time.Second, c.resolver).Get(c.url)
 			if !errors.Is(err, outbound.ErrBlocked) {
 				t.Fatalf("Get(%s) = %v, want ErrBlocked", c.url, err)
 			}
@@ -173,7 +173,7 @@ func TestClientRefusesZonedLoopbackLiteral(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := fmt.Sprintf("http://[::1%%25%s]:%s/", zone, port)
-	_, err = outbound.NewClient(outbound.NewPolicy(nil), time.Second, nil).Get(target)
+	_, err = outbound.NewClient(outbound.NewPolicy(nil, nil), time.Second, nil).Get(target)
 	if !errors.Is(err, outbound.ErrBlocked) {
 		t.Fatalf("Get(%s) = %v, want ErrBlocked", target, err)
 	}
@@ -215,17 +215,17 @@ func TestClientTimesOutMidBody(t *testing.T) {
 
 func TestClientReportsResolverFailures(t *testing.T) {
 	r := &fakeResolver{err: errors.New("no such host")}
-	if _, err := outbound.NewClient(outbound.NewPolicy(nil), time.Second, r).Get("http://unknown.example.test/"); err == nil || !strings.Contains(err.Error(), "no such host") {
+	if _, err := outbound.NewClient(outbound.NewPolicy(nil, nil), time.Second, r).Get("http://unknown.example.test/"); err == nil || !strings.Contains(err.Error(), "no such host") {
 		t.Fatalf("err = %v", err)
 	}
 	empty := &fakeResolver{}
-	if _, err := outbound.NewClient(outbound.NewPolicy(nil), time.Second, empty).Get("http://empty.example.test/"); err == nil || !strings.Contains(err.Error(), "no addresses") {
+	if _, err := outbound.NewClient(outbound.NewPolicy(nil, nil), time.Second, empty).Get("http://empty.example.test/"); err == nil || !strings.Contains(err.Error(), "no addresses") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestNewClientDefaultsTheTimeout(t *testing.T) {
-	if c := outbound.NewClient(outbound.NewPolicy(nil), 0, nil); c.Timeout != outbound.DefaultTimeout {
+	if c := outbound.NewClient(outbound.NewPolicy(nil, nil), 0, nil); c.Timeout != outbound.DefaultTimeout {
 		t.Fatalf("timeout = %s", c.Timeout)
 	}
 }

@@ -44,7 +44,7 @@ func (r *receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func loopbackClient() *http.Client {
-	return outbound.NewClient(outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}), 2*time.Second, nil)
+	return outbound.NewClient(outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, nil), 2*time.Second, nil)
 }
 
 func webhookChannel(t *testing.T, w *world, url, template string, signed bool) notify.Channel {
@@ -138,7 +138,7 @@ func TestWebhookSendRefusesLoopbackWithoutAllowlist(t *testing.T) {
 	srv := httptest.NewServer(rec)
 	defer srv.Close()
 	ch := webhookChannel(t, w, srv.URL+"/secret-path", "", false)
-	client := outbound.NewClient(outbound.NewPolicy(nil), time.Second, nil)
+	client := outbound.NewClient(outbound.NewPolicy(nil, nil), time.Second, nil)
 	err := notify.NewChannelSender(fakeBox{}, w.mail, client, nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
 	if !notify.IsPermanent(err) || !errors.Is(err, outbound.ErrBlocked) || strings.Contains(err.Error(), "secret-path") {
 		t.Fatalf("err = %v, want a permanent ErrBlocked without the URL", err)

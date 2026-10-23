@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/clientip"
+	"github.com/noixdev/pulsix/internal/outbound"
 )
 
 // defaultCAListenHost is the DNS SAN the gRPC server certificate falls
@@ -83,6 +84,16 @@ type Config struct {
 	// internal/outbound) — PULSIX_NOTIFY_ALLOW_CIDRS, CIDRs or addresses,
 	// comma separated, default empty.
 	NotifyAllowCIDRs []netip.Prefix
+	// NotifyNAT64Prefixes are the operator's own NAT64 translation
+	// prefixes (PULSIX_NOTIFY_NAT64_PREFIXES, RFC 6052 network-specific
+	// prefixes, comma separated, default empty). Without them an
+	// address inside such a prefix looks like ordinary global space, so
+	// a deployment running its own NAT64 had a route to any blocked
+	// IPv4 address the outbound policy could not recognise as one
+	// (backlog 2.76). The well-known 64:ff9b::/96 needs no
+	// configuration. Only the six prefix lengths RFC 6052 §2.2 defines
+	// an embedding for are accepted.
+	NotifyNAT64Prefixes []netip.Prefix
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -197,6 +208,16 @@ func Load(getenv func(string) string) (Config, error) {
 		return cfg, fmt.Errorf("PULSIX_NOTIFY_ALLOW_CIDRS: %w", err)
 	}
 	cfg.NotifyAllowCIDRs = notifyAllow
+	nat64, err := clientip.ParsePrefixes(getenv("PULSIX_NOTIFY_NAT64_PREFIXES"))
+	if err != nil {
+		return cfg, fmt.Errorf("PULSIX_NOTIFY_NAT64_PREFIXES: %w", err)
+	}
+	for _, pre := range nat64 {
+		if !outbound.ValidNAT64Prefix(pre) {
+			return cfg, fmt.Errorf("PULSIX_NOTIFY_NAT64_PREFIXES: %s is not a NAT64 prefix: RFC 6052 defines an embedding only for an IPv6 /32, /40, /48, /56, /64 or /96", pre)
+		}
+	}
+	cfg.NotifyNAT64Prefixes = nat64
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {
 		return cfg, fmt.Errorf("PULSIX_MASTER_KEY must be 64 hex characters (32 bytes)")

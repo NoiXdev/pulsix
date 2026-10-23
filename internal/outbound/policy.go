@@ -141,12 +141,24 @@ func isatapEmbeddedIPv4(a netip.Addr) (netip.Addr, bool) {
 // value refuses every blocked range and allows everything else.
 type Policy struct {
 	allow []netip.Prefix
+	// nat64 are the operator's own NAT64 translation prefixes
+	// (PULSIX_NOTIFY_NAT64_PREFIXES, RFC 6052 network-specific
+	// prefixes). The well-known 64:ff9b::/96 is recognised without
+	// configuration; a deployment that runs its own NSP has to say so,
+	// because an NSP is indistinguishable from ordinary global space
+	// without being told (backlog 2.76).
+	nat64 []netip.Prefix
 }
 
 // NewPolicy returns a Policy whose allowlist (PULSIX_NOTIFY_ALLOW_CIDRS)
-// re-admits addresses inside the blocked ranges.
-func NewPolicy(allow []netip.Prefix) Policy {
-	return Policy{allow: append([]netip.Prefix(nil), allow...)}
+// re-admits addresses inside the blocked ranges, and which sees through
+// the operator's own NAT64 prefixes (PULSIX_NOTIFY_NAT64_PREFIXES) as
+// well as the well-known one.
+func NewPolicy(allow, nat64 []netip.Prefix) Policy {
+	return Policy{
+		allow: append([]netip.Prefix(nil), allow...),
+		nat64: append([]netip.Prefix(nil), nat64...),
+	}
 }
 
 // Check reports whether a may be dialled: nil, or an error wrapping
@@ -181,10 +193,24 @@ func (p Policy) Check(a netip.Addr) error {
 			return fmt.Errorf("%w: %s is %s (allow it with PULSIX_NOTIFY_ALLOW_CIDRS)", ErrBlocked, a, b.reason)
 		}
 	}
-	if embedded, ok := embeddedIPv4(a); ok {
+	if embedded, ok := p.embedded(a); ok {
 		if err := p.Check(embedded); err != nil {
 			return fmt.Errorf("%s embeds the IPv4 address %s, which is not allowed: %w", a, embedded, err)
 		}
 	}
 	return nil
+}
+
+// embedded is embeddedIPv4 plus the operator's own NAT64 prefixes. The
+// configured ones are tried FIRST: an NSP may sit anywhere in global
+// space, including inside a range one of the fixed forms would also
+// match, and the operator's own statement about their network is the
+// better answer where the two disagree.
+func (p Policy) embedded(a netip.Addr) (netip.Addr, bool) {
+	for _, nsp := range p.nat64 {
+		if v4, ok := rfc6052EmbeddedIPv4(a, nsp); ok {
+			return v4, true
+		}
+	}
+	return embeddedIPv4(a)
 }
