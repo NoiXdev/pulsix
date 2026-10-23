@@ -16,6 +16,15 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	// The IANA zone database, embedded. Schedules, maintenance windows,
+	// alert routes, on-call rotations and digests all resolve a named zone
+	// through time.LoadLocation, which reads the host's zoneinfo files;
+	// a host that ships none fails all of them at once, and reports it as
+	// a bad zone the operator saved (internal/schedules' "the schedule's
+	// timetable is invalid; edit and save it"), which no edit can fix.
+	// This copy is only a fallback — the host's own files still win, and
+	// still receive the host's updates (backlog 2.88).
+	_ "time/tzdata"
 
 	"google.golang.org/grpc"
 
