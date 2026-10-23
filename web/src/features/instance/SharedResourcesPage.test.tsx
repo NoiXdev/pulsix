@@ -309,15 +309,16 @@ describe('SharedResourcesPage — job template definitions (v0.2f Task 6)', () =
     expect(await screen.findByText('Job template definition deploy-site saved')).toBeInTheDocument();
   });
 
-  // Whole-branch review finding: this dialog has no field for extra vars or
-  // their schema (the comment above TemplateDefinitionDialog explains why —
-  // they are set through the API, not here), but the PUT it sends is a full
-  // replace. Before this fix, submit() built its body from only the fields
-  // this form renders, so editing the limit here SILENTLY CLEARED a value
-  // set through the API, for every organization's projection, in the same
-  // transaction. The fix rounds the stored value back through the form
-  // state unchanged rather than defaulting it to {} on every save.
-  it('leaves stored extra vars intact when editing a field this dialog does not render them through', async () => {
+  // Whole-branch review finding: the PUT this dialog sends is a full
+  // replace, and submit() used to build its body from only the fields the
+  // form rendered — so editing the limit SILENTLY CLEARED extra vars set
+  // through the API, for every organization's projection, in the same
+  // transaction. The first fix round-tripped the stored value through
+  // submit(); backlog 2.101 then made it editable, so it now round-trips
+  // through the form's own state. The property this pins is the same
+  // either way, and it is the one that matters: an edit that does not
+  // touch extra vars leaves them exactly as they were.
+  it('leaves stored extra vars intact when editing another field', async () => {
     const user = userEvent.setup();
     let put: unknown;
     const withExtraVars = tplDef({ extra_vars: { region: 'eu-west-1', replicas: 3 } });
@@ -577,5 +578,107 @@ describe('SharedResourcesPage — check definitions (v0.2f Task 7)', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Delete disk-data' }));
     expect(await screen.findByText('No shared check definitions yet.')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Backlog 2.101 (and 2.100, folded into it): the round-trip fix above
+ * stopped an edit from CLEARING a shared template's extra vars or a
+ * shared disk check's mounts, but neither was editable here — an
+ * instance admin had to set them through the API and then never touch
+ * that definition through the GUI again without re-sending them by
+ * hand. These are the editors that close that.
+ */
+describe('shared definitions can be given extra vars and disk mounts', () => {
+  const repoDef = () => ({
+    id: 'r1', name: 'infra-base', url: 'https://git.example/provider/infra-base.git', branch: 'main', subpath: '',
+  });
+  const tplDef = (over: Record<string, unknown> = {}) => ({
+    id: 't1', name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml', limit: '', extra_vars: {}, ...over,
+  });
+
+  it('edits a shared template definition\'s extra vars and their schema', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    const withSchema = tplDef({
+      extra_vars: { region: 'eu-west-1' },
+      extra_vars_schema: { fields: [{ name: 'region', type: 'string' }] },
+    });
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [withSchema] },
+      'PUT /api/v1/admin/templates/definitions/t1': (req: MockRequest) => {
+        put = req.body;
+        return { definition: withSchema };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+
+    // The stored schema seeds the builder, and the stored value seeds
+    // the generated form — so an admin sees what is there rather than
+    // an empty editor over a value they cannot see.
+    const value = within(dialog).getByDisplayValue('eu-west-1');
+    await user.clear(value);
+    await user.type(value, 'us-east-1');
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(put).toMatchObject({
+      extra_vars: { region: 'us-east-1' },
+      extra_vars_schema: { fields: [{ name: 'region', type: 'string' }] },
+    });
+  });
+
+  it('does not offer a secret field type, which the server always refuses here', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [tplDef({ extra_vars_schema: { fields: [{ name: 'region', type: 'string' }] } })] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.click(within(dialog).getByLabelText('Type'));
+    // A shared definition's extra vars are written into every
+    // organization's own column unsealed, so the server refuses a
+    // secret-typed field outright. Offering it would be offering a
+    // save that cannot succeed.
+    expect(within(dialog).queryByRole('option', { name: 'secret' })).toBeNull();
+    expect(within(dialog).getByRole('option', { name: 'string' })).toBeInTheDocument();
+  });
+
+  it('edits a shared disk check definition\'s mounts, and an empty list means every mount', async () => {
+    const user = userEvent.setup();
+    const puts: unknown[] = [];
+    const disk = { id: 'cd1', key: 'disk', plugin: 'disk', interval_seconds: 60, params: { mounts: ['/', '/var'] } };
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+      'GET /api/v1/admin/checks/definitions': { definitions: [disk] },
+      'PUT /api/v1/admin/checks/definitions/cd1': (req: MockRequest) => {
+        puts.push(req.body);
+        return { definition: disk };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'disk' }));
+    let dialog = await screen.findByRole('dialog', { name: 'disk' });
+    const mounts = within(dialog).getByLabelText('Mounts (one per line, empty means every mount)');
+    expect(mounts).toHaveValue('/\n/var');
+    await user.clear(mounts);
+    await user.type(mounts, '/srv');
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(puts[0]).toMatchObject({ plugin: 'disk', params: { mounts: ['/srv'] } });
+
+    // Emptied: the allow-list is optional, and no list means every
+    // mount — the same contract an organization's own disk check keeps.
+    await user.click(await screen.findByRole('button', { name: 'disk' }));
+    dialog = await screen.findByRole('dialog', { name: 'disk' });
+    await user.clear(within(dialog).getByLabelText('Mounts (one per line, empty means every mount)'));
+    await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
+    expect(puts[1]).toMatchObject({ plugin: 'disk', params: {} });
   });
 });

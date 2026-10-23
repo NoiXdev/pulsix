@@ -19,6 +19,13 @@ export interface SchemaBuilderProps {
   pathPrefix?: string;
   /** A sub-schema: no scope, no overridable, no preview. */
   nested?: boolean;
+  /** The field types this schema may use; FIELD_TYPES by default. A
+   * shared job-template definition withholds "secret" — the server
+   * refuses a secret-typed field there by construction (a shared
+   * definition's extra vars are written into every organization's own
+   * column unsealed), and offering a type that is always refused is
+   * worse than not offering it (backlog 2.101). */
+  types?: readonly FieldType[];
 }
 
 function newKey(): string {
@@ -42,7 +49,7 @@ function removeItem<T>(items: readonly T[], index: number): T[] {
  * the field list on the left, the selected field's editor in the middle,
  * and, at the top level, the generated assignment form as a live preview.
  */
-export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nested = false }: SchemaBuilderProps) {
+export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nested = false, types = FIELD_TYPES }: SchemaBuilderProps) {
   const [selected, setSelected] = useState(0);
   const fields = value.fields;
   const index = Math.min(selected, fields.length - 1);
@@ -128,6 +135,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
           path={fieldPath(pathPrefix, index)}
           idBase={`${idBase}-${index}`}
           nested={nested}
+          types={types}
           problems={problems}
           canMoveUp={index > 0}
           canMoveDown={index < fields.length - 1}
@@ -155,6 +163,7 @@ interface FieldEditorProps {
   path: string;
   idBase: string;
   nested: boolean;
+  types: readonly FieldType[];
   problems?: readonly Problem[];
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -163,7 +172,7 @@ interface FieldEditorProps {
   onRemove: () => void;
 }
 
-function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMoveDown, onChange, onMove, onRemove }: FieldEditorProps) {
+function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, canMoveDown, onChange, onMove, onRemove }: FieldEditorProps) {
   const id = (k: string) => `${idBase}-${k}`;
   const problem = (k: string) => problemAt(problems, `${path}.${k}`);
   const set = (patch: Partial<SchemaField>) => onChange({ ...field, ...patch });
@@ -211,7 +220,7 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
           <Label htmlFor={id('type')}>Type</Label>
           <Select
             id={id('type')}
-            options={FIELD_TYPES.map((t) => ({ value: t, label: t === 'object' ? 'sub-schema (object)' : t }))}
+            options={types.map((t) => ({ value: t, label: t === 'object' ? 'sub-schema (object)' : t }))}
             value={field.type}
             onChange={(v) => onChange(changeType(field, v as FieldType))}
           />
@@ -307,7 +316,7 @@ function FieldEditor({ field, path, idBase, nested, problems, canMoveUp, canMove
               {problem('fields')}
             </span>
           )}
-          <SchemaBuilder nested value={{ fields: field.fields ?? [] }} onChange={(v) => set({ fields: v.fields })} problems={problems} pathPrefix={path} />
+          <SchemaBuilder nested types={types} value={{ fields: field.fields ?? [] }} onChange={(v) => set({ fields: v.fields })} problems={problems} pathPrefix={path} />
         </div>
       )}
       {otherProblems.length > 0 && (

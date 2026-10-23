@@ -1167,3 +1167,60 @@ func TestListCheckDefsReturnsEveryDefinition(t *testing.T) {
 }
 
 var ctx = context.Background()
+
+// TestTemplateDefinitionRefusesAMalformedAnsibleMarker is backlog 2.101's
+// backend half, and the same gap 2.71 closed for an organization's own
+// templates. validateTemplateDefinitionInput ran only
+// ansiblevars.ForbiddenIn, which looks at TOP-LEVEL names -- so a nested
+// object with an "__ansible" key that is not a well-formed marker saved
+// happily here and was written straight into EVERY organization's own
+// job_templates.extra_vars (store_sql.go bypasses internal/templates
+// entirely), breaking a run in each of them with a parse error in a
+// document none of their operators wrote. One mistake, every customer.
+func TestTemplateDefinitionRefusesAMalformedAnsibleMarker(t *testing.T) {
+	base := func() shared.TemplateDefinitionInput {
+		return shared.TemplateDefinitionInput{
+			Name: "deploy-site", SharedRepoID: uuid.Must(uuid.NewV7()), PlaybookPath: "site.yml",
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		vars map[string]any
+		want bool // true: must be refused
+	}{
+		{"a well-formed unsafe marker is how a definition hands over literal text",
+			map[string]any{"greeting": map[string]any{"__ansible_unsafe": "{{ not_rendered }}"}}, false},
+		{"a marker with a second key cannot be loaded",
+			map[string]any{"greeting": map[string]any{"__ansible_unsafe": "hi", "extra": 1}}, true},
+		{"an unknown __ansible key cannot be loaded",
+			map[string]any{"greeting": map[string]any{"__ansible_made_up": "hi"}}, true},
+		{"and it is found however deep it sits",
+			map[string]any{"a": []any{map[string]any{"b": map[string]any{"__ansible_vault": 7}}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := shared.NewService(store)
+			in := base()
+			in.ExtraVars = tc.vars
+			_, err := svc.CreateTemplate(ctx, in)
+			if tc.want {
+				if !errors.Is(err, shared.ErrInvalidInput) {
+					t.Fatalf("CreateTemplate = %v, want ErrInvalidInput", err)
+				}
+				if len(store.createTemplateCalls) != 0 {
+					t.Fatalf("it reached the store %d times; nothing may be projected", len(store.createTemplateCalls))
+				}
+				// The edit path is the same gate: a definition saved
+				// before this check existed must not keep a broken
+				// marker through an unrelated edit.
+				if _, err := svc.UpdateTemplate(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, shared.ErrInvalidInput) {
+					t.Fatalf("UpdateTemplate = %v, want ErrInvalidInput", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateTemplate = %v, want it saved", err)
+			}
+		})
+	}
+}

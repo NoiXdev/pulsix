@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -447,8 +449,23 @@ func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
 	if in.ExtraVarsSchema != nil && schemaHasSecretField(in.ExtraVarsSchema.Fields) {
 		return fmt.Errorf("%w: a shared template's extra vars schema may not declare a secret field — a shared definition carries no secret by construction", ErrInvalidInput)
 	}
-	if names := ansiblevars.ForbiddenIn(extraVarsOrEmpty(in.ExtraVars)); len(names) > 0 {
+	vars := extraVarsOrEmpty(in.ExtraVars)
+	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {
 		return fmt.Errorf("%w: extra vars name a reserved variable: %s", ErrInvalidInput, strings.Join(names, ", "))
+	}
+	// ForbiddenIn only looks at TOP-LEVEL names, and a nested object
+	// with an "__ansible" key that is not a well-formed marker is what
+	// makes Ansible's JSON load of a run's extra-vars file fail. The
+	// same check internal/templates.Service.build applies to an
+	// ordinary template (backlog 2.71), and it matters MORE here: a
+	// shared definition's extra vars are written straight into every
+	// organization's own job_templates row, so one malformed marker
+	// breaks a run in each of them, with a parse error in a document
+	// none of their operators wrote (backlog 2.101).
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		if err := ansiblevars.CheckMarkers(vars[name]); err != nil {
+			return fmt.Errorf("%w: extra var %s cannot be loaded by Ansible: %w", ErrInvalidInput, name, err)
+		}
 	}
 	return nil
 }

@@ -11,6 +11,10 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
+import { SchemaBuilder } from '../inventory/schema/SchemaBuilder.tsx';
+import { SchemaForm } from '../inventory/schema/SchemaForm.tsx';
+import { toVarSchema } from '../../api/hooks/useInventory.ts';
+import type { FieldType, VarSchema, Vars } from '../inventory/schema/types.ts';
 import {
   useCreateRepoDefinition,
   useDeleteRepoDefinition,
@@ -456,6 +460,14 @@ function validateTemplateDefinitionInput(values: TemplateDefinitionFormValues): 
   return errors;
 }
 
+// SHARED_FIELD_TYPES is FIELD_TYPES without "secret": a shared
+// definition's extra vars are written straight into every organization's
+// own job_templates.extra_vars column, never sealed, so the server
+// refuses a secret-typed field outright (internal/shared's
+// schemaHasSecretField). Offering a type that is always refused is worse
+// than not offering it (backlog 2.101).
+const SHARED_FIELD_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'bool', 'enum', 'list', 'repeater', 'object'];
+
 /**
  * TemplateDefinitionDialog creates or edits one installation-owned job
  * template definition. No scope, no SSH credential, no vault identities —
@@ -482,6 +494,10 @@ function TemplateDefinitionDialog({
   );
   const [errors, setErrors] = useState<Partial<Record<keyof TemplateDefinitionFormValues, string>>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [schema, setSchema] = useState<VarSchema>(
+    definition?.extra_vars_schema ? toVarSchema(definition.extra_vars_schema) : { fields: [] },
+  );
+  const [vars, setVars] = useState<Vars>((definition?.extra_vars ?? {}) as Vars);
 
   function setValue(key: Exclude<keyof TemplateDefinitionFormValues, 'sharedRepoId'>) {
     return (e: ChangeEvent<HTMLInputElement>) => setValues((v) => ({ ...v, [key]: e.target.value }));
@@ -515,18 +531,15 @@ function TemplateDefinitionDialog({
     const fieldErrors = validateTemplateDefinitionInput(values);
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
-    // extra_vars/extra_vars_schema are not rendered by this form (the doc
-    // comment above explains why), so they round-trip from the definition
-    // this dialog was opened with rather than defaulting to {} / absent —
-    // the same stored value a GET already returned, sent back unchanged
-    // rather than cleared by a PUT that never touched it. A brand-new
-    // definition (no `definition` prop) has no stored value to round-trip,
-    // so it still gets exactly the create-time default the comment above
-    // describes.
+    // Both are edited here since backlog 2.101; they used to round-trip
+    // from the definition the dialog was opened with, because the form
+    // did not render them and a PUT replaces everything. An empty field
+    // list sends no schema at all rather than an empty one, so a
+    // definition that never had one still round-trips as absent.
     const body: TemplateDefinitionInput = {
       name: values.name, shared_repo_id: values.sharedRepoId, playbook_path: values.playbookPath, limit: values.limit,
-      extra_vars: definition?.extra_vars ?? {},
-      ...(definition?.extra_vars_schema ? { extra_vars_schema: definition.extra_vars_schema } : {}),
+      extra_vars: vars,
+      ...(schema.fields.length > 0 ? { extra_vars_schema: schema } : {}),
     };
     try {
       if (definition) await update.mutateAsync(body);
@@ -563,9 +576,25 @@ function TemplateDefinitionDialog({
         </div>
         {field('playbookPath', 'site.yml')}
         {field('limit', 'e.g. web*:&!web-03 (optional)')}
+        <details className="rounded-md border border-border p-3" open={schema.fields.length > 0}>
+          <summary className="cursor-pointer text-xs font-semibold">Extra vars schema</summary>
+          <div className="pt-3">
+            {/* No secret type: the server refuses one on a shared
+                definition by construction, because these extra vars are
+                written into every organization's own column without ever
+                being sealed. */}
+            <SchemaBuilder nested types={SHARED_FIELD_TYPES} value={schema} onChange={setSchema} />
+          </div>
+        </details>
+        {schema.fields.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold">Extra vars</span>
+            <SchemaForm fields={schema.fields} value={vars} onChange={setVars} idPrefix="tpl-def-vars" />
+          </div>
+        )}
         <p className="text-[11px] text-muted-foreground">
-          Projected into every organization as a read-only template; each one supplies its own scope and SSH
-          credential here, not on this definition. Extra vars and their schema are set through the API for now.
+          Projected into every organization as a read-only template, extra vars included; each one supplies its own
+          scope and SSH credential here, not on this definition.
         </p>
         {formError && (
           <p role="alert" className="text-xs text-destructive">
@@ -700,6 +729,7 @@ interface CheckDefinitionFormValues {
   plugin: string;
   intervalSeconds: string;
   units: string;
+  mounts: string;
 }
 
 const CHECK_PLUGINS: [string, string][] = [
@@ -747,21 +777,27 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
       ? {
           key: definition.key, plugin: definition.plugin, intervalSeconds: String(definition.interval_seconds),
           units: Array.isArray(definition.params?.units) ? (definition.params.units as string[]).join('\n') : '',
+          mounts: Array.isArray(definition.params?.mounts) ? (definition.params.mounts as string[]).join('\n') : '',
         }
-      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '' },
+      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '' },
   );
   const [errors, setErrors] = useState<Partial<Record<keyof CheckDefinitionFormValues, string>>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
   function params(): Record<string, unknown> {
     if (values.plugin === 'service') return { units: lines(values.units) };
-    // disk's optional "mounts" (and any other non-"service" plugin's own
-    // params, cpu/memory excepted since they never take any) are not
-    // rendered by this form. Round-trip the stored value unchanged while
-    // the plugin itself is unchanged — switching plugins away from what
-    // params() was written against would carry over a shape the new
-    // plugin's own validation refuses anyway, so {} is still right there,
-    // exactly as it is for a brand-new definition with nothing stored yet.
+    // disk's allow-list is optional and an empty one means every mount
+    // (CheckDialog.tsx keeps the same contract for an organization's own
+    // checks), so an empty textarea sends {} rather than an empty list.
+    if (values.plugin === 'disk') {
+      const list = lines(values.mounts);
+      return list.length > 0 ? { mounts: list } : {};
+    }
+    // cpu and memory take no params at all. Any plugin added later is
+    // still unrendered here, so its stored value round-trips unchanged
+    // while the plugin itself is unchanged — switching plugins away from
+    // what params() was written against would carry over a shape the new
+    // plugin's own validation refuses anyway, so {} is right there.
     if (definition && definition.plugin === values.plugin) return definition.params ?? {};
     return {};
   }
@@ -836,6 +872,18 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
             </span>
           )}
         </div>
+        {values.plugin === 'disk' && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="check-def-mounts">Mounts (one per line, empty means every mount)</Label>
+            <textarea
+              id="check-def-mounts"
+              className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
+              value={values.mounts}
+              placeholder="/&#10;/var"
+              onChange={(e) => setValues((cur) => ({ ...cur, mounts: e.target.value }))}
+            />
+          </div>
+        )}
         {values.plugin === 'service' && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-def-units">Units (one per line)</Label>
