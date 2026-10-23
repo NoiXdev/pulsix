@@ -222,27 +222,45 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 		}
 	}
 
-	if err := c.Mail(settings.From); err != nil {
-		return fmt.Errorf("mail from: %w", err)
-	}
+	// One transaction per recipient, all in this one session (backlog
+	// 2.74). A single transaction addressed to the whole list puts every
+	// address in the To: header of a message all of them receive, so each
+	// learns who else is on the channel — for an alerting channel that is
+	// the on-call roster, and often customers' addresses. Asking to be
+	// notified is not agreeing to have your address published to everyone
+	// else who did.
+	//
+	// Per-recipient also makes a partial outcome expressible: one refused
+	// mailbox no longer costs the recipients the server accepted, and the
+	// error below names exactly who is left so a retry can be aimed.
+	// Reusing the connection keeps the cost one session, not one per
+	// address.
+	var failed []string
+	var firstErr error
 	for _, rcpt := range to {
-		if err := c.Rcpt(rcpt); err != nil {
-			return fmt.Errorf("rcpt to: %w", err)
+		if err := deliverOne(c, settings.From, rcpt, subject, body); err != nil {
+			failed = append(failed, rcpt)
+			if firstErr == nil {
+				firstErr = err
+			}
+			// A session-level failure (the connection died, the server is
+			// shutting down) will fail identically for everyone left, so
+			// stop and report the rest as unsent rather than hammering a
+			// dead socket for each one.
+			if dctx.Err() != nil {
+				failed = append(failed, remaining(to, rcpt)...)
+				break
+			}
+			continue
 		}
 	}
-	w, err := c.Data()
-	if err != nil {
-		return fmt.Errorf("data: %w", err)
+	if firstErr != nil {
+		_ = c.Quit()
+		return &PartialError{Failed: failed, Err: firstErr}
 	}
-	if _, err := w.Write(buildMessage(settings.From, to, subject, body)); err != nil {
-		return fmt.Errorf("write message: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("close message: %w", err)
-	}
-	// The server accepted the message here: w.Close sends the final dot and
-	// reads the reply, so a non-nil error above means it was refused and a
-	// nil one means it is queued and out of our hands.
+	// The server accepted every message here: each w.Close sent the final
+	// dot and read the reply, so a nil error means they are queued and out
+	// of our hands.
 	//
 	// Everything after this point is therefore no longer about delivery.
 	// QUIT is a courtesy, and servers routinely skip the 221 — a reset, an
@@ -255,6 +273,62 @@ func deliver(ctx context.Context, settings SMTPSettings, to []string, subject, b
 	_ = c.Quit()
 	return nil
 }
+
+// deliverOne runs one MAIL/RCPT/DATA transaction on an open session. The
+// message names only this recipient, which is the whole point of the
+// per-recipient loop above.
+func deliverOne(c *smtp.Client, from, rcpt, subject, body string) error {
+	if err := c.Mail(from); err != nil {
+		return fmt.Errorf("mail from: %w", err)
+	}
+	if err := c.Rcpt(rcpt); err != nil {
+		// Leave the transaction open-but-abandoned: the next Mail call
+		// starts a fresh one, and a server that cares resets on it.
+		return fmt.Errorf("rcpt to: %w", err)
+	}
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("data: %w", err)
+	}
+	if _, err := w.Write(buildMessage(from, []string{rcpt}, subject, body)); err != nil {
+		_ = w.Close()
+		return fmt.Errorf("write message: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("close message: %w", err)
+	}
+	return nil
+}
+
+// remaining returns the recipients after cur in to — those a session-level
+// failure means were never attempted.
+func remaining(to []string, cur string) []string {
+	for i, r := range to {
+		if r == cur {
+			return to[i+1:]
+		}
+	}
+	return nil
+}
+
+// PartialError reports that a send reached some recipients and not
+// others. Failed names the ones still owed the message, so a caller
+// retrying does not resend to everybody — which, before per-recipient
+// delivery, is what one refused mailbox caused on every attempt until the
+// delivery gave up (backlog 2.74). A send that reached nobody is also a
+// PartialError, with every recipient in Failed: the caller's question is
+// always "who still needs this", and answering it one way keeps that
+// caller free of a special case.
+type PartialError struct {
+	Failed []string
+	Err    error
+}
+
+func (e *PartialError) Error() string {
+	return fmt.Sprintf("send to %d of the recipients failed: %v", len(e.Failed), e.Err)
+}
+
+func (e *PartialError) Unwrap() error { return e.Err }
 
 // buildMessage renders a minimal RFC 5322 plain-text message in UTF-8.
 //

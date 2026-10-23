@@ -97,7 +97,7 @@ func (s *testSession) Logout() error { return nil }
 // AUTH at all — which is exactly the "server does not support AUTH"
 // scenario TestSendFailsWhenCredentialsProvidedButServerDoesNotAdvertiseAUTH
 // needs, without having to fake a non-authenticating backend.
-func startTestServer(t *testing.T, backend *testBackend, allowInsecureAuth bool) (host string, port int) {
+func startTestServer(t *testing.T, backend gosmtp.Backend, allowInsecureAuth bool) (host string, port int) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -328,5 +328,112 @@ func TestAddressesWithLineBreaksAreRefused(t *testing.T) {
 	}
 	if len(backend.recorded()) != 0 {
 		t.Fatal("a message with a line break in an address was delivered")
+	}
+}
+
+// TestEachRecipientGetsTheirOwnMessage is backlog 2.74's disclosure half.
+// One SMTP transaction addressed to every recipient put the whole list in
+// the To: header of a message all of them receive, so each learns who
+// else is on the channel. For an alerting channel that list is the
+// organization's on-call roster and often its customers' addresses, and
+// nothing about asking for notifications implies agreeing to publish your
+// address to everyone else who did. Each recipient now gets their own
+// message naming only themselves.
+func TestEachRecipientGetsTheirOwnMessage(t *testing.T) {
+	backend := &testBackend{username: "pulsix", password: "correct horse"}
+	host, port := startTestServer(t, backend, true)
+	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{Host: host, Port: port, Username: "pulsix", Password: "correct horse", From: "pulsix@example.test"}, nil
+	})
+	to := []string{"ops@example.test", "dba@example.test", "oncall@example.test"}
+	if err := m.SendMany(context.Background(), to, "Subject", "body"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := backend.recorded()
+	if len(got) != len(to) {
+		t.Fatalf("%d messages on the wire, want one per recipient (%d)", len(got), len(to))
+	}
+	seen := map[string]bool{}
+	for _, msg := range got {
+		if len(msg.to) != 1 {
+			t.Fatalf("a message was addressed to %v; each must carry exactly one recipient", msg.to)
+		}
+		seen[msg.to[0]] = true
+		// The envelope is not the only place a list leaks: the To: header
+		// inside the message body is what a reader actually sees.
+		for _, other := range to {
+			if other != msg.to[0] && strings.Contains(string(msg.data), other) {
+				t.Fatalf("the message to %s names %s; recipients must not learn about each other", msg.to[0], other)
+			}
+		}
+	}
+	for _, r := range to {
+		if !seen[r] {
+			t.Fatalf("%s never received the message", r)
+		}
+	}
+}
+
+// rejectingBackend refuses one named recipient at RCPT TO and accepts
+// every other, the way a real server rejects a single unknown mailbox
+// out of a channel's list.
+type rejectingBackend struct {
+	inner  *testBackend
+	reject string
+}
+
+func (b *rejectingBackend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
+	return &rejectingSession{testSession: testSession{backend: b.inner}, reject: b.reject}, nil
+}
+
+type rejectingSession struct {
+	testSession
+	reject string
+}
+
+func (s *rejectingSession) Rcpt(to string, o *gosmtp.RcptOptions) error {
+	if to == s.reject {
+		return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 1, 1}, Message: "no such mailbox"}
+	}
+	return s.testSession.Rcpt(to, o)
+}
+
+// TestOneRejectedRecipientDoesNotCostTheOthers is backlog 2.74's retry
+// half. With one transaction for the whole list, a single rejected
+// mailbox failed the delivery outright — so the retry resent to
+// everyone, and the recipients the server HAD accepted received the same
+// alert again on every attempt until the delivery gave up. The send now
+// delivers to everyone it can and reports exactly who is left, in a form
+// the caller can act on, so a retry can be aimed instead of repeated.
+func TestOneRejectedRecipientDoesNotCostTheOthers(t *testing.T) {
+	inner := &testBackend{}
+	host, port := startTestServer(t, &rejectingBackend{inner: inner, reject: "gone@example.test"}, true)
+	m := mail.NewSMTP(func(context.Context) (mail.SMTPSettings, error) {
+		return mail.SMTPSettings{Host: host, Port: port, From: "pulsix@example.test"}, nil
+	})
+
+	err := m.SendMany(context.Background(), []string{"ops@example.test", "gone@example.test", "dba@example.test"}, "Subject", "body")
+	if err == nil {
+		t.Fatal("want an error naming the recipient that was refused")
+	}
+	var partial *mail.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v (%T); want a *mail.PartialError a caller can read the remaining recipients from", err, err)
+	}
+	if len(partial.Failed) != 1 || partial.Failed[0] != "gone@example.test" {
+		t.Fatalf("failed recipients = %v, want only gone@example.test", partial.Failed)
+	}
+
+	// The two good addresses were delivered to, once each, despite the
+	// third being refused in the same session.
+	got := inner.recorded()
+	if len(got) != 2 {
+		t.Fatalf("%d messages delivered, want 2 (the accepted recipients)", len(got))
+	}
+	for _, msg := range got {
+		if len(msg.to) != 1 || msg.to[0] == "gone@example.test" {
+			t.Fatalf("unexpected recipients %v", msg.to)
+		}
 	}
 }

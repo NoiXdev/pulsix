@@ -21,12 +21,28 @@ func TestSendManyDeliversOneMessageToEveryRecipient(t *testing.T) {
 	if err := m.SendMany(context.Background(), []string{"ops@example.test", "dba@example.test"}, "Run failed", "body"); err != nil {
 		t.Fatal(err)
 	}
+	// One message per recipient since backlog 2.74 — this test used to
+	// assert the opposite (one message carrying both addresses in its
+	// To: header), which is the disclosure that row exists to remove.
+	// Its real point survives unchanged: SendMany reaches everyone, and
+	// each message is addressed to the person reading it.
 	got := backend.recorded()
-	if len(got) != 1 || len(got[0].to) != 2 || got[0].to[1] != "dba@example.test" {
-		t.Fatalf("recorded = %+v, want one message with two recipients", got)
+	if len(got) != 2 {
+		t.Fatalf("recorded %d messages, want one per recipient: %+v", len(got), got)
 	}
-	if !strings.Contains(string(got[0].data), "To: ops@example.test, dba@example.test\r\n") {
-		t.Fatalf("To header missing: %s", got[0].data)
+	for _, want := range []string{"ops@example.test", "dba@example.test"} {
+		var found bool
+		for _, msg := range got {
+			if len(msg.to) == 1 && msg.to[0] == want {
+				found = true
+				if !strings.Contains(string(msg.data), "To: "+want+"\r\n") {
+					t.Fatalf("the message to %s has no matching To header: %s", want, msg.data)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s got no message of their own: %+v", want, got)
+		}
 	}
 }
 
