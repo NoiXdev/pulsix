@@ -71,3 +71,48 @@ describe('DigestCard', () => {
     expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Backlog 2.88: the next-run line rendered the instant in the browser's
+ * zone with nothing saying so, while the Timezone field right below it
+ * named the digest's own. An operator who set the digest to Monday 08:00
+ * in Auckland and read "Sunday, 21:00" off their Berlin browser had no
+ * way to tell whether the setting had taken.
+ */
+describe('DigestCard next-run line', () => {
+  const at = '2026-07-06T20:00:00Z';
+  const fmt = (zone?: string) => new Date(at).toLocaleString(undefined, { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' });
+  // A zone this host does not already sit in, so the assertion below is
+  // about the zone and not about the formatting. Picked at run time
+  // rather than hard-coded, so the test still means something on a
+  // machine in Auckland.
+  const zone = ['Pacific/Auckland', 'America/Los_Angeles', 'UTC'].find((z) => fmt(z) !== fmt()) as string;
+
+  it('renders the next run in the digest timezone and names it', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/notification-digest': { digest: { ...digest.digest, enabled: true, timezone: zone, next_run_at: at } },
+    });
+    renderIt(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    const line = await screen.findByText(/^next:/);
+    expect(line).toHaveTextContent(fmt(zone));
+    expect(line).toHaveTextContent(zone);
+    expect(line.textContent).not.toContain(fmt());
+  });
+
+  it('falls back to the browser zone, named, when the browser does not know the digest zone', async () => {
+    // The server resolves the zone name against its own database and
+    // the browser against its own; the two can disagree over a zone one
+    // of them has and the other does not. toLocaleString throws on an
+    // unknown name, and an uncaught throw here would take down the
+    // whole card over a label.
+    mockApi({
+      'GET /api/v1/orgs/acme/notification-digest': { digest: { ...digest.digest, enabled: true, timezone: 'Mars/Olympus_Mons', next_run_at: at } },
+    });
+    renderIt(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    expect(await screen.findByRole('region', { name: 'Weekly digest' })).toBeInTheDocument();
+    const line = screen.getByText(/^next:/);
+    expect(line).toHaveTextContent(fmt());
+    expect(line).toHaveTextContent(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(line.textContent).not.toContain('Mars/Olympus_Mons');
+  });
+});

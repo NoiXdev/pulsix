@@ -57,7 +57,7 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
     <section aria-label="Weekly digest" className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-[15px] font-semibold">Weekly digest</h2>
-        {initial.next_run_at && <span className="text-xs text-muted-foreground">next: {new Date(initial.next_run_at).toLocaleString()}</span>}
+        {initial.next_run_at && <span className="text-xs text-muted-foreground">next: {nextRunLabel(initial.next_run_at, initial.timezone)}</span>}
       </div>
       <p className="text-xs text-muted-foreground">Runs per schedule, failures, skips and misses, and the slowest runs of the past seven days.</p>
       <label className="flex items-center gap-2 text-xs">
@@ -106,4 +106,27 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
       )}
     </section>
   );
+}
+
+/** nextRunLabel writes the digest's next send in the digest's OWN zone,
+ * named (backlog 2.88). It used to render in the browser's zone with
+ * nothing saying so, directly above a Timezone field reading something
+ * else: an operator who set Monday 08:00 in Auckland saw "Sunday,
+ * 21:00" on a Berlin screen and could not tell whether the setting had
+ * taken.
+ *
+ * A zone the browser does not know throws out of toLocaleString, which
+ * would take the whole card down over a label. The server resolves the
+ * name against its own database, and the two can disagree — a zone
+ * added or renamed in one and not the other — so the fallback shows the
+ * browser's zone and says that is what it is, rather than leaving the
+ * operator with no line at all. */
+function nextRunLabel(at: string, timezone: string): string {
+  const when = new Date(at);
+  try {
+    return `${when.toLocaleString(undefined, { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' })} (${timezone})`;
+  } catch {
+    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return `${when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} (${local})`;
+  }
 }

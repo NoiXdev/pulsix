@@ -249,3 +249,20 @@ describe('rangeFor across an autumn DST transition', () => {
     expect(utc.to.getTime() - utc.from.getTime()).toBe(1008 * HOUR);
   });
 });
+
+/**
+ * Backlog 2.88: the grid buckets every occurrence by its hour in the
+ * browser's zone, and said so nowhere. A schedule set to 03:00 in one
+ * zone sits in a different band for every operator looking at it, and
+ * each of them reads their own band as the schedule's configured time.
+ * The grid stays browser-local — laying it out in a fixed zone is its
+ * own feature (backlog 2.77) — but it now says which zone it is.
+ */
+describe('the calendar grid zone', () => {
+  it('names the zone its grid is laid out in', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme/calendar': { from: '', to: '', truncated: false, entries: [], maintenance: [] } });
+    renderIt();
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(await screen.findByText(`Times in ${zone}`)).toBeInTheDocument();
+  });
+});

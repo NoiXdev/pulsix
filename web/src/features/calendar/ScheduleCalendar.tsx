@@ -15,6 +15,7 @@ const TONE_VAR: Record<Tone, string> = {
   ok: 'var(--px-ok)', warn: 'var(--px-warn)', crit: 'var(--px-crit)', unknown: 'var(--px-unknown)', accent: 'var(--px-accent)', maintenance: MAINTENANCE_COLOR,
 };
 const dayLabel = (d: Date) => d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+const gridZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** ScheduleCalendar is the Scheduler artboard's calendar (spec 2026-09-18
  * §8, mockup "Week · 8–14 Sep"): scheduled runs — planned ones muted, past
@@ -54,6 +55,15 @@ export function ScheduleCalendar({ org }: { org: string }) {
           <ChevronLeft size={14} />
         </Button>
         <h2 className="text-[13px] font-semibold">{title}</h2>
+        {/* The grid buckets every occurrence by its hour in THIS
+            browser's zone (calendar.ts's weekCells), so a schedule set
+            to 03:00 somewhere else sits in a different band for every
+            operator looking at it. Laying the grid out in a fixed zone
+            is its own feature (backlog 2.77) and needs a zone to lay it
+            out in, which an organization does not yet carry; saying
+            which zone this is costs nothing and removes the ambiguity
+            (backlog 2.88). */}
+        <span className="text-[11px] text-muted-foreground">Times in {gridZone}</span>
         <Button type="button" variant="ghost" aria-label="Next" onClick={() => setAnchor(shift(view, anchor, 1))}>
           <ChevronRight size={14} />
         </Button>
