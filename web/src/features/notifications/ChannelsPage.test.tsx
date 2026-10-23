@@ -228,3 +228,74 @@ describe('a failed channel-list query (backlog 2.85)', () => {
     expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Backlog 2.75: the log showed status, attempts and the last error. An
+ * operator looking at a failed row could neither see what had been
+ * sent nor put it back on the queue once the receiver was fixed — the
+ * message was simply gone, and the only recovery was to make the
+ * underlying event happen again.
+ */
+describe('the delivery log can show a message and send it again', () => {
+  const failed = { id: 'd1', event_kind: 'run.finished', status: 'failed', attempts: 6, last_error: 'the endpoint answered 503', created_at: '2026-09-22T08:00:00Z' };
+  const sent = { id: 'd2', event_kind: 'test', status: 'sent', attempts: 1, created_at: '2026-09-22T07:00:00Z' };
+  const payload = { kind: 'run.finished', org: { slug: 'acme' }, run: { result: 'failed' } };
+
+  function openLog(role: string, extra: Record<string, unknown> = {}) {
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org(role),
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [hook], mail_available: true },
+      'GET /api/v1/orgs/acme/notification-channels/c1/deliveries': { deliveries: [failed, sent] },
+      'GET /api/v1/orgs/acme/notification-channels/c1/deliveries/d1': { delivery: failed, payload },
+      ...extra,
+    });
+    renderPage();
+  }
+
+  it('shows the event a message was built from', async () => {
+    const user = userEvent.setup();
+    openLog('operator');
+    await screen.findByText('ops hook');
+    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
+    const row = (await within(dialog).findByText(/the endpoint answered 503/)).closest('[data-delivery]') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Show message' }));
+    const shown = await within(row).findByLabelText('Message sent');
+    expect(shown).toHaveTextContent('"kind": "run.finished"');
+    await user.click(within(row).getByRole('button', { name: 'Hide message' }));
+    expect(within(row).queryByLabelText('Message sent')).toBeNull();
+  });
+
+  it('offers Send again on a failed delivery, to admins only', async () => {
+    const user = userEvent.setup();
+    let resent = 0;
+    openLog('admin', {
+      'POST /api/v1/orgs/acme/notification-channels/c1/deliveries/d1/resend': () => {
+        resent++;
+        return { delivery: { ...failed, status: 'pending', attempts: 0, last_error: '' } };
+      },
+    });
+    await screen.findByText('ops hook');
+    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
+    const failedRow = (await within(dialog).findByText(/the endpoint answered 503/)).closest('[data-delivery]') as HTMLElement;
+    const sentRow = within(dialog).getByText('test').closest('[data-delivery]') as HTMLElement;
+    // Only the failed one: a sent delivery would be a second copy in
+    // front of a receiver that already has it.
+    expect(within(sentRow).queryByRole('button', { name: 'Send again' })).toBeNull();
+    await user.click(within(failedRow).getByRole('button', { name: 'Send again' }));
+    await waitFor(() => expect(resent).toBe(1));
+    expect(await screen.findByText('Queued to be sent again')).toBeInTheDocument();
+  });
+
+  it('does not offer it to an operator, who may read the log but not send', async () => {
+    const user = userEvent.setup();
+    openLog('operator');
+    await screen.findByText('ops hook');
+    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
+    await within(dialog).findByText(/the endpoint answered 503/);
+    expect(within(dialog).queryByRole('button', { name: 'Send again' })).toBeNull();
+  });
+});

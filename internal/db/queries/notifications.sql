@@ -32,6 +32,27 @@ ON CONFLICT (org_id, event_key, channel_id) DO NOTHING;
 SELECT * FROM notification_deliveries WHERE org_id = @org_id AND channel_id = @channel_id
 ORDER BY created_at DESC, id DESC LIMIT @lim;
 
+-- name: GetNotificationDelivery :one
+SELECT * FROM notification_deliveries
+WHERE org_id = @org_id AND channel_id = @channel_id AND id = @id;
+
+-- name: ResendNotificationDelivery :one
+-- Backlog 2.75: puts a FAILED delivery back on the queue with a fresh
+-- attempt budget. The status predicate is in the statement, not checked
+-- before it, so two operators pressing resend at the same moment cannot
+-- both reset a row the dispatcher has meanwhile picked up. No rows means
+-- the delivery is gone or is not failed; the caller tells those apart
+-- with GetNotificationDelivery, on the error path only.
+--
+-- pending_recipients is left as it is: after a partial e-mail send it
+-- names the addresses still owed the message (backlog 2.74), and a
+-- resend owes them the same ones -- not the whole list again.
+UPDATE notification_deliveries
+SET status = 'pending', attempts = 0, next_attempt_at = now(),
+    last_error = '', sent_at = NULL, locked_until = NULL
+WHERE org_id = @org_id AND channel_id = @channel_id AND id = @id AND status = 'failed'
+RETURNING *;
+
 -- name: ClaimNotificationDeliveries :many
 -- The dispatcher's claim: runs on the raw pool without pulsix.org_id
 -- (bypass policy), across every organization. SKIP LOCKED lets several

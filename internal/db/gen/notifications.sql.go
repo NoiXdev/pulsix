@@ -368,6 +368,39 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 	return i, err
 }
 
+const getNotificationDelivery = `-- name: GetNotificationDelivery :one
+SELECT id, org_id, channel_id, event_key, event_kind, payload, status, attempts, next_attempt_at, locked_until, last_error, created_at, sent_at, pending_recipients FROM notification_deliveries
+WHERE org_id = $1 AND channel_id = $2 AND id = $3
+`
+
+type GetNotificationDeliveryParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) GetNotificationDelivery(ctx context.Context, arg GetNotificationDeliveryParams) (NotificationDelivery, error) {
+	row := q.db.QueryRow(ctx, getNotificationDelivery, arg.OrgID, arg.ChannelID, arg.ID)
+	var i NotificationDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ChannelID,
+		&i.EventKey,
+		&i.EventKind,
+		&i.Payload,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LockedUntil,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.SentAt,
+		&i.PendingRecipients,
+	)
+	return i, err
+}
+
 const getNotificationDigest = `-- name: GetNotificationDigest :one
 SELECT org_id, enabled, weekday, at_time, timezone, next_run_at, last_period, updated_at, retry_after FROM notification_digests WHERE org_id = $1
 `
@@ -801,6 +834,52 @@ func (q *Queries) NotifyScheduleContext(ctx context.Context, arg NotifyScheduleC
 		&i.ScheduleName,
 		&i.TemplateID,
 		&i.TemplateName,
+	)
+	return i, err
+}
+
+const resendNotificationDelivery = `-- name: ResendNotificationDelivery :one
+UPDATE notification_deliveries
+SET status = 'pending', attempts = 0, next_attempt_at = now(),
+    last_error = '', sent_at = NULL, locked_until = NULL
+WHERE org_id = $1 AND channel_id = $2 AND id = $3 AND status = 'failed'
+RETURNING id, org_id, channel_id, event_key, event_kind, payload, status, attempts, next_attempt_at, locked_until, last_error, created_at, sent_at, pending_recipients
+`
+
+type ResendNotificationDeliveryParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+// Backlog 2.75: puts a FAILED delivery back on the queue with a fresh
+// attempt budget. The status predicate is in the statement, not checked
+// before it, so two operators pressing resend at the same moment cannot
+// both reset a row the dispatcher has meanwhile picked up. No rows means
+// the delivery is gone or is not failed; the caller tells those apart
+// with GetNotificationDelivery, on the error path only.
+//
+// pending_recipients is left as it is: after a partial e-mail send it
+// names the addresses still owed the message (backlog 2.74), and a
+// resend owes them the same ones -- not the whole list again.
+func (q *Queries) ResendNotificationDelivery(ctx context.Context, arg ResendNotificationDeliveryParams) (NotificationDelivery, error) {
+	row := q.db.QueryRow(ctx, resendNotificationDelivery, arg.OrgID, arg.ChannelID, arg.ID)
+	var i NotificationDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ChannelID,
+		&i.EventKey,
+		&i.EventKind,
+		&i.Payload,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LockedUntil,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.SentAt,
+		&i.PendingRecipients,
 	)
 	return i, err
 }

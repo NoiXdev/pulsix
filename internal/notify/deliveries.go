@@ -54,6 +54,17 @@ type DeliveryLog interface {
 	// dispatcher at all — so a channel an operator only ever tests grew
 	// its log without bound (backlog 2.80).
 	TrimDeliveries(ctx context.Context, orgID, channelID uuid.UUID, keep int) error
+	// GetDelivery reads one delivery, payload included (backlog 2.75).
+	// The list deliberately leaves the payload out — it returns up to a
+	// hundred rows and a digest's event is not small — so seeing what
+	// was sent is its own read.
+	GetDelivery(ctx context.Context, orgID, channelID, id uuid.UUID) (Delivery, error)
+	// ResendDelivery puts a FAILED delivery back on the queue with a
+	// fresh attempt budget, and reports ErrNotFound when the row is
+	// gone OR is not failed — the status predicate lives in the
+	// statement so two operators cannot both reset a row the dispatcher
+	// has meanwhile claimed. The caller tells the two apart.
+	ResendDelivery(ctx context.Context, orgID, channelID, id uuid.UUID) (Delivery, error)
 }
 
 // SendTest sends the sample event (as kind test) through the channel right
@@ -120,6 +131,50 @@ func (s *Service) Deliveries(ctx context.Context, orgID, channelID uuid.UUID, li
 		return nil, err
 	}
 	return s.d.Deliveries.ListDeliveries(ctx, orgID, channelID, limit)
+}
+
+// Delivery reads one delivery of a channel, payload included: what was
+// actually sent, which the log's list does not carry (backlog 2.75).
+func (s *Service) Delivery(ctx context.Context, orgID, channelID, id uuid.UUID) (Delivery, error) {
+	if s.d.Deliveries == nil {
+		return Delivery{}, fmt.Errorf("notify: Delivery needs Deps.Deliveries, which is nil (%w)", errMissingDep)
+	}
+	if _, err := s.d.Channels.GetChannel(ctx, orgID, channelID); err != nil {
+		return Delivery{}, err
+	}
+	return s.d.Deliveries.GetDelivery(ctx, orgID, channelID, id)
+}
+
+// ResendDelivery puts a failed delivery back on the queue, so a message
+// lost to a receiver that was down can be sent once it is back —
+// without having to make the underlying event happen again (backlog
+// 2.75).
+//
+// Only a FAILED delivery: a pending one is already on its way, and a
+// sent one would put a second copy of a message in front of a receiver
+// that already has it. An e-mail delivery keeps whatever
+// pending_recipients it carried, so a resend after a partial send owes
+// the same addresses rather than the whole list again (backlog 2.74).
+func (s *Service) ResendDelivery(ctx context.Context, orgID, channelID, id uuid.UUID) (Delivery, error) {
+	if s.d.Deliveries == nil {
+		return Delivery{}, fmt.Errorf("notify: ResendDelivery needs Deps.Deliveries, which is nil (%w)", errMissingDep)
+	}
+	if _, err := s.d.Channels.GetChannel(ctx, orgID, channelID); err != nil {
+		return Delivery{}, err
+	}
+	d, err := s.d.Deliveries.ResendDelivery(ctx, orgID, channelID, id)
+	if !errors.Is(err, ErrNotFound) {
+		return d, err
+	}
+	// The statement matched nothing. Which of the two reasons it was
+	// decides what the operator is told, and only a second read can
+	// say: a row that exists but is not failed is a refusal to explain,
+	// not a missing thing.
+	existing, getErr := s.d.Deliveries.GetDelivery(ctx, orgID, channelID, id)
+	if getErr != nil {
+		return Delivery{}, getErr
+	}
+	return Delivery{}, fmt.Errorf("%w: only a failed delivery can be sent again; this one is %s", ErrInvalidInput, existing.Status)
 }
 
 // errMissingDep marks a Service built without a Deps field one of its

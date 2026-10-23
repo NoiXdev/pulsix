@@ -154,7 +154,7 @@ export function ChannelsPage() {
           onCreated={() => undefined}
         />
       )}
-      {logOf && <DeliveryLog org={org} channel={logOf} onClose={() => setLogOf(null)} />}
+      {logOf && <DeliveryLog org={org} channel={logOf} canWrite={canWrite} onClose={() => setLogOf(null)} />}
     </>
   );
 }

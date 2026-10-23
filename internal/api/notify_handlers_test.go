@@ -420,3 +420,92 @@ func TestNotificationChannelSecretsRedactedOnReadAndAudit(t *testing.T) {
 		t.Fatalf("channel audit events = %d, want 3 (create, update, test)", n)
 	}
 }
+
+// TestDeliveryPayloadViewAndResend is backlog 2.75. The delivery log
+// carried status, attempts and the last error; an operator looking at a
+// failed row could neither see what had been sent nor put it back on
+// the queue once the receiver was fixed, so the message was simply
+// lost.
+func TestDeliveryPayloadViewAndResend(t *testing.T) {
+	f := newRunFixture(t, "notify-resend")
+	// A receiver that refuses, so the test send fails and leaves a row
+	// worth resending.
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer refusing.Close()
+
+	var created struct {
+		Channel channelOut `json:"channel"`
+	}
+	decodeInto(t, postJSON(t, f.adminC, f.channelsURL(), map[string]any{
+		"kind": "webhook", "name": "flaky hook", "webhook": map[string]any{"url": refusing.URL + "/hook"},
+	}), &created)
+	ch := created.Channel.ID
+
+	var tested struct {
+		Delivery struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"delivery"`
+	}
+	decodeInto(t, postJSON(t, f.adminC, f.channelsURL()+"/"+ch+"/test", nil), &tested)
+	if tested.Delivery.Status != "failed" {
+		t.Fatalf("the test send = %+v, want a failed delivery to work with", tested.Delivery)
+	}
+	one := f.channelsURL() + "/" + ch + "/deliveries/" + tested.Delivery.ID
+
+	// The payload view is part of the log, so an operator may read it.
+	var got struct {
+		Delivery struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"delivery"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	decodeInto(t, requestJSON(t, f.operatorC, http.MethodGet, one, nil), &got)
+	if got.Delivery.ID != tested.Delivery.ID || len(got.Payload) == 0 {
+		t.Fatalf("payload view = %+v, payload %s", got.Delivery, got.Payload)
+	}
+	var ev map[string]any
+	if err := json.Unmarshal(got.Payload, &ev); err != nil || ev["kind"] != "test" {
+		t.Fatalf("payload = %s, %v; want the stored event", got.Payload, err)
+	}
+	if resp := requestJSON(t, f.viewerC, http.MethodGet, one, nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer payload view = %d", resp.StatusCode)
+	}
+
+	// Resending puts organization data in front of an outside receiver,
+	// so it is an admin action, like a test send.
+	if resp := postJSON(t, f.operatorC, one+"/resend", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("operator resend = %d", resp.StatusCode)
+	}
+	var resent struct {
+		Delivery struct {
+			Status    string `json:"status"`
+			Attempts  int    `json:"attempts"`
+			LastError string `json:"last_error"`
+		} `json:"delivery"`
+	}
+	decodeInto(t, postJSON(t, f.adminC, one+"/resend", nil), &resent)
+	if resent.Delivery.Status != "pending" || resent.Delivery.Attempts != 0 || resent.Delivery.LastError != "" {
+		t.Fatalf("resent = %+v, want pending with a fresh budget and no stale error", resent.Delivery)
+	}
+
+	// It is now pending, so a second resend is refused rather than
+	// silently queueing the same message twice.
+	if resp := postJSON(t, f.adminC, one+"/resend", nil); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("resending a pending delivery = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	missing := f.channelsURL() + "/" + ch + "/deliveries/" + "0199a000-0000-7000-8000-000000000001"
+	if resp := postJSON(t, f.adminC, missing+"/resend", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("resending an unknown delivery = %d", resp.StatusCode)
+	}
+
+	// The resend is in the activity log: it sent data outward.
+	var audited int
+	if err := f.s.DB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_events WHERE object_type = 'channel' AND object_id = $1 AND action = 'POST resendNotificationDelivery'`, ch).Scan(&audited); err != nil || audited != 1 {
+		t.Fatalf("resend audit events = %d, %v", audited, err)
+	}
+}

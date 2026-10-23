@@ -121,13 +121,43 @@ func (st *SQLStore) ListDeliveries(ctx context.Context, orgID, channelID uuid.UU
 	}
 	out := make([]Delivery, len(rows))
 	for i, r := range rows {
-		out[i] = Delivery{
-			ID: r.ID, OrgID: r.OrgID, ChannelID: r.ChannelID, EventKey: r.EventKey, EventKind: EventKind(r.EventKind),
-			Payload: r.Payload, Status: DeliveryStatus(r.Status), Attempts: int(r.Attempts), NextAttemptAt: r.NextAttemptAt,
-			LastError: r.LastError, CreatedAt: r.CreatedAt, SentAt: db.TimePtr(r.SentAt),
-		}
+		out[i] = deliveryFromRow(r)
 	}
 	return out, nil
+}
+
+// GetDelivery implements DeliveryLog.
+func (st *SQLStore) GetDelivery(ctx context.Context, orgID, channelID, id uuid.UUID) (Delivery, error) {
+	r, err := st.q.GetNotificationDelivery(ctx, gen.GetNotificationDeliveryParams{OrgID: orgID, ChannelID: channelID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Delivery{}, ErrNotFound
+	}
+	if err != nil {
+		return Delivery{}, fmt.Errorf("get notification delivery: %w", err)
+	}
+	return deliveryFromRow(r), nil
+}
+
+// ResendDelivery implements DeliveryLog. ErrNotFound covers both "no
+// such delivery" and "it is not failed": the caller decides which to
+// report, because only it knows whether the row exists.
+func (st *SQLStore) ResendDelivery(ctx context.Context, orgID, channelID, id uuid.UUID) (Delivery, error) {
+	r, err := st.q.ResendNotificationDelivery(ctx, gen.ResendNotificationDeliveryParams{OrgID: orgID, ChannelID: channelID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Delivery{}, ErrNotFound
+	}
+	if err != nil {
+		return Delivery{}, fmt.Errorf("resend notification delivery: %w", err)
+	}
+	return deliveryFromRow(r), nil
+}
+
+func deliveryFromRow(r gen.NotificationDelivery) Delivery {
+	return Delivery{
+		ID: r.ID, OrgID: r.OrgID, ChannelID: r.ChannelID, EventKey: r.EventKey, EventKind: EventKind(r.EventKind),
+		Payload: r.Payload, Status: DeliveryStatus(r.Status), Attempts: int(r.Attempts), NextAttemptAt: r.NextAttemptAt,
+		LastError: r.LastError, CreatedAt: r.CreatedAt, SentAt: db.TimePtr(r.SentAt), PendingRecipients: r.PendingRecipients,
+	}
 }
 
 func (st *SQLStore) ScheduleRules(ctx context.Context, orgID, scheduleID uuid.UUID) ([]ChannelRule, error) {

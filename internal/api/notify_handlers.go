@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -53,6 +54,23 @@ type notifyDeliveriesInput struct {
 type notifyDeliveriesOutput struct {
 	Body struct {
 		Deliveries []notifyDeliveryDTO `json:"deliveries"`
+	}
+}
+
+type notifyDeliveryInput struct {
+	Org      string `path:"org"`
+	ID       string `path:"id"`
+	Delivery string `path:"delivery"`
+}
+
+type notifyDeliveryOutput struct {
+	Body struct {
+		Delivery notifyDeliveryDTO `json:"delivery"`
+		// Payload is the stored event exactly as it was sent, not a
+		// rendering of it: a custom body template is applied by the
+		// sender, so this is the input every channel's message was
+		// built from.
+		Payload json.RawMessage `json:"payload"`
 	}
 }
 
@@ -192,6 +210,52 @@ func registerNotifyChannelRoutes(hapi huma.API, deps Deps) {
 		}
 		return out, nil
 	})
+
+	// One delivery, payload included (backlog 2.75). Separate from the
+	// list because the list returns up to a hundred rows and a digest's
+	// event is not small; the payload is what was SENT, so an operator
+	// looking at a failure can see it rather than guess from the kind.
+	// channels.read, like the log it belongs to.
+	huma.Get(hapi, "/api/v1/orgs/{org}/notification-channels/{id}/deliveries/{delivery}", func(ctx context.Context, in *notifyDeliveryInput) (*notifyDeliveryOutput, error) {
+		scope, id, err := notifyChannelScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsRead)
+		if err != nil {
+			return nil, err
+		}
+		deliveryID, err := parseUUID(in.Delivery, "delivery id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Notify.Delivery(ctx, scope.OrgID, id, deliveryID)
+		if err != nil {
+			return nil, mapNotifyErr(ctx, err)
+		}
+		out := &notifyDeliveryOutput{}
+		out.Body.Delivery = toNotifyDeliveryDTO(d)
+		out.Body.Payload = d.Payload
+		return out, nil
+	})
+
+	// Resend (backlog 2.75): channels.write and audited, because it
+	// puts organization data in front of an outside receiver — the same
+	// reason a test send is an admin action.
+	huma.Post(hapi, "/api/v1/orgs/{org}/notification-channels/{id}/deliveries/{delivery}/resend", func(ctx context.Context, in *notifyDeliveryInput) (*notifyTestOutput, error) {
+		scope, id, err := notifyChannelScope(ctx, deps, in.Org, in.ID, tenancy.PermChannelsWrite)
+		if err != nil {
+			return nil, err
+		}
+		deliveryID, err := parseUUID(in.Delivery, "delivery id")
+		if err != nil {
+			return nil, err
+		}
+		d, err := deps.Notify.ResendDelivery(ctx, scope.OrgID, id, deliveryID)
+		if err != nil {
+			return nil, mapNotifyErr(ctx, err)
+		}
+		setAuditObject(ctx, id.String(), "queued delivery "+deliveryID.String()+" ("+string(d.EventKind)+") to be sent again")
+		out := &notifyTestOutput{}
+		out.Body.Delivery = toNotifyDeliveryDTO(d)
+		return out, nil
+	}, withAudit("resendNotificationDelivery", "channel"))
 }
 
 func notifyChannelScope(ctx context.Context, deps Deps, org, rawID string, perm tenancy.Permission) (Scope, uuid.UUID, error) {

@@ -68,6 +68,36 @@ export function useChannelDeliveries(org: string, id: string) {
   });
 }
 
+/** useDeliveryPayload reads one delivery with the event that was sent
+ * (backlog 2.75). Separate from the log's list, which returns up to a
+ * hundred rows and leaves the payloads out; this is the one an operator
+ * actually opened. */
+export function useDeliveryPayload(org: string, id: string, delivery: string | null) {
+  return useQuery({
+    queryKey: ['notification-delivery', org, id, delivery],
+    queryFn: () =>
+      unwrap(api.GET('/api/v1/orgs/{org}/notification-channels/{id}/deliveries/{delivery}', {
+        params: { path: { org, id, delivery: delivery as string } },
+      })),
+    enabled: !!org && !!id && !!delivery,
+  });
+}
+
+/** useResendDelivery puts a failed delivery back on the queue (backlog
+ * 2.75), so a message lost to a receiver that was down can go out once
+ * it is back — without making the underlying event happen again. */
+export function useResendDelivery(org: string, id: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: (delivery: string) =>
+      unwrap(api.POST('/api/v1/orgs/{org}/notification-channels/{id}/deliveries/{delivery}/resend', {
+        params: { path: { org, id, delivery } },
+      })),
+    onSuccess: invalidate,
+    gcTime: 0,
+  });
+}
+
 /** useScheduleNotifications reads a schedule's notification rules in the
  * API's {on, channels} shape. */
 export function useScheduleNotifications(org: string, scheduleId: string) {

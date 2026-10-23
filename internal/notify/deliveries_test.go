@@ -1,6 +1,7 @@
 package notify_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -32,6 +33,35 @@ func (f *fakeLog) TrimDeliveries(_ context.Context, _, channelID uuid.UUID, keep
 	defer f.mu.Unlock()
 	f.trims = append(f.trims, trimCall{channelID: channelID, keep: keep})
 	return nil
+}
+
+// GetDelivery and ResendDelivery mirror the SQL store closely enough to
+// exercise the service's own branching: the resend matches only a
+// FAILED row, so the service's "it exists but is not failed" path is
+// reachable here.
+func (f *fakeLog) GetDelivery(_ context.Context, _, channelID, id uuid.UUID) (notify.Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, d := range f.rows {
+		if d.ChannelID == channelID && d.ID == id {
+			return d, nil
+		}
+	}
+	return notify.Delivery{}, notify.ErrNotFound
+}
+
+func (f *fakeLog) ResendDelivery(_ context.Context, _, channelID, id uuid.UUID) (notify.Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, d := range f.rows {
+		if d.ChannelID != channelID || d.ID != id || d.Status != notify.DeliveryFailed {
+			continue
+		}
+		d.Status, d.Attempts, d.LastError, d.SentAt = notify.DeliveryPending, 0, "", nil
+		f.rows[i] = d
+		return d, nil
+	}
+	return notify.Delivery{}, notify.ErrNotFound
 }
 
 type trimCall struct {
@@ -109,5 +139,62 @@ func TestSendTestTrimsTheChannelsDeliveryLog(t *testing.T) {
 	}
 	if log.trims[0].keep <= 0 {
 		t.Fatalf("keep = %d, want the dispatcher's retention", log.trims[0].keep)
+	}
+}
+
+// TestResendAndPayloadView is backlog 2.75. The delivery log showed
+// status, attempts and the last error. An operator looking at a failed
+// row could neither see WHAT had been sent nor put it back on the
+// queue once the receiver was fixed — the message was simply lost, and
+// the only recovery was to make the underlying event happen again.
+func TestResendAndPayloadView(t *testing.T) {
+	w := newWorld(t)
+	log := &fakeLog{}
+	sender := &countingSender{}
+	svc := notify.NewService(notify.Deps{Channels: w.channels, Deliveries: log, Box: fakeBox{}, Mail: w.mail, Sender: sender, PublicURL: "https://pulsix.example.test/"})
+	ch, err := svc.CreateChannel(ctx, w.org, w.actor, webhookInput("ops hook"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := notify.OrgRef{ID: w.org, Slug: "acme", Name: "Acme"}
+	sender.err = errors.New("the endpoint answered 500")
+	failed, err := svc.SendTest(ctx, org, ch.ID)
+	if err != nil || failed.Status != notify.DeliveryFailed {
+		t.Fatalf("SendTest = %+v, %v; want a failed delivery to work with", failed, err)
+	}
+
+	// The payload view: what was actually sent, not a summary of it.
+	got, err := svc.Delivery(ctx, w.org, ch.ID, failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Payload, failed.Payload) || len(got.Payload) == 0 {
+		t.Fatalf("payload = %s, want the stored event", got.Payload)
+	}
+	if _, err := svc.Delivery(ctx, w.org, ch.ID, uuid.Must(uuid.NewV7())); !errors.Is(err, notify.ErrNotFound) {
+		t.Fatalf("an unknown delivery = %v", err)
+	}
+
+	// The resend: back to pending with a fresh attempt budget, and the
+	// stale failure cleared so the row does not read as both.
+	again, err := svc.ResendDelivery(ctx, w.org, ch.ID, failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Status != notify.DeliveryPending || again.Attempts != 0 || again.LastError != "" || again.SentAt != nil {
+		t.Fatalf("resent = %+v, want pending with no attempts, no error and no sent time", again)
+	}
+	if !bytes.Equal(again.Payload, failed.Payload) {
+		t.Fatalf("the resend changed the payload: %s", again.Payload)
+	}
+
+	// A delivery that is not failed is not resendable: a pending one is
+	// already on its way, and a sent one would be a second copy of a
+	// message the receiver has.
+	if _, err := svc.ResendDelivery(ctx, w.org, ch.ID, again.ID); !errors.Is(err, notify.ErrInvalidInput) {
+		t.Fatalf("resending a pending delivery = %v, want ErrInvalidInput", err)
+	}
+	if _, err := svc.ResendDelivery(ctx, w.org, ch.ID, uuid.Must(uuid.NewV7())); !errors.Is(err, notify.ErrNotFound) {
+		t.Fatalf("resending an unknown delivery = %v", err)
 	}
 }
