@@ -70,7 +70,7 @@ func TestStoreUpdateSecretListDelete(t *testing.T) {
 	org, tmpl := seedTemplate(t, d, "trig-lifecycle")
 	st := triggers.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	created, err := st.Create(scoped, in, []byte("one"))
 	if err != nil {
 		t.Fatal(err)

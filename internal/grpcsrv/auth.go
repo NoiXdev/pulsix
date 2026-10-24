@@ -54,9 +54,16 @@ func AgentIdentityOf(ctx context.Context) (agents.AgentIdentity, bool) {
 
 // unauthenticatedMethods may be called without a client certificate:
 // token enrollment is how a worker or agent gets its first one.
-var unauthenticatedMethods = map[string]bool{
-	workerpb.WorkerService_Enroll_FullMethodName: true,
-	agentpb.AgentService_Enroll_FullMethodName:   true,
+// A switch, not a map var: a package-level map is writable by anything
+// in the package, and this one decides which RPCs may be called with no
+// client certificate at all — CLAUDE.md's "no package-level state"
+// (backlog 2.68).
+func unauthenticatedMethod(full string) bool {
+	switch full {
+	case workerpb.WorkerService_Enroll_FullMethodName, agentpb.AgentService_Enroll_FullMethodName:
+		return true
+	}
+	return false
 }
 
 // The two service classes sharing the listener. A certificate class is
@@ -71,7 +78,7 @@ const (
 
 // authUnaryInterceptor authenticates a unary call before the handler runs.
 func (s *Server) authUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if unauthenticatedMethods[info.FullMethod] {
+	if unauthenticatedMethod(info.FullMethod) {
 		return handler(ctx, req)
 	}
 	ctx, err := s.authenticate(ctx, info.FullMethod)

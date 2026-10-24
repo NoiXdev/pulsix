@@ -140,7 +140,7 @@ func (f *fakeStore) TakeToken(context.Context, uuid.UUID, uuid.UUID, triggers.Ra
 	return true, 0, nil
 }
 
-func (f *fakeStore) RecordDelivery(context.Context, triggers.Delivery, bool) error { return nil }
+func (f *fakeStore) RecordDelivery(context.Context, triggers.Delivery) error { return nil }
 
 func (f *fakeStore) NoteRateLimited(context.Context, uuid.UUID, uuid.UUID, triggers.Outcome, time.Time) error {
 	return nil

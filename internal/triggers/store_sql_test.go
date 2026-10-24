@@ -45,7 +45,7 @@ func TestStoreRoundTripAndResolveWithoutScope(t *testing.T) {
 	org, tmpl := seedTemplate(t, d, "trig-store")
 	st := triggers.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	created, err := st.Create(scoped, in, []byte("sealed"))
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestStoreRoundTripAndResolveWithoutScope(t *testing.T) {
 	if _, _, err := st.Resolve(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, triggers.ErrNotFound) {
 		t.Fatalf("unknown: %v", err)
 	}
-	dup := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	dup := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	dup.Name = in.Name
 	if _, err := st.Create(scoped, dup, []byte("x")); !errors.Is(err, triggers.ErrNameTaken) {
 		t.Fatalf("duplicate name: %v", err)
@@ -138,7 +138,7 @@ func TestThrottledDeliveryIsRaceFree(t *testing.T) {
 	org, tmpl := seedTemplate(t, d, "trig-throttle-race")
 	st := triggers.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestThrottledDeliveryIsRaceFree(t *testing.T) {
 			errs <- st.RecordDelivery(scoped, triggers.Delivery{
 				ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID,
 				At: at.Add(time.Duration(i) * time.Millisecond), Outcome: triggers.OutcomeRejectedAuth,
-			}, true)
+			})
 		}(i)
 	}
 	wg.Wait()
@@ -184,7 +184,7 @@ func TestThrottledDuplicateSkipsTrim(t *testing.T) {
 	org, tmpl := seedTemplate(t, d, "trig-skip-trim")
 	st := triggers.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestThrottledDuplicateSkipsTrim(t *testing.T) {
 	// (trigger_delivery_minute truncates to a UTC minute boundary) on
 	// every run, not just when the test happens not to straddle one.
 	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
-	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}); err != nil {
 		t.Fatal(err)
 	}
 	// Push the trigger's row count well past 500 directly, bypassing
@@ -211,7 +211,7 @@ func TestThrottledDuplicateSkipsTrim(t *testing.T) {
 	}
 	// A duplicate rejection in the same minute is deduplicated (0 rows
 	// inserted); the trim must not run for it.
-	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(30 * time.Second), Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(30 * time.Second), Outcome: triggers.OutcomeRejectedAuth}); err != nil {
 		t.Fatal(err)
 	}
 	var after int
@@ -236,12 +236,12 @@ func TestNoteRateLimitedAmendsTheThrottledRowOnce(t *testing.T) {
 	org, tmpl := seedTemplate(t, d, "trig-note-rl")
 	st := triggers.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
-	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at, Outcome: triggers.OutcomeRejectedAuth}); err != nil {
 		t.Fatal(err)
 	}
 	// A second rejection in the same minute, as repeated failures from one
@@ -249,7 +249,7 @@ func TestNoteRateLimitedAmendsTheThrottledRowOnce(t *testing.T) {
 	// TestThrottledDuplicateSkipsTrim already covers — nothing new to
 	// amend by its own (fresh) id either.
 	second := at.Add(30 * time.Second)
-	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: second, Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+	if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: second, Outcome: triggers.OutcomeRejectedAuth}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -286,7 +286,7 @@ func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 	org, tmpl := seedTemplate(t, d, "trig-deliveries")
 	st := triggers.NewSQLStore(d)
 	scoped := db.WithOrgScope(ctx, org)
-	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit)
+	in := storedTrigger(org, tmpl, triggers.DefaultRateLimit())
 	if _, err := st.Create(scoped, in, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 	// review, Important 2).
 	at := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(time.Duration(i) * time.Second), SourceIP: "203.0.113.7", Outcome: triggers.OutcomeRejectedAuth}, true); err != nil {
+		if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(time.Duration(i) * time.Second), SourceIP: "203.0.113.7", Outcome: triggers.OutcomeRejectedAuth}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -305,7 +305,7 @@ func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 		t.Fatalf("throttled rejections = %d, %v; want 1 row per outcome and minute", len(list), err)
 	}
 	for i := 0; i < 505; i++ {
-		if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(time.Duration(i) * time.Millisecond), Outcome: triggers.OutcomeTriggered}, false); err != nil {
+		if err := st.RecordDelivery(scoped, triggers.Delivery{ID: uuid.Must(uuid.NewV7()), OrgID: org, TriggerID: in.ID, At: at.Add(time.Duration(i) * time.Millisecond), Outcome: triggers.OutcomeTriggered}); err != nil {
 			t.Fatal(err)
 		}
 	}

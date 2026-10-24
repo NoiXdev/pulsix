@@ -29,7 +29,7 @@ func mac(secret, timestamp string, body []byte) []byte {
 // Sign returns the header value a sender presents for preset p: the
 // prefixed hex HMAC, or the prefixed token itself.
 func Sign(p Preset, secret, timestamp string, body []byte) string {
-	spec := presets[p]
+	spec, _ := preset(p)
 	if spec.auth == AuthToken {
 		return spec.prefix + secret
 	}
@@ -49,7 +49,7 @@ func verify(t Trigger, secret string, header func(string) string, body []byte, n
 			return false
 		}
 	}
-	spec, ok := presets[t.Preset]
+	spec, ok := preset(t.Preset)
 	if !ok {
 		return false
 	}

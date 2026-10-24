@@ -52,12 +52,26 @@ type presetSpec struct {
 	prefix string
 }
 
-var presets = map[Preset]presetSpec{
-	PresetPulsix: {auth: AuthHMAC, header: "X-Pulsix-Signature-256", prefix: "sha256="},
-	PresetGitHub: {auth: AuthHMAC, header: "X-Hub-Signature-256", prefix: "sha256="},
-	PresetGitea:  {auth: AuthHMAC, header: "X-Gitea-Signature"},
-	PresetGitLab: {auth: AuthToken, header: "X-Gitlab-Token"},
-	PresetBearer: {auth: AuthToken, header: "Authorization", prefix: "Bearer "},
+// preset resolves a preset's signature arrangement. A switch rather
+// than a package-level map: a map var is writable by anything in the
+// package, and what it decides is how a webhook proves itself —
+// CLAUDE.md's "no package-level state" (backlog 2.68). A switch also
+// allocates nothing, which a function returning a fresh map would do
+// on every Auth() and SignatureHeader() call.
+func preset(p Preset) (presetSpec, bool) {
+	switch p {
+	case PresetPulsix:
+		return presetSpec{auth: AuthHMAC, header: "X-Pulsix-Signature-256", prefix: "sha256="}, true
+	case PresetGitHub:
+		return presetSpec{auth: AuthHMAC, header: "X-Hub-Signature-256", prefix: "sha256="}, true
+	case PresetGitea:
+		return presetSpec{auth: AuthHMAC, header: "X-Gitea-Signature"}, true
+	case PresetGitLab:
+		return presetSpec{auth: AuthToken, header: "X-Gitlab-Token"}, true
+	case PresetBearer:
+		return presetSpec{auth: AuthToken, header: "Authorization", prefix: "Bearer "}, true
+	}
+	return presetSpec{}, false
 }
 
 type OnActive string
@@ -125,10 +139,10 @@ type Trigger struct {
 }
 
 // Auth is the preset's authentication mode.
-func (t Trigger) Auth() Auth { return presets[t.Preset].auth }
+func (t Trigger) Auth() Auth { spec, _ := preset(t.Preset); return spec.auth }
 
 // SignatureHeader is the header the credential travels in.
-func (t Trigger) SignatureHeader() string { return presets[t.Preset].header }
+func (t Trigger) SignatureHeader() string { spec, _ := preset(t.Preset); return spec.header }
 
 // Input is what an operator submits.
 type Input struct {

@@ -128,10 +128,25 @@ func claimRequest(zone uuid.UUID) *workerpb.ClaimJobRequest {
 func TestEveryMethodButEnrollNeedsACertificate(t *testing.T) {
 	h := newHarness(t)
 	conn := h.conn(nil, nil)
-	if len(unauthenticatedMethods) != 2 ||
-		!unauthenticatedMethods[workerpb.WorkerService_Enroll_FullMethodName] ||
-		!unauthenticatedMethods[agentpb.AgentService_Enroll_FullMethodName] {
-		t.Fatalf("only the two Enroll methods may skip authentication: %v", unauthenticatedMethods)
+	// Over every method and stream of both services, not over the
+	// allowlist's own length: the list is a switch since backlog 2.68,
+	// and enumerating the real surface is the stronger check anyway —
+	// a new RPC that forgets its certificate is caught here whether or
+	// not anyone remembered to count.
+	for _, desc := range []grpc.ServiceDesc{workerpb.WorkerService_ServiceDesc, agentpb.AgentService_ServiceDesc} {
+		for _, m := range desc.Methods {
+			method := "/" + desc.ServiceName + "/" + m.MethodName
+			wantOpen := method == workerpb.WorkerService_Enroll_FullMethodName || method == agentpb.AgentService_Enroll_FullMethodName
+			if unauthenticatedMethod(method) != wantOpen {
+				t.Fatalf("%s callable without a certificate = %v, want %v", method, !wantOpen, wantOpen)
+			}
+		}
+		for _, sd := range desc.Streams {
+			method := "/" + desc.ServiceName + "/" + sd.StreamName
+			if unauthenticatedMethod(method) {
+				t.Fatalf("%s is a stream and must never be callable without a certificate", method)
+			}
+		}
 	}
 	for _, desc := range []grpc.ServiceDesc{workerpb.WorkerService_ServiceDesc, agentpb.AgentService_ServiceDesc} {
 		for _, m := range desc.Methods {

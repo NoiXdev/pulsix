@@ -215,12 +215,14 @@ func (st *SQLStore) TakeToken(ctx context.Context, orgID, id uuid.UUID, rl RateL
 // newest 500 rows. Throttling (one row per trigger, outcome and minute for
 // the outcomes that need it) is enforced declaratively by
 // trigger_deliveries_throttle_idx, a partial unique index the insert
-// conflicts into — see InsertTriggerDelivery's own comment; the throttle
-// argument documents the caller's intent at the call site (receive.go)
-// without this store needing to re-derive it from the outcome. When the
-// insert is deduplicated (0 rows affected), the trim is skipped: nothing
-// changed, so there is nothing to trim for (Task 9 review, Minor 2).
-func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery, _ bool) error {
+// conflicts into — see InsertTriggerDelivery's own comment. The caller
+// used to restate that decision as a bool, which this ignored: two
+// statements of the same rule, one of them unread, free to drift apart
+// (backlog 2.68). The outcome alone decides, here and in the index.
+// When the insert is deduplicated (0 rows affected), the trim is
+// skipped: nothing changed, so there is nothing to trim for (Task 9
+// review, Minor 2).
+func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery) error {
 	rows, err := st.q.InsertTriggerDelivery(ctx, gen.InsertTriggerDeliveryParams{
 		ID: d.ID, OrgID: d.OrgID, TriggerID: d.TriggerID, At: d.At, SourceIp: d.SourceIP,
 		Outcome: string(d.Outcome), Reason: d.Reason, JobGroupID: db.NullUUID(d.JobGroupID),

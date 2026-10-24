@@ -30,7 +30,13 @@ type Store interface {
 	Deliveries(ctx context.Context, orgID, id uuid.UUID, limit int) ([]Delivery, error)
 	Resolve(ctx context.Context, id uuid.UUID) (Trigger, []byte, error)
 	TakeToken(ctx context.Context, orgID, id uuid.UUID, rl RateLimit, now time.Time) (bool, time.Duration, error)
-	RecordDelivery(ctx context.Context, d Delivery, throttle bool) error
+	// RecordDelivery appends a delivery row. Which outcomes are
+	// throttled to one row per trigger and minute is decided ONCE, by
+	// trigger_deliveries_throttle_idx's own outcome list — it used to
+	// be restated as a bool at every call site, which the store then
+	// ignored, so the two could disagree with nothing to notice
+	// (backlog 2.68).
+	RecordDelivery(ctx context.Context, d Delivery) error
 	// NoteRateLimited amends an already-recorded delivery row to say the
 	// per-address budget was spent after that row's own outcome was
 	// decided (Receive's own comment on why). It matches on (org, trigger,
@@ -228,7 +234,7 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input) (Tri
 	if err != nil {
 		return Trigger{}, err
 	}
-	if _, ok := presets[in.Preset]; !ok {
+	if _, ok := preset(in.Preset); !ok {
 		return Trigger{}, fmt.Errorf("%w: preset must be pulsix, github, gitea, gitlab or bearer", ErrInvalidInput)
 	}
 	if in.TimestampHeader != "" {

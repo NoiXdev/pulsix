@@ -22,8 +22,12 @@ const (
 
 var headerNameRE = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
-// DefaultRateLimit is the spec's 10 per minute.
-var DefaultRateLimit = RateLimit{Count: 10, Per: "1m"}
+// DefaultRateLimit is the spec's 10 per minute. A function rather than
+// a var because an exported var is writable by every importer, and this
+// one decides a security limit — CLAUDE.md's "no package-level state",
+// and the same reason internal/outbound states its blocked ranges as a
+// function (backlog 2.68).
+func DefaultRateLimit() RateLimit { return RateLimit{Count: 10, Per: "1m"} }
 
 func normalizeName(name string) (string, error) {
 	n := strings.TrimSpace(name)
@@ -55,7 +59,7 @@ func parseCIDRs(raw []string) ([]netip.Prefix, error) {
 
 func normalizeRateLimit(rl RateLimit) (RateLimit, error) {
 	if rl == (RateLimit{}) {
-		return DefaultRateLimit, nil
+		return DefaultRateLimit(), nil
 	}
 	per, err := time.ParseDuration(rl.Per)
 	if err != nil || per < time.Second || per > 24*time.Hour || rl.Count < 1 || rl.Count > 1000 {

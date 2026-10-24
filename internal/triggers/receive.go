@@ -127,10 +127,10 @@ func (s *Service) receive(ctx context.Context, req Request) (Result, Delivery, e
 		d.Reason = "test call"
 	}
 	if !t.Enabled {
-		return s.finish(ctx, d, Result{Outcome: OutcomeDisabled}, "", true)
+		return s.finish(ctx, d, Result{Outcome: OutcomeDisabled}, "")
 	}
 	if !req.Test && !allowed(t.AllowCIDRs, req.SourceIP) {
-		return s.finish(ctx, d, Result{Outcome: OutcomeRejectedIP}, "", true)
+		return s.finish(ctx, d, Result{Outcome: OutcomeRejectedIP}, "")
 	}
 	secret, err := s.d.Box.OpenAAD(sealed, AAD(t.OrgID, t.ID))
 	if err != nil {
@@ -145,14 +145,14 @@ func (s *Service) receive(ctx context.Context, req Request) (Result, Delivery, e
 		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	if !verify(t, string(secret), req.Header, req.Body, now) {
-		return s.finish(ctx, d, Result{Outcome: OutcomeRejectedAuth}, "", true)
+		return s.finish(ctx, d, Result{Outcome: OutcomeRejectedAuth}, "")
 	}
 	ok, wait, err := s.d.Store.TakeToken(ctx, t.OrgID, t.ID, t.RateLimit, now)
 	if err != nil {
 		return Result{}, d, err
 	}
 	if !ok {
-		return s.finish(ctx, d, Result{Outcome: OutcomeRateLimited, RetryAfter: wait}, "", true)
+		return s.finish(ctx, d, Result{Outcome: OutcomeRateLimited, RetryAfter: wait}, "")
 	}
 	if t.Kind == KindRepoSync {
 		return s.syncRepo(ctx, t, d)
@@ -194,12 +194,12 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 	if err != nil {
 		if errors.Is(err, errMappingCompile) {
 			s.d.Log.ErrorContext(ctx, "webhook trigger's stored mapping failed to compile", "trigger", t.ID, "org", t.OrgID, "err", err)
-			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the trigger's mapping is invalid (see the manager log)", false)
+			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the trigger's mapping is invalid (see the manager log)")
 		}
 		if field == "" {
 			return Result{}, d, err
 		}
-		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field, true)
+		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field)
 	}
 	// Check-then-enqueue, deliberately not serialised (backlog 2.62).
 	// Two deliveries landing in the same instant — or one racing the
@@ -219,7 +219,7 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 			return Result{}, d, err
 		}
 		if active {
-			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a run of the template is still active", false)
+			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a run of the template is still active")
 		}
 	}
 	var runOv *jobs.RunOverrides
@@ -233,12 +233,12 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 	created, err := s.d.Runs.EnqueueRunWith(ctx, t.OrgID, *t.TemplateID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &ref, Overrides: runOv})
 	if err != nil {
 		s.d.Log.ErrorContext(ctx, "webhook run could not be enqueued", "trigger", t.ID, "org", t.OrgID, "err", err)
-		return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, failureReason(err), false)
+		return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, failureReason(err))
 	}
 	runID := created[0].ID
 	d.JobGroupID = &created[0].RunGroupID
 	s.auditRun(ctx, t, d, "job_template", t.TemplateID.String())
-	return s.finish(ctx, d, Result{Outcome: OutcomeTriggered, RunID: &runID}, "", false)
+	return s.finish(ctx, d, Result{Outcome: OutcomeTriggered, RunID: &runID}, "")
 }
 
 func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, Delivery, error) {
@@ -248,19 +248,19 @@ func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, 
 			return Result{}, d, err
 		}
 		if active {
-			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a sync of the repository is still active", false)
+			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a sync of the repository is still active")
 		}
 	}
 	ref := t.ID
 	j, err := s.d.Runs.EnqueueSyncWith(ctx, t.OrgID, *t.RepoID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &ref})
 	if err != nil {
 		s.d.Log.ErrorContext(ctx, "webhook sync could not be enqueued", "trigger", t.ID, "org", t.OrgID, "err", err)
-		return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, failureReason(err), false)
+		return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, failureReason(err))
 	}
 	runID := j.ID
 	d.JobGroupID = &j.RunGroupID
 	s.auditRun(ctx, t, d, "repo", t.RepoID.String())
-	return s.finish(ctx, d, Result{Outcome: OutcomeTriggered, RunID: &runID}, "", false)
+	return s.finish(ctx, d, Result{Outcome: OutcomeTriggered, RunID: &runID}, "")
 }
 
 // mapPayload applies the mapping and validates the result like a manual
@@ -306,7 +306,7 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	return templates.Overrides{}, "", err
 }
 
-func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason string, throttle bool) (Result, Delivery, error) {
+func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason string) (Result, Delivery, error) {
 	d.Outcome = res.Outcome
 	switch {
 	case d.Reason == "":
@@ -314,7 +314,7 @@ func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason str
 	case reason != "":
 		d.Reason += "; " + reason
 	}
-	if err := s.d.Store.RecordDelivery(ctx, d, throttle); err != nil {
+	if err := s.d.Store.RecordDelivery(ctx, d); err != nil {
 		// Recording is best-effort bookkeeping, not part of the request's
 		// own effect — the same principle the audit middleware applies
 		// elsewhere: an outcome that was already decided (a run already

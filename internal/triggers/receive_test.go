@@ -60,7 +60,6 @@ func (f *fakeAudit) Record(_ context.Context, e audit.Event) error {
 type recording struct {
 	*fakeStore
 	deliveries []triggers.Delivery
-	throttled  []bool
 	noTokens   bool
 	// recordErr, when set, makes RecordDelivery fail after still
 	// recording the attempt — for TestReceiveKeepsTheRunWhenRecordingTheDeliveryFails.
@@ -88,9 +87,8 @@ func (r *recording) TakeToken(context.Context, uuid.UUID, uuid.UUID, triggers.Ra
 	return true, 0, nil
 }
 
-func (r *recording) RecordDelivery(_ context.Context, d triggers.Delivery, throttle bool) error {
+func (r *recording) RecordDelivery(_ context.Context, d triggers.Delivery) error {
 	r.deliveries = append(r.deliveries, d)
-	r.throttled = append(r.throttled, throttle)
 	return r.recordErr
 }
 
@@ -135,7 +133,7 @@ func TestReceiveTriggersARunWithMappedOverrides(t *testing.T) {
 		t.Fatalf("run request = %+v", req)
 	}
 	d := rw.rec.deliveries[0]
-	if d.Outcome != triggers.OutcomeTriggered || d.SourceIP != "140.82.112.5" || d.JobGroupID == nil || rw.rec.throttled[0] {
+	if d.Outcome != triggers.OutcomeTriggered || d.SourceIP != "140.82.112.5" || d.JobGroupID == nil {
 		t.Fatalf("delivery = %+v", d)
 	}
 	e := rw.audit.events[0]
@@ -206,8 +204,14 @@ func TestReceiveRejections(t *testing.T) {
 			if stored := len(rw.rec.deliveries) > before; stored != tc.stored {
 				t.Fatalf("stored = %v, want %v", stored, tc.stored)
 			}
-			if tc.stored && !rw.rec.throttled[len(rw.rec.throttled)-1] {
-				t.Fatal("rejections are recorded throttled")
+			// Whether a recorded outcome is THROTTLED to one row per
+			// minute is not this layer's to state any more (backlog
+			// 2.68): it is trigger_deliveries_throttle_idx's outcome
+			// list, pinned against real Postgres by
+			// store_sql_test.go's own throttling tests. What matters
+			// here is which outcome was recorded.
+			if tc.stored && rw.rec.deliveries[len(rw.rec.deliveries)-1].Outcome != tc.outcome {
+				t.Fatalf("recorded outcome = %s, want %s", rw.rec.deliveries[len(rw.rec.deliveries)-1].Outcome, tc.outcome)
 			}
 		})
 	}
