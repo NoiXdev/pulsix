@@ -53,7 +53,13 @@ func parsePath(expr string) (*jsonpath.Path, error) {
 	}
 	p, err := jsonpath.Parse(expr)
 	if err != nil {
-		return nil, errors.New("not a JSONPath expression (start with $)")
+		// The parser's own message, not a guess at the mistake: this
+		// used to say "start with $" for EVERY parse failure, so an
+		// operator whose path did start with $ and broke somewhere
+		// else was sent looking at the one character that was right
+		// (backlog 2.68). The expression is the operator's own
+		// configuration, never payload, so quoting the parser is safe.
+		return nil, fmt.Errorf("not a usable JSONPath expression: %v", err)
 	}
 	for _, seg := range p.Query().Segments() {
 		if seg.IsDescendant() {

@@ -162,8 +162,10 @@ func TestReconnectingClientKeepsAnOpenStreamAcrossRedial(t *testing.T) {
 
 // TestReconnectingClientRaceStress: concurrent callers hammering every
 // method while Redial fires repeatedly underneath them, run under -race
-// (and normally with -count=20 in CI for this package, per the fix round
-// 3 report). It asserts nothing about outcomes — RunEvents opened with no
+// (This used to say CI repeats it with -count=20; it does not — every
+// CI invocation is -count=1. Repeating it is what a DEVELOPER touching
+// acquire() or Redial should do locally, and claiming CI already did
+// it offered a safety net that was not there. Backlog 2.68.) It asserts nothing about outcomes — RunEvents opened with no
 // legitimate claim is expected to error immediately, same as some
 // ClaimJob/ReportResult/RenewCertificate calls landing between redials —
 // the only thing under test is that acquire() (the current generation

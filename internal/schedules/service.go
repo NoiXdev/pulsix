@@ -117,7 +117,11 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 	if err != nil {
 		return Schedule{}, err
 	}
-	sch.Paused, sch.CreatedBy, sch.LastRunAt = cur.Paused, cur.CreatedBy, cur.LastRunAt
+	// paused, created_by and last_run_at are deliberately NOT carried
+	// over: UpdateSchedule does not write those columns, and its
+	// RETURNING * reads them back from the row. Copying them here was
+	// dead against the database and only looked load-bearing because
+	// the test fake echoed its input (backlog 2.68).
 	if cur.Paused {
 		sch.NextRunAt = nil
 	}

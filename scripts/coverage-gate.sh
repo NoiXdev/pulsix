@@ -2,13 +2,18 @@
 # coverage-gate.sh — per-package statement coverage gate.
 #
 # Policy (plan Global Constraints): every Go package must be at or above
-# 80% line coverage; internal/auth, internal/tenancy, internal/db,
-# internal/inventory/schema, internal/inventory/grouptree,
-# internal/inventory/render, internal/credentials, internal/ca and
-# internal/outbound must be at or above 90% once those packages exist. A
-# single blended number across the whole module cannot express two
-# different floors and lets a weak package hide behind a strong one, so
-# this checks every package individually.
+# 80% line coverage, and the packages listed in the awk block below --
+# the ones carrying auth, tenancy, the database layer, the CA and the
+# job and check engines -- at or above 90%. A single blended number
+# across the whole module cannot express two different floors and lets
+# a weak package hide behind a strong one, so this checks every package
+# individually.
+#
+# The 90% list lives in ONE place, the condition further down, and is
+# deliberately not repeated here: this header used to name nine
+# packages while the gate enforced twenty-two, and a comment that
+# disagrees with the code it introduces is worse than no comment
+# (backlog 2.68).
 #
 # cmd/... is entry-point wiring (main.go, ListenAndServe) with no test
 # files by design (see task-1 brief/report) and is explicitly excluded

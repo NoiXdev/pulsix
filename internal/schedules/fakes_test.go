@@ -72,6 +72,14 @@ func (f *fakeStore) Update(_ context.Context, s schedules.Schedule, revision int
 	if cur.Revision != revision {
 		return schedules.Schedule{}, schedules.ErrRevisionMismatch
 	}
+	// The real UpdateSchedule writes template, name, mode, cron,
+	// simple, timezone, guards, limit, extra vars and next_run_at —
+	// and nothing else — then RETURNING *, so paused, created_by and
+	// last_run_at come back from the ROW whatever the caller passed.
+	// Echoing the input instead let the service look correct only
+	// because it happened to copy those fields in by hand (backlog
+	// 2.68).
+	s.Paused, s.CreatedBy, s.LastRunAt = cur.Paused, cur.CreatedBy, cur.LastRunAt
 	s.Revision = revision + 1
 	f.byID[s.ID] = s
 	return s, nil
