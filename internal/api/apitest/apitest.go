@@ -699,7 +699,31 @@ func New(t *testing.T, opts ...Option) *Server {
 // be rediscovered later.
 func (s *Server) Client() *http.Client {
 	jar, _ := cookiejar.New(nil)
-	return &http.Client{Jar: jar, Transport: &http.Transport{}}
+	return &http.Client{Jar: jar, Transport: &http.Transport{DialContext: dialLoopbackV4}}
+}
+
+// dialLoopbackV4 sends every "localhost" connection straight to
+// 127.0.0.1 (backlog 2.68).
+//
+// httptest listens on 127.0.0.1 only, while ts.URL names the same port
+// as "localhost" — the spelling the manager's own PublicURL uses, which
+// the passkey Origin check and every generated link compare against, so
+// the URL cannot simply be changed. That leaves the client resolving
+// the name, and on a machine with IPv6 loopback ::1 comes back ahead of
+// 127.0.0.1: an address this listener never bound. Usually the IPv6
+// attempt is refused and the dialer falls straight back, which is why
+// it worked; under the full suite's load it intermittently did not, and
+// a test failed with "connection reset by peer" against [::1]. Seen
+// twice, in different tests, never when the package runs alone.
+//
+// Resolving it here keeps every URL, Origin and cookie domain exactly
+// as the tests expect and removes the detour the listener never agreed
+// to.
+func dialLoopbackV4(ctx context.Context, network, addr string) (net.Conn, error) {
+	if host, port, err := net.SplitHostPort(addr); err == nil && host == "localhost" {
+		addr = net.JoinHostPort("127.0.0.1", port)
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
 }
 
 // passwordHashCache memoizes HashPassword by plaintext password, for the
