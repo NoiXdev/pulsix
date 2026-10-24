@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -205,7 +204,7 @@ func (s *Server) lookupWorker(ctx context.Context, identity *ca.ClientIdentity) 
 		return workers.Worker{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "look up worker certificate", "serial", identity.Serial.String(), "err", err)
+		s.log().ErrorContext(ctx, "look up worker certificate", "serial", identity.Serial.String(), "err", err)
 		return workers.Worker{}, status.Error(codes.Internal, "worker lookup failed")
 	}
 	if identity.OrgID == nil || *identity.OrgID != worker.OrgID || identity.ZoneID != worker.ZoneID {
@@ -220,7 +219,7 @@ func (s *Server) lookupWorker(ctx context.Context, identity *ca.ClientIdentity) 
 // serials read exactly like unknown ones.
 func (s *Server) lookupAgent(ctx context.Context, identity *ca.ClientIdentity) (agents.AgentIdentity, error) {
 	if s.deps.Agents == nil {
-		slog.ErrorContext(ctx, "agent certificate presented but no agent registry is wired")
+		s.log().ErrorContext(ctx, "agent certificate presented but no agent registry is wired")
 		return agents.AgentIdentity{}, status.Error(codes.Internal, "agent lookup failed")
 	}
 	agent, err := s.deps.Agents.GetBySerial(ctx, identity.Serial.String())
@@ -228,7 +227,7 @@ func (s *Server) lookupAgent(ctx context.Context, identity *ca.ClientIdentity) (
 		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "look up agent certificate", "serial", identity.Serial.String(), "err", err)
+		s.log().ErrorContext(ctx, "look up agent certificate", "serial", identity.Serial.String(), "err", err)
 		return agents.AgentIdentity{}, status.Error(codes.Internal, "agent lookup failed")
 	}
 	if agent.Revoked {

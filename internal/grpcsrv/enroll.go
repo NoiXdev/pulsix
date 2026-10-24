@@ -6,7 +6,6 @@ package grpcsrv
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/netip"
 	"time"
 
@@ -48,7 +47,7 @@ func (s *Server) Enroll(ctx context.Context, req *workerpb.EnrollRequest) (*work
 	case err != nil:
 		// Enroll is anonymous: the store's text (table and constraint
 		// names, driver messages) is logged, never sent back.
-		slog.ErrorContext(ctx, "enroll worker", "token_id", id.String(), "err", err)
+		s.log().ErrorContext(ctx, "enroll worker", "token_id", id.String(), "err", err)
 		return nil, status.Error(codes.Internal, "enrollment failed")
 	}
 	s.audit(ctx, SystemEvent{Operation: "worker.enroll", ObjectType: "worker", ObjectID: res.Worker.ID.String(),
@@ -71,7 +70,7 @@ func (s *Server) RenewCertificate(ctx context.Context, req *workerpb.RenewCertif
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "renew worker certificate", "worker_id", w.ID.String(), "err", err)
+		s.log().ErrorContext(ctx, "renew worker certificate", "worker_id", w.ID.String(), "err", err)
 		return nil, status.Error(codes.Internal, "certificate renewal failed")
 	}
 	s.audit(ctx, SystemEvent{Operation: "worker.renew", ObjectType: "worker", ObjectID: w.ID.String(),
@@ -83,7 +82,7 @@ func (s *Server) RenewCertificate(ctx context.Context, req *workerpb.RenewCertif
 // failure is logged rather than undoing it.
 func (s *Server) audit(ctx context.Context, ev SystemEvent) {
 	if err := s.deps.Audit.Record(ctx, ev); err != nil {
-		slog.ErrorContext(ctx, "audit worker certificate event", "operation", ev.Operation, "err", err)
+		s.log().ErrorContext(ctx, "audit worker certificate event", "operation", ev.Operation, "err", err)
 	}
 }
 

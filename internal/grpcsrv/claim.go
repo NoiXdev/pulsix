@@ -6,7 +6,6 @@ package grpcsrv
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -26,7 +25,7 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 	zones, err := authorizedZones(worker, req.GetZoneIds())
 	if err != nil {
 		if status.Code(err) == codes.PermissionDenied {
-			slog.WarnContext(ctx, "worker claim refused: zone outside the worker's enrollment",
+			s.log().WarnContext(ctx, "worker claim refused: zone outside the worker's enrollment",
 				"worker", worker.Name, "org", worker.OrgID, "zone", worker.ZoneID)
 		}
 		return nil, err
@@ -71,7 +70,7 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 	// NOTE: the log line names ids only — the payload carries credential
 	// material that must never reach a log (see server_test.go's
 	// log-capture test).
-	slog.InfoContext(ctx, "worker claimed job", "job_id", jobID, "worker", worker.Name, "org", job.GetOrgId())
+	s.log().InfoContext(ctx, "worker claimed job", "job_id", jobID, "worker", worker.Name, "org", job.GetOrgId())
 	return &workerpb.ClaimJobResponse{Job: job}, nil
 }
 

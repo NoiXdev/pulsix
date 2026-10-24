@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -54,7 +53,7 @@ func (s *Server) ReportResult(ctx context.Context, req *workerpb.ReportResultReq
 	}
 	if err := s.deps.Results.Finish(ctx, res); err != nil {
 		if errors.Is(err, ErrJobNotClaimed) {
-			slog.WarnContext(ctx, "job result refused: job not claimed by the reporting worker",
+			s.log().WarnContext(ctx, "job result refused: job not claimed by the reporting worker",
 				"job_id", jobID, "worker", worker.Name, "org", worker.OrgID)
 			return nil, status.Error(codes.NotFound, "no job with this id is claimed by this worker")
 		}
@@ -75,7 +74,7 @@ func (s *Server) ReportResult(ctx context.Context, req *workerpb.ReportResultReq
 	}
 	// NOTE: ids and status only — never the payload, never the error text
 	// verbatim from a log-capture perspective (see server_test.go).
-	slog.InfoContext(ctx, "job result recorded", "job_id", jobID, "status", res.Status)
+	s.log().InfoContext(ctx, "job result recorded", "job_id", jobID, "status", res.Status)
 	return &workerpb.ReportResultResponse{}, nil
 }
 

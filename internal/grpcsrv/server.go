@@ -260,3 +260,13 @@ func (r *tokenRegistry) lookup(jobID uuid.UUID) (boundToken, bool) {
 	b, ok := r.entries[jobID]
 	return b, ok
 }
+
+// log is where this server reports. Deps.Log when wired, the global
+// logger otherwise — the request path used slog directly, so a host
+// that configures its own handler saw none of it (backlog 2.64).
+func (s *Server) log() *slog.Logger {
+	if s.deps.Log != nil {
+		return s.deps.Log
+	}
+	return slog.Default()
+}
