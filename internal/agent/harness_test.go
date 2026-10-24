@@ -40,9 +40,24 @@ func (m *testCAStore) Save(_ context.Context, sealed []byte) error {
 }
 
 // newTestCA builds the in-memory instance CA and ensures its key exists.
+// One CA per test, not one per call. Every call used to mint a fresh
+// key, so two certificates obtained inside the same test did not chain
+// to the same root — which made it impossible to write a test about
+// chain verification at all, and quietly misrepresented the real
+// arrangement: one manager, one instance CA (backlog 2.64). A test
+// that deliberately wants a SECOND, foreign CA calls
+// newTestCAWithClock directly.
+var testCAs sync.Map // *testing.T -> *ca.CA
+
 func newTestCA(t *testing.T) *ca.CA {
 	t.Helper()
-	return newTestCAWithClock(t, nil)
+	if v, ok := testCAs.Load(t); ok {
+		return v.(*ca.CA)
+	}
+	inst := newTestCAWithClock(t, nil)
+	testCAs.Store(t, inst)
+	t.Cleanup(func() { testCAs.Delete(t) })
+	return inst
 }
 
 // expiredCA builds an instance CA whose clock sits at offset (negative

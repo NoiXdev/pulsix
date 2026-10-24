@@ -171,10 +171,21 @@ func isEnrollUnreachable(err error) bool {
 	switch st.Code() {
 	case codes.Unavailable, codes.DeadlineExceeded, codes.Unknown:
 		return true
+	case codes.ResourceExhausted:
+		// A rate limit is transient BY DEFINITION — the manager's own
+		// answer is "too many enrollment attempts from this address;
+		// retry in a minute". It used to sit with the refusals below,
+		// so hitting the per-address limit ended enrollment for good
+		// and told the operator to create a new token, when all that
+		// was needed was to wait out the minute the manager named. It
+		// bites hardest where several of these start at once: behind
+		// Docker's userland proxy they all arrive from the bridge
+		// gateway and share one address budget (backlog 2.64, 2.67).
+		return true
 	default:
 		// Unauthenticated (enrollment refused), AlreadyExists (name
-		// taken), InvalidArgument (bad CSR), ResourceExhausted (rate
-		// limited), … — the manager answered with a definite refusal.
+		// taken), InvalidArgument (bad CSR), … — the manager answered
+		// with a definite refusal that no retry fixes.
 		return false
 	}
 }

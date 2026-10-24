@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -82,6 +83,11 @@ type Deps struct {
 	Results      ResultRecorder
 	Audit        SystemAuditor
 	Clock        func() time.Time
+	// Log is where this package's own background work reports. nil is
+	// slog.Default(). Only the server certificate source uses it so
+	// far (backlog 2.64); the request-path sites still log through the
+	// global logger, which is a package-wide change of its own.
+	Log *slog.Logger
 
 	// CancelPollInterval overrides DefaultCancelPollInterval; zero keeps
 	// the default. Injected so tests can poll without waiting half a
@@ -131,7 +137,7 @@ func newServer(deps Deps) (*Server, error) {
 		return nil, fmt.Errorf("grpcsrv: AgentService requires the Agents registry")
 	}
 	caPool, _ := deps.CA.Pool()
-	certs, err := newServerCertSource(deps.CA, deps.Clock)
+	certs, err := newServerCertSource(deps.CA, deps.Clock, deps.Log)
 	if err != nil {
 		return nil, err
 	}

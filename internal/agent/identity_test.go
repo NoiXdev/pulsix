@@ -402,3 +402,55 @@ func TestLoadIdentityDetailDistinguishesTheTwoFailures(t *testing.T) {
 		t.Fatalf("absent = %q, corrupt = %q; the two must each say something, and not the same thing", absentWhy, corruptWhy)
 	}
 }
+
+// TestReplaceRefusesACertificateTheCADidNotSign is backlog 2.64. The
+// renewal path checked that the returned certificate parsed and that
+// it matched the agent's own key — not that the CA the agent is
+// pinned to actually signed it. A manager answering with a leaf from
+// somewhere else would have had that leaf written over a WORKING
+// identity, and the agent would have found out at its next handshake,
+// as an opaque TLS failure, with nothing left to fall back on.
+//
+// Verified against the CA in the agent's own data directory, which is
+// the one it already trusts; there is no CA rotation to get wrong.
+func TestReplaceRefusesACertificateTheCADidNotSign(t *testing.T) {
+	id, dir := enrollDataDir(t)
+	before := id.Leaf().SerialNumber
+
+	// A certificate for the agent's OWN key, signed by a DIFFERENT CA:
+	// it parses, and the key matches, so every check that existed
+	// before this one passes it.
+	key, ok := id.Signer().(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("signer is %T", id.Signer())
+	}
+	csrPEM, err := MakeCSR(key, testAgentName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCA := newTestCAWithClock(t, nil) // not this test's own CA
+	foreign, _, err := otherCA.SignAgentCSR(csrPEM, testOrgID, testAgentName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := id.Replace(foreign); err == nil {
+		t.Fatal("a certificate the pinned CA did not sign was accepted")
+	}
+	if id.Leaf().SerialNumber.Cmp(before) != 0 {
+		t.Fatal("the working identity was replaced anyway")
+	}
+	// On disk too: the refusal must not have written the file.
+	reloaded, err := LoadIdentity(dir)
+	if err != nil || reloaded == nil {
+		t.Fatalf("reload = %v, %v", reloaded, err)
+	}
+	if reloaded.Leaf().SerialNumber.Cmp(before) != 0 {
+		t.Fatal("the refused certificate reached the disk")
+	}
+
+	// A genuine renewal from the real CA still lands.
+	renewed, _ := issueAgentCert(t, csrPEM)
+	if err := id.Replace(renewed); err != nil {
+		t.Fatalf("a certificate the real CA signed was refused: %v", err)
+	}
+}

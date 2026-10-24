@@ -60,7 +60,9 @@ func TestVerifyPinned(t *testing.T) {
 		t.Fatal("verifyPinned with a mismatched server name = nil, want an error")
 	}
 	// A foreign server certificate must not verify against the pinned CA.
-	otherLeaf, otherCA := serverChain(t, newTestCA(t))
+	// Explicitly a SECOND CA: newTestCA returns this test's own one
+	// (backlog 2.64 made it one per test, not one per call).
+	otherLeaf, otherCA := serverChain(t, newTestCAWithClock(t, nil))
 	if err := verifyPinned([][]byte{otherLeaf, caDER}, pin, "manager"); err == nil {
 		t.Fatal("a foreign server certificate must not verify against the pinned CA")
 	}
@@ -136,7 +138,12 @@ func TestIsEnrollUnreachable(t *testing.T) {
 		{"unknown code", status.Error(codes.Unknown, "boom"), true},
 		{"refusal", status.Error(codes.Unauthenticated, "enrollment refused"), false},
 		{"name taken", status.Error(codes.AlreadyExists, "a host with this name already exists"), false},
-		{"rate limited", status.Error(codes.ResourceExhausted, "too many enrollment attempts"), false},
+		// Backlog 2.64: a rate limit is transient BY DEFINITION — the
+		// manager's own words are "retry in a minute". Classed as a
+		// refusal, an agent that happened to hit the per-address
+		// enrollment limit gave up for good and told its operator to
+		// create a new token, when all it needed was to wait.
+		{"rate limited", status.Error(codes.ResourceExhausted, "too many enrollment attempts"), true},
 		{"pin mismatch", errors.New("the manager's CA does not match the fingerprint in the enrollment token"), false},
 		{"no pin presented", errors.New("the manager presented no CA certificate to pin against"), false},
 		{"pinned CA mismatch", errors.New("the manager returned a CA that does not match the pinned CA fingerprint"), false},

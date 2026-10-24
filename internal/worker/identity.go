@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/noixdev/pulsix/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"sync"
@@ -181,27 +182,9 @@ func probeWritable(dir string) error {
 }
 
 // writeFileAtomic writes content to dir/name through a temp file in the
-// same directory and a rename, so a reader never sees a torn file.
+// same directory and a rename, so a reader never sees a torn file. It
+// is atomicfile.Write — this had its own copy, which flushed the file
+// but not the directory the rename landed in (backlog 2.64).
 func writeFileAtomic(dir, name string, content []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(dir, "."+name+".*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, name))
+	return atomicfile.Write(dir, name, content, mode)
 }

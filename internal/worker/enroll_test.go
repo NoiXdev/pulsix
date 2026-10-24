@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"log/slog"
 	"net"
@@ -210,5 +212,30 @@ func TestIsEnrollUnreachableNarrowlyMatchesPinFailures(t *testing.T) {
 	reset := errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: read tcp 127.0.0.1:5555->127.0.0.1:8444: read: connection reset by peer"`)
 	if !isEnrollUnreachable(reset) {
 		t.Fatalf("a connection reset during the handshake must be reported as unreachable: %v", reset)
+	}
+}
+
+// TestARateLimitIsTransient is backlog 2.64. ResourceExhausted was
+// grouped with the definite refusals, but a rate limit is transient by
+// definition — the manager's own answer is "too many enrollment
+// attempts from this address; retry in a minute". Treated as a
+// refusal, the worker exits 2 and tells its operator to create a new
+// token, when all it had to do was wait out the minute the manager
+// already named.
+//
+// It bites hardest where workers are most likely to start together:
+// behind Docker's userland proxy they all arrive from the bridge
+// gateway and share one address budget (backlog 2.67), so a compose
+// stack bringing several up at once walks straight into it.
+func TestARateLimitIsTransient(t *testing.T) {
+	limited := status.Error(codes.ResourceExhausted, "too many enrollment attempts from this address; retry in a minute")
+	if !isEnrollUnreachable(limited) {
+		t.Fatal("a rate limit must be retried, not reported as a refusal that needs a new token")
+	}
+	// The definite refusals stay definite: no retry fixes any of them.
+	for _, c := range []codes.Code{codes.Unauthenticated, codes.AlreadyExists, codes.InvalidArgument, codes.NotFound} {
+		if isEnrollUnreachable(status.Error(c, "refused")) {
+			t.Fatalf("%s must stay a refusal", c)
+		}
 	}
 }

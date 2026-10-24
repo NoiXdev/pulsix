@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/noixdev/pulsix/internal/atomicfile"
 	"io"
 	"math/big"
 	"os"
@@ -185,23 +186,10 @@ func writeFileAtomic(dir, name string, content []byte, mode os.FileMode) error {
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, content) {
 		return nil
 	}
-	tmp, err := os.CreateTemp(dir, "."+name+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("write bundle %s: %w", name, err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write bundle %s: %w", name, err)
-	}
-	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write bundle %s: %w", name, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("write bundle %s: %w", name, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	// atomicfile.Write since backlog 2.64: this had its own copy, which
+	// flushed neither the file nor the directory — a bundle the worker
+	// container is about to read deserves both.
+	if err := atomicfile.Write(dir, name, content, mode); err != nil {
 		return fmt.Errorf("write bundle %s: %w", name, err)
 	}
 	return nil

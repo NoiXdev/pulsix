@@ -254,6 +254,17 @@ func (i *Identity) Replace(certPEM []byte) error {
 		return fmt.Errorf("renewed certificate does not match the agent's key")
 	}
 	dir := i.dir
+	// And that the CA this agent is pinned to actually signed it
+	// (backlog 2.64). Matching the key is not the same as being
+	// issued: a leaf from anywhere else passes every check above, and
+	// writing it would replace a WORKING identity with one no
+	// handshake accepts — discovered at the next connection, as an
+	// opaque TLS error, with nothing left to fall back on. The roots
+	// are the agent's own ca.pem, the file its mTLS dial already
+	// trusts; there is no CA rotation for this to get wrong.
+	if err := verifyAgainstStoredCA(dir, leaf); err != nil {
+		return err
+	}
 	next := &tls.Certificate{Certificate: [][]byte{block.Bytes}, PrivateKey: i.key, Leaf: leaf}
 	meta, err := json.Marshal(identityMeta{HostID: i.hostID, IssuedAt: time.Now()})
 	if err != nil {
@@ -282,4 +293,27 @@ func hasOrgSAN(leaf *x509.Certificate) bool {
 		}
 	}
 	return false
+}
+
+// verifyAgainstStoredCA checks that leaf chains to the CA in dir. A
+// missing or unreadable ca.pem is itself a refusal: an identity
+// directory without the root its certificate was issued under cannot
+// be used to connect either, so accepting the leaf would only move the
+// failure later.
+func verifyAgainstStoredCA(dir string, leaf *x509.Certificate) error {
+	caPEM, err := readOptional(filepath.Join(dir, caFileName))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", caFileName, err)
+	}
+	pool := x509.NewCertPool()
+	if caPEM == nil || !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("cannot check the renewed certificate: %s holds no usable CA", caFileName)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		return fmt.Errorf("the renewed certificate was not issued by the CA this agent trusts: %w", err)
+	}
+	return nil
 }
