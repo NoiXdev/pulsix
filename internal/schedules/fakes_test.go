@@ -196,12 +196,19 @@ type fakeTemplates struct {
 	lastOpt  templates.OverrideOptions
 	validErr error
 	reveals  int
+	// onValidate runs inside ValidateOverrides, so a test can make the
+	// real world's delay there — a template read and a seal — visible
+	// to the clock (backlog 2.61).
+	onValidate func()
 }
 
 func (f *fakeTemplates) ValidateOverrides(_ context.Context, _, _ uuid.UUID, in templates.Overrides, opt templates.OverrideOptions) (templates.Overrides, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastOpt = opt
+	if f.onValidate != nil {
+		f.onValidate()
+	}
 	if f.validErr != nil {
 		return templates.Overrides{}, f.validErr
 	}

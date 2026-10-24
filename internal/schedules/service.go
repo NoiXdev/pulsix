@@ -142,7 +142,17 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stor
 	if err != nil {
 		return Schedule{}, templateErr(err)
 	}
-	next := tt.expr.Next(now, tt.loc)
+	// From the clock as it is NOW, not the one taken at the top of this
+	// function: compileTimetable and ValidateOverrides sit in between,
+	// and the second reads the template and seals every secret
+	// override. For a frequent schedule that stretch can cross an
+	// occurrence, and then next_run_at is written already in the past
+	// — the ticker picks it up at once and records a missed or
+	// caught-up occurrence that an edit manufactured (backlog 2.61).
+	// The timetable above still compiles against the earlier `now`,
+	// which is what it is for: validating the expression, not placing
+	// the next run.
+	next := tt.expr.Next(s.now(), tt.loc)
 	return Schedule{
 		ID: id, OrgID: orgID, TemplateID: in.TemplateID, Name: name, Mode: in.Mode,
 		Cron: tt.cron, Simple: tt.simple, Timezone: in.Timezone, Guards: guards,

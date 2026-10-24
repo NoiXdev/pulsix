@@ -312,3 +312,40 @@ func TestAuditActorKindConstant(t *testing.T) {
 		t.Fatal("ActorKindSchedule must be the literal \"schedule\"")
 	}
 }
+
+// TestUpdateComputesTheNextRunFromTheClockAfterValidation is backlog
+// 2.61's remainder. build() took one `now` at the top and still used it
+// for the next-occurrence computation at the bottom — with
+// compileTimetable and, more to the point, ValidateOverrides in
+// between, which reads the template and seals every secret override.
+// For a frequent schedule that stretch can cross an occurrence, and
+// then `next_run_at` is written already in the past: the ticker picks
+// it up at once and records a missed or caught-up occurrence that an
+// EDIT manufactured.
+func TestUpdateComputesTheNextRunFromTheClockAfterValidation(t *testing.T) {
+	w := newWorld(t)
+	in := validInput(w.templateID)
+	in.Mode, in.Cron, in.Timezone = schedules.ModeCron, "* * * * *", "UTC"
+	created, err := w.svc.Create(ctx, w.org, w.actor, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Validation takes two minutes — two occurrences of this schedule.
+	start := w.now
+	w.tmpl.onValidate = func() { w.now = w.now.Add(2 * time.Minute) }
+
+	updated, err := w.svc.Update(ctx, w.org, created.ID, created.Revision, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.NextRunAt == nil {
+		t.Fatal("no next run")
+	}
+	if !updated.NextRunAt.After(w.now) {
+		t.Fatalf("next_run_at = %s with the clock at %s: an edit must never schedule an occurrence that has already passed", updated.NextRunAt, w.now)
+	}
+	if want := start.Add(time.Minute); updated.NextRunAt.Equal(want) {
+		t.Fatalf("next_run_at = %s, computed from the clock as it was BEFORE validation", updated.NextRunAt)
+	}
+}
