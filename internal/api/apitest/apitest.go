@@ -683,10 +683,23 @@ func New(t *testing.T, opts ...Option) *Server {
 	return s
 }
 
-// Client returns an HTTP client with a cookie jar.
+// Client returns an HTTP client with a cookie jar and, deliberately, a
+// connection pool of its OWN.
+//
+// A client with no Transport uses http.DefaultTransport, whose pool is
+// shared by every test in the binary while each test stands up and
+// tears down its own httptest server. A pooled connection to a
+// finished server's address outlives it, and the operating system
+// hands the same localhost port to a later server — so a request can
+// be sent down a socket belonging to a server that no longer exists
+// and come back "connection reset by peer". Seen once, in
+// TestAgentRoutesRoleMatrix, during a full-suite run that passed on
+// its own afterwards; this removes the only route between two
+// fixtures' servers I could find, rather than leaving a rare reset to
+// be rediscovered later.
 func (s *Server) Client() *http.Client {
 	jar, _ := cookiejar.New(nil)
-	return &http.Client{Jar: jar}
+	return &http.Client{Jar: jar, Transport: &http.Transport{}}
 }
 
 // passwordHashCache memoizes HashPassword by plaintext password, for the
