@@ -117,7 +117,7 @@ func TestRenewerRenewsWhenDue(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	now := time.Now()
-	r := NewRenewer(workerpb.NewWorkerServiceClient(conn), id, func() time.Time { return now }, nil, quiet())
+	r := NewRenewer(workerpb.NewWorkerServiceClient(conn), id, func() time.Time { return now }, nil, quiet(), h.renewRoots(cfg))
 	before := id.Leaf().SerialNumber
 	if err := r.Check(t.Context()); err != nil || id.Leaf().SerialNumber.Cmp(before) != 0 {
 		t.Fatalf("a fresh certificate must not renew: %v", err)
@@ -132,7 +132,7 @@ func TestRenewerRenewsWhenDue(t *testing.T) {
 	// Run stops on cancel.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	NewRenewer(workerpb.NewWorkerServiceClient(conn), id, func() time.Time { return now }, nil, quiet()).Run(ctx)
+	NewRenewer(workerpb.NewWorkerServiceClient(conn), id, func() time.Time { return now }, nil, quiet(), h.renewRoots(cfg)).Run(ctx)
 }
 
 // TestEnsureIdentityWrapsUnreachableManager: a failure to reach the

@@ -43,7 +43,7 @@ func TestReconnectingClientRedialsAfterRenewal(t *testing.T) {
 	rc := NewReconnectingClient(oldConn, quiet())
 
 	now := id.Leaf().NotAfter.Add(-time.Hour) // due for renewal
-	r := NewRenewer(rc, id, func() time.Time { return now }, nil, quiet(), WithOnRenewed(func(ctx context.Context) {
+	r := NewRenewer(rc, id, func() time.Time { return now }, nil, quiet(), h.renewRoots(cfg), WithOnRenewed(func(ctx context.Context) {
 		rc.Redial(ctx, func(ctx context.Context) (*grpc.ClientConn, error) {
 			return dialIdentity(ctx, cfg, id, []grpc.DialOption{h.bufconnDialer()})
 		})

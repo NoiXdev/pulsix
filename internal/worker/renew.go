@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -25,6 +26,18 @@ type Renewer struct {
 	sleep     func(ctx context.Context, d time.Duration) error
 	log       *slog.Logger
 	onRenewed func(ctx context.Context)
+	// roots are the CAs a renewed certificate must chain to — the same
+	// ones the dial trusts. REQUIRED: a renewal with none configured is
+	// refused rather than performed unchecked, so a caller that forgets
+	// WithRoots finds out at the first renewal instead of silently
+	// losing the check (backlog 2.64).
+	roots *x509.CertPool
+}
+
+// WithRoots gives the renewer the CAs a renewed certificate must chain
+// to (worker.CAPool). Without them Check refuses to renew.
+func WithRoots(pool *x509.CertPool) RenewerOption {
+	return func(r *Renewer) { r.roots = pool }
 }
 
 // RenewerOption overrides a Renewer's optional behavior.
@@ -130,6 +143,17 @@ func (r *Renewer) Check(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("renew certificate: %w", err)
 	}
+	// Issued by the CA this worker trusts, not merely parseable and
+	// matching its key (backlog 2.64). Without this a manager
+	// answering with a leaf from somewhere else would have it written
+	// over a WORKING identity, and the worker would find out at its
+	// next handshake, as an opaque TLS error, with nothing to fall
+	// back on. The agent side checks the same thing in Identity.Replace,
+	// where the data dir holds the CA; here the roots come from the
+	// configuration the dial already uses.
+	if err := verifyRenewedChain(resp.GetCertificate(), r.roots); err != nil {
+		return err
+	}
 	before := r.id.Leaf().SerialNumber
 	writeErr := r.id.Replace(resp.GetCertificate())
 	if r.id.Leaf().SerialNumber.Cmp(before) == 0 {
@@ -181,4 +205,29 @@ func (r *Renewer) logPendingWrite(ctx context.Context, writeErr error) {
 		"on_disk_certificate_expires_at", diskExpiry.Format(time.RFC3339),
 		"consequence", consequence,
 		"err", writeErr)
+}
+
+// verifyRenewedChain checks that certPEM was issued by roots. A nil
+// pool is an error, not a skip: an unchecked renewal is exactly what
+// this exists to prevent, and a caller that did not supply roots has a
+// wiring bug worth hearing about.
+func verifyRenewedChain(certPEM []byte, roots *x509.CertPool) error {
+	if roots == nil {
+		return errors.New("renew certificate: the renewer has no CA to check the answer against (WithRoots was not set)")
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return errors.New("renew certificate: the manager returned no PEM certificate")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("renew certificate: parse the manager's answer: %w", err)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:     roots,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		return fmt.Errorf("renew certificate: the answer was not issued by the CA this worker trusts: %w", err)
+	}
+	return nil
 }

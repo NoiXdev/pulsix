@@ -64,13 +64,9 @@ func serverNameOf(cfg Config) (string, error) {
 // dialIdentity builds the connection; extra dial options exist for the
 // bufconn test harness.
 func dialIdentity(_ context.Context, cfg Config, id *Identity, extra []grpc.DialOption) (*grpc.ClientConn, error) {
-	caPEM, err := os.ReadFile(cfg.CAPath)
+	pool, err := CAPool(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("read CA pool file %s: %w", cfg.CAPath, err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("CA pool file %s contains no PEM certificate", cfg.CAPath)
+		return nil, err
 	}
 	serverName, err := serverNameOf(cfg)
 	if err != nil {
@@ -100,4 +96,19 @@ func dialIdentity(_ context.Context, cfg Config, id *Identity, extra []grpc.Dial
 		return nil, fmt.Errorf("new gRPC client for %s: %w", cfg.ManagerAddr, err)
 	}
 	return conn, nil
+}
+
+// CAPool reads the configured CA file into a pool. Exported because the
+// renewer needs the same roots the dial trusts, to check that a
+// renewed certificate was actually issued by them (backlog 2.64).
+func CAPool(cfg Config) (*x509.CertPool, error) {
+	caPEM, err := os.ReadFile(cfg.CAPath)
+	if err != nil {
+		return nil, fmt.Errorf("read CA pool file %s: %w", cfg.CAPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("CA pool file %s contains no PEM certificate", cfg.CAPath)
+	}
+	return pool, nil
 }

@@ -102,7 +102,15 @@ func run(env []string) int {
 	// Renewal at start and every 6 h, once a third of the validity is
 	// left; a successful renewal redials so the new certificate actually
 	// reaches the wire (see ReconnectingClient's own doc comment).
-	go worker.NewRenewer(client, id, nil, nil, slog.Default(), worker.WithOnRenewed(func(renewCtx context.Context) {
+	// The renewer checks that a renewed certificate was issued by the
+	// same CA the dial trusts (backlog 2.64); without roots it refuses
+	// to renew at all, so this is not optional wiring.
+	renewRoots, err := worker.CAPool(cfg)
+	if err != nil {
+		slog.Error("read the CA the renewer checks against", "err", err)
+		return 1
+	}
+	go worker.NewRenewer(client, id, nil, nil, slog.Default(), worker.WithRoots(renewRoots), worker.WithOnRenewed(func(renewCtx context.Context) {
 		client.Redial(renewCtx, func(dialCtx context.Context) (*grpc.ClientConn, error) {
 			return worker.DialIdentity(dialCtx, cfg, id)
 		})

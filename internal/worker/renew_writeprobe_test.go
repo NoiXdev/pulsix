@@ -100,7 +100,7 @@ func TestRenewerRenewsEvenWithReadOnlyDirectory(t *testing.T) {
 
 	now := id.Leaf().NotAfter.Add(-time.Hour) // due for renewal
 	var logs bytes.Buffer
-	r := NewRenewer(client, id, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	r := NewRenewer(client, id, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(&logs, nil)), h.renewRoots(cfg))
 	if err := r.Check(t.Context()); err != nil {
 		t.Fatalf("Check must still renew (in memory) even when the directory is read-only: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRenewerRetriesPendingWriteEveryCheckUntilDirectoryIsFixed(t *testing.T)
 	now := id.Leaf().NotAfter.Add(-time.Hour) // due once, for this first Check only
 
 	var logs1 bytes.Buffer
-	r1 := NewRenewer(client, id, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(&logs1, nil)))
+	r1 := NewRenewer(client, id, func() time.Time { return now }, nil, slog.New(slog.NewTextHandler(&logs1, nil)), h.renewRoots(cfg))
 	if err := r1.Check(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestRenewerRetriesPendingWriteEveryCheckUntilDirectoryIsFixed(t *testing.T)
 	// with the SAME on-disk expiry as before (nothing has been saved
 	// yet), not the in-memory one's ~90-days-out expiry.
 	var logs2 bytes.Buffer
-	r2 := NewRenewer(client, id, time.Now, nil, slog.New(slog.NewTextHandler(&logs2, nil)))
+	r2 := NewRenewer(client, id, time.Now, nil, slog.New(slog.NewTextHandler(&logs2, nil)), h.renewRoots(cfg))
 	if err := r2.Check(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestRenewerRetriesPendingWriteEveryCheckUntilDirectoryIsFixed(t *testing.T)
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	r3 := NewRenewer(client, id, time.Now, nil, quiet())
+	r3 := NewRenewer(client, id, time.Now, nil, quiet(), h.renewRoots(cfg))
 	if err := r3.Check(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestRenewerRunContinuesAfterFailedChecks(t *testing.T) {
 		return nil
 	}
 	var logs bytes.Buffer
-	r := NewRenewer(client, id, func() time.Time { return now }, sleep, slog.New(slog.NewTextHandler(&logs, nil)))
+	r := NewRenewer(client, id, func() time.Time { return now }, sleep, slog.New(slog.NewTextHandler(&logs, nil)), h.renewRoots(cfg))
 	r.Run(t.Context())
 
 	if n := client.callCount(); n < 3 {
@@ -352,7 +352,7 @@ func TestPendingWriteConsequenceDependsOnDiskExpiry(t *testing.T) {
 		"on-disk certificate expired":     {expiry.Add(time.Hour), "already expired", "will stop working once"},
 	} {
 		var logs bytes.Buffer
-		r := NewRenewer(nil, id, func() time.Time { return tc.now }, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+		r := NewRenewer(nil, id, func() time.Time { return tc.now }, nil, slog.New(slog.NewTextHandler(&logs, nil)), h.renewRoots(cfg))
 		r.logPendingWrite(t.Context(), os.ErrPermission)
 		out := logs.String()
 		if !strings.Contains(out, tc.want) || strings.Contains(out, tc.lack) {
@@ -361,5 +361,50 @@ func TestPendingWriteConsequenceDependsOnDiskExpiry(t *testing.T) {
 		if name == "on-disk certificate expired" && (!strings.Contains(out, "enroll") || !strings.Contains(out, "restart")) {
 			t.Fatalf("%s: the consequence must name the restart failure and re-enrollment:\n%s", name, out)
 		}
+	}
+}
+
+// TestRenewRefusesACertificateTheCADidNotIssue is backlog 2.64, the
+// worker half of the check the agent already had. The renewal applied
+// whatever the manager answered as long as it parsed and matched the
+// worker's key — so a leaf from anywhere else would have been written
+// over a WORKING identity, and the worker would have found out at its
+// next handshake, as an opaque TLS error, with nothing to fall back on.
+func TestRenewRefusesACertificateTheCADidNotIssue(t *testing.T) {
+	h := newHarness(t)
+	cfg := h.issue("fra-1", true)
+	pool, err := CAPool(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The real CA's answer passes.
+	good, _, _, err := h.ca.Issue(context.Background(), &orgID, zoneID, "fra-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyRenewedChain(good, pool); err != nil {
+		t.Fatalf("a certificate from the worker's own CA was refused: %v", err)
+	}
+
+	// A different CA's does not, however well-formed.
+	other := newHarness(t)
+	foreign, _, _, err := other.ca.Issue(context.Background(), &orgID, zoneID, "fra-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyRenewedChain(foreign, pool); err == nil {
+		t.Fatal("a certificate the worker's CA did not issue was accepted")
+	}
+
+	// And no roots at all is a refusal, not a skip: an unchecked
+	// renewal is exactly what this exists to prevent, so a caller that
+	// forgot WithRoots hears about it at the first renewal instead of
+	// quietly losing the check.
+	if err := verifyRenewedChain(good, nil); err == nil {
+		t.Fatal("a renewer with no CA renewed anyway")
+	}
+	if err := verifyRenewedChain([]byte("not a certificate"), pool); err == nil {
+		t.Fatal("garbage was accepted")
 	}
 }

@@ -374,3 +374,14 @@ func (h *harness) bufconnDialer() grpc.DialOption {
 		return h.lis.DialContext(ctx)
 	})
 }
+
+// renewRoots is the CA pool a Renewer must be given: without it the
+// renewer refuses to renew at all, which is the point (backlog 2.64).
+func (h *harness) renewRoots(cfg Config) RenewerOption {
+	h.t.Helper()
+	pool, err := CAPool(cfg)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return WithRoots(pool)
+}

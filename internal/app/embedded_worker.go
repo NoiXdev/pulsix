@@ -231,7 +231,14 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 	// Renewal at start and every 6 h, once a third of the validity is
 	// left; a successful renewal redials so the new certificate actually
 	// reaches the wire.
-	go worker.NewRenewer(client, id, nil, nil, log, worker.WithOnRenewed(func(renewCtx context.Context) {
+	// Same as cmd/worker: without roots the renewer refuses to renew,
+	// so this wiring is required, not optional (backlog 2.64).
+	renewRoots, err := worker.CAPool(wcfg)
+	if err != nil {
+		log.ErrorContext(ctx, "embedded worker: read the CA the renewer checks against", "err", err)
+		return
+	}
+	go worker.NewRenewer(client, id, nil, nil, log, worker.WithRoots(renewRoots), worker.WithOnRenewed(func(renewCtx context.Context) {
 		client.Redial(renewCtx, func(dialCtx context.Context) (*grpc.ClientConn, error) {
 			return worker.DialIdentity(dialCtx, wcfg, id)
 		})
