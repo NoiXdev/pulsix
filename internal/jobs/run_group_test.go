@@ -31,6 +31,14 @@ func (s *recordingGroupSink) RunGroupFinished(_ context.Context, r RunGroupResul
 	return s.err
 }
 
+// reset forgets what has been reported so far, so a test can tell a
+// second delivery from the first one.
+func (s *recordingGroupSink) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = nil
+}
+
 func (s *recordingGroupSink) snapshot() []RunGroupResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -568,5 +576,84 @@ func TestExcludedHostsAreReportedEvenThoughNoJobTargetsThem(t *testing.T) {
 	// one host and reached a verdict on it.
 	if r.Hosts != 1 || r.HostsOK() != 1 {
 		t.Fatalf("hosts = %d, ok = %d; the excluded hosts must not be counted among the targets", r.Hosts, r.HostsOK())
+	}
+}
+
+// TestSweepReportsAGroupWhoseReportWasLost is backlog 2.87's remainder.
+// The cancel path commits CancelJob on its own and reports the group
+// from a SECOND transaction, so a manager that dies in between leaves a
+// complete run group with no run.finished and nothing to retry it.
+//
+// The fix is a sweep, not a transaction. Making the cancel path atomic
+// would have it hold the job's row lock while it waits for the group
+// lock — the reverse of the order terminate uses (group lock first,
+// then the row), and the two would deadlock. A sweep needs no
+// lock-order change and covers every path's crash window, not one.
+func TestSweepReportsAGroupWhoseReportWasLost(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-sweep")
+	_, _, js := w.runGroup(t, 1)
+	if err := w.q.Finish(context.Background(), js[0].ID, StatusSucceeded,
+		map[string]any{"ok_hosts": []string{js[0].HostIDs[0].String()}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(w.sink.snapshot()); got != 1 {
+		t.Fatalf("reports after the finish = %d, want 1", got)
+	}
+
+	// A crash between the completing write and the report leaves the
+	// group terminal and unclaimed. That is the state the sweep is for.
+	w.sink.reset()
+	if _, err := w.d.Pool().Exec(context.Background(),
+		`UPDATE jobs SET run_group_reported = false WHERE run_group_id = $1`, js[0].RunGroupID); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := w.q.SweepUnreportedRunGroups(context.Background(), time.Now().Add(-time.Hour), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || len(w.sink.snapshot()) != 1 {
+		t.Fatalf("swept %d, reports %d; want the lost report delivered once", n, len(w.sink.snapshot()))
+	}
+
+	// And only once: a second pass finds nothing, because the first
+	// claimed it exactly as a live report would.
+	w.sink.reset()
+	if n, err := w.q.SweepUnreportedRunGroups(context.Background(), time.Now().Add(-time.Hour), 20); err != nil || n != 0 {
+		t.Fatalf("second sweep = %d, %v; want nothing left", n, err)
+	}
+	if got := len(w.sink.snapshot()); got != 0 {
+		t.Fatalf("the second sweep reported %d groups again", got)
+	}
+}
+
+// TestSweepLeavesUnfinishedAndAncientGroupsAlone: a group still running
+// is not complete, and one older than the window is news nobody wants.
+func TestSweepLeavesUnfinishedAndAncientGroupsAlone(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-sweep-skip")
+	_, _, js := w.runGroup(t, 2)
+	// Only one of the two jobs is terminal: the group is not done.
+	if err := w.q.Finish(context.Background(), js[0].ID, StatusSucceeded, map[string]any{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.q.SweepUnreportedRunGroups(context.Background(), time.Now().Add(-time.Hour), 20); err != nil || n != 0 {
+		t.Fatalf("a half-finished group was swept: %d, %v", n, err)
+	}
+
+	// Now finish it and age it past the window.
+	if err := w.q.Finish(context.Background(), js[1].ID, StatusSucceeded, map[string]any{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	w.sink.reset()
+	if _, err := w.d.Pool().Exec(context.Background(),
+		`UPDATE jobs SET run_group_reported = false, finished_at = now() - interval '2 days', created_at = now() - interval '2 days'
+		 WHERE run_group_id = $1`, js[0].RunGroupID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.q.SweepUnreportedRunGroups(context.Background(), time.Now().Add(-time.Hour), 20); err != nil || n != 0 {
+		t.Fatalf("a two-day-old group was swept: %d, %v", n, err)
+	}
+	if got := len(w.sink.snapshot()); got != 0 {
+		t.Fatalf("an ancient group produced %d reports", got)
 	}
 }

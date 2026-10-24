@@ -694,6 +694,64 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 	return items, nil
 }
 
+const listUnreportedFinishedRunGroups = `-- name: ListUnreportedFinishedRunGroups :many
+SELECT org_id, run_group_id
+FROM jobs
+WHERE kind = 'run'
+GROUP BY org_id, run_group_id
+HAVING bool_and(status IN ('succeeded', 'failed', 'cancelled', 'error'))
+   AND NOT bool_or(run_group_reported)
+   AND max(COALESCE(finished_at, created_at)) >= $1::timestamptz
+ORDER BY max(COALESCE(finished_at, created_at))
+LIMIT $2
+`
+
+type ListUnreportedFinishedRunGroupsParams struct {
+	Since time.Time `json:"since"`
+	Lim   int32     `json:"lim"`
+}
+
+type ListUnreportedFinishedRunGroupsRow struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	RunGroupID uuid.UUID `json:"run_group_id"`
+}
+
+// Backlog 2.87: run groups that are complete but whose run.finished was
+// never delivered. The live paths report a group from the transaction
+// that completes it, and the cancel path from a SEPARATE transaction
+// opened after CancelJob already committed — so a manager that dies in
+// between leaves a finished group with no report and nothing to retry
+// it.
+//
+// run_group_reported is only ever set on the group's first job, so
+// "nobody in the group is marked" is the whole test. Raw pool, bypass
+// policy, every organization — the reaper that runs it has no org of
+// its own.
+//
+// The window keeps the sweep from resurrecting ancient groups after a
+// long outage: a notification about a run from last month is noise, not
+// news. finished_at can be NULL on a job cancelled before it ever
+// started, so the age is taken from created_at where it is.
+func (q *Queries) ListUnreportedFinishedRunGroups(ctx context.Context, arg ListUnreportedFinishedRunGroupsParams) ([]ListUnreportedFinishedRunGroupsRow, error) {
+	rows, err := q.db.Query(ctx, listUnreportedFinishedRunGroups, arg.Since, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnreportedFinishedRunGroupsRow
+	for rows.Next() {
+		var i ListUnreportedFinishedRunGroupsRow
+		if err := rows.Scan(&i.OrgID, &i.RunGroupID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkerJobsToEnd = `-- name: ListWorkerJobsToEnd :many
 SELECT id, status FROM jobs
 WHERE org_id = $1 AND worker_id = $2

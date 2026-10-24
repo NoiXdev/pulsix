@@ -259,3 +259,30 @@ RETURNING id;
 SELECT id, status FROM jobs
 WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
   AND (status = 'cancelling' OR (status IN ('claimed', 'running') AND attempts >= sqlc.arg(max_attempts)::integer));
+
+-- name: ListUnreportedFinishedRunGroups :many
+-- Backlog 2.87: run groups that are complete but whose run.finished was
+-- never delivered. The live paths report a group from the transaction
+-- that completes it, and the cancel path from a SEPARATE transaction
+-- opened after CancelJob already committed — so a manager that dies in
+-- between leaves a finished group with no report and nothing to retry
+-- it.
+--
+-- run_group_reported is only ever set on the group's first job, so
+-- "nobody in the group is marked" is the whole test. Raw pool, bypass
+-- policy, every organization — the reaper that runs it has no org of
+-- its own.
+--
+-- The window keeps the sweep from resurrecting ancient groups after a
+-- long outage: a notification about a run from last month is noise, not
+-- news. finished_at can be NULL on a job cancelled before it ever
+-- started, so the age is taken from created_at where it is.
+SELECT org_id, run_group_id
+FROM jobs
+WHERE kind = 'run'
+GROUP BY org_id, run_group_id
+HAVING bool_and(status IN ('succeeded', 'failed', 'cancelled', 'error'))
+   AND NOT bool_or(run_group_reported)
+   AND max(COALESCE(finished_at, created_at)) >= @since::timestamptz
+ORDER BY max(COALESCE(finished_at, created_at))
+LIMIT @lim;

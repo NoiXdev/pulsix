@@ -7,6 +7,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,14 @@ const (
 	// DefaultMaxAttempts is how often a job may be claimed before a stale
 	// claim fails it instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS).
 	DefaultMaxAttempts = 3
+	// unreportedGroupWindow bounds how far back the lost-report sweep
+	// looks. Long enough to cover a manager restart and then some;
+	// short enough that a notification about a run nobody is still
+	// waiting on is never sent (backlog 2.87).
+	unreportedGroupWindow = 6 * time.Hour
+	// unreportedGroupBatch caps one pass, so a backlog is worked off
+	// over several ticks instead of in one long transaction storm.
+	unreportedGroupBatch = 20
 )
 
 // Reaper sweeps the queue on an interval. It is part of the queue, not the
@@ -161,6 +170,16 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 		if applied {
 			failed++
 		}
+	}
+	// Finally, the run groups whose report was lost to a crash (backlog
+	// 2.87). Here rather than in a ticker of its own: this loop already
+	// runs on a short interval, already has no organization of its own,
+	// and already repairs what a dead manager left behind — which is
+	// exactly what an unreported finished group is. A failure of this
+	// pass never fails the sweep: the requeues and terminal transitions
+	// above matter more than a late notification.
+	if _, err := r.q.SweepUnreportedRunGroups(ctx, now.Add(-unreportedGroupWindow), unreportedGroupBatch); err != nil {
+		slog.ErrorContext(ctx, "sweep unreported run groups", "err", err)
 	}
 	if firstErr != nil {
 		return requeued, failed, firstErr

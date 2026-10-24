@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/noixdev/pulsix/internal/db/gen"
 	"log/slog"
 	"runtime/debug"
 	"time"
@@ -315,14 +316,65 @@ func (q *SQLQueue) recordCancelledRunGroup(ctx context.Context, jobID uuid.UUID)
 	if Kind(kind) != KindRun {
 		return
 	}
-	if err := q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
+	if err := q.reportGroupUnderLock(ctx, orgID, groupID); err != nil {
+		slog.ErrorContext(ctx, "cancelled run group: record", "job", jobID, "err", err)
+	}
+}
+
+// reportGroupUnderLock reports a group from its own write transaction,
+// holding the same group lock terminate takes. The lock is taken FIRST
+// and the row writes follow, which is the order terminate uses too
+// (advisory lock, then the job row) — the two paths must agree on it or
+// a cancel holding a job row while it waits for the group lock would
+// deadlock against a finish holding the group lock while it waits for
+// that row (backlog 2.87).
+func (q *SQLQueue) reportGroupUnderLock(ctx context.Context, orgID, groupID uuid.UUID) error {
+	return q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
 		if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, finishGroupLockKeyPrefix+groupID.String()); err != nil {
 			return fmt.Errorf("lock run group: %w", err)
 		}
 		return q.recordRunGroup(ctx, orgID, groupID)
-	}); err != nil {
-		slog.ErrorContext(ctx, "cancelled run group: record", "job", jobID, "err", err)
+	})
+}
+
+// SweepUnreportedRunGroups reports run groups that finished but whose
+// run.finished never went out (backlog 2.87).
+//
+// Every live path reports a group from a transaction, but not always
+// from the one that completed it: the cancel path's CancelJob commits
+// on its own and the report follows in a second transaction, so a
+// manager that dies in between leaves a complete group with no report
+// and nothing to retry it. Making that one path transactional is the
+// obvious answer and the wrong one — it would have the cancel hold the
+// job's row lock while it waits for the group lock, the exact reverse
+// of the order terminate uses, and the two would deadlock.
+//
+// A sweep needs no lock-order change at all, and it covers every path's
+// crash window rather than one. Re-reporting is harmless on two counts:
+// claimRunGroupReport only lets one caller through, and the outbox
+// dedupes on the event key, which is the group id.
+//
+// since bounds how far back it looks: a notification about last month's
+// run is noise, not news.
+func (q *SQLQueue) SweepUnreportedRunGroups(ctx context.Context, since time.Time, limit int) (int, error) {
+	if q.runGroups == nil {
+		return 0, nil
 	}
+	rows, err := gen.New(q.db.Pool()).ListUnreportedFinishedRunGroups(ctx, gen.ListUnreportedFinishedRunGroupsParams{
+		Since: since, Lim: int32(limit), //nolint:gosec // a caller-set batch size
+	})
+	if err != nil {
+		return 0, fmt.Errorf("list unreported run groups: %w", err)
+	}
+	reported := 0
+	for _, r := range rows {
+		if err := q.reportGroupUnderLock(ctx, r.OrgID, r.RunGroupID); err != nil {
+			slog.ErrorContext(ctx, "sweep unreported run group", "group", r.RunGroupID, "org", r.OrgID, "err", err)
+			continue
+		}
+		reported++
+	}
+	return reported, nil
 }
 
 // callSink calls the sink and turns a panic in it into an ordinary sink
