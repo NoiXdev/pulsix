@@ -710,3 +710,44 @@ func TestDigestFromAndToAgreeWithThePeriodLabel(t *testing.T) {
 		})
 	}
 }
+
+// TestTheBodySaysWhenHostsWereExcludedForMaintenance is backlog 2.81's
+// remainder. A schedule with the exclude_hosts guard drops the hosts in
+// a window before any job exists, so Hosts counts only what remained
+// and the message read "9 hosts (ok 9, changed 0, failed 0)" — a run
+// that silently covered a quarter less of the fleet than the schedule
+// says it does.
+func TestTheBodySaysWhenHostsWereExcludedForMaintenance(t *testing.T) {
+	ev := sampleEvent()
+	ev.Kind = EventRunFinished
+	ev.Run.Hosts, ev.Run.HostsOK, ev.Run.HostsChanged, ev.Run.HostsFailed = 9, 9, 0, 0
+	ev.Run.HostsExcluded = 3
+
+	_, body := renderEmail(ev)
+	if !strings.Contains(body, "9 (ok 9, changed 0, failed 0) — 3 excluded for maintenance") {
+		t.Fatalf("body does not report the excluded hosts:\n%s", body)
+	}
+
+	// Outside the parentheses on purpose: the number in front of them
+	// is what the run targeted, and the excluded hosts are not in it.
+	if strings.Contains(body, "failed 0, 3 excluded") {
+		t.Fatal("the excluded count must not read as part of the run's own totals")
+	}
+
+	// An ordinary run says nothing — a count that is always zero is
+	// noise, and a reader who does see it is being told something.
+	ev.Run.HostsExcluded = 0
+	if _, quiet := renderEmail(ev); strings.Contains(quiet, "excluded for maintenance") {
+		t.Fatalf("a run with no exclusion mentions one:\n%s", quiet)
+	}
+
+	// And the webhook placeholder carries it for a custom body.
+	ev.Run.HostsExcluded = 3
+	out, err := renderWebhookBody(`{"excluded":{{ run.hosts_excluded }}}`, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `{"excluded":3}` {
+		t.Fatalf("webhook body = %s", out)
+	}
+}

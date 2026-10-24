@@ -172,7 +172,13 @@ type Job struct {
 	// HostIDs are the explicit targets of the host kinds; for run jobs the
 	// per-zone subset of the template's scope the job covers.
 	HostIDs []uuid.UUID
-	Status  Status
+	// HostsExcluded is how many hosts the run REQUEST dropped before any
+	// job existed (a schedule's exclude_hosts maintenance guard). It is
+	// the request's number, so every job of a run group carries the
+	// same one and the group reads it with max() — a zone all of whose
+	// hosts were excluded produces no job to carry it (backlog 2.81).
+	HostsExcluded int
+	Status        Status
 	// Attempts counts how often the job was claimed (the claim increments
 	// it); the reaper stops requeuing a stale claim at the maximum.
 	Attempts int
@@ -599,7 +605,7 @@ func (s *Service) newID() uuid.UUID {
 // alreadyDone is returned instead of propagating that failure: the
 // occurrence already has a result, and this is still a replay of it.
 func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, limit string, req RunRequest, group uuid.UUID, alreadyDone []Job) ([]Job, error) {
-	targets, err := s.resolveRunTargets(ctx, orgID, scope, limit, req)
+	targets, excluded, err := s.resolveRunTargets(ctx, orgID, scope, limit, req)
 	if err != nil {
 		if len(alreadyDone) > 0 {
 			return alreadyDone, nil
@@ -624,6 +630,7 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			Kind: KindRun, TemplateID: &tmplID, HostIDs: t.HostIDs,
 			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
+			HostsExcluded: excluded,
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {
@@ -645,32 +652,41 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 // reports ErrAllHostsExcluded even though some dropped hosts were actually
 // excluded for a changed key, not maintenance), and the unpinned-hosts
 // refusal (backlog 2.44).
-func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]ZoneTargets, error) {
+func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]ZoneTargets, int, error) {
 	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(targets) == 0 {
-		return nil, ErrEmptyScope
+		return nil, 0, ErrEmptyScope
 	}
 	if s.keyGuard != nil {
 		targets, err = s.excludeKeyChanged(ctx, orgID, targets)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if len(targets) == 0 {
-			return nil, ErrHostKeyChanged
+			return nil, 0, ErrHostKeyChanged
 		}
 	}
+	// How many the exclusion actually dropped, counted over the
+	// deduplicated host set before and after — the run's own numbers
+	// describe only what remained, so this is the only record that the
+	// others existed (backlog 2.81). Hosts a CHANGED KEY removed are
+	// deliberately not in it: they are a different refusal, with its
+	// own error and its own place in the run view.
+	excluded := 0
 	if len(req.ExcludeHosts) > 0 {
+		before := len(zoneTargetIDs(targets))
 		if targets = excludeHosts(targets, req.ExcludeHosts); len(targets) == 0 {
-			return nil, ErrAllHostsExcluded
+			return nil, 0, ErrAllHostsExcluded
 		}
+		excluded = before - len(zoneTargetIDs(targets))
 	}
 	if err := s.refuseUnpinnedHosts(ctx, orgID, zoneTargetIDs(targets)); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return targets, nil
+	return targets, excluded, nil
 }
 
 // zoneTargetIDs collects the deduplicated host ids across the per-zone

@@ -130,7 +130,7 @@ func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 		RunGroupID: j.RunGroupID, Trigger: trigger, ActorID: db.NullUUID(j.ActorID),
 		Payload:   payload,
 		DependsOn: db.NullUUID(j.DependsOn), RotationCredentialID: db.NullUUID(j.RotationCredentialID),
-		TriggerRef: db.NullUUID(j.TriggerRef),
+		TriggerRef: db.NullUUID(j.TriggerRef), HostsExcluded: int32(j.HostsExcluded), //nolint:gosec // a host count, bounded by the scope
 	}
 }
 

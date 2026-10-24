@@ -55,6 +55,13 @@ func TestEnqueueRunWithExcludesHosts(t *testing.T) {
 	if len(created) != 1 || len(created[0].HostIDs) != 1 || created[0].HostIDs[0] != hosts[1] {
 		t.Fatalf("jobs = %+v, want one job for the remaining host", created)
 	}
+	// Backlog 2.81: the job also records how many the request dropped.
+	// Without it the run's own numbers describe only what remained, and
+	// the finished-run message says "1 host (ok 1)" for a two-host
+	// scope with nothing about the one left out for a window.
+	if created[0].HostsExcluded != 1 {
+		t.Fatalf("hosts excluded = %d, want 1", created[0].HostsExcluded)
+	}
 	if _, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{
 		Trigger: jobs.TriggerSchedule, TriggerRef: &ref, ExcludeHosts: hosts,
 	}); !errors.Is(err, jobs.ErrAllHostsExcluded) {
@@ -86,5 +93,22 @@ func TestGroupSummaryDurationAndHostsOK(t *testing.T) {
 	}
 	if n := (jobs.RunGroupResult{Hosts: 1, HostsFailed: 3}).HostsOK(); n != 0 {
 		t.Fatalf("HostsOK = %d, want 0 when a host counts in several failure lists", n)
+	}
+}
+
+// TestEnqueueRunWithoutAnExclusionRecordsNone: the count is only about
+// the maintenance exclusion, so an ordinary run carries a zero and its
+// message stays as quiet as before (backlog 2.81).
+func TestEnqueueRunWithoutAnExclusionRecordsNone(t *testing.T) {
+	svc, _, org, templateID := runFixture(t)
+	ref := uuid.Must(uuid.NewV7())
+	created, err := svc.EnqueueRunWith(ctx, org, templateID, jobs.RunRequest{Trigger: jobs.TriggerSchedule, TriggerRef: &ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range created {
+		if j.HostsExcluded != 0 {
+			t.Fatalf("hosts excluded = %d on a run with no exclusion", j.HostsExcluded)
+		}
 	}
 }

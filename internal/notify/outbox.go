@@ -107,7 +107,7 @@ func (o *Outbox) RunGroupFinished(ctx context.Context, r jobs.RunGroupResult) er
 			func(sc gen.NotifyScheduleContextRow, cats []Category) Event {
 				run := &RunSummary{
 					ID: r.FirstJobID, Result: result, Hosts: r.Hosts, HostsOK: r.HostsOK(), HostsChanged: r.HostsChanged,
-					HostsFailed: r.HostsFailed, HostsNoResult: r.HostsNoResult,
+					HostsFailed: r.HostsFailed, HostsNoResult: r.HostsNoResult, HostsExcluded: r.HostsExcluded,
 					StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 				}
 				if r.StartedAt != nil && r.FinishedAt != nil {

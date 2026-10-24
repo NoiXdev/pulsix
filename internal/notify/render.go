@@ -124,6 +124,14 @@ func renderEmail(ev Event) (subject, body string) {
 				// never learned how these hosts fared (backlog 2.81).
 				hosts += fmt.Sprintf(", no result %d", r.HostsNoResult)
 			}
+			if r.HostsExcluded > 0 {
+				// Outside the parentheses: these hosts are not part of
+				// the count in front of them, which is what the run
+				// actually targeted. A reader who sees this is being
+				// told the run was smaller than the schedule's scope
+				// and why (backlog 2.81).
+				hosts += fmt.Sprintf(" — %d excluded for maintenance", r.HostsExcluded)
+			}
 			line("Hosts", hosts)
 			if r.StartedAt != nil {
 				line("Started", r.StartedAt.UTC().Format(time.RFC1123))

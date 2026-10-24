@@ -523,3 +523,50 @@ func TestStatsHostsOutsideTheJobsTargetsAreNotCounted(t *testing.T) {
 			r.Hosts, r.HostsFailed, r.HostsChanged, r.HostsNoResult, r.HostsOK())
 	}
 }
+
+// TestExcludedHostsAreReportedEvenThoughNoJobTargetsThem is backlog
+// 2.81's remainder. A schedule with the exclude_hosts maintenance guard
+// drops the hosts in a window BEFORE any job exists, so every number
+// the run reports describes only what was left: "9 hosts (ok 9)" for a
+// twelve-host scope, with nothing saying the other three were skipped
+// for a window.
+//
+// The count is the request's and sits on every job, read with max() —
+// a zone all of whose hosts were excluded produces no job at all, so a
+// sum would lose exactly the case with the most to report. This covers
+// that case: two zones, one of them entirely excluded, so only one job
+// exists to carry the number.
+func TestExcludedHostsAreReportedEvenThoughNoJobTargetsThem(t *testing.T) {
+	w := newGroupWorld(t, "rungroup-excluded")
+	group, schedule, tmpl := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	j := Job{
+		ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: testZone(t, w.d, w.org), Kind: KindRun, TemplateID: &tmpl,
+		HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}, Status: StatusQueued, RunGroupID: group,
+		Trigger: TriggerSchedule, TriggerRef: &schedule, CreatedAt: time.Now(),
+		HostsExcluded: 3,
+	}
+	ctx := db.WithOrgScope(context.Background(), w.org)
+	if err := NewSQLStore(w.d).CreateJob(ctx, j, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.d.Pool().Exec(context.Background(), `UPDATE jobs SET status = 'running', started_at = now() WHERE id = $1`, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.q.Finish(context.Background(), j.ID, StatusSucceeded,
+		map[string]any{"ok_hosts": []string{j.HostIDs[0].String()}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	got := w.sink.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("reports = %d, want 1", len(got))
+	}
+	r := got[0]
+	if r.HostsExcluded != 3 {
+		t.Fatalf("hosts excluded = %d, want 3", r.HostsExcluded)
+	}
+	// And they are NOT part of the run's own totals: the run targeted
+	// one host and reached a verdict on it.
+	if r.Hosts != 1 || r.HostsOK() != 1 {
+		t.Fatalf("hosts = %d, ok = %d; the excluded hosts must not be counted among the targets", r.Hosts, r.HostsOK())
+	}
+}

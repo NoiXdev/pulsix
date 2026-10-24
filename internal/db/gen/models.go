@@ -537,6 +537,7 @@ type Job struct {
 	TriggerRef              pgtype.UUID        `json:"trigger_ref"`
 	RunGroupReported        bool               `json:"run_group_reported"`
 	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
+	HostsExcluded           int32              `json:"hosts_excluded"`
 }
 
 type JobEvent struct {

@@ -89,7 +89,13 @@ type RunSummary struct {
 	// verdict on, because the job covering them ended without a recap
 	// (backlog 2.81). They are excluded from HostsOK rather than counted
 	// as fine, so hosts_ok + hosts_failed + hosts_no_result == hosts.
-	HostsNoResult   int        `json:"hosts_no_result"`
+	HostsNoResult int `json:"hosts_no_result"`
+	// HostsExcluded counts hosts the run never targeted because a
+	// maintenance window excluded them. They are NOT part of Hosts, so
+	// without this the message described only what remained — "9 hosts
+	// (ok 9, changed 0, failed 0)" with no sign that three more were
+	// left out (backlog 2.81).
+	HostsExcluded   int        `json:"hosts_excluded"`
 	StartedAt       *time.Time `json:"started_at,omitempty"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`
 	DurationSeconds int64      `json:"duration_seconds"`

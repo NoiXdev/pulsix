@@ -48,7 +48,13 @@ type RunGroupResult struct {
 	// reached no verdict on them. Without this, HostsOK absorbed them and
 	// a group whose every job died at the worker reported "N hosts (ok N,
 	// failed 0)" under a failed result (backlog 2.81).
-	HostsNoResult         int
+	HostsNoResult int
+	// HostsExcluded counts the hosts the REQUEST dropped before any job
+	// existed — a schedule's exclude_hosts maintenance guard. They are
+	// not in Hosts at all, so without this the message described only
+	// what remained: "9 hosts (ok 9, changed 0, failed 0)", with no
+	// hint that three more were left out for a window (backlog 2.81).
+	HostsExcluded         int
 	StartedAt, FinishedAt *time.Time
 }
 
@@ -83,6 +89,11 @@ func (q *SQLQueue) SetRunGroupSink(sink RunGroupSink) { q.runGroups = sink }
 // is not a uuid and the cast alone would error the whole statement — and
 // an errored statement here aborts the finishing transaction.
 //
+// hosts_excluded is max(), not sum(): it is the REQUEST's count, the
+// same on every job of the group, and a zone all of whose hosts were
+// excluded produces no job at all — so a sum would under-report exactly
+// the case with the most to report (backlog 2.81).
+//
 // no_result sums the targeted hosts of jobs whose five per-host stats
 // lists are ALL empty — the shape of a job that ended error or cancelled
 // without a recap. Deliberately keyed on the absence of stats rather than
@@ -91,7 +102,7 @@ func (q *SQLQueue) SetRunGroupSink(sink RunGroupSink) { q.runGroups = sink }
 // read it as one.
 const runGroupQuery = `
 WITH g AS (
-  SELECT id, status, host_ids, started_at, finished_at, created_at, template_id, trigger, trigger_ref, stats
+  SELECT id, status, host_ids, started_at, finished_at, created_at, template_id, trigger, trigger_ref, stats, hosts_excluded
   FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind = 'run'
 ),
 lists AS (
@@ -116,6 +127,7 @@ SELECT
      WHERE pg_input_is_valid(h, 'uuid') AND h::uuid = ANY(lists.host_ids)),
   (SELECT COALESCE(sum(cardinality(host_ids)), 0) FROM lists
      WHERE jsonb_array_length(changed) = 0 AND jsonb_array_length(failed) = 0 AND jsonb_array_length(unremarkable) = 0),
+  (SELECT COALESCE(max(hosts_excluded), 0) FROM g),
   (SELECT min(started_at) FROM g),
   (SELECT max(finished_at) FROM g),
   (SELECT id FROM g ORDER BY created_at, id LIMIT 1),
@@ -215,7 +227,7 @@ func (q *SQLQueue) readAndClaimRunGroup(ctx context.Context, r RunGroupResult, o
 	var first *uuid.UUID
 	if err := q.db.QueryRow(ctx, runGroupQuery, orgID, groupID).Scan(
 		&total, &terminal, &failed, &cancelled, &r.Hosts, &r.HostsChanged, &r.HostsFailed, &r.HostsNoResult,
-		&r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef,
+		&r.HostsExcluded, &r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef,
 	); err != nil {
 		return r, false, fmt.Errorf("read group: %w", err)
 	}
