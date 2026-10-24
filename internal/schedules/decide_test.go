@@ -366,3 +366,32 @@ func TestDecideStopsAScheduleWithAnUnknownTimezone(t *testing.T) {
 		t.Fatalf("an invalid timezone must be audited too: %+v", w.audit.events)
 	}
 }
+
+// TestAPartiallyEnqueuedOccurrenceIsNotRecordedAsFailed is backlog
+// 2.60's remainder. EnqueueRunWith creates one job per zone in a plain
+// sequential loop, and a failure partway — a manager shutting down
+// mid-loop — used to discard the jobs already created from its return
+// value and report only the error. The decision then recorded the
+// occurrence as FAILED and advanced past it, while the zones that did
+// get a job ran normally: the history said nothing happened, and the
+// run that did happen was linked to nothing.
+func TestAPartiallyEnqueuedOccurrenceIsNotRecordedAsFailed(t *testing.T) {
+	w := newWorld(t)
+	s := due(t, w, "0 * * * *", base2(), schedules.Guards{Overlap: schedules.OverlapSkip, CatchUp: schedules.CatchUp{Window: "1h"}})
+	w.runs.err, w.runs.partial = errors.New("the manager is shutting down"), true
+
+	d := w.svc.Decide(ctx, s, base2().Add(time.Second), grace)
+	if d.Run.Outcome == schedules.OutcomeFailed {
+		t.Fatalf("a partially enqueued occurrence was recorded as failed: %+v", d.Run)
+	}
+	if d.Run.JobGroupID == nil {
+		t.Fatal("the run that did start is linked to nothing")
+	}
+	if !strings.Contains(d.Run.Reason, "could not be enqueued") {
+		t.Fatalf("reason = %q; it must say the rest did not start", d.Run.Reason)
+	}
+}
+
+// base2 is TestDecide's base instant, for the cases that live outside
+// its table.
+func base2() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) }

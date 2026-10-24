@@ -604,6 +604,11 @@ func (s *Service) newID() uuid.UUID {
 // refusal — the live inventory can simply have changed between attempts),
 // alreadyDone is returned instead of propagating that failure: the
 // occurrence already has a result, and this is still a replay of it.
+// enqueueRunScope creates one job per zone. On a failure partway it
+// returns the jobs it DID create alongside the error: they exist and
+// will run, so a caller that treats the error as "nothing happened"
+// records a falsehood (backlog 2.60). A retry with the same
+// IdempotencyKey fills in the zones this call never reached.
 func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UUID, scope render.Scope, limit string, req RunRequest, group uuid.UUID, alreadyDone []Job) ([]Job, error) {
 	targets, excluded, err := s.resolveRunTargets(ctx, orgID, scope, limit, req)
 	if err != nil {
@@ -634,10 +639,16 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		if err := s.store.CreateJob(ctx, j, payload); err != nil {
-			return nil, err
+			// WITH what has been created so far, not instead of it
+			// (backlog 2.60). The jobs for the zones already past
+			// exist and will run; discarding them from the answer told
+			// the caller nothing happened, so a schedule recorded the
+			// occurrence FAILED while part of it was running, and the
+			// run that did start was linked to nothing.
+			return out, err
 		}
 		out = append(out, j)
 	}

@@ -246,6 +246,7 @@ type fakeRuns struct {
 	active     bool
 	activeErr  error
 	err        error
+	partial    bool
 	group      uuid.UUID
 	targets    []uuid.UUID
 	targetsErr error
@@ -263,6 +264,14 @@ func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
+		// partial models a multi-zone enqueue interrupted after some
+		// zones already had jobs: the error comes back WITH what was
+		// created, which is what the real EnqueueRunWith does since
+		// backlog 2.60.
+		if f.partial {
+			f.requests = append(f.requests, req)
+			return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: req.Trigger}}, f.err
+		}
 		return nil, f.err
 	}
 	f.requests = append(f.requests, req)

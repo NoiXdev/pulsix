@@ -188,10 +188,22 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 		decision.Run.Outcome, decision.Run.Reason = OutcomeSkippedMaintenance, "every targeted host is in a maintenance window"
 		return decision
 	}
-	if err != nil {
+	switch {
+	case err != nil && len(created) > 0:
+		// Part of the occurrence IS running (backlog 2.60): a
+		// multi-zone enqueue interrupted partway leaves the zones it
+		// already reached with real jobs. Recording "failed" here said
+		// the opposite, and left the run that did start linked to
+		// nothing. The reason names the shortfall so the history is
+		// neither a lie nor a shrug.
+		s.log.ErrorContext(ctx, "scheduled run enqueued only in part", "schedule", sch.ID, "org", sch.OrgID, "zones", len(created), "err", err)
+		decision.Run.Outcome = OutcomeTriggered
+		decision.Run.Reason = fmt.Sprintf("started in %d zone(s); the rest could not be enqueued (%s)", len(created), failureReason(err))
+		decision.Run.JobGroupID = &created[0].RunGroupID
+	case err != nil:
 		s.log.ErrorContext(ctx, "scheduled run could not be enqueued", "schedule", sch.ID, "org", sch.OrgID, "err", err)
 		decision.Run.Outcome, decision.Run.Reason = OutcomeFailed, failureReason(err)
-	} else {
+	default:
 		decision.Run.Outcome, decision.Run.Reason = OutcomeTriggered, reason
 		decision.Run.JobGroupID = &created[0].RunGroupID
 	}
