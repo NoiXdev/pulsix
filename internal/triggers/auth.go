@@ -79,7 +79,8 @@ func verify(t Trigger, secret string, header func(string) string, body []byte, n
 const decoySecret = "pulsix-timing-equaliser"
 
 // equaliseSignatureWork does the work a real trigger's signature check
-// would do and throws the answer away (backlog 2.62).
+// would do (backlog 2.62). The digest is returned only so a test can
+// prove the hashing happened; every caller discards it.
 //
 // receive returns the uniform 404 for an unknown trigger id WITHOUT
 // computing an HMAC, while a known id's rejection computes one over the
@@ -94,6 +95,8 @@ const decoySecret = "pulsix-timing-equaliser"
 // perfect oracle answers "this id I guessed does not exist" against a
 // space no one can enumerate. This removes the class rather than
 // closing a live hole.
-func equaliseSignatureWork(body []byte) {
-	runtime.KeepAlive(mac(decoySecret, "", body))
+func equaliseSignatureWork(body []byte) []byte {
+	sum := mac(decoySecret, "", body)
+	runtime.KeepAlive(sum)
+	return sum
 }

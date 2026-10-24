@@ -1,6 +1,7 @@
 package triggers
 
 import (
+	"bytes"
 	"net/http"
 	"os"
 	"strconv"
@@ -71,30 +72,31 @@ func TestVerifyTimestampWindow(t *testing.T) {
 	}
 }
 
-// TestEqualiseSignatureWorkCostsWhatAnHMACCosts is backlog 2.62's
-// timing half. receive answers an unknown trigger id with the uniform
-// 404 without computing an HMAC, while a known id's rejection computes
-// one over the whole request body — so the two differed by an amount
-// the caller chooses, by choosing how much body to send.
+// TestEqualiseSignatureWorkHashesTheBody is backlog 2.62's timing
+// half. receive answers an unknown trigger id with the uniform 404
+// without computing an HMAC, while a known id's rejection computes one
+// over the whole request body — so the two differed by an amount the
+// caller chooses, by choosing how much body to send.
 //
-// A wall-clock assertion on the two receive paths would be a flake
-// generator, so what is pinned here is the thing that actually has to
-// hold: the equaliser does the same body-proportional hashing the real
-// check does. A 1 MiB body makes that measurable well above scheduling
-// noise, and the bound is deliberately loose — this is a check that
-// the work HAPPENS, not a benchmark.
-func TestEqualiseSignatureWorkCostsWhatAnHMACCosts(t *testing.T) {
-	body := make([]byte, 1<<20)
-	real0 := time.Now()
-	_ = mac("a-real-secret", "", body)
-	realCost := time.Since(real0)
-
-	decoy0 := time.Now()
-	equaliseSignatureWork(body)
-	decoyCost := time.Since(decoy0)
-
-	if decoyCost < realCost/4 {
-		t.Fatalf("the equaliser took %s against the real check's %s; it is not doing the work", decoyCost, realCost)
+// Asserted on the digest, not on the clock: a wall-clock comparison
+// was the first thing written here and it failed under the parallel
+// suite, which is what a wall-clock assertion does. What has to hold
+// is that the same hashing happens over the same bytes, and that is
+// exact.
+func TestEqualiseSignatureWorkHashesTheBody(t *testing.T) {
+	body := []byte(`{"ref":"refs/heads/main"}`)
+	got := equaliseSignatureWork(body)
+	if want := mac(decoySecret, "", body); !bytes.Equal(got, want) {
+		t.Fatalf("the equaliser produced %x, want the HMAC of the body %x", got, want)
+	}
+	// It reads the WHOLE body — the term that grows with what the
+	// caller sends, and the only one worth equalising.
+	if bytes.Equal(got, equaliseSignatureWork(append(body, ' '))) {
+		t.Fatal("a longer body produced the same digest; the equaliser is not hashing all of it")
+	}
+	// And it is not the real check: the decoy key authenticates nothing.
+	if bytes.Equal(got, mac("a-real-secret", "", body)) {
+		t.Fatal("the equaliser used a secret that means something")
 	}
 }
 
