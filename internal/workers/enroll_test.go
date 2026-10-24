@@ -3,6 +3,7 @@ package workers_test
 import (
 	"bytes"
 	"context"
+	stdcrypto "crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -76,6 +77,13 @@ func newEnrollWorld(t *testing.T) *enrollWorld {
 
 // newCSR is an ECDSA P-256 certificate request as the worker sends it.
 func newCSR(t *testing.T) []byte {
+	csr, _ := newCSRWithKey(t)
+	return csr
+}
+
+// newCSRWithKey also returns the public key the request asks for, which
+// a renewal has to be checked against (backlog 2.64).
+func newCSRWithKey(t *testing.T) ([]byte, stdcrypto.PublicKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -85,7 +93,7 @@ func newCSR(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), key.Public()
 }
 
 func TestCreateEnrollmentAndEnroll(t *testing.T) {
@@ -211,7 +219,8 @@ func TestGetBySerialRefusesRevokedCertificatesAndWorkers(t *testing.T) {
 
 func TestRenewAddsACertificate(t *testing.T) {
 	w := newEnrollWorld(t)
-	certPEM, err := w.svc.Renew(ctx, w.existing, newCSR(t))
+	csr, pub := newCSRWithKey(t)
+	certPEM, err := w.svc.Renew(ctx, w.existing, csr, pub)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +232,7 @@ func TestRenewAddsACertificate(t *testing.T) {
 	if _, err := w.svc.GetBySerial(ctx, w.existingSerial); err != nil {
 		t.Fatalf("the old certificate stays valid: %v", err)
 	}
-	if _, err := w.svc.Renew(ctx, w.existing, []byte("x")); !errors.Is(err, workers.ErrBadCSR) {
+	if _, err := w.svc.Renew(ctx, w.existing, []byte("x"), pub); !errors.Is(err, workers.ErrBadCSR) {
 		t.Fatalf("bad csr: %v", err)
 	}
 }

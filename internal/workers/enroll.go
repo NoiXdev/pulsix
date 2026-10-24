@@ -2,9 +2,11 @@ package workers
 
 import (
 	"context"
+	"crypto"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -179,7 +181,18 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 
 // Renew signs a fresh certificate for an authenticated worker; the old one
 // stays valid until it expires (open streams are not cut).
-func (s *Service) Renew(ctx context.Context, w Worker, csrPEM []byte) ([]byte, error) {
+func (s *Service) Renew(ctx context.Context, w Worker, csrPEM []byte, currentKey crypto.PublicKey) ([]byte, error) {
+	// A renewal must prove continuity of the key, not merely of the
+	// connection (backlog 2.64). Signing whatever CSR an authenticated
+	// worker sends is not an access escalation — it is already
+	// authenticated — it is PERSISTENCE: a worker compromised once
+	// could mint a full-lifetime certificate for the attacker's own
+	// key, and cleaning the original key off the host would not take
+	// it back. Bound to the presented key, recovering the host ends
+	// the access.
+	if err := sameKey(csrPEM, currentKey); err != nil {
+		return nil, err
+	}
 	pemBytes, crt, err := s.signer.SignCSR(csrPEM, w.OrgID, w.ZoneID, w.Name)
 	if err != nil {
 		return nil, wrapSignError(err)
@@ -188,4 +201,24 @@ func (s *Service) Renew(ctx context.Context, w Worker, csrPEM []byte) ([]byte, e
 		return nil, fmt.Errorf("record renewed certificate: %w", err)
 	}
 	return pemBytes, nil
+}
+
+// sameKey reports whether csrPEM asks for current. The CSR's own
+// self-signature already proves the sender holds the key inside it;
+// what this adds is that it is the SAME key the caller authenticated
+// with.
+func sameKey(csrPEM []byte, current crypto.PublicKey) error {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return fmt.Errorf("%w: not a PEM certificate request", ErrBadCSR)
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrBadCSR, err)
+	}
+	eq, ok := csr.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !eq.Equal(current) {
+		return fmt.Errorf("%w: the request asks for a different key than the one this connection authenticated with", ErrBadCSR)
+	}
+	return nil
 }

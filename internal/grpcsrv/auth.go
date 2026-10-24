@@ -7,6 +7,7 @@ package grpcsrv
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"log/slog"
 	"strings"
@@ -32,6 +33,16 @@ type (
 
 // identityOf returns the verified client identity the interceptor stashed
 // in ctx, if it ran.
+// peerKeyKey carries the public key of the certificate the caller
+// authenticated with.
+type peerKeyKey struct{}
+
+// peerPublicKey returns the key the caller's own certificate carries.
+func peerPublicKey(ctx context.Context) (crypto.PublicKey, bool) {
+	k := ctx.Value(peerKeyKey{})
+	return k, k != nil
+}
+
 func identityOf(ctx context.Context) (*ca.ClientIdentity, bool) {
 	id, ok := ctx.Value(identityKey{}).(*ca.ClientIdentity)
 	return id, ok
@@ -149,6 +160,10 @@ func (s *Server) authenticate(ctx context.Context, fullMethod string) (context.C
 		if err != nil {
 			return ctx, err
 		}
+		// The presented leaf's public key travels with the identity:
+		// RenewCertificate must check that the CSR it is handed asks
+		// for THIS key and not another (backlog 2.64).
+		ctx = context.WithValue(ctx, peerKeyKey{}, certs[0].PublicKey)
 		return context.WithValue(context.WithValue(ctx, identityKey{}, identity), workerKey{}, worker), nil
 	case ca.KindAgent:
 		agent, err := s.lookupAgent(ctx, identity)

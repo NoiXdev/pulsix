@@ -62,7 +62,11 @@ func (s *Server) RenewCertificate(ctx context.Context, req *workerpb.RenewCertif
 	if err != nil {
 		return nil, err
 	}
-	certPEM, err := s.deps.Workers.Renew(ctx, w, req.GetCsr())
+	current, ok := peerPublicKey(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "unauthenticated call")
+	}
+	certPEM, err := s.deps.Workers.Renew(ctx, w, req.GetCsr(), current)
 	if errors.Is(err, workers.ErrBadCSR) {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}

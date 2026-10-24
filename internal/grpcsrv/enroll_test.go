@@ -47,6 +47,26 @@ func newKeyAndCSR(t *testing.T) (*ecdsa.PrivateKey, []byte) {
 	return key, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
 }
 
+// csrForKey builds a CSR for a key already on hand in PEM form — what
+// a real renewal sends, since the renewer signs with the identity's
+// own signer (backlog 2.64).
+func csrForKey(t *testing.T, keyPEMBytes []byte) []byte {
+	t.Helper()
+	block, _ := pem.Decode(keyPEMBytes)
+	if block == nil {
+		t.Fatal("key is not PEM")
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+}
+
 func keyPEM(t *testing.T, key *ecdsa.PrivateKey) []byte {
 	t.Helper()
 	der, err := x509.MarshalECPrivateKey(key)
@@ -132,7 +152,11 @@ func TestRenewCertificate(t *testing.T) {
 	h := newHarness(t)
 	certPEM, keyPEMBytes := h.worker()
 	client := h.client(certPEM, keyPEMBytes)
-	key, csr := newKeyAndCSR(t)
+	// The CSR asks for the key this connection authenticated with,
+	// which is what the real renewer sends — it signs with the
+	// identity's own signer. A CSR for any OTHER key is refused since
+	// backlog 2.64; TestRenewRefusesACSRForADifferentKey covers that.
+	csr := csrForKey(t, keyPEMBytes)
 	resp, err := client.RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: csr})
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +165,7 @@ func TestRenewCertificate(t *testing.T) {
 	if err != nil || leaf.Subject.CommonName != "pulsix-worker fra-1-a" {
 		t.Fatalf("renewed = %v, %v", leaf, err)
 	}
-	if _, err := h.client(resp.GetCertificate(), keyPEM(t, key)).ClaimJob(t.Context(), claimRequest(zoneID)); err != nil {
+	if _, err := h.client(resp.GetCertificate(), keyPEMBytes).ClaimJob(t.Context(), claimRequest(zoneID)); err != nil {
 		t.Fatalf("the renewed certificate must authenticate: %v", err)
 	}
 	if _, err := client.ClaimJob(t.Context(), claimRequest(zoneID)); err != nil {
@@ -233,7 +257,7 @@ func TestEnrollRateLimitIsPerClientAddress(t *testing.T) {
 func TestRenewCertificateIsAudited(t *testing.T) {
 	h := newHarness(t)
 	certPEM, keyPEMBytes := h.worker()
-	_, csr := newKeyAndCSR(t)
+	csr := csrForKey(t, keyPEMBytes)
 	if _, err := h.client(certPEM, keyPEMBytes).RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: csr}); err != nil {
 		t.Fatal(err)
 	}
@@ -260,8 +284,46 @@ func TestEnrollAndRenewFaultsAreGeneric(t *testing.T) {
 	if status.Code(err) != codes.Internal || status.Convert(err).Message() != "enrollment failed" {
 		t.Fatalf("enroll fault: %v, want Internal \"enrollment failed\"", err)
 	}
-	_, err = h.client(certPEM, keyPEMBytes).RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: csr})
+	_, err = h.client(certPEM, keyPEMBytes).RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: csrForKey(t, keyPEMBytes)})
 	if status.Code(err) != codes.Internal || strings.Contains(status.Convert(err).Message(), "workers_cert_serial_key") {
 		t.Fatalf("renew fault: %v, want a generic Internal", err)
+	}
+}
+
+// TestRenewRefusesACSRForADifferentKey is backlog 2.64. Renew signed
+// whatever CSR the authenticated worker sent, for that worker's
+// identity, without checking that the key inside it is the key the
+// caller just authenticated with.
+//
+// That is not an access escalation — the caller is already
+// authenticated — it is PERSISTENCE. A worker compromised once could
+// mint a full-lifetime certificate for the attacker's own key, and
+// cleaning the original key off the host would not take it back: the
+// attacker keeps a valid worker identity until someone revokes a
+// serial nobody knows to look for. Binding the renewal to the current
+// key makes it prove continuity, so recovering the host ends the
+// access.
+func TestRenewRefusesACSRForADifferentKey(t *testing.T) {
+	h := newHarness(t)
+	certPEM, keyPEMBytes := h.worker()
+	client := h.client(certPEM, keyPEMBytes)
+
+	// A CSR for a key the caller does not hold.
+	_, foreignCSR := newKeyAndCSR(t)
+	_, err := client.RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: foreignCSR})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a CSR for another key = %v, want InvalidArgument", err)
+	}
+
+	// The same key the connection authenticated with is accepted —
+	// which is what the real renewer sends (it signs the CSR with
+	// id.Signer()).
+	csr := csrForKey(t, keyPEMBytes)
+	resp, err := client.RenewCertificate(t.Context(), &workerpb.RenewCertificateRequest{Csr: csr})
+	if err != nil {
+		t.Fatalf("a renewal for the caller's own key was refused: %v", err)
+	}
+	if _, err := h.client(resp.GetCertificate(), keyPEMBytes).ClaimJob(t.Context(), claimRequest(zoneID)); err != nil {
+		t.Fatalf("the renewed certificate must authenticate: %v", err)
 	}
 }
