@@ -24,7 +24,6 @@ import (
 	"github.com/noixdev/pulsix/internal/agentapi"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/ca"
-	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
@@ -381,7 +380,7 @@ func newIntegHarness(t *testing.T) *integHarness {
 	h.agentSvc = agents.NewService(h.store, agents.WithProvisioner(h.prov), agents.WithCA(h.ca))
 	svc, err := agentapi.New(agentapi.Deps{
 		CA: h.ca, Agents: h.agentSvc, Audit: &integAuditor{},
-		Streams: agentapi.NewStreamRegistry(), Facts: h.sink, Clock: time.Now, ClientIP: clientip.New(nil),
+		Streams: agentapi.NewStreamRegistry(), Facts: h.sink, Clock: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)

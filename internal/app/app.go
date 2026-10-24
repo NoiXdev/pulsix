@@ -451,7 +451,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	agentSvc, err := agentapi.New(agentapi.Deps{
 		CA: caInst, Agents: agentsSvc, Audit: systemAuditor{auditRec},
 		Streams: agentStreams, Facts: agentsSvc, Checks: checksSvc,
-		Clock: time.Now, ClientIP: clientip.New(cfg.TrustedProxies),
+		Clock: time.Now,
 	})
 	if err != nil {
 		appDB.Close()
@@ -661,7 +661,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			CA: caInst, Workers: workersSvc,
 			Agents: agentsSvc, AgentService: agentSvc,
 			Claims: jobsClaimer{jobsQueue}, Events: jobsEventRecorder{jobsQueue}, Results: jobsResultRecorder{jobsQueue},
-			Audit: systemAuditor{auditRec}, Clock: time.Now, Streams: streams, ClientIP: clientip.New(cfg.TrustedProxies),
+			Audit: systemAuditor{auditRec}, Clock: time.Now, Streams: streams,
 		})
 		if err != nil {
 			reaperStop()

@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/noixdev/pulsix/internal/ca"
-	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
@@ -206,18 +205,23 @@ func TestEnrollNameTaken(t *testing.T) {
 	}
 }
 
-// TestEnrollRateLimitIsPerClientAddress: the limit keys on the client
-// address clientip resolves — the port does not matter, a trusted proxy's
-// X-Forwarded-For names the client, and an untrusted peer cannot dodge the
-// limit by sending one.
+// TestEnrollRateLimitIsPerClientAddress: the limit keys on the PEER
+// address and nothing else — the port does not matter, and no caller
+// can pick its own bucket by sending forwarded-for metadata, trusted
+// peer or not (backlog 2.67).
+//
+// This used to honour x-forwarded-for when the peer fell inside
+// PULSIX_TRUSTED_PROXIES, mirroring the HTTP side. On HTTP that is
+// sound: Traefik overwrites the header, so the value really is the
+// proxy speaking. Nothing overwrites gRPC METADATA — Docker's userland
+// proxy forwards TCP and leaves it untouched — so behind a gateway
+// inside a trusted range, an unauthenticated enrollment caller was
+// choosing which bucket to spend. Which is the one thing a rate limit
+// on an unauthenticated endpoint cannot allow.
 func TestEnrollRateLimitIsPerClientAddress(t *testing.T) {
 	h := newHarness(t)
-	proxies, err := clientip.ParsePrefixes("10.0.0.0/8")
-	if err != nil {
-		t.Fatal(err)
-	}
 	srv, err := newServer(Deps{CA: h.ca, Workers: workers.NewService(h.store, workers.WithSigner(h.ca)),
-		Audit: h.audit, Clock: h.clock, ClientIP: clientip.New(proxies)})
+		Audit: h.audit, Clock: h.clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,14 +245,28 @@ func TestEnrollRateLimitIsPerClientAddress(t *testing.T) {
 		want   codes.Code
 	}{
 		{"same address, another port", "192.0.2.1:6000", nil, codes.ResourceExhausted},
-		{"same client behind a trusted proxy", "10.0.0.1:443", []string{"192.0.2.1"}, codes.ResourceExhausted},
 		{"forwarded-for from an untrusted peer is ignored", "192.0.2.1:5000", []string{"198.51.100.7"}, codes.ResourceExhausted},
+		{"forwarded-for from a TRUSTED peer is ignored too", "192.0.2.1:5000", []string{"203.0.113.9"}, codes.ResourceExhausted},
 		{"another address", "192.0.2.2:5000", nil, codes.Unauthenticated},
-		{"another client behind the proxy", "10.0.0.1:443", []string{"198.51.100.8"}, codes.Unauthenticated},
 	} {
 		if code := call(tc.remote, tc.xff...); code != tc.want {
 			t.Errorf("%s: %s, want %s", tc.name, code, tc.want)
 		}
+	}
+
+	// Two callers arriving from the same gateway share its bucket,
+	// whatever they claim about themselves. That IS the cost of
+	// keying on the peer, and it is the lesser one: a shared bucket
+	// makes several workers starting together back off and retry —
+	// ResourceExhausted is transient since backlog 2.64 — while a
+	// pickable bucket makes the limit decorative.
+	for i := 0; i < enrollLimit; i++ {
+		if code := call("10.0.0.1:443", "198.51.100."+string(rune('1'+i))); code != codes.Unauthenticated {
+			t.Fatalf("gateway call %d: %s", i, code)
+		}
+	}
+	if code := call("10.0.0.1:443", "198.51.100.200"); code != codes.ResourceExhausted {
+		t.Fatalf("a fresh forwarded-for bought a fresh bucket: %s", code)
 	}
 }
 

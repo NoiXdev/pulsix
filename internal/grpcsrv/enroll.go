@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
@@ -86,15 +85,31 @@ func (s *Server) audit(ctx context.Context, ev SystemEvent) {
 	}
 }
 
-// peerAddr is the caller's address through the trusted-proxy rules.
+// peerAddr is the caller's address for the enrollment rate limit: the
+// TCP peer, and only the peer (backlog 2.67).
+//
+// It used to run the peer through clientip's trusted-proxy rules with
+// any x-forwarded-for the call carried, mirroring the HTTP side. On
+// HTTP that is sound — Traefik overwrites the header, so the value is
+// the proxy speaking, not the client. Nothing overwrites gRPC
+// METADATA: Docker's userland proxy forwards TCP and leaves it alone,
+// so behind a gateway inside PULSIX_TRUSTED_PROXIES an
+// UNAUTHENTICATED enrollment caller was choosing which bucket to
+// spend. A rate limit on an unauthenticated endpoint cannot let the
+// caller pick.
+//
+// The cost is that workers behind one gateway share its bucket. That
+// is the lesser problem and already handled: ResourceExhausted is
+// classified transient (backlog 2.64), so a fleet starting together
+// backs off and retries instead of giving up.
 func (s *Server) peerAddr(ctx context.Context) netip.Addr {
-	remote := ""
-	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
-		remote = p.Addr.String()
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return netip.Addr{}
 	}
-	var xff []string
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		xff = md.Get("x-forwarded-for")
+	ap, err := netip.ParseAddrPort(p.Addr.String())
+	if err != nil {
+		return netip.Addr{}
 	}
-	return s.deps.ClientIP.Resolve(remote, xff)
+	return ap.Addr().Unmap()
 }

@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
@@ -109,9 +108,6 @@ type Deps struct {
 	Checks ChecksPort
 	// Clock drives the enrollment rate limit; nil uses time.Now.
 	Clock func() time.Time
-	// ClientIP resolves the Enroll caller's address for the rate limit;
-	// nil trusts no proxy.
-	ClientIP *clientip.Resolver
 }
 
 // Service implements agentpb.AgentServiceServer on top of Deps.
@@ -135,9 +131,6 @@ func New(deps Deps) (*Service, error) {
 	}
 	if deps.Streams == nil {
 		deps.Streams = NewStreamRegistry()
-	}
-	if deps.ClientIP == nil {
-		deps.ClientIP = clientip.New(nil)
 	}
 	return &Service{deps: deps, streams: deps.Streams,
 		enrollLim: clientip.NewLimiter(agentEnrollLimit, agentEnrollWindow, deps.Clock)}, nil
@@ -274,16 +267,31 @@ func (s *Service) audit(ctx context.Context, ev grpcsrv.SystemEvent) {
 	}
 }
 
-// peerAddr is the caller's address through the trusted-proxy rules (the
-// same resolution the worker Enroll limits by).
+// peerAddr is the caller's address for the enrollment rate limit: the
+// TCP peer, and only the peer (backlog 2.67).
+//
+// It used to run the peer through clientip's trusted-proxy rules with
+// any x-forwarded-for the call carried, mirroring the HTTP side. On
+// HTTP that is sound — Traefik overwrites the header, so the value is
+// the proxy speaking, not the client. Nothing overwrites gRPC
+// METADATA: Docker's userland proxy forwards TCP and leaves it alone,
+// so behind a gateway inside PULSIX_TRUSTED_PROXIES an
+// UNAUTHENTICATED enrollment caller was choosing which bucket to
+// spend. A rate limit on an unauthenticated endpoint cannot let the
+// caller pick.
+//
+// The cost is that workers behind one gateway share its bucket. That
+// is the lesser problem and already handled: ResourceExhausted is
+// classified transient (backlog 2.64), so a fleet starting together
+// backs off and retries instead of giving up.
 func (s *Service) peerAddr(ctx context.Context) netip.Addr {
-	remote := ""
-	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
-		remote = p.Addr.String()
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return netip.Addr{}
 	}
-	var xff []string
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		xff = md.Get("x-forwarded-for")
+	ap, err := netip.ParseAddrPort(p.Addr.String())
+	if err != nil {
+		return netip.Addr{}
 	}
-	return s.deps.ClientIP.Resolve(remote, xff)
+	return ap.Addr().Unmap()
 }

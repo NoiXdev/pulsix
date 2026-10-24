@@ -102,10 +102,6 @@ type Deps struct {
 	// them; nil builds a private registry.
 	Streams *StreamRegistry
 
-	// ClientIP resolves the Enroll caller's address for the rate limit;
-	// nil trusts no proxy.
-	ClientIP *clientip.Resolver
-
 	// tls is the transport credentials newServer builds from the CA; not
 	// set by callers.
 	tls credentials.TransportCredentials
@@ -155,9 +151,6 @@ func newServer(deps Deps) (*Server, error) {
 	}
 	if deps.Streams == nil {
 		deps.Streams = NewStreamRegistry()
-	}
-	if deps.ClientIP == nil {
-		deps.ClientIP = clientip.New(nil)
 	}
 	return &Server{deps: deps, registry: newTokenRegistry(deps.Clock), streams: deps.Streams,
 		enrollLimit: clientip.NewLimiter(enrollLimit, enrollWindow, deps.Clock)}, nil
