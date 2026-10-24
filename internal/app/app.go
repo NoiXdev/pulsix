@@ -618,7 +618,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	// The weekly digest (spec §7): one ticker per manager, SKIP LOCKED
 	// like the schedule ticker; schedulesSvc builds the week's summary.
-	digestStop := startLoop(notify.NewDigestTicker(notify.NewDigestSQLStore(appDB, slog.Default()), schedulesSvc, outbox, notify.DefaultDigestTick, time.Now, nil, slog.Default()).Run)
+	digestStop := startLoop(notify.NewDigestTicker(notify.NewDigestSQLStore(appDB, slog.Default(), auditRec), schedulesSvc, outbox, notify.DefaultDigestTick, time.Now, nil, slog.Default()).Run)
 
 	// The rule evaluation ticker (v0.3b-2 spec, "Trigger"): one per
 	// manager, every 15 s, claiming dirty-or-due hosts with FOR UPDATE SKIP

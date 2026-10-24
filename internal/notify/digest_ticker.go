@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/noixdev/pulsix/internal/audit"
 	"log/slog"
 	"runtime/debug"
 	"time"
@@ -217,19 +218,27 @@ func (t *DigestTicker) batchDeadline() time.Duration {
 	return max(batchDeadlineFactor*t.tick, minBatchDeadline)
 }
 
+// DigestAuditor records a system action against an organization — here,
+// a digest the manager switched off on its own (backlog 2.82).
+type DigestAuditor interface {
+	Record(ctx context.Context, e audit.Event) error
+}
+
 // DigestSQLStore is the digest ticker's store: the raw pool, bypass
 // policy, every statement names its org_id.
 type DigestSQLStore struct {
-	d   *db.DB
-	log *slog.Logger
+	d     *db.DB
+	log   *slog.Logger
+	audit DigestAuditor
 }
 
-// NewDigestSQLStore builds the store; nil log is slog.Default.
-func NewDigestSQLStore(d *db.DB, log *slog.Logger) *DigestSQLStore {
+// NewDigestSQLStore builds the store; nil log is slog.Default, and a nil
+// auditor records nothing (the unit tests that only drive the queue).
+func NewDigestSQLStore(d *db.DB, log *slog.Logger, auditor DigestAuditor) *DigestSQLStore {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &DigestSQLStore{d: d, log: log}
+	return &DigestSQLStore{d: d, log: log, audit: auditor}
 }
 
 // ProcessDue locks due digests and runs handle for each inside its own
@@ -324,6 +333,13 @@ func (st *DigestSQLStore) processOne(ctx context.Context, tx pgx.Tx, r gen.Notif
 		if err := sp.Commit(pctx); err != nil {
 			st.log.ErrorContext(pctx, "commit digest savepoint", "org", r.OrgID, "err", err)
 		}
+		// After the commit, not inside the savepoint: the disable is
+		// what matters and must not be rolled back because recording
+		// it failed. Written where the ORGANIZATION can see it, which
+		// a manager log is not — its digest switched itself off and
+		// the only explanation on offer was an unticked checkbox
+		// (backlog 2.82).
+		st.auditDisabled(pctx, r.OrgID, r.Timezone)
 		return
 	}
 	handleErr := handle(ctx, sp, due)
@@ -380,3 +396,20 @@ var ErrDigestSkipped = errors.New("digest skipped")
 // ptr is the address of a value, for the nullable parameters the
 // generated queries take.
 func ptr[T any](v T) *T { return &v }
+
+// auditDisabled records the self-disable against the organization. The
+// summary names the zone, because that is the whole repair
+// instruction: pick a zone that resolves and switch the digest back on.
+func (st *DigestSQLStore) auditDisabled(ctx context.Context, orgID uuid.UUID, timezone string) {
+	if st.audit == nil {
+		return
+	}
+	if err := st.audit.Record(db.WithOrgScope(ctx, orgID), audit.Event{
+		OrgID: &orgID, ActorKind: audit.ActorKindSystem,
+		Action: "notificationDigestDisabled", ObjectType: "notification_digest", ObjectID: orgID.String(),
+		Summary: fmt.Sprintf("the weekly digest was switched off: its time zone %q is not one this installation can resolve", timezone),
+		Meta:    map[string]any{"timezone": timezone},
+	}); err != nil {
+		st.log.ErrorContext(ctx, "audit the disabled weekly digest", "org", orgID, "err", err)
+	}
+}

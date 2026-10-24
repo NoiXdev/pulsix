@@ -97,7 +97,7 @@ func TestDigestTickerDoesNotStarvePoolConnections(t *testing.T) {
 	builder := &blockingDigestBuilder{d: d, started: make(chan struct{})}
 	outbox := notify.NewOutbox(d, "https://pulsix.example.test/", func() time.Time { return due }, rand.Reader, quiet())
 	const tick = 500 * time.Millisecond
-	tk := notify.NewDigestTicker(notify.NewDigestSQLStore(d, quiet()), builder, outbox, tick, func() time.Time { return due }, nil, quiet())
+	tk := notify.NewDigestTicker(notify.NewDigestSQLStore(d, quiet(), nil), builder, outbox, tick, func() time.Time { return due }, nil, quiet())
 
 	tickDone := make(chan struct{})
 	go func() {

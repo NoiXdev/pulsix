@@ -3,6 +3,8 @@ package notify_test
 import (
 	"context"
 	"errors"
+	"github.com/noixdev/pulsix/internal/audit"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +35,7 @@ func TestDigestStoreTickAndOutbox(t *testing.T) {
 	// Not due yet.
 	due := now.AddDate(0, 0, 6) // Monday 28 Sep 08:00
 	ticker := func(at time.Time, b notify.DigestBuilder) *notify.DigestTicker {
-		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet()), b, w.outbox, time.Minute, func() time.Time { return at }, nil, quiet())
+		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet(), nil), b, w.outbox, time.Minute, func() time.Time { return at }, nil, quiet())
 	}
 	week := notify.DigestSummary{Schedules: []notify.DigestSchedule{{Name: "Nightly", Runs: 2}}, Slowest: []notify.DigestRun{{Schedule: "Nightly", RunID: uuid.Must(uuid.NewV7()), DurationSeconds: 60}}}
 	if n, _ := ticker(due.Add(-time.Minute), fixedBuilder{sum: week}).Tick(ctx); n != 0 {
@@ -106,7 +108,7 @@ func TestDigestLateDigestAdvancesWithoutSending(t *testing.T) {
 	// occurrence must be skipped, not sent 49h late.
 	now := due.Add(49 * time.Hour)
 	week := notify.DigestSummary{Schedules: []notify.DigestSchedule{{Name: "Nightly", Runs: 1}}}
-	tk := notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet()), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return now }, nil, quiet())
+	tk := notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet(), nil), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return now }, nil, quiet())
 	if n, err := tk.Tick(ctx); err != nil || n != 1 {
 		t.Fatalf("Tick = %d, %v", n, err)
 	}
@@ -174,7 +176,7 @@ func TestDigestStoreCommitsAfterAHandleSlowerThanTheWriteTimeout(t *testing.T) {
 	due := stored.NextRunAt.Add(30 * time.Second)
 
 	var handled int
-	n, err := notify.NewDigestSQLStore(w.d, quiet()).ProcessDue(ctx, due, 20,
+	n, err := notify.NewDigestSQLStore(w.d, quiet(), nil).ProcessDue(ctx, due, 20,
 		func(context.Context, pgx.Tx, notify.DueDigest) error {
 			handled++
 			// Longer than one row's write-back budget, and shorter than
@@ -236,7 +238,7 @@ func TestADigestSkippedForBeingLateIsNotRecordedAsSent(t *testing.T) {
 	// would visibly overwrite.
 	week := notify.DigestSummary{Schedules: []notify.DigestSchedule{{Name: "Nightly", Runs: 2}}}
 	ticker := func(at time.Time) *notify.DigestTicker {
-		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet()), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return at }, nil, quiet())
+		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet(), nil), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return at }, nil, quiet())
 	}
 	if n, err := ticker(due.Add(30 * time.Second)).Tick(ctx); err != nil || n != 1 {
 		t.Fatalf("the first Tick = %d, %v", n, err)
@@ -303,7 +305,7 @@ func TestAFailingDigestDoesNotStarveTheOthers(t *testing.T) {
 	setDigest(t, w.d, store, other, due)
 
 	handled := map[uuid.UUID]int{}
-	st := notify.NewDigestSQLStore(w.d, quiet())
+	st := notify.NewDigestSQLStore(w.d, quiet(), nil)
 	run := func(now time.Time) {
 		t.Helper()
 		if _, err := st.ProcessDue(ctx, now, 1, func(_ context.Context, _ pgx.Tx, d notify.DueDigest) error {
@@ -361,7 +363,7 @@ func TestTwoDigestTickersDoNotDoubleSendAPeriod(t *testing.T) {
 
 	week := notify.DigestSummary{Schedules: []notify.DigestSchedule{{Name: "Nightly", Runs: 2}}}
 	ticker := func() *notify.DigestTicker {
-		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet()), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return now }, nil, quiet())
+		return notify.NewDigestTicker(notify.NewDigestSQLStore(w.d, quiet(), nil), fixedBuilder{sum: week}, w.outbox, time.Minute, func() time.Time { return now }, nil, quiet())
 	}
 
 	var wg sync.WaitGroup
@@ -392,4 +394,78 @@ func TestTwoDigestTickersDoNotDoubleSendAPeriod(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("the period %s was queued %d times, want exactly 1", key, n)
 	}
+}
+
+// TestADisabledDigestIsRecordedWhereSomeoneCanSeeIt is backlog 2.82.
+// Stored settings whose timezone no longer resolves stop the digest —
+// the right call, since no retry fixes a zone name that is gone. But
+// the only trace was a line in the manager's log: for the
+// organization, its weekly digest simply switched itself off, with an
+// unticked checkbox as the entire explanation. A schedule that fails
+// for the same reason records a visible failed run.
+func TestADisabledDigestIsRecordedWhereSomeoneCanSeeIt(t *testing.T) {
+	w := newOutboxWorld(t, "digest-disabled-audit")
+	store := notify.NewSQLStore(w.d)
+	scoped := db.WithOrgScope(ctx, w.org)
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	svc := notify.NewService(notify.Deps{Channels: store, Digests: store, Now: func() time.Time { return now }})
+	if _, err := svc.SetDigest(scoped, w.org, notify.DigestInput{
+		Enabled: true, Weekday: "mon", Time: "08:00", Timezone: "UTC", Channels: []uuid.UUID{w.chA.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A zone the database holds but no manager can resolve — a direct
+	// edit, a restore, or a name IANA dropped.
+	if _, err := w.d.Pool().Exec(ctx, `UPDATE notification_digests SET timezone = 'Mars/Olympus' WHERE org_id = $1`, w.org); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingAuditor{}
+	st := notify.NewDigestSQLStore(w.d, quiet(), rec)
+	due := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+	if _, err := st.ProcessDue(ctx, due.Add(time.Minute), 20, func(context.Context, pgx.Tx, notify.DueDigest) error {
+		t.Fatal("a digest whose timezone does not resolve must not be built")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var enabled bool
+	if err := w.d.Pool().QueryRow(ctx, `SELECT enabled FROM notification_digests WHERE org_id = $1`, w.org).Scan(&enabled); err != nil || enabled {
+		t.Fatalf("enabled = %v, %v; want it disabled", enabled, err)
+	}
+	events := rec.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want the disable recorded once: %+v", len(events), events)
+	}
+	e := events[0]
+	if e.OrgID == nil || *e.OrgID != w.org {
+		t.Fatalf("event org = %v, want %s", e.OrgID, w.org)
+	}
+	if !strings.Contains(e.Summary, "Mars/Olympus") {
+		t.Fatalf("summary = %q; it must name the zone that stopped resolving — that is the whole repair instruction", e.Summary)
+	}
+	if e.ObjectType != "notification_digest" {
+		t.Fatalf("object type = %q", e.ObjectType)
+	}
+}
+
+// recordingAuditor collects the system audit events the digest store
+// writes, so a test can assert the organization was told.
+type recordingAuditor struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (r *recordingAuditor) Record(_ context.Context, e audit.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+	return nil
+}
+
+func (r *recordingAuditor) snapshot() []audit.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]audit.Event(nil), r.events...)
 }
