@@ -45,10 +45,22 @@ ON CONFLICT (trigger_id) DO UPDATE SET tokens = EXCLUDED.tokens, updated_at = EX
 -- name: TakeTriggerToken :one
 -- Refill by elapsed time (capped at capacity), then take one token — only
 -- when at least one is there. No row back means rate limited.
+--
+-- updated_at only ever moves FORWARD (backlog 2.62). It used to take
+-- whichever manager's wall clock made the take, so a manager running
+-- behind its peers wrote a timestamp in the past and the next take, from
+-- a correct clock, measured elapsed time from there and refilled tokens
+-- for seconds that never passed — repeat it and the limit stops limiting.
+-- GREATEST pins the bucket to the furthest-ahead clock that has touched
+-- it, which errs toward refilling too SLOWLY: the safe direction for a
+-- rate limit, and self-correcting as real time catches up. (The database
+-- clock would remove manager clocks entirely, as it does for the
+-- notification queue in backlog 2.80, but the elapsed-time arithmetic
+-- here is what the tests drive by passing a later `now`.)
 UPDATE trigger_buckets
 SET tokens = LEAST(sqlc.arg(capacity)::float8,
       tokens + GREATEST(EXTRACT(EPOCH FROM (sqlc.arg(now)::timestamptz - updated_at))::float8, 0) * sqlc.arg(refill)::float8) - 1,
-    updated_at = sqlc.arg(now)::timestamptz
+    updated_at = GREATEST(updated_at, sqlc.arg(now)::timestamptz)
 WHERE org_id = sqlc.arg(org_id) AND trigger_id = sqlc.arg(trigger_id)
   AND LEAST(sqlc.arg(capacity)::float8,
       tokens + GREATEST(EXTRACT(EPOCH FROM (sqlc.arg(now)::timestamptz - updated_at))::float8, 0) * sqlc.arg(refill)::float8) >= 1

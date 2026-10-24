@@ -49,6 +49,17 @@ const (
 
 var fieldNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,63}$`)
 
+// ValidFieldName reports whether name is usable as an Ansible variable
+// name: a lowercase letter or underscore, then lowercase letters,
+// digits and underscores, up to 64 characters.
+//
+// Exported so a caller that sets extra vars WITHOUT a schema to check
+// them against can apply the same rule rather than keep a second
+// definition of what a variable may be called — a webhook trigger's
+// mapping targets, where a template with no schema used to accept any
+// string at all including "" and "a b" (backlog 2.62).
+func ValidFieldName(name string) bool { return fieldNamePattern.MatchString(name) }
+
 // reservedPrefixes protect Ansible's connection variables and the facts
 // Pulsix renders under pulsix_facts from being shadowed by a schema field.
 var reservedPrefixes = []string{"ansible_", "pulsix_"}

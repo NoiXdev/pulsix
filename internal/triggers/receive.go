@@ -105,12 +105,16 @@ func (s *Service) receive(ctx context.Context, req Request) (Result, Delivery, e
 	}
 	t, sealed, err := s.d.Store.Resolve(ctx, id)
 	if errors.Is(err, ErrNotFound) {
+		// The signature check a known id would have run, so the
+		// uniform 404 is uniform in time too (backlog 2.62).
+		equaliseSignatureWork(req.Body)
 		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	if err != nil {
 		return Result{}, Delivery{}, err
 	}
 	if t.Kind != req.Kind {
+		equaliseSignatureWork(req.Body)
 		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	ctx = db.WithOrgScope(ctx, t.OrgID)
@@ -137,6 +141,7 @@ func (s *Service) receive(ctx context.Context, req Request) (Result, Delivery, e
 		// Nothing is recorded (OutcomeNotFound never is), so there is no
 		// row for the caller to later amend either.
 		s.d.Log.ErrorContext(ctx, "open webhook trigger secret", "trigger", t.ID, "org", t.OrgID, "err", err)
+		equaliseSignatureWork(req.Body)
 		return Result{Outcome: OutcomeNotFound}, Delivery{}, nil
 	}
 	if !verify(t, string(secret), req.Header, req.Body, now) {
@@ -196,6 +201,18 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 		}
 		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field, true)
 	}
+	// Check-then-enqueue, deliberately not serialised (backlog 2.62).
+	// Two deliveries landing in the same instant — or one racing the
+	// schedule ticker's own overlap=skip for the same template — can
+	// both read "nothing active" and both enqueue. Closing that means
+	// holding a per-template advisory lock across the active check AND
+	// the whole enqueue, and the enqueue is not one transaction: it
+	// resolves the template's scope against the inventory and creates a
+	// job per zone. Serialising all of that behind one lock to turn a
+	// rare duplicate into no duplicate is a poor trade — the guard
+	// exists to stop runs PILING UP, which it still does, and a run
+	// that does slip through is one extra run, visible in the log with
+	// its own trigger.
 	if t.OnActive == OnActiveSkip {
 		active, err := s.d.Runs.HasActiveRun(ctx, t.OrgID, *t.TemplateID)
 		if err != nil {

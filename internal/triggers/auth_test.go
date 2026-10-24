@@ -2,7 +2,9 @@ package triggers
 
 import (
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +68,48 @@ func TestVerifyTimestampWindow(t *testing.T) {
 	h.Set("X-Pulsix-Timestamp", "yesterday")
 	if verify(tr, "k", headerOf(h), body, now) {
 		t.Fatal("a malformed timestamp passed")
+	}
+}
+
+// TestEqualiseSignatureWorkCostsWhatAnHMACCosts is backlog 2.62's
+// timing half. receive answers an unknown trigger id with the uniform
+// 404 without computing an HMAC, while a known id's rejection computes
+// one over the whole request body — so the two differed by an amount
+// the caller chooses, by choosing how much body to send.
+//
+// A wall-clock assertion on the two receive paths would be a flake
+// generator, so what is pinned here is the thing that actually has to
+// hold: the equaliser does the same body-proportional hashing the real
+// check does. A 1 MiB body makes that measurable well above scheduling
+// noise, and the bound is deliberately loose — this is a check that
+// the work HAPPENS, not a benchmark.
+func TestEqualiseSignatureWorkCostsWhatAnHMACCosts(t *testing.T) {
+	body := make([]byte, 1<<20)
+	real0 := time.Now()
+	_ = mac("a-real-secret", "", body)
+	realCost := time.Since(real0)
+
+	decoy0 := time.Now()
+	equaliseSignatureWork(body)
+	decoyCost := time.Since(decoy0)
+
+	if decoyCost < realCost/4 {
+		t.Fatalf("the equaliser took %s against the real check's %s; it is not doing the work", decoyCost, realCost)
+	}
+}
+
+// TestUnknownTriggerAndRejectedSignatureBothHashTheBody pins the
+// call sites rather than the clock: every path that answers the uniform
+// 404 after a parseable id must run the equaliser, so adding a new one
+// that forgets it is a visible change here.
+func TestUnknownTriggerAndRejectedSignatureBothHashTheBody(t *testing.T) {
+	src, err := os.ReadFile("receive.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every OutcomeNotFound returned from receive() after the id parses
+	// — Resolve missing, kind mismatch, and an unopenable secret.
+	if got := strings.Count(string(src), "equaliseSignatureWork(req.Body)"); got != 3 {
+		t.Fatalf("receive.go calls the equaliser %d times, want 3 (unknown id, wrong kind, unopenable secret); a 404 path without it answers faster than a real rejection", got)
 	}
 }

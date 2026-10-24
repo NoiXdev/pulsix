@@ -87,7 +87,7 @@ func hasWildcard(p *jsonpath.Path) bool {
 func (c compiledMapping) apply(doc any) (templates.Overrides, string, error) {
 	var out templates.Overrides
 	for name, p := range c.vars {
-		nodes := p.Select(doc)
+		nodes := selectOrdered(p, doc)
 		if len(nodes) == 0 {
 			continue
 		}
@@ -95,13 +95,13 @@ func (c compiledMapping) apply(doc any) (templates.Overrides, string, error) {
 			out.ExtraVars = map[string]any{}
 		}
 		if hasWildcard(p) {
-			out.ExtraVars[name] = []any(nodes)
+			out.ExtraVars[name] = nodes
 		} else {
 			out.ExtraVars[name] = nodes[0]
 		}
 	}
 	if c.limit != nil {
-		nodes := c.limit.Select(doc)
+		nodes := selectOrdered(c.limit, doc)
 		if len(nodes) > 0 {
 			parts := make([]string, 0, len(nodes))
 			for _, n := range nodes {
@@ -116,4 +116,27 @@ func (c compiledMapping) apply(doc any) (templates.Overrides, string, error) {
 		}
 	}
 	return out, "", nil
+}
+
+// selectOrdered is Path.Select with a defined order (backlog 2.62).
+//
+// A [*] selector over a JSON OBJECT walks the decoded map, and Go
+// randomises map iteration — so the same payload produced a differently
+// ordered list on every delivery. For a mapped extra var that is a list
+// whose order a playbook may act on; for the limit it is worse, because
+// the parts are joined with "," and the run then records a different
+// host pattern each time, with no way to reproduce what actually ran.
+//
+// SelectLocated pairs each node with its normalized path, and the
+// library's own Sort orders by it: object keys lexically, array indices
+// NUMERICALLY (spec.NormalizedPath.Compare). So an array's own order —
+// which was never random — survives, including past index 9.
+func selectOrdered(p *jsonpath.Path, doc any) []any {
+	located := p.SelectLocated(doc)
+	located.Sort()
+	out := make([]any, 0, len(located))
+	for _, n := range located {
+		out = append(out, n.Node)
+	}
+	return out
 }

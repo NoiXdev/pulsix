@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -360,5 +361,48 @@ func TestRotateSecretAndUpdate(t *testing.T) {
 	in.Kind, in.RepoID, in.TemplateID = triggers.KindRepoSync, &w.repo, nil
 	if _, err := w.svc.Update(ctx, w.org, c.Trigger.ID, up.Revision, in); !errors.Is(err, triggers.ErrInvalidInput) {
 		t.Fatalf("changing the kind: %v", err)
+	}
+}
+
+// TestMappingTargetIsSyntaxCheckedWithoutASchema is backlog 2.62. The
+// target name was checked against the denylist, against secret fields
+// and — only when the template HAS an extra-vars schema — against the
+// names it declares. A template with no schema therefore accepted any
+// name at all, "" and "a b" included, and the payload's value was
+// written into the run's extra-vars document under that key. Ansible
+// cannot address such a variable, so the mapping silently did nothing
+// useful and the operator found out, if at all, from a run that behaved
+// as though the mapping were absent.
+//
+// The rule is the schema's own (schema.ValidFieldName), so a declared
+// name satisfies it by construction and this adds no second definition
+// of what a variable may be called.
+func TestMappingTargetIsSyntaxCheckedWithoutASchema(t *testing.T) {
+	w := newWorld(t)
+	// A template with no extra-vars schema: the case that had no check.
+	bare := uuid.Must(uuid.NewV7())
+	w.tmpls.byID[bare] = templates.Template{ID: bare, OrgID: w.org}
+	n := 0
+	input := func(target string) triggers.Input {
+		n++
+		in := w.templateInput()
+		in.TemplateID = &bare
+		in.Name = fmt.Sprintf("hook %d", n) // unique: names collide inside one org
+		in.Mapping = triggers.Mapping{ExtraVars: map[string]string{target: "$.ref"}}
+		return in
+	}
+	for _, bad := range []string{"", "a b", "Release", "2fast", "with-hyphen", "trailing "} {
+		t.Run("refuses "+bad, func(t *testing.T) {
+			if _, err := w.svc.Create(ctx, w.org, w.actor, input(bad)); !errors.Is(err, triggers.ErrInvalidInput) {
+				t.Fatalf("Create with target %q = %v, want ErrInvalidInput", bad, err)
+			}
+		})
+	}
+	for _, ok := range []string{"release", "_private", "release_2", "a"} {
+		t.Run("accepts "+ok, func(t *testing.T) {
+			if _, err := w.svc.Create(ctx, w.org, w.actor, input(ok)); err != nil {
+				t.Fatalf("Create with target %q = %v, want it saved", ok, err)
+			}
+		})
 	}
 }

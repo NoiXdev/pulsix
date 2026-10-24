@@ -108,6 +108,14 @@ func (st *SQLStore) Update(ctx context.Context, t Trigger, revision int64) (Trig
 	}
 	var out Trigger
 	err = st.d.WithWriteTx(ctx, t.OrgID, func(ctx context.Context) error {
+		// The stored row, read inside this transaction: whether the
+		// bucket is refilled below turns on whether the rate limit
+		// actually changed, and reading it here rather than taking the
+		// caller's word keeps that decision atomic with the write.
+		prev, err := st.Get(ctx, t.OrgID, t.ID)
+		if err != nil {
+			return err
+		}
 		row, err := st.q.UpdateTrigger(ctx, gen.UpdateTriggerParams{
 			OrgID: t.OrgID, ID: t.ID, Revision: revision, Name: t.Name, Enabled: t.Enabled, Preset: string(t.Preset),
 			Auth: string(t.Auth()), SignatureHeader: t.SignatureHeader(), TimestampHeader: t.TimestampHeader,
@@ -118,6 +126,15 @@ func (st *SQLStore) Update(ctx context.Context, t Trigger, revision int64) (Trig
 		}
 		if out, err = toTrigger(row); err != nil {
 			return err
+		}
+		// Only when the rate limit itself changed (backlog 2.62). The
+		// fill resets the bucket to capacity, so doing it on every edit
+		// meant anyone who could rename a trigger could clear its
+		// throttle — as often as they liked, by saving it again. A
+		// changed limit IS a refill: the operator has said what the
+		// budget should be, and the bucket was sized for the old one.
+		if prev.RateLimit == t.RateLimit {
+			return nil
 		}
 		return st.fill(ctx, t.OrgID, t.ID, t.RateLimit)
 	})

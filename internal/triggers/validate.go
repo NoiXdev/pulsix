@@ -11,6 +11,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/clientip"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -85,6 +86,17 @@ func checkMappingTargets(m Mapping, t templates.Template) error {
 	}
 	for name := range m.ExtraVars {
 		switch {
+		case !schema.ValidFieldName(name):
+			// Checked for every template, with or without a schema
+			// (backlog 2.62). Without one, any string used to pass —
+			// "" and "a b" included — and the payload's value was
+			// written into the run's extra-vars document under that
+			// key, where Ansible cannot address it: the mapping
+			// silently did nothing, and the operator found out, if at
+			// all, from a run that behaved as though it were absent.
+			// It is the SCHEMA's own rule, so a declared name
+			// satisfies it by construction.
+			return fmt.Errorf("%w: %q is not a usable variable name: start with a lowercase letter or underscore, then lowercase letters, digits and underscores", ErrInvalidInput, name)
 		case ansiblevars.Forbidden(name):
 			return fmt.Errorf("%w: %s is a reserved variable name (connection security or Ansible's own markers) and cannot be mapped", ErrInvalidInput, name)
 		case secret[name]:

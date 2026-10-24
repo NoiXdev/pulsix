@@ -314,3 +314,101 @@ func TestDeliveriesAreThrottledAndTrimmed(t *testing.T) {
 		t.Fatalf("rows after trim = %d, %v", count, err)
 	}
 }
+
+// TestABehindClockManagerCannotGrantFreeTokens is backlog 2.62. The
+// bucket's updated_at took whichever manager's wall clock made the
+// take, so a manager running behind its peers wrote a timestamp in the
+// past — and the NEXT take, from a correct clock, measured the elapsed
+// time from there and refilled tokens for seconds that never passed.
+// Repeat it and the per-trigger rate limit stops being a limit at all.
+//
+// Only a SUCCESSFUL take can do this: a refused one fails the
+// statement's own WHERE and writes nothing.
+func TestABehindClockManagerCannotGrantFreeTokens(t *testing.T) {
+	d := testdb.Open(t)
+	org, tmpl := seedTemplate(t, d, "trig-skew")
+	rl := triggers.RateLimit{Count: 10, Per: "1m"} // one token every 6s
+	st := triggers.NewSQLStore(d)
+	in := storedTrigger(org, tmpl, rl)
+	if _, err := st.Create(db.WithOrgScope(ctx, org), in, []byte("s")); err != nil {
+		t.Fatal(err)
+	}
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Now()
+	tokens := func() float64 {
+		t.Helper()
+		var v float64
+		if err := d.Pool().QueryRow(ctx, `SELECT tokens FROM trigger_buckets WHERE trigger_id = $1`, in.ID).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	if ok, _, err := st.TakeToken(scoped, org, in.ID, rl, now); err != nil || !ok {
+		t.Fatalf("the first take = %v, %v", ok, err)
+	}
+	// A manager thirty seconds behind takes the next one. It succeeds —
+	// there are tokens — and must not drag updated_at back with it.
+	if ok, _, err := st.TakeToken(scoped, org, in.ID, rl, now.Add(-30*time.Second)); err != nil || !ok {
+		t.Fatalf("the lagging take = %v, %v", ok, err)
+	}
+	before := tokens()
+	if ok, _, err := st.TakeToken(scoped, org, in.ID, rl, now); err != nil || !ok {
+		t.Fatalf("the third take = %v, %v", ok, err)
+	}
+	// No time passed between the second and third take on the correct
+	// clock, so the third must simply cost a token. With updated_at
+	// dragged back it would instead be handed 30s of refill — five
+	// tokens for seconds nobody waited.
+	if got := tokens(); got != before-1 {
+		t.Fatalf("tokens went from %v to %v across a take with no elapsed time; want %v", before, got, before-1)
+	}
+}
+
+// TestEditingATriggerDoesNotResetItsThrottle is backlog 2.62. Update
+// refilled the bucket to capacity on EVERY edit, not only when the rate
+// limit itself changed — so anyone who could rename a trigger could
+// clear its throttle, as often as they liked, by saving it again.
+func TestEditingATriggerDoesNotResetItsThrottle(t *testing.T) {
+	d := testdb.Open(t)
+	org, tmpl := seedTemplate(t, d, "trig-edit")
+	rl := triggers.RateLimit{Count: 1, Per: "1m"}
+	st := triggers.NewSQLStore(d)
+	in := storedTrigger(org, tmpl, rl)
+	created, err := st.Create(db.WithOrgScope(ctx, org), in, []byte("s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := db.WithOrgScope(ctx, org)
+	now := time.Now()
+	if ok, _, err := st.TakeToken(scoped, org, in.ID, rl, now); err != nil || !ok {
+		t.Fatalf("the one token = %v, %v", ok, err)
+	}
+	if ok, _, _ := st.TakeToken(scoped, org, in.ID, rl, now); ok {
+		t.Fatal("the bucket should be empty")
+	}
+
+	renamed := created
+	renamed.Name = "renamed"
+	if _, err := st.Update(scoped, renamed, created.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, _ := st.TakeToken(scoped, org, in.ID, rl, now); ok {
+		t.Fatal("renaming the trigger refilled its bucket; a throttle must survive an unrelated edit")
+	}
+
+	// Changing the limit itself IS a refill: the operator has said what
+	// the budget should be, and the old bucket was sized for the old one.
+	after, err := st.Get(scoped, org, in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wider := after
+	wider.RateLimit = triggers.RateLimit{Count: 5, Per: "1m"}
+	if _, err := st.Update(scoped, wider, after.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := st.TakeToken(scoped, org, in.ID, wider.RateLimit, now); err != nil || !ok {
+		t.Fatalf("a changed rate limit did not refill the bucket: %v, %v", ok, err)
+	}
+}

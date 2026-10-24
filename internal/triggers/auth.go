@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -70,4 +71,29 @@ func verify(t Trigger, secret string, header func(string) string, body []byte, n
 		return subtle.ConstantTimeCompare([]byte(presented), []byte(secret)) == 1
 	}
 	return false
+}
+
+// decoySecret is a fixed, meaningless key for equaliseSignatureWork. It
+// authenticates nothing; its only job is to make an HMAC cost what an
+// HMAC costs.
+const decoySecret = "pulsix-timing-equaliser"
+
+// equaliseSignatureWork does the work a real trigger's signature check
+// would do and throws the answer away (backlog 2.62).
+//
+// receive returns the uniform 404 for an unknown trigger id WITHOUT
+// computing an HMAC, while a known id's rejection computes one over the
+// whole request body — so the two answers differed in a way a caller
+// could measure, and the difference GROWS with the body the caller
+// chooses. That is the only term worth equalising: the rest of the
+// known path (an AEAD open, a preset lookup, header parsing) is
+// constant-size work far below network noise, and chasing exact
+// equality between two different code paths is a game with no end.
+//
+// What this is worth, stated plainly: trigger ids are UUIDv7, so even a
+// perfect oracle answers "this id I guessed does not exist" against a
+// space no one can enumerate. This removes the class rather than
+// closing a live hole.
+func equaliseSignatureWork(body []byte) {
+	runtime.KeepAlive(mac(decoySecret, "", body))
 }
