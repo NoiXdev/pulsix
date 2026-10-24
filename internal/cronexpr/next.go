@@ -127,3 +127,26 @@ func sameWall(t, w time.Time) bool {
 	return t.Year() == w.Year() && t.Month() == w.Month() && t.Day() == w.Day() &&
 		t.Hour() == w.Hour() && t.Minute() == w.Minute()
 }
+
+// Lookback returns the most recent occurrence at or before to, searching
+// no further back than within. It exists because Between stops counting
+// at its cap and therefore reports a `latest` that is the cap-th
+// occurrence rather than the newest one (backlog 2.60); a caller that
+// only needs to know how recent the newest occurrence is can bound the
+// question instead, and this answers it in one forward scan over that
+// bound. The zero time means there is no occurrence in the window.
+func (e Expr) Lookback(from, to time.Time, loc *time.Location, within time.Duration) time.Time {
+	start := to.Add(-within)
+	if start.Before(from) {
+		start = from
+	}
+	t := start.Add(-time.Nanosecond)
+	var latest time.Time
+	for {
+		t = e.Next(t, loc)
+		if t.IsZero() || t.After(to) {
+			return latest
+		}
+		latest = t
+	}
+}

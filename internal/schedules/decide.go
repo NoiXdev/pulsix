@@ -83,19 +83,45 @@ func (s *Service) Decide(ctx context.Context, sch Schedule, now time.Time, grace
 	reason := ""
 	if now.Sub(run.DueAt) > grace {
 		count, latest := expr.Between(run.DueAt, now, loc, maxCountedOccurrences)
+		capped := count == maxCountedOccurrences
 		if count == 0 {
 			count, latest = 1, run.DueAt
+		}
+		if capped {
+			// The scan stopped at the cap, so latest is the cap-th
+			// occurrence counting FORWARD from DueAt, not the most
+			// recent one — seven days back for a per-minute schedule
+			// after an eight-day outage. Every branch below reads
+			// now-latest, so a schedule whose last missed occurrence
+			// was a minute ago recorded "missed" and declined to
+			// catch up, in exactly the long-outage case catch-up
+			// exists for (backlog 2.60).
+			//
+			// Re-scanned over the only stretch those branches ask
+			// about, which is bounded: grace, plus the catch-up
+			// window when it is enabled (itself capped at
+			// maxCatchUpWindow). Anything older than that answers
+			// "missed" whatever its exact instant.
+			if l := expr.Lookback(run.DueAt, now, loc, grace+catchUpLookback(sch)); !l.IsZero() {
+				latest = l
+			}
+		}
+		// count is a floor once the cap is hit; say so rather than
+		// print the cap as if it were the number.
+		atLeast := ""
+		if capped {
+			atLeast = "at least "
 		}
 		switch {
 		case now.Sub(latest) <= grace:
 			if count > 1 {
-				reason = fmt.Sprintf("%d earlier occurrence(s) missed", count-1)
+				reason = fmt.Sprintf("%s%d earlier occurrence(s) missed", atLeast, count-1)
 			}
 		case sch.Guards.CatchUp.Enabled && now.Sub(latest) <= sch.Guards.CatchUp.window():
-			reason = fmt.Sprintf("catch-up of %d missed occurrence(s)", count)
+			reason = fmt.Sprintf("catch-up of %s%d missed occurrence(s)", atLeast, count)
 		default:
 			decision.Run.Outcome = OutcomeMissed
-			decision.Run.Reason = fmt.Sprintf("%d occurrence(s) missed since %s", count, run.DueAt.UTC().Format(time.RFC3339))
+			decision.Run.Reason = fmt.Sprintf("%s%d occurrence(s) missed since %s", atLeast, count, run.DueAt.UTC().Format(time.RFC3339))
 			return decision
 		}
 	}
@@ -213,4 +239,15 @@ func (s *Service) auditRun(ctx context.Context, sch Schedule, run Run) {
 	}); err != nil {
 		s.log.ErrorContext(ctx, "audit scheduled run", "schedule", sch.ID, "err", err)
 	}
+}
+
+// catchUpLookback is how far past grace the latest-occurrence re-scan
+// has to reach for this schedule: the catch-up window when catch-up is
+// on, nothing when it is off (an occurrence older than grace is missed
+// either way, so there is nothing further to learn).
+func catchUpLookback(sch Schedule) time.Duration {
+	if !sch.Guards.CatchUp.Enabled {
+		return 0
+	}
+	return sch.Guards.CatchUp.window()
 }

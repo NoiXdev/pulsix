@@ -208,3 +208,58 @@ func TestBetween(t *testing.T) {
 		t.Fatalf("empty window = %d, %v", count, latest)
 	}
 }
+
+// TestBetweenAtItsCap is backlog 2.60. Between stops counting at max,
+// and what it returns then is easy to misread: the count is a FLOOR,
+// and `latest` is the max-th occurrence rather than the newest one in
+// the range. internal/schedules read it as the newest and decided a
+// schedule's fate from how old it was.
+func TestBetweenAtItsCap(t *testing.T) {
+	e, err := cronexpr.Parse("* * * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour) // 1440 occurrences in range
+
+	count, latest := e.Between(from, to, time.UTC, 10)
+	if count != 10 {
+		t.Fatalf("count = %d, want the cap 10", count)
+	}
+	if want := from.Add(9 * time.Minute); !latest.Equal(want) {
+		t.Fatalf("latest = %s, want the 10th occurrence %s — NOT the newest in the range", latest, want)
+	}
+	// Uncapped, the same range gives the real answers.
+	count, latest = e.Between(from, to, time.UTC, 10000)
+	if count != 1441 || !latest.Equal(to) {
+		t.Fatalf("uncapped = %d, %s; want 1441 and %s", count, latest, to)
+	}
+}
+
+// TestLookback: the newest occurrence at or before `to`, searched no
+// further back than `within` — what a caller needs when it only cares
+// how recent the newest one is, and the reason Between's cap does not
+// have to be raised to answer it.
+func TestLookback(t *testing.T) {
+	e, err := cronexpr.Parse("* 0-22 * * *") // every minute except hour 23
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	at2330 := time.Date(2026, 9, 26, 23, 30, 0, 0, time.UTC)
+
+	// Inside the hole: the newest is 22:59 on the same day.
+	got := e.Lookback(from, at2330, time.UTC, 2*time.Hour)
+	if want := time.Date(2026, 9, 26, 22, 59, 0, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("Lookback = %s, want %s", got, want)
+	}
+	// A window too short to contain one reports none rather than
+	// guessing.
+	if got := e.Lookback(from, at2330, time.UTC, 5*time.Minute); !got.IsZero() {
+		t.Fatalf("Lookback over five minutes of a dead hour = %s, want none", got)
+	}
+	// It never looks earlier than `from`, even when asked to.
+	if got := e.Lookback(at2330.Add(-time.Hour), at2330, time.UTC, 30*24*time.Hour); !got.Equal(time.Date(2026, 9, 26, 22, 59, 0, 0, time.UTC)) {
+		t.Fatalf("Lookback clamped to from = %s", got)
+	}
+}

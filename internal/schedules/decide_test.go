@@ -67,6 +67,25 @@ func TestDecide(t *testing.T) {
 			outcome: schedules.OutcomeMissed, next: "2026-09-19T03:00:00Z"},
 		{name: "a frequent schedule whose latest occurrence is on time runs normally", spec: "* * * * *", dueAt: base, now: base.Add(10*time.Minute + 5*time.Second), guards: skip,
 			outcome: schedules.OutcomeTriggered, reason: "10 earlier occurrence(s) missed", next: "2026-09-18T10:11:00Z", enqueued: true},
+		// Backlog 2.60: a per-minute schedule past the occurrence cap.
+		// maxCountedOccurrences is 10000, so eight days of downtime
+		// overruns it — and `latest` used to be whatever the capped
+		// scan stopped at, seven days back, instead of the occurrence
+		// a minute ago. The branch below reads `now - latest`, so the
+		// schedule recorded "missed" and declined to catch up, in
+		// exactly the long-outage case catch-up exists for.
+		// Here the newest occurrence IS now, so this runs on time and
+		// merely notes the backlog — the point is that it runs at all:
+		// before the fix it recorded "missed".
+		{name: "a schedule past the occurrence cap whose newest occurrence is now runs on time", spec: "* * * * *", dueAt: base, now: base.Add(8 * 24 * time.Hour), guards: catchUp,
+			outcome: schedules.OutcomeTriggered, reason: "at least 9999 earlier occurrence(s) missed", next: "2026-09-26T10:01:00Z", enqueued: true},
+		// And here it is a real catch-up past the cap: every minute
+		// except hour 23, asked at 23:30, so the newest occurrence is
+		// 22:59 — past grace, inside the 2 h catch-up window, and the
+		// count long past 10000. This is the case the capped `latest`
+		// turned into "missed".
+		{name: "catch-up past the occurrence cap", spec: "* 0-22 * * *", dueAt: base, now: base.Add(8*24*time.Hour + 13*time.Hour + 30*time.Minute), guards: catchUp,
+			outcome: schedules.OutcomeTriggered, reason: "catch-up of at least 10000 missed occurrence(s)", next: "2026-09-27T00:00:00Z", enqueued: true},
 		{name: "enqueue failure is recorded generically", spec: "0 * * * *", dueAt: base, now: base, guards: skip, enqueueErr: jobs.ErrEmptyScope,
 			outcome: schedules.OutcomeFailed, reason: "resolves to no host", next: "2026-09-18T11:00:00Z"},
 	}
