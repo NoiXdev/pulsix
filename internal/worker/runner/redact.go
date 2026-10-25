@@ -8,6 +8,7 @@
 package runner
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -40,8 +41,9 @@ type redactor struct {
 // (secret extra vars, secret inventory vars, one-time logins, ...) plus
 // every part of every credential the claim ships — defense in depth for a
 // claim whose list is incomplete. Each value is also redacted in its
-// JSON-escaped spelling (display text shows module results as JSON) and,
-// for a multi-line value, line by line.
+// JSON-escaped spelling (display text shows module results as JSON), in
+// its base64 spellings (backlog 2.48, see base64Spellings) and, for a
+// multi-line value, line by line.
 func newRedactor(job *workerpb.Job) *redactor {
 	set := map[string]bool{}
 	add := func(v string) {
@@ -53,6 +55,9 @@ func newRedactor(job *workerpb.Job) *redactor {
 			if esc := string(b[1 : len(b)-1]); esc != v {
 				set[esc] = true
 			}
+		}
+		for _, enc := range base64Spellings(v) {
+			set[enc] = true
 		}
 		if strings.Contains(v, "\n") {
 			for _, line := range strings.Split(v, "\n") {
@@ -85,6 +90,40 @@ func newRedactor(job *workerpb.Job) *redactor {
 		return strings.Compare(a, b)
 	})
 	return r
+}
+
+// base64Spellings is every base64 form of v a run can print (backlog
+// 2.48). Ansible reaches for base64 routinely — `slurp` returns file
+// contents that way, and `b64encode` is an everyday filter — so a secret
+// read from a file and shown in a module result leaves the worker intact
+// unless its encoded spelling is replaced too.
+//
+// All four alphabets, because which one appears is not ours to choose:
+// standard is what Ansible's own filters emit, the URL alphabet turns up
+// wherever a value travels in a URL or a JWT, and either may arrive
+// unpadded.
+//
+// Only transformations that are REVERSIBLE belong here. A hash of a
+// secret is deliberately not in this list: it is not the secret, and
+// whether a digest of a password ever reaches a run's output is a guess,
+// where base64 has a named source. Guessing costs output — every entry
+// is replaced wherever it appears — so the bar is a transformation we
+// can name a producer for.
+//
+// v is already past minRedactLen when this is called, and every encoding
+// is at least as long as its input, so none of these can be a short
+// string that shreds ordinary output.
+func base64Spellings(v string) []string {
+	b := []byte(v)
+	out := make([]string, 0, 4)
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding,
+	} {
+		if s := enc.EncodeToString(b); s != "" && s != v {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // text redacts one string.
