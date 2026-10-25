@@ -68,6 +68,17 @@ export default defineConfig({
     // it needs the agent binary built and a rule to drive a real tuple to
     // crit.
     { name: 'alerts', testMatch: /alerts\.spec\.ts/, dependencies: ['items'] },
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['alerts'] },
+    // The scheduler and notification pages (backlog 2.78). None of them
+    // needs an agent or a worker: maintenance.spec and calendar.spec work
+    // on organization-wide windows, and notifications.spec sends its test
+    // message through the stack's own mailpit, the way members.spec reads
+    // an invitation. They sit here, after the agent-driven journeys, only
+    // because calendar.spec asserts that exactly ONE maintenance window is
+    // on the calendar — its own — and an earlier spec leaving one behind
+    // would be indistinguishable from a bug.
+    { name: 'maintenance', testMatch: /maintenance\.spec\.ts/, dependencies: ['alerts'] },
+    { name: 'calendar', testMatch: /calendar\.spec\.ts/, dependencies: ['maintenance'] },
+    { name: 'notifications', testMatch: /notifications\.spec\.ts/, dependencies: ['calendar'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['notifications'] },
   ],
 });
