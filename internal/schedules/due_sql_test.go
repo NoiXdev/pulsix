@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -788,5 +790,169 @@ func TestTickerDoesNotStarvePoolConnections(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Tick did not return within 10s of the concurrent operations finishing — pool exhaustion deadlock?")
+	}
+}
+
+// TestProcessRowLeavesTheRowDueWhenItsWriteBackFails covers the write-back
+// failure paths processRow logs as "leaving it due for the next tick" —
+// none of which the suite reached before (0 % of them was covered). The
+// panic path next to them is tested; the ordinary one, a write that
+// fails, was not.
+//
+// Three things have to hold at once, and they pull in different
+// directions. The failing row must be left exactly as it was — no run
+// row, next_run_at untouched — so the next tick decides the SAME
+// occurrence again and RunRequest.IdempotencyKey turns the repeat into a
+// no-op rather than a second playbook run. A failure partway through
+// must take the earlier writes of that row back with it, or the retry
+// would add a second run row for one occurrence. And none of it may
+// reach the other rows of the batch, which share one transaction: that
+// is what the per-row savepoint is for, and without it a single bad row
+// would abort the whole tick's write-back, including rows that had
+// already enqueued.
+//
+// The failure is injected where a real one would land, in the database.
+// The two cases differ in where the write-back is cut: before it has
+// written anything, and after it has written the run row.
+func TestProcessRowLeavesTheRowDueWhenItsWriteBackFails(t *testing.T) {
+	for name, tc := range map[string]struct {
+		// on is the statement the trigger refuses, and with it the step of
+		// the write-back that fails.
+		on string
+	}{
+		"recording the run fails":      {"INSERT ON schedule_runs"},
+		"advancing the schedule fails": {"UPDATE ON schedules"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := testdb.Open(t)
+			org, templateID := seedTemplate(t, d, "sched-write-fail")
+			st := schedules.NewSQLStore(d)
+			scoped := db.WithOrgScope(ctx, org)
+			now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+			dueAt := now.Add(-time.Minute)
+			nextHour := time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)
+
+			mk := func(schedName string) schedules.Schedule {
+				t.Helper()
+				s, err := st.Create(scoped, schedules.Schedule{
+					ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: schedName,
+					Mode: schedules.ModeCron, Cron: "0 * * * *", Timezone: "UTC",
+					Guards: schedules.Guards{Overlap: schedules.OverlapQueue, CatchUp: schedules.CatchUp{Window: "1h"}}, NextRunAt: &dueAt,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return s
+			}
+			broken, healthy := mk("broken"), mk("healthy")
+
+			// The trigger needs DDL, which Open's pulsix_app role
+			// deliberately does not have, so it goes in over testdb's
+			// superuser connection. It names one schedule id, so it can
+			// only ever refuse this test's own row.
+			admin, err := pgx.Connect(ctx, testdb.URL(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer admin.Close(ctx) //nolint:errcheck // test teardown
+			// schedules names the column id, schedule_runs names it
+			// schedule_id.
+			column := "schedule_id"
+			if strings.HasSuffix(tc.on, "ON schedules") {
+				column = "id"
+			}
+			if _, err := admin.Exec(ctx, fmt.Sprintf(`
+				CREATE FUNCTION refuse_write() RETURNS trigger LANGUAGE plpgsql AS $fn$
+				BEGIN
+					IF NEW.%s = '%s' THEN
+						RAISE EXCEPTION 'injected write-back failure';
+					END IF;
+					RETURN NEW;
+				END $fn$`, column, broken.ID)); err != nil {
+				t.Fatal(err)
+			}
+			dropTrigger := fmt.Sprintf(`DROP TRIGGER IF EXISTS refuse_write ON %s`, strings.Fields(tc.on)[2])
+			t.Cleanup(func() {
+				c, err := pgx.Connect(context.Background(), testdb.URL(t))
+				if err != nil {
+					return
+				}
+				defer c.Close(context.Background()) //nolint:errcheck // test teardown
+				_, _ = c.Exec(context.Background(), dropTrigger)
+				_, _ = c.Exec(context.Background(), `DROP FUNCTION IF EXISTS refuse_write()`)
+			})
+			if _, err := admin.Exec(ctx, fmt.Sprintf(
+				`CREATE TRIGGER refuse_write BEFORE %s FOR EACH ROW EXECUTE FUNCTION refuse_write()`, tc.on)); err != nil {
+				t.Fatal(err)
+			}
+
+			runs := &fakeRuns{}
+			svc := schedules.NewService(st, &fakeTemplates{}, runs, &fakeAudit{}, func() time.Time { return now }, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			store := schedules.NewDueSQLStore(d, rand.Reader, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			decide := func(ctx context.Context, s schedules.Schedule) schedules.Decision {
+				return svc.Decide(ctx, s, now, 2*15*time.Second)
+			}
+
+			if _, err := store.ProcessDue(context.Background(), now, 50, decide); err != nil {
+				t.Fatalf("ProcessDue returned an error; one bad row must not fail the batch: %v", err)
+			}
+
+			// The broken row: nothing written, still due at the same
+			// instant. In the advance case the run row HAD been written
+			// before the failure, so this also pins that the savepoint
+			// took it back.
+			var brokenRuns int
+			if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, broken.ID).Scan(&brokenRuns); err != nil || brokenRuns != 0 {
+				t.Fatalf("broken schedule's run rows = %d, %v, want 0", brokenRuns, err)
+			}
+			var brokenNext *time.Time
+			if err := d.Pool().QueryRow(ctx, `SELECT next_run_at FROM schedules WHERE id = $1`, broken.ID).Scan(&brokenNext); err != nil {
+				t.Fatal(err)
+			}
+			if brokenNext == nil || !brokenNext.Equal(dueAt) {
+				t.Fatalf("broken schedule's next_run_at = %v, want unchanged (%v) so the next tick retries the same occurrence", brokenNext, dueAt)
+			}
+
+			// The healthy row in the same batch is untouched by its
+			// neighbour's failure — the point of the per-row savepoint.
+			gotHealthy, err := st.Get(scoped, org, healthy.ID)
+			if err != nil || gotHealthy.NextRunAt == nil || !gotHealthy.NextRunAt.Equal(nextHour) {
+				t.Fatalf("healthy schedule after the batch = %+v, %v; want advanced to %v", gotHealthy, err, nextHour)
+			}
+			var healthyRuns int
+			if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, healthy.ID).Scan(&healthyRuns); err != nil || healthyRuns != 1 {
+				t.Fatalf("healthy schedule's run rows = %d, %v, want 1", healthyRuns, err)
+			}
+
+			// Both rows enqueued — the broken one's run was started before
+			// its bookkeeping failed, which is why it must stay due with
+			// the same occurrence rather than be written off.
+			if len(runs.requests) != 2 {
+				t.Fatalf("enqueued = %d, want 2", len(runs.requests))
+			}
+
+			// The retry, with the injected failure removed: the broken row
+			// decides the SAME occurrence again and carries the same
+			// idempotency key, so the repeat is the no-op backlog 2.60
+			// built it to be.
+			if _, err := admin.Exec(ctx, dropTrigger); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.ProcessDue(context.Background(), now, 50, decide); err != nil {
+				t.Fatal(err)
+			}
+			if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM schedule_runs WHERE schedule_id = $1`, broken.ID).Scan(&brokenRuns); err != nil || brokenRuns != 1 {
+				t.Fatalf("broken schedule's run rows after the retry = %d, %v, want exactly 1", brokenRuns, err)
+			}
+			if len(runs.requests) != 3 {
+				t.Fatalf("enqueued after the retry = %d, want 3", len(runs.requests))
+			}
+			if runs.requests[2].IdempotencyKey == "" || runs.requests[2].IdempotencyKey != runs.requests[0].IdempotencyKey {
+				t.Fatalf("retry idempotency key = %q, want the first attempt's %q", runs.requests[2].IdempotencyKey, runs.requests[0].IdempotencyKey)
+			}
+			if len(runs.groups) != 2 {
+				t.Fatalf("distinct run groups = %d, want 2 (one per schedule); the retry must replay its own, not mint a third", len(runs.groups))
+			}
+		})
 	}
 }

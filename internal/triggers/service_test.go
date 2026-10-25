@@ -150,6 +150,11 @@ type fakeTemplates struct {
 	byID map[uuid.UUID]templates.Template
 	// opts records the options every ValidateOverrides call received.
 	opts *[]templates.OverrideOptions
+	// refuse, when set, is the answer ValidateOverrides gives instead of
+	// passing the overrides through — a test that needs the validation to
+	// fail stores the refusal here. A pointer, because the fake travels
+	// by value.
+	refuse *error
 }
 
 func (f fakeTemplates) Get(_ context.Context, orgID, id uuid.UUID) (templates.Template, error) {
@@ -163,6 +168,9 @@ func (f fakeTemplates) Get(_ context.Context, orgID, id uuid.UUID) (templates.Te
 func (f fakeTemplates) ValidateOverrides(_ context.Context, _, _ uuid.UUID, in templates.Overrides, opt templates.OverrideOptions) (templates.Overrides, error) {
 	if f.opts != nil {
 		*f.opts = append(*f.opts, opt)
+	}
+	if f.refuse != nil && *f.refuse != nil {
+		return templates.Overrides{}, *f.refuse
 	}
 	return in, nil
 }
@@ -192,7 +200,7 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{store: newFakeStore(), org: uuid.Must(uuid.NewV7()), actor: uuid.Must(uuid.NewV7()), template: uuid.Must(uuid.NewV7()), repo: uuid.Must(uuid.NewV7())}
 	sc := &schema.Schema{Fields: []schema.Field{{Name: "release", Type: schema.TypeString}, {Name: "token", Type: schema.TypeSecret}}}
-	w.tmpls = fakeTemplates{byID: map[uuid.UUID]templates.Template{w.template: {ID: w.template, OrgID: w.org, ExtraVarsSchema: sc}}, opts: &[]templates.OverrideOptions{}}
+	w.tmpls = fakeTemplates{byID: map[uuid.UUID]templates.Template{w.template: {ID: w.template, OrgID: w.org, ExtraVarsSchema: sc}}, opts: &[]templates.OverrideOptions{}, refuse: new(error)}
 	w.repos = fakeRepos{byID: map[uuid.UUID]repos.Repo{w.repo: {ID: w.repo, OrgID: w.org}}}
 	w.svc = triggers.NewService(triggers.Deps{
 		Store:     w.store,

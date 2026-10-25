@@ -15,6 +15,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/clientip"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
@@ -546,5 +547,46 @@ func TestReceiveRefusesDeeplyNestedValues(t *testing.T) {
 	}
 	if res, err := rw.svc.Receive(ctx, rw.signed(t, c, nested(32))); err != nil || res.Outcome != triggers.OutcomeTriggered {
 		t.Fatalf("Receive(depth 32) = %+v, %v; the cap itself is allowed", res, err)
+	}
+}
+
+// TestReceiveInvalidPayloadNamesOnlyTheMappingTarget is the other half of
+// the redaction: firstSegment is correct in isolation, and this pins that
+// it is what the caller actually relies on. The validation error's own
+// message carries the full path, so an answer built from the error — the
+// obvious refactor — would put the sender's own keys and indices into the
+// 422 and into the delivery row an operator reads.
+func TestReceiveInvalidPayloadNamesOnlyTheMappingTarget(t *testing.T) {
+	rw := newReceiveWorld(t)
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, rw.templateInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	*rw.tmpls.refuse = &schema.ValidationError{Problems: []schema.Problem{
+		{Path: "release.__ansible_unsafe[7]", Message: "expected a string"},
+	}}
+
+	res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"v1.2.3"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != triggers.OutcomeInvalidPayload {
+		t.Fatalf("outcome = %s, want %s", res.Outcome, triggers.OutcomeInvalidPayload)
+	}
+	if res.Field != "extra_vars.release" {
+		t.Fatalf("field = %q, want the mapping target alone", res.Field)
+	}
+	d := rw.rec.deliveries[0]
+	if d.Reason != "invalid value at extra_vars.release" {
+		t.Fatalf("delivery reason = %q", d.Reason)
+	}
+	for _, leaked := range []string{"__ansible_unsafe", "[7]", "expected a string"} {
+		if strings.Contains(res.Field, leaked) || strings.Contains(d.Reason, leaked) {
+			t.Fatalf("%q reached the answer or the delivery log: field=%q reason=%q", leaked, res.Field, d.Reason)
+		}
+	}
+	// Nothing ran: an invalid payload must not reach the queue.
+	if len(rw.runs.requests) != 0 {
+		t.Fatalf("enqueued %d runs for an invalid payload", len(rw.runs.requests))
 	}
 }
