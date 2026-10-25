@@ -188,3 +188,48 @@ func TestRevocationBetweenRecvAndAppendDropsTheEvent(t *testing.T) {
 		t.Fatalf("stored %d events after the revocation, want none: %+v", len(events), events)
 	}
 }
+
+// TestRunEventsTracksTheStreamBeforeTheRevocationRecheck pins the ORDER of
+// the two statements the window above depends on: RunEvents must register
+// the stream and only then re-read the serial.
+// TestRevocationBetweenAuthAndTrackEndsTheStream proves the re-read
+// happens, but it would stay green with the two lines swapped — and
+// swapped they close nothing: a revocation committing between them would
+// find no stream to cut AND a serial that still reads valid.
+//
+// The handler is called directly, so the context already carries what the
+// interceptor resolved and the re-read is the handler's only lookup. The
+// hook cuts the worker's streams from inside it: one stream cut means
+// tracking had already happened.
+func TestRunEventsTracksTheStreamBeforeTheRevocationRecheck(t *testing.T) {
+	h := newHarness(t)
+	jobID := uuid.Must(uuid.NewV7())
+	h.srv.registry.register(jobID, testToken(jobID))
+	ctx, w := h.authenticatedStreamContext(jobID)
+
+	cut := -1
+	h.store.onLookup = func() { cut = h.srv.streams.CloseWorker(w.ID) }
+
+	// Recv waits for the handler to return, so the cut — not an EOF racing
+	// it — is what ends the stream. The wait is bounded: with the two
+	// statements swapped nothing cuts the stream, and the test must report
+	// the order rather than hang. The bound costs nothing when the order
+	// is right, because the cut has already happened by the first Recv.
+	handlerReturned := make(chan struct{})
+	stream := &scriptedEventStream{ctx: ctx, recv: func(int) (*workerpb.RunEvent, error) {
+		select {
+		case <-handlerReturned:
+		case <-time.After(5 * time.Second):
+		}
+		return nil, io.EOF
+	}}
+	err := h.srv.RunEvents(stream)
+	close(handlerReturned)
+
+	if cut != 1 {
+		t.Fatalf("CloseWorker during the re-check cut %d streams, want the one this handler had already tracked", cut)
+	}
+	if code := status.Code(err); code != codes.Unauthenticated {
+		t.Fatalf("RunEvents = %v, want Unauthenticated from the cut", err)
+	}
+}

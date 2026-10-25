@@ -34,27 +34,37 @@ var (
 )
 
 // TestAuthUnauthenticated rejects a call that presents no client
-// certificate. With tls.VerifyClientCertIfGiven the handshake succeeds, and
-// the interceptor answers codes.Unauthenticated for every method but
-// Enroll; the assert also accepts a handshake-failure codes.Unavailable,
-// and the documentation point is: no certificate, no service.
+// certificate. With tls.VerifyClientCertIfGiven the handshake succeeds —
+// there is nothing to verify — so the refusal comes from the interceptor,
+// for every method but Enroll. This answer is not a toss-up between the
+// handshake and the interceptor: nothing in the TLS exchange can fail
+// here, so the code and the message are both pinned.
 func TestAuthUnauthenticated(t *testing.T) {
 	h := newHarness(t)
 	client := h.client(nil, nil)
 	_, err := client.ClaimJob(t.Context(), claimRequest(zoneID))
-	if err == nil {
-		t.Fatal("claim without a client certificate must fail")
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("code = %s (%v), want Unauthenticated from the interceptor", status.Code(err), err)
 	}
-	code := status.Code(err)
-	if code != codes.Unavailable && code != codes.Unauthenticated {
-		t.Fatalf("code = %s (%v), want Unauthenticated or a handshake-failure Unavailable", code, err)
+	if msg := status.Convert(err).Message(); !strings.Contains(msg, "no client certificate presented") {
+		t.Fatalf("message = %q, want the missing certificate named", msg)
 	}
 }
 
-// TestAuthForeignCertificate rejects a client certificate that chains to
-// some other root: VerifyClientCertIfGiven still verifies every presented
-// certificate, so the handshake fails (Unavailable), or the interceptor
-// answers Unauthenticated.
+// TestAuthForeignCertificate: a client certificate chaining to some other
+// root buys no service — and the two refusals it can run into are
+// different mechanisms, so the test names both instead of accepting
+// either.
+//
+// An honest client never gets the certificate onto the wire: crypto/tls
+// matches tls.Config.Certificates against the authorities the server
+// names in its certificate request, finds none that fit, and sends an
+// empty certificate — so the call reads exactly like presenting nothing.
+// That filter is the client's own courtesy, not a defence, which is why
+// the second half forces the certificate out regardless and lands on the
+// SERVER's verification. Only the code is pinned there: under TLS 1.3 the
+// server's alert races the client's first write, so the message is
+// sometimes the refused authority and sometimes the closed pipe.
 func TestAuthForeignCertificate(t *testing.T) {
 	h := newHarness(t)
 
@@ -71,14 +81,17 @@ func TestAuthForeignCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := h.client(foreignCert, foreignKey)
-	_, err = client.ClaimJob(t.Context(), claimRequest(zoneID))
-	if err == nil {
-		t.Fatal("claim with a foreign certificate must fail")
+	_, err = h.client(foreignCert, foreignKey).ClaimJob(t.Context(), claimRequest(zoneID))
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("honest client: code = %s (%v), want Unauthenticated", status.Code(err), err)
 	}
-	code := status.Code(err)
-	if code != codes.Unavailable && code != codes.Unauthenticated {
-		t.Fatalf("code = %s (%v), want Unauthenticated or a handshake-failure Unavailable", code, err)
+	if msg := status.Convert(err).Message(); !strings.Contains(msg, "no client certificate presented") {
+		t.Fatalf("honest client: message = %q — the certificate must never reach the server", msg)
+	}
+
+	forced := workerpb.NewWorkerServiceClient(h.dial(h.forcedClientTLS(foreignCert, foreignKey)))
+	if _, err := forced.ClaimJob(t.Context(), claimRequest(zoneID)); status.Code(err) != codes.Unavailable {
+		t.Fatalf("forced onto the wire: code = %s (%v), want a refused handshake", status.Code(err), err)
 	}
 }
 
@@ -309,9 +322,15 @@ func TestExpiredCertificateRefused(t *testing.T) {
 	if _, err := workers.NewService(h.store).Register(t.Context(), orgID, workers.RegisterInput{ZoneID: zoneID, Name: "expired", CertSerial: serial}); err != nil {
 		t.Fatal(err)
 	}
+	// An expired certificate still chains to the instance CA, so the
+	// client does offer it and the server's own verification is what
+	// refuses it — at the handshake, before any interceptor runs. Only
+	// the code is pinned: like every TLS 1.3 refusal here the alert races
+	// the client's first write, so the message is sometimes the expiry
+	// and sometimes the closed pipe.
 	_, err = h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID))
-	if code := status.Code(err); code != codes.Unavailable && code != codes.Unauthenticated {
-		t.Fatalf("expired certificate: %v, want a refused handshake", err)
+	if code := status.Code(err); code != codes.Unavailable {
+		t.Fatalf("expired certificate: %s (%v), want a refused handshake", code, err)
 	}
 }
 

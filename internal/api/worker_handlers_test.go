@@ -256,16 +256,30 @@ func TestWorkerEnrollmentRefusals(t *testing.T) {
 	c := s.LoginAs(owner)
 	base := s.HTTP.URL + "/api/v1/orgs/workers-refuse"
 	zones, _ := s.Deps.Hosts.ListZones(db.WithOrgScope(context.Background(), org), org)
+	// Each case pins its own status AND what the answer says. The two
+	// refusals are different in kind — the service's own rules answer 400
+	// with a reason an operator can act on, the request schema answers 422
+	// before any handler runs — and a test that accepted either for every
+	// case could not tell them apart: a service that stopped refusing the
+	// reserved name would still pass as long as something, anywhere,
+	// answered 422.
 	for name, tc := range map[string]struct {
 		body map[string]any
 		want int
+		says string
 	}{
-		"reserved name": {map[string]any{"zone_id": zones[0].ID.String(), "name": workers.EmbeddedName}, http.StatusBadRequest},
-		"unknown zone":  {map[string]any{"zone_id": uuid.NewString(), "name": "x-1"}, http.StatusBadRequest},
-		"bad zone id":   {map[string]any{"zone_id": "nope", "name": "x-1"}, http.StatusBadRequest},
+		"reserved name": {map[string]any{"zone_id": zones[0].ID.String(), "name": workers.EmbeddedName}, http.StatusBadRequest, "is reserved for the manager"},
+		"unknown zone":  {map[string]any{"zone_id": uuid.NewString(), "name": "x-1"}, http.StatusBadRequest, "unknown zone"},
+		"bad zone id":   {map[string]any{"zone_id": "nope", "name": "x-1"}, http.StatusUnprocessableEntity, "body.zone_id"},
+		"empty name":    {map[string]any{"zone_id": zones[0].ID.String(), "name": ""}, http.StatusUnprocessableEntity, "body.name"},
 	} {
-		if resp := postJSON(t, c, base+"/worker-enrollments", tc.body); resp.StatusCode != tc.want && resp.StatusCode != http.StatusUnprocessableEntity {
-			t.Fatalf("%s: %d %s", name, resp.StatusCode, mustReadBody(t, resp))
+		resp := postJSON(t, c, base+"/worker-enrollments", tc.body)
+		body := mustReadBody(t, resp)
+		if resp.StatusCode != tc.want {
+			t.Fatalf("%s: %d, want %d: %s", name, resp.StatusCode, tc.want, body)
+		}
+		if !strings.Contains(body, tc.says) {
+			t.Fatalf("%s: answer must name %q: %s", name, tc.says, body)
 		}
 	}
 	if resp := postJSON(t, c, base+"/workers/not-a-uuid/revoke", nil); resp.StatusCode != http.StatusBadRequest {
@@ -284,5 +298,75 @@ func TestWorkerEnrollmentNeedsTheWorkerEndpoint(t *testing.T) {
 	resp := postJSON(t, s.LoginAs(owner), s.HTTP.URL+"/api/v1/orgs/workers-off/worker-enrollments", map[string]any{"zone_id": zones[0].ID.String(), "name": "x"})
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(mustReadBody(t, resp), "PULSIX_GRPC_LISTEN") {
 		t.Fatalf("disabled endpoint: %d", resp.StatusCode)
+	}
+}
+
+// TestWorkerRoutesCrossOrgIsolation: every worker route is scoped to the
+// organization in its path, not to the id alone. One user owns both
+// organizations here on purpose — a 404 from a non-member would prove
+// nothing, since membership alone would already have refused the call.
+// An id from the first organization used under the second must read as
+// absent on every route that takes one, and neither list may mention the
+// other organization's rows.
+func TestWorkerRoutesCrossOrgIsolation(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("workers-xorg@example.test", "correct horse battery")
+	orgA := s.SeedOrg("workers-xorg-a", owner)
+	s.SeedOrg("workers-xorg-b", owner)
+	c := s.LoginAs(owner)
+	a := s.HTTP.URL + "/api/v1/orgs/workers-xorg-a"
+	b := s.HTTP.URL + "/api/v1/orgs/workers-xorg-b"
+	zones, err := s.Deps.Hosts.ListZones(db.WithOrgScope(context.Background(), orgA), orgA)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones: %v", err)
+	}
+
+	// A redeemed worker and a still-pending enrollment, both in org A.
+	var created struct {
+		Enrollment struct {
+			ID string `json:"id"`
+		} `json:"enrollment"`
+		Token string `json:"token"`
+	}
+	decodeInto(t, postJSON(t, c, a+"/worker-enrollments", map[string]any{"zone_id": zones[0].ID.String(), "name": "xorg-1"}), &created)
+	tok, err := enrolltoken.Parse(created.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Deps.Workers.Enroll(context.Background(), workers.EnrollInput{TokenID: tok.ID, Secret: tok.Secret, CSRPEM: workerCSR(t), Version: "v0.2c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending struct {
+		Enrollment struct {
+			ID string `json:"id"`
+		} `json:"enrollment"`
+	}
+	decodeInto(t, postJSON(t, c, a+"/worker-enrollments", map[string]any{"zone_id": zones[0].ID.String(), "name": "xorg-2"}), &pending)
+
+	workerID, enrollmentID := res.Worker.ID.String(), pending.Enrollment.ID
+	for name, call := range map[string]struct {
+		method, url string
+	}{
+		"revoke":            {http.MethodPost, b + "/workers/" + workerID + "/revoke"},
+		"delete worker":     {http.MethodDelete, b + "/workers/" + workerID},
+		"delete enrollment": {http.MethodDelete, b + "/worker-enrollments/" + enrollmentID},
+	} {
+		if resp := requestJSON(t, c, call.method, call.url, nil); resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s across organizations: %d %s", name, resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	if body := mustReadBody(t, requestJSON(t, c, http.MethodGet, b+"/workers", nil)); strings.Contains(body, workerID) {
+		t.Fatalf("org B lists org A's worker: %s", body)
+	}
+	if body := mustReadBody(t, requestJSON(t, c, http.MethodGet, b+"/worker-enrollments", nil)); strings.Contains(body, enrollmentID) {
+		t.Fatalf("org B lists org A's pending enrollment: %s", body)
+	}
+	// The refusals changed nothing: org A still has both rows.
+	if body := mustReadBody(t, requestJSON(t, c, http.MethodGet, a+"/workers", nil)); !strings.Contains(body, workerID) || !strings.Contains(body, `"status":"offline"`) {
+		t.Fatalf("org A's worker must be untouched: %s", body)
+	}
+	if body := mustReadBody(t, requestJSON(t, c, http.MethodGet, a+"/worker-enrollments", nil)); !strings.Contains(body, enrollmentID) {
+		t.Fatalf("org A's enrollment must be untouched: %s", body)
 	}
 }

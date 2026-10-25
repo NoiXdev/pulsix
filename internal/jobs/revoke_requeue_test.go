@@ -3,6 +3,8 @@ package jobs_test
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,4 +84,97 @@ func TestRequeueWorkerJobs(t *testing.T) {
 	if _, _, err := q.RequeueWorkerJobs(dead, org, revoked, "worker revoked", 3); err == nil {
 		t.Fatal("a failed requeue must return its error")
 	}
+}
+
+// TestFinishRacesRequeueWorkerJobs: the worker's result and the
+// revocation's requeue reach the same claimed job at the same moment.
+// Exactly one of them may take effect. The dangerous outcome is neither
+// error: a job that is back in the queue AND carries a finished result
+// would be run twice with a success already recorded, and a job finished
+// while counted as requeued would be claimed by a second worker.
+//
+// Both orders are legitimate, so the test asserts the pair of states is
+// consistent rather than which one wins: requeued means queued, unclaimed,
+// unfinished, payload intact, and the worker's result refused with
+// ErrNotClaimedByWorker — finished means succeeded, payload wiped, and
+// nothing reported as requeued.
+func TestFinishRacesRequeueWorkerJobs(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "jobs-finish-requeue")
+	zone := seedZone(t, d, org)
+	store := jobs.NewSQLStore(d)
+	q := jobs.NewSQLQueue(d, crypto.NewBox(testBoxKey("finish-requeue")), emptySources{}, emptySources{}, emptySources{}, emptySources{}, time.Now, rand.Reader)
+	scoped := db.WithOrgScope(ctx, org)
+	worker := uuid.Must(uuid.NewV7())
+	ref := jobs.WorkerRef{ID: worker, OrgID: org, ZoneID: zone}
+
+	const rounds = 12
+	outcomes := map[string]int{}
+	for r := range rounds {
+		j := newJob(org, zone, jobs.KindAdhoc, jobs.StatusQueued)
+		if err := store.CreateJob(scoped, j, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Pool().Exec(ctx, `UPDATE jobs SET status = 'running', worker_id = $2, attempts = 1, claimed_at = now(), payload = '{"sealed":"x"}' WHERE id = $1`, j.ID, worker); err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		var finishErr, requeueErr error
+		var requeued, ended int
+		start := make(chan struct{})
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			finishErr = q.FinishFor(ctx, ref, j.ID, jobs.StatusSucceeded, nil, "")
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			requeued, ended, requeueErr = q.RequeueWorkerJobs(ctx, org, worker, "worker revoked", 3)
+		}()
+		close(start)
+		wg.Wait()
+
+		if requeueErr != nil {
+			t.Fatalf("round %d: RequeueWorkerJobs: %v", r, requeueErr)
+		}
+		if ended != 0 {
+			t.Fatalf("round %d: ended %d jobs; attempts are below the limit, so nothing may end", r, ended)
+		}
+		var status string
+		var claimedBy *uuid.UUID
+		var finishedAt *time.Time
+		var hasPayload bool
+		if err := d.Pool().QueryRow(ctx, `SELECT status, worker_id, finished_at, payload IS NOT NULL FROM jobs WHERE id = $1`, j.ID).Scan(&status, &claimedBy, &finishedAt, &hasPayload); err != nil {
+			t.Fatal(err)
+		}
+		outcomes[status]++
+		switch status {
+		case string(jobs.StatusQueued):
+			if requeued != 1 {
+				t.Fatalf("round %d: the job is queued but RequeueWorkerJobs reported %d requeued", r, requeued)
+			}
+			if claimedBy != nil || finishedAt != nil || !hasPayload {
+				t.Fatalf("round %d: a requeued job must be unclaimed and unfinished with its payload intact: worker=%v finished=%v payload=%v", r, claimedBy, finishedAt, hasPayload)
+			}
+			if !errors.Is(finishErr, jobs.ErrNotClaimedByWorker) {
+				t.Fatalf("round %d: the result of a job handed back to the queue must be refused, got %v", r, finishErr)
+			}
+		case string(jobs.StatusSucceeded):
+			if requeued != 0 {
+				t.Fatalf("round %d: the job finished but RequeueWorkerJobs reported %d requeued", r, requeued)
+			}
+			if finishErr != nil {
+				t.Fatalf("round %d: FinishFor: %v", r, finishErr)
+			}
+			if claimedBy == nil || finishedAt == nil || hasPayload {
+				t.Fatalf("round %d: a finished job keeps its worker, gets a finish time and loses its payload: worker=%v finished=%v payload=%v", r, claimedBy, finishedAt, hasPayload)
+			}
+		default:
+			t.Fatalf("round %d: job is %s; only queued or succeeded can come out of this race", r, status)
+		}
+	}
+	t.Logf("outcomes over %d rounds: %v", rounds, outcomes)
 }

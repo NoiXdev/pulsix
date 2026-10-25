@@ -68,6 +68,9 @@ type fakeWorkerStore struct {
 	// and then marks it revoked: a revocation landing right after the
 	// interceptor authenticated a call.
 	revokeAfterLookup string
+	// onLookup runs at the start of every serial lookup, so a test can
+	// observe the state the caller had reached by the time it looked up.
+	onLookup func()
 	// lookupErr, enrollErr and addCertErr inject store faults.
 	lookupErr, enrollErr, addCertErr error
 }
@@ -103,6 +106,9 @@ func (f *fakeWorkerStore) GetByName(_ context.Context, orgID uuid.UUID, name str
 }
 
 func (f *fakeWorkerStore) LookupSerial(_ context.Context, serial *big.Int) (workers.Worker, workers.Certificate, error) {
+	if f.onLookup != nil {
+		f.onLookup()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if serial == nil {
@@ -451,14 +457,47 @@ func (h *harness) client(certPEM, keyPEM []byte) workerpb.WorkerServiceClient {
 // conn is client's raw connection, for calls by method name.
 func (h *harness) conn(certPEM, keyPEM []byte) *grpc.ClientConn {
 	h.t.Helper()
+	return h.dial(h.clientTLS(certPEM, keyPEM))
+}
+
+// clientTLS is an honest worker's client configuration: the certificate is
+// offered through tls.Config.Certificates, which crypto/tls filters
+// against the certificate authorities the server names in its request —
+// so a certificate chaining elsewhere is never put on the wire.
+func (h *harness) clientTLS(certPEM, keyPEM []byte) *tls.Config {
+	h.t.Helper()
 	cfg := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "manager"}
 	if certPEM != nil {
-		cert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			h.t.Fatal(err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
+		cfg.Certificates = []tls.Certificate{h.keyPair(certPEM, keyPEM)}
 	}
+	return cfg
+}
+
+// forcedClientTLS puts the certificate on the wire whatever the server
+// asked for: GetClientCertificate answers before the filter clientTLS
+// relies on. It is how a test reaches the SERVER's verification of a
+// chain, which an honest client's filter would otherwise hide.
+func (h *harness) forcedClientTLS(certPEM, keyPEM []byte) *tls.Config {
+	h.t.Helper()
+	cert := h.keyPair(certPEM, keyPEM)
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13, ServerName: "manager",
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &cert, nil },
+	}
+}
+
+func (h *harness) keyPair(certPEM, keyPEM []byte) tls.Certificate {
+	h.t.Helper()
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return cert
+}
+
+// dial opens the connection to the in-process server with cfg.
+func (h *harness) dial(cfg *tls.Config) *grpc.ClientConn {
+	h.t.Helper()
 	pool, _ := h.ca.Pool()
 	cfg.RootCAs = pool
 	conn, err := grpc.NewClient("passthrough:///bufnet",
