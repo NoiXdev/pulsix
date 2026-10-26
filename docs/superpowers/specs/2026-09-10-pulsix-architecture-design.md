@@ -674,9 +674,29 @@ Layered like Checkmk rulesets and Zabbix templates.
   results only for jobs it claimed, and the default deployment runs workers in their
   own container without database access or master key. Consequences: grant `jobs.run`
   only to people you would trust with every credential the organization's hosts use;
-  give each trust domain its own organization (or at least its own zone and worker).
-  Running playbooks under a separate uid so a task cannot read the worker's key is a
-  hardening item (backlog).
+  give each trust domain its own organization (or at least its own zone and worker) —
+  this remains the stronger answer, since what follows narrows only what one trust
+  domain's own playbook can do to its own worker.
+- **Playbook uid separation (backlog 2.42).** `PULSIX_WORKER_PLAY_UID`, unset by
+  default, runs ansible-runner under a second, unprivileged uid instead of the
+  worker's own; the shipped worker image sets it to `65533`, so a standard deployment
+  is separated out of the box. The worker's identity directory (certificate, key,
+  enrollment token) stays mode `0700` owned by the worker's own uid; the data
+  directory becomes `0710` once a play uid is configured, so the second uid can
+  traverse into its own run's work dir but cannot list the data directory or see
+  `identity` by name. A `localhost` task therefore reaches its own job's files (the
+  play's primary gid is the worker's own, so everything it creates stays group-owned
+  and readable back for the event stream) but not the worker's certificate and key.
+  The one privileged step — changing uid — runs through a setuid-root helper compiled
+  into the worker image (`PULSIX_WORKER_SETUID_HELPER`, default
+  `/usr/local/bin/pulsix-setuid-exec`) that execs one fixed program as one fixed uid
+  with nothing taken from its arguments or environment; a worker outside the image
+  must ship its own such helper or leave the variable unset. This closes exactly the
+  certificate-and-key exposure above — it does **not** isolate a play from its own
+  job's revealed credentials (those are the credentials the job was dispatched with)
+  or from the worker's network, so the per-trust-domain recommendation above still
+  stands as the stronger answer. See
+  `docs/superpowers/specs/2026-10-26-playbook-uid-separation-design.md`.
 - **Worker enrollment (v0.2c).** An owner or admin creates a token
   `pxw1.<id>.<secret>.<ca-sha256>`: single use, valid for one hour, bound to
   organization, zone and worker name; only the SHA-256 of the secret is stored, and
