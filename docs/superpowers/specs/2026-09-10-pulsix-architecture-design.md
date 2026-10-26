@@ -680,7 +680,8 @@ Layered like Checkmk rulesets and Zabbix templates.
 - **Playbook uid separation (backlog 2.42).** `PULSIX_WORKER_PLAY_UID`, unset by
   default, runs ansible-runner under a second, unprivileged uid instead of the
   worker's own; the shipped worker image sets it to `65533`, so a standard deployment
-  is separated out of the box. The worker's identity directory (certificate, key,
+  carries the second uid; the compose stack, not the image, turns the
+  separation on, so an existing installation is never opted in by an image pull. The worker's identity directory (certificate, key,
   enrollment token) stays mode `0700` owned by the worker's own uid; the data
   directory becomes `0710` once a play uid is configured, so the second uid can
   traverse into its own run's work dir but cannot list the data directory or see

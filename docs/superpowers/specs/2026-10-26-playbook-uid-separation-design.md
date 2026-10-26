@@ -1,6 +1,13 @@
 # Running playbooks under their own uid — design
 
-Backlog 2.42. Status: design only; nothing is built.
+Backlog 2.42. Status: **built** — see
+`docs/superpowers/plans/2026-10-26-playbook-uid-separation.md` and the commits
+it names. Two things below were superseded during execution and are kept as
+written so the reasoning survives: the shared `pulsix-run` group (the play's
+PRIMARY gid is the worker's own instead, which removed a variable), and
+"execs one fixed program" (work-dir cleanup became a second caller of the
+helper). Cancellation across the uid boundary is an open defect the
+whole-feature review found; it is not solved here.
 
 ## Why
 
