@@ -162,6 +162,13 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc -b
+      # The Playwright specs are their own tsconfig project and `tsc -b`
+      # builds only the root one (include: ["src"]), so until this step
+      # existed ESLint — which is type-unaware — was the only thing
+      # looking at them (backlog 1.47). A separate step rather than a
+      # `references` entry: the root project sets noEmit, which cannot be
+      # combined with the composite flag a referenced project needs.
+      - run: npx tsc -p e2e/tsconfig.json --noEmit
       - run: npm test -- --coverage
       - run: npm run build
       - name: Verify the generated API client has no drift

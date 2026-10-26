@@ -40,8 +40,15 @@ export function Dialog({ open, onClose, title, children, size = 'default' }: Dia
   return (
     <dialog
       ref={ref}
+      // Only `close`, not `cancel` (backlog 1.46). A native <dialog>
+      // answers one Escape with BOTH events — `cancel` first, then
+      // `close` once it is not prevented — so wiring the same handler to
+      // each called it twice per key press. Every call site's closer
+      // happened to be idempotent, which is why nothing broke; the first
+      // one with a real side effect would have double-fired silently.
+      // `close` is the one to keep: it also fires for the programmatic
+      // el.close() below, which `cancel` does not.
       onClose={onClose}
-      onCancel={onClose}
       aria-labelledby={titleId}
       // m-auto is not decoration: a native <dialog> centres itself in the
       // viewport through the user-agent stylesheet's own `margin: auto`,
