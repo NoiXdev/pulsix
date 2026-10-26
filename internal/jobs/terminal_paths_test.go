@@ -24,7 +24,7 @@ import (
 func (w *atomicWorld) insertRotateJob(t *testing.T, target uuid.UUID) Job {
 	t.Helper()
 	zone := testZone(t, w.d, w.org)
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: w.org, ZoneID: zone, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	payload, err := json.Marshal(rotationJobPayload{
 		CredentialID: uuid.Must(uuid.NewV7()), Target: rotationTarget{Kind: rotationTargetHost, ID: target},

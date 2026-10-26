@@ -102,6 +102,9 @@ const rotationLockKeyPrefix = "credential-rotation:"
 // insertJobs inserts jobs through q (a transaction's queries).
 func insertJobs(ctx context.Context, q *gen.Queries, jobs []Job, payloads map[uuid.UUID]json.RawMessage) error {
 	for _, j := range jobs {
+		if err := checkTrigger(j); err != nil {
+			return err
+		}
 		if _, err := q.CreateJob(ctx, createJobParams(j, payloads[j.ID])); err != nil {
 			return fmt.Errorf("create job %s: %w", j.ID, err)
 		}
@@ -109,7 +112,23 @@ func insertJobs(ctx context.Context, q *gen.Queries, jobs []Job, payloads map[uu
 	return nil
 }
 
+// checkTrigger refuses a job with no trigger (backlog 2.68, T4).
+// createJobParams used to substitute "manual" for an empty one, for the
+// benefit of integration-test fixtures that did not set it — but a
+// trigger is how a run is ATTRIBUTED, and quietly calling an unattributed
+// job manual writes a claim about who started it into the run list and
+// the audit trail. A caller that forgets one is a bug in this package,
+// and this says so where it happens rather than letting the database
+// answer with the name of a check constraint.
+func checkTrigger(j Job) error {
+	if j.Trigger == "" {
+		return fmt.Errorf("%w: job %s has no trigger", ErrInvalidInput, j.ID)
+	}
+	return nil
+}
+
 // createJobParams maps a job and its stored payload onto the insert.
+// Callers check the trigger first; see checkTrigger.
 func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 	hostIDs := j.HostIDs
 	if hostIDs == nil {
@@ -117,17 +136,10 @@ func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 		// NULL, keeps the column's contract.
 		hostIDs = []uuid.UUID{}
 	}
-	trigger := j.Trigger
-	if trigger == "" {
-		// Several existing integration tests insert jobs without a
-		// trigger; the insert always names the column, so the DB default
-		// never applied and the new jobs_trigger_check would refuse ''.
-		trigger = TriggerManual
-	}
 	return gen.CreateJobParams{
 		ID: j.ID, OrgID: j.OrgID, ZoneID: j.ZoneID, Kind: string(j.Kind),
 		TemplateID: db.NullUUID(j.TemplateID), HostIds: hostIDs, Status: string(j.Status),
-		RunGroupID: j.RunGroupID, Trigger: trigger, ActorID: db.NullUUID(j.ActorID),
+		RunGroupID: j.RunGroupID, Trigger: j.Trigger, ActorID: db.NullUUID(j.ActorID),
 		Payload:   payload,
 		DependsOn: db.NullUUID(j.DependsOn), RotationCredentialID: db.NullUUID(j.RotationCredentialID),
 		TriggerRef: db.NullUUID(j.TriggerRef), HostsExcluded: int32(j.HostsExcluded), //nolint:gosec // a host count, bounded by the scope
@@ -135,6 +147,9 @@ func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 }
 
 func (s *SQLStore) CreateJob(ctx context.Context, j Job, payload json.RawMessage) error {
+	if err := checkTrigger(j); err != nil {
+		return err
+	}
 	if _, err := s.q.CreateJob(ctx, createJobParams(j, payload)); err != nil {
 		return fmt.Errorf("create job: %w", err)
 	}

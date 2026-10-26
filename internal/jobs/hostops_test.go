@@ -162,7 +162,7 @@ func TestBuildPayloadConnectionTestShipsSelfContainedProbe(t *testing.T) {
 	}})
 	q.SetKeyPins(fakePins{byID: map[uuid.UUID]string{hostID: pinned}})
 
-	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	job := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Payload: json.RawMessage(`{"note":"ignored"}`)}
 	out := &workerpb.Job{}
 	if err := q.buildPayload(db.WithOrgScope(context.Background(), org), job, out); err != nil {
@@ -422,7 +422,7 @@ func TestFinishRecordsConnectionTest(t *testing.T) {
 
 	// A connection_test job claimed, its single result event streamed, then
 	// finished failed — the outcome records with the EVENT's timestamp.
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
@@ -481,7 +481,7 @@ func TestFinishConnectionTestCancelledRecordsNothing(t *testing.T) {
 	store := NewSQLStore(d)
 	scoped := db.WithOrgScope(context.Background(), org)
 
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
@@ -509,7 +509,7 @@ func TestFinishConnectionTestWithoutEventRecordsNothing(t *testing.T) {
 	scoped := db.WithOrgScope(context.Background(), org)
 
 	// The job errored at claim (payload build failed) — no events exist.
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
@@ -545,7 +545,7 @@ func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 
 	// A job whose claim failed carries no single host: recordTest logs and
 	// records nothing (the job is already terminal, no event, no record).
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: nil, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
@@ -565,7 +565,7 @@ func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 
 	// A running connection_test job whose event payload is not a result:
 	// recordTest logs the parse failure and records nothing.
-	j2 := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j2 := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j2, nil); err != nil {
 		t.Fatal(err)
@@ -590,7 +590,7 @@ func TestRecordTestErrorPathsAreLoggedNotFatal(t *testing.T) {
 
 	// A result whose hop entries are malformed (a bastion id that does not
 	// parse): the list is rejected rather than half-stored, nothing records.
-	j3 := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j3 := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j3, nil); err != nil {
 		t.Fatal(err)
@@ -649,7 +649,7 @@ func TestFinishConnectionTestTwoHostsRecordsNothing(t *testing.T) {
 	// probe target is self-contained per host. It fails closed at claim
 	// (a multi-host connection_test cannot build a payload), so the branch
 	// is driven through recordTest directly with a seeded running job.
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())},
 		Status:  StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j, nil); err != nil {
@@ -695,7 +695,7 @@ func TestFinishConnectionTestSinkFailureFailsTheFinish(t *testing.T) {
 	store := NewSQLStore(d)
 	scoped := db.WithOrgScope(context.Background(), org)
 
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
 		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)

@@ -483,6 +483,9 @@ func (q *SQLQueue) enqueueRevocations(ctx context.Context, orgID, groupID uuid.U
 			return fmt.Errorf("finalize rotation: seal revocation: %w", err)
 		}
 		stored := json.RawMessage(`"` + base64.StdEncoding.EncodeToString(sealed) + `"`)
+		if err := checkTrigger(j); err != nil {
+			return err
+		}
 		if _, err := gen.New(q.db).CreateJob(ctx, createJobParams(j, stored)); err != nil {
 			return fmt.Errorf("finalize rotation: queue revocation: %w", err)
 		}

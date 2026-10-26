@@ -21,7 +21,7 @@ import (
 // worker (ClaimFor), returning the job.
 func (w *atomicWorld) claimRotateJobFor(t *testing.T, worker WorkerRef) Job {
 	t.Helper()
-	j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: worker.ZoneID, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: w.org, ZoneID: worker.ZoneID, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	payload, err := json.Marshal(rotationJobPayload{
 		CredentialID: uuid.Must(uuid.NewV7()), Target: rotationTarget{Kind: rotationTargetHost, ID: w.host},

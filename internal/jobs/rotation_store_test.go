@@ -683,14 +683,14 @@ func TestCreateJobGroupIsAtomic(t *testing.T) {
 	// A pre-inserted row whose id the group's second job will collide with.
 	tripID := uuid.Must(uuid.NewV7())
 	if err := store.CreateJob(scoped, jobs.Job{
-		ID: tripID, OrgID: org, ZoneID: seedZone(t, d, org), Kind: jobs.KindRun,
+		ID: tripID, OrgID: org, ZoneID: seedZone(t, d, org), Kind: jobs.KindRun, Trigger: jobs.TriggerManual,
 		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now(),
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	zone := seedZone(t, d, org)
-	first := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: jobs.KindRotateKey,
+	first := jobs.Job{ID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, OrgID: org, ZoneID: zone, Kind: jobs.KindRotateKey,
 		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	second := first
 	second.ID = tripID // violates jobs_pkey on the second insert
@@ -770,7 +770,7 @@ func TestFinishClearsSystemPayloads(t *testing.T) {
 	}
 
 	// The bootstrap job: a sealed one-time login, terminal → dropped.
-	bootstrap := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: w.zone(t), Kind: jobs.KindBootstrap,
+	bootstrap := jobs.Job{ID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, OrgID: w.org, ZoneID: w.zone(t), Kind: jobs.KindBootstrap,
 		HostIDs: []uuid.UUID{h.ID}, Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	loginPayload, err := json.Marshal(map[string]any{
 		"credential_id": created.ID.String(), "login_user": "root", "login": map[string]string{"password": "one-time-pw"},
@@ -794,7 +794,7 @@ func TestFinishClearsSystemPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	probe := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: w.zone(t), Kind: jobs.KindConnectionTest,
+	probe := jobs.Job{ID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, OrgID: w.org, ZoneID: w.zone(t), Kind: jobs.KindConnectionTest,
 		HostIDs: []uuid.UUID{h.ID}, Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(w.scoped, probe, sealFor(box, w.org, probe.ID, rotationPayload)); err != nil {
 		t.Fatal(err)
@@ -803,7 +803,7 @@ func TestFinishClearsSystemPayloads(t *testing.T) {
 
 	// A plain connection_test (no payload) finishes cleanly and stays
 	// payload-less.
-	plain := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: w.zone(t), Kind: jobs.KindConnectionTest,
+	plain := jobs.Job{ID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, OrgID: w.org, ZoneID: w.zone(t), Kind: jobs.KindConnectionTest,
 		HostIDs: []uuid.UUID{h.ID}, Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	if err := store.CreateJob(w.scoped, plain, nil); err != nil {
 		t.Fatal(err)

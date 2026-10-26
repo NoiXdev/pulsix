@@ -105,7 +105,7 @@ func (w *atomicWorld) claimedRotateJobs(t *testing.T, n int) []Job {
 	scoped := db.WithOrgScope(context.Background(), w.org)
 	var out []Job
 	for i := 0; i < n; i++ {
-		j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
+		j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: w.org, ZoneID: zone, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
 			Status: StatusQueued, RunGroupID: group, CreatedAt: time.Now().Add(time.Duration(i) * time.Microsecond)}
 		payload, err := json.Marshal(rotationJobPayload{
 			CredentialID: cred, Target: rotationTarget{Kind: rotationTargetHost, ID: w.host},
