@@ -69,6 +69,13 @@ const (
 	evStateStdout   = "stdout"
 )
 
+// envPlayUID is PULSIX_WORKER_PLAY_UID. worker.Config keeps its own copy of
+// this name unexported, so it is duplicated here: a refused spawn (see
+// newRunnerCmd's caller) must name the variable in its error, not just read
+// env.Config.PlayUID, or an operator is left with a bare "operation not
+// permitted" and no idea which setting to revisit.
+const envPlayUID = "PULSIX_WORKER_PLAY_UID"
+
 // Runner executes claimed jobs by driving ansible-runner as a subprocess.
 // The fields are the injection points; zero values fall back to their
 // defaults at Run time.
@@ -130,6 +137,16 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if err := r.materializeRunnerConfig(job, env); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize runner config: %w", err)
 	}
+	if env.Config.PlayUID != 0 {
+		// Every run file is now in place (inventory, playbook, ansible.cfg,
+		// ssh_config, vault passwords); ShareWorkDir must run after all of
+		// them and before the spawn below, or whatever lands outside this
+		// window stays owner-only and the play — about to start under its
+		// own uid — cannot reach it.
+		if err := ShareWorkDir(env.WorkDir); err != nil {
+			return worker.StatusError, nil, fmt.Errorf("share work dir with play uid: %w", err)
+		}
+	}
 
 	// The bookends are the runner's own events; everything between them is
 	// ansible-runner's stream, forwarded in order.
@@ -146,13 +163,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		args = append(args, "--limit", limit)
 	}
 
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = env.WorkDir
-	cmd.Env = r.subprocessEnv(env, ansibleBin)
-	// A private process group: the cancel path signals the runner and the
-	// ansible-playbook child together, whatever ansible-runner forwards
-	// itself.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd := newRunnerCmd(bin, args, env, r.subprocessEnv(env, ansibleBin))
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -162,6 +173,15 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
+		if cred := cmd.SysProcAttr.Credential; cred != nil {
+			// There is no fallback: a worker configured to drop privilege
+			// that silently ran the play as itself instead would defeat
+			// the whole point, so a refused setuid fails the job — named
+			// so an operator lands on the variable to revisit instead of a
+			// bare "operation not permitted".
+			return worker.StatusError, nil, fmt.Errorf("start %s under %s=%d: the worker process may not change uid in this deployment: %w",
+				bin, envPlayUID, cred.Uid, err)
+		}
 		return worker.StatusError, nil, fmt.Errorf("start %s: %w", bin, err)
 	}
 
@@ -215,6 +235,25 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		return status, statsMap, errors.New(errText)
 	}
 	return status, statsMap, nil
+}
+
+// newRunnerCmd builds the ansible-runner subprocess's *exec.Cmd. Setpgid is
+// unconditional regardless of PlayUID — the cancel path signals the whole
+// process group and breaks without it. Credential is set only when
+// env.Config.PlayUID is non-zero (the default, feature-off value); its Gid
+// is the WORKER's own (os.Getgid()), deliberately not a group derived from
+// the play uid, because the worker must still be able to read whatever the
+// play writes back into the work dir — that is what keeps the event stream
+// working.
+func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string) *exec.Cmd {
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = env.WorkDir
+	cmd.Env = subprocessEnv
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if uid := env.Config.PlayUID; uid != 0 {
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: uint32(os.Getgid())}
+	}
+	return cmd
 }
 
 // streamEvents forwards the runner's stdout event stream: each ansible

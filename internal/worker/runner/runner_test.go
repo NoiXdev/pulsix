@@ -8,6 +8,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -699,6 +700,85 @@ func TestRunEmptyInventoryRunsAgainstNothing(t *testing.T) {
 	// ansible-level condition (exit 5), not a materialization error.
 	if got := string(mustRead(t, filepath.Join(env.WorkDir, "inventory.json"))); got != "{}" {
 		t.Errorf("inventory.json = %q", got)
+	}
+}
+
+// TestRunnerSpawnsUnderThePlayUID pins the built *exec.Cmd directly (per the
+// plan: the uid boundary itself is proven by the Task 4 integration test,
+// and a unit test cannot setuid). PlayUID set must carry a Credential with
+// the configured Uid and the WORKER's own Gid — not a group derived from
+// the play uid, which is what keeps the worker able to read what the play
+// writes. PlayUID 0 must carry no Credential at all, and Setpgid must stay
+// true either way: the cancel path signals the process group and breaks
+// without it.
+func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
+	cases := map[string]struct {
+		playUID        uint32
+		wantCredential bool
+	}{
+		"play uid set":   {playUID: 12345, wantCredential: true},
+		"play uid unset": {playUID: 0, wantCredential: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := runEnv(t)
+			env.Config.PlayUID = tc.playUID
+			cmd := newRunnerCmd("ansible-runner", []string{"run"}, env, nil)
+
+			if !cmd.SysProcAttr.Setpgid {
+				t.Error("Setpgid = false, want true regardless of PlayUID")
+			}
+			if !tc.wantCredential {
+				if cmd.SysProcAttr.Credential != nil {
+					t.Errorf("Credential = %+v, want nil when PlayUID is 0", cmd.SysProcAttr.Credential)
+				}
+				return
+			}
+			cred := cmd.SysProcAttr.Credential
+			if cred == nil {
+				t.Fatal("Credential is nil, want it set when PlayUID is non-zero")
+			}
+			if cred.Uid != tc.playUID {
+				t.Errorf("Credential.Uid = %d, want %d", cred.Uid, tc.playUID)
+			}
+			if cred.Gid != uint32(os.Getgid()) {
+				t.Errorf("Credential.Gid = %d, want the worker's own gid %d (so the worker can still read what the play writes)", cred.Gid, os.Getgid())
+			}
+		})
+	}
+}
+
+// TestRunnerRefusedSpawnNamesTheVariable: a non-root test process asked to
+// spawn under a uid it is not already is always refused by the kernel
+// (EPERM). The resulting error must name PULSIX_WORKER_PLAY_UID and the
+// uid — a bare "operation not permitted" sends an operator nowhere useful.
+// There is no fallback: the job fails outright.
+func TestRunnerRefusedSpawnNamesTheVariable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: the spawn would succeed")
+	}
+	playUID := uint32(1)
+	if os.Getuid() == 1 {
+		playUID = 2
+	}
+
+	fake := writeFakeRunner(t)
+	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
+	t.Setenv(fakeEnvEvents, fixtureAbs(t))
+	t.Setenv(fakeEnvExit, "0")
+
+	job := runJob(t)
+	env := runEnv(t)
+	env.Config.PlayUID = playUID
+	_, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), job, env, func(*workerpb.RunEvent) error { return nil })
+	if err == nil {
+		t.Fatal("Run must fail: this test process cannot become another uid")
+	}
+	if !strings.Contains(err.Error(), "PULSIX_WORKER_PLAY_UID") {
+		t.Errorf("error = %v, want it to name PULSIX_WORKER_PLAY_UID (not a bare \"operation not permitted\")", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(playUID)) {
+		t.Errorf("error = %v, want it to name the uid %d", err, playUID)
 	}
 }
 
