@@ -182,6 +182,10 @@ type alertOut struct {
 	Muted             bool       `json:"muted"`
 	MuteReason        string     `json:"mute_reason"`
 	MutedUntil        *time.Time `json:"muted_until"`
+	// WasFlapping was absent from this struct until backlog 4.33, which
+	// is the other half of why nothing could catch a broken assignment:
+	// the field was not merely unasserted, it was not even decoded.
+	WasFlapping bool `json:"was_flapping"`
 }
 
 type alertListOut struct {
@@ -805,5 +809,64 @@ func TestListLimitsAdvertiseTheirBounds(t *testing.T) {
 		if resp := requestJSON(t, c, http.MethodGet, base+path, nil); resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s with no limit = %d, want the default to still work", path, resp.StatusCode)
 		}
+	}
+}
+
+// TestAlertDTOReportsWasFlapping is backlog 4.33. seedOpenAlert writes
+// no check_states row — its own doc comment says so — and InsertAlert
+// seeds was_flapping FROM that row, so every alert any API test has ever
+// opened carried false by construction. The store's own
+// TestExecuteOpenSeedsWasFlappingFromCheckState covers the column; what
+// nothing covered is the one line that carries it to a client,
+// `WasFlapping: a.WasFlapping` in toAlertDTO. Flipped, dropped, or
+// hard-wired, it would have shipped silently.
+//
+// Two alerts, not one, and on two different hosts: a single true
+// assertion passes just as well against a hard-wired true. The pair is
+// what makes the field prove it is reading something.
+func TestAlertDTOReportsWasFlapping(t *testing.T) {
+	f := newAlertFixture(t, "alert-flapping-dto")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// The flapping tuple's state has to exist BEFORE the alert opens:
+	// InsertAlert reads it in the same statement that writes the row.
+	flapping := tupleSubject(f.hostA, "cpu", "", "used_percent")
+	steady := tupleSubject(f.hostB, "cpu", "", "used_percent")
+	seedTupleState(t, f.s, f.orgID, f.hostA, "cpu", "", "used_percent", "warn", now, now, true)
+	seedTupleState(t, f.s, f.orgID, f.hostB, "cpu", "", "used_percent", "warn", now, now, false)
+
+	flappingID := f.seedOpenAlert(t, f.hostA, flapping, rules.StateWarn, now)
+	steadyID := f.seedOpenAlert(t, f.hostB, steady, rules.StateWarn, now)
+
+	for _, tc := range []struct {
+		name string
+		id   uuid.UUID
+		want bool
+	}{
+		{"the flapping tuple's alert", flappingID, true},
+		{"the steady one's", steadyID, false},
+	} {
+		resp, got := f.getAlert(t, f.viewerC, tc.id)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: GET = %d", tc.name, resp.StatusCode)
+		}
+		if got.WasFlapping != tc.want {
+			t.Errorf("%s: was_flapping = %v, want %v", tc.name, got.WasFlapping, tc.want)
+		}
+	}
+
+	// The list path builds its DTOs through the same function; a
+	// divergence between the two would be its own bug.
+	var list alertListOut
+	decodeInto(t, requestJSON(t, f.viewerC, http.MethodGet, f.alertsURL(""), nil), &list)
+	seen := map[string]bool{}
+	for _, a := range list.Alerts {
+		seen[a.ID] = a.WasFlapping
+	}
+	if !seen[flappingID.String()] {
+		t.Errorf("the list reports was_flapping=false for the flapping alert; detail and list disagree")
+	}
+	if seen[steadyID.String()] {
+		t.Errorf("the list reports was_flapping=true for the steady alert")
 	}
 }
