@@ -370,6 +370,35 @@ func evaluateCases() []evalCase {
 			},
 		},
 		{
+			// Backlog 3.37. The case above is a host going silent — it
+			// still produced news (ok → unknown), so it keeps the short
+			// heartbeat. This is the same host one pass later: already
+			// unknown, nothing changed, nothing ripening. At 15 s it
+			// rewrote its state rows four times a minute with only
+			// evaluated_at moving, and since the claim orders by
+			// next_due_at, a fleet of decommissioned hosts took the batch
+			// ahead of live ones on every tick.
+			//
+			// Backing off cannot delay a recovery: a sample arriving marks
+			// the host dirty, and the claim takes a dirty cursor whatever
+			// its due time says.
+			name: "a host already fully unknown and unchanged backs its heartbeat off",
+			snap: rules.Snapshot{
+				Now:       at(20),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(10), oneMin)},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous:  prev(was(cpuT, rules.StateUnknown, at(5))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateUnknown, Since: at(5),
+					LastValue: ptr(95.0), EvaluatedAt: at(20),
+				}},
+				Host:    rules.HostState{State: rules.StateUnknown, Unknown: 1, Since: at(5), EvaluatedAt: at(20)},
+				NextDue: at(20).Add(5 * time.Minute),
+			},
+		},
+		{
 			// Step 1 by collection error: the value is fresh and would
 			// cross the threshold, but the agent could not collect it.
 			name: "a collection error goes unknown even with a fresh value",

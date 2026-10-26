@@ -29,6 +29,21 @@ const (
 	// unknown: nothing marks such a host dirty, so only a due time
 	// returns to it.
 	heartbeat = 15 * time.Second
+	// silentHeartbeat replaces heartbeat for a host that has gone fully
+	// silent: every tuple already unknown, nothing ripening, nothing
+	// changed this pass (backlog 3.37). At 15 s such a host rewrote every
+	// state row four times a minute with only evaluated_at moving, and —
+	// because ClaimDueEvalCursors orders by next_due_at — the oldest due
+	// times belong precisely to those hosts, so a fleet carrying a hundred
+	// decommissioned ones took the batch ahead of live hosts, every tick.
+	//
+	// Backing off costs nothing it was buying. The heartbeat exists to
+	// bring a silent host INTO unknown; once it is there, each pass
+	// re-derives the same answer from the same absence of data. And it
+	// cannot delay a recovery: a sample arriving marks the host dirty, and
+	// the claim takes `dirty_at > evaluated_at OR next_due_at <= now()` —
+	// the due time is not what brings a returning agent back.
+	silentHeartbeat = 5 * time.Minute
 	// The flapping flag's own hysteresis (spec, step 6): set at this many
 	// changes in the counted window, cleared below the lower bound, and
 	// carried over in between, so the flag does not itself flap.
@@ -349,7 +364,7 @@ func Evaluate(s Snapshot) Result {
 		States:     states,
 		Changes:    changes,
 		Host:       rollUp(states, s.Now, s.PreviousHost),
-		NextDue:    nextDue(pending, s.Now),
+		NextDue:    nextDue(pending, states, len(changes) > 0, s.Now),
 		Dropped:    dropped,
 		Unmeasured: unmeasured,
 	}
@@ -554,8 +569,17 @@ func staleAt(ts TupleSnapshot) time.Time {
 // what makes unknown reachable at all — a host whose agent has died sends
 // nothing, so nothing marks it dirty and only a due time brings the ticker
 // back to it.
-func nextDue(pending []time.Time, now time.Time) time.Time {
+//
+// The fallback is the long one once the host has arrived where that
+// journey ends: every tuple unknown, and this pass changed nothing. See
+// silentHeartbeat for why that is free. Anything else — a single tuple
+// still judged, or any change at all — keeps the short one, including a
+// host part-way into going silent, which is still a host producing news.
+func nextDue(pending []time.Time, states []TupleState, changed bool, now time.Time) time.Time {
 	if len(pending) == 0 {
+		if silent(states, changed) {
+			return now.Add(silentHeartbeat)
+		}
 		return now.Add(heartbeat)
 	}
 	earliest := pending[0]
@@ -565,6 +589,24 @@ func nextDue(pending []time.Time, now time.Time) time.Time {
 		}
 	}
 	return earliest
+}
+
+// silent reports whether this pass produced nothing but a repeat of what
+// was already stored: at least one tuple, every one of them unknown, and
+// no change. A host with NO states is deliberately not silent — it writes
+// no row at all (see rollUp), so there is nothing to back off from, and a
+// host whose checks are being set up should not wait five minutes for its
+// first verdict.
+func silent(states []TupleState, changed bool) bool {
+	if changed || len(states) == 0 {
+		return false
+	}
+	for _, st := range states {
+		if st.State != StateUnknown {
+			return false
+		}
+	}
+	return true
 }
 
 // rollUp is step 7: the host's worst tuple state with a count per severity.
