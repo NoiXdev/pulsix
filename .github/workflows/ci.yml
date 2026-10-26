@@ -352,7 +352,7 @@ jobs:
     # straight into its local Docker daemon with a plain `docker build`);
     # release.yml is what additionally cross-builds arm64.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       # Pinned by SHA like every other job (see the go job's pin table).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -379,6 +379,18 @@ jobs:
           docker build -f deploy/worker/Dockerfile \
             -t "noixdev/pulsix-worker:$IMAGE_TAG" \
             --build-arg VERSION="$IMAGE_TAG" .
+      # The uid boundary (backlog 2.42) is a kernel boundary inside the
+      # image, so it can only be tested where uid 65533, the shared group
+      # and the setuid helper exist — which is here, against the image
+      # this job just built. Without this step the test skips everywhere
+      # and proves nothing, which is how a shipped image that could not
+      # run a single playbook stayed green.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version: "1.27.1" }
+      - name: Run the playbook uid boundary against the worker image
+        env:
+          PULSIX_E2E_WORKER_IMAGE: noixdev/pulsix-worker:${{ github.sha }}
+        run: go test ./internal/e2e -run TestPlaybookUIDBoundary -count=1 -timeout 1200s
       - name: Run the release smoke test against them
         env:
           IMAGE_TAG: ${{ github.sha }}

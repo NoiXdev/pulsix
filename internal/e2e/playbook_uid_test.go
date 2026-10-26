@@ -9,64 +9,74 @@
 // test inside the real image: unit tests can prove the *exec.Cmd is shaped
 // right (internal/worker/runner) and the directory modes are right
 // (internal/worker), but neither can prove that uid 65533 is actually
-// refused by the filesystem. This test therefore runs the image.
+// refused by the filesystem.
+//
+// What runs in the container is internal/e2e/uidboundary's test binary,
+// compiled here for the image's platform and mounted in. It drives the
+// REAL worker — worker.Loop with the real runner.Runner executor against a
+// fake manager — through real jobs. The earlier version of this test
+// staged the work dir by hand and invoked the helper directly, which is
+// precisely why it stayed green while the shipped image could not run a
+// single playbook: nothing it did went through the code that was broken.
 package e2e
 
 import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 // envWorkerImage overrides the image under test; defaultWorkerImage is the
-// tag `docker build -f deploy/worker/Dockerfile -t ...` and CI's release
-// smoke test both produce.
+// tag `docker build -f deploy/worker/Dockerfile -t ...` produces locally.
+// CI's docker job builds noixdev/pulsix-worker:<sha> and points this
+// variable at it.
 const (
 	envWorkerImage     = "PULSIX_E2E_WORKER_IMAGE"
 	defaultWorkerImage = "noixdev/pulsix-worker:dev"
+	// envInImage switches the mounted binary out of skip mode; the
+	// in-image package refuses to assert anything without it.
+	envInImage = "PULSIX_UID_BOUNDARY_IN_IMAGE"
 )
 
-// The markers the in-container script prints; each stands for one half of
-// the boundary. They are asserted by presence rather than by the script's
-// exit code alone so a script that silently stopped early cannot pass.
-const (
-	markerBundleDirPrivate = "PULSIX-UID-TEST: bundle dir is 0700"
-	markerUIDMismatch      = "PULSIX-UID-TEST: the helper refuses a uid it was not built for"
-	markerKeyUnreadable    = "PULSIX-UID-TEST: the play cannot read the worker key"
-	markerArtifactReadBack = "PULSIX-UID-TEST: the worker read back what the play wrote"
-)
-
-func TestPlaybookCannotReadTheWorkerKey(t *testing.T) {
+func TestPlaybookUIDBoundary(t *testing.T) {
 	image := workerImageOrSkip(t)
-	// A whole ansible-playbook run inside a cold container; generous, and
-	// the test fails rather than hangs if the image misbehaves.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// A cold container running several whole ansible-playbook runs;
+	// generous, and the test fails rather than hangs if the image
+	// misbehaves.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
+	binary := buildInImageTest(ctx, t, image)
+
 	// No --user: the image's own `USER 65532:65532` is part of what is
-	// under test — the helper has to work for an unprivileged caller, which
-	// is the whole reason it exists instead of CAP_SETUID on the worker.
+	// under test — the helper has to work for an unprivileged caller,
+	// which is the whole reason it exists instead of CAP_SETUID on the
+	// worker. --network none because the only network the tests need is
+	// the container's own loopback (the SSH fixture binds 127.0.0.1).
 	cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
-		"--entrypoint", "/bin/sh", image, "-c", uidBoundaryScript)
+		"--network", "none",
+		"-e", envInImage+"=1",
+		"-v", binary+":/uid-boundary.test:ro",
+		"--entrypoint", "/uid-boundary.test", image,
+		"-test.v", "-test.timeout", "10m")
 	out, err := cmd.CombinedOutput()
 	t.Logf("docker run %s:\n%s", image, out)
 	if err != nil {
-		t.Fatalf("the uid boundary script failed: %v", err)
+		t.Fatalf("the uid boundary tests failed inside %s: %v", image, err)
 	}
-	for _, marker := range []string{markerBundleDirPrivate, markerUIDMismatch, markerKeyUnreadable, markerArtifactReadBack} {
-		if !strings.Contains(string(out), marker) {
-			t.Errorf("the script never reported %q", marker)
-		}
+	// A binary that skipped everything would exit 0 too; the tests only
+	// skip when the in-image marker is missing, so an all-skip run means
+	// the wiring here broke rather than the boundary holding.
+	if strings.Contains(string(out), "SKIP") {
+		t.Errorf("the in-image tests skipped; they must RUN inside the image")
 	}
 }
 
-// workerImageOrSkip returns the worker image to test, or skips. It mirrors
-// web/e2e/worker.ts's probe: the image carrying the Ansible runtime is not
-// part of the test stack yet, so an absent image is a skip with a visible
-// reason and never a silent pass.
+// workerImageOrSkip returns the worker image to test, or skips.
 func workerImageOrSkip(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -77,130 +87,35 @@ func workerImageOrSkip(t *testing.T) string {
 		image = defaultWorkerImage
 	}
 	if err := exec.Command("docker", "image", "inspect", image).Run(); err != nil {
-		t.Skipf("the pulsix worker image %q is not built here (override with %s): "+
-			"backlog 2.96 is the blocker — the Ansible worker image is not in the test stack yet", image, envWorkerImage)
+		t.Skipf("the pulsix worker image %q is not built here: build it with "+
+			"`docker build -f deploy/worker/Dockerfile -t %s .` or point %s at an existing tag",
+			image, defaultWorkerImage, envWorkerImage)
 	}
 	return image
 }
 
-// uidBoundaryScript runs as the image's own unprivileged user (65532). It
-// stages what a real run stages — a certificate bundle in /etc/pulsix-worker
-// and a group-shared work dir, the shapes deploy/worker/Dockerfile and
-// internal/worker/runner.ShareWorkDir produce — then starts one play through
-// the setuid helper and checks both directions of the boundary:
-// the play cannot read the key, and the worker can read what the play wrote.
-const uidBoundaryScript = `
-set -eu
-play_uid=65533
-bundle=/etc/pulsix-worker
-key=$bundle/key.pem
-data=/var/lib/pulsix-worker
-work=$data/uid-boundary
-work_mismatch=/tmp/pulsix-uid-mismatch.log
-
-# The image's own shape, before any worker code has run: a bundle directory
-# a localhost play could list is a key a localhost play can read.
-mode=$(stat -c %a "$bundle")
-if [ "$mode" != "700" ]; then
-	echo "FAIL: $bundle is mode $mode, want 700"
-	exit 1
-fi
-echo "PULSIX-UID-TEST: bundle dir is 0700"
-
-printf 'not a real private key\n' > "$key"
-chmod 0600 "$key"
-
-# The drift check. PULSIX_WORKER_PLAY_UID on the Go side and PLAY_UID in the
-# image are two numbers that can be edited apart; the helper must refuse the
-# pair rather than run the play as whichever one it was built with. 65532 is
-# the worker's own uid, so a helper that accepted it would run the play with
-# the worker's identity — the separation inverted.
-set +e
-/usr/local/bin/pulsix-setuid-exec 65532 /usr/bin/id > "$work_mismatch.out" 2> "$work_mismatch.err"
-rc=$?
-set -e
-cat "$work_mismatch.err"
-if [ "$rc" -ne 1 ]; then
-	echo "FAIL: the helper exited $rc for uid 65532; it is built for 65533 and must refuse with 1"
-	exit 1
-fi
-if ! grep -q 65532 "$work_mismatch.err" || ! grep -q 65533 "$work_mismatch.err"; then
-	echo "FAIL: the refusal must name both numbers"
-	exit 1
-fi
-# The contract runner.setuidHelperFailure keys on: the refusal is the FIRST
-# line of stderr, prefixed "pulsix-setuid-exec:", and nothing reaches
-# stdout. Without that the worker renders a useless "ansible-runner exited
-# with code 1" and the words above die in a pipe.
-if [ "$(head -n 1 "$work_mismatch.err" | cut -c1-19)" != "pulsix-setuid-exec:" ]; then
-	echo "FAIL: the refusal must be the first line of stderr, prefixed pulsix-setuid-exec:"
-	exit 1
-fi
-if [ -s "$work_mismatch.out" ]; then
-	echo "FAIL: the helper wrote to stdout; its refusal must be on stderr alone"
-	exit 1
-fi
-echo "PULSIX-UID-TEST: the helper refuses a uid it was not built for"
-
-# What the worker does at run time: the data dir traversable but not
-# listable (0710), the work dir and everything in it group-shared and
-# setgid so the play's own files stay group-owned by the worker.
-mkdir -p "$work/project" "$work/home" "$work/tmp"
-chmod 0710 "$data"
-chmod 2770 "$work" "$work/project" "$work/home" "$work/tmp"
-HOME=$work/home
-ANSIBLE_HOME=$work/home/ansible
-ANSIBLE_LOCAL_TEMP=$work/tmp
-ANSIBLE_REMOTE_TEMP=$work/tmp
-export HOME ANSIBLE_HOME ANSIBLE_LOCAL_TEMP ANSIBLE_REMOTE_TEMP
-
-cat > "$work/project/play.yml" <<YML
-- name: the uid boundary
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: report the uid the play runs under
-      ansible.builtin.command: id
-      changed_when: false
-    - name: write an artifact the worker must be able to read back
-      ansible.builtin.copy:
-        content: "written by the play\n"
-        dest: $work/artifact.txt
-        mode: "0660"
-    - name: read the worker's own key
-      ansible.builtin.slurp:
-        src: $key
-YML
-chmod 0660 "$work/project/play.yml"
-
-set +e
-/usr/local/bin/pulsix-setuid-exec "$play_uid" /usr/local/bin/ansible-playbook \
-	-i localhost, "$work/project/play.yml" > "$work/play.log" 2>&1
-rc=$?
-set -e
-cat "$work/play.log"
-
-if [ "$rc" -eq 0 ]; then
-	echo "FAIL: the play succeeded; it must not be able to read $key"
-	exit 1
-fi
-if ! grep -qi 'permission denied' "$work/play.log"; then
-	echo "FAIL: the play failed for some other reason than permission denied"
-	exit 1
-fi
-echo "PULSIX-UID-TEST: the play cannot read the worker key"
-
-# The other direction. This shell is the worker uid: if it cannot read an
-# artifact the play wrote, the run's event stream would be dead.
-if ! grep -q 'written by the play' "$work/artifact.txt"; then
-	echo "FAIL: the worker cannot read back the play's artifact"
-	exit 1
-fi
-owner=$(stat -c %u "$work/artifact.txt")
-if [ "$owner" != "$play_uid" ]; then
-	echo "FAIL: the artifact is owned by uid $owner, want $play_uid — the play did not run under its own uid"
-	exit 1
-fi
-echo "PULSIX-UID-TEST: the worker read back what the play wrote"
-`
+// buildInImageTest compiles internal/e2e/uidboundary's test binary for the
+// image's own platform. CGO is off so the binary runs on any libc; the
+// architecture comes from the image itself rather than from runtime.GOARCH,
+// because a developer's arm64 Docker and an amd64 image are a normal
+// combination.
+func buildInImageTest(ctx context.Context, t *testing.T, image string) string {
+	t.Helper()
+	arch, err := exec.CommandContext(ctx, "docker", "image", "inspect",
+		"--format", "{{.Architecture}}", image).Output()
+	if err != nil {
+		t.Fatalf("read the image's architecture: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "uid-boundary.test")
+	cmd := exec.CommandContext(ctx, "go", "test", "-c", "-o", binary, "./uidboundary")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+strings.TrimSpace(string(arch)))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile the in-image boundary test: %v\n%s", err, out)
+	}
+	// The mount is read-only and the container runs as 65532: the binary
+	// has to be readable and executable by anyone.
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatalf("chmod the test binary: %v", err)
+	}
+	return binary
+}
