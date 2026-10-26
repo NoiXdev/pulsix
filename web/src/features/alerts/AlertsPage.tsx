@@ -198,7 +198,16 @@ export function AlertsPage() {
             </div>
           );
         })}
-        {rows.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No alerts match this view.</p>}
+        {/* Only once the cursor is exhausted (backlog 4.37). The `muted`
+            filter is applied in Go AFTER the page is cut
+            (alerts.Service.List), so a page can legitimately come back
+            empty with next_cursor still set — correct, since following
+            the cursor yields the full set, but "nothing matched" and
+            "Load more" side by side on screen contradict each other.
+            This says nothing matched only when that is actually known. */}
+        {rows.length === 0 && !alerts.hasNextPage && (
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">No alerts match this view.</p>
+        )}
       </Card>
       {alerts.hasNextPage && (
         <LoadMoreButton onClick={() => void alerts.fetchNextPage()} loading={alerts.isFetchingNextPage} />

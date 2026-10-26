@@ -101,6 +101,23 @@ describe('AlertsPage', () => {
     expect(await screen.findByText(/No alerts match this view/)).toBeInTheDocument();
   });
 
+  // Backlog 4.37. The `muted` filter is applied server-side AFTER the
+  // page is cut (alerts.Service.List), so a page can legitimately come
+  // back empty with next_cursor still set — following the cursor yields
+  // the full set. Correct, but the two pieces of copy contradicted each
+  // other on screen: "nothing matched" above a "Load more" button that
+  // would go on to produce matches.
+  it('does not claim nothing matched while a cursor is still unfollowed', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': { alerts: [], next_cursor: 'cur-2' },
+    });
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: /Load more/i })).toBeInTheDocument();
+    expect(screen.queryByText(/No alerts match this view/)).not.toBeInTheDocument();
+  });
+
   it('asks for nothing without checks.read', async () => {
     let asked = false;
     mockApi({
