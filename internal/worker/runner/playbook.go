@@ -85,7 +85,22 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 	if err != nil {
 		return "", err
 	}
-	return r.fetchRepo(ctx, spec, secret, env.RepoCacheDir, env.WorkDir)
+	path, err := r.fetchRepo(ctx, spec, secret, env.RepoCacheDir, env.WorkDir)
+	if err != nil {
+		return "", err
+	}
+	if env.Config.PlayUID != 0 {
+		// A repo playbook is run where it was checked out, not copied into
+		// the work dir, so sharing the work dir does nothing for it: the
+		// repo cache is the worker's own 0700 tree and the play's uid
+		// cannot so much as traverse it. Open the clone — and the path
+		// down to it — for reading, never for writing.
+		clone := r.repoDir(env.RepoCacheDir, worker.RepoSpec{OrgID: spec.OrgID, RepoID: spec.RepoID})
+		if err := ShareRepoRead(env.RepoCacheDir, clone); err != nil {
+			return "", fmt.Errorf("share the repo checkout with the play uid: %w", err)
+		}
+	}
+	return path, nil
 }
 
 // repoSpec reads the repository out of the claim: the kind payload carries

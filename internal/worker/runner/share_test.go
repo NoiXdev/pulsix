@@ -126,3 +126,112 @@ func TestShareWorkDirSkipsSymlinks(t *testing.T) {
 		t.Errorf("real file mode = %v, want 0660 (sharing must still happen for non-symlink entries)", got)
 	}
 }
+
+// TestShareRepoReadOpensTheCheckoutReadOnly pins the repo cache's shape
+// once a play uid is set: a repo-backed playbook is never copied into the
+// work dir, so the play has to read it where it was cloned — under the
+// worker's own 0700 cache, which it cannot even traverse. Group gains read
+// and execute down the whole path; group NEVER gains write, because one
+// job that could write into the cache could poison the next job's
+// checkout. World bits stay untouched.
+func TestShareRepoReadOpensTheCheckoutReadOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	clone := filepath.Join(root, "org", "repo")
+	if err := os.MkdirAll(filepath.Join(clone, "playbooks"), 0o700); err != nil {
+		t.Fatalf("mkdir clone: %v", err)
+	}
+	playbook := filepath.Join(clone, "playbooks", "site.yml")
+	if err := os.WriteFile(playbook, []byte("- hosts: all\n"), 0o600); err != nil {
+		t.Fatalf("write playbook: %v", err)
+	}
+	// A clone written under a 002 umask: group-writable on arrival, and it
+	// must not stay that way.
+	groupWritable := filepath.Join(clone, "roles.yml")
+	if err := os.WriteFile(groupWritable, []byte("x"), 0o664); err != nil {
+		t.Fatalf("write group-writable file: %v", err)
+	}
+	// An executable the checkout carries (a hook, a script a role runs):
+	// group follows the owner's execute bit, still without write.
+	script := filepath.Join(clone, "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	if err := ShareRepoRead(root, clone); err != nil {
+		t.Fatalf("ShareRepoRead: %v", err)
+	}
+
+	cases := []struct {
+		path     string
+		wantMode os.FileMode
+	}{
+		{root, 0o750},
+		{filepath.Join(root, "org"), 0o750},
+		{clone, 0o750},
+		{filepath.Join(clone, "playbooks"), 0o750},
+		{playbook, 0o640},
+		{groupWritable, 0o644},
+		{script, 0o750},
+	}
+	for _, c := range cases {
+		info, err := os.Stat(c.path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", c.path, err)
+		}
+		got := info.Mode().Perm()
+		if got != c.wantMode {
+			t.Errorf("%s: mode = %v, want %v", c.path, got, c.wantMode)
+		}
+		if got&0o020 != 0 {
+			t.Errorf("%s: mode = %v is group-writable; the cache is read-only to the play", c.path, got)
+		}
+		if info.Mode()&os.ModeSetgid != 0 {
+			t.Errorf("%s: setgid is for the work dir, where the play creates files; nothing is created here", c.path)
+		}
+	}
+}
+
+// TestShareRepoReadSkipsSymlinks: os.Chmod follows a symlink, and a
+// checked-out role tree routinely carries them — including ones pointing
+// outside the cache entirely. Same rule as ShareWorkDir.
+func TestShareRepoReadSkipsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	clone := filepath.Join(root, "org", "repo")
+	if err := os.MkdirAll(clone, 0o700); err != nil {
+		t.Fatalf("mkdir clone: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "host-file")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(clone, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(clone, "gone"), filepath.Join(clone, "dangling")); err != nil {
+		t.Fatalf("dangling symlink: %v", err)
+	}
+
+	if err := ShareRepoRead(root, clone); err != nil {
+		t.Fatalf("ShareRepoRead: %v", err)
+	}
+
+	info, err := os.Stat(outside)
+	if err != nil {
+		t.Fatalf("stat outside target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("outside target mode = %v, want unchanged 0600", got)
+	}
+}
+
+// TestShareRepoReadRefusesAPathOutsideTheCache: the walk is only ever
+// allowed inside the cache root it was given.
+func TestShareRepoReadRefusesAPathOutsideTheCache(t *testing.T) {
+	root := t.TempDir()
+	if err := ShareRepoRead(root, t.TempDir()); err == nil {
+		t.Fatal("ShareRepoRead must refuse a directory outside the repo cache")
+	}
+}

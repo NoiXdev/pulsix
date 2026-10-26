@@ -614,8 +614,10 @@ func TestLoopDoesNotTouchModesWhenPlayUIDUnset(t *testing.T) {
 // sharing step, the data dir is traversable by group and a run's work dir
 // is group-writable, but the identity directory and the repo cache —
 // sitting right next to that now-traversable data dir — stay owner-only.
-// The repo cache matters as much as identity: group-writable, the play
-// could poison the next job's checkout.
+// A repo playbook's own checkout is opened for READING later, by the
+// fetch itself (runner.ShareRepoRead); nothing here opens the cache, and
+// nothing anywhere makes it group-writable — a play that could write
+// there could poison the next job's checkout.
 func TestSharingLeavesTheWorkerSecretsOwnerOnly(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {

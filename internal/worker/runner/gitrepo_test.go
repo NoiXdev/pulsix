@@ -427,3 +427,49 @@ func TestFetchRepoNeverPassesOptionShapedArguments(t *testing.T) {
 		}
 	}
 }
+
+// TestRepoPlaybookIsReadableByThePlayUID: a `repo:<id>:<subpath>` playbook
+// is executed where it was cloned — the worker's 0700 repo cache — and is
+// never copied into the work dir, so sharing the work dir does nothing for
+// it. With a play uid set, every directory from the cache root down to the
+// playbook has to be group-traversable and the playbook group-readable, or
+// the run dies on a file the worker can see and the play cannot. Nothing
+// on that path may become group-WRITABLE: one job must not be able to
+// rewrite the next job's checkout.
+func TestRepoPlaybookIsReadableByThePlayUID(t *testing.T) {
+	source := gitFixture(t)
+	r := &Runner{GitBin: gitOnPATH(t)}
+
+	job := runJob(t)
+	repo := uuid.Must(uuid.NewV7())
+	job.Playbook = "repo:" + repo.String() + ":playbooks/site.yml"
+	job.KindPayload = `{"repo":{"id":"` + repo.String() + `","url":"` + source + `","branch":"main","subpath":"playbooks/site.yml"}}`
+
+	env := runEnv(t)
+	env.Config.PlayUID = 12345
+	playbook, err := r.materializePlaybook(context.Background(), job, env)
+	if err != nil {
+		t.Fatalf("materializePlaybook: %v", err)
+	}
+
+	for p := playbook; ; p = filepath.Dir(p) {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		perm := info.Mode().Perm()
+		want := os.FileMode(0o040) // group read
+		if info.IsDir() {
+			want |= 0o010 // and traverse
+		}
+		if perm&want != want {
+			t.Errorf("%s: mode = %v, the play uid cannot reach the playbook through it", p, perm)
+		}
+		if perm&0o020 != 0 {
+			t.Errorf("%s: mode = %v is group-writable; the repo cache is read-only to the play", p, perm)
+		}
+		if p == env.RepoCacheDir {
+			break
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ShareWorkDir walks dir and, for every entry, copies the owner permission
@@ -57,4 +58,72 @@ func ShareWorkDir(dir string) error {
 		}
 		return nil
 	})
+}
+
+// ShareRepoRead opens a repo-cache checkout for READING by the worker's
+// group: root (the repo cache itself), every directory between root and
+// dir, and everything under dir get the owner's read and execute bits
+// mirrored into the group triplet — directories 0750, files 0640 — while
+// group write is always cleared.
+//
+// A repo-backed playbook (`repo:<id>:<subpath>`) is never copied into the
+// run's work dir; it is executed where it was checked out, under the
+// worker's 0700 repo cache, which the play's own uid cannot even traverse.
+// Opening it read-only is the whole fix: the play reads its playbook and
+// the role tree beside it, and still cannot write there — one job must not
+// be able to poison the next job's checkout, which is why group write goes
+// even when the clone arrived with it (a worker umask of 002 produces
+// 0664 files).
+//
+// Unlike ShareWorkDir this sets no setgid bit: nothing is created here by
+// the play, so there is no group to inherit. Symlinks are skipped for the
+// same reason as there — os.Chmod follows them, and a role tree's symlink
+// can point anywhere.
+func ShareRepoRead(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return fmt.Errorf("locate %s inside the repo cache %s: %w", dir, root, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("%s is not inside the repo cache %s", dir, root)
+	}
+	// The ancestors first: the play needs execute on every directory on
+	// the path, or the checkout below is unreachable however open it is.
+	path := root
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if err := chmodReadShared(path); err != nil {
+			return err
+		}
+		if part == "." {
+			break
+		}
+		path = filepath.Join(path, part)
+	}
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		return chmodReadShared(path)
+	})
+}
+
+// chmodReadShared gives path's group whatever read and execute access its
+// owner has, and never write.
+func chmodReadShared(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	perm := info.Mode().Perm()
+	shared := (perm | (perm&0o500)>>3) &^ 0o020
+	if shared == perm {
+		return nil
+	}
+	if err := os.Chmod(path, shared); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	return nil
 }
