@@ -17,6 +17,7 @@ package alerts_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -782,19 +783,19 @@ func TestSweepLeavesHostScopeAlertsAlone(t *testing.T) {
 // sets), yet alerts.id and hosts.id are both globally unique UUIDs — so
 // every test above, each running under a single organization, would stay
 // green even if "AND org_id = @org_id" were quietly deleted from
-// ListOpenAlertsForHost, GetAlertSeverity, RaiseAlertSeverity,
-// SetAlertFlapping or CloseAlert. That guard is the only tenant isolation
+// ListOpenAlertsForHost, RaiseAlertSeverity, SetAlertFlapping or
+// CloseAlert. That guard is the only tenant isolation
 // on this path at all, which is why CLAUDE.md puts tenancy at >= 90%
 // coverage.
 //
 // Each subtest below drives one statement directly against org B's
 // credentials but org A's own alert id/host id, and asserts org A's row
 // is untouched — RaiseAlertSeverity, SetAlertFlapping and CloseAlert are
-// :exec statements that silently affect zero rows rather than erroring
-// when the WHERE matches nothing, so "no error" alone would prove
-// nothing; reading the row back after each call is what actually pins the
-// guard. GetAlertSeverity and ListOpenAlertsForHost are read statements,
-// so their own guard is pinned by what they return instead.
+// statements that affect zero rows rather than erroring when the WHERE
+// matches nothing, so "no error" alone would prove nothing; reading the
+// row back after each call is what actually pins the guard.
+// ListOpenAlertsForHost is a read statement, so its own guard is pinned
+// by what it returns instead.
 func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
 	d := testdb.Open(t)
 	orgA, hostA := seedHost(t, d)
@@ -825,26 +826,18 @@ func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
 		}
 	})
 
-	t.Run("GetAlertSeverity", func(t *testing.T) {
-		if _, err := q.GetAlertSeverity(ctx, gen.GetAlertSeverityParams{ID: alertA, OrgID: orgB}); err == nil {
-			t.Fatalf("GetAlertSeverity(alertA, orgB) returned no error, want org A's row to be invisible to org B")
-		}
-	})
-
-	// The three UPDATEs below report their row count since backlog 4.24,
-	// so each sub-test now says "this matched nothing" outright instead
-	// of inferring it from a column that did not move — the two are the
+	// The three UPDATEs below say outright that they matched nothing —
+	// two by a row count since backlog 4.24, RaiseAlertSeverity by
+	// pgx.ErrNoRows since 4.25 folded its read into the write — instead
+	// of inferring it from a column that did not move. The two are the
 	// same claim here, but only the first one stays true if a future
 	// statement starts matching and then writing the same value back.
 	t.Run("RaiseAlertSeverity", func(t *testing.T) {
-		n, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
-			Severity: "crit", SeverityRank: 3, ClearsSnooze: false, ID: alertA, OrgID: orgB,
+		before, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+			Severity: "crit", SeverityRank: 3, ClearsSnooze: false, At: time.Now(), ID: alertA, OrgID: orgB,
 		})
-		if err != nil {
-			t.Fatalf("RaiseAlertSeverity(alertA, orgB): %v", err)
-		}
-		if n != 0 {
-			t.Fatalf("RaiseAlertSeverity(alertA, orgB) matched %d rows, want none of org A's", n)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("RaiseAlertSeverity(alertA, orgB) = %q, %v, want pgx.ErrNoRows — org A's row must be invisible to org B", before, err)
 		}
 		if row := alertRowByID(t, tx, alertA); row.severity != "warn" {
 			t.Fatalf("severity = %q after a wrong-org raise, want warn (unchanged)", row.severity)
@@ -926,5 +919,56 @@ func TestOperatorWritesRunUnderRowLevelSecurity(t *testing.T) {
 	}
 	if row := alertRowByID(t, d.Pool(), id); row.snoozeUntilChange {
 		t.Fatal("org B's snooze landed on org A's alert")
+	}
+}
+
+// TestRaiseAlertSeverityReportsTheSeverityItReplaced pins the statement's
+// own contract after backlog 4.25: the severity a severity_raised event
+// hangs on is the one THIS statement overwrote, reported by the statement
+// itself, not by a SELECT issued just before it. The two readings agree in
+// a quiet test, so the point of the test is the shape — the previous value
+// comes back from the write — and the absent GetAlertSeverity round trip
+// is what makes the question unanswerable by a stale read at all.
+//
+// The wrong-org call is the same guard TestOrgIDGuardsEveryAlertStatement
+// kept with a row count: a statement that matches nothing now returns
+// pgx.ErrNoRows instead of zero rows, so "no error" still proves nothing
+// and the row is still read back.
+func TestRaiseAlertSeverityReportsTheSeverityItReplaced(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+
+	tx := beginTx(t, d)
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: tuple(host, "disk", "/", "used_percent"), At: time.Now(), Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(ctx, tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v (%d rows)", err, len(open))
+	}
+	id := open[0].ID
+	q := gen.New(tx)
+
+	before, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+		Severity: "crit", SeverityRank: 3, At: time.Now(), ID: id, OrgID: org,
+	})
+	if err != nil {
+		t.Fatalf("RaiseAlertSeverity: %v", err)
+	}
+	if before != "warn" {
+		t.Errorf("RaiseAlertSeverity returned %q, want the severity it replaced (warn)", before)
+	}
+	if row := alertRowByID(t, tx, id); row.severity != "crit" {
+		t.Errorf("severity = %q after the raise, want crit — the statement must still write the new value", row.severity)
+	}
+
+	if _, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+		Severity: "warn", SeverityRank: 2, At: time.Now(), ID: uuid.New(), OrgID: org,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("RaiseAlertSeverity on an alert that does not exist = %v, want pgx.ErrNoRows", err)
 	}
 }

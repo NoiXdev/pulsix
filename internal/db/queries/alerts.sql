@@ -64,15 +64,29 @@ INSERT INTO alerts (
 )
 RETURNING id;
 
--- name: GetAlertSeverity :one
--- Execute's own read before applying an ActionSeverity: whether the
--- severity actually rose — and therefore whether a severity_raised event
--- belongs in the history — can only be answered against the row's current
--- severity, which Action itself does not carry.
-SELECT severity FROM alerts WHERE id = @id AND org_id = @org_id;
-
--- name: RaiseAlertSeverity :execrows
+-- name: RaiseAlertSeverity :one
 -- The brief's own statement, verbatim, plus v0.4d's own fourth SET target.
+--
+-- It returns the severity it REPLACED (backlog 4.25). raiseSeverity
+-- (internal/alerts/store_sql_execute.go) needs the previous severity to
+-- decide whether a severity_raised event belongs in the history — Action
+-- itself does not carry it — and used to fetch it with a GetAlertSeverity
+-- SELECT issued just before this UPDATE. Two statements, so two readings:
+-- under READ COMMITTED another transaction committing in between left the
+-- SELECT's answer stale while this UPDATE saw the newer row, and the event
+-- decision hung on the stale one. The locking CTE closes that: `FOR UPDATE`
+-- takes the row's lock and, after waiting, re-reads the latest committed
+-- version, so prev_severity is the value this very statement overwrites.
+-- A plain `FROM alerts AS prev` self-join would NOT do — its scan keeps
+-- the statement's own snapshot while the UPDATE's EvalPlanQual re-reads
+-- the row, which is the same disagreement in one statement instead of two.
+-- PostgreSQL 18's own `RETURNING OLD.severity` says this more directly and
+-- is what this should become; sqlc 1.31.1's parser does not accept it yet.
+--
+-- :one, not :execrows: zero rows now means pgx.ErrNoRows rather than a
+-- row count of 0, which is the same "this organization has no such alert"
+-- answer backlog 4.24 gave the three write statements, reported through
+-- the mechanism a RETURNING statement has.
 -- The nested CASE's literal ranking (warn=1, unknown=2, crit=3) is
 -- deliberately NOT what ships here — see store_sql.go's own comment on
 -- raiseAlertSeverityRank for why, and TestPeakSeverityRankMatchesRulesStateRank
@@ -116,6 +130,11 @@ SELECT severity FROM alerts WHERE id = @id AND org_id = @org_id;
 -- regardless — it is honest data about the alert, true on its own terms —
 -- but nothing outside the alerts store's own row mapping
 -- (internal/alerts/store_sql.go) reads it today.
+WITH prev AS (
+  SELECT a.id, a.severity AS prev_severity FROM alerts a
+  WHERE a.id = @id AND a.org_id = @org_id
+  FOR UPDATE
+)
 UPDATE alerts SET severity = @severity,
   peak_severity = CASE WHEN @severity_rank::int > (
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
@@ -123,7 +142,8 @@ UPDATE alerts SET severity = @severity,
   snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END,
   acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END,
   severity_changed_at = @at
-WHERE id = @id AND org_id = @org_id;
+FROM prev WHERE alerts.id = prev.id
+RETURNING prev.prev_severity;
 
 -- name: SetAlertFlapping :execrows
 -- ActionFlapped: latches was_flapping once a tuple is seen flapping. There

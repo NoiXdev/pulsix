@@ -171,26 +171,6 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 	return i, err
 }
 
-const getAlertSeverity = `-- name: GetAlertSeverity :one
-SELECT severity FROM alerts WHERE id = $1 AND org_id = $2
-`
-
-type GetAlertSeverityParams struct {
-	ID    uuid.UUID `json:"id"`
-	OrgID uuid.UUID `json:"org_id"`
-}
-
-// Execute's own read before applying an ActionSeverity: whether the
-// severity actually rose — and therefore whether a severity_raised event
-// belongs in the history — can only be answered against the row's current
-// severity, which Action itself does not carry.
-func (q *Queries) GetAlertSeverity(ctx context.Context, arg GetAlertSeverityParams) (string, error) {
-	row := q.db.QueryRow(ctx, getAlertSeverity, arg.ID, arg.OrgID)
-	var severity string
-	err := row.Scan(&severity)
-	return severity, err
-}
-
 const insertAlert = `-- name: InsertAlert :one
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
@@ -755,7 +735,12 @@ func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateCha
 	return items, nil
 }
 
-const raiseAlertSeverity = `-- name: RaiseAlertSeverity :execrows
+const raiseAlertSeverity = `-- name: RaiseAlertSeverity :one
+WITH prev AS (
+  SELECT a.id, a.severity AS prev_severity FROM alerts a
+  WHERE a.id = $6 AND a.org_id = $7
+  FOR UPDATE
+)
 UPDATE alerts SET severity = $1,
   peak_severity = CASE WHEN $2::int > (
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
@@ -763,7 +748,8 @@ UPDATE alerts SET severity = $1,
   snooze_until_change = CASE WHEN $3::boolean THEN false ELSE snooze_until_change END,
   acknowledged_severity = CASE WHEN $4::boolean THEN NULL ELSE acknowledged_severity END,
   severity_changed_at = $5
-WHERE id = $6 AND org_id = $7
+FROM prev WHERE alerts.id = prev.id
+RETURNING prev.prev_severity
 `
 
 type RaiseAlertSeverityParams struct {
@@ -777,6 +763,27 @@ type RaiseAlertSeverityParams struct {
 }
 
 // The brief's own statement, verbatim, plus v0.4d's own fourth SET target.
+//
+// It returns the severity it REPLACED (backlog 4.25). raiseSeverity
+// (internal/alerts/store_sql_execute.go) needs the previous severity to
+// decide whether a severity_raised event belongs in the history — Action
+// itself does not carry it — and used to fetch it with a GetAlertSeverity
+// SELECT issued just before this UPDATE. Two statements, so two readings:
+// under READ COMMITTED another transaction committing in between left the
+// SELECT's answer stale while this UPDATE saw the newer row, and the event
+// decision hung on the stale one. The locking CTE closes that: `FOR UPDATE`
+// takes the row's lock and, after waiting, re-reads the latest committed
+// version, so prev_severity is the value this very statement overwrites.
+// A plain `FROM alerts AS prev` self-join would NOT do — its scan keeps
+// the statement's own snapshot while the UPDATE's EvalPlanQual re-reads
+// the row, which is the same disagreement in one statement instead of two.
+// PostgreSQL 18's own `RETURNING OLD.severity` says this more directly and
+// is what this should become; sqlc 1.31.1's parser does not accept it yet.
+//
+// :one, not :execrows: zero rows now means pgx.ErrNoRows rather than a
+// row count of 0, which is the same "this organization has no such alert"
+// answer backlog 4.24 gave the three write statements, reported through
+// the mechanism a RETURNING statement has.
 // The nested CASE's literal ranking (warn=1, unknown=2, crit=3) is
 // deliberately NOT what ships here — see store_sql.go's own comment on
 // raiseAlertSeverityRank for why, and TestPeakSeverityRankMatchesRulesStateRank
@@ -820,8 +827,8 @@ type RaiseAlertSeverityParams struct {
 // regardless — it is honest data about the alert, true on its own terms —
 // but nothing outside the alerts store's own row mapping
 // (internal/alerts/store_sql.go) reads it today.
-func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) (int64, error) {
-	result, err := q.db.Exec(ctx, raiseAlertSeverity,
+func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) (string, error) {
+	row := q.db.QueryRow(ctx, raiseAlertSeverity,
 		arg.Severity,
 		arg.SeverityRank,
 		arg.ClearsSnooze,
@@ -830,10 +837,9 @@ func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverity
 		arg.ID,
 		arg.OrgID,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var prev_severity string
+	err := row.Scan(&prev_severity)
+	return prev_severity, err
 }
 
 const setAlertFlapping = `-- name: SetAlertFlapping :execrows

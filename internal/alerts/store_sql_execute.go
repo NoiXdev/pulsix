@@ -134,24 +134,27 @@ func raiseAlertSeverityRank(s rules.State) int32 { return int32(rules.StateRank(
 // the column cannot later read as acknowledged again (backlog 4.36) while
 // disagreeing with the ack_voided event this function writes right below
 // it for the very same action.
+//
+// The severity this replaced comes back from the UPDATE itself (backlog
+// 4.25). It used to be a GetAlertSeverity SELECT issued immediately
+// before — two statements, so two readings of a row another transaction
+// could change in between, with the event decision hanging on the older
+// one. queries/alerts.sql's own comment on RaiseAlertSeverity has the
+// mechanism.
 func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a Action) error {
-	before, err := q.GetAlertSeverity(ctx, gen.GetAlertSeverityParams{ID: a.AlertID, OrgID: orgID})
+	before, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
+		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		// This organization has no such alert. The read happens to catch
-		// it before the UPDATE's own row count would (backlog 4.24), so
-		// what this needs is the same ANSWER the other two actions give,
-		// not a second guard — a caller matching on ErrNotFound must not
-		// have to know which action it asked for.
+		// This organization has no such alert. The same ANSWER the other
+		// two actions give through changedOne (backlog 4.24), reported
+		// here by a RETURNING statement that matched nothing — a caller
+		// matching on ErrNotFound must not have to know which action it
+		// asked for.
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("read current severity: %w", err)
-	}
-
-	if err := changedOne(q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
-		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
-		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
-	})); err != nil {
 		return fmt.Errorf("raise severity: %w", err)
 	}
 
