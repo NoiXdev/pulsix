@@ -7811,7 +7811,7 @@ export interface operations {
                 muted?: string;
                 /** @description Opaque cursor from a previous page's next_cursor */
                 cursor?: string;
-                /** @description Page size; the server clamps it */
+                /** @description Page size */
                 limit?: number;
             };
             header?: never;

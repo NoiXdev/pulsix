@@ -209,7 +209,14 @@ type alertListInput struct {
 	Acknowledged string `query:"acknowledged" doc:"true or false"`
 	Muted        string `query:"muted" doc:"true or false"`
 	Cursor       string `query:"cursor" doc:"Opaque cursor from a previous page's next_cursor"`
-	Limit        int    `query:"limit" doc:"Page size; the server clamps it"`
+	// The bounds are the ones alerts.clampLimit already enforces
+	// (backlog 4.40). "The server clamps it" was true and useless: a
+	// client reading the document could not tell that ?limit=5000
+	// silently became 100, or what an omitted limit would give it.
+	// `default` states the clamp's own zero case rather than changing
+	// it — 20 is alerts.DefaultListLimit, so an absent parameter still
+	// resolves to exactly what it always did.
+	Limit int `query:"limit" minimum:"1" maximum:"100" default:"20" doc:"Page size"`
 }
 
 type alertListOutput struct {

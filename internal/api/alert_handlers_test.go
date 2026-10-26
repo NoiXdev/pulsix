@@ -738,3 +738,72 @@ func TestAlertListRejectsAMalformedCursor(t *testing.T) {
 		t.Fatalf("list with a malformed cursor = %d %s, want 400", resp.StatusCode, mustReadBody(t, resp))
 	}
 }
+
+// TestListLimitsAdvertiseTheirBounds is backlog 4.40. Both list routes
+// clamp `limit` server-side — 0 or absent to DefaultListLimit, anything
+// over MaxListLimit down to 100 — and neither said so in the generated
+// document. "The server clamps it" was true and useless: a client
+// reading the schema could not tell that ?limit=5000 silently became
+// 100, nor what an omitted limit would give it.
+//
+// The document and the behaviour are asserted together, because the tag
+// is only worth having if it describes what actually happens: an
+// over-limit request must now be REFUSED rather than quietly trimmed —
+// a client asking for 5000 and receiving 100 with no signal cannot tell
+// a short page from the end of the list — and an absent one must still
+// resolve to the same default it always did.
+func TestListLimitsAdvertiseTheirBounds(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("limit-bounds@example.test", "correct horse battery")
+	s.SeedOrg("limit-bounds", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/limit-bounds"
+
+	spec := mustReadBody(t, requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/openapi.json", nil))
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Parameters []struct {
+				Name   string `json:"name"`
+				Schema struct {
+					Minimum *int `json:"minimum"`
+					Maximum *int `json:"maximum"`
+					Default *int `json:"default"`
+				} `json:"schema"`
+			} `json:"parameters"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal([]byte(spec), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/orgs/{org}/alerts", "/api/v1/orgs/{org}/hosts"} {
+		op, ok := doc.Paths[path]["get"]
+		if !ok {
+			t.Fatalf("%s has no GET in the document", path)
+		}
+		var found bool
+		for _, p := range op.Parameters {
+			if p.Name != "limit" {
+				continue
+			}
+			found = true
+			if p.Schema.Minimum == nil || *p.Schema.Minimum != 1 ||
+				p.Schema.Maximum == nil || *p.Schema.Maximum != 100 ||
+				p.Schema.Default == nil || *p.Schema.Default != 20 {
+				t.Errorf("%s limit schema = %+v, want minimum 1, maximum 100, default 20", path, p.Schema)
+			}
+		}
+		if !found {
+			t.Errorf("%s declares no limit parameter", path)
+		}
+	}
+
+	// And the document is not decoration: the bound is enforced.
+	for _, path := range []string{"/alerts", "/hosts"} {
+		if resp := requestJSON(t, c, http.MethodGet, base+path+"?limit=5000", nil); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("GET %s?limit=5000 = %d, want 422 rather than a silently trimmed page", path, resp.StatusCode)
+		}
+		if resp := requestJSON(t, c, http.MethodGet, base+path, nil); resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s with no limit = %d, want the default to still work", path, resp.StatusCode)
+		}
+	}
+}

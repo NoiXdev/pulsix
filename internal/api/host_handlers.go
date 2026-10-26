@@ -147,7 +147,10 @@ type hostListInput struct {
 	Monitored string `query:"monitored"`
 	Q         string `query:"q"`
 	Cursor    string `query:"cursor"`
-	Limit     int    `query:"limit"`
+	// Same bounds, same reasoning as alertListInput's own Limit
+	// (backlog 4.40): hosts.clampLimit enforces exactly these, and 20
+	// is hosts.DefaultListLimit, so an absent parameter is unchanged.
+	Limit int `query:"limit" minimum:"1" maximum:"100" default:"20"`
 }
 
 type hostListOutput struct {
