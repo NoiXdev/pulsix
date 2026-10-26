@@ -12,6 +12,7 @@ package worker
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ const (
 	envServerName    = "PULSIX_MANAGER_SERVER_NAME"
 	envEnrollToken   = "PULSIX_ENROLL_TOKEN"
 	envIdentityDir   = "PULSIX_WORKER_IDENTITY_DIR"
+	envPlayUID       = "PULSIX_WORKER_PLAY_UID"
 )
 
 // Defaults for the optional variables.
@@ -102,6 +104,13 @@ type Config struct {
 	// EnrollToken is the one-time token (PULSIX_ENROLL_TOKEN) the worker
 	// enrolls with when no usable bundle exists yet.
 	EnrollToken string
+	// PlayUID (PULSIX_WORKER_PLAY_UID) is the uid ansible-playbook runs
+	// under; zero, the default, means off and ansible-playbook inherits
+	// the worker process's own uid. A playbook task targeting localhost
+	// otherwise runs as the worker, which can read the worker's own
+	// client certificate and key — this lets an operator put the playbook
+	// under a second, unprivileged uid that cannot.
+	PlayUID uint32
 }
 
 // Load parses and validates the given environment (os.Environ() in the
@@ -189,6 +198,27 @@ func Load(env []string) (Config, error) {
 			return cfg, fmt.Errorf("%s %q must be at least 1", envMaxConcurrent, raw)
 		}
 		cfg.MaxConcurrent = n
+	}
+
+	if raw := vals[envPlayUID]; raw != "" {
+		n, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			return cfg, fmt.Errorf("%s %q is not a number: %v", envPlayUID, raw, err)
+		}
+		// 0 is root: setting it would turn "drop privilege" into "stay
+		// root", the opposite of the feature's purpose, so refuse it
+		// outright rather than silently de-escalating to nothing.
+		if n == 0 {
+			return cfg, fmt.Errorf("%s %q must not be 0 (root is never a de-escalation)", envPlayUID, raw)
+		}
+		// The worker's own uid is a no-op: the operator would believe
+		// the playbook runs under a separate, unprivileged account when
+		// it is in fact unchanged, which is worse than not setting this
+		// at all because the false belief masks the exposure.
+		if uint32(n) == uint32(os.Getuid()) {
+			return cfg, fmt.Errorf("%s %q must not be the worker's own uid (%d)", envPlayUID, raw, os.Getuid())
+		}
+		cfg.PlayUID = uint32(n)
 	}
 	return cfg, nil
 }

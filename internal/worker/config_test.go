@@ -4,6 +4,8 @@
 package worker
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +116,52 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Zones[1] != mustZone(t, "018f4e2a-7b3c-7d4e-8f90-1a2b3c4d5e62") {
 		t.Errorf("Zones[1] = %s", cfg.Zones[1])
+	}
+}
+
+// TestLoadPlayUID (uid separation, Task 1): PULSIX_WORKER_PLAY_UID is
+// optional and, when set, must name a uid that is neither root nor the
+// worker's own — either would make the de-escalation a no-op or worse.
+func TestLoadPlayUID(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw  string
+		want uint32
+		err  string
+	}{
+		"unset":        {"", 0, ""},
+		"set":          {"65533", 65533, ""},
+		"not a number": {"nobody", 0, "PULSIX_WORKER_PLAY_UID"},
+		"negative":     {"-1", 0, "PULSIX_WORKER_PLAY_UID"},
+		"zero is root": {"0", 0, "must not be 0"},
+		"own uid":      {strconv.Itoa(os.Getuid()), 0, "the worker's own uid"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := []string{
+				"PULSIX_MANAGER_ADDR=manager.example.test:8444",
+				"PULSIX_WORKER_CERT=/c.pem",
+				"PULSIX_WORKER_KEY=/k.pem",
+				"PULSIX_CA_CERT=/ca.pem",
+			}
+			if tc.raw != "" {
+				env = append(env, "PULSIX_WORKER_PLAY_UID="+tc.raw)
+			}
+			cfg, err := Load(env)
+			if tc.err == "" {
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if cfg.PlayUID != tc.want {
+					t.Errorf("PlayUID = %d, want %d", cfg.PlayUID, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Load must fail")
+			}
+			if !strings.Contains(err.Error(), tc.err) {
+				t.Fatalf("error %q must contain %q", err, tc.err)
+			}
+		})
 	}
 }
 
