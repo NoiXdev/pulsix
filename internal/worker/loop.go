@@ -165,6 +165,14 @@ func (l *Loop) Run(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Join(l.cfg.DataDir, repoCacheDirName), 0o700); err != nil {
 		return fmt.Errorf("create repo cache dir: %w", err)
 	}
+	// PlayUID == 0 (the default) must leave every mode exactly as it is
+	// today: no chmod at all, so a worker that never opted into the
+	// separation sees no behavior change.
+	if l.cfg.PlayUID != 0 {
+		if err := l.secureDirsForPlayUID(ctx); err != nil {
+			return fmt.Errorf("prepare data dir for play uid: %w", err)
+		}
+	}
 
 	zoneIDs := make([]string, len(l.cfg.Zones))
 	for i, z := range l.cfg.Zones {
@@ -412,10 +420,71 @@ func joinErrText(a, b string) string {
 	return a + "; " + b
 }
 
-// newWorkDir creates a fresh owner-private temp dir under the data dir; the
-// caller removes it when the run ends.
+// newWorkDir creates a fresh temp dir under the data dir; the caller removes
+// it when the run ends. MkdirTemp's own default (0700) is exactly right when
+// PlayUID is unset: owner-only. When it is set, the play that is about to
+// run inside this dir needs group access to it (not just to the files
+// ShareWorkDir later opens up inside it, but to the directory itself, or it
+// could never list or enter it) — setgid so anything the play creates in
+// turn inherits the worker's group too.
 func (l *Loop) newWorkDir() (string, error) {
-	return os.MkdirTemp(l.cfg.DataDir, "job-")
+	dir, err := os.MkdirTemp(l.cfg.DataDir, "job-")
+	if err != nil {
+		return "", err
+	}
+	if l.cfg.PlayUID != 0 {
+		if err := os.Chmod(dir, 0o770|os.ModeSetgid); err != nil {
+			return "", fmt.Errorf("share work dir: %w", err)
+		}
+	}
+	return dir, nil
+}
+
+// secureDirsForPlayUID shapes the two directories the play's own uid must
+// be able to reach or must never reach, once PlayUID is set. The data dir
+// becomes group-traversable (0710: execute only, no group read — a listing
+// would name the repo cache and identity dir without granting entry to
+// either, so there is nothing to gain from it) so a path into a
+// group-opened work dir actually resolves; the identity directory is then
+// hardened to owner-only, undoing whatever wider mode it arrived in.
+func (l *Loop) secureDirsForPlayUID(ctx context.Context) error {
+	if err := os.Chmod(l.cfg.DataDir, 0o710); err != nil {
+		return fmt.Errorf("chmod data dir: %w", err)
+	}
+	return l.hardenIdentityDir(ctx)
+}
+
+// hardenIdentityDir chmods the directory holding the worker's own
+// certificate and key to 0700. That directory is created by code this
+// change does not control: the data dir's own identity/ (enroll.go,
+// already 0700 in the common case) or, for an explicit cert/key/ca bundle,
+// /etc/pulsix-worker — the Dockerfile's bind mount, created with no mode at
+// all and therefore 0755, letting the play read the key straight off disk.
+// A chmod is only logged when it actually changes something, so an
+// operator who bind-mounted that directory sees it happen instead of
+// finding out the feature was silently inert.
+func (l *Loop) hardenIdentityDir(ctx context.Context) error {
+	dir := l.cfg.IdentityDir
+	if dir == "" {
+		// The bundle form (all three of cert/key/ca set explicitly) never
+		// populates IdentityDir; the three files are expected to live
+		// side by side, so the cert's own parent is the mount to harden.
+		dir = filepath.Dir(l.cfg.CertPath)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat identity dir %s: %w", dir, err)
+	}
+	const ownerOnly = os.FileMode(0o700)
+	if info.Mode().Perm() == ownerOnly {
+		return nil
+	}
+	if err := os.Chmod(dir, ownerOnly); err != nil {
+		return fmt.Errorf("chmod identity dir %s: %w", dir, err)
+	}
+	l.log.InfoContext(ctx, "tightened the identity directory to owner-only for the play uid",
+		"dir", dir, "was", info.Mode().Perm())
+	return nil
 }
 
 // interruptibleSleep is the production sleep: the full duration, or until

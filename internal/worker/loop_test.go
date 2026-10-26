@@ -550,6 +550,130 @@ func TestLoopWorkDirLifecycle(t *testing.T) {
 	}
 }
 
+// TestNewWorkDirIsGroupSetgidWhenPlayUIDIsSet pins the mode the play's own
+// uid needs to even reach the dir — group rwx plus setgid — which is
+// separate from ShareWorkDir's job of opening up the files inside it.
+func TestNewWorkDirIsGroupSetgidWhenPlayUIDIsSet(t *testing.T) {
+	dir := t.TempDir()
+	cfg := cfgFor(dir, zoneID)
+	cfg.PlayUID = 1000
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{})
+
+	work, err := l.newWorkDir()
+	if err != nil {
+		t.Fatalf("newWorkDir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(work) }()
+
+	info, err := os.Stat(work)
+	if err != nil {
+		t.Fatalf("stat %s: %v", work, err)
+	}
+	if got := info.Mode() & (os.ModePerm | os.ModeSetgid); got != 0o770|os.ModeSetgid {
+		t.Errorf("newWorkDir mode = %v, want 0770 with setgid", got)
+	}
+}
+
+// TestLoopDoesNotTouchModesWhenPlayUIDUnset: PlayUID's zero value is "the
+// feature is off", and off must mean off — not even a chmod that happens to
+// no-op. A data dir left in a non-default mode (nothing this package would
+// normally produce, but nothing stops an operator's umask either) must
+// survive Run() untouched when PlayUID is unset.
+func TestLoopDoesNotTouchModesWhenPlayUIDUnset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod data dir: %v", err)
+	}
+	cfg := cfgFor(dir, zoneID) // PlayUID left at its zero value
+
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, _ func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		t.Error("no job is queued")
+		return StatusSucceeded, nil, nil
+	}})
+
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(dir, repoCacheDirName))
+		return err == nil // Run() has reached its startup past the repo cache mkdir
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %s: %v", dir, err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Errorf("data dir mode = %v, want unchanged 0755", got)
+	}
+}
+
+// TestSharingLeavesTheWorkerSecretsOwnerOnly: after the loop's start-up
+// sharing step, the data dir is traversable by group and a run's work dir
+// is group-writable, but the identity directory and the repo cache —
+// sitting right next to that now-traversable data dir — stay owner-only.
+// The repo cache matters as much as identity: group-writable, the play
+// could poison the next job's checkout.
+func TestSharingLeavesTheWorkerSecretsOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod data dir: %v", err)
+	}
+
+	identityDir := filepath.Join(dir, "identity")
+	// The Dockerfile's bundle mount shape: created with no mode, so 0755.
+	if err := os.Mkdir(identityDir, 0o755); err != nil {
+		t.Fatalf("mkdir identity: %v", err)
+	}
+	repoCache := filepath.Join(dir, repoCacheDirName)
+	if err := os.MkdirAll(repoCache, 0o700); err != nil {
+		t.Fatalf("mkdir repo cache: %v", err)
+	}
+
+	cfg := cfgFor(dir, zoneID)
+	cfg.PlayUID = 1000
+	cfg.IdentityDir = identityDir
+
+	var logs bytes.Buffer
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{}, WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+
+	if err := l.secureDirsForPlayUID(context.Background()); err != nil {
+		t.Fatalf("secureDirsForPlayUID: %v", err)
+	}
+	work, err := l.newWorkDir()
+	if err != nil {
+		t.Fatalf("newWorkDir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(work) }()
+
+	perm := func(p string) os.FileMode {
+		t.Helper()
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		return info.Mode() & (os.ModePerm | os.ModeSetgid)
+	}
+
+	if got := perm(dir); got != 0o710 {
+		t.Errorf("data dir mode = %v, want 0710", got)
+	}
+	if got := perm(work); got != 0o770|os.ModeSetgid {
+		t.Errorf("work dir mode = %v, want 0770 with setgid", got)
+	}
+	if got := perm(identityDir); got != 0o700 {
+		t.Errorf("identity dir mode = %v, want 0700", got)
+	}
+	if got := perm(repoCache); got != 0o700 {
+		t.Errorf("repo cache mode = %v, want 0700 (unchanged)", got)
+	}
+	if !strings.Contains(logs.String(), "tightened the identity directory") {
+		t.Errorf("expected an INFO log noting the identity directory's mode changed:\n%s", logs.String())
+	}
+}
+
 // TestLoopNoSecretsInLogs: a full fake run whose payload carries credential
 // material logs none of it — ids, kinds and durations only.
 func TestLoopNoSecretsInLogs(t *testing.T) {
