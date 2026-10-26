@@ -843,6 +843,107 @@ func TestRunCancelThroughTheSetuidHelperStillKillsTheGroup(t *testing.T) {
 	}
 }
 
+// TestSetuidHelperRefusalReachesTheOperator pins both halves of the one
+// path the helper's own wording travels. Only a MISSING helper fails at
+// cmd.Start(); every other refusal it can make — a uid that disagrees with
+// the one it was built for, a lost setuid bit, a drop the kernel did not
+// make — starts fine and exits 1, and the generic branch would render that
+// as "ansible-runner exited with code 1", throwing the reason away. The
+// other half matters just as much: an ansible-runner that genuinely exits 1
+// must still read exactly as it does today.
+func TestSetuidHelperRefusalReachesTheOperator(t *testing.T) {
+	const playUID = uint32(12345)
+	const refusal = "pulsix-setuid-exec: asked for uid 12345 but this helper is built for uid 65533"
+
+	cases := map[string]struct {
+		playUID uint32
+		stderr  string
+		want    string
+		wantNot string
+	}{
+		"the helper refuses": {
+			playUID: playUID,
+			stderr:  refusal + "\n",
+			want:    refusal,
+		},
+		"the helper names the variable even when its own line does not": {
+			playUID: playUID,
+			stderr:  "pulsix-setuid-exec: setgid: Operation not permitted\n",
+			want:    "PULSIX_WORKER_PLAY_UID=12345",
+		},
+		"ansible-runner itself exits 1": {
+			playUID: playUID,
+			stderr:  "ERROR! the playbook could not be found\n",
+			want:    "ansible-runner exited with code 1",
+			wantNot: "pulsix-setuid-exec",
+		},
+		"the feature is off": {
+			// Nothing can have come from a helper that was never invoked;
+			// a runner echoing the prefix must not be mistaken for one.
+			playUID: 0,
+			stderr:  refusal + "\n",
+			want:    "ansible-runner exited with code 1",
+			wantNot: "asked for uid",
+		},
+		"the extra-vars guard still wins its own case": {
+			playUID: playUID,
+			stderr:  extraVarsGuardVar,
+			wantNot: "ansible-runner exited with code 1",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, _, errText := summarize(1, nil, nil, tc.stderr, nil, tc.playUID)
+			if status != worker.StatusError {
+				t.Errorf("status = %q, want %q", status, worker.StatusError)
+			}
+			if tc.want != "" && !strings.Contains(errText, tc.want) {
+				t.Errorf("errText = %q, want it to contain %q", errText, tc.want)
+			}
+			if tc.wantNot != "" && strings.Contains(errText, tc.wantNot) {
+				t.Errorf("errText = %q, want it NOT to contain %q", errText, tc.wantNot)
+			}
+		})
+	}
+}
+
+// TestRunSurfacesASetuidHelperRefusal is the same property end to end: a
+// helper that refuses and exits 1 (what the real one does for every failure
+// but its own absence) must leave its words on the job's error, not in a
+// pipe nobody reads.
+func TestRunSurfacesASetuidHelperRefusal(t *testing.T) {
+	const playUID = uint32(12345)
+	refusing := filepath.Join(t.TempDir(), "refusing-setuid-exec")
+	script := "#!/bin/sh\n" +
+		"echo \"pulsix-setuid-exec: asked for uid $1 but this helper is built for uid 65533\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(refusing, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := writeFakeRunner(t)
+	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
+	t.Setenv(fakeEnvEvents, "")
+	t.Setenv(fakeEnvExit, "0")
+
+	env := runEnv(t)
+	env.Config.PlayUID = playUID
+	env.Config.SetuidHelper = refusing
+
+	status, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), runJob(t), env, func(*workerpb.RunEvent) error { return nil })
+	if status != worker.StatusError || err == nil {
+		t.Fatalf("status = %q err = %v, want an error status with a reason", status, err)
+	}
+	for _, want := range []string{"asked for uid 12345", "PULSIX_WORKER_PLAY_UID=12345"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to contain %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "exited with code 1") {
+		t.Errorf("error = %v, want the helper's reason instead of the generic exit-code text", err)
+	}
+}
+
 // writeStandInSetuidHelper writes an unprivileged stand-in for
 // deploy/worker/setuid-exec.c: the same contract (refuse a uid that is not
 // the one it was built for, then exec argv[2:]) without the uid drop, which

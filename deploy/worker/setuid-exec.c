@@ -58,10 +58,14 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 	/* The drift check. strtoul alone would accept "65533junk" and, worse,
-	 * "-1" (which wraps), so the parse has to be exact: a whole, non-empty,
-	 * base-10 string. A caller and an image that disagree about the uid must
-	 * stop here, naming both numbers, rather than run the play as whichever
-	 * of the two happens to be compiled in. */
+	 * "-1" (which wraps), so the whole string has to be consumed and a
+	 * leading '-' rejected outright. It is not a strict numeric grammar:
+	 * strtoul still skips leading whitespace and accepts a leading '+', so
+	 * " +65533" parses. That is harmless — equality with PLAY_UID is
+	 * required either way, and this program never does anything with the
+	 * value but compare it. A caller and an image that disagree about the
+	 * uid must stop here, naming both numbers, rather than run the play as
+	 * whichever of the two happens to be compiled in. */
 	char *rest = NULL;
 	errno = 0;
 	unsigned long wanted = strtoul(argv[1], &rest, 10);
@@ -87,9 +91,15 @@ int main(int argc, char *argv[]) {
 	}
 	/* Supplementary groups are inherited from the worker and would otherwise
 	 * survive the drop, carrying every group access the worker holds into the
-	 * play. They can only be dropped while euid is still 0, so this is first. */
+	 * play. They can only be dropped while euid is still 0, so this is first.
+	 * Read back like the uid and gid below, and for the same reason: a return
+	 * value is a claim, the kernel's own answer is the fact. */
 	if (setgroups(0, NULL) != 0) {
 		return fail("setgroups");
+	}
+	if (getgroups(0, NULL) != 0) {
+		fprintf(stderr, "pulsix-setuid-exec: supplementary groups survived the drop (%d left)\n", getgroups(0, NULL));
+		return 1;
 	}
 	/* setgid before setuid: after the uid drop there is no privilege left to
 	 * change the gid with. The gid is the WORKER's on purpose — the worker has
@@ -115,7 +125,16 @@ int main(int argc, char *argv[]) {
 	/* execv, not execvp: PATH comes from the environment, and the program to
 	 * run must be decided by argv alone. The environment is passed through
 	 * untouched — the worker already strips its own PULSIX_ and ANSIBLE_
-	 * variables (runner.stripPrivateEnv) and this program reads none of it. */
+	 * variables (runner.stripPrivateEnv) and this program reads none of it.
+	 *
+	 * Descriptors above 2 are not closed and the signal mask is not reset,
+	 * which a setuid program that gains privilege would have to do. This one
+	 * only ever LOSES privilege: uid 65533 holds strictly less than any
+	 * account that can run this binary, so an inherited descriptor or a
+	 * blocked signal reaches a process weaker than the one that passed it.
+	 * It is the worker's own pipes the runner needs on 0/1/2 anyway. If the
+	 * invariant in the Dockerfile beside mode 4755 ever stops holding, this
+	 * paragraph stops holding with it. */
 	execv(argv[2], &argv[2]);
 	return fail(argv[2]);
 }

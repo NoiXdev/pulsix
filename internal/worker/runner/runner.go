@@ -82,10 +82,19 @@ const (
 )
 
 // defaultSetuidHelper mirrors worker.Load's default for
-// PULSIX_WORKER_SETUID_HELPER. Load always fills Config.SetuidHelper, so
-// this only catches a Config assembled by hand (tests, an embedded worker)
-// and keeps an empty string from becoming an exec of "".
+// PULSIX_WORKER_SETUID_HELPER. Load always fills Config.SetuidHelper (and
+// refuses a non-absolute one), so this only catches a Config assembled by
+// hand (tests, an embedded worker) and keeps an empty string from becoming
+// an exec of "".
 const defaultSetuidHelper = "/usr/local/bin/pulsix-setuid-exec"
+
+// helperErrPrefix is how deploy/worker/setuid-exec.c introduces every one
+// of its refusals on stderr. Only a MISSING helper fails at cmd.Start();
+// every other refusal — uid drift, a lost setuid bit, a drop that did not
+// take — starts fine and exits 1, where summarize would otherwise render
+// the useless "ansible-runner exited with code 1" and throw the helper's
+// own words away.
+const helperErrPrefix = "pulsix-setuid-exec:"
 
 // Runner executes claimed jobs by driving ansible-runner as a subprocess.
 // The fields are the injection points; zero values fall back to their
@@ -231,7 +240,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	default:
 	}
 
-	status, statsMap, errText := summarize(cmd.ProcessState.ExitCode(), stats, waitErr, stderr.String(), job.GetConnections())
+	status, statsMap, errText := summarize(cmd.ProcessState.ExitCode(), stats, waitErr, stderr.String(), job.GetConnections(), env.Config.PlayUID)
 	if errText != "" {
 		// The failure detail belongs to the result (the manager stores it
 		// on the job row for the run view); the log names the outcome only.
@@ -398,7 +407,10 @@ func terminateGroup(pid int, grace time.Duration) {
 }
 
 // summarize maps the process exit onto the loop's terminal statuses.
-func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, connections map[string]string) (worker.Status, map[string]any, string) {
+// playUID is the configured play uid (0 = the feature is off): when it is
+// set, the process that ran was the setuid helper, and a refusal of its own
+// has to reach the operator instead of the generic exit-code text.
+func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, connections map[string]string, playUID uint32) (worker.Status, map[string]any, string) {
 	if rc < 0 {
 		return worker.StatusError, nil, fmt.Sprintf("ansible-runner terminated by signal (%v)", waitErr)
 	}
@@ -420,11 +432,38 @@ func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, 
 	default:
 		// Anything else (1: ansible error, 5: bad options, 250: internal
 		// error, ...) is an infrastructure failure of the run itself.
+		if reason := setuidHelperFailure(stderr, playUID); reason != "" {
+			return worker.StatusError, nil, reason
+		}
 		if reason := extraVarsLoadFailure(stderr); reason != "" {
 			return worker.StatusError, nil, reason
 		}
 		return worker.StatusError, nil, fmt.Sprintf("ansible-runner exited with code %d", rc)
 	}
+}
+
+// setuidHelperFailure recognises a refusal by the setuid helper and returns
+// it as the run's error. Only a missing helper fails at cmd.Start() with a
+// legible message; a helper that runs and refuses (a uid that disagrees
+// with the one it was built for, a lost setuid bit, a drop the kernel did
+// not make) exits 1 with its reason on stderr, which the generic branch
+// below renders as "ansible-runner exited with code 1" — a message that
+// sends an operator looking at Ansible for a problem in the image.
+//
+// The helper writes its line and never execs, so it is the whole of stderr
+// when it speaks; anything else on stderr is the runner's and must keep
+// taking the generic path, or a play that legitimately exits 1 would start
+// reading as a privilege problem. The variable is named alongside, because
+// not every refusal the helper can print names it itself.
+func setuidHelperFailure(stderr string, playUID uint32) string {
+	if playUID == 0 {
+		return ""
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
+	if !strings.HasPrefix(line, helperErrPrefix) {
+		return ""
+	}
+	return fmt.Sprintf("%s (%s=%d)", strings.TrimSpace(line), envPlayUID, playUID)
 }
 
 // extraVarsLoadFailure recognises the one failure the extra-vars guard

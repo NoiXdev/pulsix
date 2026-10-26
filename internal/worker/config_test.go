@@ -282,6 +282,27 @@ func TestLoadErrors(t *testing.T) {
 			inName: "PULSIX_CLAIM_INTERVAL",
 		},
 		{
+			// A bare name is resolved by exec.LookPath against PATH, so the
+			// environment would choose which setuid-root binary the worker
+			// execs. Refused at load, not discovered at run time.
+			name: "relative setuid helper",
+			env: map[string]string{
+				"PULSIX_MANAGER_ADDR": "manager.example.test:8444",
+				"PULSIX_WORKER_CERT":  "/c.pem", "PULSIX_WORKER_KEY": "/k.pem", "PULSIX_CA_CERT": "/ca.pem",
+				"PULSIX_WORKER_SETUID_HELPER": "pulsix-setuid-exec",
+			},
+			inName: "PULSIX_WORKER_SETUID_HELPER",
+		},
+		{
+			name: "dot-relative setuid helper",
+			env: map[string]string{
+				"PULSIX_MANAGER_ADDR": "manager.example.test:8444",
+				"PULSIX_WORKER_CERT":  "/c.pem", "PULSIX_WORKER_KEY": "/k.pem", "PULSIX_CA_CERT": "/ca.pem",
+				"PULSIX_WORKER_SETUID_HELPER": "./setuid-exec",
+			},
+			inName: "./setuid-exec",
+		},
+		{
 			name: "invalid max concurrent",
 			env: map[string]string{
 				"PULSIX_MANAGER_ADDR": "manager.example.test:8444",

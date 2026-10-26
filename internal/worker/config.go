@@ -233,6 +233,13 @@ func Load(env []string) (Config, error) {
 
 	cfg.SetuidHelper = defaultSetuidHelper
 	if raw := vals[envSetuidHelper]; raw != "" {
+		// Absolute only. A value without a separator is resolved by
+		// exec.LookPath against the worker's PATH, which would let the
+		// ENVIRONMENT pick which setuid-root binary gets exec'd — the exact
+		// thing the helper's own "execv, not execvp" rule exists to prevent.
+		if !filepath.IsAbs(raw) {
+			return cfg, fmt.Errorf("%s %q must be an absolute path (a relative name would be resolved against PATH, letting the environment choose which setuid-root binary runs)", envSetuidHelper, raw)
+		}
 		cfg.SetuidHelper = raw
 	}
 	return cfg, nil

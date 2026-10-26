@@ -98,6 +98,15 @@ RUN groupadd --system --gid 65532 pulsix \
 # anything they could not already do by being themselves. root:root ownership
 # is what makes the setuid bit mean root; COPY --from already lands it that
 # way, stated here so a future edit cannot drop it silently.
+#
+# THE INVARIANT 4755 RESTS ON: the helper confers gid 65532 (the worker's)
+# as well as uid 65533, and nothing owned by the worker outside a run's own
+# work dir is group-accessible. The identity directory is 0700, the data dir
+# 0710, the repo cache 0700. Make ANY worker-owned path group-readable or
+# group-writable and this mode stops being free — it would then let every
+# account in the image reach it through the helper. Tighten to
+# `chown root:pulsix` + `chmod 4750` at that point, so only the worker may
+# invoke the helper at all.
 COPY --from=build /out/pulsix-setuid-exec /usr/local/bin/pulsix-setuid-exec
 RUN chown root:root /usr/local/bin/pulsix-setuid-exec \
 	&& chmod 4755 /usr/local/bin/pulsix-setuid-exec

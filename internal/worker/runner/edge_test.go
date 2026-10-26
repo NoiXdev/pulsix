@@ -119,7 +119,7 @@ func TestSubprocessEnvStripsPrivateVars(t *testing.T) {
 }
 
 func TestSummarizeSignalIsAnError(t *testing.T) {
-	status, stats, errText := summarize(-1, nil, os.ErrDeadlineExceeded, "", nil)
+	status, stats, errText := summarize(-1, nil, os.ErrDeadlineExceeded, "", nil, 0)
 	if status != worker.StatusError || stats != nil || errText == "" {
 		t.Errorf("signal run: status=%q stats=%v err=%q", status, stats, errText)
 	}
@@ -454,7 +454,7 @@ func TestSummarizeMapsAnsiblePlaybookExitCodes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			status, stats, _ := summarize(c.rc, c.stats, nil, "", conns)
+			status, stats, _ := summarize(c.rc, c.stats, nil, "", conns, 0)
 			if status != c.want {
 				t.Fatalf("summarize(%d) = %s, want %s", c.rc, status, c.want)
 			}
@@ -483,7 +483,7 @@ func TestSummarizeNamesAFailedExtraVarsLoad(t *testing.T) {
 		"The error appears to be in '/work/env/extravars': line 1, column 28\n" +
 		`{"pulsix_extravars_guard": {"json-only: this key is longer than …`
 
-	status, stats, errText := summarize(1, nil, nil, guardErr, nil)
+	status, stats, errText := summarize(1, nil, nil, guardErr, nil, 0)
 	if status != worker.StatusError || stats != nil {
 		t.Fatalf("summarize = %s, %v; want an error with no stats", status, stats)
 	}
@@ -496,7 +496,7 @@ func TestSummarizeNamesAFailedExtraVarsLoad(t *testing.T) {
 
 	// An unrelated failure keeps the plain exit-code reason: the guard
 	// is the only thing this branch recognises.
-	_, _, other := summarize(5, nil, nil, "ERROR! the playbook could not be found", nil)
+	_, _, other := summarize(5, nil, nil, "ERROR! the playbook could not be found", nil, 0)
 	if strings.Contains(other, "extra vars") {
 		t.Fatalf("an unrelated failure reported %q", other)
 	}

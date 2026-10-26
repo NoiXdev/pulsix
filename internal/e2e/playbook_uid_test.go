@@ -116,16 +116,28 @@ chmod 0600 "$key"
 # the worker's own uid, so a helper that accepted it would run the play with
 # the worker's identity — the separation inverted.
 set +e
-/usr/local/bin/pulsix-setuid-exec 65532 /usr/bin/id > "$work_mismatch" 2>&1
+/usr/local/bin/pulsix-setuid-exec 65532 /usr/bin/id > "$work_mismatch.out" 2> "$work_mismatch.err"
 rc=$?
 set -e
-cat "$work_mismatch"
-if [ "$rc" -eq 0 ]; then
-	echo "FAIL: the helper accepted uid 65532; it is built for 65533"
+cat "$work_mismatch.err"
+if [ "$rc" -ne 1 ]; then
+	echo "FAIL: the helper exited $rc for uid 65532; it is built for 65533 and must refuse with 1"
 	exit 1
 fi
-if ! grep -q 65532 "$work_mismatch" || ! grep -q 65533 "$work_mismatch"; then
+if ! grep -q 65532 "$work_mismatch.err" || ! grep -q 65533 "$work_mismatch.err"; then
 	echo "FAIL: the refusal must name both numbers"
+	exit 1
+fi
+# The contract runner.setuidHelperFailure keys on: the refusal is the FIRST
+# line of stderr, prefixed "pulsix-setuid-exec:", and nothing reaches
+# stdout. Without that the worker renders a useless "ansible-runner exited
+# with code 1" and the words above die in a pipe.
+if [ "$(head -n 1 "$work_mismatch.err" | cut -c1-19)" != "pulsix-setuid-exec:" ]; then
+	echo "FAIL: the refusal must be the first line of stderr, prefixed pulsix-setuid-exec:"
+	exit 1
+fi
+if [ -s "$work_mismatch.out" ]; then
+	echo "FAIL: the helper wrote to stdout; its refusal must be on stderr alone"
 	exit 1
 fi
 echo "PULSIX-UID-TEST: the helper refuses a uid it was not built for"
