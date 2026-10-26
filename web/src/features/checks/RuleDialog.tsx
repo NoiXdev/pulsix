@@ -1,62 +1,18 @@
-import { useCallback, useId, useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useCheckRule, useCreateRule, useUpdateRule } from '../../api/hooks/useRules.ts';
-import { useHosts } from '../../api/hooks/useHosts.ts';
-import { useHostItems } from '../../api/hooks/useItems.ts';
 import { RuleForm } from './RuleForm.tsx';
+import { RuleHostPicker, RuleItemPicker } from './RulePickers.tsx';
+import { CONFIRM_SWITCH, confirmDropClear, defaultOpFor, lines } from './ruleDialogText.ts';
 import { RuleExpression } from './RuleExpression.tsx';
 import type { MonitoringGroup, Rule, RuleFormValue, RuleInput, RuleMetric, RuleScope } from '../../api/types.ts';
 
 // Still used by RuleHostPicker's own search <input> below, which stays a
 // plain text field rather than becoming a Select.
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
-
-/** lines turns a textarea's content into the string list the API takes,
- * dropping blank lines so a trailing newline is not a label of its own —
- * the same helper CheckDialog's units/mounts fields use. */
-function lines(text: string): string[] {
-  return text.split('\n').map((l) => l.trim()).filter(Boolean);
-}
-
-/** defaultOpFor picks the operator a freshly chosen metric starts with:
- * the first (and most common) comparison for its kind. */
-function defaultOpFor(kind: 'numeric' | 'discrete'): string {
-  return kind === 'discrete' ? '==' : '>';
-}
-
-const CONFIRM_SWITCH =
-  'Switching to the expression editor is a one-way door from here. The way back to the form editor only stays open while the ' +
-  "expression keeps exactly the shape the form produces — one comparison against this metric, no arithmetic, no time window, no \"or\". " +
-  'Once it leaves that shape, this rule can only be edited as an expression from now on. Continue?';
-
-/** confirmDropClear is the second, separate confirmation a rule with a
- * clear condition has to pass before it is converted.
- *
- * The expression grammar has no syntax for a clear condition at all, and
- * the server stores clear_ast = NULL for every expression-mode rule, so the
- * conversion does not merely close the way back — it deletes the
- * hysteresis. A rule triggering at >= 85 and clearing at < 80 would start
- * flipping between ok and warn on every crossing of 85, which is the exact
- * behaviour the clear condition was written to prevent, with nothing on
- * screen recording that it happened and no way to recover it by reopening
- * the dialog.
- *
- * It names the condition rather than mentioning one in the abstract, and it
- * is asked every time rather than once per dialog (unlike CONFIRM_SWITCH):
- * this one is destructive, and the operator may well have added the clear
- * condition after the first switch. */
-function confirmDropClear(op: string, value: string): string {
-  return (
-    `This rule clears at "${op} ${value}". The expression editor has no syntax for a clear condition, so saving as an ` +
-    'expression will remove it — the rule will then change state on every crossing of its threshold instead of holding ' +
-    'until the clear condition is met. Remove the clear condition and continue?'
-  );
-}
-
 export interface RuleDialogProps {
   org: string;
   /** The rule being edited; undefined creates one. */
@@ -359,120 +315,5 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
         </div>
       </form>
     </Dialog>
-  );
-}
-
-/**
- * RuleHostPicker chooses the host a host- or item-scoped rule targets.
- * Mirrors CheckDialog's own HostPicker in shape (features/checks): the
- * hosts list is paginated, so it searches through the API rather than
- * filtering one page, and the host a rule already targets stays
- * selectable even when a search does not happen to return it — the same
- * review finding that fixed CheckDialog's binding select (a select whose
- * value matches no option falls back to the empty placeholder and
- * swallows Save with no message).
- *
- * RuleDTO does carry host_name now (backlog 3.30), the same enrichment a
- * check definition has, but only on the rule this dialog already loaded,
- * not on an id this picker's own paginated host search resolves — the
- * editable value here is a plain host id, so a missing current binding
- * (one the search does not happen to return) is still shown by its
- * shortened id rather than a name.
- */
-function RuleHostPicker({ org, value, onChange }: { org: string; value: string; onChange: (id: string) => void }) {
-  const [q, setQ] = useState('');
-  const hosts = useHosts(org, { monitored: true, q });
-  const listed = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
-  const currentMissing = value !== '' && !listed.some((h) => h.id === value);
-
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor="rule-host">Host</Label>
-      <input
-        type="search"
-        aria-label="Search monitored hosts"
-        placeholder="Search monitored hosts…"
-        className={SELECT}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
-      <Select
-        id="rule-host"
-        placeholder="Choose a monitored host…"
-        required
-        value={value}
-        onChange={onChange}
-        options={[
-          ...(currentMissing ? [{ value, label: `${value.slice(0, 8)} (current binding)` }] : []),
-          ...listed.map((h) => ({ value: h.id, label: h.name })),
-        ]}
-      />
-      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
-      {!hosts.data && hosts.isError && (
-        <span role="alert" className="text-[11px] text-destructive">
-          Could not load monitored hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/**
- * RuleItemPicker names the item an item-scoped rule targets: a `<datalist>`
- * over the chosen host's discovered items (GET /hosts/{id}/items), with
- * the field underneath it a plain text input throughout (v0.3b-3 spec,
- * "the rule editor's item field becomes a picker ... with free text still
- * accepted"). A rule may name an item that has not appeared yet — the
- * same decoupling ItemDecisionDialog's own pattern field has from the
- * items it matches — so this never becomes a closed `<select>`: a
- * `<datalist>` suggests without restricting what can be typed or
- * submitted.
- *
- * `checkKey` narrows the suggestions to the check the rule's own metric
- * belongs to (RuleMetric's own check_key) — a mount and a unit are never
- * the same kind of item, and listing every item this host has ever
- * reported, regardless of check, would suggest ones the rule's metric
- * could not possibly apply to.
- *
- * The `<datalist>`'s id is generated per instance with useId rather than a
- * fixed string: a `list=` attribute resolves by id against the whole
- * document, and two mounted pickers sharing one id would silently collide
- * — the browser binds to whichever datalist it finds first, offering one
- * picker's suggestions on the other's input, with no error to notice it by.
- */
-function RuleItemPicker({
-  org,
-  hostId,
-  checkKey,
-  value,
-  onChange,
-}: {
-  org: string;
-  hostId: string;
-  checkKey: string | undefined;
-  value: string;
-  onChange: (item: string) => void;
-}) {
-  const items = useHostItems(org, hostId, hostId !== '');
-  const options = [...new Set((items.data?.items ?? []).filter((it) => it.check_key === checkKey).map((it) => it.item))].sort();
-  const optionsId = useId();
-
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor="rule-item">Item</Label>
-      <Input
-        id="rule-item"
-        required
-        list={optionsId}
-        placeholder="/var, sshd, …"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <datalist id={optionsId}>
-        {options.map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
-    </div>
   );
 }

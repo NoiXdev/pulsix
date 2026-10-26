@@ -173,3 +173,13 @@ export function sourceLabel(c: HostCheck): string {
   if (c.source === 'group') return c.source_name ?? 'Monitoring group';
   return 'Organization';
 }
+
+/** The tuple a "Rules" disclosure is open for — the same three fields that
+ * name a tuple everywhere else on the host card, without `range`: there is
+ * no window to pick for a rule, unlike a graph selection. Shared here
+ * since backlog 3.42 split the card and its rows apart. */
+export interface TupleKey {
+  check: string;
+  item: string;
+  metric: string;
+}
