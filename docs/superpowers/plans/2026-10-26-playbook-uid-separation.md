@@ -182,9 +182,33 @@ Assert against the built `*exec.Cmd` rather than a real run: the uid boundary it
 Run: `go test ./internal/worker/runner/ -run TestRunnerSpawnsUnderThePlayUID -count=1`
 Expected: FAIL
 
-- [ ] **Step 3: Set the credential and call `ShareWorkDir` before `cmd.Start()`**
+- [ ] **Step 3: Exec the setuid helper, and call `ShareWorkDir` before `cmd.Start()`**
 
-`cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}` keeps its existing field and gains `Credential: &syscall.Credential{Uid: playUID, Gid: uint32(os.Getgid())}` when the uid is non-zero. The primary gid is the WORKER's, so artifacts the play writes stay readable by the worker — this is what makes the event stream keep working.
+> **Superseded and corrected during execution (2026-10-26).** This step first
+> said to set `syscall.Credential{Uid: playUID, Gid: os.Getgid()}`. That is
+> wrong and contradicts the spec's own anti-goal: `Credential` needs
+> `CAP_SETUID`, the capability the worker must not hold, so the shipped image
+> would have failed every playbook job at `cmd.Start()`. Task 4's
+> implementer caught it by running the e2e test against a real image.
+
+When `env.Config.PlayUID != 0`, build the command as
+`<helper> <uid> <ansible-runner> <args…>` — the helper (Task 4) drops
+privilege and `execv`s the rest. **No `Credential` on any path**: its return
+is a regression into the anti-goal, so the test asserts its absence. The
+helper's own primary gid is the WORKER's, so artifacts the play writes stay
+readable by the worker — this is what keeps the event stream working.
+`Setpgid: true` stays unconditional, on the helper; the exec'd runner
+inherits the group, so the cancel path still reaches it (prove this with a
+test — the signal has to cross an `execv`).
+
+The uid is passed as `argv[1]` and the helper **refuses** unless it matches
+its own compiled-in `PLAY_UID`. `PULSIX_WORKER_PLAY_UID` and `PLAY_UID` are
+otherwise two values free to drift apart in silence, and the play would run
+as a uid nobody configured.
+
+The helper's path is `PULSIX_WORKER_SETUID_HELPER`, default
+`/usr/local/bin/pulsix-setuid-exec`, so a deployment outside our image can
+point at its own.
 
 - [ ] **Step 4: Write the failing test for a refused spawn**
 
@@ -200,7 +224,11 @@ func TestRunnerRefusedSpawnNamesTheVariable(t *testing.T) {
 
 - [ ] **Step 5: Make a refused spawn legible**
 
-Wrap the `cmd.Start()` error when a credential was set: name `PULSIX_WORKER_PLAY_UID`, the uid, and that the worker may not change uid in this deployment. Per Global Constraints there is no fallback — the job fails.
+Wrap the `cmd.Start()` error when the helper was used: name
+`PULSIX_WORKER_PLAY_UID`, the uid, and what to check — with the helper the
+cause is a missing or non-setuid helper binary rather than a refused
+`setuid`, so the message must send an operator there. Per Global Constraints
+there is no fallback — the job fails.
 
 - [ ] **Step 6: Run the package**
 
