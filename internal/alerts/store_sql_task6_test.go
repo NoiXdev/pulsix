@@ -10,10 +10,14 @@
 package alerts_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1098,4 +1102,81 @@ func insertAlertAt(t *testing.T, d *db.DB, org, host uuid.UUID, checkKey, item, 
 	if err != nil {
 		t.Fatalf("insert alert at %v: %v", openedAt, err)
 	}
+}
+
+// TestWindowsForHostLogsAWindowItCannotEvaluate is backlog 4.29. A
+// window whose cron or timezone no longer parses — hand-edited, or
+// written by a version that accepted something this one does not —
+// simply vanished from suppression: occurrenceAt reported it inactive,
+// which is the same answer it gives for "not now", and nothing anywhere
+// recorded the difference.
+//
+// The two are not the same event. "Not now" is the window working; this
+// is the window gone, and with it every mute it held — so an alert an
+// operator declared silenced pages, and the only trace was the page
+// itself. Suppression stays best-effort (one bad row must not fail
+// alerting for the whole host), so the fix is a log line, and the test
+// is that the line exists and names the window.
+func TestWindowsForHostLogsAWindowItCannotEvaluate(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	now := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+
+	// Written straight through gen, because the service layer would
+	// refuse both of these — which is the point: the row exists, so the
+	// read path has to cope with it.
+	broken := recurringWindow(t, d, org, &host, maintenance.ReasonSilence, "not a cron", "UTC", time.Hour)
+	badZone := recurringWindow(t, d, org, &host, maintenance.ReasonSilence, "0 12 * * *", "Mars/Olympus", time.Hour)
+	// A healthy window alongside them: one bad row must not take the
+	// others down with it.
+	good := recurringWindow(t, d, org, &host, maintenance.ReasonMaintenance, "0 12 * * *", "UTC", 2*time.Hour)
+
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	got, err := st.WindowsForHost(context.Background(), org, host, now)
+	if err != nil {
+		t.Fatalf("WindowsForHost must not fail over a bad row: %v", err)
+	}
+	if len(got) != 1 || got[0].WindowID != good {
+		t.Fatalf("WindowsForHost = %+v, want only the healthy window %s", got, good)
+	}
+
+	out := logs.String()
+	for _, id := range []uuid.UUID{broken, badZone} {
+		if !strings.Contains(out, id.String()) {
+			t.Errorf("no log line names window %s; an operator has nothing to look for:\n%s", id, out)
+		}
+	}
+	if !strings.Contains(out, "suppressing nothing") {
+		t.Errorf("the log line must say what the consequence is, not only that something failed:\n%s", out)
+	}
+	// The healthy window is not reported as broken — a line per row would
+	// bury the two that matter.
+	if strings.Contains(out, good.String()) {
+		t.Errorf("the healthy window %s was logged as unevaluable:\n%s", good, out)
+	}
+}
+
+// lockedBuffer collects what the default logger writes while a test has
+// it swapped out. slog's handler may be called from more than one
+// goroutine, so the writes take a lock.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

@@ -25,6 +25,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -647,31 +648,65 @@ func (s *SQLStore) StateChanges(ctx context.Context, orgID uuid.UUID, subject Su
 // reported inactive rather than failing the whole call — suppression
 // display is best-effort the same way OccurrencesBetween's own calendar
 // is, never a safety gate.
-func occurrenceAt(r gen.MaintenanceWindow, now time.Time) (maintenance.Occurrence, bool) {
+//
+// Inactive is not the whole story, which is why the third return exists
+// (backlog 4.29). "This window does not cover now" and "this window can
+// no longer be evaluated at all" are the same answer here and must not
+// be the same EVENT: the second un-mutes every alert the window covered,
+// and before this nothing recorded it anywhere, so the symptom reached
+// an operator as pages firing during a declared silence with no trace
+// pointing at the cause. The caller logs it and carries on; the
+// best-effort contract above is unchanged.
+func occurrenceAt(r gen.MaintenanceWindow, now time.Time) (maintenance.Occurrence, bool, error) {
 	reason := maintenance.Reason(r.Reason)
 	if r.Cron == nil {
 		starts, ends := db.TimePtr(r.StartsAt), db.TimePtr(r.EndsAt)
 		if starts == nil || ends == nil || now.Before(*starts) || !now.Before(*ends) {
-			return maintenance.Occurrence{}, false
+			return maintenance.Occurrence{}, false, nil
 		}
-		return maintenance.Occurrence{WindowID: r.ID, Reason: reason, Start: *starts, End: *ends}, true
+		return maintenance.Occurrence{WindowID: r.ID, Reason: reason, Start: *starts, End: *ends}, true, nil
 	}
 	if r.Timezone == nil || r.DurationSeconds == nil {
-		return maintenance.Occurrence{}, false
+		// A recurring row missing either is not a window this code can
+		// evaluate; the schema allows the shape, so say so rather than
+		// reading it as "not now".
+		return maintenance.Occurrence{}, false, fmt.Errorf("recurring window has no %s", missingRecurringField(r))
 	}
 	w := maintenance.Window{
 		ID: r.ID, Reason: reason, Cron: *r.Cron, Timezone: *r.Timezone,
 		Duration: time.Duration(*r.DurationSeconds) * time.Second,
 	}
 	active, err := maintenance.ActiveAt(w, now)
-	if err != nil || !active {
-		return maintenance.Occurrence{}, false
+	if err != nil {
+		return maintenance.Occurrence{}, false, fmt.Errorf("evaluate: %w", err)
+	}
+	if !active {
+		return maintenance.Occurrence{}, false, nil
 	}
 	occs, _, err := maintenance.Occurrences(w, now, now.Add(time.Nanosecond), 1)
-	if err != nil || len(occs) == 0 {
-		return maintenance.Occurrence{}, false
+	if err != nil {
+		return maintenance.Occurrence{}, false, fmt.Errorf("resolve the active occurrence: %w", err)
 	}
-	return occs[0], true
+	if len(occs) == 0 {
+		// ActiveAt said yes and the occurrence walk found nothing: not a
+		// parse failure, so not an error — the two ask the same question
+		// of the same expression and only disagree at a boundary instant.
+		return maintenance.Occurrence{}, false, nil
+	}
+	return occs[0], true, nil
+}
+
+// missingRecurringField names which half of a recurring window's required
+// pair is absent, so the log line says what to fix.
+func missingRecurringField(r gen.MaintenanceWindow) string {
+	switch {
+	case r.Timezone == nil && r.DurationSeconds == nil:
+		return "timezone or duration"
+	case r.Timezone == nil:
+		return "timezone"
+	default:
+		return "duration"
+	}
 }
 
 // WindowsForHost implements Store.
@@ -684,7 +719,19 @@ func (s *SQLStore) WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, 
 	}
 	var out []maintenance.Occurrence
 	for _, r := range rows {
-		if occ, active := occurrenceAt(r, now); active {
+		occ, active, err := occurrenceAt(r, now)
+		if err != nil {
+			// Logged, never returned: suppression stays best-effort, and
+			// failing this call would take down alerting for the whole
+			// host over one bad row. But it is no longer silent — this
+			// window has stopped covering anything, and an operator
+			// looking for why a silenced alert paged has a line naming
+			// the window (backlog 4.29).
+			slog.ErrorContext(ctx, "maintenance window cannot be evaluated and is suppressing nothing",
+				"window", r.ID, "org", orgID, "host", hostID, "err", err)
+			continue
+		}
+		if active {
 			out = append(out, occ)
 		}
 	}
