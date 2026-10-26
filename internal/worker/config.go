@@ -38,6 +38,7 @@ const (
 	envEnrollToken   = "PULSIX_ENROLL_TOKEN"
 	envIdentityDir   = "PULSIX_WORKER_IDENTITY_DIR"
 	envPlayUID       = "PULSIX_WORKER_PLAY_UID"
+	envSetuidHelper  = "PULSIX_WORKER_SETUID_HELPER"
 )
 
 // Defaults for the optional variables.
@@ -48,6 +49,7 @@ const (
 	defaultClaimInterval   = 3 * time.Second
 	defaultMaxConcurrent   = 1
 	defaultIdentityDirName = "identity"
+	defaultSetuidHelper    = "/usr/local/bin/pulsix-setuid-exec"
 )
 
 // Config is the validated worker configuration. Version is the build
@@ -111,6 +113,14 @@ type Config struct {
 	// client certificate and key — this lets an operator put the playbook
 	// under a second, unprivileged uid that cannot.
 	PlayUID uint32
+	// SetuidHelper (PULSIX_WORKER_SETUID_HELPER, default
+	// /usr/local/bin/pulsix-setuid-exec) is the setuid-root program that
+	// performs the drop to PlayUID; read only when PlayUID is set. The
+	// worker cannot change uid itself — doing so would need CAP_SETUID,
+	// and a process holding that can setuid(0), so granting it would add
+	// a path to root the worker does not have today. A deployment outside
+	// the Pulsix worker image points this at its own helper.
+	SetuidHelper string
 }
 
 // Load parses and validates the given environment (os.Environ() in the
@@ -219,6 +229,11 @@ func Load(env []string) (Config, error) {
 			return cfg, fmt.Errorf("%s %q must not be the worker's own uid (%d)", envPlayUID, raw, os.Getuid())
 		}
 		cfg.PlayUID = uint32(n)
+	}
+
+	cfg.SetuidHelper = defaultSetuidHelper
+	if raw := vals[envSetuidHelper]; raw != "" {
+		cfg.SetuidHelper = raw
 	}
 	return cfg, nil
 }

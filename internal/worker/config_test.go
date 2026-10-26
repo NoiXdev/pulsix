@@ -53,6 +53,11 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ServerName != "" {
 		t.Errorf("ServerName = %q, want empty without PULSIX_MANAGER_SERVER_NAME", cfg.ServerName)
 	}
+	// The helper has a default even with PlayUID off: the runner only reads
+	// it when the uid is set, and an empty value there would exec "".
+	if cfg.SetuidHelper != "/usr/local/bin/pulsix-setuid-exec" {
+		t.Errorf("SetuidHelper = %q, want the default", cfg.SetuidHelper)
+	}
 }
 
 // TestLoadServerNameOverride (Task 17): PULSIX_MANAGER_SERVER_NAME is
@@ -88,6 +93,7 @@ func TestLoadOverrides(t *testing.T) {
 		"PULSIX_ANSIBLE_BIN=/usr/local/bin/ansible-playbook",
 		"PULSIX_CLAIM_INTERVAL=250ms",
 		"PULSIX_MAX_CONCURRENT=1",
+		"PULSIX_WORKER_SETUID_HELPER=/opt/pulsix/setuid-exec",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +112,11 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.MaxConcurrent != 1 {
 		t.Errorf("MaxConcurrent = %d", cfg.MaxConcurrent)
+	}
+	// A worker outside the Pulsix image ships its own setuid helper, so the
+	// path has to be configurable rather than compiled into the worker.
+	if cfg.SetuidHelper != "/opt/pulsix/setuid-exec" {
+		t.Errorf("SetuidHelper = %q", cfg.SetuidHelper)
 	}
 	want := 2
 	if len(cfg.Zones) != want {

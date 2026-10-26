@@ -34,6 +34,7 @@ const (
 // exit code alone so a script that silently stopped early cannot pass.
 const (
 	markerBundleDirPrivate = "PULSIX-UID-TEST: bundle dir is 0700"
+	markerUIDMismatch      = "PULSIX-UID-TEST: the helper refuses a uid it was not built for"
 	markerKeyUnreadable    = "PULSIX-UID-TEST: the play cannot read the worker key"
 	markerArtifactReadBack = "PULSIX-UID-TEST: the worker read back what the play wrote"
 )
@@ -55,7 +56,7 @@ func TestPlaybookCannotReadTheWorkerKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the uid boundary script failed: %v", err)
 	}
-	for _, marker := range []string{markerBundleDirPrivate, markerKeyUnreadable, markerArtifactReadBack} {
+	for _, marker := range []string{markerBundleDirPrivate, markerUIDMismatch, markerKeyUnreadable, markerArtifactReadBack} {
 		if !strings.Contains(string(out), marker) {
 			t.Errorf("the script never reported %q", marker)
 		}
@@ -95,6 +96,7 @@ bundle=/etc/pulsix-worker
 key=$bundle/key.pem
 data=/var/lib/pulsix-worker
 work=$data/uid-boundary
+work_mismatch=/tmp/pulsix-uid-mismatch.log
 
 # The image's own shape, before any worker code has run: a bundle directory
 # a localhost play could list is a key a localhost play can read.
@@ -107,6 +109,26 @@ echo "PULSIX-UID-TEST: bundle dir is 0700"
 
 printf 'not a real private key\n' > "$key"
 chmod 0600 "$key"
+
+# The drift check. PULSIX_WORKER_PLAY_UID on the Go side and PLAY_UID in the
+# image are two numbers that can be edited apart; the helper must refuse the
+# pair rather than run the play as whichever one it was built with. 65532 is
+# the worker's own uid, so a helper that accepted it would run the play with
+# the worker's identity — the separation inverted.
+set +e
+/usr/local/bin/pulsix-setuid-exec 65532 /usr/bin/id > "$work_mismatch" 2>&1
+rc=$?
+set -e
+cat "$work_mismatch"
+if [ "$rc" -eq 0 ]; then
+	echo "FAIL: the helper accepted uid 65532; it is built for 65533"
+	exit 1
+fi
+if ! grep -q 65532 "$work_mismatch" || ! grep -q 65533 "$work_mismatch"; then
+	echo "FAIL: the refusal must name both numbers"
+	exit 1
+fi
+echo "PULSIX-UID-TEST: the helper refuses a uid it was not built for"
 
 # What the worker does at run time: the data dir traversable but not
 # listable (0710), the work dir and everything in it group-shared and
@@ -141,7 +163,7 @@ YML
 chmod 0660 "$work/project/play.yml"
 
 set +e
-/usr/local/bin/pulsix-setuid-exec /usr/local/bin/ansible-playbook \
+/usr/local/bin/pulsix-setuid-exec "$play_uid" /usr/local/bin/ansible-playbook \
 	-i localhost, "$work/project/play.yml" > "$work/play.log" 2>&1
 rc=$?
 set -e

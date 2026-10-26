@@ -11,8 +11,16 @@
  * here instead, in a program short enough to read in one sitting that can
  * only ever become the single uid compiled in below.
  *
- * Nothing the caller supplies picks the identity: not an argument, not an
- * environment variable. argv[1:] says WHAT to run, never AS WHOM.
+ * Usage: pulsix-setuid-exec UID PROGRAM [ARG ...]
+ *
+ * Nothing the caller supplies picks the identity. argv[1] is the uid the
+ * caller BELIEVES it is asking for, and the only thing this program does
+ * with it is refuse when it disagrees with the compiled-in PLAY_UID. That
+ * is a drift check, not an input: the worker reads PULSIX_WORKER_PLAY_UID
+ * and the image compiles PLAY_UID in, two numbers that can be edited apart.
+ * Without the check a play would quietly run as a uid nobody configured —
+ * on a worker where the image's uid happens to be privileged, that is the
+ * separation inverted. argv[2:] says WHAT to run, never AS WHOM.
  *
  * Built by deploy/worker/Dockerfile, statically linked, installed
  * root-owned with mode 4755:
@@ -21,6 +29,7 @@
 #include <errno.h>
 #include <grp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -44,8 +53,26 @@ static int fail(const char *what) {
 }
 
 int main(int argc, char *argv[]) {
-	if (argc < 2) {
-		fprintf(stderr, "usage: pulsix-setuid-exec PROGRAM [ARG ...]\n");
+	if (argc < 3) {
+		fprintf(stderr, "usage: pulsix-setuid-exec UID PROGRAM [ARG ...]\n");
+		return 1;
+	}
+	/* The drift check. strtoul alone would accept "65533junk" and, worse,
+	 * "-1" (which wraps), so the parse has to be exact: a whole, non-empty,
+	 * base-10 string. A caller and an image that disagree about the uid must
+	 * stop here, naming both numbers, rather than run the play as whichever
+	 * of the two happens to be compiled in. */
+	char *rest = NULL;
+	errno = 0;
+	unsigned long wanted = strtoul(argv[1], &rest, 10);
+	if (errno != 0 || rest == argv[1] || *rest != '\0' || argv[1][0] == '-') {
+		fprintf(stderr, "pulsix-setuid-exec: %s is not a uid\n", argv[1]);
+		return 1;
+	}
+	if (wanted != (unsigned long)play_uid) {
+		fprintf(stderr, "pulsix-setuid-exec: asked for uid %lu but this helper is built for uid %u; "
+				"PULSIX_WORKER_PLAY_UID and the image's PLAY_UID must be the same number\n",
+			wanted, (unsigned)play_uid);
 		return 1;
 	}
 	/* Without euid 0 none of the drops below can change identity, and the
@@ -89,6 +116,6 @@ int main(int argc, char *argv[]) {
 	 * run must be decided by argv alone. The environment is passed through
 	 * untouched — the worker already strips its own PULSIX_ and ANSIBLE_
 	 * variables (runner.stripPrivateEnv) and this program reads none of it. */
-	execv(argv[1], &argv[1]);
-	return fail(argv[1]);
+	execv(argv[2], &argv[2]);
+	return fail(argv[2]);
 }

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -704,63 +706,82 @@ func TestRunEmptyInventoryRunsAgainstNothing(t *testing.T) {
 }
 
 // TestRunnerSpawnsUnderThePlayUID pins the built *exec.Cmd directly (per the
-// plan: the uid boundary itself is proven by the Task 4 integration test,
-// and a unit test cannot setuid). PlayUID set must carry a Credential with
-// the configured Uid and the WORKER's own Gid — not a group derived from
-// the play uid, which is what keeps the worker able to read what the play
-// writes. PlayUID 0 must carry no Credential at all, and Setpgid must stay
-// true either way: the cancel path signals the process group and breaks
-// without it.
+// plan: the uid boundary itself is proven by the Task 4 integration test
+// against the real image, and a unit test cannot setuid). With PlayUID set
+// the command must be the setuid helper, carrying the uid and then the real
+// runner binary ahead of the runner's own arguments. The drop happens inside
+// the helper and never through SysProcAttr.Credential: Credential needs
+// CAP_SETUID on the worker, and a process holding that can setuid(0), so a
+// Credential reappearing here is a regression into the design's anti-goal.
+// With PlayUID 0 the invocation must be byte-for-byte what it always was.
+// Setpgid stays true either way — the cancel path signals the process group
+// and breaks without it.
 func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
+	const (
+		helper = "/opt/pulsix/setuid-exec"
+		// Absolute on purpose: exec.Command only consults PATH for a name
+		// without a separator, which would make cmd.Path depend on whether
+		// ansible-runner happens to be installed on the machine.
+		bin = "/opt/ansible/ansible-runner"
+	)
+	args := []string{"run", "--json"}
+
 	cases := map[string]struct {
-		playUID        uint32
-		wantCredential bool
+		playUID  uint32
+		helper   string
+		wantPath string
+		wantArgs []string
 	}{
-		"play uid set":   {playUID: 12345, wantCredential: true},
-		"play uid unset": {playUID: 0, wantCredential: false},
+		"play uid set": {
+			playUID:  12345,
+			helper:   helper,
+			wantPath: helper,
+			wantArgs: []string{helper, "12345", bin, "run", "--json"},
+		},
+		"play uid set, helper left at its default": {
+			playUID:  12345,
+			wantPath: defaultSetuidHelper,
+			wantArgs: []string{defaultSetuidHelper, "12345", bin, "run", "--json"},
+		},
+		"play uid unset": {
+			helper:   helper,
+			wantPath: bin,
+			wantArgs: []string{bin, "run", "--json"},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			env := runEnv(t)
 			env.Config.PlayUID = tc.playUID
-			cmd := newRunnerCmd("ansible-runner", []string{"run"}, env, nil)
+			env.Config.SetuidHelper = tc.helper
+			cmd := newRunnerCmd(bin, args, env, nil)
 
 			if !cmd.SysProcAttr.Setpgid {
 				t.Error("Setpgid = false, want true regardless of PlayUID")
 			}
-			if !tc.wantCredential {
-				if cmd.SysProcAttr.Credential != nil {
-					t.Errorf("Credential = %+v, want nil when PlayUID is 0", cmd.SysProcAttr.Credential)
-				}
-				return
+			if cmd.SysProcAttr.Credential != nil {
+				t.Errorf("Credential = %+v, want nil always: the drop belongs to the setuid helper, because Credential would need CAP_SETUID on the worker", cmd.SysProcAttr.Credential)
 			}
-			cred := cmd.SysProcAttr.Credential
-			if cred == nil {
-				t.Fatal("Credential is nil, want it set when PlayUID is non-zero")
+			if cmd.Path != tc.wantPath {
+				t.Errorf("cmd.Path = %q, want %q", cmd.Path, tc.wantPath)
 			}
-			if cred.Uid != tc.playUID {
-				t.Errorf("Credential.Uid = %d, want %d", cred.Uid, tc.playUID)
-			}
-			if cred.Gid != uint32(os.Getgid()) {
-				t.Errorf("Credential.Gid = %d, want the worker's own gid %d (so the worker can still read what the play writes)", cred.Gid, os.Getgid())
+			if !slices.Equal(cmd.Args, tc.wantArgs) {
+				t.Errorf("cmd.Args = %q, want %q", cmd.Args, tc.wantArgs)
 			}
 		})
 	}
 }
 
-// TestRunnerRefusedSpawnNamesTheVariable: a non-root test process asked to
-// spawn under a uid it is not already is always refused by the kernel
-// (EPERM). The resulting error must name PULSIX_WORKER_PLAY_UID and the
-// uid — a bare "operation not permitted" sends an operator nowhere useful.
-// There is no fallback: the job fails outright.
+// TestRunnerRefusedSpawnNamesTheVariable: with PlayUID set, the spawn goes
+// through the setuid helper, so the way it fails is a helper that is not
+// there (a worker outside the Pulsix image, a bad
+// PULSIX_WORKER_SETUID_HELPER). The error must name the helper path, the
+// uid and PULSIX_WORKER_PLAY_UID — a bare "no such file or directory"
+// sends an operator nowhere useful. There is no fallback: the job fails
+// rather than quietly running the play as the worker itself.
 func TestRunnerRefusedSpawnNamesTheVariable(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: the spawn would succeed")
-	}
-	playUID := uint32(1)
-	if os.Getuid() == 1 {
-		playUID = 2
-	}
+	const playUID = uint32(12345)
+	absent := filepath.Join(t.TempDir(), "no-such-setuid-helper")
 
 	fake := writeFakeRunner(t)
 	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
@@ -770,16 +791,76 @@ func TestRunnerRefusedSpawnNamesTheVariable(t *testing.T) {
 	job := runJob(t)
 	env := runEnv(t)
 	env.Config.PlayUID = playUID
+	env.Config.SetuidHelper = absent
 	_, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), job, env, func(*workerpb.RunEvent) error { return nil })
 	if err == nil {
-		t.Fatal("Run must fail: this test process cannot become another uid")
+		t.Fatal("Run must fail: the setuid helper does not exist")
 	}
-	if !strings.Contains(err.Error(), "PULSIX_WORKER_PLAY_UID") {
-		t.Errorf("error = %v, want it to name PULSIX_WORKER_PLAY_UID (not a bare \"operation not permitted\")", err)
+	for _, want := range []string{"PULSIX_WORKER_PLAY_UID", "PULSIX_WORKER_SETUID_HELPER", absent, fmt.Sprint(playUID)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to name %q", err, want)
+		}
 	}
-	if !strings.Contains(err.Error(), fmt.Sprint(playUID)) {
-		t.Errorf("error = %v, want it to name the uid %d", err, playUID)
+}
+
+// TestRunCancelThroughTheSetuidHelperStillKillsTheGroup is the one claim
+// the argv assertions above cannot make: Setpgid is set on the HELPER, and
+// the cancel path signals that process group. It only reaches the runner
+// because the helper execs rather than forks — same pid, same group. A
+// stand-in helper (it checks argv[1] and execs argv[2:], like the real one,
+// but cannot setuid as an unprivileged test process) is enough to prove the
+// chain; the privileged half is the image test's job.
+func TestRunCancelThroughTheSetuidHelperStillKillsTheGroup(t *testing.T) {
+	const playUID = uint32(12345)
+	fake := writeFakeRunner(t)
+	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
+	t.Setenv(fakeEnvEvents, "")
+	t.Setenv(fakeEnvExit, "0")
+	t.Setenv(fakeEnvSticky, "1") // ignores SIGTERM, so only the group SIGKILL ends it
+
+	env := runEnv(t)
+	env.Config.PlayUID = playUID
+	env.Config.SetuidHelper = writeStandInSetuidHelper(t, playUID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var status worker.Status
+	var runErr error
+	go func() {
+		defer close(done)
+		status, _, runErr = (&Runner{RunnerBin: fake, KillGrace: 150 * time.Millisecond}).Run(
+			ctx, runJob(t), env, func(*workerpb.RunEvent) error { return nil })
+	}()
+	time.Sleep(300 * time.Millisecond) // let the helper exec the runner and stick
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run did not end after cancellation: the group signal did not reach the runner through the helper")
 	}
+	if status != worker.StatusCancelled || runErr == nil {
+		t.Errorf("status = %q err = %v, want cancelled + context.Canceled", status, runErr)
+	}
+}
+
+// writeStandInSetuidHelper writes an unprivileged stand-in for
+// deploy/worker/setuid-exec.c: the same contract (refuse a uid that is not
+// the one it was built for, then exec argv[2:]) without the uid drop, which
+// a test process may not do.
+func writeStandInSetuidHelper(t *testing.T, uid uint32) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "stand-in-setuid-exec")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" != \"" + strconv.FormatUint(uint64(uid), 10) + "\" ]; then\n" +
+		"  echo \"stand-in helper: asked for uid $1\" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"shift\n" +
+		"exec \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // Claim uuids the stats mapping asserts on: the ansible host names web1,

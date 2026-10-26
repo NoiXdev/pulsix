@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -69,12 +70,22 @@ const (
 	evStateStdout   = "stdout"
 )
 
-// envPlayUID is PULSIX_WORKER_PLAY_UID. worker.Config keeps its own copy of
-// this name unexported, so it is duplicated here: a refused spawn (see
-// newRunnerCmd's caller) must name the variable in its error, not just read
-// env.Config.PlayUID, or an operator is left with a bare "operation not
-// permitted" and no idea which setting to revisit.
-const envPlayUID = "PULSIX_WORKER_PLAY_UID"
+// envPlayUID is PULSIX_WORKER_PLAY_UID and envSetuidHelper is
+// PULSIX_WORKER_SETUID_HELPER. worker.Config keeps its own copies of these
+// names unexported, so they are duplicated here: a refused spawn (see
+// newRunnerCmd's caller) must name the two variables in its error, not just
+// read env.Config, or an operator is left with a bare "no such file or
+// directory" and no idea which setting to revisit.
+const (
+	envPlayUID      = "PULSIX_WORKER_PLAY_UID"
+	envSetuidHelper = "PULSIX_WORKER_SETUID_HELPER"
+)
+
+// defaultSetuidHelper mirrors worker.Load's default for
+// PULSIX_WORKER_SETUID_HELPER. Load always fills Config.SetuidHelper, so
+// this only catches a Config assembled by hand (tests, an embedded worker)
+// and keeps an empty string from becoming an exec of "".
+const defaultSetuidHelper = "/usr/local/bin/pulsix-setuid-exec"
 
 // Runner executes claimed jobs by driving ansible-runner as a subprocess.
 // The fields are the injection points; zero values fall back to their
@@ -173,14 +184,15 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
-		if cred := cmd.SysProcAttr.Credential; cred != nil {
+		if uid := env.Config.PlayUID; uid != 0 {
 			// There is no fallback: a worker configured to drop privilege
 			// that silently ran the play as itself instead would defeat
-			// the whole point, so a refused setuid fails the job — named
-			// so an operator lands on the variable to revisit instead of a
-			// bare "operation not permitted".
-			return worker.StatusError, nil, fmt.Errorf("start %s under %s=%d: the worker process may not change uid in this deployment: %w",
-				bin, envPlayUID, cred.Uid, err)
+			// the whole point, so a helper that will not start fails the
+			// job. What fails here is the HELPER, not a setuid call, so
+			// the error names it and both variables — an operator lands on
+			// what to check instead of a bare "no such file or directory".
+			return worker.StatusError, nil, fmt.Errorf("start %s through the setuid helper %s (%s=%d, %s): the helper must exist and be setuid-root: %w",
+				bin, cmd.Path, envPlayUID, uid, envSetuidHelper, err)
 		}
 		return worker.StatusError, nil, fmt.Errorf("start %s: %w", bin, err)
 	}
@@ -237,22 +249,42 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	return status, statsMap, nil
 }
 
-// newRunnerCmd builds the ansible-runner subprocess's *exec.Cmd. Setpgid is
-// unconditional regardless of PlayUID — the cancel path signals the whole
-// process group and breaks without it. Credential is set only when
-// env.Config.PlayUID is non-zero (the default, feature-off value); its Gid
-// is the WORKER's own (os.Getgid()), deliberately not a group derived from
-// the play uid, because the worker must still be able to read whatever the
-// play writes back into the work dir — that is what keeps the event stream
-// working.
+// newRunnerCmd builds the ansible-runner subprocess's *exec.Cmd.
+//
+// With PlayUID set, the command becomes
+//
+//	<helper> <uid> <runner bin> <args...>
+//
+// and the drop happens inside the setuid-root helper
+// (deploy/worker/setuid-exec.c), NOT here. SysProcAttr.Credential would be
+// the shorter route, but it requires CAP_SETUID on the worker process, and
+// a process holding that capability can setuid(0): granting it would hand a
+// compromised worker a path to root it does not have today. The helper can
+// only ever become the single uid compiled into it, which is why the uid is
+// passed along — the helper refuses when it disagrees, so the worker's
+// PULSIX_WORKER_PLAY_UID and the image's PLAY_UID cannot drift apart
+// silently. The helper setgid()s to the WORKER's own gid, deliberately not
+// a group derived from the play uid, because the worker must still be able
+// to read whatever the play writes back into the work dir — that is what
+// keeps the event stream working.
+//
+// Setpgid is unconditional regardless of PlayUID: the cancel path signals
+// the whole process group and breaks without it. It is set on the helper,
+// which execs (not forks) the runner, so the runner keeps the helper's pid
+// and the new group — one process, not two.
 func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string) *exec.Cmd {
-	cmd := exec.Command(bin, args...)
+	name, argv := bin, args
+	if uid := env.Config.PlayUID; uid != 0 {
+		name = env.Config.SetuidHelper
+		if name == "" {
+			name = defaultSetuidHelper
+		}
+		argv = append([]string{strconv.FormatUint(uint64(uid), 10), bin}, args...)
+	}
+	cmd := exec.Command(name, argv...)
 	cmd.Dir = env.WorkDir
 	cmd.Env = subprocessEnv
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if uid := env.Config.PlayUID; uid != 0 {
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uid, Gid: uint32(os.Getgid())}
-	}
 	return cmd
 }
 
