@@ -717,13 +717,15 @@ func TestRunEmptyInventoryRunsAgainstNothing(t *testing.T) {
 // Setpgid stays true either way — the cancel path signals the process group
 // and breaks without it.
 func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
-	const (
-		helper = "/opt/pulsix/setuid-exec"
-		// Absolute on purpose: exec.Command only consults PATH for a name
-		// without a separator, which would make cmd.Path depend on whether
-		// ansible-runner happens to be installed on the machine.
-		bin = "/opt/ansible/ansible-runner"
-	)
+	const helper = "/opt/pulsix/setuid-exec"
+	// A BARE name, which is what PULSIX_ANSIBLE_RUNNER_BIN defaults to, on
+	// a PATH this test controls. Pinning an absolute path here was how the
+	// shipped image's "the helper execs a name nothing resolves" bug
+	// survived the unit suite: the helper calls execv, which does no PATH
+	// search, so the absolute path has to be produced on the Go side.
+	const bin = "ansible-runner"
+	abs := writeFakeRunner(t)
+	t.Setenv("PATH", filepath.Dir(abs))
 	args := []string{"run", "--json"}
 
 	cases := map[string]struct {
@@ -736,16 +738,16 @@ func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
 			playUID:  12345,
 			helper:   helper,
 			wantPath: helper,
-			wantArgs: []string{helper, "12345", bin, "run", "--json"},
+			wantArgs: []string{helper, "12345", abs, "run", "--json"},
 		},
 		"play uid set, helper left at its default": {
 			playUID:  12345,
 			wantPath: defaultSetuidHelper,
-			wantArgs: []string{defaultSetuidHelper, "12345", bin, "run", "--json"},
+			wantArgs: []string{defaultSetuidHelper, "12345", abs, "run", "--json"},
 		},
 		"play uid unset": {
 			helper:   helper,
-			wantPath: bin,
+			wantPath: abs,
 			wantArgs: []string{bin, "run", "--json"},
 		},
 	}
@@ -754,7 +756,10 @@ func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
 			env := runEnv(t)
 			env.Config.PlayUID = tc.playUID
 			env.Config.SetuidHelper = tc.helper
-			cmd := newRunnerCmd(bin, args, env, nil)
+			cmd, err := newRunnerCmd(bin, args, env, nil)
+			if err != nil {
+				t.Fatalf("newRunnerCmd: %v", err)
+			}
 
 			if !cmd.SysProcAttr.Setpgid {
 				t.Error("Setpgid = false, want true regardless of PlayUID")
@@ -769,6 +774,30 @@ func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
 				t.Errorf("cmd.Args = %q, want %q", cmd.Args, tc.wantArgs)
 			}
 		})
+	}
+}
+
+// TestRunnerPlayUIDNeedsTheRunnerBinaryOnTheGoSide: the helper execs
+// argv[2] with execv, which performs no PATH search whatsoever, so a bare
+// PULSIX_ANSIBLE_RUNNER_BIN (the default, "ansible-runner") has to be
+// resolved before it is handed over. One that cannot be resolved must fail
+// the job by name — inside the helper the same situation is an ENOENT
+// indistinguishable from the helper itself being missing.
+func TestRunnerPlayUIDNeedsTheRunnerBinaryOnTheGoSide(t *testing.T) {
+	const missing = "pulsix-no-such-ansible-runner"
+	t.Setenv("PATH", t.TempDir()) // an empty PATH: nothing resolves
+
+	env := runEnv(t)
+	env.Config.PlayUID = 12345
+	env.Config.AnsibleRunnerBin = missing
+	_, _, err := (&Runner{}).Run(context.Background(), runJob(t), env, func(*workerpb.RunEvent) error { return nil })
+	if err == nil {
+		t.Fatal("Run must fail: the runner binary is not on PATH and the helper cannot search for it")
+	}
+	for _, want := range []string{missing, "PULSIX_ANSIBLE_RUNNER_BIN"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q must name %q", err, want)
+		}
 	}
 }
 

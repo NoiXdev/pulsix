@@ -70,15 +70,17 @@ const (
 	evStateStdout   = "stdout"
 )
 
-// envPlayUID is PULSIX_WORKER_PLAY_UID and envSetuidHelper is
-// PULSIX_WORKER_SETUID_HELPER. worker.Config keeps its own copies of these
+// envPlayUID is PULSIX_WORKER_PLAY_UID, envSetuidHelper is
+// PULSIX_WORKER_SETUID_HELPER and envRunnerBin is
+// PULSIX_ANSIBLE_RUNNER_BIN. worker.Config keeps its own copies of these
 // names unexported, so they are duplicated here: a refused spawn (see
-// newRunnerCmd's caller) must name the two variables in its error, not just
+// newRunnerCmd's caller) must name the variable in its error, not just
 // read env.Config, or an operator is left with a bare "no such file or
 // directory" and no idea which setting to revisit.
 const (
 	envPlayUID      = "PULSIX_WORKER_PLAY_UID"
 	envSetuidHelper = "PULSIX_WORKER_SETUID_HELPER"
+	envRunnerBin    = "PULSIX_ANSIBLE_RUNNER_BIN"
 )
 
 // defaultSetuidHelper mirrors worker.Load's default for
@@ -183,7 +185,10 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		args = append(args, "--limit", limit)
 	}
 
-	cmd := newRunnerCmd(bin, args, env, r.subprocessEnv(env, ansibleBin))
+	cmd, err := newRunnerCmd(bin, args, env, r.subprocessEnv(env, ansibleBin))
+	if err != nil {
+		return worker.StatusError, nil, err
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -277,24 +282,55 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 // to read whatever the play writes back into the work dir — that is what
 // keeps the event stream working.
 //
+// The runner binary is resolved to an absolute path first. exec.Command
+// would do that itself for the direct spawn, but the helper's argv[2] is
+// handed to execv — deliberately not execvp, so that only argv decides
+// which program runs — and execv does no PATH search at all. The default
+// PULSIX_ANSIBLE_RUNNER_BIN is the bare name "ansible-runner", so without
+// this every playbook job in the shipped image would die on ENOENT.
+//
 // Setpgid is unconditional regardless of PlayUID: the cancel path signals
 // the whole process group and breaks without it. It is set on the helper,
 // which execs (not forks) the runner, so the runner keeps the helper's pid
 // and the new group — one process, not two.
-func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string) *exec.Cmd {
+func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string) (*exec.Cmd, error) {
 	name, argv := bin, args
 	if uid := env.Config.PlayUID; uid != 0 {
+		abs, err := resolveRunnerBin(bin)
+		if err != nil {
+			return nil, err
+		}
 		name = env.Config.SetuidHelper
 		if name == "" {
 			name = defaultSetuidHelper
 		}
-		argv = append([]string{strconv.FormatUint(uint64(uid), 10), bin}, args...)
+		argv = append([]string{strconv.FormatUint(uint64(uid), 10), abs}, args...)
 	}
 	cmd := exec.Command(name, argv...)
 	cmd.Dir = env.WorkDir
 	cmd.Env = subprocessEnv
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	return cmd
+	return cmd, nil
+}
+
+// resolveRunnerBin turns the configured ansible-runner binary into an
+// absolute path for the setuid helper's execv. LookPath covers the bare
+// name (the default) against the worker's own PATH; Abs covers a relative
+// one, which execv would otherwise resolve against the subprocess's
+// working directory — the run's work dir, where no binary of the
+// operator's lives. A binary that cannot be found fails the job by name,
+// naming the variable that chose it: ENOENT from inside a setuid helper is
+// otherwise indistinguishable from the helper itself being absent.
+func resolveRunnerBin(bin string) (string, error) {
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return "", fmt.Errorf("find the ansible-runner binary %q (%s): %w", bin, envRunnerBin, err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve the ansible-runner binary %q (%s) to an absolute path: %w", bin, envRunnerBin, err)
+	}
+	return abs, nil
 }
 
 // streamEvents forwards the runner's stdout event stream: each ansible
