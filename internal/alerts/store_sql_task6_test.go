@@ -1180,3 +1180,84 @@ func (b *lockedBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestAlertActionsTellClosedApartFromMissing is backlog 4.31. Of the four
+// operator actions, only Acknowledge and Snooze carry `closed_at IS NULL`
+// in their WHERE, so for those two a zero-row update has two possible
+// causes — the alert does not exist, or it closed — and the row count
+// cannot say which. Both of them guessed, and they guessed differently:
+// Acknowledge always answered ErrInvalidInput ("alert is closed"),
+// Snooze always ErrNotFound. Each was therefore wrong in exactly the
+// case the other got right.
+//
+// It reaches an operator, because the handlers already map the two
+// apart: acknowledging an id that does not exist answered 422 "alert is
+// closed" about an alert nobody ever had, and snoozing one that had just
+// closed answered 404 about an alert plainly on screen.
+//
+// Unacknowledge and Unsnooze are checked here too, as the control: their
+// statements have no closed_at predicate, so zero rows has one meaning
+// and ErrNotFound is already right — including for a CLOSED alert, which
+// they are free to act on.
+func TestAlertActionsTellClosedApartFromMissing(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// A real user: the undo paths below succeed, and a successful action
+	// writes an alert_events row whose actor_id has a foreign key.
+	actor := seedUser(t, d)
+
+	tx := beginTx(t, d)
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: tuple(host, "cpu", "", "used"), At: now, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(ctx, tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	closed := open[0].ID
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionClose, AlertID: closed, At: now, Reason: alerts.Resolved},
+	}); err != nil {
+		t.Fatalf("execute close: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	missing := uuid.Must(uuid.NewV7())
+
+	for name, tc := range map[string]struct {
+		act  func(id uuid.UUID) error
+		want error
+	}{
+		"acknowledge a closed alert":  {func(id uuid.UUID) error { return st.Acknowledge(ctx, org, id, actor, "late", now) }, alerts.ErrInvalidInput},
+		"acknowledge a missing alert": {func(id uuid.UUID) error { return st.Acknowledge(ctx, org, id, actor, "late", now) }, alerts.ErrNotFound},
+		"snooze a closed alert":       {func(id uuid.UUID) error { return st.Snooze(ctx, org, id, actor, nil, true, now) }, alerts.ErrInvalidInput},
+		"snooze a missing alert":      {func(id uuid.UUID) error { return st.Snooze(ctx, org, id, actor, nil, true, now) }, alerts.ErrNotFound},
+		"unacknowledge a missing one": {func(id uuid.UUID) error { return st.Unacknowledge(ctx, org, id, actor, now) }, alerts.ErrNotFound},
+		"unsnooze a missing one":      {func(id uuid.UUID) error { return st.Unsnooze(ctx, org, id, actor, now) }, alerts.ErrNotFound},
+	} {
+		id := closed
+		if strings.Contains(name, "missing") {
+			id = missing
+		}
+		if err := tc.act(id); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", name, err, tc.want)
+		}
+	}
+
+	// The control's other half: undoing an action on a CLOSED alert is
+	// allowed, so it must not be refused at all. A guard copied onto
+	// these two by symmetry would break an operator's last chance to
+	// correct a mistaken acknowledgement on an episode that has ended.
+	if err := st.Unacknowledge(ctx, org, closed, actor, now); err != nil {
+		t.Errorf("Unacknowledge on a closed alert: %v, want it to succeed", err)
+	}
+	if err := st.Unsnooze(ctx, org, closed, actor, now); err != nil {
+		t.Errorf("Unsnooze on a closed alert: %v, want it to succeed", err)
+	}
+}

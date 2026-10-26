@@ -779,6 +779,32 @@ func (s *SQLStore) writeAlertAction(ctx context.Context, fn func(q *gen.Queries)
 	return nil
 }
 
+// closedOrMissing explains a zero-row update for the two statements whose
+// WHERE carries `closed_at IS NULL` — AcknowledgeAlert and SnoozeAlert
+// (backlog 4.31). For those two, no row matched means either that the
+// alert does not exist (or belongs to another organization, which is the
+// same thing from here) or that it closed; the row count cannot say
+// which, and both of them used to guess — Acknowledge always answered
+// "alert is closed" and Snooze always ErrNotFound, so each was wrong in
+// exactly the case the other got right. An operator acknowledging an id
+// that does not exist was told it was closed; one snoozing an alert that
+// had just closed was told it never existed.
+//
+// The read runs only on this path, inside the same transaction as the
+// failed update, so it costs nothing in the normal case and cannot
+// disagree with it. UnacknowledgeAlert and UnsnoozeAlert carry no
+// closed_at predicate and are deliberately left alone: zero rows there
+// has only one meaning, and their ErrNotFound is already correct.
+func closedOrMissing(ctx context.Context, q *gen.Queries, orgID, id uuid.UUID) error {
+	if _, err := q.GetAlert(ctx, gen.GetAlertParams{OrgID: orgID, ID: id}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("explain the refused alert action: %w", err)
+	}
+	return fmt.Errorf("%w: alert is closed", ErrInvalidInput)
+}
+
 // Acknowledge implements Store.
 func (s *SQLStore) Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, note string, at time.Time) error {
 	return s.writeAlertAction(ctx, func(q *gen.Queries) error {
@@ -790,7 +816,7 @@ func (s *SQLStore) Acknowledge(ctx context.Context, orgID, id, actor uuid.UUID, 
 			return fmt.Errorf("acknowledge alert: %w", err)
 		}
 		if n == 0 {
-			return fmt.Errorf("%w: alert is closed", ErrInvalidInput)
+			return closedOrMissing(ctx, q, orgID, id)
 		}
 		return q.InsertAlertActorEvent(ctx, gen.InsertAlertActorEventParams{
 			OrgID: orgID, AlertID: id, At: at, Kind: eventAcknowledged, ActorID: db.NullUUID(&actor),
@@ -826,7 +852,7 @@ func (s *SQLStore) Snooze(ctx context.Context, orgID, id, actor uuid.UUID, until
 			return fmt.Errorf("snooze alert: %w", err)
 		}
 		if n == 0 {
-			return ErrNotFound
+			return closedOrMissing(ctx, q, orgID, id)
 		}
 		return q.InsertAlertActorEvent(ctx, gen.InsertAlertActorEventParams{
 			OrgID: orgID, AlertID: id, At: at, Kind: eventSnoozed, ActorID: db.NullUUID(&actor),
