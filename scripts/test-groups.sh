@@ -13,14 +13,26 @@
 #
 # Why groups at all, and why these three:
 #
-#   api  — internal/api alone runs 1005-1175 s under -race on an idle
-#          machine and was measured at ~1264 s on a busy one (backlog 3.21,
-#          three measurements 2026-09-28). `go test`'s -timeout applies to
-#          each package's own binary, so one number for the whole module
-#          has to be sized for this package and is then also what a hung
-#          five-second package waits out. Splitting it off lets the slow
-#          one have a real margin — 3600 s, about 3x its worst measurement
-#          — while everything else fails fast.
+#   api  — internal/api is the module's slowest package by a wide margin.
+#          `go test`'s -timeout applies to each package's own binary, so
+#          one number for the whole module has to be sized for this
+#          package and is then also what a hung five-second package waits
+#          out. Splitting it off lets the slow one have a real margin
+#          while everything else fails fast.
+#
+#          Its runtime is NOT what it was: 1005-1175 s under -race on an
+#          idle machine, ~1264 s on a busy one (backlog 3.21, three
+#          measurements 2026-09-28), against 153.6 s and 162.2 s measured
+#          2026-10-26 after backlog 3.46 cut internal/db/testdb's per-test
+#          cost. The timeout came down with it, 3600 s to 1800 s — still
+#          about 11x today's measurement, and still ABOVE the old worst
+#          case, which is the point: a regression all the way back to the
+#          pre-3.46 runtime fails as a slow suite somebody looks at, not
+#          as a timeout, while a genuinely hung test now names itself in
+#          half an hour instead of an hour. The group itself stays: the
+#          reason this package runs on its own invocation is contention
+#          (see `rest` below and backlog 2.83), which its runtime dropping
+#          does not change.
 #
 #   e2e  — runs on its own invocation because a single whole-module
 #          `go test -race ./...` intermittently hits internal/e2e's SSH
@@ -28,11 +40,18 @@
 #          tests compete for CPU while the e2e fixtures wait on loopback
 #          handshakes (backlog 2.83).
 #
-#   rest — everything else, at 900 s per package. The slowest of them
-#          measured 147 s (internal/checks under -race -cover), so this is
-#          six times the measured worst case and still short enough that a
-#          deadlocked test names itself in fifteen minutes instead of an
-#          hour.
+#   rest — everything else, at 900 s per package. Re-surveyed 2026-10-26
+#          (backlog 3.46a) by running every package of this group under
+#          -race one at a time, never concurrently — a concurrent number
+#          is not comparable, and that contention is what 2.83 and 3.21
+#          are about. Today's slowest is internal/jobs at 36.3 s, then
+#          notify 32.5 s and auth 31.0 s; nothing else reaches 25 s. So
+#          this is roughly 25x the measured worst case, not the 6x the
+#          number was originally sized for (internal/checks at 147 s), and
+#          a deadlocked test still names itself in fifteen minutes rather
+#          than an hour. Left at 900 s: the margin is generous rather than
+#          wrong, and the figure it has to survive is a cold CI runner,
+#          which nobody has measured.
 #
 # Usage: scripts/test-groups.sh
 # Exit status: 0 when the groups partition `go list ./...` exactly.
@@ -72,6 +91,6 @@ fi
 # into the last argument under some shells' word splitting.
 oneline() { printf '%s\n' "$1" | tr '\n' ' ' | sed 's/ *$//'; }
 
-printf 'api 3600s %s\n' "$(oneline "$api_pkgs")"
+printf 'api 1800s %s\n' "$(oneline "$api_pkgs")"
 printf 'e2e 1800s %s\n' "$(oneline "$e2e_pkgs")"
 printf 'rest 900s %s\n' "$(oneline "$rest_pkgs")"
