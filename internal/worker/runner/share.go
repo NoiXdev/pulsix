@@ -25,6 +25,20 @@ func ShareWorkDir(dir string) error {
 		if err != nil {
 			return err
 		}
+		// os.Chmod always follows a symlink to its target — there is no
+		// way to chmod the link itself — so a symlink entry must never
+		// reach the Chmod call below. Role trees routinely contain
+		// symlinks; computing a mode from the link's own (lstat'd,
+		// typically 0777) bits and chmoding through it would set the
+		// TARGET's mode, wherever that target lives, including outside
+		// dir entirely — exactly the "nothing gains world bits anywhere"
+		// invariant this function exists to uphold. A dangling symlink is
+		// the same mistake with a different symptom: chmod on a target
+		// that does not exist returns ENOENT and would abort the whole
+		// walk over an entry that was never the worker's to touch.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return fmt.Errorf("stat %s: %w", path, err)
