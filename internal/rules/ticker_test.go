@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/rules"
 )
@@ -43,7 +44,54 @@ func due(host uuid.UUID) rules.Due { return rules.Due{OrgID: tickO, HostID: host
 // rules.ContextWithClaimedTx, export_test.go's own seam) the way
 // EvalSQLStore's real evaluateOne does, which is what lets Ticker.evaluate
 // reach the sink at all.
-type stubTx struct{ pgx.Tx }
+//
+// It implements the interface rather than embedding a nil pgx.Tx
+// (backlog 4.32). "Never actually used" is a property of today's tests,
+// not of the type: the first orchestration test that does reach for the
+// transaction would, with an embedded nil, fail as a nil-pointer
+// dereference inside pgx, with a stack that says nothing about why.
+// Every method below panics by name instead, and the message names the
+// decision the author then has to make — a real transaction through
+// testdb, or a real behaviour on this stub.
+//
+// A panic rather than t.Fatalf so the zero value stays usable:
+// threading a *testing.T through would mean changing
+// newFakeEvalStore's signature and every one of its call sites, for no
+// gain over a message that already says everything.
+type stubTx struct{}
+
+func (s stubTx) unused(method string) {
+	panic("stubTx." + method + " was called: these orchestration tests bind a transaction only so the " +
+		"claimed-tx context key is populated, and this stub can execute nothing. Either the code under " +
+		"test now needs a real transaction (use testdb) or this stub needs a real behaviour.")
+}
+
+func (s stubTx) Begin(context.Context) (pgx.Tx, error) { s.unused("Begin"); return nil, nil }
+func (s stubTx) Commit(context.Context) error          { s.unused("Commit"); return nil }
+func (s stubTx) Rollback(context.Context) error        { s.unused("Rollback"); return nil }
+func (s stubTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	s.unused("CopyFrom")
+	return 0, nil
+}
+func (s stubTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults {
+	s.unused("SendBatch")
+	return nil
+}
+func (s stubTx) LargeObjects() pgx.LargeObjects { s.unused("LargeObjects"); return pgx.LargeObjects{} }
+func (s stubTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	s.unused("Prepare")
+	return nil, nil
+}
+func (s stubTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	s.unused("Exec")
+	return pgconn.CommandTag{}, nil
+}
+func (s stubTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	s.unused("Query")
+	return nil, nil
+}
+func (s stubTx) QueryRow(context.Context, string, ...any) pgx.Row { s.unused("QueryRow"); return nil }
+func (s stubTx) Conn() *pgx.Conn                                  { s.unused("Conn"); return nil }
 
 // fakeSink is the rules.AlertSink test double. Apply records exactly what
 // it was called with, in order — before checking applyErr, not after, so a

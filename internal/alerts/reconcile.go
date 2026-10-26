@@ -51,7 +51,14 @@ func Reconcile(in rules.AlertInput, open []Alert) []Action {
 		existing, found := bySubject[sub]
 
 		if ts.State == rules.StateOK {
-			actions = append(actions, closeOrFlap(in.At, ts, existing, found)...)
+			// `found` is read here, not inside closeOrFlap (backlog
+			// 4.20), so both branches of this switch ask the same
+			// question in the same place: an ok tuple with no open
+			// alert is nothing to do, exactly as a warn one with no
+			// open alert is an open.
+			if found {
+				actions = append(actions, closeOrFlap(in.At, ts, existing)...)
+			}
 			continue
 		}
 
@@ -103,10 +110,9 @@ func staleActions(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 // decision 1 on the time axis instead of the severity axis. A flapping
 // tuple not yet marked as such latches was_flapping instead of closing, so
 // the episode remembers it flapped even once it finally settles.
-func closeOrFlap(at time.Time, ts rules.TupleState, existing Alert, found bool) []Action {
-	if !found {
-		return nil
-	}
+// It is only ever called for a tuple that HAS an open alert; the caller
+// checks that, next to the same check for the warn/crit path.
+func closeOrFlap(at time.Time, ts rules.TupleState, existing Alert) []Action {
 	if !ts.Flapping {
 		return []Action{{Kind: ActionClose, AlertID: existing.ID, At: at, Reason: Resolved}}
 	}
