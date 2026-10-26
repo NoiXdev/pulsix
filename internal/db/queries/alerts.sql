@@ -71,7 +71,7 @@ RETURNING id;
 -- severity, which Action itself does not carry.
 SELECT severity FROM alerts WHERE id = @id AND org_id = @org_id;
 
--- name: RaiseAlertSeverity :exec
+-- name: RaiseAlertSeverity :execrows
 -- The brief's own statement, verbatim, plus v0.4d's own fourth SET target.
 -- The nested CASE's literal ranking (warn=1, unknown=2, crit=3) is
 -- deliberately NOT what ships here — see store_sql.go's own comment on
@@ -125,13 +125,15 @@ UPDATE alerts SET severity = @severity,
   severity_changed_at = @at
 WHERE id = @id AND org_id = @org_id;
 
--- name: SetAlertFlapping :exec
+-- name: SetAlertFlapping :execrows
 -- ActionFlapped: latches was_flapping once a tuple is seen flapping. There
 -- is no "flapped" kind in alert_events' own CHECK (migration 00049) — this
--- is the one action kind Execute applies with no event to match.
+-- is the one action kind Execute applies with no event to match, which is
+-- also why it is the one whose no-op nothing else would have caught
+-- (backlog 4.24): :execrows is what makes Execute able to say so.
 UPDATE alerts SET was_flapping = true WHERE id = @id AND org_id = @org_id;
 
--- name: CloseAlert :exec
+-- name: CloseAlert :execrows
 -- ActionClose, both reasons (resolved from Reconcile, stale from the
 -- sweep's own SweepStaleAlerts below — this statement is Execute's own
 -- path, the sweep writes its UPDATE directly since it closes many rows at

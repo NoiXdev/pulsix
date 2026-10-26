@@ -831,11 +831,20 @@ func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
 		}
 	})
 
+	// The three UPDATEs below report their row count since backlog 4.24,
+	// so each sub-test now says "this matched nothing" outright instead
+	// of inferring it from a column that did not move — the two are the
+	// same claim here, but only the first one stays true if a future
+	// statement starts matching and then writing the same value back.
 	t.Run("RaiseAlertSeverity", func(t *testing.T) {
-		if err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+		n, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
 			Severity: "crit", SeverityRank: 3, ClearsSnooze: false, ID: alertA, OrgID: orgB,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("RaiseAlertSeverity(alertA, orgB): %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("RaiseAlertSeverity(alertA, orgB) matched %d rows, want none of org A's", n)
 		}
 		if row := alertRowByID(t, tx, alertA); row.severity != "warn" {
 			t.Fatalf("severity = %q after a wrong-org raise, want warn (unchanged)", row.severity)
@@ -843,8 +852,12 @@ func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
 	})
 
 	t.Run("SetAlertFlapping", func(t *testing.T) {
-		if err := q.SetAlertFlapping(ctx, gen.SetAlertFlappingParams{ID: alertA, OrgID: orgB}); err != nil {
+		n, err := q.SetAlertFlapping(ctx, gen.SetAlertFlappingParams{ID: alertA, OrgID: orgB})
+		if err != nil {
 			t.Fatalf("SetAlertFlapping(alertA, orgB): %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("SetAlertFlapping(alertA, orgB) matched %d rows, want none of org A's", n)
 		}
 		if row := alertRowByID(t, tx, alertA); row.wasFlapping {
 			t.Fatalf("was_flapping = true after a wrong-org flap, want unchanged")
@@ -853,10 +866,14 @@ func TestOrgIDGuardsEveryAlertStatement(t *testing.T) {
 
 	t.Run("CloseAlert", func(t *testing.T) {
 		reason := "resolved"
-		if err := q.CloseAlert(ctx, gen.CloseAlertParams{
+		n, err := q.CloseAlert(ctx, gen.CloseAlertParams{
 			ClosedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}, Reason: &reason, ID: alertA, OrgID: orgB,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("CloseAlert(alertA, orgB): %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("CloseAlert(alertA, orgB) matched %d rows, want none of org A's", n)
 		}
 		if row := alertRowByID(t, tx, alertA); row.closedAt != nil {
 			t.Fatalf("closed_at = %v after a wrong-org close, want nil (unchanged)", row.closedAt)

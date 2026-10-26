@@ -391,7 +391,7 @@ func (s *SQLStore) Execute(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, acti
 		case ActionSeverity:
 			err = s.raiseSeverity(ctx, q, orgID, a)
 		case ActionFlapped:
-			err = q.SetAlertFlapping(ctx, gen.SetAlertFlappingParams{ID: a.AlertID, OrgID: orgID})
+			err = changedOne(q.SetAlertFlapping(ctx, gen.SetAlertFlappingParams{ID: a.AlertID, OrgID: orgID}))
 		case ActionClose:
 			err = s.close(ctx, q, orgID, a)
 		default:
@@ -400,6 +400,35 @@ func (s *SQLStore) Execute(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, acti
 		if err != nil {
 			return fmt.Errorf("execute %s action: %w", a.Kind, err)
 		}
+	}
+	return nil
+}
+
+// changedOne turns an :execrows result into an error when the statement
+// matched nothing (backlog 4.24). Execute's three UPDATEs key on
+// (id, org_id) and carry no state predicate, so no row matched means one
+// thing only: this organization has no such alert.
+//
+// They were :exec, and the event write that follows each was the only
+// thing standing between a wrong id and a silent no-op — which is not a
+// guard at all for two of the three. alert_events.alert_id references
+// alerts(id) ALONE, not (org_id, id), so an alert belonging to ANOTHER
+// organization leaves the UPDATE empty while the event insert succeeds:
+// a history row filed under the caller's organization, about an alert it
+// did not touch and cannot see. ActionFlapped writes no event at all
+// (there is no "flapped" kind), so nothing caught its no-op even in
+// principle.
+//
+// Call sites pass ids they just read from this same organization, so
+// none of this is reachable today. That is exactly the reliance the
+// review asked to remove: the guarantee now comes from the statement
+// rather than from every future caller remembering.
+func changedOne(n int64, err error) error {
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -449,15 +478,22 @@ func raiseAlertSeverityRank(s rules.State) int32 { return int32(rules.StateRank(
 // it for the very same action.
 func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a Action) error {
 	before, err := q.GetAlertSeverity(ctx, gen.GetAlertSeverityParams{ID: a.AlertID, OrgID: orgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// This organization has no such alert. The read happens to catch
+		// it before the UPDATE's own row count would (backlog 4.24), so
+		// what this needs is the same ANSWER the other two actions give,
+		// not a second guard — a caller matching on ErrNotFound must not
+		// have to know which action it asked for.
+		return ErrNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("read current severity: %w", err)
 	}
 
-	err = q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
+	if err := changedOne(q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
 		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
 		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
-	})
-	if err != nil {
+	})); err != nil {
 		return fmt.Errorf("raise severity: %w", err)
 	}
 
@@ -484,10 +520,9 @@ func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid
 // been asked to.
 func (s *SQLStore) close(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a Action) error {
 	reason := string(a.Reason)
-	err := q.CloseAlert(ctx, gen.CloseAlertParams{
+	if err := changedOne(q.CloseAlert(ctx, gen.CloseAlertParams{
 		ClosedAt: pgtype.Timestamptz{Time: a.At, Valid: true}, Reason: &reason, ID: a.AlertID, OrgID: orgID,
-	})
-	if err != nil {
+	})); err != nil {
 		return fmt.Errorf("close alert: %w", err)
 	}
 	return q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{OrgID: orgID, AlertID: a.AlertID, At: a.At, Kind: eventClosed})

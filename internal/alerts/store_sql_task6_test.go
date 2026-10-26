@@ -1261,3 +1261,76 @@ func TestAlertActionsTellClosedApartFromMissing(t *testing.T) {
 		t.Errorf("Unsnooze on a closed alert: %v, want it to succeed", err)
 	}
 }
+
+// TestExecuteRefusesAnActionOnAnAlertOfAnotherOrganization is backlog
+// 4.24. Execute's three UPDATEs key on (id, org_id) with no state
+// predicate, so a zero-row result has exactly one meaning — and until
+// they reported their row count, nothing in Execute could see it.
+//
+// The event write that follows each was doing duty as the guard, and it
+// is not one: alert_events.alert_id references alerts(id) ALONE, not
+// (org_id, id), so an alert belonging to another organization left the
+// UPDATE empty while the event insert SUCCEEDED — a history row filed
+// under the caller's organization about an alert it never touched.
+// ActionFlapped has no event at all, so its no-op was invisible even in
+// principle.
+//
+// Reachable only through a caller that invents an id, which none does
+// today; that is the reliance the review asked to remove.
+func TestExecuteRefusesAnActionOnAnAlertOfAnotherOrganization(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, hostA := seedHost(t, d)
+	orgB, _ := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	tx := beginTx(t, d)
+	if err := st.Execute(ctx, tx, orgA, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: tuple(hostA, "cpu", "", "used"), At: now, Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("execute open: %v", err)
+	}
+	open, err := st.OpenForHost(ctx, tx, orgA, hostA)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d rows", err, len(open))
+	}
+	id := open[0].ID
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	for name, action := range map[string]alerts.Action{
+		"severity": {Kind: alerts.ActionSeverity, AlertID: id, At: now, Severity: rules.StateCrit},
+		"flapped":  {Kind: alerts.ActionFlapped, AlertID: id, At: now},
+		"close":    {Kind: alerts.ActionClose, AlertID: id, At: now, Reason: alerts.Resolved},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tx := beginTx(t, d)
+			defer tx.Rollback(ctx) //nolint:errcheck // the refusal is the point; nothing to keep
+			err := st.Execute(ctx, tx, orgB, []alerts.Action{action})
+			if !errors.Is(err, alerts.ErrNotFound) {
+				t.Fatalf("Execute(%s) as the wrong organization: err = %v, want ErrNotFound", name, err)
+			}
+		})
+	}
+
+	// And org A's own alert is untouched by all of it — neither the row
+	// nor its history gained anything from the three refusals.
+	var severity string
+	var closedAt *time.Time
+	var wasFlapping bool
+	var events int
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT a.severity, a.closed_at, a.was_flapping, (SELECT count(*) FROM alert_events e WHERE e.alert_id = a.id)
+		 FROM alerts a WHERE a.id = $1`, id,
+	).Scan(&severity, &closedAt, &wasFlapping, &events); err != nil {
+		t.Fatal(err)
+	}
+	if severity != "warn" || closedAt != nil || wasFlapping {
+		t.Fatalf("org A's alert = severity %q closed %v flapping %v, want warn/open/not flapping", severity, closedAt, wasFlapping)
+	}
+	if events != 1 {
+		t.Fatalf("alert_events for org A's alert = %d, want 1 (the opened event alone)", events)
+	}
+}

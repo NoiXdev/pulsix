@@ -55,7 +55,7 @@ func (q *Queries) AcknowledgeAlert(ctx context.Context, arg AcknowledgeAlertPara
 	return result.RowsAffected(), nil
 }
 
-const closeAlert = `-- name: CloseAlert :exec
+const closeAlert = `-- name: CloseAlert :execrows
 UPDATE alerts SET closed_at = $1, closed_reason = $2
 WHERE id = $3 AND org_id = $4
 `
@@ -71,14 +71,17 @@ type CloseAlertParams struct {
 // sweep's own SweepStaleAlerts below — this statement is Execute's own
 // path, the sweep writes its UPDATE directly since it closes many rows at
 // once with no per-row event to pair it with).
-func (q *Queries) CloseAlert(ctx context.Context, arg CloseAlertParams) error {
-	_, err := q.db.Exec(ctx, closeAlert,
+func (q *Queries) CloseAlert(ctx context.Context, arg CloseAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, closeAlert,
 		arg.ClosedAt,
 		arg.Reason,
 		arg.ID,
 		arg.OrgID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAlert = `-- name: GetAlert :one
@@ -752,7 +755,7 @@ func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateCha
 	return items, nil
 }
 
-const raiseAlertSeverity = `-- name: RaiseAlertSeverity :exec
+const raiseAlertSeverity = `-- name: RaiseAlertSeverity :execrows
 UPDATE alerts SET severity = $1,
   peak_severity = CASE WHEN $2::int > (
     CASE peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
@@ -817,8 +820,8 @@ type RaiseAlertSeverityParams struct {
 // regardless — it is honest data about the alert, true on its own terms —
 // but nothing outside the alerts store's own row mapping
 // (internal/alerts/store_sql.go) reads it today.
-func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) error {
-	_, err := q.db.Exec(ctx, raiseAlertSeverity,
+func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, raiseAlertSeverity,
 		arg.Severity,
 		arg.SeverityRank,
 		arg.ClearsSnooze,
@@ -827,10 +830,13 @@ func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverity
 		arg.ID,
 		arg.OrgID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const setAlertFlapping = `-- name: SetAlertFlapping :exec
+const setAlertFlapping = `-- name: SetAlertFlapping :execrows
 UPDATE alerts SET was_flapping = true WHERE id = $1 AND org_id = $2
 `
 
@@ -841,10 +847,15 @@ type SetAlertFlappingParams struct {
 
 // ActionFlapped: latches was_flapping once a tuple is seen flapping. There
 // is no "flapped" kind in alert_events' own CHECK (migration 00049) — this
-// is the one action kind Execute applies with no event to match.
-func (q *Queries) SetAlertFlapping(ctx context.Context, arg SetAlertFlappingParams) error {
-	_, err := q.db.Exec(ctx, setAlertFlapping, arg.ID, arg.OrgID)
-	return err
+// is the one action kind Execute applies with no event to match, which is
+// also why it is the one whose no-op nothing else would have caught
+// (backlog 4.24): :execrows is what makes Execute able to say so.
+func (q *Queries) SetAlertFlapping(ctx context.Context, arg SetAlertFlappingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setAlertFlapping, arg.ID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const snoozeAlert = `-- name: SnoozeAlert :execrows
