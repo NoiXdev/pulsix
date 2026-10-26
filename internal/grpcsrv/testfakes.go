@@ -4,6 +4,7 @@
 package grpcsrv
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"net"
 	"sync"
@@ -319,8 +321,29 @@ type harness struct {
 	workerCert []byte // cached standard worker certificate
 	workerKey  []byte
 
+	logs syncBuffer
+
 	mu  sync.Mutex
 	now time.Time
+}
+
+// syncBuffer collects what the injected logger writes. The server logs
+// from several goroutines, so the writes take a lock.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // clock is the injected Deps.Clock.
@@ -369,6 +392,7 @@ func newHarness(t *testing.T) *harness {
 		Agents: agents.NewService(h.agents), AgentService: agentpb.UnimplementedAgentServiceServer{},
 		Claims: h.claims, Events: h.events, Results: h.results, Audit: h.audit,
 		Clock: h.clock, CancelPollInterval: 10 * time.Millisecond,
+		Log: slog.New(slog.NewTextHandler(&h.logs, nil)),
 	}
 	h.srv, err = newServer(deps)
 	if err != nil {

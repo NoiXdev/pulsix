@@ -83,10 +83,10 @@ type Deps struct {
 	Results      ResultRecorder
 	Audit        SystemAuditor
 	Clock        func() time.Time
-	// Log is where this package's own background work reports. nil is
-	// slog.Default(). Only the server certificate source uses it so
-	// far (backlog 2.64); the request-path sites still log through the
-	// global logger, which is a package-wide change of its own.
+	// Log is where everything this package writes goes — the server
+	// certificate source's background work and every request-path site,
+	// which reach it through Server.log(). nil is slog.Default()
+	// (backlog 2.64, completed under 2.68).
 	Log *slog.Logger
 
 	// CancelPollInterval overrides DefaultCancelPollInterval; zero keeps

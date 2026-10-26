@@ -3,6 +3,8 @@
 package grpcsrv
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,5 +174,38 @@ func TestRegistryTTLBound(t *testing.T) {
 	h.advance(31 * time.Second)
 	if ok := h.srv.registry.consume(jobID, "tok"); ok {
 		t.Fatal("an expired binding must not consume")
+	}
+}
+
+// TestRequestPathLogsThroughTheInjectedLogger closes the last item of
+// backlog 2.68's grpcsrv list. The request-path sites were converted to
+// Server.log() under 2.64, but Deps.Log was never set when internal/app
+// builds the server — so log() fell through to slog.Default() and the
+// indirection bought nothing in production. app.go passes slog.Default()
+// explicitly now, the way every other subsystem there is wired, and this
+// pins that a request-path site really does reach the injected logger
+// rather than the global one.
+//
+// A registry fault is the site chosen because it is the one a reader of
+// the log most needs: the caller is told a bare "worker lookup failed"
+// on purpose, so the actual cause exists nowhere else.
+func TestRequestPathLogsThroughTheInjectedLogger(t *testing.T) {
+	h := newHarness(t)
+	certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+	h.store.mu.Lock()
+	h.store.lookupErr = errors.New("connection refused")
+	h.store.mu.Unlock()
+
+	_, err := h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID))
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("code = %s (%v), want Internal", status.Code(err), err)
+	}
+	// The caller learns nothing; the operator's log is the only record.
+	if msg := status.Convert(err).Message(); strings.Contains(msg, "connection refused") {
+		t.Fatalf("the store's own error reached the caller: %q", msg)
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "look up worker certificate") || !strings.Contains(logs, "connection refused") {
+		t.Fatalf("the injected logger did not receive the fault:\n%s", logs)
 	}
 }

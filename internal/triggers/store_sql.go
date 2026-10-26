@@ -271,6 +271,20 @@ func encode(t Trigger) (mapping, rl []byte, err error) {
 	return mapping, rl, nil
 }
 
+// toTrigger maps a stored row onto the domain type. It never copies
+// `secret`, which is why the management queries can keep SELECT * —
+// weighed and declined under backlog 2.68.
+//
+// Naming the columns in GetTrigger, ListTriggers and the two RETURNING
+// clauses would stop the secret being read at all, at the cost of four
+// more generated row types with identical fields and four adapters to
+// keep in step: every future column would then have to be added in five
+// places, and forgetting one is a silent omission rather than a
+// compile error. What that buys is small, because the column is SEALED
+// (migration 00026, AAD trigger:<org>:<id>) — a management read carries
+// ciphertext bound to this trigger, not a usable secret, and the thing
+// worth protecting is the box key. Resolve is the one caller that needs
+// the value, and it opens it deliberately.
 func toTrigger(r gen.JobTrigger) (Trigger, error) {
 	t := Trigger{
 		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), TemplateID: db.UUIDPtr(r.TemplateID), RepoID: db.UUIDPtr(r.RepoID),

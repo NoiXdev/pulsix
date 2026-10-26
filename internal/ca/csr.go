@@ -99,11 +99,24 @@ func (c *CA) SignAgentCSR(csrPEM []byte, orgID uuid.UUID, agentName string) ([]b
 	return pemCert(der), crt, nil
 }
 
-// CAPEM is the root certificate as PEM (the chain a worker stores).
+// CAPEM is the root certificate as PEM (the chain a worker stores), and
+// CAPin the fingerprint an enrollment token carries: SHA-256 of the root
+// certificate's DER.
+//
+// Both panic before Ensure, when c.cert is still nil, and that is
+// deliberate — backlog 2.68 proposed a nil guard and it is the wrong
+// trade. A guard would have to return something, and the only values
+// available are an empty chain and a ZERO pin. A worker comparing the
+// manager's certificate against a zero pin is being told an answer to a
+// security question, and the answer is wrong. Failing loudly, in the
+// process that has no CA yet, is strictly better than shipping a
+// fingerprint that matches nothing — every caller reaches these only
+// after app.Build has run Ensure, so the nil case is a wiring bug and
+// should read like one.
 func (c *CA) CAPEM() []byte { return pemCert(c.cert.Raw) }
 
-// CAPin is the fingerprint an enrollment token carries: SHA-256 of the
-// root certificate's DER.
+// CAPin is the enrollment token's fingerprint; see CAPEM on why a nil
+// certificate panics here rather than answering.
 func (c *CA) CAPin() [32]byte { return sha256.Sum256(c.cert.Raw) }
 
 // ParseLeaf decodes the first PEM certificate of certPEM.
