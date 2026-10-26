@@ -11,8 +11,12 @@ export interface SlugFieldProps {
   /** Reads the name the slug is derived from, at the moment it is asked.
    * A getter rather than a value on purpose: subscribing to the name
    * would re-render this field on every keystroke in another one, and
-   * react-hook-form's `watch` opts the whole component out of the React
-   * compiler. Nothing here needs the name until somebody acts. */
+   * react-hook-form's `watch` is what `react-hooks/incompatible-library`
+   * flags — the React Compiler's own analysis, which this repository runs
+   * as lint rather than as a build step (backlog 1.45; the build
+   * deliberately does not transform). The re-render argument stands on
+   * its own either way. Nothing here needs the name until somebody
+   * acts. */
   readSource: () => string;
   /** Writes the generated slug back into the form. */
   write: (slug: string) => void;
