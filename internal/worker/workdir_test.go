@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -142,5 +143,52 @@ func TestRemoveWorkDirClearsThePlayUIDsLeftovers(t *testing.T) {
 	// still has to be reported rather than swallowed.
 	if !strings.Contains(logs.String(), "level=ERROR") {
 		t.Errorf("a work dir still present after both attempts must be logged as an error:\n%s", logs.String())
+	}
+}
+
+// TestRemoveWorkDirDoesNotHandThePlayUIDTheWorkersSecrets: the cleanup
+// child is the one subprocess that used to inherit the worker's whole
+// environment. The helper's final execv is a plain non-setuid binary with
+// unchanged credentials, so the child is dumpable and its
+// /proc/<pid>/environ belongs to the play uid — readable by anything the
+// play left running under that uid. PULSIX_ENROLL_TOKEN in there is
+// exactly the secret this feature exists to keep away from a play, so the
+// cleanup strips the private environment the way the run spawn does.
+func TestRemoveWorkDirDoesNotHandThePlayUIDTheWorkersSecrets(t *testing.T) {
+	dir := t.TempDir()
+	work := unremovableWorkDir(t, dir)
+
+	t.Setenv("PULSIX_ENROLL_TOKEN", "enroll-secret-value")
+	t.Setenv("ANSIBLE_CONFIG", "/etc/pulsix-worker/ansible.cfg")
+
+	record := filepath.Join(t.TempDir(), "env")
+	helper := filepath.Join(t.TempDir(), "fake-setuid-exec")
+	script := "#!/bin/sh\nenv > " + record + "\nexit 0\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake helper: %v", err)
+	}
+
+	cfg := cfgFor(dir, zoneID)
+	cfg.PlayUID = 65533
+	cfg.SetuidHelper = helper
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{}, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+
+	l.removeWorkDir(work)
+
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the setuid helper was never invoked for the leftovers: %v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		name, _, _ := strings.Cut(line, "=")
+		if strings.HasPrefix(name, "PULSIX_") || strings.HasPrefix(name, "ANSIBLE_") {
+			t.Errorf("the cleanup child inherited %q; the worker's private environment must not cross the uid boundary", name)
+		}
+	}
+	// The strip must not take the rest of the environment with it: rm
+	// itself is resolved absolutely, but a child with no PATH at all is a
+	// different program than the one the run spawn builds.
+	if !strings.Contains(string(raw), "PATH=") {
+		t.Errorf("the cleanup child lost its whole environment, not just the private part:\n%s", raw)
 	}
 }

@@ -105,6 +105,13 @@ func (l *Loop) removeAsPlayUID(workDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), removeGrace)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, helper, argv...)
+	// The helper's final execv is a plain binary with unchanged
+	// credentials, so this child is dumpable and its /proc/<pid>/environ
+	// belongs to the play uid — readable by anything the play left behind
+	// under it. The worker's own settings, PULSIX_ENROLL_TOKEN among them,
+	// have no business there; the run spawn strips them for the same
+	// reason.
+	cmd.Env = stripPrivateEnv(os.Environ())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w: %s", helper, err, out)
 	}
