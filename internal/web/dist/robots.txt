@@ -1,3 +1,6 @@
-# placeholder static asset — see index.html in this directory
+# placeholder static asset — see index.html in this directory. The real
+# one is web/public/robots.txt, which Vite copies into every build; this
+# copy only serves a `go build ./cmd/manager` made without `make`, and
+# must say the same thing (backlog 1.40).
 User-agent: *
-Disallow: /api/
+Disallow: /

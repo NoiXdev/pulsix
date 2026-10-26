@@ -2,6 +2,9 @@ package web
 
 import (
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -165,4 +168,51 @@ func TestHandlerProductionFSEmbeds(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("GET /: status = %d, want 200", rec.Code)
 	}
+}
+
+// TestRobotsTxtDisallowsEverythingAndMatchesTheSource is backlog 1.40.
+// internal/web/dist is placeholder scaffolding that `go:embed all:dist`
+// serves when someone builds cmd/manager without `make`; the real file
+// is web/public/robots.txt, which Vite copies into every build. Before
+// this the placeholder carried a robots.txt and a real build carried
+// NONE, so the committed tree implied a rule that nothing shipped — and
+// no suite looked at what the bundle contained, which is why a local
+// image build found it rather than CI.
+//
+// Both halves are pinned. The content, because "Disallow: /api/" (what
+// the placeholder used to say) leaves the sign-in page indexable, and a
+// crawler reaching it would publish a private instance's address — the
+// one thing a self-hosted panel has no reason to announce. And the two
+// copies against each other, because they are the kind of pair that
+// drifts silently: nothing else would notice if a later edit changed one.
+func TestRobotsTxtDisallowsEverythingAndMatchesTheSource(t *testing.T) {
+	embedded, err := dist.ReadFile("dist/robots.txt")
+	if err != nil {
+		t.Fatalf("the embedded placeholder must carry a robots.txt: %v", err)
+	}
+	source, err := os.ReadFile(filepath.Join("..", "..", "web", "public", "robots.txt"))
+	if err != nil {
+		t.Fatalf("web/public/robots.txt is what real builds ship; it must exist: %v", err)
+	}
+	for name, content := range map[string][]byte{"embedded placeholder": embedded, "web/public": source} {
+		rules := directives(string(content))
+		if !slices.Equal(rules, []string{"user-agent: *", "disallow: /"}) {
+			t.Errorf("%s robots.txt = %v, want a blanket disallow", name, rules)
+		}
+	}
+}
+
+// directives reduces a robots.txt to its instructions: comments and blank
+// lines are commentary, and the two copies carry different ones on
+// purpose — each explains what it is to whoever finds it.
+func directives(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, strings.ToLower(line))
+	}
+	return out
 }

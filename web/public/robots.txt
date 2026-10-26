@@ -1,0 +1,12 @@
+# Pulsix is a private, self-hosted control panel: every page behind the
+# sign-in screen is an operator's view of their own infrastructure, and
+# none of it is meant to be found by searching. Disallow everything
+# rather than the API alone (backlog 1.40) — a crawler that indexed the
+# sign-in page would publish the instance's existence and its address,
+# which is the one thing a self-hosted panel has no reason to announce.
+#
+# Vite copies this directory into the build verbatim, so it ships with
+# every artefact. internal/web/dist/ holds a matching copy for the
+# go:embed placeholder, which serves a build made without `make`.
+User-agent: *
+Disallow: /

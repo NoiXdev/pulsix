@@ -36,8 +36,13 @@ function renderPage() {
   );
 }
 
+// An admin session by default. Until backlog 1.48 this page rendered its
+// three write controls whatever the role was, so the tests that drive
+// them never had to say who was driving — they passed with no org in the
+// mock at all, which `may()` reads as no role.
 const base = {
   'GET /api/v1/auth/me': ME,
+  'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
   'GET /api/v1/orgs/acme/bastions': BASTIONS,
   'GET /api/v1/orgs/acme/credentials': CREDS,
   'GET /api/v1/orgs/acme/zones': ZONES,
@@ -182,7 +187,7 @@ describe('JumpHostsPage', () => {
     expect(screen.queryByRole('button', { name: 'Unpin bastion-a host key' })).not.toBeInTheDocument();
   });
 
-  it('shows nothing interactive for a viewer (no pin/unpin)', async () => {
+  it('shows nothing interactive for a viewer', async () => {
     mockApi({
       ...base,
       'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
@@ -193,5 +198,13 @@ describe('JumpHostsPage', () => {
     renderPage();
     expect(await screen.findByText(FP)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Pin bastion-a host key' })).not.toBeInTheDocument();
+    // Backlog 1.48: the page's own three write controls were rendered
+    // unconditionally while the host-key actions beside them were gated,
+    // so a viewer was offered buttons that could only answer 403. This
+    // test already claimed "nothing interactive" and was not checking
+    // them.
+    expect(screen.queryByRole('button', { name: 'Add jump host' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit bastion-a' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete bastion-a' })).not.toBeInTheDocument();
   });
 });
