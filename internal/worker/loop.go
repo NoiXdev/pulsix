@@ -309,7 +309,7 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 	if err != nil {
 		return l.report(ctx, job, StatusError, nil, fmt.Sprintf("create work dir: %v", err))
 	}
-	defer func() { _ = os.RemoveAll(workDir) }() // best-effort: the dir is scratch
+	defer l.removeWorkDir(workDir)
 
 	runCtx, cancelRun := context.WithCancel(streamCtx)
 	defer cancelRun()
@@ -418,26 +418,6 @@ func joinErrText(a, b string) string {
 		return b
 	}
 	return a + "; " + b
-}
-
-// newWorkDir creates a fresh temp dir under the data dir; the caller removes
-// it when the run ends. MkdirTemp's own default (0700) is exactly right when
-// PlayUID is unset: owner-only. When it is set, the play that is about to
-// run inside this dir needs group access to it (not just to the files
-// ShareWorkDir later opens up inside it, but to the directory itself, or it
-// could never list or enter it) — setgid so anything the play creates in
-// turn inherits the worker's group too.
-func (l *Loop) newWorkDir() (string, error) {
-	dir, err := os.MkdirTemp(l.cfg.DataDir, "job-")
-	if err != nil {
-		return "", err
-	}
-	if l.cfg.PlayUID != 0 {
-		if err := os.Chmod(dir, 0o770|os.ModeSetgid); err != nil {
-			return "", fmt.Errorf("share work dir: %w", err)
-		}
-	}
-	return dir, nil
 }
 
 // secureDirsForPlayUID shapes the two directories the play's own uid must
