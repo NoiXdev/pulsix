@@ -50,10 +50,12 @@ func normalize(in Input, now time.Time) (Window, error) {
 	}
 	w.TargetKind, w.TargetID = in.TargetKind, in.TargetID
 
-	reason := in.Reason
-	if reason == "" {
-		reason = ReasonMaintenance
-	}
+	// Through reasonOrDefault (store_sql.go), not a second copy of the
+	// same `if r == "" ` here (backlog 4.21): the store applies that
+	// default to a Window built directly, and two statements of one rule
+	// are free to drift — the one that moved would then decide which
+	// path a caller happened to take.
+	reason := reasonOrDefault(in.Reason)
 	switch reason {
 	case ReasonMaintenance, ReasonSilence:
 	default:

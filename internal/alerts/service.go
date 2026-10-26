@@ -43,10 +43,14 @@ type View struct {
 // Detail is View plus the alert's own timeline (timeline.go's
 // mergeTimeline) and its notification hold — what Get returns.
 type Detail struct {
-	Alert
-	HostName    string
-	Suppression Suppression
-	Timeline    []TimelineEntry
+	// Embedded, not three fields restated (backlog 4.27): a Detail IS a
+	// View with a timeline, and re-declaring Alert, HostName and
+	// Suppression meant a field added to View silently missed Detail
+	// until someone remembered to add it twice. Promotion keeps every
+	// existing reader working — d.Alert, d.HostName and d.Suppression
+	// read exactly as before.
+	View
+	Timeline []TimelineEntry
 	// NotificationHold answers "why did nothing arrive" (v0.4c Task 11):
 	// "" when nothing is held, "deferred" when every route that wants this
 	// alert is outside its delivery window, "suppressed" when the host is
@@ -265,7 +269,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Detail, error) 
 		}
 	}
 	return Detail{
-		Alert: a.Alert, HostName: a.HostName, Suppression: sup,
+		View:     View{Alert: a.Alert, HostName: a.HostName, Suppression: sup},
 		Timeline: mergeTimeline(events, changes), NotificationHold: hold,
 	}, nil
 }

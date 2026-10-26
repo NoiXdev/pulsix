@@ -161,11 +161,27 @@ func (s *SQLStore) StateChanges(ctx context.Context, orgID uuid.UUID, subject Su
 func occurrenceAt(r gen.MaintenanceWindow, now time.Time) (maintenance.Occurrence, bool, error) {
 	reason := maintenance.Reason(r.Reason)
 	if r.Cron == nil {
-		starts, ends := db.TimePtr(r.StartsAt), db.TimePtr(r.EndsAt)
-		if starts == nil || ends == nil || now.Before(*starts) || !now.Before(*ends) {
+		// Through maintenance.ActiveAt, not a second `!now.Before(start)
+		// && now.Before(end)` written here (backlog 4.28). Whether a
+		// window's stretch is half-open at the end is a convention that
+		// package owns; stating it again in this one gives the two
+		// somewhere to drift, and an operator would see a window cover
+		// its final instant on the alerts page and not on the calendar.
+		w := maintenance.Window{
+			ID: r.ID, Reason: reason,
+			StartsAt: db.TimePtr(r.StartsAt), EndsAt: db.TimePtr(r.EndsAt),
+		}
+		active, err := maintenance.ActiveAt(w, now)
+		if err != nil {
+			// A one-off row with no start or end: unevaluable, the same
+			// kind of broken row the recurring branch reports below
+			// rather than reading as "not now" (backlog 4.29).
+			return maintenance.Occurrence{}, false, fmt.Errorf("evaluate: %w", err)
+		}
+		if !active {
 			return maintenance.Occurrence{}, false, nil
 		}
-		return maintenance.Occurrence{WindowID: r.ID, Reason: reason, Start: *starts, End: *ends}, true, nil
+		return maintenance.Occurrence{WindowID: r.ID, Reason: reason, Start: *w.StartsAt, End: *w.EndsAt}, true, nil
 	}
 	if r.Timezone == nil || r.DurationSeconds == nil {
 		// A recurring row missing either is not a window this code can

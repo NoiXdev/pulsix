@@ -131,10 +131,13 @@ func mapWriteErr(err error) error {
 	return err
 }
 
-// reasonOrDefault applies the same default normalize does, for a Window
-// built directly rather than through Service.Create/Update — otherwise an
-// empty Reason would reach the NOT NULL, CHECK-constrained column as "" and
-// be rejected instead of defaulting.
+// reasonOrDefault is where "an unset reason means maintenance" is
+// decided, for the whole package. The store applies it to a Window built
+// directly rather than through Service.Create/Update — otherwise an empty
+// Reason would reach the NOT NULL, CHECK-constrained column as "" and be
+// rejected instead of defaulting — and normalize (validate.go) and
+// HostsInMaintenance (service.go) read through it rather than restating
+// it (backlog 4.21).
 func reasonOrDefault(r Reason) Reason {
 	if r == "" {
 		return ReasonMaintenance
