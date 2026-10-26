@@ -79,6 +79,18 @@ export default defineConfig({
     { name: 'maintenance', testMatch: /maintenance\.spec\.ts/, dependencies: ['alerts'] },
     { name: 'calendar', testMatch: /calendar\.spec\.ts/, dependencies: ['maintenance'] },
     { name: 'notifications', testMatch: /notifications\.spec\.ts/, dependencies: ['calendar'] },
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['notifications'] },
+    // The v0.2c pages (backlog 2.68), for the same reason the three
+    // above were cheap: neither needs an agent or a worker.
+    // workers.spec stops where a real worker would begin — enrolling for
+    // real needs the worker IMAGE in this stack, which backlog 2.96 is
+    // waiting on, the same thing ansible.spec self-skips for.
+    // triggers.spec hangs its webhook on a REPOSITORY rather than a job
+    // template, because a template needs a playbook, a playbook needs a
+    // synced repository, and syncing is a job — which needs that same
+    // worker. The schedules page is blocked on it outright: a schedule
+    // has nothing to point at without a template.
+    { name: 'workers', testMatch: /workers\.spec\.ts/, dependencies: ['notifications'] },
+    { name: 'triggers', testMatch: /triggers\.spec\.ts/, dependencies: ['workers'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['triggers'] },
   ],
 });
