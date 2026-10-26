@@ -100,13 +100,20 @@ type hostCheckValueDTO struct {
 	// so a null State means both "never evaluated" and "being ignored",
 	// two different statements this field tells apart. Measurement
 	// continues regardless of this flag — ignoring never touches what the
-	// agent is asked to collect. Always false for an item-less metric
-	// (cpu, memory): there is nothing to ignore.
+	// agent is asked to collect.
+	//
+	// It is reported for an ITEM-LESS metric too (cpu, memory), which it
+	// was not before backlog 3.45: items.Match("*", "") is true, so a
+	// host-scoped glob over check_key cpu really does stop cpu.used_pct
+	// being judged — the evaluation path has always treated it that way,
+	// and this field claiming otherwise made an operator's own silencing
+	// invisible here.
 	Ignored bool `json:"ignored" doc:"An item decision currently keeps this tuple from being judged; measurement continues regardless"`
 	// DecidedBy is the decision that produced Ignored — the same
 	// items.Decide resolution, from the same read, so the two can never
 	// disagree. Absent when nothing decides this tuple (the default,
-	// watch) and always absent for an item-less metric.
+	// watch) — including for an item-less metric, which a glob decision
+	// can now be reported as governing (see Ignored, backlog 3.45).
 	//
 	// It is here rather than left to GET /hosts/{id}/items because the
 	// row's Ignore/Watch button has to know whether a decision it could
@@ -450,13 +457,15 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 			// in (Stale stays false) but stops advancing EvaluatedAt.
 			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*d.Interval
 		}
-		if c.Item != "" {
-			if res, ok := ignored[ignoredKey{CheckKey: d.Key, Item: c.Item}]; ok {
-				v.Ignored = res.Ignored()
-				if res.Decision != nil {
-					decided := toItemDecisionDTO(*res.Decision)
-					v.DecidedBy = &decided
-				}
+		// Every tuple, item-less ones included (backlog 3.45): the filter
+		// that used to stand here was the second half of the same wrong
+		// rule hostIgnoredItems carried, and leaving either in place
+		// keeps the flag silent for a glob an operator really did write.
+		if res, ok := ignored[ignoredKey{CheckKey: d.Key, Item: c.Item}]; ok {
+			v.Ignored = res.Ignored()
+			if res.Decision != nil {
+				decided := toItemDecisionDTO(*res.Decision)
+				v.DecidedBy = &decided
 			}
 		}
 		dto.Values[i] = v
@@ -484,8 +493,16 @@ type ignoredKey struct{ CheckKey, Item string }
 // one Decide call is what makes it impossible for the two to disagree —
 // see DecidedBy's own doc comment for the bug that cost.
 //
-// Metrics with no item (cpu, memory) have nothing to ignore and are never
-// looked up — the same filter hostCheckDTO's own Ignored field documents.
+// Every tuple is asked, including the itemless ones (backlog 3.45). This
+// used to skip them, on the stated grounds that "metrics with no item
+// (cpu, memory) have nothing to ignore" — which is not true of the code
+// beside it: items.Match("*", "") is true, so a host-scoped glob over
+// check_key cpu genuinely drops cpu.used_pct from judgement, and the
+// evaluation path (internal/rules.resolveIgnored) runs Decide over the
+// empty-item tuples for exactly that reason. The read side skipping them
+// is what made an operator's own silencing invisible on the host page:
+// the metric really did stop being judged, and the `ignored` badge could
+// not say so.
 func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current) (map[ignoredKey]items.Resolution, error) {
 	// Decisions, not ListDecisions: this route is polled every 30 s per
 	// open host page, and the only decisions that can ever govern an item
@@ -500,9 +517,6 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 	}
 	out := make(map[ignoredKey]items.Resolution, len(current))
 	for _, c := range current {
-		if c.Item == "" {
-			continue
-		}
 		k := ignoredKey{CheckKey: c.CheckKey, Item: c.Item}
 		if _, ok := out[k]; ok {
 			continue

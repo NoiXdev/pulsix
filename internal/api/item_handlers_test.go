@@ -790,3 +790,67 @@ func TestHostChecksReportsIgnoredAdditively(t *testing.T) {
 		t.Fatalf("/opt decided_by = %+v, want absent: no decision names it", optValue.DecidedBy)
 	}
 }
+
+// TestHostChecksReportsIgnoredForAnItemlessMetric is backlog 3.45. Two
+// paths answer the same question — does an item decision currently keep
+// this tuple from being judged — and they disagreed for a metric with no
+// item. items.Match("*", "") is true, so a host-scoped glob over
+// check_key cpu genuinely drops cpu.used_pct from judgement, and the
+// evaluation path (internal/rules.resolveIgnored) has always run Decide
+// over the empty-item tuples for that reason. The read path skipped them
+// outright, on a doc comment that asserted they had "nothing to ignore".
+//
+// The effect was the quiet kind: an operator who silenced cpu on a host
+// really did silence it, and the host page's badge could not say so —
+// the same invisible-until-you-look-elsewhere gap 3.44 closed one level
+// up, still open at the tuple level.
+func TestHostChecksReportsIgnoredForAnItemlessMetric(t *testing.T) {
+	f := newItemsFixture(t, "items-ignored-itemless")
+	// A glob over an itemless check. "*" is the pattern an operator
+	// reaches for to mean "this whole check on this host", and it is
+	// exactly what the evaluation path already honours.
+	ignoreCPU := f.createDecision(t, f.operatorC, map[string]any{
+		"scope": "host", "host_id": f.web.String(), "check_key": "cpu",
+		"match_kind": "glob", "pattern": "*", "decision": "ignore",
+	})
+
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	res, err := f.s.Checks.RecordObservations(scoped, f.orgID, []checks.Observation{
+		{HostID: f.web, CheckKey: "cpu", Metric: "used_percent", At: time.Now(), Value: floatPtr(42)},
+		{HostID: f.web, CheckKey: "disk", Item: "/opt", Metric: "used_percent", At: time.Now(), Value: floatPtr(20)},
+	})
+	if err != nil || res.Rejected() != 0 {
+		t.Fatalf("record observations: %+v, err %v", res, err)
+	}
+
+	var body hostChecksBody
+	decodeInto(t, requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.web)+"/checks", nil), &body)
+
+	cpu := body.byKey(t, "cpu")
+	var used *hostCheckValue
+	for i := range cpu.Values {
+		if cpu.Values[i].Item == "" && cpu.Values[i].Metric == "used_percent" {
+			used = &cpu.Values[i]
+		}
+	}
+	if used == nil {
+		t.Fatalf("cpu.used_percent is missing from %+v", cpu.Values)
+	}
+	if !used.Ignored {
+		t.Fatalf("cpu.used_percent = %+v, want ignored=true: the glob silences it, and the evaluator already agrees", used)
+	}
+	// decided_by rides with it, out of the same resolution, so the row's
+	// own Ignore/Watch button knows which decision it would be flipping.
+	if used.DecidedBy == nil || used.DecidedBy.ID != ignoreCPU.ID || used.DecidedBy.MatchKind != "glob" {
+		t.Fatalf("cpu.used_percent decided_by = %+v, want the host-scoped glob %q", used.DecidedBy, ignoreCPU.ID)
+	}
+
+	// The glob names cpu, so nothing else moves — a change that reported
+	// every itemless tuple as ignored would pass the assertions above.
+	disk := body.byKey(t, "disk")
+	for _, v := range disk.Values {
+		if v.Ignored || v.DecidedBy != nil {
+			t.Fatalf("disk %s/%s = %+v, want untouched by a cpu decision", v.Item, v.Metric, v)
+		}
+	}
+}

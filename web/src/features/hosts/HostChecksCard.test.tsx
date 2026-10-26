@@ -914,6 +914,55 @@ describe('HostChecksCard', () => {
       expect(screen.queryByText('Set on this host')).not.toBeInTheDocument();
     });
 
+    // Backlog 3.45. A whole-host metric has no item, and this card used
+    // to drop both the origin and the disclosure for one — defensible
+    // only while the server never reported such a tuple as ignored. It
+    // does now: items.Match('*', '') is true, so a host-scoped glob over
+    // check_key cpu really does stop cpu.used_percent being judged.
+    //
+    // The row with the hardest silencing to trace is exactly this one:
+    // there is no item underneath it to look up on the Items tab, so the
+    // disclosure is the only place the operator can be told. A bare
+    // "ignored" with nothing to ask is the confusion the fallback above
+    // already exists to prevent.
+    it('explains an ignored whole-host metric, which has no item row to look it up on', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            check({
+              definition_id: 'd3',
+              key: 'cpu',
+              plugin: 'cpu',
+              interval_seconds: 60,
+              source: 'org',
+              values: [
+                ignoredValue({
+                  item: '',
+                  decided_by: { id: 'dec-glob', scope: 'host', match_kind: 'glob', pattern: '*', decision: 'ignore' },
+                }),
+              ],
+            }),
+          ],
+        },
+      });
+      renderCard();
+
+      expect(await screen.findByText('ignored')).toBeInTheDocument();
+      await user.click(screen.getByText('Why ignored'));
+      expect(screen.getByText(/Set on this host/)).toBeInTheDocument();
+
+      // The row ACTION stays item-only: a glob is not something this row
+      // can flip, so offering Watch here would promise an edit that the
+      // older-created_at tie-break would silently lose.
+      expect(screen.queryByRole('button', { name: /Watch|Ignore/ })).not.toBeInTheDocument();
+    });
+
     it('names an organization pattern as the origin, with its note, once the row is opened — not before', async () => {
       const user = userEvent.setup();
       mockApi({

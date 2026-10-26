@@ -435,26 +435,27 @@ func TestItemDecisionPipelineGate(t *testing.T) {
 	// tuples and an operator's own decision over every one of them.
 	waitForFleetAllIgnored(t, w, hostID, "the fleet roll-up once every tuple is ignored", 60*time.Second)
 
-	// Measurement never stopped for any of the three. disk's own mount
-	// carries an item, so GET /hosts/{id}/checks reports its ignored flag
-	// directly — the same claim claim 2 already pins. cpu and memory
-	// report no item at all, and hostIgnoredItems (host_check_handlers.go)
-	// deliberately never looks one up for an itemless metric ("metrics
-	// with no item have nothing to ignore", its own doc comment) — that
-	// route's ignored flag is an Items-tab affordance, and there is no
-	// item row for either of these to show it against. Their own evaluation
-	// tuple is still dropped from judgement (resolveIgnored draws no such
-	// exception — load_sql.go's own doc comment: "including the empty-item
-	// ones"), which is exactly why the fleet roll-up above went to null —
-	// so what is left to check here is only that a real value kept
-	// arriving for both, not a flag this route was never going to set.
-	if _, value, ignored := diskTupleState(t, w, hostID); value == nil || !ignored {
-		t.Fatalf("itemMount's value/ignored = %v/%v once all-ignored, want a real value and ignored=true", value, ignored)
-	}
-	if _, value, _ := tupleState(t, w, hostID, "cpu", "", cpuUsedPct); value == nil {
-		t.Fatalf("cpu.used_pct's value = nil once all-ignored, want measurement to continue regardless")
-	}
-	if _, value, _ := tupleState(t, w, hostID, "memory", "", memUsedPct); value == nil {
-		t.Fatalf("mem.used_pct's value = nil once all-ignored, want measurement to continue regardless")
+	// Measurement never stopped for any of the three, and all three now
+	// SAY they are ignored. cpu and memory carry no item, and this
+	// assertion used to spare them the flag: hostIgnoredItems skipped
+	// itemless tuples on the stated grounds that they had "nothing to
+	// ignore", so the route could not report what the evaluation path was
+	// already doing — their tuples really were dropped from judgement
+	// (resolveIgnored runs over "the empty-item ones" too, its own doc
+	// comment), which is exactly why the roll-up above went to null.
+	// Backlog 3.45 closed that gap, so the claim no longer has to route
+	// around the one case it was most about.
+	for _, tuple := range []struct{ check, item, metric string }{
+		{"disk", itemMount, diskUsedPct},
+		{"cpu", "", cpuUsedPct},
+		{"memory", "", memUsedPct},
+	} {
+		_, value, ignored := tupleState(t, w, hostID, tuple.check, tuple.item, tuple.metric)
+		if value == nil {
+			t.Fatalf("%s/%s %s has no value once all-ignored, want measurement to continue regardless", tuple.check, tuple.item, tuple.metric)
+		}
+		if !ignored {
+			t.Fatalf("%s/%s %s reports ignored=false once all-ignored; the evaluator stopped judging it, so the host page must say so", tuple.check, tuple.item, tuple.metric)
+		}
 	}
 }

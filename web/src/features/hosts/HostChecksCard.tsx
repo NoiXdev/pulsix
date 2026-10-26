@@ -238,9 +238,12 @@ function ValueRow({
   // was ignored but not by what, and the Ignore/Watch button below
   // treated "nothing governs this" as licence to POST a second decision
   // that lost the older-created_at tie-break and died silently.
-  // Undefined for a whole-host metric — items with no name are not rows
-  // at all (v0.3b-3 design) — and whenever nothing decides this item.
-  const decidedBy = value.item !== '' ? value.decided_by : undefined;
+  // Undefined whenever nothing decides this tuple. A whole-host metric
+  // used to be excluded here too, on the v0.3b-3 reading that items with
+  // no name are not rows at all — but a host-scoped glob silences such a
+  // metric for real, and since backlog 3.45 the server says so, so the
+  // row has an origin to show and must show it.
+  const decidedBy = value.decided_by;
 
   const st = verdictLabel(value.state, value.ignored);
 
@@ -415,8 +418,16 @@ function ValueRow({
           "ignored" with no affordance to even ask why is exactly the
           confusion ruling 2 exists to prevent, so the fallback stays. It
           says plainly that the origin is not known; guessing a scope
-          nobody told this card would be worse than saying nothing. */}
-      {value.item !== '' && (decidedBy || value.ignored) && (
+          nobody told this card would be worse than saying nothing.
+
+          Whole-host metrics are included (backlog 3.45). They were not
+          before, which was defensible only while the server never
+          reported them as ignored; now that it does, excluding them
+          would leave the one row whose silencing is hardest to find —
+          there is no item under it to look up — with a bare "ignored"
+          and nothing to ask. The row ACTION below stays item-only: a
+          glob is not something this row can flip. */}
+      {(decidedBy || value.ignored) && (
         <details className="text-[11px] text-muted-foreground">
           <summary className="cursor-pointer">
             {decidedBy ? (decidedBy.decision === 'ignore' ? 'Why ignored' : 'Why watched') : 'Why ignored'}
