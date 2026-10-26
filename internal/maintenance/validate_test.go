@@ -68,6 +68,29 @@ func TestWindowDefaultsToMaintenanceReason(t *testing.T) {
 	}
 }
 
+// TestWindowKeepsAnExplicitSilenceReason is backlog 4.22. The two tests
+// around it cover the default (an empty reason becomes maintenance) and
+// the refusal (anything else is ErrInvalidInput) — but nothing drove the
+// one arm that matters most, an explicit silence surviving normalize.
+//
+// The silence tests elsewhere build Window literals directly and never
+// reach this function, so deleting ReasonSilence from the switch would
+// have sent every silence window to the default branch and been refused
+// as an unknown reason, with the suite still green: the refusal test
+// would pass for the wrong input, and the default test never names a
+// reason at all.
+func TestWindowKeepsAnExplicitSilenceReason(t *testing.T) {
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	in := Input{Name: "nightly", TargetKind: TargetOrg, Cron: "@daily", Duration: "1h", Timezone: "UTC", Reason: ReasonSilence}
+	w, err := normalize(in, now)
+	if err != nil {
+		t.Fatalf("normalize with an explicit silence reason: %v", err)
+	}
+	if w.Reason != ReasonSilence {
+		t.Fatalf("reason = %q, want %q — a silence must not be normalized into a maintenance window", w.Reason, ReasonSilence)
+	}
+}
+
 func TestWindowRejectsAnUnknownReason(t *testing.T) {
 	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
 	in := Input{Name: "nightly", TargetKind: TargetOrg, Cron: "@daily", Duration: "1h", Timezone: "UTC", Reason: "snooze"}
