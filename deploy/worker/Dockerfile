@@ -81,35 +81,42 @@ COPY --from=build /out/pulsix-worker /pulsix-worker
 # PULSIX_WORKER_PLAY_UID is set. Its PRIMARY group is the worker's own
 # (65532), not a group of its own: the run's work dir is shared by group, so
 # everything the play writes stays group-owned by the worker and readable
-# back — that is what keeps the run's event stream working. It owns nothing,
-# has no home (a run gets its HOME inside its own work dir) and cannot log
-# in. What it specifically does NOT reach is the worker's identity directory,
-# which stays owner-only below.
+# back — that is what keeps the run's event stream working. It owns nothing
+# else and cannot log in. What it specifically does NOT reach is the
+# worker's identity directory, which stays owner-only below.
+#
+# Its home DOES have to exist, and that was learned the hard way: Ansible
+# expands `remote_tmp` (`~/.ansible/tmp`) from the account's passwd entry,
+# not from $HOME, and does it for a `connection: local` task as much as for
+# an SSH one. With --no-create-home every task came back UNREACHABLE with
+# "Failed to create temporary directory ... /home/pulsix-play/.ansible/tmp".
+# The run's own scratch still lives in its work dir (HOME, ANSIBLE_CONFIG
+# and ANSIBLE_LOCAL_TEMP all point there, and the dir is wiped afterwards);
+# this one is 0700 so nothing but the play itself can look inside it.
 RUN groupadd --system --gid 65532 pulsix \
 	&& useradd --system --uid 65532 --gid 65532 --home-dir /home/pulsix --create-home \
 		--shell /usr/sbin/nologin pulsix \
 	&& chmod 0700 /home/pulsix \
-	&& useradd --system --uid 65533 --gid 65532 --no-create-home \
-		--shell /usr/sbin/nologin pulsix-play
+	&& useradd --system --uid 65533 --gid 65532 --home-dir /home/pulsix-play --create-home \
+		--shell /usr/sbin/nologin pulsix-play \
+	&& chmod 0700 /home/pulsix-play
 
-# The privileged step, and the only setuid binary in the image. Mode 4755 is
-# deliberate: the only identity it can confer is 65533, which holds strictly
-# less than any other account here, so "anyone may run it" grants nobody
-# anything they could not already do by being themselves. root:root ownership
-# is what makes the setuid bit mean root; COPY --from already lands it that
-# way, stated here so a future edit cannot drop it silently.
+# The privileged step, and the only setuid binary in the image. root
+# ownership is what makes the setuid bit mean root; the group is the
+# worker's (65532) and the mode is 4750, so only the worker may invoke it
+# at all.
 #
-# THE INVARIANT 4755 RESTS ON: the helper confers gid 65532 (the worker's)
-# as well as uid 65533, and nothing owned by the worker outside a run's own
-# work dir is group-accessible. The identity directory is 0700, the data dir
-# 0710, the repo cache 0700. Make ANY worker-owned path group-readable or
-# group-writable and this mode stops being free — it would then let every
-# account in the image reach it through the helper. Tighten to
-# `chown root:pulsix` + `chmod 4750` at that point, so only the worker may
-# invoke the helper at all.
+# WHY NOT 4755: the helper confers gid 65532 — the worker's own group — as
+# well as uid 65533, so "anyone may run it" is only free while nothing
+# worker-owned is group-accessible. That stopped being true. A live run's
+# work dir is 2770 with the job's SSH keys and vault passwords at 0660
+# inside it, and the repo cache is 0750 whenever the separation is on, so
+# a 4755 helper would hand every account in the image a way into both.
+# 4750 costs nothing — the worker is the only caller there has ever been —
+# and it removes the question entirely.
 COPY --from=build /out/pulsix-setuid-exec /usr/local/bin/pulsix-setuid-exec
-RUN chown root:root /usr/local/bin/pulsix-setuid-exec \
-	&& chmod 4755 /usr/local/bin/pulsix-setuid-exec
+RUN chown root:pulsix /usr/local/bin/pulsix-setuid-exec \
+	&& chmod 4750 /usr/local/bin/pulsix-setuid-exec
 
 # The worker's scratch root: per-job temp dirs and the persistent repo
 # cache live under it (PULSIX_WORKER_DATA_DIR defaults to this path). It
@@ -134,10 +141,15 @@ RUN mkdir -p /var/lib/pulsix-worker && chmod 0700 /var/lib/pulsix-worker \
 ENV PULSIX_WORKER_DATA_DIR=/var/lib/pulsix-worker
 VOLUME ["/var/lib/pulsix-worker"]
 
-# Playbooks run under pulsix-play (65533) in the shipped image, so a play
-# task targeting localhost cannot read /etc/pulsix-worker. The worker keeps
-# its own uid; only the ansible-runner subprocess is dropped.
-ENV PULSIX_WORKER_PLAY_UID=65533
+# PULSIX_WORKER_PLAY_UID is deliberately NOT set here. The image ships
+# everything the separation needs — the pulsix-play account, the shared
+# group, the setuid helper — so a deployment can turn it on with one
+# variable, and deploy/compose/docker-compose.yml sets it for a new
+# installation. Baking it into the image instead would opt every existing
+# deployment in at its next `docker compose pull`, including ones on a
+# bind-mounted data directory or a derived image where uid 65533 does not
+# exist; the design requires those to keep working unchanged until their
+# operator opts in.
 
 USER 65532:65532
 ENTRYPOINT ["/pulsix-worker"]

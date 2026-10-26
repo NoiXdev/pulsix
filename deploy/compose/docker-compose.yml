@@ -168,6 +168,16 @@ services:
       PULSIX_WORKER_CERT: /etc/pulsix-worker/cert.pem
       PULSIX_WORKER_KEY: /etc/pulsix-worker/key.pem
       PULSIX_CA_CERT: /etc/pulsix-worker/ca.pem
+      # Playbooks run under the image's second, unprivileged account
+      # (pulsix-play, uid 65533) instead of the worker's own, so a task
+      # aimed at the worker itself cannot read the certificate and key
+      # above. It is set HERE and not in the image on purpose: an upgrade
+      # must never turn it on behind an operator's back, and 65533 only
+      # exists in the Pulsix worker image — a derived image or a
+      # bind-mounted data directory may not know the uid at all.
+      # Set PULSIX_WORKER_PLAY_UID= (empty) in your .env to turn it off;
+      # playbooks then run as the worker, as they did before v0.4.
+      PULSIX_WORKER_PLAY_UID: "${PULSIX_WORKER_PLAY_UID-65533}"
     volumes:
       - pulsix-worker-bundle:/etc/pulsix-worker
       - pulsix-worker-data:/var/lib/pulsix-worker
