@@ -1203,14 +1203,45 @@ func TestStopGroupStillKillsTheGroupAfterTheLeaderExited(t *testing.T) {
 	}
 }
 
-// TestStopGroupDoesNotFailOnAProcessThatIsAlreadyGone: a process group that
-// finished on its own races the cancel all the time (Task 1's ESRCH
-// contract treats that as success, and the stand-in here always exits 0).
-// stopGroup must take that in stride with no error-level log — the whole
-// point of removing the old liveness probe is that this case is routine,
-// not exceptional.
-func TestStopGroupDoesNotFailOnAProcessThatIsAlreadyGone(t *testing.T) {
-	helper, _, _ := writeRecordingSetuidHelper(t)
+// TestSignalGroupTreatsAnAlreadyGoneGroupAsSuccess exercises the direct
+// path's ESRCH branch for real, not merely against a stand-in that always
+// exits 0 regardless of whether anything was actually there to signal: a
+// process group that finished on its own races the cancel all the time
+// (Task 1's ESRCH contract treats that as success), and signalGroup must
+// take that in stride with no error. The pgid is a real child this test
+// starts, kills and reaps itself first — never an invented or guessed
+// number (same reasoning as TestSignalGroupSignalsDirectlyWithoutAPlayUID:
+// a guessed pgid could belong to the test runner or the developer's own
+// shell).
+func TestSignalGroupTreatsAnAlreadyGoneGroupAsSuccess(t *testing.T) {
+	child := exec.Command("sleep", "5")
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		t.Fatalf("start disposable child: %v", err)
+	}
+	pgid := child.Process.Pid // Setpgid makes the child its own group leader
+
+	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill the disposable child to make its group actually gone: %v", err)
+	}
+	_ = child.Wait() // reap it: by now the group is gone for real, not merely signalled
+
+	env := runEnv(t) // PlayUID stays 0: the direct kill(2) path
+	r := &Runner{}
+	if err := r.signalGroup(env, pgid, syscall.SIGTERM); err != nil {
+		t.Errorf("signalGroup on an already-gone group = %v, want nil (ESRCH is success)", err)
+	}
+}
+
+// TestStopGroupSendsTheKillEvenWhenTheHelperRefusedTheTerm: a setuid helper
+// that refuses the TERM (a uid that drifted from the image's compiled-in
+// PLAY_UID, a lost setuid bit, anything deploy/worker/setuid-exec.c itself
+// can refuse with) must not cost the run its follow-up KILL — the two
+// signals are independent attempts, and stopGroup's unconditional second
+// send is exactly what keeps one failed signal from stranding the group.
+func TestStopGroupSendsTheKillEvenWhenTheHelperRefusedTheTerm(t *testing.T) {
+	const refusal = "pulsix-setuid-exec: asked for uid 12345 but this helper is built for uid 65533"
+	helper, calls := writeRefusingThenRecordingSetuidHelper(t, refusal)
 	env := runEnv(t)
 	env.Config.PlayUID = 12345
 	env.Config.SetuidHelper = helper
@@ -1222,9 +1253,61 @@ func TestStopGroupDoesNotFailOnAProcessThatIsAlreadyGone(t *testing.T) {
 
 	r.stopGroup(env, 4242, exited)
 
-	if strings.Contains(logBuf.String(), "level=ERROR") {
-		t.Errorf("stopGroup logged at error level for a process group that was already gone:\n%s", logBuf.String())
+	// (a) the warning names the helper's stderr line.
+	logText := logBuf.String()
+	if !strings.Contains(logText, "level=WARN") {
+		t.Errorf("log = %q, want a WARN record for the refused TERM", logText)
 	}
+	if !strings.Contains(logText, refusal) {
+		t.Errorf("log = %q, want it to carry the helper's stderr line %q", logText, refusal)
+	}
+	if strings.Contains(logText, "level=ERROR") {
+		t.Errorf("log = %q, want no error-level record: the failure is best-effort, never the run's status", logText)
+	}
+
+	// (b) the KILL still went out despite the TERM failing.
+	got := recordedCalls(t, calls)
+	if len(got) != 1 {
+		t.Fatalf("recorded %d calls to the helper's successful half, want 1 (the KILL): %v", len(got), got)
+	}
+	if got[0][1] != "--signal" || got[0][2] != "KILL" {
+		t.Errorf("the one recorded call = %v, want a KILL", got[0])
+	}
+}
+
+// writeRefusingThenRecordingSetuidHelper writes a stand-in that refuses
+// its FIRST invocation (prints refusal on stderr and exits 1, like a real
+// setuid-exec.c refusal) and then behaves like writeRecordingSetuidHelper
+// (records argv, exits 0) on every call after that — enough to prove
+// stopGroup's TERM and KILL are independent attempts rather than the
+// second depending on the first having succeeded.
+func writeRefusingThenRecordingSetuidHelper(t *testing.T, refusal string) (helper, calls string) {
+	t.Helper()
+	dir := t.TempDir()
+	helper = filepath.Join(dir, "refusing-then-recording-setuid-exec")
+	calls = filepath.Join(dir, "calls")
+	marker := filepath.Join(dir, "refused-once")
+	script := "#!/bin/sh\n" +
+		"if [ ! -e \"" + marker + "\" ]; then\n" +
+		"  touch \"" + marker + "\"\n" +
+		"  echo " + shQuote(refusal) + " >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"printf '%s\\n' \"$@\" >> \"" + calls + "\"\n" +
+		"printf '===\\n' >> \"" + calls + "\"\n" +
+		"exit 0\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return helper, calls
+}
+
+// shQuote wraps s in single quotes for embedding in a generated /bin/sh
+// script, escaping any single quote s itself contains. None of the
+// fixed strings this is used with (refusal lines built from constants
+// in this file) actually contain one; the escaping is defensive.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Claim uuids the stats mapping asserts on: the ansible host names web1,

@@ -227,11 +227,14 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 
 	cancelledCh := make(chan struct{}, 1)
 	// The cancel watcher: SIGTERM to the process group (the runner and its
-	// ansible child together), then SIGKILL once the grace elapses or the
-	// leader exits, whichever is first — stopGroup's own policy. It shares
-	// exited with the cmd.Wait() goroutine started below: if the leader
-	// dies while stopGroup is still waiting out the grace, closing exited
-	// wakes it immediately instead of leaving it to time out.
+	// ansible child together), then SIGKILL once stopGroup's own select
+	// resolves. It shares exited with the cmd.Wait() goroutine started
+	// below, but that goroutine is not started until streamEvents returns
+	// (see the comment above) — so the early wake only takes effect once
+	// the stdout stream itself is done. A leader that dies while the
+	// stream is still blocked reading is not reflected on exited in time;
+	// stopGroup then simply waits out the full grace before sending the
+	// unconditional KILL, which is exactly the case that signal exists for.
 	go func() {
 		<-ctx.Done()
 		cancelledCh <- struct{}{}
