@@ -11,7 +11,9 @@
  * here instead, in a program short enough to read in one sitting that can
  * only ever become the single uid compiled in below.
  *
- * Usage: pulsix-setuid-exec UID PROGRAM [ARG ...]
+ * Usage:
+ *   pulsix-setuid-exec UID PROGRAM [ARG ...]
+ *   pulsix-setuid-exec UID --signal SIGNAL PGID
  *
  * Nothing the caller supplies picks the identity. argv[1] is the uid the
  * caller BELIEVES it is asking for, and the only thing this program does
@@ -22,12 +24,25 @@
  * on a worker where the image's uid happens to be privileged, that is the
  * separation inverted. argv[2:] says WHAT to run, never AS WHOM.
  *
+ * The second form (backlog 2.104) lets the worker reach a play's process
+ * group when the play runs under a uid the worker itself may not signal.
+ * It adds no new authority: the helper performs the exact same
+ * setgroups/setgid/setuid drop below, with the same read-back of the
+ * kernel's own answer, BEFORE it ever calls kill(2). At the moment it
+ * signals, it holds exactly the privilege the play uid holds and nothing
+ * more — root was given up several lines earlier. SIGNAL is exactly TERM
+ * or KILL, the only two signals the worker's cancel policy ever sends, and
+ * PGID must be a process group greater than 1: kill(-1, ...) means every
+ * process this uid may signal, so admitting 0, 1 or a negative number here
+ * would turn one cancel into a fleet-wide kill of the play uid's processes.
+ *
  * Built by deploy/worker/Dockerfile, statically linked, installed
- * root-owned with mode 4755:
+ * root-owned with mode 4750:
  *   cc -static -Wall -Wextra -Werror -O2 -DPLAY_UID=65533 -DWORKER_GID=65532
  */
 #include <errno.h>
 #include <grp.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,9 +67,51 @@ static int fail(const char *what) {
 	return 1;
 }
 
+/* parse_pgid parses PGID with the same whole-string strictness argv[1]
+ * (the uid) already gets above: strtoul, reject a parse errno, an empty
+ * parse, trailing characters, and a leading '-' (strtoul itself would
+ * otherwise wrap a negative number into a huge unsigned value instead of
+ * failing). It additionally rejects anything <= 1. kill(-1, ...) means
+ * "every process this uid may signal", so a lax parse here is not merely
+ * the wrong process group — it turns one cancel into a fleet-wide kill of
+ * every process the play uid holds. 0 and 1 are refused for the same
+ * reason: neither is ever a play's own process group. */
+static int parse_pgid(const char *s, pid_t *out) {
+	if (s[0] == '-') {
+		return -1;
+	}
+	char *rest = NULL;
+	errno = 0;
+	unsigned long v = strtoul(s, &rest, 10);
+	if (errno != 0 || rest == s || *rest != '\0') {
+		return -1;
+	}
+	if (v <= 1) {
+		return -1;
+	}
+	*out = (pid_t)v;
+	return 0;
+}
+
+/* signal_for_name maps exactly the two signals the worker's TERM->grace->
+ * KILL cancel policy ever sends. Nothing else is accepted: a general
+ * signal relay would be a larger privileged surface for no gain. */
+static int signal_for_name(const char *name, int *out) {
+	if (strcmp(name, "TERM") == 0) {
+		*out = SIGTERM;
+		return 0;
+	}
+	if (strcmp(name, "KILL") == 0) {
+		*out = SIGKILL;
+		return 0;
+	}
+	return -1;
+}
+
 int main(int argc, char *argv[]) {
 	if (argc < 3) {
-		fprintf(stderr, "usage: pulsix-setuid-exec UID PROGRAM [ARG ...]\n");
+		fprintf(stderr, "usage: pulsix-setuid-exec UID PROGRAM [ARG ...]\n"
+				"       pulsix-setuid-exec UID --signal SIGNAL PGID\n");
 		return 1;
 	}
 	/* The drift check. strtoul alone would accept "65533junk" and, worse,
@@ -78,6 +135,30 @@ int main(int argc, char *argv[]) {
 				"PULSIX_WORKER_PLAY_UID and the image's PLAY_UID must be the same number\n",
 			wanted, (unsigned)play_uid);
 		return 1;
+	}
+	/* Mode detection, and then all of that mode's own validation, BEFORE
+	 * the geteuid() refusal below. Validating first is what makes the
+	 * argument contract testable without root: a bad signal name or pgid
+	 * is refused here regardless of privilege, and only a well-formed
+	 * SIGNAL and PGID ever reach the privilege check. */
+	int signal_mode = (strcmp(argv[2], "--signal") == 0);
+	int sig = 0;
+	pid_t pgid = 0;
+	if (signal_mode) {
+		if (argc != 5) {
+			fprintf(stderr, "usage: pulsix-setuid-exec UID --signal SIGNAL PGID\n");
+			return 1;
+		}
+		if (signal_for_name(argv[3], &sig) != 0) {
+			fprintf(stderr, "pulsix-setuid-exec: %s is an unsupported signal; only TERM and KILL are accepted\n",
+				argv[3]);
+			return 1;
+		}
+		if (parse_pgid(argv[4], &pgid) != 0) {
+			fprintf(stderr, "pulsix-setuid-exec: %s is not a process group (must be an integer greater than 1)\n",
+				argv[4]);
+			return 1;
+		}
 	}
 	/* Without euid 0 none of the drops below can change identity, and the
 	 * program would exec the play as its CALLER — the worker's own uid, with
@@ -122,6 +203,19 @@ int main(int argc, char *argv[]) {
 			(unsigned)getuid(), (unsigned)geteuid(), (unsigned)getgid(), (unsigned)getegid());
 		return 1;
 	}
+	if (signal_mode) {
+		/* The drop above is the whole safety argument: this kill(2) runs
+		 * with exactly the privilege the play uid holds and nothing more,
+		 * so the kernel's own permission check confines it to processes
+		 * uid 65533 may signal. ESRCH is not an error here — it means the
+		 * process group finished on its own between the worker's decision
+		 * to cancel and this call, the common race, not a failure to
+		 * report. */
+		if (kill(-pgid, sig) != 0 && errno != ESRCH) {
+			return fail("kill");
+		}
+		return 0;
+	}
 	/* execv, not execvp: PATH comes from the environment, and the program to
 	 * run must be decided by argv alone. The environment is passed through
 	 * untouched — the worker already strips its own PULSIX_ and ANSIBLE_
@@ -133,7 +227,7 @@ int main(int argc, char *argv[]) {
 	 * account that can run this binary, so an inherited descriptor or a
 	 * blocked signal reaches a process weaker than the one that passed it.
 	 * It is the worker's own pipes the runner needs on 0/1/2 anyway. If the
-	 * invariant in the Dockerfile beside mode 4755 ever stops holding, this
+	 * invariant in the Dockerfile beside mode 4750 ever stops holding, this
 	 * paragraph stops holding with it. */
 	execv(argv[2], &argv[2]);
 	return fail(argv[2]);

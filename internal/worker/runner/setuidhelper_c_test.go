@@ -1,0 +1,120 @@
+package runner_test
+
+// This file compiles deploy/worker/setuid-exec.c and exercises the CLI
+// contract of its signal mode (backlog 2.104):
+//
+//	pulsix-setuid-exec UID --signal SIGNAL PGID
+//
+// It proves the validation order from the design — argc, uid drift, mode
+// detection, signal-name and pgid validation, THEN the geteuid() refusal —
+// without needing root or a real setuid binary: every case here is turned
+// away before the helper would ever call kill(2).
+
+import (
+	"bytes"
+	"errors"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+)
+
+var (
+	helperOnce sync.Once
+	helperPath string
+	helperSkip string
+)
+
+// compiledSetuidHelper compiles deploy/worker/setuid-exec.c once per test
+// binary and returns the path to the resulting executable.
+//
+// It is compiled WITHOUT -static on purpose: static linking is a property
+// the shipped image gives the binary (deploy/worker/Dockerfile's build
+// stage), not a property of the argv contract this test exercises, and a
+// developer machine (darwin) cannot link a static binary at all. The whole
+// file is skipped, naming the reason, when "cc" is not on PATH or the
+// compile itself fails on this platform; CI is Linux and will not skip.
+func compiledSetuidHelper(t *testing.T) string {
+	t.Helper()
+	helperOnce.Do(func() {
+		ccPath, err := exec.LookPath("cc")
+		if err != nil {
+			helperSkip = "no cc on PATH: " + err.Error()
+			return
+		}
+
+		_, thisFile, _, ok := runtime.Caller(0)
+		if !ok {
+			helperSkip = "could not determine this test file's own path"
+			return
+		}
+		// internal/worker/runner/setuidhelper_c_test.go -> repo root
+		repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+		src := filepath.Join(repoRoot, "deploy", "worker", "setuid-exec.c")
+
+		out := filepath.Join(t.TempDir(), "pulsix-setuid-exec")
+		cmd := exec.Command(ccPath, "-Wall", "-Wextra", "-Werror", "-O2",
+			"-DPLAY_UID=65533", "-DWORKER_GID=65532", "-o", out, src)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			helperSkip = "compiling setuid-exec.c without -static failed on this platform: " +
+				err.Error() + ": " + stderr.String()
+			return
+		}
+		helperPath = out
+	})
+	if helperSkip != "" {
+		t.Skip(helperSkip)
+	}
+	return helperPath
+}
+
+// TestSetuidHelperSignalModeContract is Review Focus 5 for the signal mode:
+// every case here must be refused before the helper ever drops privilege,
+// so it is safe to run as an ordinary developer account. The last case is
+// the load-bearing one — it proves the helper reaches the geteuid() refusal
+// for a well-formed signal and pgid, i.e. that no kill(2) is reachable
+// without the setuid bit actually having taken effect.
+func TestSetuidHelperSignalModeContract(t *testing.T) {
+	helper := compiledSetuidHelper(t)
+
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{name: "pgid 1 is refused", argv: []string{"65533", "--signal", "TERM", "1"}, want: "not a process group"},
+		{name: "pgid 0 is refused", argv: []string{"65533", "--signal", "TERM", "0"}, want: "not a process group"},
+		{name: "a negative pgid is refused", argv: []string{"65533", "--signal", "TERM", "-5"}, want: "not a process group"},
+		{name: "trailing junk is refused", argv: []string{"65533", "--signal", "TERM", "42x"}, want: "not a process group"},
+		{name: "an unsupported signal is refused", argv: []string{"65533", "--signal", "HUP", "4242"}, want: "unsupported signal"},
+		{name: "the uid drift check comes first", argv: []string{"65534", "--signal", "TERM", "4242"}, want: "this helper is built for uid 65533"},
+		{name: "no signal without the drop", argv: []string{"65533", "--signal", "TERM", "4242"}, want: "not setuid-root"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(helper, tt.argv...)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("expected the helper to exit non-zero, got err=%v (stderr=%q)", err, stderr.String())
+			}
+			if exitErr.ExitCode() != 1 {
+				t.Errorf("exit code = %d, want 1 (stderr=%q)", exitErr.ExitCode(), stderr.String())
+			}
+			if !strings.HasPrefix(stderr.String(), "pulsix-setuid-exec: ") {
+				t.Errorf("stderr = %q, want prefix %q", stderr.String(), "pulsix-setuid-exec: ")
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Errorf("stderr = %q, want to contain %q", stderr.String(), tt.want)
+			}
+		})
+	}
+}
