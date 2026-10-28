@@ -64,7 +64,10 @@ the 5-second `defaultKillGrace`.
 2. **`terminateGroup` stops reading `EPERM` as "already gone"**, so the
    `SIGKILL` after the grace is reached whenever the group is still alive.
 3. **A cancelled run says what it left unfinished.** The run view shows,
-   per host: finished, interrupted mid-task (naming the task that was
+   per host: no task in flight (the host's last event closed its step —
+   which, under the linear strategy, is as true after task 3 of 10 as after
+   the last one, so the state is about the step and must not be read as
+   "this host is done"), interrupted mid-task (naming the task that was
    running), or never started. When at least one host was interrupted, an
    explicit warning says Pulsix only dropped the connection and the command
    on that host may still be running, so its state should be checked before
@@ -354,8 +357,75 @@ execution ledger
     `signalHelperTimeout` is an independent constant the brief left
     unspecified (implemented as 5 s), not derived from `killGrace` — the two
     are free to drift further apart if either changes without the other.
-- **The run-view breakdown (Task 4, goal 3) shipped exactly as designed**, as
-  a pure function (`cancelHostRows`, `web/src/features/runs/status.ts`)
-  beside `hostResultRows`, consuming `jobDTO.Hosts` and the event log
-  `useRunLog` already seeds — no new endpoint, query or migration. Reviewed
-  clean, no findings of any severity.
+- **The run-view breakdown (Task 4, goal 3) shipped with the structure
+  designed and the copy inverted, because 2.107 retracted the premise the
+  copy rested on.** The derivation is the pure function the design asked for
+  (`cancelHostRows`, `web/src/features/runs/status.ts`) beside
+  `hostResultRows`, consuming `jobDTO.Hosts` and the event log `useRunLog`
+  already seeds — no new endpoint, query or migration. Two things about what
+  it *says* are not what this document specified, both decided in the
+  whole-branch review:
+  - **The warning is unconditional on a cancelled run**, not shown "only
+    when at least one host was interrupted" (goal 3, acceptance criterion
+    4). The anti-goal "a warning nobody reads" argued the conditional case
+    and argued it correctly — *on the assumption that a cancel stops the
+    play.* 2.107 is the retraction of that assumption: the play survives the
+    cancel against every host, the worker's event stream simply dies with
+    the leader, and the breakdown therefore freezes at the instant of the
+    cancel and presents that freeze as a final account. With `forks: 5` over
+    six hosts cancelled during task 3 of 10 the page claimed four hosts
+    finished, one interrupted and one never started while, in reality, all
+    six were still being worked on. There is no cancelled run on which the
+    warning is unnecessary, so the condition would only teach operators that
+    its absence means something. The copy says the play may still be running
+    against **every host listed**, that the list is what Pulsix last saw
+    rather than a final account, and names the action (check the hosts
+    before re-running). **This is conditioned on 2.107: when 2.107 ships,
+    the conditional warning of goal 3 returns** — restore the
+    `cancelRows.some(r => r.state === 'interrupted')` guard and the
+    interrupted-host wording, which is what the anti-goal actually wants
+    once a cancel stops the play.
+  - **The `finished` state is labelled "no task in flight"**, not
+    "finished" — see goal 3 above, amended. The function always computed
+    "this host's last event closed its step"; the one-word label promoted
+    that into a claim about the host, and an operator who believed it would
+    re-run only the interrupted host and leave a host with 3 of 10 tasks
+    applied alone. The `CancelHostState` key stays `finished`; only the
+    label changed.
+- **The breakdown also depends on the SPA draining the event stream's tail,
+  which it did not.** `writeJobStream`'s `select` (`internal/api/job_sse.go`)
+  does not order the subscriber's event channel against its status ticker,
+  and the worker stores every event before `ReportResult` flips the job
+  terminal (`internal/worker/loop.go`), so a buffered backlog can still be
+  pending when the tick writes the terminal `status` frame and returns. The
+  SPA closed the EventSource on that frame while `transport` stayed `'sse'`,
+  so neither the poll fallback nor the seq-gap detector engaged — the loss
+  is at the tail, where no later event ever exposes a gap. A host whose
+  closing `ok` was in that tail rendered as `interrupted`, warning about a
+  host that finished cleanly, and a reload fixed it, which is what makes it
+  read as flakiness. Fixed in the SPA (`useRunLog`): a terminal status frame
+  triggers one final `fetchJobEvents(org, id, lastSeq)` and the status is
+  applied together with what it brings back, so nothing downstream ever sees
+  a terminal run on top of a short log. Deliberately **not** fixed by
+  draining server-side, which races a slow client's own writes.
+  `cancelHostRows`' doc comment records the dependency next to the
+  uncapped-history one it already carried.
+- **Four defects of the implementation itself, found in the whole-branch
+  review and fixed in it:** `parse_pgid`'s `s[0] == '-'` guard was defeated
+  by a leading space (`strtoul` skips whitespace *before* it reads the sign,
+  so `" -18446744073709551614"` wrapped to 2 and was accepted) — the guard
+  is now "the first character is a digit", which covers whitespace, `+` and
+  `-` at once, and the comment that *is* the security argument in that file
+  now describes what the code does. The cancel watcher
+  (`runner.go`) fired on every completed job, because `runOne`'s
+  `defer cancelRun()` cancels on a clean success too: it sent TERM and —
+  `exited` being closed, so the grace resolved at once — an immediate KILL
+  to a pgid the worker had already reaped, plus two helper `fork`/`exec` per
+  job with a play uid set; it now returns early when `exited` is already
+  closed. `TestCancellingAPlayUnderThePlayUIDReportsCancelled` now reaps
+  what 2.107 leaves behind (`t.Cleanup`), so un-skipping its sibling really
+  is the one deleted line its doc comment promises. And the evidence
+  pointers in both e2e files and in backlog row 2.107 pointed at
+  `docs/superpowers/sdd/...` and `.superpowers/sdd/...`, neither of which is
+  committed; they now point at this spec and at row 2.107's own prose, which
+  is self-contained.
