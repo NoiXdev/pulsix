@@ -211,30 +211,51 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		return worker.StatusError, nil, fmt.Errorf("start %s: %w", bin, err)
 	}
 
+	// exited is declared here, before anything reads it, so the cancel
+	// watcher below can share it; the goroutine that actually closes it
+	// (by calling cmd.Wait()) is started further down, once streamEvents
+	// has returned. cmd.Wait() must never run concurrently with the
+	// scanner's own reads from stdout — exec.Cmd closes the StdoutPipe
+	// once the process exits, and doing so mid-Read is a use-after-close,
+	// not a theoretical hazard: starting this goroutine any earlier than
+	// that reproduced "read |0: file already closed" under -race on every
+	// ordinary, uncancelled run. streamEvents returning — by EOF or by the
+	// sink erroring out — is the earliest point those reads are
+	// guaranteed done.
+	var waitErr error
+	exited := make(chan struct{})
+
 	cancelledCh := make(chan struct{}, 1)
-	grace := r.killGrace()
 	// The cancel watcher: SIGTERM to the process group (the runner and its
-	// ansible child together), then SIGKILL after the grace. The second
-	// signal is best-effort — a runner that died on the first one is fine
-	// (its pid is gone; the group kill is a no-op).
+	// ansible child together), then SIGKILL once the grace elapses or the
+	// leader exits, whichever is first — stopGroup's own policy. It shares
+	// exited with the cmd.Wait() goroutine started below: if the leader
+	// dies while stopGroup is still waiting out the grace, closing exited
+	// wakes it immediately instead of leaving it to time out.
 	go func() {
 		<-ctx.Done()
 		cancelledCh <- struct{}{}
-		terminateGroup(cmd.Process.Pid, grace)
+		r.stopGroup(env, cmd.Process.Pid, exited)
 	}()
 
 	stats, scanErr := r.streamEvents(ctx, stdout, sink, newRedactor(job))
+	// cmd.Wait() is called exactly once, from this goroutine, regardless of
+	// which path below runs: the write to waitErr happens-before
+	// close(exited), and every reader below is sequenced after a receive
+	// from exited — the ordering -race depends on to call this field
+	// race-free.
+	go func() { waitErr = cmd.Wait(); close(exited) }()
 	if scanErr != nil {
 		// The event stream broke (the manager is gone): the run cannot be
 		// observed anymore, so it must not keep going — stop the process
 		// group immediately (the same TERM→KILL policy as the cancel path)
 		// before waiting for it. The claim is at-least-once; the reaper
 		// requeues what this worker never reported.
-		terminateGroup(cmd.Process.Pid, grace)
-		_ = cmd.Wait()
+		r.stopGroup(env, cmd.Process.Pid, exited)
+		<-exited
 		return worker.StatusError, nil, fmt.Errorf("stream runner events: %w", scanErr)
 	}
-	waitErr := cmd.Wait()
+	<-exited
 
 	select {
 	case <-cancelledCh:
@@ -426,20 +447,105 @@ func (r *Runner) killGrace() time.Duration {
 	return defaultKillGrace
 }
 
-// terminateGroup stops a run's process group: SIGTERM first, SIGKILL after
-// the grace — a runner that exits on the TERM is left alone (its group is
-// gone; the liveness check spares the wait), one that ignores it is killed
-// bounded. The cancel path and a broken event stream share the policy.
-func terminateGroup(pid int, grace time.Duration) {
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
-	deadline := time.Now().Add(grace)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(-pid, 0); err != nil {
-			return // the group is gone; the TERM did its job
+// signalHelperTimeout bounds one setuid-helper signal call (backlog 2.104)
+// so a wedged helper cannot hold the cancel path open. Behind it is a
+// handful of syscalls — the privilege drop (setgroups, setgid, setuid, each
+// read back) and then one kill(2) — so this is generous already.
+const signalHelperTimeout = 5 * time.Second
+
+// signalGroup sends sig to the run's process group. Setpgid on the
+// runner's exec.Cmd (newRunnerCmd) makes its pid double as its process
+// group id, which is what the caller passes as pgid.
+//
+// With no play uid configured, the worker's own uid may signal the group
+// directly. Once a play uid IS configured, the worker's own kill(2) gets
+// EPERM — it runs under a different, unrelated uid now — so the signal has
+// to cross the uid boundary through the setuid helper's signal mode
+// instead (Task 1, deploy/worker/setuid-exec.c): the same privilege drop
+// the run's own spawn uses, kill(2) only after it, so the helper never
+// holds more than the play uid's own privilege at the moment it signals.
+// Either way, ESRCH — the group having already finished — is success, not
+// an error: it is the common race between the worker's decision to cancel
+// and the signal actually landing.
+func (r *Runner) signalGroup(env worker.RunEnv, pgid int, sig syscall.Signal) error {
+	if env.Config.PlayUID == 0 {
+		if err := syscall.Kill(-pgid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal process group %d: %w", pgid, err)
 		}
-		time.Sleep(20 * time.Millisecond)
+		return nil
 	}
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	word, err := signalWord(sig)
+	if err != nil {
+		return err
+	}
+	helper := env.Config.SetuidHelper
+	if helper == "" {
+		// Load always fills this; a Config assembled by hand (tests, the
+		// embedded worker) may not.
+		helper = defaultSetuidHelper
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), signalHelperTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, helper,
+		strconv.FormatUint(uint64(env.Config.PlayUID), 10),
+		"--signal", word, strconv.Itoa(pgid))
+	// The helper's own child (the drop happens inside it before the
+	// kill(2)) is as dumpable as any other process at the play uid, so its
+	// /proc/<pid>/environ is as readable as anything else the play leaves
+	// behind — the worker's own settings have no business there (backlog
+	// 2.105), same reasoning as the run spawn's own env.
+	cmd.Env = stripPrivateEnv(os.Environ())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+		// Best-effort: a cancel in flight must not fail the run over this.
+		// Logged as a warning, never swallowed and never turned into the
+		// run's status — summarize never sees this exec at all.
+		r.log().Warn("setuid helper could not signal the run's process group",
+			"pgid", pgid, "signal", word, "err", err, "stderr", line)
+		return fmt.Errorf("%s %s --signal %s %d: %w", helper, strconv.FormatUint(uint64(env.Config.PlayUID), 10), word, pgid, err)
+	}
+	return nil
+}
+
+// signalWord maps a signal to the setuid helper's CLI word. The helper
+// accepts exactly these two spellings (deploy/worker/setuid-exec.c); a
+// fallthrough that invented a name instead of refusing would hand the
+// helper an argument it does not understand.
+func signalWord(sig syscall.Signal) (string, error) {
+	switch sig {
+	case syscall.SIGTERM:
+		return "TERM", nil
+	case syscall.SIGKILL:
+		return "KILL", nil
+	default:
+		return "", fmt.Errorf("signal %v has no word in the setuid helper's CLI contract (only TERM and KILL)", sig)
+	}
+}
+
+// stopGroup stops a run's process group: SIGTERM, then — once exited
+// closes or the grace elapses, whichever comes first — SIGKILL, sent
+// unconditionally. There is no liveness probe in between. With a play uid
+// configured, syscall.Kill(pgid, 0) across the uid boundary returns EPERM
+// whether the group is alive or already gone, so a probe built on it could
+// never tell the two apart — misreading that EPERM as "the group already
+// exited" is exactly how a cancelled run under a play uid used to hang
+// forever: the probe gave up early, the unconditional KILL that would have
+// ended the still-running group never went out, and the worker's own
+// cmd.Wait() blocked on it indefinitely (backlog 2.104). The unconditional
+// second signal below is what the old probe was reaching for in the first
+// place: the group can outlive its leader through orphaned grandchildren,
+// and a KILL into an already-empty group
+// is a harmless ESRCH either way (signalGroup's own contract). Both
+// signals are best-effort — a failure is logged by signalGroup and never
+// turned into the run's status.
+func (r *Runner) stopGroup(env worker.RunEnv, pgid int, exited <-chan struct{}) {
+	_ = r.signalGroup(env, pgid, syscall.SIGTERM)
+	select {
+	case <-exited:
+	case <-time.After(r.killGrace()):
+	}
+	_ = r.signalGroup(env, pgid, syscall.SIGKILL)
 }
 
 // summarize maps the process exit onto the loop's terminal statuses.

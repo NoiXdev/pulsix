@@ -7,13 +7,18 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -974,9 +979,15 @@ func TestRunSurfacesASetuidHelperRefusal(t *testing.T) {
 }
 
 // writeStandInSetuidHelper writes an unprivileged stand-in for
-// deploy/worker/setuid-exec.c: the same contract (refuse a uid that is not
-// the one it was built for, then exec argv[2:]) without the uid drop, which
-// a test process may not do.
+// deploy/worker/setuid-exec.c covering BOTH of its CLI forms, without the
+// uid drop a test process may not do: the same uid-drift refusal either
+// way, then either exec argv[2:] (the exec form) or kill(2) the negated
+// pgid (the signal form, Task 1) when argv[2] is literally "--signal" —
+// the same test the real helper uses to tell the two forms apart. The
+// kill's own exit code is ignored (always exits 0): the real helper's
+// ESRCH-is-success contract is exercised by setuidhelper_c_test.go against
+// the actual C binary, not by this stand-in, whose job here is only to get
+// the signal to the fake runner it stood up.
 func writeStandInSetuidHelper(t *testing.T, uid uint32) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "stand-in-setuid-exec")
@@ -986,11 +997,234 @@ func writeStandInSetuidHelper(t *testing.T, uid uint32) string {
 		"  exit 1\n" +
 		"fi\n" +
 		"shift\n" +
+		"if [ \"$1\" = \"--signal\" ]; then\n" +
+		"  sig=\"$2\"\n" +
+		"  pgid=\"$3\"\n" +
+		"  kill -s \"$sig\" -- \"-$pgid\" 2>/dev/null\n" +
+		"  exit 0\n" +
+		"fi\n" +
 		"exec \"$@\"\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// writeRecordingSetuidHelper writes a stand-in setuid helper for
+// signalGroup/stopGroup's tests: each invocation appends its argv (one
+// argument per line, like writeFakeRunner's dump) followed by a "===\n"
+// record separator, then overwrites the env dump with its own
+// environment, and exits 0 regardless — Task 1's "ESRCH from kill(2) is
+// success" contract, so these tests never need a real process sitting at
+// pgid for signalGroup to report success.
+func writeRecordingSetuidHelper(t *testing.T) (helper, calls, envDump string) {
+	t.Helper()
+	dir := t.TempDir()
+	helper = filepath.Join(dir, "recording-setuid-exec")
+	calls = filepath.Join(dir, "calls")
+	envDump = filepath.Join(dir, "env")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> \"" + calls + "\"\n" +
+		"printf '===\\n' >> \"" + calls + "\"\n" +
+		"env > \"" + envDump + "\"\n" +
+		"exit 0\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return helper, calls, envDump
+}
+
+// recordedCalls parses writeRecordingSetuidHelper's call log into one
+// []string (its argv) per invocation, in call order.
+func recordedCalls(t *testing.T, path string) [][]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var out [][]string
+	for _, block := range strings.Split(string(raw), "===\n") {
+		var args []string
+		for _, l := range strings.Split(block, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				args = append(args, l)
+			}
+		}
+		if len(args) > 0 {
+			out = append(out, args)
+		}
+	}
+	return out
+}
+
+// TestSignalGroupGoesThroughTheHelperWhenAPlayUIDIsSet: with a play uid
+// configured, the worker cannot signal the group itself (it runs under a
+// uid the play's own does not share), so signalGroup must go through the
+// setuid helper's signal mode instead of calling kill(2) directly. The
+// pgid crosses over WITHOUT a minus sign — Task 1's helper negates it
+// itself — and the helper child's environment must carry none of the
+// worker's own PULSIX_/ANSIBLE_ settings (backlog 2.105: this child's
+// /proc/<pid>/environ belongs to the play uid once the real helper execs).
+func TestSignalGroupGoesThroughTheHelperWhenAPlayUIDIsSet(t *testing.T) {
+	helper, calls, envDump := writeRecordingSetuidHelper(t)
+	// Decoys on the worker's own process environment.
+	t.Setenv("PULSIX_WORKER_PLAY_UID", "12345")
+	t.Setenv("ANSIBLE_CONFIG", "/operator/leaked.cfg")
+
+	env := runEnv(t)
+	env.Config.PlayUID = 12345
+	env.Config.SetuidHelper = helper
+
+	r := &Runner{}
+	if err := r.signalGroup(env, 4242, syscall.SIGTERM); err != nil {
+		t.Fatalf("signalGroup: %v", err)
+	}
+
+	got := recordedCalls(t, calls)
+	if len(got) != 1 {
+		t.Fatalf("recorded %d calls, want 1: %v", len(got), got)
+	}
+	assertArgs(t, strings.Join(got[0], "\n"), "12345", "--signal", "TERM", "4242")
+
+	envText := string(mustRead(t, envDump))
+	for _, forbidden := range []string{"PULSIX_", "ANSIBLE_"} {
+		if strings.Contains(envText, forbidden) {
+			t.Errorf("the helper's environment leaks a %q variable:\n%s", forbidden, envText)
+		}
+	}
+}
+
+// TestSignalGroupSignalsDirectlyWithoutAPlayUID exercises the PlayUID == 0
+// path for real: signalGroup must call syscall.Kill(-pgid, sig) itself
+// rather than go through any helper. The pgid is a real disposable child
+// this test starts (a short sleep with Setpgid: true, whose pid is then
+// its own pgid) — never an invented or guessed number, which could belong
+// to the test runner or the developer's own shell and get killed by
+// mistake. Two things are asserted: the child is actually gone afterwards
+// (the real proof the direct kill(2) worked), and the stand-in helper was
+// never invoked (the weaker property, kept because it is still a real
+// claim: nothing here goes near the setuid helper when PlayUID is 0).
+func TestSignalGroupSignalsDirectlyWithoutAPlayUID(t *testing.T) {
+	child := exec.Command("sleep", "5")
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		t.Fatalf("start disposable child: %v", err)
+	}
+	pgid := child.Process.Pid // Setpgid makes the child its own group leader
+
+	helper := filepath.Join(t.TempDir(), "never-invoked-setuid-exec")
+	env := runEnv(t)
+	env.Config.SetuidHelper = helper // PlayUID stays 0
+
+	r := &Runner{}
+	if err := r.signalGroup(env, pgid, syscall.SIGKILL); err != nil {
+		t.Fatalf("signalGroup: %v (a nonexistent helper would fail to exec, so this proves it was never tried)", err)
+	}
+
+	if _, statErr := os.Stat(helper); !os.IsNotExist(statErr) {
+		t.Errorf("the stand-in helper at %s exists; it must never have been invoked when PlayUID is 0", helper)
+	}
+
+	waitErr := child.Wait()
+	var exitErr *exec.ExitError
+	if !errors.As(waitErr, &exitErr) {
+		t.Fatalf("child Wait = %v, want an *exec.ExitError from the signal", waitErr)
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		t.Errorf("child exit status = %#v, want it killed by a signal (i.e. actually gone)", exitErr.Sys())
+	}
+}
+
+// TestStopGroupKillsTheGroupAfterTheGrace: an exited channel that is never
+// closed must still see the KILL, sent once the grace elapses — the
+// TERM -> grace -> KILL policy stopGroup replaces terminateGroup with.
+func TestStopGroupKillsTheGroupAfterTheGrace(t *testing.T) {
+	helper, calls, _ := writeRecordingSetuidHelper(t)
+	env := runEnv(t)
+	env.Config.PlayUID = 12345
+	env.Config.SetuidHelper = helper
+
+	r := &Runner{KillGrace: 50 * time.Millisecond}
+	exited := make(chan struct{}) // never closed
+
+	start := time.Now()
+	r.stopGroup(env, 4242, exited)
+	elapsed := time.Since(start)
+
+	if elapsed < r.KillGrace {
+		t.Errorf("stopGroup returned after %v, want at least the %v grace", elapsed, r.KillGrace)
+	}
+
+	got := recordedCalls(t, calls)
+	if len(got) != 2 {
+		t.Fatalf("recorded %d calls, want 2 (TERM then KILL): %v", len(got), got)
+	}
+	if got[0][1] != "--signal" || got[0][2] != "TERM" {
+		t.Errorf("first call = %v, want a TERM", got[0])
+	}
+	if got[1][1] != "--signal" || got[1][2] != "KILL" {
+		t.Errorf("second call = %v, want a KILL", got[1])
+	}
+}
+
+// TestStopGroupStillKillsTheGroupAfterTheLeaderExited: exited already
+// closed must still see the unconditional KILL — the group can outlive its
+// leader through orphaned grandchildren — and stopGroup must return right
+// away rather than waiting out the grace, which is set deliberately large
+// here to make a wrongly-waiting stopGroup obvious.
+func TestStopGroupStillKillsTheGroupAfterTheLeaderExited(t *testing.T) {
+	helper, calls, _ := writeRecordingSetuidHelper(t)
+	env := runEnv(t)
+	env.Config.PlayUID = 12345
+	env.Config.SetuidHelper = helper
+
+	r := &Runner{KillGrace: 2 * time.Second}
+	exited := make(chan struct{})
+	close(exited) // the leader already exited
+
+	start := time.Now()
+	r.stopGroup(env, 4242, exited)
+	elapsed := time.Since(start)
+
+	if elapsed >= r.KillGrace {
+		t.Errorf("stopGroup took %v, want well under the %v grace since the leader had already exited", elapsed, r.KillGrace)
+	}
+
+	got := recordedCalls(t, calls)
+	if len(got) != 2 {
+		t.Fatalf("recorded %d calls, want 2 (TERM then KILL): %v", len(got), got)
+	}
+	if got[1][2] != "KILL" {
+		t.Errorf("second call = %v, want a KILL even though the leader already exited", got[1])
+	}
+}
+
+// TestStopGroupDoesNotFailOnAProcessThatIsAlreadyGone: a process group that
+// finished on its own races the cancel all the time (Task 1's ESRCH
+// contract treats that as success, and the stand-in here always exits 0).
+// stopGroup must take that in stride with no error-level log — the whole
+// point of removing the old liveness probe is that this case is routine,
+// not exceptional.
+func TestStopGroupDoesNotFailOnAProcessThatIsAlreadyGone(t *testing.T) {
+	helper, _, _ := writeRecordingSetuidHelper(t)
+	env := runEnv(t)
+	env.Config.PlayUID = 12345
+	env.Config.SetuidHelper = helper
+
+	var logBuf bytes.Buffer
+	r := &Runner{KillGrace: 10 * time.Millisecond, Log: slog.New(slog.NewTextHandler(&logBuf, nil))}
+	exited := make(chan struct{})
+	close(exited)
+
+	r.stopGroup(env, 4242, exited)
+
+	if strings.Contains(logBuf.String(), "level=ERROR") {
+		t.Errorf("stopGroup logged at error level for a process group that was already gone:\n%s", logBuf.String())
+	}
 }
 
 // Claim uuids the stats mapping asserts on: the ansible host names web1,
