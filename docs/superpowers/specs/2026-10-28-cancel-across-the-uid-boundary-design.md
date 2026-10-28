@@ -292,3 +292,70 @@ host.
 5. `make test` green, `golangci-lint run` and `gofmt -s -l .` clean.
 6. Backlog 2.104 closed; 2.42's "not safe to enable" note updated to say
    what is left, which after this is nothing.
+
+## As built
+
+Four tasks shipped (`internal/e2e/uidboundary/cancel_test.go`'s commit
+history, `aef1cdd..b040e04`); a fifth, documentation-only. Gathered from the
+execution ledger
+(`.superpowers/sdd/2026-10-28-cancel-across-the-uid-boundary/progress.md`).
+
+- **Acceptance criterion 1 is only half met, and the gap is this design's own
+  reason to exist, inverted.** "Cancelling a running play stops it" is true
+  of the *signal* — proven across a real uid drop by
+  `TestCancellingAPlayUnderThePlayUIDReportsCancelled`, which reaches
+  `cancelled` in ~5.1 s where before this work the job never reported at all
+  within 30 s — but false of the *play*. Task 3's proof run (in the real
+  worker image, not a stand-in) found that `ansible-runner` invokes
+  `ansible-playbook` through `pexpect.spawn()`, which pty-forks into a new
+  process group, and `ansible-core`'s `WorkerProcess` isolates one level
+  deeper into another; `stopGroup`'s signal reaches only the worker's own
+  leader group, so both nested groups — the play itself — survive to
+  completion. Confirmed independent of everything this design built: the
+  identical escape reproduces with a plain `kill -TERM`/`kill -KILL` from the
+  same uid, no helper, no `PULSIX_WORKER_PLAY_UID` at all. It is a
+  pre-existing defect of every cancel that no earlier test could see, because
+  the suite's stand-in runner forks no nested group to begin with — exactly
+  the same class of blindness the design's own anti-goal ("a fix that only
+  the test can see") warned about, just on the other side of the fix. Tracked
+  as backlog **2.107**, with the installed versions, source locations and
+  observed pgids recorded there. `TestCancellingAPlayUnderThePlayUIDStopsIt`
+  (`internal/e2e/uidboundary/cancel_test.go`) is the test criterion 1 actually
+  needs; it is committed, unweakened, and `t.Skip`-ped naming 2.107 — un-skip
+  by deleting that one line once 2.107 ships. **Acceptance criterion 6 is
+  therefore also not what shipped**: 2.104 stays open rather than closing (it
+  names the uid-crossing half only, which is fixed), and 2.42's note says
+  what is left is 2.107, not nothing. See `docs/BACKLOG.md`.
+- **A plan defect, found twice, independently: the brief's `cmd.Wait()`
+  goroutine placement races `streamEvents`' own pipe reads.** The brief's
+  Task 2 snippet started the `Wait` goroutine immediately after
+  `cmd.Start()`. `exec.Cmd.StdoutPipe`'s contract forbids reading after
+  `Wait` returns, so starting `Wait` concurrently with `streamEvents` still
+  reading the pipe produced a reproducible `-race` failure ("file already
+  closed") on every ordinary run, not only on cancel — the implementer hit it
+  first and moved the goroutine's start to after `streamEvents` returns,
+  keeping the channel declarations early so the cancel watcher still shares
+  them; the reviewer then independently reverted the change to the brief's
+  literal position and reproduced the same failure before upholding the
+  implementer's placement. The shipped code starts `cmd.Wait()` only after
+  `streamEvents` returns.
+- **Two minors deferred from Task 2, recorded rather than fixed, per the
+  brief's own mandate and this design's "no configurable grace" non-goal:**
+  - The unconditional `SIGKILL` after the grace can in principle reach a
+    recycled pgid, once the group is completely empty and the kernel has
+    reused the pid inside the grace window. The brief mandates the
+    unconditional `KILL`; this is an accepted, narrow risk, not a gap in the
+    implementation.
+  - Worst-case cancel latency with a play uid configured is **~15 s**, not
+    the 5 s `defaultKillGrace` this design's "What an operator wants"
+    section frames as the whole wait: 5 s for the helper's own
+    `signalHelperTimeout` on the `TERM` call, 5 s of `defaultKillGrace`, then
+    another 5 s of `signalHelperTimeout` on the follow-up `KILL`.
+    `signalHelperTimeout` is an independent constant the brief left
+    unspecified (implemented as 5 s), not derived from `killGrace` — the two
+    are free to drift further apart if either changes without the other.
+- **The run-view breakdown (Task 4, goal 3) shipped exactly as designed**, as
+  a pure function (`cancelHostRows`, `web/src/features/runs/status.ts`)
+  beside `hostResultRows`, consuming `jobDTO.Hosts` and the event log
+  `useRunLog` already seeds — no new endpoint, query or migration. Reviewed
+  clean, no findings of any severity.
