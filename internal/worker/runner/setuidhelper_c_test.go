@@ -90,6 +90,16 @@ func TestSetuidHelperSignalModeContract(t *testing.T) {
 		{name: "pgid 0 is refused", argv: []string{"65533", "--signal", "TERM", "0"}, want: "not a process group"},
 		{name: "a negative pgid is refused", argv: []string{"65533", "--signal", "TERM", "-5"}, want: "not a process group"},
 		{name: "trailing junk is refused", argv: []string{"65533", "--signal", "TERM", "42x"}, want: "not a process group"},
+		// Regression for the review finding on this task: parse_pgid used
+		// to validate the parsed value as unsigned long and cast to pid_t
+		// (32-bit signed) only afterwards, so a value a multiple of 2^32
+		// away from a small number passed the ">1" check on the wide type
+		// and then truncated to that small number on the narrow one —
+		// 2^32+1 truncated to 1, turning "refuse pgid 1" into "accept a
+		// pgid that becomes 1", i.e. kill(-1, ...) after all.
+		{name: "2^31 is refused (first value that truncates negative)", argv: []string{"65533", "--signal", "TERM", "2147483648"}, want: "not a process group"},
+		{name: "2^32 is refused (truncates to the helper's own pgid, 0)", argv: []string{"65533", "--signal", "TERM", "4294967296"}, want: "not a process group"},
+		{name: "2^32+1 is refused (truncates to pgid 1, the fleet-wide kill)", argv: []string{"65533", "--signal", "TERM", "4294967297"}, want: "not a process group"},
 		{name: "an unsupported signal is refused", argv: []string{"65533", "--signal", "HUP", "4242"}, want: "unsupported signal"},
 		{name: "the uid drift check comes first", argv: []string{"65534", "--signal", "TERM", "4242"}, want: "this helper is built for uid 65533"},
 		{name: "no signal without the drop", argv: []string{"65533", "--signal", "TERM", "4242"}, want: "not setuid-root"},

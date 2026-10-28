@@ -36,12 +36,20 @@
  * process this uid may signal, so admitting 0, 1 or a negative number here
  * would turn one cancel into a fleet-wide kill of the play uid's processes.
  *
+ * The two forms are told apart by comparing argv[2] to the literal string
+ * "--signal". That makes a PROGRAM literally named --signal indistinguishable
+ * from the signal mode, which is accepted here on purpose: the worker always
+ * passes PROGRAM as an absolute path (never a bare name looked up on PATH —
+ * see the execv note below), so "--signal" can never occur as argv[2] in the
+ * exec form in practice.
+ *
  * Built by deploy/worker/Dockerfile, statically linked, installed
  * root-owned with mode 4750:
  *   cc -static -Wall -Wextra -Werror -O2 -DPLAY_UID=65533 -DWORKER_GID=65532
  */
 #include <errno.h>
 #include <grp.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,7 +83,17 @@ static int fail(const char *what) {
  * "every process this uid may signal", so a lax parse here is not merely
  * the wrong process group — it turns one cancel into a fleet-wide kill of
  * every process the play uid holds. 0 and 1 are refused for the same
- * reason: neither is ever a play's own process group. */
+ * reason: neither is ever a play's own process group.
+ *
+ * Both ends of the range matter, not just the lower one: v is parsed into
+ * an unsigned long (commonly 64-bit) and then narrowed into a pid_t
+ * (32-bit signed on every platform this builds for). Without a check
+ * against the narrow type's own range, a value like 2^32+1 sails past
+ * "> 1" on the wide type and then truncates to 1 on the cast — the exact
+ * -1-equivalent fleet-wide kill the lower bound exists to prevent, just
+ * reached from the other direction. Bounding v against INT_MAX before the
+ * cast closes that: nothing that would change value across the narrowing
+ * is accepted in the first place. */
 static int parse_pgid(const char *s, pid_t *out) {
 	if (s[0] == '-') {
 		return -1;
@@ -86,7 +104,7 @@ static int parse_pgid(const char *s, pid_t *out) {
 	if (errno != 0 || rest == s || *rest != '\0') {
 		return -1;
 	}
-	if (v <= 1) {
+	if (v <= 1 || v > (unsigned long)INT_MAX) {
 		return -1;
 	}
 	*out = (pid_t)v;
