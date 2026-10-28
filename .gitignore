@@ -25,3 +25,7 @@ internal/web/dist/*
 # script (see internal/agentdist/dist/.placeholder).
 internal/agentdist/dist/*
 !internal/agentdist/dist/.placeholder
+
+# Superpowers scratch: brainstorming mockups and SDD ledgers. Local
+# working state for one session, never part of the repository.
+.superpowers/
