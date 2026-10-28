@@ -854,7 +854,8 @@ func TestRunCancelThroughTheSetuidHelperStillKillsTheGroup(t *testing.T) {
 
 	env := runEnv(t)
 	env.Config.PlayUID = playUID
-	env.Config.SetuidHelper = writeStandInSetuidHelper(t, playUID)
+	helper, _ := writeStandInSetuidHelper(t, playUID)
+	env.Config.SetuidHelper = helper
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -874,6 +875,55 @@ func TestRunCancelThroughTheSetuidHelperStillKillsTheGroup(t *testing.T) {
 	}
 	if status != worker.StatusCancelled || runErr == nil {
 		t.Errorf("status = %q err = %v, want cancelled + context.Canceled", status, runErr)
+	}
+}
+
+// TestNoSignalIsSentAfterARunThatFinishedOnItsOwn: the loop's runOne
+// defers cancelRun(), so the run context is cancelled on EVERY return —
+// a clean success included — and the cancel watcher wakes for finished
+// runs too, long after Run handed its result back. It must do nothing
+// then. Signalling anyway means a TERM and, because exited is already
+// closed and stopGroup's grace therefore resolves at once, an immediate
+// KILL aimed at a process group the worker has already reaped, whose pid
+// the kernel is free to have recycled — plus two helper fork/execs for
+// every completed job once a play uid is configured. The stand-in helper
+// records each signal invocation, so "no signal" is observable here in a
+// way the direct kill(2) path is not.
+func TestNoSignalIsSentAfterARunThatFinishedOnItsOwn(t *testing.T) {
+	const playUID = uint32(12345)
+	fake := writeFakeRunner(t)
+	t.Setenv(fakeEnvDump, filepath.Join(t.TempDir(), "env"))
+	t.Setenv(fakeEnvEvents, cleanFixtureAbs(t))
+	t.Setenv(fakeEnvExit, "0")
+
+	helper, calls := writeStandInSetuidHelper(t, playUID)
+	env := runEnv(t)
+	env.Config.PlayUID = playUID
+	env.Config.SetuidHelper = helper
+
+	ctx, cancel := context.WithCancel(context.Background())
+	status, _, err := (&Runner{RunnerBin: fake, KillGrace: 50 * time.Millisecond}).Run(
+		ctx, runJob(t), env, func(*workerpb.RunEvent) error { return nil })
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if status != worker.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded: this test is about a run that ended on its own", status)
+	}
+
+	// Exactly what runOne's `defer cancelRun()` does once Run returned.
+	cancel()
+	// The watcher is a goroutine; give a wrongly-signalling one time to
+	// run its TERM and (exited being closed) its immediate KILL.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(recordedCalls(t, calls)) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := recordedCalls(t, calls); len(got) != 0 {
+		t.Errorf("the cancel watcher signalled %d time(s) after a run that had already finished: %v", len(got), got)
 	}
 }
 
@@ -988,9 +1038,17 @@ func TestRunSurfacesASetuidHelperRefusal(t *testing.T) {
 // ESRCH-is-success contract is exercised by setuidhelper_c_test.go against
 // the actual C binary, not by this stand-in, whose job here is only to get
 // the signal to the fake runner it stood up.
-func writeStandInSetuidHelper(t *testing.T, uid uint32) string {
+//
+// It also returns the path of a call log holding one record per SIGNAL
+// invocation (and only those: the exec form replaces this process, so it
+// has nothing left to append), in writeRecordingSetuidHelper's own format
+// so that recordedCalls reads both. A test that has to prove NO signal was
+// sent needs a helper that execs the run AND keeps a record.
+func writeStandInSetuidHelper(t *testing.T, uid uint32) (helper, calls string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "stand-in-setuid-exec")
+	dir := t.TempDir()
+	helper = filepath.Join(dir, "stand-in-setuid-exec")
+	calls = filepath.Join(dir, "signal-calls")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" != \"" + strconv.FormatUint(uint64(uid), 10) + "\" ]; then\n" +
 		"  echo \"stand-in helper: asked for uid $1\" >&2\n" +
@@ -998,16 +1056,18 @@ func writeStandInSetuidHelper(t *testing.T, uid uint32) string {
 		"fi\n" +
 		"shift\n" +
 		"if [ \"$1\" = \"--signal\" ]; then\n" +
+		"  printf '%s\\n' \"$@\" >> \"" + calls + "\"\n" +
+		"  printf '===\\n' >> \"" + calls + "\"\n" +
 		"  sig=\"$2\"\n" +
 		"  pgid=\"$3\"\n" +
 		"  kill -s \"$sig\" -- \"-$pgid\" 2>/dev/null\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"exec \"$@\"\n"
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	return helper, calls
 }
 
 // writeRecordingSetuidHelper writes a stand-in setuid helper for

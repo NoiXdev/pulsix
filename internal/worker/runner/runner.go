@@ -237,6 +237,22 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	// unconditional KILL, which is exactly the case that signal exists for.
 	go func() {
 		<-ctx.Done()
+		// The context is cancelled on EVERY return from the loop's runOne
+		// — `defer cancelRun()` (internal/worker/loop.go), a clean success
+		// included — so this goroutine wakes for finished runs too, long
+		// after Run handed the result back. There is nothing left to stop
+		// then, and signalling anyway is pure harm: exited is already
+		// closed, so stopGroup's grace resolves immediately and sends TERM
+		// and KILL back to back at a pgid the worker has already reaped —
+		// a pid the kernel is free to have recycled by then — and, with a
+		// play uid configured, forks and execs the setuid helper twice for
+		// every completed job. A real cancel always arrives with the child
+		// still running, so it never takes this branch.
+		select {
+		case <-exited:
+			return
+		default:
+		}
 		cancelledCh <- struct{}{}
 		r.stopGroup(env, cmd.Process.Pid, exited)
 	}()
