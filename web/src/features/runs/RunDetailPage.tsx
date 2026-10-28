@@ -259,10 +259,10 @@ export function RunDetailPage() {
             className="m-4 rounded-md border p-3 text-xs"
             style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
           >
-            Cancelling stops Pulsix from following this run; it does not reliably stop the play. The playbook may still be
+            Cancelling stops Pulsix from following this run; it does not stop the play. The playbook may still be
             running against <strong>every host listed below</strong>, including those with no task in flight, and a command
             already started on a host keeps running regardless. Treat this list as what Pulsix last saw, not as a final
-            account: check the hosts before you re-run.
+            account: check the hosts before you re-run, or two runs may change the same host at once.
           </div>
           <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Cancelled run hosts">
             {cancelRows.map((r) => (

@@ -269,7 +269,7 @@ describe('RunDetailPage cancelled run', () => {
     expect(within(list).getByText('interrupted')).toBeInTheDocument();
     expect(within(list).getByText('Restart service')).toBeInTheDocument();
     expect(within(list).getByText('never started')).toBeInTheDocument();
-    expect(screen.getByText(/it does not reliably stop the play/)).toBeInTheDocument();
+    expect(screen.getByText(/it does not stop the play/)).toBeInTheDocument();
   });
 
   // Backlog 2.107: the play survives the cancel whatever the per-host
@@ -289,7 +289,7 @@ describe('RunDetailPage cancelled run', () => {
 
     const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
     expect(within(list).getAllByText('never started')).toHaveLength(2);
-    expect(screen.getByText(/it does not reliably stop the play/)).toBeInTheDocument();
+    expect(screen.getByText(/it does not stop the play/)).toBeInTheDocument();
   });
 
   // The terminal status frame can be written on top of events the server
@@ -348,7 +348,7 @@ describe('RunDetailPage cancelled run', () => {
 
     await screen.findByText('deploy-site');
     expect(screen.queryByRole('list', { name: 'Cancelled run hosts' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/it does not reliably stop the play/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/it does not stop the play/)).not.toBeInTheDocument();
   });
 });
 

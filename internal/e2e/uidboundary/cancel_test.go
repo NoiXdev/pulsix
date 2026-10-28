@@ -43,8 +43,7 @@ import (
 // TERM-then-grace-then-KILL window. Before Tasks 1-2 this was impossible —
 // the worker's own kill(2) against the play uid's process group was EPERM,
 // stopGroup's cancel watcher hung forever, and the job was never reported at
-// all (see this package's red run in the task-3 report: the job simply never
-// reports after 30s).
+// all (the job simply never reports after 30s).
 //
 // It does NOT assert that the play's own processes are gone — that the
 // cancel actually stops anything running — because it does not: see backlog
@@ -120,12 +119,12 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 // Setpgid-based kill(-pgid, …) never reaches either, so the play survives
 // the cancel. This is independent of the uid work: the identical escape
 // reproduces with a plain `kill -TERM/-KILL -$pgid` from the SAME uid, no
-// setuid helper, no PULSIX_WORKER_PLAY_UID at all (see the task-3 report's
-// cross-check). Fixing it needs a design decision — walking /proc by
-// descendancy rather than by uid, since discovery by uid would reach a
-// CONCURRENT job's play on the same worker, and a process already
-// reparented to init escapes a descendancy walk too — which is its own
-// spec, not a fix bolted onto this task.
+// setuid helper, no PULSIX_WORKER_PLAY_UID at all (backlog row 2.107 in
+// docs/BACKLOG.md has the cross-check). Fixing it needs a design decision —
+// walking /proc by descendancy rather than by uid, since discovery by uid
+// would reach a CONCURRENT job's play on the same worker, and a process
+// already reparented to init escapes a descendancy walk too — which is its
+// own spec, not a fix bolted onto this task.
 //
 // Un-skip by deleting the t.Skip line below; everything after it is
 // unmodified from the version that first caught this.
