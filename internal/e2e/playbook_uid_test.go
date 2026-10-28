@@ -68,10 +68,17 @@ func TestPlaybookUIDBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the uid boundary tests failed inside %s: %v", image, err)
 	}
-	// A binary that skipped everything would exit 0 too; the tests only
-	// skip when the in-image marker is missing, so an all-skip run means
-	// the wiring here broke rather than the boundary holding.
-	if strings.Contains(string(out), "SKIP") {
+	// A binary that skipped everything would exit 0 too; every test skips
+	// via inImage with this exact wording when the in-image marker is
+	// missing, so seeing it means the wiring here broke rather than the
+	// boundary holding. This is deliberately narrower than matching the bare
+	// word "SKIP": uidboundary.TestCancellingAPlayUnderThePlayUIDStopsIt
+	// carries its own, differently worded skip (backlog 2.107 — the play's
+	// process group escapes the worker's signal, a defect this test found
+	// and proved independent of the uid boundary; see
+	// docs/superpowers/sdd/2026-10-28-cancel-across-the-uid-boundary/task-3-report.md)
+	// and must not trip this guard.
+	if strings.Contains(string(out), "not inside the worker image") {
 		t.Errorf("the in-image tests skipped; they must RUN inside the image")
 	}
 }

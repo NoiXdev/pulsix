@@ -438,6 +438,10 @@ type fakeManager struct {
 	report   *workerpb.ReportResultRequest
 	reported chan struct{}
 	once     sync.Once
+	// stream is the RunEvents stream handed out by the one call this fake
+	// ever serves; cancel pushes a directive down it the way a real
+	// manager's cancel endpoint would.
+	stream *fakeStream
 }
 
 func (f *fakeManager) ClaimJob(context.Context, *workerpb.ClaimJobRequest, ...grpc.CallOption) (*workerpb.ClaimJobResponse, error) {
@@ -451,7 +455,24 @@ func (f *fakeManager) ClaimJob(context.Context, *workerpb.ClaimJobRequest, ...gr
 }
 
 func (f *fakeManager) RunEvents(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[workerpb.RunEvent, workerpb.ManagerDirective], error) {
-	return &fakeStream{ctx: ctx, mgr: f, closed: make(chan struct{})}, nil
+	s := &fakeStream{ctx: ctx, mgr: f, closed: make(chan struct{}), directives: make(chan *workerpb.ManagerDirective, 1)}
+	f.mu.Lock()
+	f.stream = s
+	f.mu.Unlock()
+	return s, nil
+}
+
+// cancel pushes a cancel directive down the run's stream, the way a real
+// manager's cancel endpoint reaches a worker: through the same RunEvents
+// bidi stream, not a side channel the loop never reads.
+func (f *fakeManager) cancel() {
+	f.mu.Lock()
+	s := f.stream
+	f.mu.Unlock()
+	if s == nil {
+		return
+	}
+	s.directives <- &workerpb.ManagerDirective{Cancel: true}
 }
 
 func (f *fakeManager) ReportResult(_ context.Context, in *workerpb.ReportResultRequest, _ ...grpc.CallOption) (*workerpb.ReportResultResponse, error) {
@@ -482,13 +503,15 @@ func (f *fakeManager) events() []*workerpb.RunEvent {
 	return append([]*workerpb.RunEvent(nil), f.sent...)
 }
 
-// fakeStream is one RunEvents stream: the worker sends, the manager never
-// cancels (the cancel path is not what this file is about).
+// fakeStream is one RunEvents stream: the worker sends, and the manager may
+// push a directive (cancel_test.go's TestCancellingAPlayUnderThePlayUIDStopsIt
+// is the one test in this package that does).
 type fakeStream struct {
-	ctx    context.Context
-	mgr    *fakeManager
-	closed chan struct{}
-	once   sync.Once
+	ctx        context.Context
+	mgr        *fakeManager
+	closed     chan struct{}
+	once       sync.Once
+	directives chan *workerpb.ManagerDirective
 }
 
 func (s *fakeStream) Send(ev *workerpb.RunEvent) error {
@@ -500,6 +523,8 @@ func (s *fakeStream) Send(ev *workerpb.RunEvent) error {
 
 func (s *fakeStream) Recv() (*workerpb.ManagerDirective, error) {
 	select {
+	case d := <-s.directives:
+		return d, nil
 	case <-s.ctx.Done():
 		return nil, s.ctx.Err()
 	case <-s.closed:
