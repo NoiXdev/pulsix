@@ -111,6 +111,16 @@ const CANCEL_CLOSING_STATES = new Set(['ok', 'changed', 'failed', 'skipped', 'un
  * seq 0 before subscribing to the live stream, and Service.Events applies
  * no limit today — a capped history would hide interruptions that happened
  * before the cap, silently turning `interrupted` into `never-started`.
+ *
+ * It depends on one more property of useRunLog, for the same reason and in
+ * the other direction: the log must be COMPLETE at the moment a run goes
+ * terminal. The SSE stream can write its terminal status frame on top of
+ * events still buffered server-side (internal/api/job_sse.go's select does
+ * not order the two), and a missing tail here is not a visible gap — it is
+ * a host whose closing `ok` never arrived, which this function reads as
+ * `interrupted` and the page then warns about. useRunLog therefore does one
+ * last fetchJobEvents before it reports a terminal status; if that drain is
+ * ever removed, this function starts inventing interrupted hosts.
  */
 export function cancelHostRows(
   targets: string[],

@@ -292,6 +292,51 @@ describe('RunDetailPage cancelled run', () => {
     expect(screen.getByText(/it does not reliably stop the play/)).toBeInTheDocument();
   });
 
+  // The terminal status frame can be written on top of events the server
+  // still had buffered (internal/api/job_sse.go's select does not order
+  // the event channel against its status ticker), and that loss is at the
+  // TAIL — no later frame exposes a seq gap, so neither the gap detector
+  // nor the poll fallback ever engages. Here h2's closing `ok` is in the
+  // dropped tail: without the final history fetch the breakdown would
+  // call a host that finished its step `interrupted`.
+  it('backfills the events dropped behind a terminal status frame before the breakdown is drawn', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    const eventFetches: string[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      // running, so the breakdown can only come from the stream's own
+      // terminal frame — not from the detail poll racing ahead of it.
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({ status: 'running', hosts: ['h1', 'h2'] }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': (req: MockRequest) => {
+        const after = Number(req.search.get('after') ?? '0');
+        eventFetches.push(String(after));
+        if (after === 0) {
+          return {
+            events: [
+              hostEvent(1, 'h1', 'Install nginx', 'task'),
+              hostEvent(2, 'h1', 'Install nginx', 'ok'),
+              hostEvent(3, 'h2', 'Restart service', 'task'),
+            ],
+          };
+        }
+        return { events: [hostEvent(4, 'h2', 'Restart service', 'ok')] };
+      },
+    });
+    renderPage();
+
+    await screen.findByRole('list', { name: 'Run events' });
+    const es = FakeEventSource.last();
+    es?.emit('status', { id: JOB_ID, status: 'cancelled' });
+    expect(es?.closed).toBe(true);
+
+    const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
+    await waitFor(() => expect(within(list).getAllByText('no task in flight')).toHaveLength(2));
+    expect(within(list).queryByText('interrupted')).not.toBeInTheDocument();
+    expect(eventFetches).toEqual(['0', '3']);
+  });
+
   it('shows neither the cancelled-host list nor the warning for a succeeded run', async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     mockApi({

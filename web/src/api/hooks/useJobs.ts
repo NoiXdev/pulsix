@@ -138,7 +138,10 @@ interface RunLogState {
  *    is greater than last+1 — closes the stream and falls back to polling
  *    GET /events?after=<seq>, which replays exactly what was lost.
  *  - `event: status` frames carry {id, status}; the terminal status frame
- *    ends the stream, and the hook stops connecting.
+ *    ends the stream, and the hook stops connecting. Because the server
+ *    may write that frame while events it has not yet sent are still
+ *    buffered, the hook does ONE final history fetch before it reports
+ *    the terminal status — see the status listener below.
  *  - the server ends the stream on transient errors; EventSource
  *    reconnects by itself, and a reconnect's missed frames surface as a
  *    seq gap → the same polling fallback.
@@ -203,15 +206,48 @@ export function useRunLog(org: string, id: string): RunLog {
       });
 
       es.addEventListener('status', (e) => {
+        let frame: { status?: string };
         try {
-          const frame = JSON.parse((e as MessageEvent<string>).data) as { status?: string };
-          if (frame.status) {
-            if (isTerminal(frame.status)) es.close(); // terminal frame ends the stream
-            patch((s) => ({ ...s, status: frame.status ?? null }));
-          }
+          frame = JSON.parse((e as MessageEvent<string>).data) as { status?: string };
         } catch {
-          /* an unreadable status frame is ignored */
+          return; // an unreadable status frame is ignored
         }
+        const status = frame.status;
+        if (!status) return;
+        if (!isTerminal(status)) {
+          patch((s) => ({ ...s, status }));
+          return;
+        }
+        // The terminal frame ends the stream — and can end it on top of
+        // events this client was never sent. writeJobStream's select
+        // (internal/api/job_sse.go) does not order the event channel
+        // against its status ticker, and the worker stores every event
+        // before ReportResult flips the job terminal, so a backlog can
+        // still be sitting in the subscriber's buffer when the tick wins
+        // the race: the terminal status frame goes out and the server
+        // returns without draining it. Those events are at the TAIL, so
+        // no later frame ever exposes a seq gap and neither the gap
+        // detector above nor the poll fallback ever engages — the log
+        // would just silently end early, and the cancelled-run breakdown
+        // (features/runs/status.ts) would read the missing closing events
+        // as hosts interrupted mid-task. One last history fetch closes
+        // it, and the status is applied together with what it brings
+        // back, so nothing downstream sees a terminal run with a log that
+        // is still short. (The drain belongs here, not in the server's
+        // select: a server-side drain races a slow or stalled client's
+        // own writes.)
+        es.close();
+        void fetchJobEvents(org, id, lastSeq.current)
+          .then((tail) => {
+            if (tail.length > 0) lastSeq.current = tail[tail.length - 1].seq;
+            patch((s) => ({ ...s, status, events: tail.length > 0 ? mergeEvents(s.events, tail) : s.events }));
+          })
+          .catch(() => {
+            // That one fetch failed; hand the tail to the poll fallback
+            // rather than dropping it, exactly as every other error path
+            // in this hook does.
+            patch((s) => ({ ...s, status, transport: 'poll' }));
+          });
       });
 
       es.addEventListener('error', () => {
