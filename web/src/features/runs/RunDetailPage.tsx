@@ -9,10 +9,23 @@ import { useCancelJob, useJob, useRetryFailedJobs, useRunLog, isTerminal } from 
 import { may } from '../../lib/roles.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { EventLog } from './EventLog.tsx';
-import { hasFailedHosts, hostResultRows, kindLabel, shortId, statusTone } from './status.ts';
+import { cancelHostRows, hasFailedHosts, hostResultRows, kindLabel, shortId, statusTone } from './status.ts';
+import type { CancelHostState } from './status.ts';
 import { triggerLabel } from './trigger.ts';
 
 const RUNNING = new Set(['queued', 'claimed', 'running']);
+
+const CANCEL_STATE_LABEL: Record<CancelHostState, string> = {
+  finished: 'finished',
+  interrupted: 'interrupted',
+  'never-started': 'never started',
+};
+
+const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
+  finished: 'var(--px-ok)',
+  interrupted: 'var(--px-warn)',
+  'never-started': 'var(--px-unknown)',
+};
 
 /**
  * RunDetailPage is the run view (spec §7, backlog 2.12): the job's header,
@@ -46,6 +59,18 @@ export function RunDetailPage() {
   const j = job.data.job;
 
   const rows = hostResultRows(j.stats);
+  // The run log's SSE status frame may carry the status before the detail
+  // poll catches up; the header shows whichever is fresher.
+  const status = log.status ?? j.status;
+  // A cancelled run gets no Ansible recap (the worker stops before
+  // playbook_on_stats runs), so the per-host table above renders empty;
+  // this derives what each target host was left doing from the event log
+  // itself, which useRunLog seeds in full before anything else happens.
+  const cancelRows = status === 'cancelled' ? cancelHostRows(j.hosts ?? [], log.events) : [];
+  // The warning is conditional on purpose (design decision): a banner on
+  // every cancelled run, including the one cancelled before it touched
+  // anything, is a banner people learn to skip.
+  const anyInterrupted = cancelRows.some((r) => r.state === 'interrupted');
   const retryable = isTerminal(j.status) && hasFailedHosts(j.stats);
   const cancellable = RUNNING.has(j.status);
   // A schedule's or webhook's per-run overrides are wiped when the run
@@ -67,9 +92,6 @@ export function RunDetailPage() {
   // live read of the repository's and template's configuration right now,
   // which may no longer match what actually ran if either changed since.
   const vaultIdentitiesRecorded = j.vault_identities_source === 'recorded';
-  // The run log's SSE status frame may carry the status before the detail
-  // poll catches up; the header shows whichever is fresher.
-  const status = log.status ?? j.status;
 
   async function onRetry() {
     try {
@@ -213,6 +235,35 @@ export function RunDetailPage() {
               ))}
             </tbody>
           </table>
+        </Card>
+      )}
+      {cancelRows.length > 0 && (
+        <Card>
+          <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+            Cancelled run
+          </div>
+          {anyInterrupted && (
+            <div
+              role="alert"
+              className="m-4 rounded-md border p-3 text-xs"
+              style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
+            >
+              Pulsix ended the connection when this run was cancelled. The command on an interrupted host may still be running — check its state before re-running.
+            </div>
+          )}
+          <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Cancelled run hosts">
+            {cancelRows.map((r) => (
+              <li key={r.host} className="flex items-center justify-between gap-2">
+                <span className="font-mono">{r.host}</span>
+                <span className="flex items-center gap-2">
+                  {r.state === 'interrupted' && <span className="text-muted-foreground">{r.task}</span>}
+                  <span className="font-semibold" style={{ color: CANCEL_STATE_COLOR[r.state] }}>
+                    {CANCEL_STATE_LABEL[r.state]}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
       <Card>

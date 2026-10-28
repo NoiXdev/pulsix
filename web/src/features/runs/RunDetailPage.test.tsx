@@ -242,6 +242,67 @@ describe('RunDetailPage', () => {
   });
 });
 
+describe('RunDetailPage cancelled run', () => {
+  const hostEvent = (seq: number, host: string, task: string, state: string) => ({
+    seq, at: '2026-09-15T08:00:00Z', host, task, state, payload: { stdout: state },
+  });
+
+  it('renders the warning and all three host states for a cancelled run with an interrupted host', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({ status: 'cancelled', hosts: ['h1', 'h2', 'h3'] }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': {
+        events: [
+          hostEvent(1, 'h1', 'Install nginx', 'task'),
+          hostEvent(2, 'h1', 'Install nginx', 'ok'),
+          hostEvent(3, 'h2', 'Restart service', 'task'),
+        ],
+      },
+    });
+    renderPage();
+
+    const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
+    expect(within(list).getByText('finished')).toBeInTheDocument();
+    expect(within(list).getByText('interrupted')).toBeInTheDocument();
+    expect(within(list).getByText('Restart service')).toBeInTheDocument();
+    expect(within(list).getByText('never started')).toBeInTheDocument();
+    expect(screen.getByText(/Pulsix ended the connection/)).toBeInTheDocument();
+  });
+
+  it('shows every target as never started and no warning when a cancelled run has no events', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({ status: 'cancelled', hosts: ['h1', 'h2'] }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+
+    const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
+    expect(within(list).getAllByText('never started')).toHaveLength(2);
+    expect(screen.queryByText(/Pulsix ended the connection/)).not.toBeInTheDocument();
+  });
+
+  it('shows neither the cancelled-host list nor the warning for a succeeded run', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail({ status: 'succeeded', hosts: ['h1'] }).job },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+    });
+    renderPage();
+
+    await screen.findByText('deploy-site');
+    expect(screen.queryByRole('list', { name: 'Cancelled run hosts' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pulsix ended the connection/)).not.toBeInTheDocument();
+  });
+});
+
 describe('RunDetailPage vault identities', () => {
   // v0.2e Task 5: the run detail says which labelled vault passwords the
   // run received, and whether each came from the repository or the

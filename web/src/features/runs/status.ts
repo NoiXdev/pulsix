@@ -76,3 +76,57 @@ function stringList(raw: unknown): string[] {
 export function hasFailedHosts(stats: Record<string, unknown> | undefined | null): boolean {
   return stringList(stats?.failed_hosts).length > 0 || stringList(stats?.unreachable_hosts).length > 0;
 }
+
+export type CancelHostState = 'finished' | 'interrupted' | 'never-started';
+
+export interface CancelHostRow {
+  host: string;
+  state: CancelHostState;
+  task: string;
+}
+
+// The run event vocabulary (internal/worker/runner/events.go's mapping): a
+// host's step opens on `task` and closes on one of these five. Every other
+// state a run event can carry — `stdout` chief among them, the worker's
+// follow-up line for the event it just emitted — takes no part in open/close
+// and is skipped below.
+const CANCEL_OPEN_STATE = 'task';
+const CANCEL_CLOSING_STATES = new Set(['ok', 'changed', 'failed', 'skipped', 'unreachable']);
+
+/**
+ * cancelHostRows is hostResultRows's sibling for a cancelled run: a
+ * cancelled run gets no terminal recap to fold (the worker stops before
+ * playbook_on_stats), so this replays the run's own event log instead. A
+ * host's last `task`/closing event decides its state: `task` with nothing
+ * after it means the step was cut off mid-run (`interrupted`, carrying that
+ * event's task name); a closing event last means the step finished before
+ * the cancel landed (`finished`); a target no event mentions at all is
+ * `never-started`. Events with an empty host, and any event whose state is
+ * neither `task` nor a closing one, are ignored. A host the events name
+ * that `targets` does not is included rather than dropped — the same
+ * ansible-host-name-vs-host-id tolerance hostResultRows already has.
+ * Sorted by host, localeCompare.
+ *
+ * This only works because useRunLog seeds the complete event history from
+ * seq 0 before subscribing to the live stream, and Service.Events applies
+ * no limit today — a capped history would hide interruptions that happened
+ * before the cap, silently turning `interrupted` into `never-started`.
+ */
+export function cancelHostRows(
+  targets: string[],
+  events: { host: string; task: string; state: string }[],
+): CancelHostRow[] {
+  const last = new Map<string, { task: string; state: string }>();
+  for (const e of events) {
+    if (!e.host || (e.state !== CANCEL_OPEN_STATE && !CANCEL_CLOSING_STATES.has(e.state))) continue;
+    last.set(e.host, { task: e.task, state: e.state });
+  }
+  const hosts = new Set<string>([...targets, ...last.keys()]);
+  const rows: CancelHostRow[] = [...hosts].map((host) => {
+    const final = last.get(host);
+    if (!final) return { host, state: 'never-started', task: '' };
+    if (final.state === CANCEL_OPEN_STATE) return { host, state: 'interrupted', task: final.task };
+    return { host, state: 'finished', task: '' };
+  });
+  return rows.sort((a, b) => a.host.localeCompare(b.host));
+}
