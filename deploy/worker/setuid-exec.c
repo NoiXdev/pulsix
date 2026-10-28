@@ -75,11 +75,15 @@ static int fail(const char *what) {
 	return 1;
 }
 
-/* parse_pgid parses PGID with the same whole-string strictness argv[1]
- * (the uid) already gets above: strtoul, reject a parse errno, an empty
- * parse, trailing characters, and a leading '-' (strtoul itself would
- * otherwise wrap a negative number into a huge unsigned value instead of
- * failing). It additionally rejects anything <= 1. kill(-1, ...) means
+/* parse_pgid parses PGID strictly: strtoul, reject a parse errno, an empty
+ * parse, trailing characters, and — before strtoul ever sees the string —
+ * anything but a digit in the first position. The leading character is
+ * checked rather than merely tested for '-', because strtoul accepts a
+ * sign AND skips leading whitespace first: a bare "s[0] == '-'" guard is
+ * defeated by one space, and " -18446744073709551614" then wraps through
+ * strtoul to 2 and is accepted. Requiring a digit rejects whitespace, '+'
+ * and '-' in one condition, which is the whole-string strictness this
+ * comment claims. It additionally rejects anything <= 1. kill(-1, ...) means
  * "every process this uid may signal", so a lax parse here is not merely
  * the wrong process group — it turns one cancel into a fleet-wide kill of
  * every process the play uid holds. 0 and 1 are refused for the same
@@ -95,7 +99,7 @@ static int fail(const char *what) {
  * cast closes that: nothing that would change value across the narrowing
  * is accepted in the first place. */
 static int parse_pgid(const char *s, pid_t *out) {
-	if (s[0] == '-') {
+	if (s[0] < '0' || s[0] > '9') {
 		return -1;
 	}
 	char *rest = NULL;
