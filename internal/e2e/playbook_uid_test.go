@@ -75,8 +75,9 @@ func TestPlaybookUIDBoundary(t *testing.T) {
 	// word "SKIP": uidboundary.TestCancellingAPlayUnderThePlayUIDStopsIt
 	// carries its own, differently worded skip (backlog 2.107 — the play's
 	// process group escapes the worker's signal, a defect this test found
-	// and proved independent of the uid boundary; see
-	// docs/superpowers/sdd/2026-10-28-cancel-across-the-uid-boundary/task-3-report.md)
+	// and proved independent of the uid boundary; see docs/BACKLOG.md's row
+	// 2.107 and the "As built" section of
+	// docs/superpowers/specs/2026-10-28-cancel-across-the-uid-boundary-design.md)
 	// and must not trip this guard.
 	if strings.Contains(string(out), "not inside the worker image") {
 		t.Errorf("the in-image tests skipped; they must RUN inside the image")

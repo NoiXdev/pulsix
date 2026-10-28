@@ -13,9 +13,10 @@
 // backlog 2.107. TestCancellingAPlayUnderThePlayUIDReportsCancelled proves
 // the uid-crossing half (what Tasks 1-2 actually built) and passes.
 // TestCancellingAPlayUnderThePlayUIDStopsIt proves the play's own processes
-// actually die and is skipped — see its doc comment and the task-3 report
-// under docs/superpowers/sdd/2026-10-28-cancel-across-the-uid-boundary/ for
-// the full diagnosis.
+// actually die and is skipped — see its doc comment, backlog row 2.107 in
+// docs/BACKLOG.md (which carries the full diagnosis: installed versions,
+// source locations and the observed pgids) and the "As built" section of
+// docs/superpowers/specs/2026-10-28-cancel-across-the-uid-boundary-design.md.
 package uidboundary
 
 import (
@@ -24,9 +25,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -50,6 +53,14 @@ import (
 func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 	inImage(t)
 	writeWorkerKey(t)
+	// This test leaves the play running — that is 2.107, and it is this
+	// test's whole point that the job still reports. Everything in the
+	// package shares one container, so those leftovers would otherwise be
+	// the starting state of TestCancellingAPlayUnderThePlayUIDStopsIt,
+	// whose first assertion is that no uid-65533 process exists at all.
+	// Without this, un-skipping that test would not be the one deleted
+	// line its doc comment promises.
+	t.Cleanup(func() { reapPlayUIDLeftovers(t) })
 
 	job := localhostJob(t, `
 - hosts: localhost
@@ -179,6 +190,132 @@ func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 	}
 }
 
+// reapPlayUIDLeftovers kills everything still running under the play uid
+// and clears whatever it left in the data dir. It exists because of
+// backlog 2.107: a cancel reaches the worker's own ansible-runner leader
+// and nothing in the two process groups below it, so a cancelled run in
+// this package leaves a `sleep 300` and the two ansible processes above it
+// alive for the rest of the container's life.
+//
+// The kill goes through the setuid helper for the same reason the worker's
+// own does: this process is uid 65532 and the kernel will not let it
+// signal 65533. Finding the groups by UID is what the worker itself must
+// not do — a concurrent job's play would share that uid — but here it is
+// the right primitive and the narrower one: this container runs one test
+// at a time, and the premise of every test after this one is that nothing
+// of the play uid's is left over.
+func reapPlayUIDLeftovers(t *testing.T) {
+	t.Helper()
+	helper := workerConfig(t).SetuidHelper
+	// Never signal our own group. A helper child spawned without Setpgid
+	// is a member of it and is uid 65533 for the stretch between its drop
+	// and its execv, so a scan that caught one mid-flight would otherwise
+	// name this group and this cleanup would kill the test binary.
+	self := syscall.Getpgrp()
+	for _, pgid := range playUIDProcessGroups(t) {
+		if pgid <= 1 || pgid == self {
+			continue // the helper refuses <= 1, and rightly: kill(-1, ...)
+		}
+		if out, err := exec.Command(helper, strconv.Itoa(playUID), "--signal", "KILL", strconv.Itoa(pgid)).CombinedOutput(); err != nil {
+			t.Logf("reaping play uid process group %d: %v: %s", pgid, err, out)
+		}
+	}
+	if !waitUntil(time.Now().Add(30*time.Second), func() bool { return !playUIDProcessExists(t) }) {
+		t.Logf("processes under uid %d survived the cleanup:\n%s", playUID, debugPlayUIDProcesses(t))
+	}
+	// The surviving play keeps writing into the run's work dir, which it
+	// can recreate after the worker's own cleanup already removed it. What
+	// is inside belongs to the play uid, so it comes off exactly the way
+	// internal/worker/workdir.go's removeAsPlayUID takes it off: the
+	// entries through the helper, the (now empty) directory as ourselves,
+	// because the data dir is 0710 and the play uid may not unlink in it.
+	for _, dir := range workDirs(t) {
+		full := filepath.Join(dataDir, dir)
+		entries, err := os.ReadDir(full)
+		if err != nil {
+			t.Logf("read %s: %v", full, err)
+			continue
+		}
+		rm, err := exec.LookPath("rm")
+		if err != nil {
+			t.Logf("find rm to clear %s: %v", full, err)
+			rm = "/bin/rm"
+		}
+		argv := []string{strconv.Itoa(playUID), rm, "-rf", "--"}
+		for _, e := range entries {
+			argv = append(argv, filepath.Join(full, e.Name()))
+		}
+		if len(entries) > 0 {
+			if out, err := exec.Command(helper, argv...).CombinedOutput(); err != nil {
+				t.Logf("clearing %s as uid %d: %v: %s", full, playUID, err, out)
+			}
+		}
+		if err := os.RemoveAll(full); err != nil {
+			t.Logf("remove %s: %v", full, err)
+		}
+	}
+}
+
+// playUIDProcessGroups lists the distinct process groups of every process
+// whose real uid is the play uid. The pgrp is field 5 of /proc/<pid>/stat,
+// read from the LAST ')' forward because field 2 is the comm and a comm may
+// contain spaces and parentheses.
+func playUIDProcessGroups(t *testing.T) []int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatalf("read /proc: %v", err)
+	}
+	want := strconv.Itoa(playUID)
+	seen := map[int]bool{}
+	var out []int
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		status, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
+		if err != nil {
+			continue // exited between ReadDir and ReadFile
+		}
+		if !uidLineIs(string(status), want) {
+			continue
+		}
+		stat, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		closeParen := strings.LastIndex(string(stat), ")")
+		if closeParen < 0 {
+			continue
+		}
+		fields := strings.Fields(string(stat)[closeParen+1:]) // state, ppid, pgrp, ...
+		if len(fields) < 3 {
+			continue
+		}
+		pgid, err := strconv.Atoi(fields[2])
+		if err != nil || seen[pgid] {
+			continue
+		}
+		seen[pgid] = true
+		out = append(out, pgid)
+	}
+	return out
+}
+
+// uidLineIs reports whether /proc/<pid>/status's "Uid:" line names want as
+// the process's REAL uid (the first of real, effective, saved, fs).
+func uidLineIs(status, want string) bool {
+	for _, line := range strings.Split(status, "\n") {
+		uid, ok := strings.CutPrefix(line, "Uid:")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(uid)
+		return len(fields) > 0 && fields[0] == want
+	}
+	return false
+}
+
 // waitUntil polls cond every 100ms until it reports true or deadline
 // passes, returning cond's last result either way.
 func waitUntil(deadline time.Time, cond func() bool) bool {
@@ -214,16 +351,8 @@ func playUIDProcessExists(t *testing.T) bool {
 		if err != nil {
 			continue // the process exited between ReadDir and ReadFile
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			uid, ok := strings.CutPrefix(line, "Uid:")
-			if !ok {
-				continue
-			}
-			fields := strings.Fields(uid)
-			if len(fields) > 0 && fields[0] == want {
-				return true
-			}
-			break
+		if uidLineIs(string(data), want) {
+			return true
 		}
 	}
 	return false
@@ -232,8 +361,9 @@ func playUIDProcessExists(t *testing.T) bool {
 // debugPlayUIDProcesses is diagnostic only: dumps every /proc entry matching
 // the play uid, including its State line, so a lingering ZOMBIE (already
 // dead, reaped only by its parent calling wait) can be told apart from a
-// process still actually running. Used by the skipped
-// TestCancellingAPlayUnderThePlayUIDStopsIt once it is un-skipped.
+// process still actually running. Used by reapPlayUIDLeftovers when its
+// kill did not take, and by TestCancellingAPlayUnderThePlayUIDStopsIt once
+// that test is un-skipped.
 func debugPlayUIDProcesses(t *testing.T) string {
 	t.Helper()
 	entries, err := os.ReadDir("/proc")

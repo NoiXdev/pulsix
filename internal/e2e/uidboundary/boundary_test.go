@@ -504,8 +504,10 @@ func (f *fakeManager) events() []*workerpb.RunEvent {
 }
 
 // fakeStream is one RunEvents stream: the worker sends, and the manager may
-// push a directive (cancel_test.go's TestCancellingAPlayUnderThePlayUIDStopsIt
-// is the one test in this package that does).
+// push a directive. cancel_test.go's
+// TestCancellingAPlayUnderThePlayUIDReportsCancelled is the one test in
+// this package that does — its skipped sibling
+// TestCancellingAPlayUnderThePlayUIDStopsIt would too, if it ran.
 type fakeStream struct {
 	ctx        context.Context
 	mgr        *fakeManager
