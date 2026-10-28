@@ -15,8 +15,14 @@ import { triggerLabel } from './trigger.ts';
 
 const RUNNING = new Set(['queued', 'claimed', 'running']);
 
+// cancelHostRows answers a question about the host's STEP, not about the
+// play: `finished` there means "this host's last event closed its step",
+// which in a linear-strategy play is just as true after task 3 of 10 as
+// after the last one. Labelling that bare "finished" invited an operator
+// to re-run only the interrupted host and leave a half-applied one alone,
+// so the label says what was actually observed.
 const CANCEL_STATE_LABEL: Record<CancelHostState, string> = {
-  finished: 'finished',
+  finished: 'no task in flight',
   interrupted: 'interrupted',
   'never-started': 'never started',
 };
@@ -67,10 +73,6 @@ export function RunDetailPage() {
   // this derives what each target host was left doing from the event log
   // itself, which useRunLog seeds in full before anything else happens.
   const cancelRows = status === 'cancelled' ? cancelHostRows(j.hosts ?? [], log.events) : [];
-  // The warning is conditional on purpose (design decision): a banner on
-  // every cancelled run, including the one cancelled before it touched
-  // anything, is a banner people learn to skip.
-  const anyInterrupted = cancelRows.some((r) => r.state === 'interrupted');
   const retryable = isTerminal(j.status) && hasFailedHosts(j.stats);
   const cancellable = RUNNING.has(j.status);
   // A schedule's or webhook's per-run overrides are wiped when the run
@@ -242,15 +244,26 @@ export function RunDetailPage() {
           <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
             Cancelled run
           </div>
-          {anyInterrupted && (
-            <div
-              role="alert"
-              className="m-4 rounded-md border p-3 text-xs"
-              style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
-            >
-              Pulsix ended the connection when this run was cancelled. The command on an interrupted host may still be running — check its state before re-running.
-            </div>
-          )}
+          {/* The warning is shown on EVERY cancelled run while backlog
+              2.107 is open. The design's anti-goal argued against an
+              unconditional banner — a warning that is almost always
+              unnecessary gets skipped — and that argument was sound on its
+              premise: that a cancel stops the play. 2.107 retracted the
+              premise. The play survives the cancel regardless of host
+              state, so there is no cancelled run on which this is
+              unnecessary, and the list below freezes at the instant the
+              worker's event stream died rather than describing a finished
+              run. The conditional version returns when 2.107 ships. */}
+          <div
+            role="alert"
+            className="m-4 rounded-md border p-3 text-xs"
+            style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
+          >
+            Cancelling stops Pulsix from following this run; it does not reliably stop the play. The playbook may still be
+            running against <strong>every host listed below</strong>, including those with no task in flight, and a command
+            already started on a host keeps running regardless. Treat this list as what Pulsix last saw, not as a final
+            account: check the hosts before you re-run.
+          </div>
           <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Cancelled run hosts">
             {cancelRows.map((r) => (
               <li key={r.host} className="flex items-center justify-between gap-2">

@@ -265,14 +265,18 @@ describe('RunDetailPage cancelled run', () => {
     renderPage();
 
     const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
-    expect(within(list).getByText('finished')).toBeInTheDocument();
+    expect(within(list).getByText('no task in flight')).toBeInTheDocument();
     expect(within(list).getByText('interrupted')).toBeInTheDocument();
     expect(within(list).getByText('Restart service')).toBeInTheDocument();
     expect(within(list).getByText('never started')).toBeInTheDocument();
-    expect(screen.getByText(/Pulsix ended the connection/)).toBeInTheDocument();
+    expect(screen.getByText(/it does not reliably stop the play/)).toBeInTheDocument();
   });
 
-  it('shows every target as never started and no warning when a cancelled run has no events', async () => {
+  // Backlog 2.107: the play survives the cancel whatever the per-host
+  // breakdown says, so the warning is unconditional on a cancelled run —
+  // a run cancelled before it touched a single host is exactly the one
+  // where a second play started by a re-run would collide with the first.
+  it('warns on a cancelled run even when every target never started', async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
@@ -285,7 +289,7 @@ describe('RunDetailPage cancelled run', () => {
 
     const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
     expect(within(list).getAllByText('never started')).toHaveLength(2);
-    expect(screen.queryByText(/Pulsix ended the connection/)).not.toBeInTheDocument();
+    expect(screen.getByText(/it does not reliably stop the play/)).toBeInTheDocument();
   });
 
   it('shows neither the cancelled-host list nor the warning for a succeeded run', async () => {
@@ -299,7 +303,7 @@ describe('RunDetailPage cancelled run', () => {
 
     await screen.findByText('deploy-site');
     expect(screen.queryByRole('list', { name: 'Cancelled run hosts' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Pulsix ended the connection/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/it does not reliably stop the play/)).not.toBeInTheDocument();
   });
 });
 
