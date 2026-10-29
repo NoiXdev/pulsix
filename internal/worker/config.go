@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -121,6 +122,22 @@ type Config struct {
 	// a path to root the worker does not have today. A deployment outside
 	// the Pulsix worker image points this at its own helper.
 	SetuidHelper string
+	// PlaySupervisor is the absolute path of the binary the runner
+	// re-executes as the per-run play supervisor (see
+	// internal/worker/supervisor): the running worker binary itself, which
+	// recognises supervisor.Arg as its first argument. Load fills it on
+	// Linux only — the supervisor needs the process-tree and pidfd
+	// facilities only Linux offers — and leaves it empty elsewhere, where
+	// the runner spawns the play directly as before. There is no
+	// environment variable for it, and a Config built by hand does not get
+	// it: it names the one binary that is known to carry the supervisor,
+	// so an operator's setting could only point it at something that does
+	// not, and a test that builds a Config must opt in explicitly rather
+	// than have every run re-executed under the test binary. Both binaries
+	// that load a worker Config therefore dispatch on the argument: cmd/worker
+	// and cmd/manager, whose embedded worker (internal/app) loads its
+	// Config through Load inside the manager process.
+	PlaySupervisor string
 }
 
 // Load parses and validates the given environment (os.Environ() in the
@@ -241,6 +258,18 @@ func Load(env []string) (Config, error) {
 			return cfg, fmt.Errorf("%s %q must be an absolute path (a relative name would be resolved against PATH, letting the environment choose which setuid-root binary runs)", envSetuidHelper, raw)
 		}
 		cfg.SetuidHelper = raw
+	}
+
+	if runtime.GOOS == "linux" {
+		// A failure here is a configuration error rather than a reason to
+		// run unsupervised: without the supervisor a cancelled play leaves
+		// its descendants behind (backlog 2.107), and starting anyway would
+		// hide that behind a healthy-looking worker.
+		exe, err := os.Executable()
+		if err != nil {
+			return cfg, fmt.Errorf("locate the worker binary to re-execute as the play supervisor: %w", err)
+		}
+		cfg.PlaySupervisor = exe
 	}
 	return cfg, nil
 }

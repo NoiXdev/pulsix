@@ -40,6 +40,7 @@ import (
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
 	"github.com/noixdev/pulsix/internal/worker/sshprobe"
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
 // version is the worker's build version, reported to the manager on every
@@ -48,11 +49,24 @@ import (
 // `-ldflags "-X main.version=..."`, the same mechanism cmd/manager uses.
 var version = "dev"
 
-// main only translates run's exit code; the indirection keeps run's
+// main only translates entry's exit code; the indirection keeps run's
 // deferred closes executing (os.Exit from inside a function with pending
 // defers skips them).
 func main() {
-	os.Exit(run(os.Environ()))
+	os.Exit(entry(os.Args, os.Environ()))
+}
+
+// entry decides what this process is. The runner re-executes the worker
+// binary as the per-run play supervisor, marked by a reserved first
+// argument; that process must do nothing a worker does — no configuration
+// (it has no PULSIX_* variables: the runner strips them), no logging setup,
+// no connection — so the check comes first, before run reads the
+// environment. Everything else is the worker.
+func entry(args, env []string) int {
+	if len(args) > 1 && args[1] == supervisor.Arg {
+		return supervisor.Main(args[2:])
+	}
+	return run(env)
 }
 
 // run wires the worker process: load the configuration, run under the

@@ -19,6 +19,7 @@ import (
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
 // TestServeWithGracefulShutdownWaitsForDrain is a regression test for
@@ -209,6 +210,20 @@ func TestDispatchRejectsUnknownArguments(t *testing.T) {
 		if !strings.Contains(stderr.String(), "usage:") {
 			t.Errorf("dispatch %v: stderr = %q, want a usage message", args, stderr.String())
 		}
+	}
+}
+
+// TestDispatchRoutesSupervisorArg: the embedded worker re-executes this
+// binary as the play supervisor, so the reserved argument has to reach the
+// supervisor — with no further arguments it refuses (exit 1) rather than
+// falling into the unknown-command usage error (exit 2).
+func TestDispatchRoutesSupervisorArg(t *testing.T) {
+	var stderr bytes.Buffer
+	if code := dispatch([]string{supervisor.Arg}, io.Discard, &stderr); code != 1 {
+		t.Fatalf("dispatch supervisor arg: exit code = %d, want 1 (the supervisor's refusal)", code)
+	}
+	if strings.Contains(stderr.String(), "usage:") {
+		t.Errorf("stderr = %q, the supervisor arg must not reach the usage error", stderr.String())
 	}
 }
 

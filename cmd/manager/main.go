@@ -30,6 +30,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/config"
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
@@ -57,8 +58,12 @@ func main() {
 // dispatch routes to the "openapi" subcommand (writes the OpenAPI document
 // to stdout and exits, no server or database involved — see
 // api.Document's doc comment), the "worker add" enrollment subcommand (see
-// app.RunWorkerAdd), or — with no arguments at all — starts the manager
-// server. Any other argument list is a usage error (exit 2), never a
+// app.RunWorkerAdd), the play supervisor's reserved argument, or — with no
+// arguments at all — starts the manager server. The supervisor case exists
+// because the embedded worker runs plays by re-executing this very binary
+// (worker.Config.PlaySupervisor is the manager's own path there); it must
+// stay a case of its own, ahead of the usage error, and does not touch the
+// environment or the configuration. Any other argument list is a usage error (exit 2), never a
 // server start: `docker compose run manager /pulsix-manager worker add …`
 // (the image's ENTRYPOINT already is /pulsix-manager, so the binary sees
 // its own path as the first argument) used to fall through to run() and
@@ -67,6 +72,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case len(args) == 0:
 		return run()
+	case args[0] == supervisor.Arg:
+		return supervisor.Main(args[1:])
 	case args[0] == "openapi":
 		return runOpenAPI(stdout)
 	case len(args) >= 2 && args[0] == "worker" && args[1] == "add":

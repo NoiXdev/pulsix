@@ -5,6 +5,8 @@ package worker
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -133,6 +135,48 @@ func TestLoadOverrides(t *testing.T) {
 // TestLoadPlayUID (uid separation, Task 1): PULSIX_WORKER_PLAY_UID is
 // optional and, when set, must name a uid that is neither root nor the
 // worker's own — either would make the de-escalation a no-op or worse.
+// TestLoadPlaySupervisor: Load, not the environment, names the binary the
+// runner re-executes as the play supervisor — this very executable, on
+// Linux only. Elsewhere it stays empty and the runner spawns directly.
+func TestLoadPlaySupervisor(t *testing.T) {
+	cfg, err := Load([]string{"PULSIX_MANAGER_ADDR=manager.example.test:8444"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "linux" {
+		if cfg.PlaySupervisor != "" {
+			t.Fatalf("PlaySupervisor = %q on %s, want empty", cfg.PlaySupervisor, runtime.GOOS)
+		}
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PlaySupervisor != exe {
+		t.Errorf("PlaySupervisor = %q, want os.Executable() = %q", cfg.PlaySupervisor, exe)
+	}
+	if !filepath.IsAbs(cfg.PlaySupervisor) {
+		t.Errorf("PlaySupervisor = %q, want an absolute path", cfg.PlaySupervisor)
+	}
+}
+
+// TestLoadPlaySupervisorIgnoresEnvironment: there is no variable for it, so
+// an operator cannot point the worker at another binary.
+func TestLoadPlaySupervisorIgnoresEnvironment(t *testing.T) {
+	cfg, err := Load([]string{
+		"PULSIX_MANAGER_ADDR=manager.example.test:8444",
+		"PULSIX_WORKER_PLAY_SUPERVISOR=/bin/evil",
+		"PULSIX_PLAY_SUPERVISOR=/bin/evil",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PlaySupervisor == "/bin/evil" {
+		t.Fatal("PlaySupervisor was taken from the environment")
+	}
+}
+
 func TestLoadPlayUID(t *testing.T) {
 	for name, tc := range map[string]struct {
 		raw  string

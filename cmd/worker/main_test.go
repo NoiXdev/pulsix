@@ -12,6 +12,7 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 	"google.golang.org/grpc"
 )
 
@@ -23,6 +24,32 @@ func TestRunConfigError(t *testing.T) {
 	}
 	if code := run([]string{"PULSIX_MANAGER_ADDR=http://bad"}); code != 2 {
 		t.Fatalf("run with scheme addr: exit = %d, want 2", code)
+	}
+}
+
+// TestEntryRoutesSupervisorArg: the reserved first argument makes the
+// binary the play supervisor, decided before anything reads the config or
+// the environment. With no further arguments the supervisor refuses (exit 1,
+// no --grace); had entry fallen through to run, the nil environment would
+// have failed config loading with exit 2 instead.
+func TestEntryRoutesSupervisorArg(t *testing.T) {
+	if code := entry([]string{"/pulsix-worker", supervisor.Arg}, nil); code != 1 {
+		t.Fatalf("entry with the supervisor arg: exit = %d, want 1 (the supervisor's refusal)", code)
+	}
+}
+
+// TestEntryWithoutSupervisorArgRunsTheWorker: anything else starts the
+// worker as before, so a broken environment is still exit 2.
+func TestEntryWithoutSupervisorArgRunsTheWorker(t *testing.T) {
+	for _, args := range [][]string{
+		{"/pulsix-worker"},
+		{"/pulsix-worker", "serve"},
+		// The reserved argument only counts in first position.
+		{"/pulsix-worker", "x", supervisor.Arg},
+	} {
+		if code := entry(args, nil); code != 2 {
+			t.Errorf("entry %v: exit = %d, want 2 (configuration error)", args, code)
+		}
 	}
 }
 
