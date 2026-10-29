@@ -181,6 +181,15 @@ services:
     volumes:
       - pulsix-worker-bundle:/etc/pulsix-worker
       - pulsix-worker-data:/var/lib/pulsix-worker
+    # An init (PID 1) that reaps what its children orphan (backlog 2.108).
+    # Cancelling a run no longer leaves its play behind: the worker starts
+    # every run under a per-run supervisor that stops and reaps the whole
+    # tree. Other paths can still orphan a process into PID 1 though (a
+    # repository sync's `ssh` outliving its killed `git`, or a supervisor
+    # that had to be killed), and the worker binary only waits for what it
+    # started itself. Without this, those become zombies until the
+    # container restarts. A plain `docker run` needs `--init` for the same.
+    init: true
     restart: unless-stopped
 
   # Optional TLS-terminating reverse proxy, only started with:
