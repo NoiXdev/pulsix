@@ -36,18 +36,39 @@ const (
 	fakeEnvExit   = "FAKE_RUNNER_EXIT"   // the process exit code
 	fakeEnvSticky = "FAKE_RUNNER_STICKY" // set → ignore SIGTERM (cancel test)
 	fakeEnvFlood  = "FAKE_RUNNER_FLOOD"  // set → flood ok-events in a loop, counting into the file (prompt-kill test)
+	fakeEnvPid    = "FAKE_RUNNER_PID"    // set → write the fake's own pid to the file
+	// The supervised Linux tests' modes (supervised_linux_test.go). Each
+	// starts a sleep in a session of its own, records the sleep's pid in
+	// the file the variable names, and waits for that record before going
+	// on: ESCAPE then emits the fixture and runs until it is stopped,
+	// DAEMON emits the fixture and exits.
+	fakeEnvEscape = "FAKE_RUNNER_ESCAPE"
+	fakeEnvDaemon = "FAKE_RUNNER_DAEMON"
 )
 
 // writeFakeRunner writes the fake ansible-runner binary: it dumps its env
 // and its argv to the given files, optionally sticks (ignores SIGTERM — the
 // cancel test) or floods (emits ok-events in a loop until killed — the
 // prompt-kill test), then emits the event fixture and exits with the code.
+// The ESCAPE and DAEMON modes (fakeEnvEscape, fakeEnvDaemon) leave a sleep
+// behind in a session of its own, the shape of a play that detaches.
 func writeFakeRunner(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ansible-runner")
 	script := "#!/bin/sh\n" +
 		"env > \"$" + fakeEnvDump + "\"\n" +
 		"printf '%s\\n' \"$@\" > \"$" + fakeEnvArgs + "\"\n" +
+		"if [ -n \"$" + fakeEnvPid + "\" ]; then echo $$ > \"$" + fakeEnvPid + "\"; fi\n" +
+		"if [ -n \"$" + fakeEnvEscape + "\" ]; then\n" +
+		"  setsid sh -c 'echo $$ > \"$" + fakeEnvEscape + "\"; exec sleep 300' &\n" +
+		"  while [ ! -s \"$" + fakeEnvEscape + "\" ]; do sleep 0.01; done\n" +
+		"  cat \"$" + fakeEnvEvents + "\" 2>/dev/null\n" +
+		"  while :; do sleep 1; done\n" +
+		"fi\n" +
+		"if [ -n \"$" + fakeEnvDaemon + "\" ]; then\n" +
+		"  setsid sh -c 'echo $$ > \"$" + fakeEnvDaemon + "\"; exec sleep 301' &\n" +
+		"  while [ ! -s \"$" + fakeEnvDaemon + "\" ]; do sleep 0.01; done\n" +
+		"fi\n" +
 		"if [ -n \"$" + fakeEnvSticky + "\" ]; then\n" +
 		"  trap '' TERM\n" +
 		"  while :; do sleep 5; done\n" +
@@ -761,7 +782,7 @@ func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
 			env := runEnv(t)
 			env.Config.PlayUID = tc.playUID
 			env.Config.SetuidHelper = tc.helper
-			cmd, err := newRunnerCmd(bin, args, env, nil)
+			cmd, err := newRunnerCmd(bin, args, env, nil, 5*time.Second)
 			if err != nil {
 				t.Fatalf("newRunnerCmd: %v", err)
 			}
@@ -779,6 +800,83 @@ func TestRunnerSpawnsUnderThePlayUID(t *testing.T) {
 				t.Errorf("cmd.Args = %q, want %q", cmd.Args, tc.wantArgs)
 			}
 		})
+	}
+}
+
+// TestNewRunnerCmdSupervised pins the play supervisor's place in the spawn
+// (backlog 2.107). With Config.PlaySupervisor set, the supervisor is what
+// starts, carrying the grace and the runner's ABSOLUTE path (it does no PATH
+// lookup); with a play uid as well, the setuid helper execs the supervisor
+// in its place, so the supervisor runs as the play uid. Without a
+// supervisor — every OS but Linux, and every Config built by hand — the
+// command is exactly today's direct spawn. Setpgid stays on the outermost
+// process in all three: the worker's TERM and its backstop KILL go to that
+// group.
+func TestNewRunnerCmdSupervised(t *testing.T) {
+	const (
+		bin    = "ansible-runner"
+		helper = "/opt/pulsix/setuid-exec"
+		sup    = "/sup"
+	)
+	abs := writeFakeRunner(t)
+	t.Setenv("PATH", filepath.Dir(abs))
+	args := []string{"run", "--json"}
+
+	cases := map[string]struct {
+		supervisor string
+		playUID    uint32
+		wantPath   string
+		wantArgs   []string
+	}{
+		"no supervisor, no play uid": {
+			wantPath: abs,
+			wantArgs: []string{bin, "run", "--json"},
+		},
+		"supervisor, no play uid": {
+			supervisor: sup,
+			wantPath:   sup,
+			wantArgs:   []string{sup, "__pulsix-play-supervisor", "--grace", "5s", "--", abs, "run", "--json"},
+		},
+		"supervisor under the play uid": {
+			supervisor: sup,
+			playUID:    65533,
+			wantPath:   helper,
+			wantArgs:   []string{helper, "65533", sup, "__pulsix-play-supervisor", "--grace", "5s", "--", abs, "run", "--json"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := runEnv(t)
+			env.Config.PlaySupervisor = tc.supervisor
+			env.Config.PlayUID = tc.playUID
+			env.Config.SetuidHelper = helper
+			cmd, err := newRunnerCmd(bin, args, env, nil, 5*time.Second)
+			if err != nil {
+				t.Fatalf("newRunnerCmd: %v", err)
+			}
+			if !cmd.SysProcAttr.Setpgid {
+				t.Error("Setpgid = false, want true: the worker's signals go to the outermost process's group")
+			}
+			if cmd.Path != tc.wantPath {
+				t.Errorf("cmd.Path = %q, want %q", cmd.Path, tc.wantPath)
+			}
+			if !slices.Equal(cmd.Args, tc.wantArgs) {
+				t.Errorf("cmd.Args = %q, want %q", cmd.Args, tc.wantArgs)
+			}
+		})
+	}
+}
+
+// TestNewRunnerCmdSupervisedNeedsTheRunnerBinary: the supervisor refuses a
+// relative program, so a runner binary that does not resolve must fail the
+// spawn on the Go side, by name, exactly as under the setuid helper.
+func TestNewRunnerCmdSupervisedNeedsTheRunnerBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // nothing resolves
+	env := runEnv(t)
+	env.Config.PlaySupervisor = "/sup"
+	_, err := newRunnerCmd("pulsix-no-such-ansible-runner", []string{"run"}, env, nil, 5*time.Second)
+	if err == nil || !strings.Contains(err.Error(), envRunnerBin) {
+		t.Fatalf("newRunnerCmd error = %v, want the unresolvable binary named with %s", err, envRunnerBin)
 	}
 }
 
@@ -1332,6 +1430,158 @@ func TestStopGroupSendsTheKillEvenWhenTheHelperRefusedTheTerm(t *testing.T) {
 	}
 	if got[0][1] != "--signal" || got[0][2] != "KILL" {
 		t.Errorf("the one recorded call = %v, want a KILL", got[0])
+	}
+}
+
+// supervisedStopEnv is the stopGroup setup the supervised tests share: a
+// play supervisor configured, and a play uid with the recording helper, so
+// every signal is a recorded helper call and no real pgid is ever touched.
+func supervisedStopEnv(t *testing.T) (env worker.RunEnv, calls string) {
+	t.Helper()
+	helper, calls, _ := writeRecordingSetuidHelper(t)
+	env = runEnv(t)
+	env.Config.PlayUID = 12345
+	env.Config.SetuidHelper = helper
+	env.Config.PlaySupervisor = "/sup"
+	return env, calls
+}
+
+// assertTermThenKill checks the recorded helper calls are a TERM and a KILL.
+func assertTermThenKill(t *testing.T, calls string) {
+	t.Helper()
+	got := recordedCalls(t, calls)
+	if len(got) != 2 || got[0][2] != "TERM" || got[1][2] != "KILL" {
+		t.Errorf("recorded calls = %v, want a TERM then a KILL", got)
+	}
+}
+
+// TestStopGroupWaitsForTheSupervisorBackstop: under the play supervisor the
+// supervisor owns TERM -> grace -> KILL of the play, so the worker's own
+// KILL is only a backstop for a wedged supervisor. It must therefore wait
+// the grace AND the backstop before it fires, and say so at warn level when
+// it does: a supervisor killed this way leaves its orphans to PID 1 again.
+func TestStopGroupWaitsForTheSupervisorBackstop(t *testing.T) {
+	env, calls := supervisedStopEnv(t)
+	var logBuf bytes.Buffer
+	// The backstop is well above what the two helper execs take on their
+	// own (tens of milliseconds), so the elapsed floor below only holds for
+	// a stopGroup that really waited it out.
+	r := &Runner{
+		KillGrace:          20 * time.Millisecond,
+		SupervisorBackstop: 400 * time.Millisecond,
+		Log:                slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	exited := make(chan struct{}) // never closed: the supervisor is wedged
+
+	start := time.Now()
+	r.stopGroup(env, 4242, exited)
+	elapsed := time.Since(start)
+
+	if want := r.KillGrace + r.SupervisorBackstop; elapsed < want {
+		t.Errorf("stopGroup returned after %v, want at least the grace plus the backstop (%v)", elapsed, want)
+	}
+	logText := logBuf.String()
+	if !strings.Contains(logText, "level=WARN") || !strings.Contains(logText, "play supervisor did not stop the run in time") {
+		t.Errorf("log = %q, want a WARN naming the wedged supervisor", logText)
+	}
+	for _, field := range []string{"pgid=4242", "grace=20ms", "backstop=400ms"} {
+		if !strings.Contains(logText, field) {
+			t.Errorf("log = %q, want it to carry %s", logText, field)
+		}
+	}
+	assertTermThenKill(t, calls)
+}
+
+// TestStopGroupSupervisedReturnsOnExit: a supervisor that stops the run
+// within its grace ends stopGroup's wait at once, with no warning. The
+// backstop is large on purpose, so a stopGroup that waited it out anyway
+// would be obvious even on a loaded machine; the KILL still goes out,
+// since the group can outlive the supervisor.
+func TestStopGroupSupervisedReturnsOnExit(t *testing.T) {
+	env, calls := supervisedStopEnv(t)
+	var logBuf bytes.Buffer
+	r := &Runner{
+		KillGrace:          20 * time.Millisecond,
+		SupervisorBackstop: 5 * time.Second,
+		Log:                slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	exited := make(chan struct{})
+	time.AfterFunc(10*time.Millisecond, func() { close(exited) })
+
+	start := time.Now()
+	r.stopGroup(env, 4242, exited)
+	elapsed := time.Since(start)
+
+	if elapsed >= 2*time.Second {
+		t.Errorf("stopGroup took %v, want it to return once the supervisor exited, well before the %v backstop", elapsed, r.SupervisorBackstop)
+	}
+	if logText := logBuf.String(); strings.Contains(logText, "play supervisor did not stop the run in time") {
+		t.Errorf("log = %q, want no backstop warning for a supervisor that exited", logText)
+	}
+	assertTermThenKill(t, calls)
+}
+
+// TestStopGroupUnsupervisedIgnoresTheBackstop: without a supervisor the
+// worker still owns the escalation, so the backstop must not stretch its
+// wait, and nothing is logged about a supervisor that is not there.
+func TestStopGroupUnsupervisedIgnoresTheBackstop(t *testing.T) {
+	env, calls := supervisedStopEnv(t)
+	env.Config.PlaySupervisor = ""
+	var logBuf bytes.Buffer
+	r := &Runner{
+		KillGrace:          20 * time.Millisecond,
+		SupervisorBackstop: 5 * time.Second,
+		Log:                slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	exited := make(chan struct{}) // never closed
+
+	start := time.Now()
+	r.stopGroup(env, 4242, exited)
+	elapsed := time.Since(start)
+
+	if elapsed >= 2*time.Second {
+		t.Errorf("stopGroup took %v, want only the %v grace without a supervisor", elapsed, r.KillGrace)
+	}
+	if logText := logBuf.String(); strings.Contains(logText, "play supervisor") {
+		t.Errorf("log = %q, want nothing about a supervisor", logText)
+	}
+	assertTermThenKill(t, calls)
+}
+
+// TestSupervisorBackstopDefault: zero means the default, which is 10 s.
+func TestSupervisorBackstopDefault(t *testing.T) {
+	if got := (&Runner{}).supervisorBackstop(); got != 10*time.Second {
+		t.Errorf("default backstop = %v, want 10s", got)
+	}
+	if got := (&Runner{SupervisorBackstop: time.Second}).supervisorBackstop(); got != time.Second {
+		t.Errorf("backstop = %v, want the configured 1s", got)
+	}
+}
+
+// TestSummarizeNamesTheSupervisor: a supervisor that could not do its job
+// ran no play and exits 1 with one line of its own; that line is the job's
+// error, so the operator is not sent looking at Ansible. Anything else on
+// stderr of an exit 1 is the runner's and keeps the generic text.
+func TestSummarizeNamesTheSupervisor(t *testing.T) {
+	const refusal = "pulsix-play-supervisor: set child subreaper: operation not permitted"
+	cases := map[string]struct {
+		stderr string
+		want   string
+	}{
+		"the supervisor refuses":   {stderr: refusal + "\n", want: refusal},
+		"ansible-runner exits 1":   {stderr: "ERROR! the playbook could not be found\n", want: "ansible-runner exited with code 1"},
+		"the prefix only mid-text": {stderr: "ERROR! boom\n" + refusal + "\n", want: "ansible-runner exited with code 1"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, stats, errText := summarize(1, nil, nil, tc.stderr, nil, 0)
+			if status != worker.StatusError || stats != nil {
+				t.Errorf("status = %q stats = %v, want %q and none", status, stats, worker.StatusError)
+			}
+			if errText != tc.want {
+				t.Errorf("errText = %q, want %q", errText, tc.want)
+			}
+		})
 	}
 }
 

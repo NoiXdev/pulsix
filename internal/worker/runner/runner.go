@@ -42,11 +42,19 @@ import (
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
 // defaultKillGrace is how long a SIGTERM'd runner gets to exit before it is
-// SIGKILL'd.
+// SIGKILL'd. Under the play supervisor it is the supervisor's --grace.
 const defaultKillGrace = 5 * time.Second
+
+// defaultSupervisorBackstop is how long past the kill grace the worker waits
+// for a supervised run to end before it KILLs the supervisor's process group
+// itself. The supervisor owns the play's TERM -> grace -> KILL; this margin
+// covers its own KILL pass and reaping, so the worker's KILL fires only for a
+// supervisor that is wedged.
+const defaultSupervisorBackstop = 10 * time.Second
 
 // The job kinds this executor runs; every other kind is reported as an
 // executor error (the composite dispatch's default). bootstrap and
@@ -114,6 +122,10 @@ type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace on cancellation;
 	// defaultKillGrace when zero.
 	KillGrace time.Duration
+	// SupervisorBackstop is how long past KillGrace a supervised run gets
+	// to end before the worker KILLs its process group itself;
+	// defaultSupervisorBackstop when zero.
+	SupervisorBackstop time.Duration
 	// Log receives run diagnostics: malformed-line warnings, cancellation
 	// and failure notices. Payload material never lands here — the run's
 	// output travels as events, failures name ids and exit codes only.
@@ -185,7 +197,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		args = append(args, "--limit", limit)
 	}
 
-	cmd, err := newRunnerCmd(bin, args, env, r.subprocessEnv(env, ansibleBin))
+	cmd, err := newRunnerCmd(bin, args, env, r.subprocessEnv(env, ansibleBin), r.killGrace())
 	if err != nil {
 		return worker.StatusError, nil, err
 	}
@@ -194,6 +206,9 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if err != nil {
 		return worker.StatusError, nil, fmt.Errorf("pipe runner stdout: %w", err)
 	}
+	// A buffer, not a pipe of our own: exec.Cmd copies stderr until the
+	// process exits, so the supervisor's own last line (its failures name
+	// themselves) always has a reader and never dies of SIGPIPE.
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -233,8 +248,9 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	// (see the comment above) — so the early wake only takes effect once
 	// the stdout stream itself is done. A leader that dies while the
 	// stream is still blocked reading is not reflected on exited in time;
-	// stopGroup then simply waits out the full grace before sending the
-	// unconditional KILL, which is exactly the case that signal exists for.
+	// stopGroup then simply waits out the full grace (plus the backstop
+	// under the play supervisor) before sending the unconditional KILL,
+	// which is exactly the case that signal exists for.
 	go func() {
 		<-ctx.Done()
 		// The context is cancelled on EVERY return from the loop's runOne
@@ -305,6 +321,19 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 
 // newRunnerCmd builds the ansible-runner subprocess's *exec.Cmd.
 //
+// With Config.PlaySupervisor set (worker.Load sets it on Linux), the
+// command runs the runner under the play supervisor (backlog 2.107):
+//
+//	<supervisor> __pulsix-play-supervisor --grace <grace> -- <abs runner bin> <args...>
+//
+// The supervisor is a child subreaper, so everything the play starts stays
+// in its tree however it detaches, and it owns the play's TERM -> grace ->
+// KILL: on the worker's TERM, and when the runner exits on its own, it stops
+// every descendant and passes the runner's exit status through. The worker's
+// own KILL (stopGroup) is only a backstop for a wedged supervisor. Without
+// a supervisor — every other OS, and every Config built by hand — the
+// command is exactly the direct spawn below.
+//
 // With PlayUID set, the command becomes
 //
 //	<helper> <uid> <runner bin> <args...>
@@ -320,31 +349,45 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 // silently. The helper setgid()s to the WORKER's own gid, deliberately not
 // a group derived from the play uid, because the worker must still be able
 // to read whatever the play writes back into the work dir — that is what
-// keeps the event stream working.
+// keeps the event stream working. Under the supervisor as well, the helper
+// execs the supervisor in the runner's place —
+// <helper> <uid> <supervisor> __pulsix-play-supervisor … — so the
+// supervisor runs as the play uid, the same uid as everything below it,
+// and signals its own descendants with no helper round trip.
 //
 // The runner binary is resolved to an absolute path first. exec.Command
-// would do that itself for the direct spawn, but the helper's argv[2] is
+// would do that itself for the direct spawn, but the supervisor does no
+// PATH lookup (it refuses a relative program), and the helper's argv[2] is
 // handed to execv — deliberately not execvp, so that only argv decides
 // which program runs — and execv does no PATH search at all. The default
 // PULSIX_ANSIBLE_RUNNER_BIN is the bare name "ansible-runner", so without
 // this every playbook job in the shipped image would die on ENOENT.
 //
 // Setpgid is unconditional regardless of PlayUID: the cancel path signals
-// the whole process group and breaks without it. It is set on the helper,
-// which execs (not forks) the runner, so the runner keeps the helper's pid
-// and the new group — one process, not two.
-func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string) (*exec.Cmd, error) {
+// the whole process group and breaks without it. It is set on the
+// outermost process: the supervisor or the runner, or the helper, which
+// execs (not forks) either of them, so that process keeps the helper's pid
+// and the new group, one process, not two. The supervisor starts the
+// runner in that same group, so the worker's TERM still reaches the runner
+// exactly as before.
+func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string, grace time.Duration) (*exec.Cmd, error) {
 	name, argv := bin, args
-	if uid := env.Config.PlayUID; uid != 0 {
+	if sup := env.Config.PlaySupervisor; sup != "" || env.Config.PlayUID != 0 {
 		abs, err := resolveRunnerBin(bin)
 		if err != nil {
 			return nil, err
 		}
-		name = env.Config.SetuidHelper
-		if name == "" {
-			name = defaultSetuidHelper
+		name, argv = abs, args
+		if sup != "" {
+			name, argv = sup, supervisor.Command(grace, abs, args)
 		}
-		argv = append([]string{strconv.FormatUint(uint64(uid), 10), abs}, args...)
+	}
+	if uid := env.Config.PlayUID; uid != 0 {
+		helper := env.Config.SetuidHelper
+		if helper == "" {
+			helper = defaultSetuidHelper
+		}
+		name, argv = helper, append([]string{strconv.FormatUint(uint64(uid), 10), name}, argv...)
 	}
 	cmd := exec.Command(name, argv...)
 	cmd.Dir = env.WorkDir
@@ -466,6 +509,14 @@ func (r *Runner) killGrace() time.Duration {
 	return defaultKillGrace
 }
 
+// supervisorBackstop returns the effective backstop past the kill grace.
+func (r *Runner) supervisorBackstop() time.Duration {
+	if r.SupervisorBackstop > 0 {
+		return r.SupervisorBackstop
+	}
+	return defaultSupervisorBackstop
+}
+
 // signalHelperTimeout bounds one setuid-helper signal call (backlog 2.104)
 // so a wedged helper cannot hold the cancel path open. Behind it is a
 // handful of syscalls — the privilege drop (setgroups, setgid, setuid, each
@@ -558,11 +609,29 @@ func signalWord(sig syscall.Signal) (string, error) {
 // is a harmless ESRCH either way (signalGroup's own contract). Both
 // signals are best-effort — a failure is logged by signalGroup and never
 // turned into the run's status.
+//
+// Under the play supervisor (Config.PlaySupervisor set) the TERM reaches
+// the supervisor, and the supervisor owns the play's TERM -> grace -> KILL
+// across its whole tree, sessions and double forks included. The worker
+// then owns no escalation of its own: it waits the grace plus the
+// supervisor backstop, and its KILL is only for a supervisor that is
+// wedged. That KILL is logged at warn level when it is what ended the
+// wait, because a supervisor killed this way leaves the play's orphans to
+// PID 1 again.
 func (r *Runner) stopGroup(env worker.RunEnv, pgid int, exited <-chan struct{}) {
 	_ = r.signalGroup(env, pgid, syscall.SIGTERM)
+	grace, supervised := r.killGrace(), env.Config.PlaySupervisor != ""
+	wait := grace
+	if supervised {
+		wait += r.supervisorBackstop()
+	}
 	select {
 	case <-exited:
-	case <-time.After(r.killGrace()):
+	case <-time.After(wait):
+		if supervised {
+			r.log().Warn("play supervisor did not stop the run in time; killing its process group",
+				"pgid", pgid, "grace", grace, "backstop", r.supervisorBackstop())
+		}
 	}
 	_ = r.signalGroup(env, pgid, syscall.SIGKILL)
 }
@@ -596,6 +665,9 @@ func summarize(rc int, stats map[string]hostStat, waitErr error, stderr string, 
 		if reason := setuidHelperFailure(stderr, playUID); reason != "" {
 			return worker.StatusError, nil, reason
 		}
+		if reason := supervisorFailure(stderr); reason != "" {
+			return worker.StatusError, nil, reason
+		}
 		if reason := extraVarsLoadFailure(stderr); reason != "" {
 			return worker.StatusError, nil, reason
 		}
@@ -625,6 +697,22 @@ func setuidHelperFailure(stderr string, playUID uint32) string {
 		return ""
 	}
 	return fmt.Sprintf("%s (%s=%d)", strings.TrimSpace(line), envPlayUID, playUID)
+}
+
+// supervisorFailure recognises a play supervisor that could not do its job
+// (it could not become a subreaper, could not start the runner, ...) and
+// returns its line as the run's error. The supervisor then ran no play and
+// exits 1 with one line of its own, prefixed with supervisor.ErrPrefix,
+// which the generic branch would render as "ansible-runner exited with
+// code 1" and so send the operator looking at Ansible. Only the FIRST line
+// counts, as for the setuid helper: a refusal comes before anything the
+// runner could write, and a prefix further down is the play's own output.
+func supervisorFailure(stderr string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
+	if !strings.HasPrefix(line, supervisor.ErrPrefix) {
+		return ""
+	}
+	return strings.TrimSpace(line)
 }
 
 // extraVarsLoadFailure recognises the one failure the extra-vars guard
