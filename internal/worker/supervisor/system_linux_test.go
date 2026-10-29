@@ -279,6 +279,14 @@ func TestNewSystemNamesMissingPidfd(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pidfd") {
 		t.Fatalf("err = %v, want a refusal naming the missing pidfd support", err)
 	}
+	// Both causes are named: an old kernel, and a seccomp profile that
+	// blocks the syscalls (an older container runtime's default does), so
+	// an operator on a new kernel is not sent to upgrade it.
+	for _, cause := range []string{"5.3", "seccomp"} {
+		if !strings.Contains(err.Error(), cause) {
+			t.Errorf("err = %q, want it to name %q as a possible cause", err, cause)
+		}
+	}
 	if !errors.Is(err, unix.ENOSYS) {
 		t.Errorf("err = %v, want it to wrap ENOSYS", err)
 	}

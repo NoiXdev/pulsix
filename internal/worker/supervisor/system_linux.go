@@ -33,7 +33,7 @@ func newSystem() (system, error) {
 func newSystemWith(open func(pid, flags int) (int, error)) (system, error) {
 	fd, err := open(os.Getpid(), 0)
 	if err != nil {
-		return nil, fmt.Errorf("the play supervisor needs pidfd support (Linux 5.3 or newer): pidfd_open: %w", err)
+		return nil, fmt.Errorf("the play supervisor needs pidfds, which a kernel older than Linux 5.3 lacks and a seccomp profile can block (pidfd_open, pidfd_send_signal): pidfd_open: %w", err)
 	}
 	_ = unix.Close(fd)
 	return linuxSystem{}, nil
