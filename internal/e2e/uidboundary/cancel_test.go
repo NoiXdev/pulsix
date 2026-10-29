@@ -22,13 +22,11 @@ package uidboundary
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -55,10 +53,11 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 	// This test leaves the play running — that is 2.107, and it is this
 	// test's whole point that the job still reports. Everything in the
 	// package shares one container, so those leftovers would otherwise be
-	// the starting state of TestCancellingAPlayUnderThePlayUIDStopsIt,
-	// whose first assertion is that no uid-65533 process exists at all.
-	// Without this, un-skipping that test would not be the one deleted
-	// line its doc comment promises.
+	// the starting state of TestCancellingAPlayUnderThePlayUIDStopsIt:
+	// they would satisfy its "the play has started" wait before its own
+	// play did, and fail its closing "nothing of the play uid's is left"
+	// whatever its cancel achieved. Without this, un-skipping that test
+	// would not be the one deleted line its doc comment promises.
 	t.Cleanup(func() { reapPlayUIDLeftovers(t) })
 
 	job := localhostJob(t, `
@@ -202,7 +201,12 @@ func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 // not do — a concurrent job's play would share that uid — but here it is
 // the right primitive and the narrower one: this container runs one test
 // at a time, and the premise of every test after this one is that nothing
-// of the play uid's is left over.
+// of the play uid's is left over — which is why a survivor fails the test
+// that owns this cleanup instead of only being logged.
+//
+// What it kills stays behind as zombies: this binary is the container's
+// PID 1, inherits every orphan, and never waits for a pid it did not start.
+// playUIDProcessExists counts only live processes for exactly that reason.
 func reapPlayUIDLeftovers(t *testing.T) {
 	t.Helper()
 	helper := workerConfig(t).SetuidHelper
@@ -220,7 +224,7 @@ func reapPlayUIDLeftovers(t *testing.T) {
 		}
 	}
 	if !waitUntil(time.Now().Add(30*time.Second), func() bool { return !playUIDProcessExists(t) }) {
-		t.Logf("processes under uid %d survived the cleanup:\n%s", playUID, debugPlayUIDProcesses(t))
+		t.Errorf("processes under uid %d survived the cleanup:\n%s", playUID, debugPlayUIDProcesses(t))
 	}
 	// The surviving play keeps writing into the run's work dir, which it
 	// can recreate after the worker's own cleanup already removed it. What
@@ -255,66 +259,6 @@ func reapPlayUIDLeftovers(t *testing.T) {
 	}
 }
 
-// playUIDProcessGroups lists the distinct process groups of every process
-// whose real uid is the play uid. The pgrp is field 5 of /proc/<pid>/stat,
-// read from the LAST ')' forward because field 2 is the comm and a comm may
-// contain spaces and parentheses.
-func playUIDProcessGroups(t *testing.T) []int {
-	t.Helper()
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		t.Fatalf("read /proc: %v", err)
-	}
-	want := strconv.Itoa(playUID)
-	seen := map[int]bool{}
-	var out []int
-	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
-		}
-		status, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
-		if err != nil {
-			continue // exited between ReadDir and ReadFile
-		}
-		if !uidLineIs(string(status), want) {
-			continue
-		}
-		stat, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
-		if err != nil {
-			continue
-		}
-		closeParen := strings.LastIndex(string(stat), ")")
-		if closeParen < 0 {
-			continue
-		}
-		fields := strings.Fields(string(stat)[closeParen+1:]) // state, ppid, pgrp, ...
-		if len(fields) < 3 {
-			continue
-		}
-		pgid, err := strconv.Atoi(fields[2])
-		if err != nil || seen[pgid] {
-			continue
-		}
-		seen[pgid] = true
-		out = append(out, pgid)
-	}
-	return out
-}
-
-// uidLineIs reports whether /proc/<pid>/status's "Uid:" line names want as
-// the process's REAL uid (the first of real, effective, saved, fs).
-func uidLineIs(status, want string) bool {
-	for _, line := range strings.Split(status, "\n") {
-		uid, ok := strings.CutPrefix(line, "Uid:")
-		if !ok {
-			continue
-		}
-		fields := strings.Fields(uid)
-		return len(fields) > 0 && fields[0] == want
-	}
-	return false
-}
-
 // waitUntil polls cond every 100ms until it reports true or deadline
 // passes, returning cond's last result either way.
 func waitUntil(deadline time.Time, cond func() bool) bool {
@@ -327,81 +271,4 @@ func waitUntil(deadline time.Time, cond func() bool) bool {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-}
-
-// playUIDProcessExists scans /proc for a process whose REAL uid (the first
-// field of /proc/<pid>/status's Uid: line — real, effective, saved, fs, in
-// that order) is the play uid. It is read straight from the kernel rather
-// than inferred from the playbook's own output, because the playbook's
-// output is exactly what a worker that failed to drop privilege could still
-// fake.
-func playUIDProcessExists(t *testing.T) bool {
-	t.Helper()
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		t.Fatalf("read /proc: %v", err)
-	}
-	want := strconv.Itoa(playUID)
-	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue // not a pid directory
-		}
-		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
-		if err != nil {
-			continue // the process exited between ReadDir and ReadFile
-		}
-		if uidLineIs(string(data), want) {
-			return true
-		}
-	}
-	return false
-}
-
-// debugPlayUIDProcesses is diagnostic only: dumps every /proc entry matching
-// the play uid, including its State line, so a lingering ZOMBIE (already
-// dead, reaped only by its parent calling wait) can be told apart from a
-// process still actually running. Used by reapPlayUIDLeftovers when its
-// kill did not take, and by TestCancellingAPlayUnderThePlayUIDStopsIt once
-// that test is un-skipped.
-func debugPlayUIDProcesses(t *testing.T) string {
-	t.Helper()
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return fmt.Sprintf("read /proc: %v", err)
-	}
-	want := strconv.Itoa(playUID)
-	var b strings.Builder
-	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
-		if err != nil {
-			continue
-		}
-		lines := strings.Split(string(data), "\n")
-		var uidLine, stateLine, nameLine, ppidLine string
-		for _, l := range lines {
-			switch {
-			case strings.HasPrefix(l, "Uid:"):
-				uidLine = l
-			case strings.HasPrefix(l, "State:"):
-				stateLine = l
-			case strings.HasPrefix(l, "Name:"):
-				nameLine = l
-			case strings.HasPrefix(l, "PPid:"):
-				ppidLine = l
-			}
-		}
-		fields := strings.Fields(strings.TrimPrefix(uidLine, "Uid:"))
-		if len(fields) == 0 || fields[0] != want {
-			continue
-		}
-		cmdline, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
-		fmt.Fprintf(&b, "pid=%s %s %s %s cmdline=%q\n", e.Name(), nameLine, stateLine, ppidLine, strings.ReplaceAll(string(cmdline), "\x00", " "))
-	}
-	if b.Len() == 0 {
-		return "(no matching /proc entries at dump time)"
-	}
-	return b.String()
 }
