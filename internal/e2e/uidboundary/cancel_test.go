@@ -123,10 +123,17 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 // the deleted t.Skip line. Its "the play has started" wait relies on
 // playUIDProcessExists leaving the supervisor out: under the supervisor the
 // first process of the play uid is the supervisor itself, and counting it
-// let the cancel land before ansible-runner existed. The tests that wait
-// for the play's own `sleep` before cancelling are
-// TestACancelledPlayLeavesNoZombie below and cancel_nouid_test.go's
-// TestCancellingAPlayWithoutAPlayUIDStopsIt.
+// let the cancel land before ansible-runner existed. The wait releases on
+// ansible-runner, not on the play, so the cancel may land before the
+// `sleep` exists.
+//
+// Its closing check is the lenient one: playUIDProcessExists leaves the
+// supervisor out and does not count zombies. The strict proofs, which wait
+// for the play's own `sleep` before cancelling and then count every
+// process, are TestACancelledPlayLeavesNoZombie below (play uid: no entry
+// of the play uid at all, live or zombie, supervisor included) and
+// cancel_nouid_test.go's TestCancellingAPlayWithoutAPlayUIDStopsIt (no
+// play uid: the `sleep` itself is gone).
 func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 	inImage(t)
 	writeWorkerKey(t)

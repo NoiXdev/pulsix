@@ -132,9 +132,6 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
-// TestLoadPlayUID (uid separation, Task 1): PULSIX_WORKER_PLAY_UID is
-// optional and, when set, must name a uid that is neither root nor the
-// worker's own — either would make the de-escalation a no-op or worse.
 // TestLoadPlaySupervisor: Load, not the environment, names the binary the
 // runner re-executes as the play supervisor — this very executable, on
 // Linux only. Elsewhere it stays empty and the runner spawns directly.
@@ -162,7 +159,9 @@ func TestLoadPlaySupervisor(t *testing.T) {
 }
 
 // TestLoadPlaySupervisorIgnoresEnvironment: there is no variable for it, so
-// an operator cannot point the worker at another binary.
+// an operator cannot point the worker at another binary. The value is the
+// one Load names without any (this executable on Linux, empty elsewhere),
+// not merely something other than the variable's.
 func TestLoadPlaySupervisorIgnoresEnvironment(t *testing.T) {
 	cfg, err := Load([]string{
 		"PULSIX_MANAGER_ADDR=manager.example.test:8444",
@@ -172,11 +171,20 @@ func TestLoadPlaySupervisorIgnoresEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PlaySupervisor == "/bin/evil" {
-		t.Fatal("PlaySupervisor was taken from the environment")
+	want := ""
+	if runtime.GOOS == "linux" {
+		if want, err = os.Executable(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if cfg.PlaySupervisor != want {
+		t.Fatalf("PlaySupervisor = %q, want %q whatever the environment says", cfg.PlaySupervisor, want)
 	}
 }
 
+// TestLoadPlayUID (uid separation, Task 1): PULSIX_WORKER_PLAY_UID is
+// optional and, when set, must name a uid that is neither root nor the
+// worker's own — either would make the de-escalation a no-op or worse.
 func TestLoadPlayUID(t *testing.T) {
 	for name, tc := range map[string]struct {
 		raw  string

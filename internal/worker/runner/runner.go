@@ -619,8 +619,8 @@ func signalWord(sig syscall.Signal) (string, error) {
 // then owns no escalation of its own: it waits the grace plus the
 // supervisor backstop, and its KILL is only for a supervisor that is
 // wedged. That KILL is logged at warn level, naming the run (jobID), when
-// it is what ended the wait, because a supervisor killed this way leaves the play's orphans to
-// PID 1 again.
+// it is what ended the wait, because a supervisor killed this way leaves
+// the play's orphans to PID 1 again.
 func (r *Runner) stopGroup(env worker.RunEnv, jobID string, pgid int, exited <-chan struct{}) {
 	_ = r.signalGroup(env, pgid, syscall.SIGTERM)
 	grace, supervised := r.killGrace(), env.Config.PlaySupervisor != ""

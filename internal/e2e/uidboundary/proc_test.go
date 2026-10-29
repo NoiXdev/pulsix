@@ -152,8 +152,10 @@ func isLiveUnderUID(status, want string) bool {
 // runner's place — and a cancel sent the moment it appears lands before
 // ansible-runner, let alone the play, exists: the cancel tests would then
 // prove only that a supervisor with nothing below it stops. Counting from
-// the first process that is not the supervisor restores what the wait
-// meant when it was written: the play's own processes are running.
+// the first process that is not the supervisor makes the wait release on
+// ansible-runner, the supervisor's child: the run has started, but the
+// play's own processes may not exist yet. A test that must cancel a play
+// that is already running waits for the play's own process instead.
 //
 // What a test asserts is GONE after a run must not skip anything, which is
 // why reapPlayUIDLeftovers uses livePlayUIDProcessExists and
