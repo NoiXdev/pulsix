@@ -28,7 +28,7 @@ const CANCEL_STATE_LABEL: Record<CancelHostState, string> = {
 };
 
 const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
-  finished: 'var(--px-ok)',
+  finished: 'var(--px-unknown)',
   interrupted: 'var(--px-warn)',
   'never-started': 'var(--px-unknown)',
 };
@@ -244,26 +244,27 @@ export function RunDetailPage() {
           <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
             Cancelled run
           </div>
-          {/* The warning is shown on EVERY cancelled run while backlog
-              2.107 is open. The design's anti-goal argued against an
-              unconditional banner — a warning that is almost always
-              unnecessary gets skipped — and that argument was sound on its
-              premise: that a cancel stops the play. 2.107 retracted the
-              premise. The play survives the cancel regardless of host
-              state, so there is no cancelled run on which this is
-              unnecessary, and the list below freezes at the instant the
-              worker's event stream died rather than describing a finished
-              run. The conditional version returns when 2.107 ships. */}
-          <div
-            role="alert"
-            className="m-4 rounded-md border p-3 text-xs"
-            style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
-          >
-            Cancelling stops Pulsix from following this run; it does not stop the play. The playbook may still be
-            running against <strong>every host listed below</strong>, including those with no task in flight, and a command
-            already started on a host keeps running regardless. Treat this list as what Pulsix last saw, not as a final
-            account: check the hosts before you re-run, or two runs may change the same host at once.
-          </div>
+          {/* Warn only where a command was in flight. Backlog 2.107 made a
+              cancel stop the play on the worker (spec
+              2026-10-29-cancel-stops-the-play-design.md, "What the run view
+              shows"), so a host that was between tasks or never started has
+              nothing left running and a banner there would be noise that
+              trains operators to skip the one that matters. An interrupted
+              host is the exception: the command already started on it is
+              not undone by the stop. The pill for a host with no task in
+              flight is neutral, not green: "finished" there only says its
+              last step closed, not that the play finished. */}
+          {cancelRows.some((r) => r.state === 'interrupted') && (
+            <div
+              role="alert"
+              className="m-4 rounded-md border p-3 text-xs"
+              style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
+            >
+              The run was stopped. On a host marked interrupted, a command had already started there and may still be
+              running on that host — stopping the run does not stop a command already running on a host. Check those
+              hosts before you re-run.
+            </div>
+          )}
           <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Cancelled run hosts">
             {cancelRows.map((r) => (
               <li key={r.host} className="flex items-center justify-between gap-2">
