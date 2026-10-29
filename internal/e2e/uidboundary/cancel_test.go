@@ -120,11 +120,10 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 //
 // The test was written before that fix and was skipped until it landed; it
 // is unmodified from the version that first caught the defect apart from
-// the deleted t.Skip line. One thing about it changed with the fix all the
-// same: its "the play has started" wait matches the first live process of
-// the play uid, and under the supervisor that is the supervisor itself, not
-// ansible-runner, so its cancel can land before the sleep has started (in
-// the image it reports in about a quarter of a second). The tests that wait
+// the deleted t.Skip line. Its "the play has started" wait relies on
+// playUIDProcessExists leaving the supervisor out: under the supervisor the
+// first process of the play uid is the supervisor itself, and counting it
+// let the cancel land before ansible-runner existed. The tests that wait
 // for the play's own `sleep` before cancelling are
 // TestACancelledPlayLeavesNoZombie below and cancel_nouid_test.go's
 // TestCancellingAPlayWithoutAPlayUIDStopsIt.
@@ -209,10 +208,12 @@ func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 //
 // What it kills stays behind as zombies: this binary is the container's
 // PID 1, inherits every orphan, and never waits for a pid it did not start.
-// playUIDProcessExists counts only live processes for exactly that reason.
+// livePlayUIDProcessExists counts only live processes for exactly that
+// reason — and, unlike playUIDProcessExists, the supervisor too: a
+// supervisor alive after its run is a survivor like any other.
 func reapPlayUIDLeftovers(t *testing.T) {
 	t.Helper()
-	if playUIDProcessExists(t) {
+	if livePlayUIDProcessExists(t) {
 		t.Errorf("a process of uid %d outlived its run (a regression of backlog 2.107); killing it:\n%s", playUID, debugPlayUIDProcesses(t))
 	}
 	helper := workerConfig(t).SetuidHelper
@@ -229,7 +230,7 @@ func reapPlayUIDLeftovers(t *testing.T) {
 			t.Logf("reaping play uid process group %d: %v: %s", pgid, err, out)
 		}
 	}
-	if !waitUntil(time.Now().Add(30*time.Second), func() bool { return !playUIDProcessExists(t) }) {
+	if !waitUntil(time.Now().Add(30*time.Second), func() bool { return !livePlayUIDProcessExists(t) }) {
 		t.Errorf("processes under uid %d survived the cleanup:\n%s", playUID, debugPlayUIDProcesses(t))
 	}
 	// The surviving play keeps writing into the run's work dir, which it
