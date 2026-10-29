@@ -14,13 +14,16 @@ type WorkerEndpoint struct {
 }
 
 // workerSnippets renders the docker run and compose snippets the Add
-// worker dialog shows next to the token.
+// worker dialog shows next to the token. Both start the worker under an init
+// process (--init, init: true): the worker is otherwise PID 1 and never
+// reaps what a run orphans outside its per-run supervisor (backlog 2.108).
+// The bundled compose file sets the same.
 func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, compose string) {
 	if version == "" || version == "dev" {
 		version = "latest"
 	}
 	docker = strings.Join([]string{
-		fmt.Sprintf("docker run -d --name pulsix-worker-%s --restart unless-stopped \\", name),
+		fmt.Sprintf("docker run -d --init --name pulsix-worker-%s --restart unless-stopped \\", name),
 		fmt.Sprintf("  -e PULSIX_MANAGER_ADDR=%s \\", ep.Addr),
 		fmt.Sprintf("  -e PULSIX_MANAGER_SERVER_NAME=%s \\", ep.ServerName),
 		fmt.Sprintf("  -e PULSIX_ENROLL_TOKEN=%s \\", token),
@@ -31,6 +34,7 @@ func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, com
 		"services:",
 		fmt.Sprintf("  pulsix-worker-%s:", name),
 		fmt.Sprintf("    image: noixdev/pulsix-worker:%s", version),
+		"    init: true",
 		"    restart: unless-stopped",
 		"    environment:",
 		fmt.Sprintf("      PULSIX_MANAGER_ADDR: %q", ep.Addr),
