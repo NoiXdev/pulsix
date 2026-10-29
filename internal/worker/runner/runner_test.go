@@ -37,6 +37,8 @@ const (
 	fakeEnvSticky = "FAKE_RUNNER_STICKY" // set → ignore SIGTERM (cancel test)
 	fakeEnvFlood  = "FAKE_RUNNER_FLOOD"  // set → flood ok-events in a loop, counting into the file (prompt-kill test)
 	fakeEnvPid    = "FAKE_RUNNER_PID"    // set → write the fake's own pid to the file
+	// set (with STICKY) → write the fake's pid to the file once TERM is ignored
+	fakeEnvTrapped = "FAKE_RUNNER_TRAPPED"
 	// The supervised Linux tests' modes (supervised_linux_test.go). Each
 	// starts a sleep in a session of its own, records the sleep's pid in
 	// the file the variable names, and waits for that record before going
@@ -71,6 +73,7 @@ func writeFakeRunner(t *testing.T) string {
 		"fi\n" +
 		"if [ -n \"$" + fakeEnvSticky + "\" ]; then\n" +
 		"  trap '' TERM\n" +
+		"  if [ -n \"$" + fakeEnvTrapped + "\" ]; then echo $$ > \"$" + fakeEnvTrapped + "\"; fi\n" +
 		"  while :; do sleep 5; done\n" +
 		"fi\n" +
 		"if [ -n \"$" + fakeEnvFlood + "\" ]; then\n" +
@@ -1310,7 +1313,7 @@ func TestStopGroupKillsTheGroupAfterTheGrace(t *testing.T) {
 	exited := make(chan struct{}) // never closed
 
 	start := time.Now()
-	r.stopGroup(env, 4242, exited)
+	r.stopGroup(env, "job-1", 4242, exited)
 	elapsed := time.Since(start)
 
 	if elapsed < r.KillGrace {
@@ -1345,7 +1348,7 @@ func TestStopGroupStillKillsTheGroupAfterTheLeaderExited(t *testing.T) {
 	close(exited) // the leader already exited
 
 	start := time.Now()
-	r.stopGroup(env, 4242, exited)
+	r.stopGroup(env, "job-1", 4242, exited)
 	elapsed := time.Since(start)
 
 	if elapsed >= r.KillGrace {
@@ -1409,7 +1412,7 @@ func TestStopGroupSendsTheKillEvenWhenTheHelperRefusedTheTerm(t *testing.T) {
 	exited := make(chan struct{})
 	close(exited)
 
-	r.stopGroup(env, 4242, exited)
+	r.stopGroup(env, "job-1", 4242, exited)
 
 	// (a) the warning names the helper's stderr line.
 	logText := logBuf.String()
@@ -1474,7 +1477,7 @@ func TestStopGroupWaitsForTheSupervisorBackstop(t *testing.T) {
 	exited := make(chan struct{}) // never closed: the supervisor is wedged
 
 	start := time.Now()
-	r.stopGroup(env, 4242, exited)
+	r.stopGroup(env, "job-1", 4242, exited)
 	elapsed := time.Since(start)
 
 	if want := r.KillGrace + r.SupervisorBackstop; elapsed < want {
@@ -1484,7 +1487,7 @@ func TestStopGroupWaitsForTheSupervisorBackstop(t *testing.T) {
 	if !strings.Contains(logText, "level=WARN") || !strings.Contains(logText, "play supervisor did not stop the run in time") {
 		t.Errorf("log = %q, want a WARN naming the wedged supervisor", logText)
 	}
-	for _, field := range []string{"pgid=4242", "grace=20ms", "backstop=400ms"} {
+	for _, field := range []string{"job_id=job-1", "pgid=4242", "grace=20ms", "backstop=400ms"} {
 		if !strings.Contains(logText, field) {
 			t.Errorf("log = %q, want it to carry %s", logText, field)
 		}
@@ -1509,7 +1512,7 @@ func TestStopGroupSupervisedReturnsOnExit(t *testing.T) {
 	time.AfterFunc(10*time.Millisecond, func() { close(exited) })
 
 	start := time.Now()
-	r.stopGroup(env, 4242, exited)
+	r.stopGroup(env, "job-1", 4242, exited)
 	elapsed := time.Since(start)
 
 	if elapsed >= 2*time.Second {
@@ -1536,7 +1539,7 @@ func TestStopGroupUnsupervisedIgnoresTheBackstop(t *testing.T) {
 	exited := make(chan struct{}) // never closed
 
 	start := time.Now()
-	r.stopGroup(env, 4242, exited)
+	r.stopGroup(env, "job-1", 4242, exited)
 	elapsed := time.Since(start)
 
 	if elapsed >= 2*time.Second {

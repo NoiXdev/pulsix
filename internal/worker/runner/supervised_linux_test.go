@@ -191,6 +191,9 @@ func TestSupervisedCancelStopsAnEscapedGrandchild(t *testing.T) {
 	case <-time.After(r.KillGrace + defaultSupervisorBackstop + 5*time.Second):
 		t.Fatal("the run did not end after the cancel")
 	}
+	if took, limit := time.Since(cancelled), r.KillGrace+time.Second; took >= limit {
+		t.Errorf("the run took %v to end after the cancel, want under %v: the supervisor, not the worker's backstop, must stop it", took, limit)
+	}
 	if res.status != worker.StatusCancelled || !errors.Is(res.err, context.Canceled) {
 		t.Errorf("status = %q err = %v, want cancelled + context.Canceled", res.status, res.err)
 	}
@@ -201,21 +204,22 @@ func TestSupervisedCancelStopsAnEscapedGrandchild(t *testing.T) {
 // passes that on to its own children) is the supervisor's to KILL after
 // the grace, well before the worker's backstop.
 func TestSupervisedCancelKillsAStickyRunner(t *testing.T) {
-	fake, pidFile := supervisedFake(t)
+	fake, _ := supervisedFake(t)
+	trapped := filepath.Join(t.TempDir(), "trapped.pid")
 	t.Setenv(fakeEnvSticky, "1")
+	t.Setenv(fakeEnvTrapped, trapped)
 	env := supervisedEnv(t)
 	r := &Runner{RunnerBin: fake, KillGrace: 200 * time.Millisecond}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done, _ := startRun(ctx, r, runJob(t), env, &collector{})
-	pid := readPid(t, pidFile)
+	// The fake writes this file only once its TERM trap is set, so the
+	// cancel always meets a runner that really ignores TERM.
+	pid := readPid(t, trapped)
 	if !procPresent(t, pid, filepath.Base(fake)) {
 		t.Fatalf("the fake runner (pid %d) is not running before the cancel", pid)
 	}
-	// The pid is written before the fake's TERM trap is set; give it time
-	// to be set, so the cancel meets a runner that really ignores TERM.
-	time.Sleep(300 * time.Millisecond)
 
 	cancel()
 	cancelled := time.Now()
@@ -271,22 +275,32 @@ func TestSupervisedNormalRunStopsItsDaemon(t *testing.T) {
 
 // TestSupervisedExitCodesPassThrough: summarize tells failed (2) and
 // unreachable (4) runs apart by the runner's exit code, so the supervisor's
-// own exit must carry it through unchanged.
+// own exit must carry it through unchanged. The fixture's recap is clean,
+// so only the exit code can make these runs failed; rc 0 is the control
+// that the same recap reads as succeeded.
 func TestSupervisedExitCodesPassThrough(t *testing.T) {
-	for _, rc := range []string{"2", "4"} {
-		t.Run("exit "+rc, func(t *testing.T) {
+	cases := []struct {
+		rc   string
+		want worker.Status
+	}{
+		{"0", worker.StatusSucceeded},
+		{"2", worker.StatusFailed},
+		{"4", worker.StatusFailed},
+	}
+	for _, tc := range cases {
+		t.Run("exit "+tc.rc, func(t *testing.T) {
 			fake, _ := supervisedFake(t)
-			t.Setenv(fakeEnvEvents, fixtureAbs(t))
-			t.Setenv(fakeEnvExit, rc)
+			t.Setenv(fakeEnvEvents, cleanFixtureAbs(t))
+			t.Setenv(fakeEnvExit, tc.rc)
 			nop := func(*workerpb.RunEvent) error { return nil }
 
 			wantStatus, wantStats, wantErr := (&Runner{RunnerBin: fake}).Run(context.Background(), runJob(t), runEnv(t), nop)
 			status, stats, err := (&Runner{RunnerBin: fake}).Run(context.Background(), runJob(t), supervisedEnv(t), nop)
-			if wantStatus != worker.StatusFailed || wantErr != nil {
-				t.Fatalf("unsupervised run: status = %q err = %v, want failed", wantStatus, wantErr)
+			if wantStatus != tc.want || wantErr != nil {
+				t.Fatalf("unsupervised run: status = %q err = %v, want %q", wantStatus, wantErr, tc.want)
 			}
-			if status != wantStatus || err != nil {
-				t.Errorf("supervised run: status = %q err = %v, want %q as unsupervised", status, err, wantStatus)
+			if status != tc.want || err != nil {
+				t.Errorf("supervised run: status = %q err = %v, want %q as unsupervised", status, err, tc.want)
 			}
 			if !reflect.DeepEqual(stats, wantStats) {
 				t.Errorf("supervised stats = %v, want the unsupervised run's %v", stats, wantStats)

@@ -206,8 +206,9 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if err != nil {
 		return worker.StatusError, nil, fmt.Errorf("pipe runner stdout: %w", err)
 	}
-	// A buffer, not a pipe of our own: exec.Cmd copies stderr until the
-	// process exits, so the supervisor's own last line (its failures name
+	// A buffer, not a pipe of our own: exec.Cmd copies stderr until EOF —
+	// until every process holding the pipe has closed it — and Wait waits
+	// for that copy, so the supervisor's own last line (its failures name
 	// themselves) always has a reader and never dies of SIGPIPE.
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -270,7 +271,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		default:
 		}
 		cancelledCh <- struct{}{}
-		r.stopGroup(env, cmd.Process.Pid, exited)
+		r.stopGroup(env, job.GetId(), cmd.Process.Pid, exited)
 	}()
 
 	stats, scanErr := r.streamEvents(ctx, stdout, sink, newRedactor(job))
@@ -286,7 +287,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		// group immediately (the same TERM→KILL policy as the cancel path)
 		// before waiting for it. The claim is at-least-once; the reaper
 		// requeues what this worker never reported.
-		r.stopGroup(env, cmd.Process.Pid, exited)
+		r.stopGroup(env, job.GetId(), cmd.Process.Pid, exited)
 		<-exited
 		return worker.StatusError, nil, fmt.Errorf("stream runner events: %w", scanErr)
 	}
@@ -615,10 +616,10 @@ func signalWord(sig syscall.Signal) (string, error) {
 // across its whole tree, sessions and double forks included. The worker
 // then owns no escalation of its own: it waits the grace plus the
 // supervisor backstop, and its KILL is only for a supervisor that is
-// wedged. That KILL is logged at warn level when it is what ended the
-// wait, because a supervisor killed this way leaves the play's orphans to
+// wedged. That KILL is logged at warn level, naming the run (jobID), when
+// it is what ended the wait, because a supervisor killed this way leaves the play's orphans to
 // PID 1 again.
-func (r *Runner) stopGroup(env worker.RunEnv, pgid int, exited <-chan struct{}) {
+func (r *Runner) stopGroup(env worker.RunEnv, jobID string, pgid int, exited <-chan struct{}) {
 	_ = r.signalGroup(env, pgid, syscall.SIGTERM)
 	grace, supervised := r.killGrace(), env.Config.PlaySupervisor != ""
 	wait := grace
@@ -630,7 +631,7 @@ func (r *Runner) stopGroup(env worker.RunEnv, pgid int, exited <-chan struct{}) 
 	case <-time.After(wait):
 		if supervised {
 			r.log().Warn("play supervisor did not stop the run in time; killing its process group",
-				"pgid", pgid, "grace", grace, "backstop", r.supervisorBackstop())
+				"job_id", jobID, "pgid", pgid, "grace", grace, "backstop", r.supervisorBackstop())
 		}
 	}
 	_ = r.signalGroup(env, pgid, syscall.SIGKILL)
