@@ -3,14 +3,11 @@
 package supervisor
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"runtime"
-	"slices"
 	"strconv"
-	"strings"
 	"syscall"
 	"unsafe"
 
@@ -78,74 +75,36 @@ func (linuxSystem) DropStdout() error {
 	return nil
 }
 
-// Descendants reads every /proc/<pid>/stat once, builds the parent → child
-// map, and walks it from the supervisor. Zombies (Z) and dead tasks (X) are
-// left out: they have nothing left to signal, only to reap.
+// Descendants lists /proc and walks it from the supervisor (descendantsFrom).
+// Only a failure to list /proc itself is an error; a single entry that
+// cannot be read is skipped by the walk.
 func (linuxSystem) Descendants() ([]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, fmt.Errorf("read /proc: %w", err)
 	}
-	children := make(map[int][]int)
+	pids := make([]int, 0, len(entries))
 	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue // not a process: self, sys, meminfo, …
+		if pid, err := strconv.Atoi(e.Name()); err == nil {
+			pids = append(pids, pid) // the rest is not a process: self, sys, meminfo, …
 		}
-		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ESRCH) {
-			continue // exited between ReadDir and ReadFile
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read /proc/%d/stat: %w", pid, err)
-		}
-		fields, err := parseStat(b)
-		if err != nil {
-			return nil, fmt.Errorf("/proc/%d/stat: %w", pid, err)
-		}
-		if state := fields[0]; state == "Z" || state == "X" {
-			continue
-		}
-		ppid, err := strconv.Atoi(fields[1])
-		if err != nil {
-			return nil, fmt.Errorf("/proc/%d/stat: ppid %q: %w", pid, fields[1], err)
-		}
-		children[ppid] = append(children[ppid], pid)
 	}
-
-	var out []int
-	queue := []int{os.Getpid()}
-	for len(queue) > 0 {
-		next := children[queue[0]]
-		queue = append(queue[1:], next...)
-		out = append(out, next...)
-	}
-	return out, nil
+	return descendantsFrom(os.Getpid(), pids, readProcStat), nil
 }
 
-// parseStat returns the fields of a /proc/<pid>/stat line that follow the
-// command name: [0] state, [1] ppid, [2] pgrp, [3] session, and so on. The
-// command name is in parentheses and may itself contain spaces, parentheses
-// or newlines, so the fields start after the last ')', not after the
-// second space.
-func parseStat(stat []byte) ([]string, error) {
-	i := bytes.LastIndexByte(stat, ')')
-	if i < 0 {
-		return nil, errors.New("no command name in stat")
-	}
-	fields := strings.Fields(string(stat[i+1:]))
-	if len(fields) < 4 {
-		return nil, fmt.Errorf("stat has %d fields after the command name, want at least 4", len(fields))
-	}
-	return fields, nil
+// readProcStat is the statReader over the real /proc.
+func readProcStat(pid int) ([]byte, error) {
+	return os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 }
 
 // Signal sends sig through a pidfd, never by raw pid. The pidfd pins the
 // process: once it is open, it names this process and no other, even if the
-// pid is recycled. Descent is therefore re-checked after opening it; a pid
-// that was reaped and reused between the caller's Descendants and here
-// either fails to open or is no longer a descendant, and is left alone.
-func (s linuxSystem) Signal(pid int, sig syscall.Signal) error {
+// pid is recycled. Descent is therefore re-checked after opening it, by
+// walking pid's own parent chain (isDescendant); a pid that was reaped and
+// reused between the caller's Descendants and here either fails to open or
+// is no longer a descendant, and is left alone, as is one whose chain cannot
+// be read.
+func (linuxSystem) Signal(pid int, sig syscall.Signal) error {
 	fd, err := unix.PidfdOpen(pid, 0)
 	if errors.Is(err, unix.ESRCH) {
 		return nil
@@ -155,11 +114,7 @@ func (s linuxSystem) Signal(pid int, sig syscall.Signal) error {
 	}
 	defer func() { _ = unix.Close(fd) }()
 
-	pids, err := s.Descendants()
-	if err != nil {
-		return fmt.Errorf("re-check descent: %w", err)
-	}
-	if !slices.Contains(pids, pid) {
+	if !isDescendant(os.Getpid(), pid, readProcStat) {
 		return nil
 	}
 	if err := unix.PidfdSendSignal(fd, sig, nil, 0); err != nil && !errors.Is(err, unix.ESRCH) {
@@ -196,9 +151,20 @@ func (linuxSystem) Reap() ([]reaped, error) {
 // with exit code 2), so the disposition is set straight to SIG_DFL with
 // rt_sigaction, the signal is unblocked on this thread, and it is sent to
 // this thread, where the kernel delivers it on the way back from tgkill.
+// The core size limit is set to zero first: when the runner died of a
+// dumping signal (SIGABRT, SIGSEGV, …) it has already left its own core, and
+// the supervisor's would be a second one of a process that did not crash.
+// The worker still sees the same signal; only the core-dumped bit differs.
 // It returns only if sig does not end a process by default.
 func raise(sig syscall.Signal) error {
 	runtime.LockOSThread()
+	// A failure here must not stop the raise: dying of the right signal
+	// matters more than a spare core file. It is reported only if the
+	// process survives.
+	var errs []error
+	if err := unix.Setrlimit(unix.RLIMIT_CORE, &unix.Rlimit{}); err != nil {
+		errs = append(errs, fmt.Errorf("setrlimit(RLIMIT_CORE, 0): %w", err))
+	}
 	// SIGKILL's disposition cannot be changed, and need not be.
 	if sig != syscall.SIGKILL {
 		// A zeroed kernel struct sigaction is SIG_DFL with no flags and
@@ -218,7 +184,7 @@ func raise(sig syscall.Signal) error {
 		return fmt.Errorf("unblock: %w", err)
 	}
 	if err := unix.Tgkill(unix.Getpid(), unix.Gettid(), sig); err != nil {
-		return fmt.Errorf("tgkill: %w", err)
+		errs = append(errs, fmt.Errorf("tgkill: %w", err))
 	}
-	return nil
+	return errors.Join(errs...)
 }
