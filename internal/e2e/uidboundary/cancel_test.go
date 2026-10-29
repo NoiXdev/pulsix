@@ -8,15 +8,17 @@
 // can signal its own child just fine and is therefore structurally blind to
 // the half that actually fails.
 //
-// This file holds two tests, not one, because investigating the first one
-// surfaced a SECOND, separate defect that Tasks 1-2 do not and cannot fix:
-// backlog 2.107. TestCancellingAPlayUnderThePlayUIDReportsCancelled proves
-// the uid-crossing half (what Tasks 1-2 actually built) and passes.
-// TestCancellingAPlayUnderThePlayUIDStopsIt proves the play's own processes
-// actually die and is skipped — see its doc comment, backlog row 2.107 in
-// docs/BACKLOG.md (which carries the full diagnosis: installed versions,
-// source locations and the observed pgids) and the "As built" section of
-// docs/superpowers/specs/2026-10-28-cancel-across-the-uid-boundary-design.md.
+// This file holds more than one test because investigating the first one
+// surfaced a SECOND, separate defect: backlog 2.107, the play surviving the
+// cancel in process groups the worker never signalled.
+// TestCancellingAPlayUnderThePlayUIDReportsCancelled proves the uid-crossing
+// half (2.104). TestCancellingAPlayUnderThePlayUIDStopsIt proves the play's
+// own processes actually die; it was skipped until the play supervisor
+// (internal/worker/supervisor, docs/superpowers/specs/2026-10-29-cancel-stops-the-play-design.md)
+// fixed 2.107, and runs unchanged apart from that one deleted skip.
+// TestACancelledPlayLeavesNoZombie adds what StopsIt cannot see: that the
+// play is reaped, not only dead. cancel_nouid_test.go holds the same proof
+// without a play uid.
 package uidboundary
 
 import (
@@ -43,21 +45,20 @@ import (
 // stopGroup's cancel watcher hung forever, and the job was never reported at
 // all (the job simply never reports after 30s).
 //
-// It does NOT assert that the play's own processes are gone — that the
-// cancel actually stops anything running — because it does not: see backlog
-// 2.107 and TestCancellingAPlayUnderThePlayUIDStopsIt below, skipped on
-// purpose.
+// It does not assert that the play's own processes are gone — that is
+// TestCancellingAPlayUnderThePlayUIDStopsIt's job below, which was written
+// when this test still left the play running (backlog 2.107).
 func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 	inImage(t)
 	writeWorkerKey(t)
-	// This test leaves the play running — that is 2.107, and it is this
-	// test's whole point that the job still reports. Everything in the
-	// package shares one container, so those leftovers would otherwise be
-	// the starting state of TestCancellingAPlayUnderThePlayUIDStopsIt:
-	// they would satisfy its "the play has started" wait before its own
-	// play did, and fail its closing "nothing of the play uid's is left"
-	// whatever its cancel achieved. Without this, un-skipping that test
-	// would not be the one deleted line its doc comment promises.
+	// Until the play supervisor this test left the play running (2.107).
+	// Everything in the package shares one container, so a survivor would
+	// be the starting state of TestCancellingAPlayUnderThePlayUIDStopsIt:
+	// it would satisfy that test's "the play has started" wait before its
+	// own play did, and fail its closing "nothing of the play uid's is
+	// left" whatever its cancel achieved. The cleanup stays as a guard: a
+	// survivor now fails this test as the regression it is, and is still
+	// cleared out of the way of the tests after it.
 	t.Cleanup(func() { reapPlayUIDLeftovers(t) })
 
 	job := localhostJob(t, `
@@ -107,29 +108,27 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 	}
 }
 
-// TestCancellingAPlayUnderThePlayUIDStopsIt is backlog 2.107, skipped on
-// purpose: Tasks 1-2 (the setuid helper's --signal mode and stopGroup
-// routing through it) correctly deliver TERM then KILL across the uid
-// boundary to the LEADER process — ansible-runner itself — and that leader
-// dies on schedule, which is exactly what TestCancellingAPlayUnderThePlayUIDReportsCancelled
-// proves above. But ansible-runner hands the actual play off to a process
-// ansible-runner itself put in a NEW process group, and ansible-core's own
-// per-host worker puts it in a THIRD, deeper one still; the worker's
-// Setpgid-based kill(-pgid, …) never reaches either, so the play survives
-// the cancel. This is independent of the uid work: the identical escape
-// reproduces with a plain `kill -TERM/-KILL -$pgid` from the SAME uid, no
-// setuid helper, no PULSIX_WORKER_PLAY_UID at all (backlog row 2.107 in
-// docs/BACKLOG.md has the cross-check). Fixing it needs a design decision —
-// walking /proc by descendancy rather than by uid, since discovery by uid
-// would reach a CONCURRENT job's play on the same worker, and a process
-// already reparented to init escapes a descendancy walk too — which is its
-// own spec, not a fix bolted onto this task.
+// TestCancellingAPlayUnderThePlayUIDStopsIt is backlog 2.107: a cancel
+// must stop the play itself, not only its leader. ansible-runner hands the
+// play to a process it put in a NEW process group, and ansible-core's
+// per-host worker puts it in a THIRD, deeper one, so the worker's
+// kill(-pgid, …) reached ansible-runner and nothing below it, with or
+// without a play uid (backlog row 2.107 in docs/BACKLOG.md has the
+// diagnosis). The play supervisor fixes it: a child subreaper per run that
+// TERMs and then KILLs every descendant, whatever group or session it
+// moved to (docs/superpowers/specs/2026-10-29-cancel-stops-the-play-design.md).
 //
-// Un-skip by deleting the t.Skip line below; everything after it is
-// unmodified from the version that first caught this.
+// The test was written before that fix and was skipped until it landed; it
+// is unmodified from the version that first caught the defect apart from
+// the deleted t.Skip line. One thing about it changed with the fix all the
+// same: its "the play has started" wait matches the first live process of
+// the play uid, and under the supervisor that is the supervisor itself, not
+// ansible-runner, so its cancel can land before the sleep has started (in
+// the image it reports in about a quarter of a second). The tests that wait
+// for the play's own `sleep` before cancelling are
+// TestACancelledPlayLeavesNoZombie below and cancel_nouid_test.go's
+// TestCancellingAPlayWithoutAPlayUIDStopsIt.
 func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
-	t.Skip("backlog 2.107: ansible-runner's pexpect pty-fork and ansible-core's WorkerProcess each put the play in a process group the worker never signals, so the play survives a cancel with or without a play uid; the uid crossing itself is fixed and proven by TestCancellingAPlayUnderThePlayUIDReportsCancelled")
-
 	inImage(t)
 	writeWorkerKey(t)
 
@@ -189,11 +188,15 @@ func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 }
 
 // reapPlayUIDLeftovers kills everything still running under the play uid
-// and clears whatever it left in the data dir. It exists because of
-// backlog 2.107: a cancel reaches the worker's own ansible-runner leader
-// and nothing in the two process groups below it, so a cancelled run in
-// this package leaves a `sleep 300` and the two ansible processes above it
-// alive for the rest of the container's life.
+// and clears whatever it left in the data dir. It was written for backlog
+// 2.107, when a cancel reached the worker's own ansible-runner leader and
+// nothing in the two process groups below it, so a cancelled run in this
+// package left a `sleep 300` and the two ansible processes above it alive
+// for the rest of the container's life. The play supervisor fixed that,
+// and the function stays as a guard: it runs after the owning test's worker
+// has stopped, so any live process of the play uid it finds outlived its
+// run. That is a regression of 2.107, which it reports as a failure of the
+// owning test before clearing it away so the tests after it start clean.
 //
 // The kill goes through the setuid helper for the same reason the worker's
 // own does: this process is uid 65532 and the kernel will not let it
@@ -209,6 +212,9 @@ func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 // playUIDProcessExists counts only live processes for exactly that reason.
 func reapPlayUIDLeftovers(t *testing.T) {
 	t.Helper()
+	if playUIDProcessExists(t) {
+		t.Errorf("a process of uid %d outlived its run (a regression of backlog 2.107); killing it:\n%s", playUID, debugPlayUIDProcesses(t))
+	}
 	helper := workerConfig(t).SetuidHelper
 	// Never signal our own group. A helper child spawned without Setpgid
 	// is a member of it and is uid 65533 for the stretch between its drop
@@ -256,6 +262,44 @@ func reapPlayUIDLeftovers(t *testing.T) {
 		if err := os.RemoveAll(full); err != nil {
 			t.Logf("remove %s: %v", full, err)
 		}
+	}
+}
+
+// TestACancelledPlayLeavesNoZombie is what TestCancellingAPlayUnderThePlayUIDStopsIt
+// cannot see, kept in its own test so that one stays as it was written:
+// playUIDProcessExists counts only live processes, so a play that died but
+// was never reaped would pass it. Under the supervisor nothing of a
+// cancelled play may be left in /proc at all within the grace plus one
+// second: the supervisor is the play's subreaper and reaps every
+// descendant before it exits. A play-uid zombie means some process
+// escaped it to this binary, PID 1, which never reaps a pid it did not
+// start.
+func TestACancelledPlayLeavesNoZombie(t *testing.T) {
+	inImage(t)
+	writeWorkerKey(t)
+	t.Cleanup(func() { reapPlayUIDLeftovers(t) })
+
+	job := localhostJob(t, `
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: sleep far longer than this test is willing to wait
+      ansible.builtin.command: sleep 305
+      changed_when: false
+`)
+	job.Id = "01900000-0000-7000-8000-00000000009a"
+
+	result, logs, cancelledAt := cancelRun(t, workerConfig(t), job, func() bool {
+		_, state, ok := processWithCmdline(t, "sleep 305")
+		return ok && state != "Z"
+	})
+
+	if got := result.GetStatus(); got != "cancelled" {
+		t.Errorf("status = %q, want cancelled (error: %q):\n%s", got, result.GetError(), logs)
+	}
+	if !waitUntil(cancelledAt.Add(stopGrace+time.Second), func() bool { return !playUIDEntryExists(t) }) {
+		t.Errorf("a /proc entry of uid %d, live or zombie, is left %v after the cancel:\n%s",
+			playUID, stopGrace+time.Second, debugPlayUIDProcesses(t))
 	}
 }
 

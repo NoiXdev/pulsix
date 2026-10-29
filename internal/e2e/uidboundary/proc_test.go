@@ -1,7 +1,9 @@
 package uidboundary
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -140,9 +142,9 @@ func playUIDProcessExists(t *testing.T) bool {
 // debugPlayUIDProcesses is diagnostic only: dumps every /proc entry matching
 // the play uid, including its State line, so a lingering ZOMBIE (already
 // dead, reaped only by its parent calling wait) can be told apart from a
-// process still actually running. Used by reapPlayUIDLeftovers when its
-// kill did not take, and by TestCancellingAPlayUnderThePlayUIDStopsIt once
-// that test is un-skipped.
+// process still actually running. Used by reapPlayUIDLeftovers when it
+// finds a survivor or its kill did not take, and by the tests that assert
+// nothing of a play is left after its run.
 func debugPlayUIDProcesses(t *testing.T) string {
 	t.Helper()
 	entries, err := os.ReadDir("/proc")
@@ -184,4 +186,95 @@ func debugPlayUIDProcesses(t *testing.T) string {
 		return "(no matching /proc entries at dump time)"
 	}
 	return b.String()
+}
+
+// playUIDEntryExists reports whether ANY /proc entry belongs to the play
+// uid, zombies and dying processes included — unlike playUIDProcessExists,
+// which counts only live ones. Under the play supervisor nothing of a
+// finished run may be left at all: the supervisor is a child subreaper and
+// reaps every descendant before it exits, so a play-uid zombie here means
+// something escaped to this binary (PID 1, which never reaps a pid it did
+// not start) and is a regression, not noise to filter out.
+func playUIDEntryExists(t *testing.T) bool {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatalf("read /proc: %v", err)
+	}
+	want := strconv.Itoa(playUID)
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
+		if err != nil {
+			continue // reaped between ReadDir and ReadFile
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if uid, ok := strings.CutPrefix(line, "Uid:"); ok {
+				if fields := strings.Fields(uid); len(fields) > 0 && fields[0] == want {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
+// processWithCmdline finds a process whose /proc/<pid>/cmdline, its NULs
+// joined by spaces and trimmed, is exactly want, and returns its pid and
+// the state letter of its State: line ("S", "R", "Z", ...).
+//
+// It cannot see a zombie: the kernel releases a process's memory when it
+// exits, and cmdline is read from that memory, so a zombie's cmdline is
+// empty. A caller that must also rule out a zombie keeps the pid this
+// returned while the process was live and checks processGone on it.
+func processWithCmdline(t *testing.T, want string) (pid int, state string, ok bool) {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatalf("read /proc: %v", err)
+	}
+	for _, e := range entries {
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(strings.ReplaceAll(string(cmdline), "\x00", " ")) != want {
+			continue
+		}
+		status, err := os.ReadFile(filepath.Join("/proc", e.Name(), "status"))
+		if err != nil {
+			continue // it ended between the two reads
+		}
+		return n, procState(string(status)), true
+	}
+	return 0, "", false
+}
+
+// processGone reports whether pid has no /proc entry at all: it has ended
+// AND been reaped, so it is neither running nor a zombie. Pids in the
+// container's own namespace count up from 1 towards pid_max before they
+// wrap, so within one test a pid is not handed to a new process again.
+func processGone(pid int) bool {
+	_, err := os.Stat(filepath.Join("/proc", strconv.Itoa(pid)))
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// procState is the state letter of a /proc/<pid>/status text's State: line,
+// or "" without one.
+func procState(status string) string {
+	for _, line := range strings.Split(status, "\n") {
+		if state, ok := strings.CutPrefix(line, "State:"); ok {
+			if fields := strings.Fields(state); len(fields) > 0 {
+				return fields[0]
+			}
+		}
+	}
+	return ""
 }
