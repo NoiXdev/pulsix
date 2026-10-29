@@ -90,9 +90,16 @@ COPY --from=build /out/pulsix-worker /pulsix-worker
 # not from $HOME, and does it for a `connection: local` task as much as for
 # an SSH one. With --no-create-home every task came back UNREACHABLE with
 # "Failed to create temporary directory ... /home/pulsix-play/.ansible/tmp".
-# The run's own scratch still lives in its work dir (HOME, ANSIBLE_CONFIG
-# and ANSIBLE_LOCAL_TEMP all point there, and the dir is wiped afterwards);
-# this one is 0700 so nothing but the play itself can look inside it.
+# MOST of the run's scratch still lives in its work dir — HOME,
+# ANSIBLE_CONFIG and ANSIBLE_LOCAL_TEMP all point there and the dir is
+# wiped afterwards — but `remote_tmp` is exactly the part that does not,
+# which is why this home exists at all. It is 0700, so nothing but a play
+# can look inside; it is also NOT per job and NOT cleaned, so it is shared
+# scratch between every play for the container's lifetime (backlog 2.106).
+# That is bounded rather than fixed: pointing remote_tmp at the work dir
+# is not available, because the same setting applies to real target hosts
+# where no such directory exists, and clearing it between jobs would
+# delete a CONCURRENT job's scratch — all plays are one uid.
 RUN groupadd --system --gid 65532 pulsix \
 	&& useradd --system --uid 65532 --gid 65532 --home-dir /home/pulsix --create-home \
 		--shell /usr/sbin/nologin pulsix \

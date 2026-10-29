@@ -18,7 +18,15 @@ import (
 // removeGrace bounds the play-uid removal below. It is a plain `rm -rf` of
 // one scratch directory, so a second is already generous; the bound exists
 // so a wedged helper cannot hold the claim loop.
-const removeGrace = 30 * time.Second
+//
+// It was 30 s, which contradicted that sentence and cost more than it
+// looked (backlog 2.106): this removal runs in runOne's defer, so the
+// bound is also how long a job can delay the worker's SHUTDOWN. Ten
+// seconds keeps a wide margin over "generous" while making a wedged
+// helper cost ten seconds of a restart rather than thirty. Past it the
+// dir is left behind and logged as an error, which is the same failure
+// the longer bound had — later.
+const removeGrace = 10 * time.Second
 
 // newWorkDir creates a fresh temp dir under the data dir; runOne removes
 // it when the run ends. MkdirTemp's own default (0700) is exactly right
@@ -43,10 +51,17 @@ func (l *Loop) newWorkDir() (string, error) {
 // removeWorkDir deletes one run's work dir, and says so when it cannot.
 //
 // With a play uid set, plain removal is not enough: ansible-runner creates
-// artifacts/<ident>/ — and ansible its own ~/.ansible/tmp — as the PLAY's
-// uid with mode 0700, and the worker, which owns neither, may not list or
-// unlink inside them. Everything else in the dir goes and those two stay,
-// so the data volume grows by one directory per job forever. The second
+// artifacts/<ident>/ inside the work dir as the PLAY's uid with mode 0700,
+// and the worker, which owns neither, may not list or unlink inside it.
+// Everything else in the dir goes and that one stays, so the data volume
+// grows by one directory per job forever.
+//
+// Ansible's own ~/.ansible/tmp is NOT one of these leftovers, though an
+// earlier version of this comment said it was (backlog 2.106). It lives
+// in the play uid's home, not in the work dir, so nothing here reaches it
+// and nothing should: it is shared between concurrent jobs of the same
+// uid, and clearing it from one job's cleanup would delete another job's
+// scratch mid-run. deploy/worker/Dockerfile carries the whole argument. The second
 // attempt therefore deletes the leftovers as the play uid itself, through
 // the same setuid helper the run was started with: the play owns its own
 // directories, and the worker's own files sit in group-writable (2770)

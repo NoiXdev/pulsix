@@ -79,6 +79,21 @@ func ShareWorkDir(dir string) error {
 // the play, so there is no group to inherit. Symlinks are skipped for the
 // same reason as there — os.Chmod follows them, and a role tree's symlink
 // can point anywhere.
+//
+// The opening is PERMANENT, and that is a property worth saying out loud
+// rather than leaving to be discovered (backlog 2.106). Nothing reverts
+// these modes when the job ends, so once any repo-backed job has run, the
+// cache root and that organization's directory stay 0750 for the life of
+// the worker, and every later play can read every checkout opened before
+// it. That is inside the trust model rather than a hole in it — all plays
+// on one worker run as the SAME uid, so a play that wanted another
+// organization's checkout could simply wait for the job that opens it;
+// reverting the modes per job would buy a window, not a boundary. The
+// boundary for work that must not share a worker is the one the trust
+// model already names: a separate zone, and a worker of its own. A
+// freshly created cache is 0700 (loop.go's MkdirAll) and stays so until
+// the first repo-backed job — which is what makes "the cache is 0700" a
+// true statement about a new worker and a false one about a used one.
 func ShareRepoRead(root, dir string) error {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil {
@@ -89,8 +104,33 @@ func ShareRepoRead(root, dir string) error {
 	}
 	// The ancestors first: the play needs execute on every directory on
 	// the path, or the checkout below is unreachable however open it is.
+	//
+	// A symlink on that path is refused rather than skipped, which is the
+	// opposite of what the WalkDir below does, and the difference is
+	// deliberate. A symlink inside a checkout is ordinary repository
+	// content: skipping it costs nothing, because the play reaches the
+	// target through its own real path. An ancestor is different — it is
+	// part of the cache's own structure, which only the worker creates, so
+	// a symlink there is something nobody put here on purpose. Skipping it
+	// would leave the play unable to traverse and fail the run later with
+	// a permission error that names nothing; chmoding it would follow the
+	// link and open a directory OUTSIDE the cache, which is worse. So it
+	// stops here, naming the path (backlog 2.106).
+	//
+	// The damage this prevents is Linux-only and therefore invisible on a
+	// developer's machine: Linux gives every symlink mode 0777, from which
+	// chmodReadShared computes 0757 and chmods the target to world-rwx,
+	// while Darwin's 0755 symlinks compute back to 0755 and the chmod is
+	// skipped as a no-op. Linux is where the worker runs.
 	path := root
 	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink on the path into the repo cache %s; opening it to the play's group would follow the link out of the cache", path, root)
+		}
 		if err := chmodReadShared(path); err != nil {
 			return err
 		}

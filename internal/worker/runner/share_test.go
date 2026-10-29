@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -233,5 +234,59 @@ func TestShareRepoReadRefusesAPathOutsideTheCache(t *testing.T) {
 	root := t.TempDir()
 	if err := ShareRepoRead(root, t.TempDir()); err == nil {
 		t.Fatal("ShareRepoRead must refuse a directory outside the repo cache")
+	}
+}
+
+// TestShareRepoReadRefusesASymlinkedAncestor is backlog 2.106's fourth
+// item. The WalkDir below the ancestor loop skips symlinks for a stated
+// reason — os.Chmod follows a link, so chmoding one sets its TARGET's mode,
+// wherever that target lives. The ancestor loop had no such guard, and it
+// calls the same chmodReadShared: a symlink anywhere on the path from the
+// cache root down to the checkout would have opened a directory OUTSIDE
+// the cache to the play's group.
+//
+// The two call sites answer differently on purpose, and the test pins both
+// answers. A symlink inside a checkout is ordinary repository content, and
+// skipping it costs nothing. A symlink on the cache's own ancestor path is
+// a structure the worker did not create; skipping it would leave the play
+// unable to traverse and fail the run later with a permission error that
+// names nothing, so it fails here instead, naming the path.
+func TestShareRepoReadRefusesASymlinkedAncestor(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores the permission bits this case is built from")
+	}
+	root := t.TempDir()
+	// The target lives outside the cache entirely — that is the hazard.
+	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o700); err != nil {
+		t.Fatalf("chmod outside: %v", err)
+	}
+	checkout := filepath.Join(outside, "checkout")
+	if err := os.Mkdir(checkout, 0o700); err != nil {
+		t.Fatalf("mkdir checkout: %v", err)
+	}
+	link := filepath.Join(root, "org")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err := ShareRepoRead(root, filepath.Join(link, "checkout"))
+	if err == nil {
+		t.Fatal("ShareRepoRead accepted a symlinked ancestor; it must refuse rather than chmod through it")
+	}
+	if !strings.Contains(err.Error(), link) {
+		t.Errorf("error = %v, want it to name the symlinked path %s", err, link)
+	}
+	// A secondary assertion, and a weak one by platform: Linux symlinks are
+	// mode 0777, from which chmodReadShared computes 0757 and chmods the
+	// TARGET to world-rwx; Darwin's are 0755, which computes back to 0755
+	// so the chmod never fires and this check passes even unguarded. The
+	// refusal above is what actually holds on both.
+	info, statErr := os.Stat(outside)
+	if statErr != nil {
+		t.Fatalf("stat outside: %v", statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("the symlink's target outside the cache is now %v, want 0700 — chmod followed the link", got)
 	}
 }

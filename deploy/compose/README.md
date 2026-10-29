@@ -48,6 +48,21 @@ The stack ships one, in two services:
   jobs. The bundle volume is writable for it (not read-only): the worker
   renews its own certificate and replaces `cert.pem` in place.
 
+Playbooks do not run as the worker. The image carries a second,
+unprivileged account (uid 65533) and `docker-compose.yml` points
+`PULSIX_WORKER_PLAY_UID` at it, so a task aimed at the worker's own
+machine cannot read the certificate and key the worker holds. Set
+`PULSIX_WORKER_PLAY_UID=` (empty) in `.env` to turn that off; playbooks
+then run as the worker, as they did before v0.4. The account and the
+small setuid helper that reaches it exist only inside this image — a
+worker you build yourself has to ship both or leave the variable empty.
+
+Cancelling a run is honest about its limits: it stops Pulsix following
+the run, and the run view then lists what each host was last seen doing.
+It does **not** stop the playbook, and a command already started on a
+target host keeps running. Check the hosts before you start the run
+again.
+
 By default the worker serves the `default` zone of the first
 organization. `PULSIX_WORKER_ZONE`, `PULSIX_WORKER_ORG` and
 `PULSIX_WORKER_NAME` in `.env` change that before the first enrollment.

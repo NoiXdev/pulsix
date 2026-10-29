@@ -668,8 +668,14 @@ func TestSharingLeavesTheWorkerSecretsOwnerOnly(t *testing.T) {
 	if got := perm(identityDir); got != 0o700 {
 		t.Errorf("identity dir mode = %v, want 0700", got)
 	}
+	// 0700 is the mode of a cache no repo-backed job has touched yet, which
+	// is all this test creates. It does NOT stay that way: the first such
+	// job opens the cache root to 0750 through ShareRepoRead and nothing
+	// reverts it (backlog 2.106, and ShareRepoRead's own comment on why
+	// that is the trust model rather than a hole). Asserting 0700 here
+	// without saying so read as a standing guarantee.
 	if got := perm(repoCache); got != 0o700 {
-		t.Errorf("repo cache mode = %v, want 0700 (unchanged)", got)
+		t.Errorf("repo cache mode = %v, want 0700 before any repo-backed job has run", got)
 	}
 	if !strings.Contains(logs.String(), "tightened the identity directory") {
 		t.Errorf("expected an INFO log noting the identity directory's mode changed:\n%s", logs.String())
