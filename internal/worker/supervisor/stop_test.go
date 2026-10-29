@@ -209,29 +209,71 @@ func TestStopTreeDescendantsErrorIsReturned(t *testing.T) {
 	}
 }
 
-func TestStopTreeSignalErrorDoesNotSpareTheRest(t *testing.T) {
+func TestStopTreeFailedTermStillLeadsToKill(t *testing.T) {
 	boom := errors.New("pidfd refused")
-	clk := &fakeClock{now: time.Unix(1000, 0)}
-	inner := newFakeTable(clk, map[int]reaction{10: {diesOnTerm: true}, 11: {diesOnTerm: true}})
-	ft := &failingSignal{fakeTable: inner, failPid: 10, err: boom}
+	start := time.Unix(1000, 0)
+	clk := &fakeClock{now: start}
+	// pid 10 ignores TERM (and the TERM errors out); pid 11 obeys it.
+	inner := newFakeTable(clk, map[int]reaction{10: {}, 11: {diesOnTerm: true}})
+	ft := &failingSignal{fakeTable: inner, failPid: 10, failSig: syscall.SIGTERM, err: boom}
 
 	err := stopTree(ft, clk, testGrace, testPoll, 3)
 	if !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+		t.Fatalf("err = %v, want it to contain %v", err, boom)
+	}
+	if errors.Is(err, ErrTreeDidNotDrain) {
+		t.Errorf("err = %v: the KILL phase drained the tree, it must not read as undrained", err)
+	}
+	if !strings.Contains(err.Error(), "signal 10 with terminated") {
+		t.Errorf("err = %q, want the signal error wrapped with its pid and signal", err)
 	}
 	if n := inner.count(11, syscall.SIGTERM); n != 1 {
 		t.Errorf("pid 11 got %d SIGTERMs, want 1: one failing signal must not spare the others", n)
 	}
+	if n := inner.count(11, syscall.SIGKILL); n != 0 {
+		t.Errorf("pid 11 got %d SIGKILLs, want 0 (it obeyed TERM)", n)
+	}
+	if n := inner.count(10, syscall.SIGKILL); n != 1 {
+		t.Fatalf("pid 10 got %d SIGKILLs, want 1: a failed TERM must not skip the KILL", n)
+	}
+	for _, s := range inner.sent {
+		if s.sig == syscall.SIGKILL && s.at.Sub(start) < testGrace {
+			t.Errorf("SIGKILL sent %v after the start, before the %v grace elapsed", s.at.Sub(start), testGrace)
+		}
+	}
 }
 
+func TestStopTreeUnsignalableSurvivorReportsBoth(t *testing.T) {
+	const passes = 3
+	boom := errors.New("pidfd refused")
+	clk := &fakeClock{now: time.Unix(1000, 0)}
+	inner := newFakeTable(clk, map[int]reaction{10: {}})
+	ft := &failingSignal{fakeTable: inner, failPid: 10, err: boom} // every signal to 10 fails
+
+	err := stopTree(ft, clk, testGrace, testPoll, passes)
+	if !errors.Is(err, boom) || !errors.Is(err, ErrTreeDidNotDrain) {
+		t.Fatalf("err = %v, want both the signal error and ErrTreeDidNotDrain", err)
+	}
+	if ft.kills != passes {
+		t.Errorf("attempted %d SIGKILLs, want %d: failing signals must not shorten the kill phase", ft.kills, passes)
+	}
+}
+
+// failingSignal fails signals to failPid (only failSig when set, else every
+// signal) and counts the SIGKILLs it was asked to send.
 type failingSignal struct {
 	*fakeTable
 	failPid int
+	failSig syscall.Signal
 	err     error
+	kills   int
 }
 
 func (f *failingSignal) Signal(pid int, sig syscall.Signal) error {
-	if pid == f.failPid {
+	if sig == syscall.SIGKILL {
+		f.kills++
+	}
+	if pid == f.failPid && (f.failSig == 0 || f.failSig == sig) {
 		return f.err
 	}
 	return f.fakeTable.Signal(pid, sig)

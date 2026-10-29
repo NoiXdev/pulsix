@@ -50,20 +50,29 @@ var ErrTreeDidNotDrain = errors.New("descendants survived the kill passes")
 // leaves a new child behind needs another. A tree that is still not empty
 // after the last pass is reported as ErrTreeDidNotDrain, naming the pids.
 //
-// A failing Signal does not stop the pass: one process the supervisor cannot
-// signal must not spare its siblings. Its error is returned once the pass is
-// done, wrapped, so the caller sees it.
+// A failing Signal never ends the stop early: nothing of the play may
+// survive, and one process the supervisor cannot signal (or one failed TERM)
+// must not spare its siblings or skip the KILL phase. Every signal error is
+// collected, wrapped with its pid and signal, and returned together with the
+// outcome once the tree has drained, or joined with ErrTreeDidNotDrain when
+// the kill passes run out.
 func stopTree(pt procTable, clk clock, grace time.Duration, poll time.Duration, maxKillPasses int) error {
 	deadline := clk.Now().Add(grace)
 	termed := make(map[int]bool)
+	var sigErrs []error
+	// finish returns the collected signal errors joined with the outcome
+	// (nil for a drained tree), so every exit reports them.
+	finish := func(outcome error) error {
+		return errors.Join(append(sigErrs, outcome)...)
+	}
 
 	for {
 		pids, err := pt.Descendants()
 		if err != nil {
-			return fmt.Errorf("list descendants: %w", err)
+			return finish(fmt.Errorf("list descendants: %w", err))
 		}
 		if len(pids) == 0 {
-			return nil
+			return finish(nil)
 		}
 		var fresh []int
 		for _, pid := range pids {
@@ -72,9 +81,7 @@ func stopTree(pt procTable, clk clock, grace time.Duration, poll time.Duration, 
 				fresh = append(fresh, pid)
 			}
 		}
-		if err := signalAll(pt, fresh, syscall.SIGTERM); err != nil {
-			return err
-		}
+		sigErrs = append(sigErrs, signalAll(pt, fresh, syscall.SIGTERM)...)
 		if !clk.Now().Before(deadline) {
 			break
 		}
@@ -84,14 +91,12 @@ func stopTree(pt procTable, clk clock, grace time.Duration, poll time.Duration, 
 	for range maxKillPasses {
 		pids, err := pt.Descendants()
 		if err != nil {
-			return fmt.Errorf("list descendants: %w", err)
+			return finish(fmt.Errorf("list descendants: %w", err))
 		}
 		if len(pids) == 0 {
-			return nil
+			return finish(nil)
 		}
-		if err := signalAll(pt, pids, syscall.SIGKILL); err != nil {
-			return err
-		}
+		sigErrs = append(sigErrs, signalAll(pt, pids, syscall.SIGKILL)...)
 		clk.Sleep(poll)
 	}
 
@@ -99,22 +104,22 @@ func stopTree(pt procTable, clk clock, grace time.Duration, poll time.Duration, 
 	// before calling the tree undrainable.
 	pids, err := pt.Descendants()
 	if err != nil {
-		return fmt.Errorf("list descendants: %w", err)
+		return finish(fmt.Errorf("list descendants: %w", err))
 	}
 	if len(pids) == 0 {
-		return nil
+		return finish(nil)
 	}
-	return fmt.Errorf("%w: pids %v still alive after %d kill passes", ErrTreeDidNotDrain, pids, maxKillPasses)
+	return finish(fmt.Errorf("%w: pids %v still alive after %d kill passes", ErrTreeDidNotDrain, pids, maxKillPasses))
 }
 
 // signalAll sends sig to every pid, continuing past failures, and returns
-// them joined.
-func signalAll(pt procTable, pids []int, sig syscall.Signal) error {
+// each failure wrapped with its pid and signal.
+func signalAll(pt procTable, pids []int, sig syscall.Signal) []error {
 	var errs []error
 	for _, pid := range pids {
 		if err := pt.Signal(pid, sig); err != nil {
 			errs = append(errs, fmt.Errorf("signal %d with %v: %w", pid, sig, err))
 		}
 	}
-	return errors.Join(errs...)
+	return errs
 }
