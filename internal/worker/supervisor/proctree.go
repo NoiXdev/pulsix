@@ -20,8 +20,11 @@ const maxChainHops = 4096
 
 // descendantsFrom returns the live descendants of self among pids: it reads
 // each pid's stat once, builds the parent → child map and walks it from
-// self. Zombies (Z) and dead tasks (X) are left out, since they have
-// nothing left to signal, only to reap.
+// self. Zombies (Z) and dead tasks (X) are left out of the result, since
+// they have nothing left to signal, only to reap, but the walk passes
+// through them: a thread-group leader whose main thread exited while other
+// threads still run shows as Z, and its children stay its own until the
+// whole group is gone, so stopping at it would hide them from the stop.
 //
 // An entry that cannot be read or parsed is skipped, never fatal. It may be
 // a process that exited after /proc was listed, or one this uid may not read
@@ -31,12 +34,16 @@ const maxChainHops = 4096
 // tree.
 func descendantsFrom(self int, pids []int, read statReader) []int {
 	children := make(map[int][]int)
+	dead := make(map[int]bool)
 	for _, pid := range pids {
 		state, ppid, ok := readLink(pid, read)
-		if !ok || state == "Z" || state == "X" {
+		if !ok {
 			continue
 		}
 		children[ppid] = append(children[ppid], pid)
+		if state == "Z" || state == "X" {
+			dead[pid] = true
+		}
 	}
 
 	var out []int
@@ -44,7 +51,11 @@ func descendantsFrom(self int, pids []int, read statReader) []int {
 	for len(queue) > 0 {
 		next := children[queue[0]]
 		queue = append(queue[1:], next...)
-		out = append(out, next...)
+		for _, pid := range next {
+			if !dead[pid] {
+				out = append(out, pid)
+			}
+		}
 	}
 	return out
 }

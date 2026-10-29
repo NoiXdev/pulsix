@@ -79,6 +79,32 @@ func TestDescendantsFromSkipsZombiesAndDead(t *testing.T) {
 	}
 }
 
+func TestDescendantsFromWalksThroughZombies(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+	}{
+		// A thread-group leader whose main thread exited while other
+		// threads still run shows as Z, and its children are still its
+		// own: they are not reparented until the whole group is gone.
+		{"zombie thread-group leader", "Z"},
+		{"dead task", "X"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newTree()
+			p.stat[102] = stat(102, tc.state, 101)
+			p.stat[104] = stat(104, "S", 102)
+			p.stat[105] = stat(105, "R", 104)
+			got := descendantsFrom(100, p.pids(), p.read)
+			slices.Sort(got)
+			if want := []int{101, 103, 104, 105}; !slices.Equal(got, want) {
+				t.Errorf("descendants = %v, want %v: the walk passes through %d but leaves it out", got, want, 102)
+			}
+		})
+	}
+}
+
 func TestDescendantsFromSkipsUnreadableEntries(t *testing.T) {
 	p := newTree()
 	// Unrelated entries this uid may not read, one that vanished, and one
