@@ -396,3 +396,104 @@ the play:
    pre-existing errcheck findings golangci-lint 2.15.0 reports on `main`)
    and `gofmt -s -l .` pass. The SPA's ESLint and `tsc -b` pass.
 10. The records listed under "Records" say what is now true.
+
+## As built
+
+Shipped on `fix/2.107-cancel-stops-the-play`. Everything the sections above
+specify was built as written; what follows is every place the build chose or
+differs, and how acceptance came out.
+
+### What was left to the builder, and what was chosen
+
+- **Reserved argument:** `__pulsix-play-supervisor`. **Stderr prefix of every
+  supervisor line:** `pulsix-play-supervisor: `. Argv is
+  `<supervisor> __pulsix-play-supervisor --grace <duration> -- <absolute runner
+  path> <runner args…>`; `parseArgs` is strict and refuses anything else.
+- **Structure** (`internal/worker/supervisor`): `stop.go` holds the policy
+  behind a `procTable`/`clock` pair (`stopTree`, tested with fakes on any OS);
+  `run.go` the OS-neutral loop (`supervise`, `Main`); `system_linux.go` the
+  `/proc`, `pidfd` and `prctl` implementation, `system_other.go` a stub that
+  refuses. The loop does not use `exec.Cmd.Wait` for the runner: it starts it
+  with `syscall.ForkExec` and learns its status from its own `wait4(-1)` loop,
+  woken by `SIGCHLD` through `os/signal`.
+- **Stop loop bounds:** poll 50 ms, at most 100 `KILL` passes, then
+  `ErrTreeDidNotDrain` naming the survivors, reported on one prefixed stderr
+  line while the runner's own status is still what the supervisor exits with.
+- **Runner tests on Linux** build `./cmd/worker` (`supervised_linux_test.go`)
+  and use it as the supervisor; hand-built `Config`s keep the direct spawn.
+
+### Differences from the text above
+
+- **A failing signal never ends the stop.** `stopTree` collects signal errors,
+  carries on through the pass and into the `KILL` phase, and returns them
+  joined with the outcome. A single unsignalable process must not spare its
+  siblings (goal 1).
+- **Unreadable `/proc` entries are skipped**, not fatal, and `Signal`'s
+  descent re-check walks the target's ppid chain up to the supervisor's own
+  pid instead of re-reading all of `/proc`.
+- **The supervisor needs `pidfd_open`** (kernel 5.3 or newer) and probes it on
+  startup; without it, it refuses and names why, like a failed `prctl`.
+- **Re-raising a death signal** first sets `RLIMIT_CORE` to 0 so a runner that
+  died of `SIGSEGV` or `SIGABRT` does not dump a second core, then resets the
+  disposition and raises it through `rt_sigaction` + `tgkill`
+  (`signal.Reset` would restore only the Go runtime's handler).
+- **Two failure kinds, not one.** A refusal (nothing started) exits 1; a
+  failure after the runner started (stdout could not be dropped, a stop pass
+  did not drain) is reported and the runner's own status is still used.
+- **`worker.Load` fails** on Linux if `os.Executable()` fails, instead of
+  quietly running unsupervised. A cancel that silently does not work is the
+  failure this work exists to remove.
+- **`stopGroup` takes the job id** (the spec's signature was open) so the
+  backstop warning names the run: `play supervisor did not stop the run in
+  time; killing its process group`, with `job_id`, `pgid`, `grace`, `backstop`.
+- **The in-image test binary's `TestMain` dispatch** landed with the runner
+  change rather than with the in-image tests: once the runner is supervised,
+  the in-image test binary is the supervisor, so the e2e group could not pass
+  without it.
+- **`playUIDProcessExists`** (in-image helper) counts only live play-uid
+  processes that are not the supervisor. With the supervisor running as the
+  play uid, the old definition released the "play has started" wait on the
+  supervisor itself. The post-cancel checks stay strict (`playUIDEntryExists`
+  counts live and zombie entries).
+
+### Acceptance
+
+1. **Met.** `TestCancellingAPlayUnderThePlayUIDStopsIt` passes with only its
+   `t.Skip` line deleted (0.26 s). Its wait releases on `ansible-runner`, so it
+   cancels before the `sleep` exists and is the weaker signal; the sleep-level
+   proof is `TestACancelledPlayLeavesNoZombie` (waits for the `sleep`, then no
+   play-uid `/proc` entry, live or zombie, within grace + 1 s; 0.52 s).
+2. **Met.** `TestCancellingAPlayWithoutAPlayUIDStopsIt` (0.59 s). With the
+   supervisor switched off, it and `TestACancelledPlayLeavesNoZombie` fail
+   with the `sleep` still alive.
+3. **Met.** `TestABackgroundProcessDoesNotOutliveItsRun` (0.70 s).
+4. **Partly in the image.** `TestAFailingPlayStillReportsFailed` (0.41 s)
+   covers a failed run in the image; exit codes 0, 2 and 4 are covered with
+   the real supervisor by `TestSupervisedExitCodesPassThrough` (compared
+   against the unsupervised run), and the extra-vars guard's error by
+   `summarize`'s unit tests, which do not go through the supervisor. Neither
+   has an in-image test.
+5. **Met**, on any OS (`stop_test.go`, `run_test.go`, `main_test.go`), with
+   the Linux-only real-process tests in `system_linux_test.go`.
+6. **Met** (`supervisorFailure`, ahead of the extra-vars check in `summarize`).
+7. **Met** (`RunDetailPage.test.tsx`).
+8. **Met.**
+9. **Met.** `golangci-lint` reports only the 26 pre-existing findings, none in
+   a touched file; filed as backlog 2.110. A second, unrelated pre-existing
+   failure surfaced when the runner tests ran as root in a container:
+   backlog 2.109.
+10. **Met**; see below.
+
+### Records, as done
+
+- `docs/BACKLOG.md`: 2.104, 2.107 and 2.108 are `done` with what shipped and
+  the measured numbers above; 2.42's "what still gates it" now says nothing
+  does; 2.109 and 2.110 are new.
+- `deploy/compose/docker-compose.yml`: `init: true` on `worker`, with a
+  comment. `deploy/compose/.env.example` and `deploy/compose/README.md`: the
+  limitation lines now say what is true (the top-level `README.md` never
+  carried one, so it is unchanged).
+- The predecessor spec carries a pointer from its unconditional-warning note.
+- End-user documentation, `NoiXdev/noix-docs` branch `pulsix` (local commit):
+  see the pulsix commit message for its hash. Pages changed are listed in
+  the task report; none names the tech stack.

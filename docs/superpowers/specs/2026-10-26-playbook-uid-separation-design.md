@@ -7,7 +7,8 @@ written so the reasoning survives: the shared `pulsix-run` group (the play's
 PRIMARY gid is the worker's own instead, which removed a variable), and
 "execs one fixed program" (work-dir cleanup became a second caller of the
 helper). Cancellation across the uid boundary is an open defect the
-whole-feature review found; it is not solved here.
+whole-feature review found; it is not solved here. (Closed since: backlog
+2.104 and 2.107, see `docs/superpowers/specs/2026-10-29-cancel-stops-the-play-design.md`.)
 
 ## Why
 

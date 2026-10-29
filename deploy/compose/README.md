@@ -57,11 +57,13 @@ then run as the worker, as they did before v0.4. The account and the
 small setuid helper that reaches it exist only inside this image — a
 worker you build yourself has to ship both or leave the variable empty.
 
-Cancelling a run is honest about its limits: it stops Pulsix following
-the run, and the run view then lists what each host was last seen doing.
-It does **not** stop the playbook, and a command already started on a
-target host keeps running. Check the hosts before you start the run
-again.
+Cancelling a run stops the playbook on the worker, with everything it
+started there, and starts nothing new on any host. It cannot take back a
+command already running on a target host, which may continue there; the
+run view marks those hosts as interrupted. Check them before you start
+the run again. The worker service runs with `init: true` so that nothing a
+run leaves behind lingers as a defunct process; add `--init` if you start
+the worker image with a plain `docker run`.
 
 By default the worker serves the `default` zone of the first
 organization. `PULSIX_WORKER_ZONE`, `PULSIX_WORKER_ORG` and

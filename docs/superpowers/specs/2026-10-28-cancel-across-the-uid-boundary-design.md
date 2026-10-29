@@ -385,6 +385,9 @@ execution ledger
     `cancelRows.some(r => r.state === 'interrupted')` guard and the
     interrupted-host wording, which is what the anti-goal actually wants
     once a cancel stops the play.
+    *Update 2026-10-29: 2.107 shipped, and the conditional warning is
+    back, with the neutral "no task in flight" pill — see
+    `docs/superpowers/specs/2026-10-29-cancel-stops-the-play-design.md`.*
   - **The `finished` state is labelled "no task in flight"**, not
     "finished" — see goal 3 above, amended. The function always computed
     "this host's last event closed its step"; the one-word label promoted
