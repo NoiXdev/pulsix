@@ -406,7 +406,8 @@ differs, and how acceptance came out.
 ### What was left to the builder, and what was chosen
 
 - **Reserved argument:** `__pulsix-play-supervisor`. **Stderr prefix of every
-  supervisor line:** `pulsix-play-supervisor: `. Argv is
+  supervisor line:** `pulsix-play-supervisor: `, and of a refusal
+  `pulsix-play-supervisor: refused: ` (`supervisor.RefusedPrefix`). Argv is
   `<supervisor> __pulsix-play-supervisor --grace <duration> -- <absolute runner
   path> <runner args…>`; `parseArgs` is strict and refuses anything else.
 - **Structure** (`internal/worker/supervisor`): `stop.go` holds the policy
@@ -432,14 +433,35 @@ differs, and how acceptance came out.
   descent re-check walks the target's ppid chain up to the supervisor's own
   pid instead of re-reading all of `/proc`.
 - **The supervisor needs `pidfd_open`** (kernel 5.3 or newer) and probes it on
-  startup; without it, it refuses and names why, like a failed `prctl`.
+  startup; without it, it refuses and names why, like a failed `prctl`. The
+  refusal names both causes: a kernel older than 5.3, or a seccomp profile
+  that blocks `pidfd_open`/`pidfd_send_signal` (Docker's default profile
+  before 20.10). The installation docs state the host requirement; probing
+  at worker start, so an unsupported host shows at boot rather than at the
+  first job, is backlog 2.112.
 - **Re-raising a death signal** first sets `RLIMIT_CORE` to 0 so a runner that
   died of `SIGSEGV` or `SIGABRT` does not dump a second core, then resets the
   disposition and raises it through `rt_sigaction` + `tgkill`
   (`signal.Reset` would restore only the Go runtime's handler).
 - **Two failure kinds, not one.** A refusal (nothing started) exits 1; a
   failure after the runner started (stdout could not be dropped, a stop pass
-  did not drain) is reported and the runner's own status is still used.
+  did not drain) is reported and the runner's own status is still used. The
+  two are told apart on the wire: a refusal's line starts with
+  `pulsix-play-supervisor: refused: `, a report's only with
+  `pulsix-play-supervisor: `. `supervisorFailure` matches only the refused
+  form, so a real Ansible exit 1 beside a report keeps the generic
+  "ansible-runner exited with code 1". The worker logs every prefixed line at
+  warn level with `job_id` once the run has exited, on every path out of
+  `Run` (a cancel, a broken event stream, a normal end), as
+  `play supervisor reported a problem` (`logSupervisorReports`). This is what
+  the anti-goal "the job must still report and the worker must log it" and
+  the fork-storm risk's "must log if it hits it" ask for; before the final
+  review the worker read these lines only for an exit it did not understand.
+- **The descendant walk passes through zombies.** `descendantsFrom` puts `Z`
+  and `X` entries into its parent → child map and leaves them out only of the
+  result: a thread-group leader whose main thread exited while other threads
+  run shows as `Z`, and its children are still its own, so stopping the walk
+  there would hide them from the stop.
 - **`worker.Load` fails** on Linux if `os.Executable()` fails, instead of
   quietly running unsupervised. A cancel that silently does not work is the
   failure this work exists to remove.
@@ -485,20 +507,51 @@ differs, and how acceptance came out.
    has an in-image test.
 5. **Met**, on any OS (`stop_test.go`, `run_test.go`, `main_test.go`), with
    the Linux-only real-process tests in `system_linux_test.go`.
-6. **Met** (`supervisorFailure`, ahead of the extra-vars check in `summarize`).
+6. **Met** (`supervisorFailure`, ahead of the extra-vars check in `summarize`;
+   it names only a refusal, and reports from after the runner started are
+   logged instead).
 7. **Met** (`RunDetailPage.test.tsx`).
 8. **Met.**
-9. **Met.** `golangci-lint` reports only the 26 pre-existing findings, none in
-   a touched file; filed as backlog 2.110. A second, unrelated pre-existing
+9. **Met.** `golangci-lint` reports only the 26 pre-existing findings; filed
+   as backlog 2.110. The branch adds none, but one of them sits in a file it
+   touches: `cmd/manager/main_test.go:80` (`<-returned` in a `select`, from
+   2026-09), in the file the dispatch test was added to. A second, unrelated pre-existing
    failure surfaced when the runner tests ran as root in a container:
    backlog 2.109.
 10. **Met**; see below.
+
+### Risks, as checked
+
+- **`removeAsPlayUID`** (`internal/worker/workdir.go`) hides nothing: each of
+  its failures (listing the dir, finding `rm`, the helper's run, with its
+  output) is returned and logged by `removeWorkDir` at warn level, and a work
+  dir that still cannot be removed is logged at error level. Nothing in it
+  depended on the play still running, so nothing changed.
+- **`ansible-runner`'s `TERM`-time artifact writes vs the work-dir removal:**
+  no race is left. The loop removes the work dir only after `Run` returns,
+  `Run` returns only after `cmd.Wait` on the supervisor, and the supervisor
+  exits only after its stop has drained and reaped the whole tree,
+  `ansible-runner` included, so whatever `ansible-runner` writes on `TERM` is
+  written before the removal starts. Observed in the image (final-review
+  run, 11/11 pass): the two cancel tests that check the data dir
+  (`TestCancellingAPlayUnderThePlayUIDStopsIt`,
+  `TestCancellingAPlayWithoutAPlayUIDStopsIt`) find no surviving `job-*`
+  dir, and none of the nine runs' worker logs carries a
+  `could not remove the run's work dir` or
+  `could not clear the play uid's leftovers` line.
+- **The event stream**, **the fork storm** and **the in-image reaper**: as
+  recorded under Acceptance (acceptance 3 and 4, `stopTree`'s bounds and
+  `ErrTreeDidNotDrain`, `reapPlayUIDLeftovers` kept as a guard).
 
 ### Records, as done
 
 - `docs/BACKLOG.md`: 2.104, 2.107 and 2.108 are `done` with what shipped and
   the measured numbers above; 2.42's "what still gates it" now says nothing
-  does; 2.109 and 2.110 are new, and 2.111 records the embedded worker's missing init.
+  does; 2.109 and 2.110 are new, and 2.111 records the embedded worker's
+  missing init. The final review added 2.112 (probe pidfd support at worker
+  start), 2.113 (a version-pinned worker keeps the old Cancel while the run
+  view stops warning; a decision to make), 2.114 (the review's deferred
+  minors) and 2.115 (the pre-existing malformed-event warning).
 - `deploy/compose/docker-compose.yml`: `init: true` on `worker`, with a
   comment. `deploy/compose/.env.example` and `deploy/compose/README.md`: the
   limitation lines now say what is true (the top-level `README.md` never
@@ -506,4 +559,9 @@ differs, and how acceptance came out.
 - The predecessor spec carries a pointer from its unconditional-warning note.
 - End-user documentation, `NoiXdev/noix-docs` branch `pulsix` (local commit):
   see the pulsix commit message for its hash. Pages changed are listed in
-  the task report; none names the tech stack.
+  the task report; none names the tech stack. The final review added
+  noix-docs `93946df`: a "Worker host" section on the requirements page (a
+  host kernel from late 2019 or newer, and a runtime that allows the system
+  calls for it), a note in the cancel section that Cancel stops the play
+  only on workers of this release or newer and that pinned worker images
+  need updating after an upgrade, and a changelog line saying both.
