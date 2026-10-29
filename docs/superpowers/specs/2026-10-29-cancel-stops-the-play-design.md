@@ -456,6 +456,16 @@ differs, and how acceptance came out.
   supervisor itself. The post-cancel checks stay strict (`playUIDEntryExists`
   counts live and zombie entries).
 
+- **The Add worker dialog's snippets carry the init too** (not in the spec):
+  `workerSnippets` (`internal/api/worker_snippets.go`) now emits
+  `docker run -d --init …` and `init: true` in the compose service, with a
+  test beside it. Documenting `--init` as a manual step would have left every
+  worker added through the GUI without one. This is a user-visible GUI change.
+- **The embedded worker's container still has no init**: only the `worker`
+  service got `init: true`, not `manager`. Recorded as backlog 2.111; the
+  embedded worker is off by default and its play orphans are still reaped by
+  the supervisor, so only the residual paths named under "PID 1" remain.
+
 ### Acceptance
 
 1. **Met.** `TestCancellingAPlayUnderThePlayUIDStopsIt` passes with only its
@@ -488,7 +498,7 @@ differs, and how acceptance came out.
 
 - `docs/BACKLOG.md`: 2.104, 2.107 and 2.108 are `done` with what shipped and
   the measured numbers above; 2.42's "what still gates it" now says nothing
-  does; 2.109 and 2.110 are new.
+  does; 2.109 and 2.110 are new, and 2.111 records the embedded worker's missing init.
 - `deploy/compose/docker-compose.yml`: `init: true` on `worker`, with a
   comment. `deploy/compose/.env.example` and `deploy/compose/README.md`: the
   limitation lines now say what is true (the top-level `README.md` never
