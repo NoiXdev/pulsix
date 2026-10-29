@@ -57,6 +57,17 @@ func (h *mainHarness) oneErrorLine(t *testing.T, want string) {
 	}
 }
 
+// refusal asserts that stderr holds exactly one line, starting with
+// RefusedPrefix and containing want: the form the worker reads as "the
+// supervisor ran no play".
+func (h *mainHarness) refusal(t *testing.T, want string) {
+	t.Helper()
+	h.oneErrorLine(t, want)
+	if out := h.stderr.String(); !strings.HasPrefix(out, RefusedPrefix) {
+		t.Errorf("stderr = %q, want a refusal starting with %q", out, RefusedPrefix)
+	}
+}
+
 var goodArgs = []string{"--grace", "5s", "--", "/usr/bin/ansible-runner", "run", "/w"}
 
 func TestRunRefusesBadArguments(t *testing.T) {
@@ -64,7 +75,7 @@ func TestRunRefusesBadArguments(t *testing.T) {
 	if code := h.run([]string{"--grace", "5s"}); code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
-	h.oneErrorLine(t, "missing --")
+	h.refusal(t, "missing --")
 	if len(h.sys.calls) != 0 {
 		t.Errorf("calls = %q, want none for an argv that does not parse", h.sys.calls)
 	}
@@ -76,7 +87,7 @@ func TestRunRefusesWithoutASystem(t *testing.T) {
 	if code := h.run(goodArgs); code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
-	h.oneErrorLine(t, "needs Linux")
+	h.refusal(t, "needs Linux")
 }
 
 func TestRunRefusesWithoutSubreaper(t *testing.T) {
@@ -85,7 +96,7 @@ func TestRunRefusesWithoutSubreaper(t *testing.T) {
 	if code := h.run(goodArgs); code != 1 {
 		t.Errorf("code = %d, want 1", code)
 	}
-	h.oneErrorLine(t, "operation not permitted")
+	h.refusal(t, "operation not permitted")
 }
 
 func TestRunPassesExitCodeThrough(t *testing.T) {
@@ -126,4 +137,18 @@ func TestRunReportsAStopFailureOnOneLineAndKeepsTheCode(t *testing.T) {
 		t.Errorf("code = %d, want the runner's 2", code)
 	}
 	h.oneErrorLine(t, "survived")
+	// The runner ran: the line reports, it does not refuse, or the worker
+	// would take a play's real exit 1 for a supervisor that never ran it.
+	if out := h.stderr.String(); strings.HasPrefix(out, RefusedPrefix) {
+		t.Errorf("stderr = %q, want a report, not a refusal starting with %q", out, RefusedPrefix)
+	}
+}
+
+func TestRunRefusesWhenStartFails(t *testing.T) {
+	h := newMainHarness(nil)
+	h.sys.startErr = errors.New("exec format error")
+	if code := h.run(goodArgs); code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	h.refusal(t, "exec format error")
 }

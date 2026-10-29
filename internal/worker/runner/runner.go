@@ -289,9 +289,11 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		// requeues what this worker never reported.
 		r.stopGroup(env, job.GetId(), cmd.Process.Pid, exited)
 		<-exited
+		r.logSupervisorReports(env, job.GetId(), stderr.String())
 		return worker.StatusError, nil, fmt.Errorf("stream runner events: %w", scanErr)
 	}
 	<-exited
+	r.logSupervisorReports(env, job.GetId(), stderr.String())
 
 	select {
 	case <-cancelledCh:
@@ -700,20 +702,50 @@ func setuidHelperFailure(stderr string, playUID uint32) string {
 	return fmt.Sprintf("%s (%s=%d)", strings.TrimSpace(line), envPlayUID, playUID)
 }
 
-// supervisorFailure recognises a play supervisor that could not do its job
-// (it could not become a subreaper, could not start the runner, ...) and
-// returns its line as the run's error. The supervisor then ran no play and
-// exits 1 with one line of its own, prefixed with supervisor.ErrPrefix,
-// which the generic branch would render as "ansible-runner exited with
-// code 1" and so send the operator looking at Ansible. Only the FIRST line
-// counts, as for the setuid helper: a refusal comes before anything the
-// runner could write, and a prefix further down is the play's own output.
+// supervisorFailure recognises a play supervisor that refused to run the
+// play (it could not become a subreaper, could not start the runner, ...)
+// and returns its line as the run's error. The supervisor then ran no play
+// and exits 1 with one line of its own, prefixed with
+// supervisor.RefusedPrefix, which the generic branch would render as
+// "ansible-runner exited with code 1" and so send the operator looking at
+// Ansible. Only the FIRST line counts, as for the setuid helper: a refusal
+// comes before anything the runner could write, and a prefix further down
+// is the play's own output.
+//
+// Only the refused form counts. Every other supervisor line reports
+// something that went wrong after the runner started, beside the runner's
+// own status; with an exit 1 that status is a real Ansible failure, which
+// such a line does not explain and must not relabel as the supervisor's.
+// logSupervisorReports puts those lines in the log instead.
 func supervisorFailure(stderr string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
-	if !strings.HasPrefix(line, supervisor.ErrPrefix) {
+	if !strings.HasPrefix(line, supervisor.RefusedPrefix) {
 		return ""
 	}
 	return strings.TrimSpace(line)
+}
+
+// logSupervisorReports logs, at warn level and naming the run, every stderr
+// line that starts with supervisor.ErrPrefix: what the play supervisor wrote
+// (the runner shares the pipe, and its own lines carry no such prefix). The
+// supervisor never lets a problem of its own replace the runner's status
+// (the worker must still read the run's real outcome), so a stop that did
+// not drain, a signal or reap that failed, or a stdout it could not drop
+// reaches the operator only through this log: summarize does not read
+// stderr for a cancelled run or an exit it understands, and the job's error
+// names only a refusal. It runs after the run has exited, on every path out
+// of Run, once stderr is complete. Without a supervisor there is nothing of
+// its own to report, and a prefixed line would be the play's output.
+func (r *Runner) logSupervisorReports(env worker.RunEnv, jobID, stderr string) {
+	if env.Config.PlaySupervisor == "" {
+		return
+	}
+	for line := range strings.Lines(stderr) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, supervisor.ErrPrefix) {
+			r.log().Warn("play supervisor reported a problem", "job_id", jobID, "report", line)
+		}
+	}
 }
 
 // extraVarsLoadFailure recognises the one failure the extra-vars guard

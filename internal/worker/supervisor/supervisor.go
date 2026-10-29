@@ -42,6 +42,15 @@ const Arg = "__pulsix-play-supervisor"
 // job, instead of passing for the play's output.
 const ErrPrefix = "pulsix-play-supervisor: "
 
+// RefusedPrefix starts the one line the supervisor writes when it refused to
+// run the play at all, before the runner started. Every other line it writes
+// reports something that went wrong after the runner started (a stop that did
+// not drain, a failed signal or reap), and comes beside the runner's own
+// status. The worker must tell the two apart: only a refusal means the exit
+// is the supervisor's and not the play's, so only a refusal may become the
+// run's error in place of a real Ansible exit 1.
+const RefusedPrefix = ErrPrefix + "refused: "
+
 // graceFlag and separator are the two literals parseArgs and Command share.
 const (
 	graceFlag = "--grace"

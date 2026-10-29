@@ -47,8 +47,9 @@ type system interface {
 
 // errRefused marks the failures that happen before the runner is started:
 // the supervisor then ran nothing, and must exit non-zero without a status
-// to pass through.
-var errRefused = errors.New("refused to run the play")
+// to pass through. Its text is what follows ErrPrefix in RefusedPrefix, so a
+// refusal's line starts with RefusedPrefix and nothing else's does.
+var errRefused = errors.New("refused")
 
 // supervise runs argv as the supervisor's child and returns its wait status.
 //
@@ -150,7 +151,9 @@ wait:
 
 // Main is the supervisor's whole life: args is everything after Arg, and the
 // return value is the code to exit with. Every failure is written to stderr
-// as one line starting with ErrPrefix.
+// as one line starting with ErrPrefix; a refusal (the runner never started)
+// starts with RefusedPrefix, so the worker can tell a supervisor that ran no
+// play from one that reports beside the runner's status.
 //
 // When the runner exited, Main returns its exit code. When a signal killed
 // the runner, Main resets that signal to its default disposition and raises
@@ -187,12 +190,12 @@ func run(args []string, d mainDeps) int {
 
 	grace, argv, err := parseArgs(args)
 	if err != nil {
-		report(fmt.Errorf("parse arguments: %w", err))
+		report(fmt.Errorf("%w: parse arguments: %w", errRefused, err))
 		return 1
 	}
 	sys, err := d.newSystem()
 	if err != nil {
-		report(err)
+		report(fmt.Errorf("%w: %w", errRefused, err))
 		return 1
 	}
 	// notify must be in place before the runner starts, or a runner that

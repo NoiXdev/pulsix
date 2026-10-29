@@ -1561,12 +1561,17 @@ func TestSupervisorBackstopDefault(t *testing.T) {
 	}
 }
 
-// TestSummarizeNamesTheSupervisor: a supervisor that could not do its job
-// ran no play and exits 1 with one line of its own; that line is the job's
-// error, so the operator is not sent looking at Ansible. Anything else on
-// stderr of an exit 1 is the runner's and keeps the generic text.
+// TestSummarizeNamesTheSupervisor: a supervisor that refused ran no play
+// and exits 1 with one line of its own; that line is the job's error, so
+// the operator is not sent looking at Ansible. Anything else on stderr of
+// an exit 1 is the runner's and keeps the generic text, a supervisor's
+// report from after the runner started included: the exit 1 is then the
+// play's own, which the report sits beside and does not explain.
 func TestSummarizeNamesTheSupervisor(t *testing.T) {
-	const refusal = "pulsix-play-supervisor: set child subreaper: operation not permitted"
+	const (
+		refusal = "pulsix-play-supervisor: refused: become a child subreaper: operation not permitted"
+		report  = "pulsix-play-supervisor: stop the play: descendants survived the kill passes: pids [42] still alive after 100 kill passes"
+	)
 	cases := map[string]struct {
 		stderr string
 		want   string
@@ -1574,6 +1579,7 @@ func TestSummarizeNamesTheSupervisor(t *testing.T) {
 		"the supervisor refuses":   {stderr: refusal + "\n", want: refusal},
 		"ansible-runner exits 1":   {stderr: "ERROR! the playbook could not be found\n", want: "ansible-runner exited with code 1"},
 		"the prefix only mid-text": {stderr: "ERROR! boom\n" + refusal + "\n", want: "ansible-runner exited with code 1"},
+		"a report after the start": {stderr: report + "\n", want: "ansible-runner exited with code 1"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
