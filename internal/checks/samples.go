@@ -3,7 +3,9 @@ package checks
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -183,8 +185,21 @@ func withinContract(o Observation) error {
 		return fmt.Errorf("%w: item for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxItemLen)
 	case len(o.Metric) > MaxMetricLen:
 		return fmt.Errorf("%w: metric for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxMetricLen)
+	case breaksLine(o.CheckKey) || breaksLine(o.Item) || breaksLine(o.Metric):
+		return fmt.Errorf("%w: check_key, item and metric must not contain control characters or line breaks", ErrInvalidInput)
 	}
 	return nil
+}
+
+// breaksLine reports whether s holds a control character or a Unicode line
+// or paragraph separator. The agent chooses check_key, item and metric, and
+// alert notifications print them one alert per line, so such a character
+// would let a host forge alert rows or chat markup in mails and webhook
+// bodies (backlog 7.13). The sibling name validators refuse the same.
+func breaksLine(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	}) >= 0
 }
 
 // wellShaped reports whether o carries exactly one of the shapes

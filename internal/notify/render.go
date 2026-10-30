@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -215,19 +216,35 @@ func digestTruncationNote(d DigestSummary) string {
 // The e-mail body and the alerts.items placeholder share it, so a webhook
 // template and a mail about the same batch cannot describe it
 // differently. No trailing newline — the callers decide what follows.
+//
+// Every field passes through oneLine: check keys, items and metrics come
+// from a host's agent, so a line break in one would let the host forge
+// alert rows or phishing lines (backlog 7.13). Ingest refuses them, and this
+// keeps a row stored before that from breaking the format.
 func alertItemsText(items []AlertItem) string {
 	lines := make([]string, len(items))
 	for i, it := range items {
-		what := it.CheckKey
+		what := oneLine(it.CheckKey)
 		if it.Item != "" {
-			what += "/" + it.Item
+			what += "/" + oneLine(it.Item)
 		}
 		if it.Metric != "" {
-			what += " " + it.Metric
+			what += " " + oneLine(it.Metric)
 		}
-		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", it.Severity, it.HostName, it.Event, what)
+		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", oneLine(it.Severity), oneLine(it.HostName), oneLine(it.Event), what)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// oneLine replaces every control character and Unicode line or paragraph
+// separator in s with U+FFFD, so s cannot start a new line.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
 }
 
 // alertTruncationNote is what an alert batch's message says when its item

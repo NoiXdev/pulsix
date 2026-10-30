@@ -536,6 +536,27 @@ func TestRenderEmailAlertBatch(t *testing.T) {
 	}
 }
 
+// TestAlertItemsTextKeepsOneLinePerAlert is backlog 7.13: whatever an
+// item's fields hold — including a row stored before the ingest contract
+// refused control characters — each alert stays exactly one line, so a
+// host cannot forge alert rows or phishing lines in a mail or a webhook's
+// alerts.items text.
+func TestAlertItemsTextKeepsOneLinePerAlert(t *testing.T) {
+	items := []AlertItem{
+		{HostName: "web-7", CheckKey: "disk", Item: "/var\ncrit     db-prod-1            opened   disk/ x\r\n\nACTION REQUIRED @everyone", Metric: "disk.used_pct", Severity: "warn", Event: "opened"},
+		{HostName: "db\u2028-2", CheckKey: "disk\t", Item: "/srv\x1b[31m", Metric: "disk.used_pct\u2029", Severity: "crit", Event: "opened"},
+	}
+	got := alertItemsText(items)
+	if n := strings.Count(got, "\n"); n != len(items)-1 {
+		t.Fatalf("%d alerts rendered with %d line breaks, want %d:\n%s", len(items), n, len(items)-1, got)
+	}
+	for _, bad := range []string{"\r", "\x1b", "\t", "\u2028", "\u2029"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("rendered text still holds %q:\n%s", bad, got)
+		}
+	}
+}
+
 // TestRenderEmailAlertBatchSaysWhatItLeftOut: the batch's item list is
 // capped by the follower (alertroutes.MaxBatchItems), and Count is the
 // number before that cut precisely so a reader can tell a complete list

@@ -663,6 +663,38 @@ func obsAt(host uuid.UUID, now time.Time, key, item, metric string) checks.Obser
 	return checks.Observation{HostID: host, CheckKey: key, Item: item, Metric: metric, At: now, Value: f64(1)}
 }
 
+// TestRecordObservationsRejectsLineBreaksAndControlCharacters is backlog
+// 7.13: an agent chooses check_key, item and metric, and alert
+// notifications print them one alert per line. A line break or control
+// character in any of them let a host forge alert rows or chat markup in
+// mails and webhook bodies, so the contract refuses them like the sibling
+// name validators do.
+func TestRecordObservationsRejectsLineBreaksAndControlCharacters(t *testing.T) {
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	cases := map[string]checks.Observation{
+		"newline in item":         obsAt(host, now, "disk", "/var\ncrit db-prod-1 opened", "disk.used_pct"),
+		"carriage return in item": obsAt(host, now, "disk", "/var\r@everyone", "disk.used_pct"),
+		"escape in item":          obsAt(host, now, "disk", "/var\x1b[31m", "disk.used_pct"),
+		"line separator in item":  obsAt(host, now, "disk", "/var\u2028crit", "disk.used_pct"),
+		"tab in check_key":        obsAt(host, now, "di\tsk", "/var", "disk.used_pct"),
+		"newline in metric":       obsAt(host, now, "disk", "/var", "disk.used_pct\nx"),
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := checks.NewService(store, fixedClock(now))
+			_, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{bad})
+			if !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			if store.reachedStore() != 0 {
+				t.Fatalf("store calls = %d, want 0", store.reachedStore())
+			}
+		})
+	}
+}
+
 // TestRecordObservationsBatchSizeBoundary: the count bound is a REFUSAL of
 // the whole batch (ErrInvalidInput, the shape agents.RecordFacts already
 // uses for its own contract's bounds), never a silent truncation, and the
