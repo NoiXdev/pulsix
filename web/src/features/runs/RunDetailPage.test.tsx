@@ -252,7 +252,7 @@ describe('RunDetailPage cancelled run', () => {
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
-        job: detail({ status: 'cancelled', hosts: ['h1', 'h2', 'h3'] }).job,
+        job: detail({ status: 'cancelled', hosts: ['h1', 'h2', 'h3'], cancel_stops_play: true }).job,
       },
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': {
         events: [
@@ -274,13 +274,14 @@ describe('RunDetailPage cancelled run', () => {
 
   // Backlog 2.107 is fixed: a cancel stops the play, so a run with no
   // command in flight has nothing to warn about, and the warning is kept
-  // for the hosts where a command had already started.
+  // for the hosts where a command had already started. That holds only
+  // when the worker that claimed the run said so (backlog 2.113).
   it('does not warn on a cancelled run with no interrupted host', async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
-        job: detail({ status: 'cancelled', hosts: ['h1', 'h2'] }).job,
+        job: detail({ status: 'cancelled', hosts: ['h1', 'h2'], cancel_stops_play: true }).job,
       },
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
     });
@@ -289,6 +290,53 @@ describe('RunDetailPage cancelled run', () => {
     const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
     expect(within(list).getAllByText('never started')).toHaveLength(2);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // Backlog 2.113: without the claiming worker's word that a cancel stops
+  // the play (an older worker, one without the play supervisor, a job
+  // requeued since or claimed before the field existed), the play may
+  // still be running everywhere, so the run view warns about every host,
+  // whatever each was doing.
+  it.each([
+    ['false', false],
+    ['absent', undefined],
+  ])('warns about every host when cancel_stops_play is %s', async (_label, cancelStopsPlay) => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({ status: 'cancelled', hosts: ['h1', 'h2'], cancel_stops_play: cancelStopsPlay }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': {
+        events: [hostEvent(1, 'h1', 'Install nginx', 'task'), hostEvent(2, 'h1', 'Install nginx', 'ok')],
+      },
+    });
+    renderPage();
+
+    await screen.findByRole('list', { name: 'Cancelled run hosts' });
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/the playbook may still be running against every host listed below/);
+    expect(alert).toHaveTextContent(/including those with no task in flight/);
+  });
+
+  it('shows only the stronger warning when such a run also has an interrupted host', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': {
+        job: detail({ status: 'cancelled', hosts: ['h1'], cancel_stops_play: false }).job,
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': {
+        events: [hostEvent(1, 'h1', 'Restart service', 'task')],
+      },
+    });
+    renderPage();
+
+    const list = await screen.findByRole('list', { name: 'Cancelled run hosts' });
+    expect(within(list).getByText('interrupted')).toBeInTheDocument();
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/every host listed below/);
   });
 
   it('does not colour "no task in flight" as ok', async () => {

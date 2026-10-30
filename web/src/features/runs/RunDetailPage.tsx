@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -244,26 +245,39 @@ export function RunDetailPage() {
           <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
             Cancelled run
           </div>
-          {/* Warn only where a command was in flight. Backlog 2.107 made a
-              cancel stop the play on the worker (spec
-              2026-10-29-cancel-stops-the-play-design.md, "What the run view
-              shows"), so a host that was between tasks or never started has
-              nothing left running and a banner there would be noise that
-              trains operators to skip the one that matters. An interrupted
-              host is the exception: the command already started on it is
-              not undone by the stop. The pill for a host with no task in
-              flight is neutral, not green: "finished" there only says its
-              last step closed, not that the play finished. */}
-          {cancelRows.some((r) => r.state === 'interrupted') && (
-            <div
-              role="alert"
-              className="m-4 rounded-md border p-3 text-xs"
-              style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
-            >
-              The run was stopped. On a host marked interrupted, a command had already started there and may still be
-              running on that host — stopping the run does not stop a command already running on a host. Check those
-              hosts before you re-run.
-            </div>
+          {/* Warn only where a command was in flight — when the worker
+              that claimed the run said a cancel stops the play on it
+              (cancel_stops_play, backlog 2.113). Backlog 2.107 made that
+              true for a worker running plays under the play supervisor
+              (spec 2026-10-29-cancel-stops-the-play-design.md, "What the
+              run view shows"), so a host that was between tasks or never
+              started has nothing left running and a banner there would be
+              noise that trains operators to skip the one that matters. An
+              interrupted host is the exception: the command already
+              started on it is not undone by the stop.
+              Without that word — an older worker, one without the
+              supervisor, a run requeued since or claimed before the field
+              existed — the play may still be running against every host,
+              so the warning covers all of them, as it did before 2.107.
+              The pill for a host with no task in flight is neutral, not
+              green: "finished" there only says its last step closed, not
+              that the play finished. */}
+          {!j.cancel_stops_play ? (
+            <CancelWarning>
+              Pulsix cannot confirm that cancelling stopped the play: the worker that ran it may only stop following
+              a cancelled run, and then the playbook may still be running against <strong>every host listed below</strong>,
+              including those with no task in flight. A command already
+              started on a host keeps running regardless. Treat this list as what Pulsix last saw, not as a final
+              account: check the hosts before you re-run, or two runs may change the same host at once.
+            </CancelWarning>
+          ) : (
+            cancelRows.some((r) => r.state === 'interrupted') && (
+              <CancelWarning>
+                The run was stopped. On a host marked interrupted, a command had already started there and may still
+                be running on that host — stopping the run does not stop a command already running on a host. Check
+                those hosts before you re-run.
+              </CancelWarning>
+            )
           )}
           <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Cancelled run hosts">
             {cancelRows.map((r) => (
@@ -287,6 +301,18 @@ export function RunDetailPage() {
         <EventLog events={log.events} />
       </Card>
     </>
+  );
+}
+
+function CancelWarning({ children }: { children: ReactNode }) {
+  return (
+    <div
+      role="alert"
+      className="m-4 rounded-md border p-3 text-xs"
+      style={{ borderColor: 'color-mix(in srgb, var(--px-warn) 33%, transparent)', background: 'color-mix(in srgb, var(--px-warn) 10%, transparent)', color: 'var(--px-warn)' }}
+    >
+      {children}
+    </div>
   );
 }
 
