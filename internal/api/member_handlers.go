@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -62,15 +63,15 @@ type inviteCreateOutput struct {
 
 type inviteAcceptInput struct {
 	Body struct {
-		Token       string `json:"token" minLength:"1"`
-		DisplayName string `json:"display_name" minLength:"1"`
-		// minLength is a basic guard, not full password-strength policy —
-		// this endpoint can create a brand-new account (see
-		// tenancy.Service.AcceptInvite), so it deserves at least the same
-		// floor a signup form would, unlike /auth/login's Password field
-		// (which validates credentials for an account that may predate any
-		// such policy).
-		Password string `json:"password" minLength:"8"`
+		Token string `json:"token" minLength:"1"`
+		// DisplayName and Password are needed only when accepting creates
+		// the account (or gives an existing, password-less one its first
+		// password). A signed-in account accepting an invitation for its
+		// own address sends neither. tenancy.Service.AcceptInvite enforces
+		// both, including the 8-character floor a signup form would have,
+		// once it knows which case it is in (backlog 7.10).
+		DisplayName string `json:"display_name,omitempty" required:"false"`
+		Password    string `json:"password,omitempty" required:"false"`
 	}
 }
 
@@ -202,6 +203,15 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 // organization available (AcceptInvite already returns it), so nothing
 // blocks recording it here the same way.
 //
+// An invitation for an address that already has an account with its own
+// password can only be accepted from that account's own interactive,
+// MFA-complete session (inviteAcceptor); anonymously it answers 409
+// (tenancy.ErrSignInRequired) and the SPA asks the invitee to sign in and
+// open the link again. Before backlog 7.10 the token alone added the
+// membership, so whoever first redeemed an address's invitation — on an
+// instance without outgoing mail the inviting administrator holds the link
+// — decided that address's later memberships too.
+//
 // Whether acceptance also opens a session depends on which of
 // tenancy.Service.AcceptInvite's two cases just happened, per the fix that
 // replaced this route's original behaviour of never opening one at all
@@ -220,7 +230,7 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 // deps.Tenancy and deps.Sessions — ever calls Sessions.Create.
 func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/invites/accept", func(ctx context.Context, in *inviteAcceptInput) (*inviteAcceptOutput, error) {
-		uid, orgID, newAccount, err := deps.Tenancy.AcceptInvite(ctx, in.Body.Token, in.Body.DisplayName, in.Body.Password)
+		uid, orgID, newAccount, err := deps.Tenancy.AcceptInvite(ctx, inviteAcceptor(ctx), in.Body.Token, in.Body.DisplayName, in.Body.Password)
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
@@ -252,6 +262,20 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 		// is rate limited per client address like the other public auth
 		// endpoints.
 	}, withAuthRateLimit(deps), withAudit("acceptInvite", "member"))
+}
+
+// inviteAcceptor is the account on whose behalf an invitation is being
+// accepted: the caller's own user when it holds an MFA-complete browser
+// session, uuid.Nil otherwise. A bearer token never counts — joining an
+// organization is an account-level act, like the credential routes that
+// requireInteractiveSession guards — and a half-signed-in session (second
+// factor still due) does not either.
+func inviteAcceptor(ctx context.Context) uuid.UUID {
+	p, ok := auth.FromContext(ctx)
+	if !ok || !p.MFAComplete || p.TokenID != nil {
+		return uuid.Nil
+	}
+	return p.UserID
 }
 
 // registerAdminRoutes wires the one instance-level (not org-scoped) route

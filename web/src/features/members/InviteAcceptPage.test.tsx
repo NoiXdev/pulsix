@@ -39,6 +39,16 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Accept invitation' }));
 }
 
+const anonymous = () => new Response(JSON.stringify({ detail: 'login required' }), { status: 401 });
+
+const signedInAs = (email: string) => ({
+  user: { id: 'u9', email, display_name: 'Existing User' },
+  mfa_complete: true,
+  mfa_enrolment_required: false,
+  totp_confirmed: true,
+  instance_admin: false,
+});
+
 describe('InviteAcceptPage', () => {
   it('a new invitee continues signed in towards second-factor enrolment', async () => {
     const user = userEvent.setup();
@@ -49,16 +59,19 @@ describe('InviteAcceptPage', () => {
         accepted = req.body;
         return { user_id: 'u2', org_id: 'o1', signed_in: true };
       },
-      // Accepting an invite that creates a new account opens a session
-      // that must enrol a second factor (see tenancy.Service.AcceptInvite /
+      // Anonymous until accepting opens the new account's session, which
+      // must enrol a second factor (see tenancy.Service.AcceptInvite /
       // api.registerInviteAcceptRoute).
-      'GET /api/v1/auth/me': {
-        user: { id: 'u2', email: 'ops@acme.io', display_name: 'Ops User' },
-        mfa_complete: false,
-        mfa_enrolment_required: true,
-        totp_confirmed: false,
-        instance_admin: false,
-      },
+      'GET /api/v1/auth/me': () =>
+        accepted === undefined
+          ? anonymous()
+          : {
+              user: { id: 'u2', email: 'ops@acme.io', display_name: 'Ops User' },
+              mfa_complete: false,
+              mfa_enrolment_required: true,
+              totp_confirmed: false,
+              instance_admin: false,
+            },
     });
 
     renderPage(qc);
@@ -68,20 +81,61 @@ describe('InviteAcceptPage', () => {
     expect(accepted).toMatchObject({ token: 'tok_abc123', display_name: 'Ops User' });
   });
 
-  it('an existing account is told to sign in with its own password instead of being left signed in', async () => {
+  // Backlog 7.10: the link alone no longer joins an address that already
+  // has an account; the server answers 409 and the invitation stays open.
+  it('asks the holder of an existing account to sign in and open the link again', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
-      // No session was opened: the address already had its own password.
-      'POST /api/v1/invites/accept': () => ({ user_id: 'u3', org_id: 'o1', signed_in: false }),
+      'GET /api/v1/auth/me': anonymous,
+      'POST /api/v1/invites/accept': () =>
+        new Response(JSON.stringify({ detail: 'this address already has an account' }), { status: 409 }),
     });
 
     renderPage(qc);
     await fillAndSubmit(user);
 
     expect(await screen.findByText('You already have an account')).toBeInTheDocument();
+    expect(screen.getByText(/open this invitation link again/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Go to sign in' }));
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+  });
+
+  it('a signed-in account joins with the token alone', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let accepted: unknown;
+    mockApi({
+      'GET /api/v1/auth/me': signedInAs('existing@acme.io'),
+      'POST /api/v1/invites/accept': (req: MockRequest) => {
+        accepted = req.body;
+        return { user_id: 'u9', org_id: 'o1', signed_in: false };
+      },
+    });
+
+    renderPage(qc);
+    expect(await screen.findByText(/existing@acme\.io/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Choose a password')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Join organization' }));
+
+    expect(await screen.findByText('ROOT')).toBeInTheDocument();
+    expect(accepted).toEqual({ token: 'tok_abc123' });
+  });
+
+  it('tells a signed-in account whose address the invitation is not for what to do', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/auth/me': signedInAs('someone-else@acme.io'),
+      'POST /api/v1/invites/accept': () =>
+        new Response(JSON.stringify({ detail: 'this address already has an account' }), { status: 409 }),
+    });
+
+    renderPage(qc);
+    await user.click(await screen.findByRole('button', { name: 'Join organization' }));
+
+    expect(await screen.findByText(/this address already has an account/)).toBeInTheDocument();
+    expect(screen.getByText(/sign out and open this invitation link again/)).toBeInTheDocument();
   });
 
   // I4: the page used to treat *any* failure loading the new session as
@@ -90,9 +144,14 @@ describe('InviteAcceptPage', () => {
   it('reports a failure to load the new session as such, not as an existing account', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let accepted = false;
     mockApi({
-      'POST /api/v1/invites/accept': () => ({ user_id: 'u4', org_id: 'o1', signed_in: true }),
-      'GET /api/v1/auth/me': () => new Response(JSON.stringify({ detail: 'internal error' }), { status: 500 }),
+      'POST /api/v1/invites/accept': () => {
+        accepted = true;
+        return { user_id: 'u4', org_id: 'o1', signed_in: true };
+      },
+      'GET /api/v1/auth/me': () =>
+        accepted ? new Response(JSON.stringify({ detail: 'internal error' }), { status: 500 }) : anonymous(),
     });
 
     renderPage(qc);
@@ -106,6 +165,7 @@ describe('InviteAcceptPage', () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
+      'GET /api/v1/auth/me': anonymous,
       'POST /api/v1/invites/accept': () => new Response(JSON.stringify({ detail: 'invitation expired' }), { status: 410 }),
     });
 

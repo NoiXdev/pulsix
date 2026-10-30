@@ -340,6 +340,17 @@ func (f *fakeStore) DeleteInvite(_ context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeStore) PeekInvite(_ context.Context, tokenHash []byte, now time.Time) (tenancy.Invite, error) {
+	if err := f.take("PeekInvite"); err != nil {
+		return tenancy.Invite{}, err
+	}
+	inv, ok := f.invites[string(tokenHash)]
+	if !ok || now.After(inv.ExpiresAt) {
+		return tenancy.Invite{}, tenancy.ErrNotFound
+	}
+	return inv, nil
+}
+
 func (f *fakeStore) TakeInvite(_ context.Context, tokenHash []byte, now time.Time) (tenancy.Invite, error) {
 	if err := f.take("TakeInvite"); err != nil {
 		return tenancy.Invite{}, err
@@ -389,7 +400,7 @@ func TestInviteCreatesUserSendsMailAndAcceptJoins(t *testing.T) {
 	if len(mail.sent) != 1 || !strings.Contains(mail.sent[0].body, inv.Token) {
 		t.Fatalf("mail %+v", mail.sent)
 	}
-	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "New User", "correct horse battery")
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New User", "correct horse battery")
 	if err != nil || gotOrg != org.ID {
 		t.Fatalf("accept: %v", err)
 	}
@@ -400,7 +411,7 @@ func TestInviteCreatesUserSendsMailAndAcceptJoins(t *testing.T) {
 	if err != nil || role != tenancy.RoleOperator {
 		t.Fatalf("role %s %v", role, err)
 	}
-	if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("invite reused: %v", err)
 	}
 }
@@ -429,7 +440,9 @@ func TestAcceptInviteExistingAccountKeepsPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "Attacker-Chosen Name", "attacker-chosen-password")
+	// Backlog 7.10: the token alone no longer joins an existing account —
+	// whoever holds it must be signed in as that account.
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, existing, inv.Token, "Attacker-Chosen Name", "attacker-chosen-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +493,7 @@ func TestAcceptInviteAsExistingMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "Ignored Name", "correct horse battery")
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, existing, inv.Token, "Ignored Name", "")
 	if err != nil {
 		t.Fatalf("accept as existing member: %v", err)
 	}
@@ -526,7 +539,7 @@ func TestAcceptInviteReinvitedPasswordlessAccountReportsNewAccount(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, inv.Token, "First Real Name", "correct horse battery")
+	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "First Real Name", "correct horse battery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,10 +557,100 @@ func TestAcceptInviteReinvitedPasswordlessAccountReportsNewAccount(t *testing.T)
 	}
 }
 
+// TestAcceptInviteNeedsTheExistingAccountsOwnSession is backlog 7.10: an
+// invite token proves at most that someone saw the link, not who they are.
+// An address that already has an account joins only when the request is
+// signed in as that account; otherwise acceptance is refused without
+// burning the invitation, so its holder can sign in and accept it.
+func TestAcceptInviteNeedsTheExistingAccountsOwnSession(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	existing := st.addUser("existing@x", true)
+	inv, err := svc.Invite(ctx, org.ID, owner, "existing@x", tenancy.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, acceptor := range map[string]uuid.UUID{"anonymous": uuid.Nil, "someone else": owner} {
+		if _, _, _, err := svc.AcceptInvite(ctx, acceptor, inv.Token, "x", "whatever-password"); !errors.Is(err, tenancy.ErrSignInRequired) {
+			t.Fatalf("%s accepting an existing account's invite: %v, want ErrSignInRequired", name, err)
+		}
+		if _, err := svc.MembershipOf(ctx, org.ID, existing); !errors.Is(err, tenancy.ErrNotMember) {
+			t.Fatalf("%s: the existing account was added anyway: %v", name, err)
+		}
+	}
+	if uid, _, _, err := svc.AcceptInvite(ctx, existing, inv.Token, "", ""); err != nil || uid != existing {
+		t.Fatalf("the account's own session accepting afterwards: uid %s, %v; the refusals must not have burned the invite", uid, err)
+	}
+}
+
+// TestAcceptInviteCannotCaptureAnotherOrgsInvitation is security audit
+// run 1's reproduction of backlog 7.10. On an instance without mail an
+// inviter receives the accept link, so any member who owns an org could
+// invite someone else's address, redeem the link and own that account; a
+// later invitation from an unrelated org, accepted by the real person, then
+// joined the attacker's account. It must not.
+func TestAcceptInviteCannotCaptureAnotherOrgsInvitation(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	unmailed := &fakeMailer{failErr: fmt.Errorf("load smtp settings: %w", mail.ErrNotConfigured)}
+	svc := tenancy.NewService(st, unmailed, testPublicURL, time.Now)
+	attacker := st.addUser("attacker@x", true)
+	orgA, _ := svc.CreateOrg(ctx, attacker, "attacker-org", "A")
+	ownerB := st.addUser("owner-b@x", true)
+	orgB, _ := svc.CreateOrg(ctx, ownerB, "victim-org", "B")
+
+	invA, err := svc.Invite(ctx, orgA.ID, attacker, "alice@corp.example", tenancy.RoleViewer)
+	if err != nil || invA.AcceptURL == "" {
+		t.Fatalf("unmailed invite: %+v %v", invA, err)
+	}
+	captured, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, invA.Token, "Alice", "attacker-chosen-pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invB, err := svc.Invite(ctx, orgB.ID, ownerB, "alice@corp.example", tenancy.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, invB.Token, "Alice Real", "alice-real-password"); !errors.Is(err, tenancy.ErrSignInRequired) {
+		t.Fatalf("accepting org B's invite without the account's session: %v, want ErrSignInRequired", err)
+	}
+	if role, err := svc.MembershipOf(ctx, orgB.ID, captured); !errors.Is(err, tenancy.ErrNotMember) {
+		t.Fatalf("the attacker-created account joined org B as %s (%v)", role, err)
+	}
+}
+
+// TestAcceptInviteNewAccountNeedsAPassword: the password became optional on
+// the wire (a signed-in existing account sends none), so the service
+// enforces the floor for an account it creates — before taking the invite.
+func TestAcceptInviteNewAccountNeedsAPassword(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	inv, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, password string }{{"New", ""}, {"New", "short"}, {"", "long enough password"}} {
+		if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, tc.name, tc.password); !errors.Is(err, tenancy.ErrInvalidInput) {
+			t.Fatalf("name %q password %q: %v, want ErrInvalidInput", tc.name, tc.password, err)
+		}
+	}
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "long enough password"); err != nil {
+		t.Fatalf("a valid acceptance after the refusals: %v; the refusals must not have burned the invite", err)
+	}
+}
+
 func TestAcceptInviteUnknownTokenNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := tenancy.NewService(newFakeStore(), &fakeMailer{}, testPublicURL, time.Now)
-	if _, _, _, err := svc.AcceptInvite(ctx, "not-a-real-token", "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, "not-a-real-token", "x", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("unknown token: %v, want ErrNotFound", err)
 	}
 }
@@ -561,7 +664,7 @@ func TestInviteExpires(t *testing.T) {
 	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
 	inv, _ := svc.Invite(ctx, org.ID, owner, "late@x", tenancy.RoleViewer)
 	now = now.Add(8 * 24 * time.Hour)
-	if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "Late", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "Late", "correct horse battery"); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("expired invite: %v", err)
 	}
 }
@@ -644,7 +747,7 @@ func TestInviteWithoutMailConfiguredReturnsTheLink(t *testing.T) {
 	if len(st.invites) != 1 {
 		t.Fatalf("stored invitations = %d, want 1", len(st.invites))
 	}
-	if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "long enough password"); err != nil {
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "long enough password"); err != nil {
 		t.Fatalf("accepting the returned link: %v", err)
 	}
 
@@ -1256,7 +1359,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["TakeInvite"] = boom
-		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite TakeInvite failure: %v, want %v", err, boom)
 		}
 	})
@@ -1272,7 +1375,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["CreateUser"] = boom
-		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite CreateUser failure: %v, want %v", err, boom)
 		}
 	})
@@ -1288,7 +1391,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["GetUserByEmail"] = boom
-		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite GetUserByEmail failure: %v, want %v", err, boom)
 		}
 	})
@@ -1308,7 +1411,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["SetUserPasswordAndName"] = boom
-		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite SetUserPasswordAndName failure: %v, want %v", err, boom)
 		}
 	})
@@ -1324,7 +1427,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			t.Fatal(err)
 		}
 		st.failNext["AddMembership"] = boom
-		if _, _, _, err := svc.AcceptInvite(ctx, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
+		if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "correct horse battery"); !errors.Is(err, boom) {
 			t.Fatalf("AcceptInvite AddMembership failure: %v, want %v", err, boom)
 		}
 	})

@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { PulsixMark } from '../../ui/PulsixMark.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { acceptInvite } from '../../api/hooks/useMembers.ts';
-import { useRefetchMe } from '../../api/hooks/useMe.ts';
+import { useMe, useRefetchMe } from '../../api/hooks/useMe.ts';
+import { ApiError } from '../../api/client.ts';
 import { useResetSession } from '../../lib/session.ts';
 
 function InviteAcceptShell({ children }: { children: ReactNode }) {
@@ -28,40 +30,95 @@ function InviteAcceptShell({ children }: { children: ReactNode }) {
  * /login); it follows the same split-brand-panel-free, centered-card
  * language as LoginPage for consistency.
  *
- * POST /invites/accept opens a session only when accepting it just gave
- * the address its first password — a brand-new account, or a
- * never-logged-in row left over from an earlier, never-accepted invite
- * (see tenancy.Service.AcceptInvite's own doc comment) — and says so in
- * `signed_in`. A new invitee continues signed in towards second-factor
- * enrolment; the holder of an existing account (signed_in: false; the
- * membership was added all the same) is told to sign in with the
- * credentials that account already has. Any failure — of acceptance
- * itself, or of loading the new session afterwards — is reported as such,
- * never mistaken for the existing-account outcome.
+ * The invitation link alone joins only an address that has no account yet
+ * (backlog 7.10, see tenancy.Service.AcceptInvite's own doc comment):
+ *
+ * - Anonymously the page asks for a name and a password. Accepting creates
+ *   the account and opens a session (`signed_in`), and the new invitee
+ *   continues towards second-factor enrolment. If the address already has
+ *   an account, the server answers 409 without using the invitation up,
+ *   and the page asks its holder to sign in and open the link again.
+ * - Signed in (MFA-complete), the page offers to join as that account and
+ *   posts the token alone; the server checks that the invitation is for
+ *   this account's address.
+ *
+ * Any failure — of acceptance itself, or of loading the new session
+ * afterwards — is reported as such, never mistaken for another outcome.
  */
 export function InviteAcceptPage() {
   const { token } = useParams({ strict: false }) as { token: string };
   const navigate = useNavigate();
   const refetchMe = useRefetchMe();
   const resetSession = useResetSession();
+  const me = useMe();
+  const qc = useQueryClient();
 
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [joinedExistingAccount, setJoinedExistingAccount] = useState(false);
+  const [signInRequired, setSignInRequired] = useState(false);
 
-  if (joinedExistingAccount) {
+  if (me.isPending) {
+    return (
+      <InviteAcceptShell>
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      </InviteAcceptShell>
+    );
+  }
+
+  if (signInRequired) {
     return (
       <InviteAcceptShell>
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
           <h1 className="text-lg font-semibold">You already have an account</h1>
           <p className="text-xs text-muted-foreground">
-            This address already belongs to an account with its own password. You have been added to the
-            organization — sign in with that account&apos;s existing password and second factor to continue.
+            This address already belongs to an account. Sign in to it with its own password and second factor, then
+            open this invitation link again to join the organization.
           </p>
           <Button type="button" variant="primary" onClick={() => void navigate({ to: '/login', search: { step: undefined } })}>
             Go to sign in
+          </Button>
+        </div>
+      </InviteAcceptShell>
+    );
+  }
+
+  const account = me.data?.mfa_complete ? me.data.user : undefined;
+  if (account) {
+    return (
+      <InviteAcceptShell>
+        <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
+          <h1 className="text-lg font-semibold">Join the organization</h1>
+          <p className="text-xs text-muted-foreground">
+            You are signed in as <span className="font-medium text-foreground">{account.email}</span>. The invitation
+            must be for this address.
+          </p>
+          {error && (
+            <p className="text-xs text-destructive">
+              {error} If the invitation is for a different address, sign out and open this invitation link again.
+            </p>
+          )}
+          <Button
+            type="button"
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await acceptInvite({ token });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'failed to accept invitation');
+                setBusy(false);
+                return;
+              }
+              // The account's organization list just changed.
+              await qc.invalidateQueries();
+              await navigate({ to: '/' });
+            }}
+          >
+            Join organization
           </Button>
         </div>
       </InviteAcceptShell>
@@ -76,16 +133,14 @@ export function InviteAcceptPage() {
           e.preventDefault();
           setBusy(true);
           setError(null);
-          let signedIn: boolean;
           try {
-            ({ signed_in: signedIn } = await acceptInvite({ token, display_name: displayName, password }));
+            await acceptInvite({ token, display_name: displayName, password });
           } catch (err) {
-            setError(err instanceof Error ? err.message : 'failed to accept invitation');
-            setBusy(false);
-            return;
-          }
-          if (!signedIn) {
-            setJoinedExistingAccount(true);
+            if (err instanceof ApiError && err.status === 409) {
+              setSignInRequired(true);
+            } else {
+              setError(err instanceof Error ? err.message : 'failed to accept invitation');
+            }
             setBusy(false);
             return;
           }

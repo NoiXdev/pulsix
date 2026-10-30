@@ -4061,8 +4061,8 @@ export interface components {
              * @example https://example.com/schemas/InviteAcceptInputBody.json
              */
             readonly $schema?: string;
-            display_name: string;
-            password: string;
+            display_name?: string;
+            password?: string;
             token: string;
         };
         InviteAcceptOutputBody: {

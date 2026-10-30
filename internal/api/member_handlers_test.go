@@ -163,16 +163,18 @@ func TestInviteAcceptNewAccountOpensEnrolmentSession(t *testing.T) {
 	}
 }
 
-// TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword is the
-// other half of the same fix: an address that already belongs to an
-// account with its own password must gain nothing from an intercepted
-// invitation — no session, and the account's real password (not the one
-// submitted at acceptance) is what still signs it in.
-func TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword(t *testing.T) {
+// TestInviteAcceptExistingAccountNeedsItsOwnSession is the other half of
+// the same fix, tightened by backlog 7.10: an address that already belongs
+// to an account with its own password gains nothing from the invitation
+// link alone. Anonymously, and signed in as anyone else, accepting answers
+// 409 without using the invitation up; signed in as the account itself it
+// joins, opens no new session, and never touches the account's password.
+func TestInviteAcceptExistingAccountNeedsItsOwnSession(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("existacct-owner@example.test", "correct horse battery")
 	s.SeedOrg("existacct-org", owner)
-	s.SeedUser("already-has-account@example.test", "the-real-password")
+	existing := s.SeedUser("already-has-account@example.test", "the-real-password")
+	bystander := s.SeedUser("bystander@example.test", "bystander-password")
 	c := s.LoginAs(owner)
 
 	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/existacct-org/invites", map[string]any{"email": "already-has-account@example.test", "role": "operator"})
@@ -180,12 +182,37 @@ func TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword(t *testing.T)
 		t.Fatalf("create invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 	token := extractInviteToken(t, s)
+	accept := func(client *http.Client, body map[string]any) *http.Response {
+		t.Helper()
+		return postJSON(t, client, s.HTTP.URL+"/api/v1/invites/accept", body)
+	}
 
-	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{
-		"token": token, "display_name": "Attacker-Chosen Name", "password": "attacker-chosen-password",
-	})
+	for name, client := range map[string]*http.Client{
+		"anonymous":             s.Client(),
+		"another account":       s.LoginAs(bystander),
+		"second factor pending": s.LoginAsPending(existing),
+	} {
+		resp = accept(client, map[string]any{
+			"token": token, "display_name": "Attacker-Chosen Name", "password": "attacker-chosen-password",
+		})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("%s: accept for an existing account: status %d, want 409; body %s", name, resp.StatusCode, mustReadBody(t, resp))
+		}
+		for _, ck := range resp.Cookies() {
+			if ck.Name == auth.CookieName {
+				t.Fatalf("%s: refused accept set a session cookie: %+v", name, ck)
+			}
+		}
+	}
+	if isMember(t, s, c, "existacct-org", existing) {
+		t.Fatal("a refused accept added the membership")
+	}
+
+	// Signed in as the account itself, the token alone is enough.
+	self := s.LoginAs(existing)
+	resp = accept(self, map[string]any{"token": token})
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("accept invite: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+		t.Fatalf("accept as the account itself: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 	for _, ck := range resp.Cookies() {
 		if ck.Name == auth.CookieName {
@@ -201,22 +228,46 @@ func TestInviteAcceptExistingAccountOpensNoSessionAndKeepsPassword(t *testing.T)
 	if accepted.SignedIn {
 		t.Fatal("accept for an existing account reported signed_in")
 	}
+	if !isMember(t, s, c, "existacct-org", existing) {
+		t.Fatal("accepting as the account itself did not add the membership")
+	}
 
-	// The account's real password still works.
+	// The account's real password still works; nothing submitted at the
+	// refused attempts was applied.
 	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{
 		"email": "already-has-account@example.test", "password": "the-real-password",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login with the real password: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
-
-	// The password submitted at acceptance was never applied.
 	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{
 		"email": "already-has-account@example.test", "password": "attacker-chosen-password",
 	})
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("login with the attacker-chosen password from acceptance unexpectedly succeeded")
 	}
+}
+
+// isMember reports whether userID is in slug's member list, as seen by
+// client (a member of that organization).
+func isMember(t *testing.T, s *apitest.Server, client *http.Client, slug string, userID uuid.UUID) bool {
+	t.Helper()
+	resp := requestJSON(t, client, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/"+slug+"/members", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list members: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var list struct {
+		Members []memberDTO `json:"members"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range list.Members {
+		if m.UserID == userID.String() {
+			return true
+		}
+	}
+	return false
 }
 
 // extractInviteToken pulls the invite token out of the most recently sent

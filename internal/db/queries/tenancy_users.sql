@@ -62,6 +62,13 @@ SELECT count(*) FROM org_memberships WHERE org_id = $1 AND role = 'owner';
 INSERT INTO invites (id, org_id, email, role, token_hash, invited_by, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7);
 
+-- name: PeekInvite :one
+-- Reads the invite TakeInvite would take, without taking it: AcceptInvite
+-- decides first whether this caller may accept it at all (backlog 7.10), so
+-- a refused attempt never burns the invitation.
+SELECT * FROM invites
+WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz;
+
 -- name: TakeInvite :one
 -- Atomically finds an invite that is unaccepted and unexpired as of now and
 -- marks it accepted in the same statement, so two concurrent requests

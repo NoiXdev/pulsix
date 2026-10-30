@@ -188,6 +188,36 @@ func (q *Queries) ListMembers(ctx context.Context, orgID uuid.UUID) ([]ListMembe
 	return items, nil
 }
 
+const peekInvite = `-- name: PeekInvite :one
+SELECT id, org_id, email, role, token_hash, invited_by, expires_at, accepted_at, created_at FROM invites
+WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > $2::timestamptz
+`
+
+type PeekInviteParams struct {
+	TokenHash []byte    `json:"token_hash"`
+	Now       time.Time `json:"now"`
+}
+
+// Reads the invite TakeInvite would take, without taking it: AcceptInvite
+// decides first whether this caller may accept it at all (backlog 7.10), so
+// a refused attempt never burns the invitation.
+func (q *Queries) PeekInvite(ctx context.Context, arg PeekInviteParams) (Invite, error) {
+	row := q.db.QueryRow(ctx, peekInvite, arg.TokenHash, arg.Now)
+	var i Invite
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Email,
+		&i.Role,
+		&i.TokenHash,
+		&i.InvitedBy,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const revokeSessionsForUser = `-- name: RevokeSessionsForUser :exec
 UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
 `

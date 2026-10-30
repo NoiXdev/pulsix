@@ -41,6 +41,9 @@ export function useRemoveMember(org: string) {
   });
 }
 
-export async function acceptInvite(body: { token: string; display_name: string; password: string }) {
+/** acceptInvite redeems an invitation. display_name and password are for
+ * creating the account; a signed-in account accepting for its own address
+ * sends the token alone. */
+export async function acceptInvite(body: { token: string; display_name?: string; password?: string }) {
   return unwrap(api.POST('/api/v1/invites/accept', { body }));
 }

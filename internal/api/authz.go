@@ -135,6 +135,8 @@ func mapTenancyErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, tenancy.ErrSlugTaken):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, tenancy.ErrSignInRequired):
+		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, tenancy.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, tenancy.ErrInviteDelivery):

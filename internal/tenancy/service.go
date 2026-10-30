@@ -36,7 +36,15 @@ var (
 	// Invite removes it again, so nothing is left that nobody was told
 	// about.
 	ErrInviteDelivery = errors.New("the invitation e-mail could not be delivered")
+	// ErrSignInRequired refuses accepting an invitation for an address that
+	// already has an account, unless the request is signed in as that
+	// account (backlog 7.10). The invitation is not used up.
+	ErrSignInRequired = errors.New("this address already has an account: sign in to it, then accept the invitation")
 )
+
+// minInvitePasswordLen is the floor for the password of an account an
+// invitation creates: a basic guard, not a full strength policy.
+const minInvitePasswordLen = 8
 
 // maxOrgNameLength bounds an organization's display name.
 const maxOrgNameLength = 200
@@ -161,6 +169,9 @@ type Store interface {
 	InsertInvite(ctx context.Context, inv Invite, tokenHash []byte) error
 	// DeleteInvite removes an invitation of orgID that was never delivered.
 	DeleteInvite(ctx context.Context, orgID, id uuid.UUID) error
+	// PeekInvite returns the invite TakeInvite would take — unaccepted and
+	// unexpired as of now — without taking it, or ErrNotFound.
+	PeekInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error)
 	// TakeInvite atomically finds an invite that is unaccepted and
 	// unexpired as of now and marks it accepted, returning ErrNotFound if
 	// no such invite exists — whether because the token is unknown,
@@ -372,53 +383,57 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 }
 
 // AcceptInvite redeems token, creating or reusing the invited user, and
-// joins them to the invite's org with the invite's role.
+// joins them to the invite's org with the invite's role. acceptor is the
+// user the request is signed in as (an MFA-complete interactive session),
+// uuid.Nil when none.
 //
-// The invited address might already belong to a registered account with its
-// own password. The invite token only proves control of that mailbox at the
-// moment the invite was accepted — it is not proof of that account's
-// password — so acceptance must never let whoever holds the token overwrite
-// an existing account's credentials: that would turn "I can read this
-// inbox" into "I now control this account", for any account whose owner an
-// org admin (accidentally or otherwise) invites by email. Only a user row
-// created by a *previous*, never-accepted invite (PasswordHash == nil, no
-// one has ever logged into it) has its password and display name set here;
-// an account that already has a password keeps it, and keeps its existing
-// display name, unchanged.
+// The token proves at most that someone saw the link, not who they are: an
+// instance without outbound mail hands the link to the inviter (see Invite),
+// and a link can be forwarded. So it never speaks for an account that
+// already has a password (backlog 7.10):
 //
-// The returned newAccount reports which of those two cases happened: true
-// when this call just gave the address its first password (a brand-new
-// user row, or a never-logged-in row left over from an earlier,
-// never-accepted invite) — false when the address already belonged to an
-// account with a password of its own. The handler layer (see
-// api.registerInviteAcceptRoute) uses this to decide whether accepting the
-// invite also opens a session: a token is a single-use credential for a
-// new account, never a way to sign in as an account that already has its
-// own password.
-func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password string) (userID uuid.UUID, orgID uuid.UUID, newAccount bool, err error) {
+//   - An address whose account has its own password joins only when acceptor
+//     is that account. Anything else is ErrSignInRequired, and the invitation
+//     is checked first and not used up, so the account's holder can sign in
+//     and accept it. The account's password and display name are never
+//     touched. Without this rule, whoever redeemed an unmailed link for
+//     someone else's address owned that account, and every later invitation
+//     to the address, from any organization, joined it.
+//   - An address with no account, or only a user row a previous, never
+//     accepted invite left behind (PasswordHash == nil, nobody ever signed
+//     in), gets its first password and display name here; both are required.
+//
+// The returned newAccount reports which case happened: true when this call
+// just gave the address its first password, false when an existing account
+// joined. The handler layer (see api.registerInviteAcceptRoute) opens a
+// session only for a new account.
+func (s *Service) AcceptInvite(ctx context.Context, acceptor uuid.UUID, token, displayName, password string) (userID uuid.UUID, orgID uuid.UUID, newAccount bool, err error) {
 	sum := sha256.Sum256([]byte(token))
-	inv, err := s.store.TakeInvite(ctx, sum[:], s.now())
+	inv, err := s.store.PeekInvite(ctx, sum[:], s.now())
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// TakeInvite's contract already folds "unknown token", "already
-			// accepted" and "expired" into ErrNotFound (see Store.TakeInvite),
-			// so this is a genuine no-such-invite, not a store failure.
-			return uuid.Nil, uuid.Nil, false, ErrNotFound
-		}
-		// A database outage here must not present as "no such invite": that
-		// would turn a store failure into a silent 404 the same way the
-		// review flagged for every other method in this file. Adjacent fix,
-		// Task 10 fix round 1.
-		return uuid.Nil, uuid.Nil, false, fmt.Errorf("take invite: %w", err)
-	}
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, false, fmt.Errorf("hash password: %w", err)
+		return uuid.Nil, uuid.Nil, false, inviteLookupErr(err)
 	}
 	u, err := s.store.GetUserByEmail(ctx, inv.Email)
+	exists := err == nil
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return uuid.Nil, uuid.Nil, false, err
+	}
+	if err := checkAcceptor(exists, u, acceptor, displayName, password); err != nil {
+		return uuid.Nil, uuid.Nil, false, err
+	}
+	if inv, err = s.store.TakeInvite(ctx, sum[:], s.now()); err != nil {
+		return uuid.Nil, uuid.Nil, false, inviteLookupErr(err)
+	}
+	// Read the address again now that the invite is ours: a concurrent
+	// acceptance may have created the account in between.
+	u, err = s.store.GetUserByEmail(ctx, inv.Email)
 	created := false
 	switch {
 	case errors.Is(err, ErrNotFound):
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			return uuid.Nil, uuid.Nil, false, fmt.Errorf("hash password: %w", err)
+		}
 		u = User{ID: uuid.Must(uuid.NewV7()), Email: inv.Email, DisplayName: displayName, PasswordHash: &hash}
 		if err := s.store.CreateUser(ctx, u); err != nil {
 			return uuid.Nil, uuid.Nil, false, fmt.Errorf("create invited user: %w", err)
@@ -426,18 +441,56 @@ func (s *Service) AcceptInvite(ctx context.Context, token, displayName, password
 		created = true
 	case err != nil:
 		return uuid.Nil, uuid.Nil, false, err
-	default:
-		if u.PasswordHash == nil {
-			if err := s.store.SetUserPasswordAndName(ctx, u.ID, hash, displayName); err != nil {
-				return uuid.Nil, uuid.Nil, false, fmt.Errorf("set invited user credentials: %w", err)
-			}
-			created = true
+	case u.PasswordHash == nil:
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			return uuid.Nil, uuid.Nil, false, fmt.Errorf("hash password: %w", err)
 		}
+		if err := s.store.SetUserPasswordAndName(ctx, u.ID, hash, displayName); err != nil {
+			return uuid.Nil, uuid.Nil, false, fmt.Errorf("set invited user credentials: %w", err)
+		}
+		created = true
+	case u.ID != acceptor:
+		// The account appeared after the first check; the invitation is
+		// used up, but it still never joins an account its holder did not
+		// sign in to.
+		return uuid.Nil, uuid.Nil, false, ErrSignInRequired
 	}
 	if err := s.store.AddMembership(ctx, inv.OrgID, u.ID, inv.Role); err != nil {
 		return uuid.Nil, uuid.Nil, false, fmt.Errorf("add membership: %w", err)
 	}
 	return u.ID, inv.OrgID, created, nil
+}
+
+// checkAcceptor decides, before an invitation is taken, whether this request
+// may accept it: an address with a password-bearing account only through
+// that account's own session, a new account only with a name and a password
+// of minInvitePasswordLen or more.
+func checkAcceptor(exists bool, u User, acceptor uuid.UUID, displayName, password string) error {
+	if exists && u.PasswordHash != nil {
+		if u.ID != acceptor {
+			return ErrSignInRequired
+		}
+		return nil
+	}
+	if strings.TrimSpace(displayName) == "" {
+		return fmt.Errorf("%w: a name is required to create the account", ErrInvalidInput)
+	}
+	if len(password) < minInvitePasswordLen {
+		return fmt.Errorf("%w: the password must be at least %d characters", ErrInvalidInput, minInvitePasswordLen)
+	}
+	return nil
+}
+
+// inviteLookupErr maps a Peek/TakeInvite failure: the store already folds
+// "unknown token", "already accepted" and "expired" into ErrNotFound, so
+// that is a genuine no-such-invite. Anything else is a store failure and
+// must not present as a silent 404 (Task 10 fix round 1).
+func inviteLookupErr(err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	return fmt.Errorf("take invite: %w", err)
 }
 
 // ChangeRole sets target's role in orgID. actorRole is the caller's already
