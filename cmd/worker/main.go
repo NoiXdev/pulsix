@@ -66,18 +66,31 @@ func entry(args, env []string) int {
 	if len(args) > 1 && args[1] == supervisor.Arg {
 		return supervisor.Main(args[2:])
 	}
-	return run(env)
+	return run(env, supervisor.Probe)
 }
 
-// run wires the worker process: load the configuration, run under the
-// signal context, map the outcome to the exit code.
-func run(env []string) int {
+// run wires the worker process: load the configuration, check that the host
+// can run the play supervisor (probeSupervisor, supervisor.Probe outside
+// tests), run under the signal context, map the outcome to the exit code.
+func run(env []string, probeSupervisor func() error) int {
 	cfg, err := worker.Load(env)
 	if err != nil {
 		slog.Error("configuration error", "err", err)
 		return 2
 	}
 	cfg.Version = version
+	// The per-run play supervisor needs what only the host can give
+	// (pidfds: a kernel and a seccomp profile that allow them). Without it
+	// every playbook job would fail with the supervisor's refusal while the
+	// worker enrolled, connected and looked healthy, so it is checked here,
+	// before anything else, and refused like any configuration the operator
+	// has to fix (backlog 2.112).
+	if cfg.PlaySupervisor != "" {
+		if err := probeSupervisor(); err != nil {
+			slog.Error("this host cannot run playbooks", "err", err)
+			return 2
+		}
+	}
 
 	// Cancelled on SIGTERM (the container orchestrator's graceful stop) or
 	// SIGINT (Ctrl-C during local development); the loop shuts down cleanly

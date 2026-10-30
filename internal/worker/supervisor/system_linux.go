@@ -22,20 +22,31 @@ type linuxSystem struct{}
 // newSystem returns the Linux system after checking that the kernel has
 // pidfds.
 func newSystem() (system, error) {
-	return newSystemWith(unix.PidfdOpen)
+	return newSystemWith(unix.PidfdOpen, unix.PidfdSendSignal)
 }
 
-// newSystemWith probes pidfd support through open (unix.PidfdOpen outside
-// tests) by opening a pidfd on the supervisor itself. Without pidfds (a
-// kernel older than 5.3, or a seccomp profile that forbids them) the
-// supervisor refuses by name rather than fall back to signalling raw pids,
-// which could hit an unrelated process that recycled a pid.
-func newSystemWith(open func(pid, flags int) (int, error)) (system, error) {
+// pidfdRefusal is the start of every refusal over missing pidfd support; the
+// failing call and its error follow it.
+const pidfdRefusal = "the play supervisor needs pidfds, which a kernel older than Linux 5.3 lacks and a seccomp profile can block (pidfd_open, pidfd_send_signal)"
+
+// newSystemWith probes pidfd support through open and send
+// (unix.PidfdOpen and unix.PidfdSendSignal outside tests): it opens a pidfd
+// on the calling process and sends signal 0 through it, which checks that
+// the call is allowed and delivers nothing. Both calls are probed because a
+// seccomp profile can allow one and block the other, and the supervisor
+// needs the second only once it stops a tree. Without pidfds (a kernel
+// older than 5.3, or a seccomp profile that forbids them) the supervisor
+// refuses by name rather than fall back to signalling raw pids, which could
+// hit an unrelated process that recycled a pid.
+func newSystemWith(open func(pid, flags int) (int, error), send func(fd int, sig unix.Signal, info *unix.Siginfo, flags int) error) (system, error) {
 	fd, err := open(os.Getpid(), 0)
 	if err != nil {
-		return nil, fmt.Errorf("the play supervisor needs pidfds, which a kernel older than Linux 5.3 lacks and a seccomp profile can block (pidfd_open, pidfd_send_signal): pidfd_open: %w", err)
+		return nil, fmt.Errorf("%s: pidfd_open: %w", pidfdRefusal, err)
 	}
-	_ = unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
+	if err := send(fd, 0, nil, 0); err != nil {
+		return nil, fmt.Errorf("%s: pidfd_send_signal: %w", pidfdRefusal, err)
+	}
 	return linuxSystem{}, nil
 }
 

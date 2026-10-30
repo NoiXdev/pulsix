@@ -129,3 +129,12 @@ func exitFor(ws syscall.WaitStatus) (code int, sig syscall.Signal) {
 	}
 	return ws.ExitStatus(), 0
 }
+
+// Probe reports whether this host gives the supervisor what it needs, with
+// the same refusal Main would print for the first run. The worker calls it
+// at start, so an unsupported host shows before the worker claims a job
+// rather than as the error of every playbook job (backlog 2.112).
+func Probe() error {
+	_, err := newSystem()
+	return err
+}

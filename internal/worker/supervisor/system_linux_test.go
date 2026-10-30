@@ -275,7 +275,7 @@ func TestLinuxSystemDescendantsSkipsZombies(t *testing.T) {
 }
 
 func TestNewSystemNamesMissingPidfd(t *testing.T) {
-	_, err := newSystemWith(func(int, int) (int, error) { return -1, unix.ENOSYS })
+	_, err := newSystemWith(func(int, int) (int, error) { return -1, unix.ENOSYS }, unix.PidfdSendSignal)
 	if err == nil || !strings.Contains(err.Error(), "pidfd") {
 		t.Fatalf("err = %v, want a refusal naming the missing pidfd support", err)
 	}
@@ -292,17 +292,54 @@ func TestNewSystemNamesMissingPidfd(t *testing.T) {
 	}
 }
 
+// A profile can allow pidfd_open and still block pidfd_send_signal, which
+// the supervisor needs only once it stops a tree. The probe must catch that
+// at start, not at the first cancel.
+func TestNewSystemNamesABlockedPidfdSendSignal(t *testing.T) {
+	_, err := newSystemWith(unix.PidfdOpen, func(int, unix.Signal, *unix.Siginfo, int) error { return unix.EPERM })
+	if err == nil || !strings.Contains(err.Error(), "pidfd_send_signal: ") {
+		t.Fatalf("err = %v, want a refusal naming pidfd_send_signal as the failing call", err)
+	}
+	for _, cause := range []string{"5.3", "seccomp"} {
+		if !strings.Contains(err.Error(), cause) {
+			t.Errorf("err = %q, want it to name %q as a possible cause", err, cause)
+		}
+	}
+	if !errors.Is(err, unix.EPERM) {
+		t.Errorf("err = %v, want it to wrap EPERM", err)
+	}
+}
+
 func TestNewSystemProbesPidfd(t *testing.T) {
-	var probed []int
+	var opened []int
+	openedFD := -1
+	var sent []unix.Signal
+	sentFD := -2
 	_, err := newSystemWith(func(pid, flags int) (int, error) {
-		probed = append(probed, pid)
-		return unix.PidfdOpen(pid, flags)
+		opened = append(opened, pid)
+		fd, err := unix.PidfdOpen(pid, flags)
+		openedFD = fd
+		return fd, err
+	}, func(fd int, sig unix.Signal, info *unix.Siginfo, flags int) error {
+		sent = append(sent, sig)
+		sentFD = fd
+		return unix.PidfdSendSignal(fd, sig, info, flags)
 	})
 	if err != nil {
-		t.Fatalf("newSystemWith(real pidfd_open): %v", err)
+		t.Fatalf("newSystemWith(real pidfds): %v", err)
 	}
-	if !slices.Equal(probed, []int{os.Getpid()}) {
-		t.Errorf("probed %v, want exactly one probe of our own pid %d", probed, os.Getpid())
+	if !slices.Equal(opened, []int{os.Getpid()}) {
+		t.Errorf("opened %v, want exactly one pidfd on our own pid %d", opened, os.Getpid())
+	}
+	// Signal 0 checks that the call is allowed and delivers nothing.
+	if !slices.Equal(sent, []unix.Signal{0}) || sentFD != openedFD {
+		t.Errorf("sent %v on fd %d, want exactly signal 0 on the probe's pidfd %d", sent, sentFD, openedFD)
+	}
+}
+
+func TestProbe(t *testing.T) {
+	if err := Probe(); err != nil {
+		t.Errorf("Probe() on a host that runs the supervisor's own tests = %v, want nil", err)
 	}
 }
 

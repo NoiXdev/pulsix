@@ -5,6 +5,9 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,11 +22,53 @@ import (
 // TestRunConfigError: a broken environment is exit 2, before any network
 // activity.
 func TestRunConfigError(t *testing.T) {
-	if code := run(nil); code != 2 {
+	if code := run(nil, noProbe); code != 2 {
 		t.Fatalf("run with no env: exit = %d, want 2", code)
 	}
-	if code := run([]string{"PULSIX_MANAGER_ADDR=http://bad"}); code != 2 {
+	if code := run([]string{"PULSIX_MANAGER_ADDR=http://bad"}, noProbe); code != 2 {
 		t.Fatalf("run with scheme addr: exit = %d, want 2", code)
+	}
+}
+
+// noProbe is a supervisor probe that passes.
+func noProbe() error { return nil }
+
+// TestRunRefusesAHostTheSupervisorCannotRunOn: a worker that will run plays
+// under the supervisor checks at start that this host gives the supervisor
+// what it needs, and refuses as a configuration error (exit 2) if not, by
+// the probe's own words, before any network activity. Otherwise the worker
+// enrolls, reports healthy and fails every playbook job (backlog 2.112).
+// Off Linux the worker runs no supervisor, so there is nothing to probe.
+func TestRunRefusesAHostTheSupervisorCannotRunOn(t *testing.T) {
+	probed := 0
+	probe := func() error {
+		probed++
+		return errors.New("the play supervisor needs pidfds")
+	}
+	var logs strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	code := run([]string{
+		"PULSIX_MANAGER_ADDR=manager.invalid:8444",
+		"PULSIX_WORKER_DATA_DIR=" + t.TempDir(),
+	}, probe)
+
+	if runtime.GOOS != "linux" {
+		if probed != 0 {
+			t.Errorf("probed %d times off Linux, want 0: no supervisor runs here", probed)
+		}
+		return
+	}
+	if probed != 1 || code != 2 {
+		t.Fatalf("probed %d times, exit %d; want one probe and exit 2", probed, code)
+	}
+	if !strings.Contains(logs.String(), "the play supervisor needs pidfds") {
+		t.Errorf("log does not carry the probe's error:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "pulsix-worker starting") {
+		t.Errorf("the worker went on starting after the probe failed:\n%s", logs.String())
 	}
 }
 
