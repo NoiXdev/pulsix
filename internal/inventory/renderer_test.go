@@ -262,6 +262,16 @@ func TestStringFieldTurnedSecretIsMaskedInThePreview(t *testing.T) {
 	if err != nil || snap.Doc["webserver"].(map[string]any)["vars"].(map[string]any)["api_token"] != "plain-token" {
 		t.Fatalf("snapshot of a plain value under a secret field: %v", err)
 	}
+	// Backlog 7.12: reads hide that value as a secret, so the run's redact
+	// list must name it too, or a task printing it shows viewers in the run
+	// log what the inventory API masks from them.
+	listed := false
+	for _, s := range snap.Secrets {
+		listed = listed || s == "plain-token"
+	}
+	if !listed {
+		t.Fatalf("snapshot secrets = %q, want the plain value under the secret field listed for redaction", snap.Secrets)
+	}
 }
 
 // TestSnapshotListsTheSecretsItReveals (final review I4): a snapshot names

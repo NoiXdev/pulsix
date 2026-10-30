@@ -271,6 +271,13 @@ func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[strin
 	return schema.MapSecrets(fields, vars, func(_ string, v any) (any, error) {
 		ct, ok := schema.SealedBytes(v)
 		if !ok {
+			// A plain value left under a field changed to secret (a schema
+			// change reseals nothing, see schema.MaskDeclared) is a secret
+			// to every read, so the run's redact list names it too
+			// (backlog 7.12).
+			if s, isString := v.(string); isString && s != "" {
+				*revealed = append(*revealed, s)
+			}
 			return v, nil
 		}
 		plain, err := r.box.OpenAAD(ct, aad)
