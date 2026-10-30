@@ -23,7 +23,9 @@
           "ansible_user": "deploy",
           "php_default": "8.4",
           "pulsix_facts": {
-            "os": "debian"
+            "os": {
+              "__ansible_unsafe": "debian"
+            }
           },
           "vhosts": [
             {

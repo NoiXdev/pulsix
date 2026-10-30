@@ -16,6 +16,12 @@ import (
 // is reserved as a whole, so a key a later ansible-core adds is covered.
 const reservedKeyPrefix = "__ansible"
 
+// ReservedKey reports whether k is an object key ansible-core's JSON loader
+// would read as a marker of its own (see reservedKeyPrefix).
+func ReservedKey(k string) bool {
+	return strings.HasPrefix(k, reservedKeyPrefix)
+}
+
 // ErrReservedKey refuses an untrusted value holding a reserved object key.
 var ErrReservedKey = errors.New(`an object key starting with "__ansible" is reserved`)
 
@@ -52,7 +58,7 @@ func checkUntrusted(v any, depth int) error {
 			return ErrTooDeep
 		}
 		for k, item := range x {
-			if strings.HasPrefix(k, reservedKeyPrefix) {
+			if ReservedKey(k) {
 				return ErrReservedKey
 			}
 			if err := checkUntrusted(item, depth); err != nil {

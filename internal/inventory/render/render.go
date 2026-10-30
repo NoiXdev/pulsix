@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/inventory/grouptree"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -387,9 +388,25 @@ func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection
 		}
 	}
 	if len(h.Facts) > 0 {
-		vars["pulsix_facts"] = h.Facts
+		vars["pulsix_facts"] = inertFacts(h.Facts)
 	}
 	return vars, conn, nil
+}
+
+// inertFacts returns a host's facts as Ansible must receive them (backlog
+// 7.7). The host's agent reports them, so they are lower-trust than the
+// controller that loads the inventory: every string is marked unsafe, so a
+// planted "{{ … }}" or lookup stays literal text instead of running on the
+// worker, and a key Ansible's JSON loader would read as a marker of its own
+// is dropped. No real fact is named "__ansible…".
+func inertFacts(facts map[string]any) map[string]any {
+	out := make(map[string]any, len(facts))
+	for k, v := range facts {
+		if !ansiblevars.ReservedKey(k) {
+			out[k] = ansiblevars.Inert(v)
+		}
+	}
+	return out
 }
 
 func (r *renderer) sshFor(hostID uuid.UUID) sshconf.HostSSH {

@@ -162,7 +162,7 @@ func TestRenderWholeOrganization(t *testing.T) {
 		"ansible_ssh_common_args": "-o ProxyJump=ops@bastion-a.example:22",
 		"php_default":             "8.4",
 		"vhosts":                  []any{map[string]any{"domain": "acme.io", "ssl": true, "basic_auth": map[string]any{"user": "u", "password": "********"}}},
-		"pulsix_facts":            map[string]any{"os": "debian"},
+		"pulsix_facts":            map[string]any{"os": map[string]any{"__ansible_unsafe": "debian"}},
 	}
 	if !reflect.DeepEqual(w1, want) {
 		t.Errorf("web-01 hostvars =\n%#v\nwant\n%#v", w1, want)
@@ -314,6 +314,37 @@ func TestRenderFailsClosedOnBrokenJumpHosts(t *testing.T) {
 	in.SSH[hWeb02] = sshconf.HostSSH{HostID: hWeb02, Port: 22, BastionMode: sshconf.ModeExplicit}
 	if _, err := render.Render(in); !errors.Is(err, render.ErrUnrenderable) || !strings.Contains(err.Error(), "host web-02") {
 		t.Errorf("explicit mode without a bastion must fail as unrenderable: %v", err)
+	}
+}
+
+// TestRenderMarksFactsInert pins backlog 7.7: a host's agent reports its
+// facts, so they are lower-trust than the controller that loads the
+// inventory. Every fact string reaches Ansible marked unsafe, so a planted
+// "{{ … }}" or lookup stays literal text instead of running on the worker,
+// and a fact key Ansible's JSON loader would read as a marker of its own
+// ("__ansible…") is dropped rather than rendered.
+func TestRenderMarksFactsInert(t *testing.T) {
+	in := fixture()
+	for i := range in.Hosts {
+		if in.Hosts[i].ID == hWeb01 {
+			in.Hosts[i].Facts = map[string]any{
+				"os":               "debian-{{ 6 * 7 }}-{{ lookup('pipe', 'id') }}",
+				"kernel":           "6.1",
+				"__ansible_unsafe": "x",
+				"__ansible_vault":  "y",
+			}
+		}
+	}
+	inv, err := render.Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"os":     map[string]any{"__ansible_unsafe": "debian-{{ 6 * 7 }}-{{ lookup('pipe', 'id') }}"},
+		"kernel": map[string]any{"__ansible_unsafe": "6.1"},
+	}
+	if got := hostvars(t, inv, "web-01")["pulsix_facts"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("pulsix_facts =\n%#v\nwant every fact marked unsafe and no reserved keys\n%#v", got, want)
 	}
 }
 
