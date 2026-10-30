@@ -33,6 +33,8 @@ func TestIsLiveUnderUID(t *testing.T) {
 		{"running, real uid differs", "Name:\tsleep\nState:\tS (sleeping)\nUid:\t65532\t65533\t65533\t65533\n", false},
 		{"zombie under the uid", "Name:\tsleep\nState:\tZ (zombie)\nUid:\t65533\t65533\t65533\t65533\n", false},
 		{"exiting under the uid", "Name:\tsleep\nState:\tX (dead)\nUid:\t65533\t65533\t65533\t65533\n", false},
+		{"zombie leader whose other threads run on", "Name:\tpython3\nState:\tZ (zombie)\nUid:\t65533\t65533\t65533\t65533\nThreads:\t2\n", true},
+		{"zombie leader with no thread left", "Name:\tpython3\nState:\tZ (zombie)\nUid:\t65533\t65533\t65533\t65533\nThreads:\t1\n", false},
 		{"stopped under the uid", "Name:\tsleep\nState:\tT (stopped)\nUid:\t65533\t65533\t65533\t65533\n", true},
 		{"no Uid line", "Name:\tsleep\nState:\tS (sleeping)\n", false},
 		{"no State line", "Name:\tsleep\nUid:\t65533\t65533\t65533\t65533\n", true},
@@ -123,21 +125,26 @@ func playUIDProcessGroups(t *testing.T) []int {
 // process that is still running and whose REAL uid (the first of the Uid:
 // line's real, effective, saved, fs) is want. A zombie (Z) or a process
 // being torn down (X) is not running: it has already exited and only waits
-// for its parent's wait(2), which no signal can hasten.
+// for its parent's wait(2), which no signal can hasten. The exception is a
+// thread-group leader whose main thread exited while other threads run on:
+// it shows as Z too, but its Threads: line counts those threads, and the
+// group is alive until they end.
 func isLiveUnderUID(status, want string) bool {
-	uidMatches := false
+	uidMatches, exited, threads := false, false, 0
 	for _, line := range strings.Split(status, "\n") {
 		if state, ok := strings.CutPrefix(line, "State:"); ok {
-			if s := strings.TrimSpace(state); strings.HasPrefix(s, "Z") || strings.HasPrefix(s, "X") {
-				return false
-			}
+			s := strings.TrimSpace(state)
+			exited = strings.HasPrefix(s, "Z") || strings.HasPrefix(s, "X")
+		}
+		if n, ok := strings.CutPrefix(line, "Threads:"); ok {
+			threads, _ = strconv.Atoi(strings.TrimSpace(n))
 		}
 		if uid, ok := strings.CutPrefix(line, "Uid:"); ok {
 			fields := strings.Fields(uid)
 			uidMatches = len(fields) > 0 && fields[0] == want
 		}
 	}
-	return uidMatches
+	return uidMatches && (!exited || threads > 1)
 }
 
 // playUIDProcessExists scans /proc for a live process whose REAL uid (see

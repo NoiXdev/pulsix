@@ -20,11 +20,9 @@ const maxChainHops = 4096
 
 // descendantsFrom returns the live descendants of self among pids: it reads
 // each pid's stat once, builds the parent → child map and walks it from
-// self. Zombies (Z) and dead tasks (X) are left out of the result, since
-// they have nothing left to signal, only to reap, but the walk passes
-// through them: a thread-group leader whose main thread exited while other
-// threads still run shows as Z, and its children stay its own until the
-// whole group is gone, so stopping at it would hide them from the stop.
+// self. Processes that have exited (see exited) are left out of the result,
+// since they have nothing left to signal, only to reap, but the walk passes
+// through them, so a child that has not been reparented yet is still found.
 //
 // An entry that cannot be read or parsed is skipped, never fatal. It may be
 // a process that exited after /proc was listed, or one this uid may not read
@@ -36,12 +34,12 @@ func descendantsFrom(self int, pids []int, read statReader) []int {
 	children := make(map[int][]int)
 	dead := make(map[int]bool)
 	for _, pid := range pids {
-		state, ppid, ok := readLink(pid, read)
+		fields, ppid, ok := readLink(pid, read)
 		if !ok {
 			continue
 		}
 		children[ppid] = append(children[ppid], pid)
-		if state == "Z" || state == "X" {
+		if exited(fields) {
 			dead[pid] = true
 		}
 	}
@@ -83,22 +81,47 @@ func isDescendant(ancestor, pid int, read statReader) bool {
 	return false
 }
 
-// readLink reads pid's state and parent, reporting false for a stat that
-// cannot be read or parsed.
-func readLink(pid int, read statReader) (state string, ppid int, ok bool) {
+// numThreadsField is num_threads' index in parseStat's fields: stat field
+// 20, counted from the state's 3.
+const numThreadsField = 17
+
+// exited reports whether a process's parsed stat says it has exited: a dead
+// task (X), or a zombie (Z) whose thread group has nothing left running. A
+// thread-group leader whose main thread exited while other threads still
+// run shows as Z too, but its num_threads counts those threads, and a
+// signal to it still reaches them: that group is alive. A stat too short to
+// carry num_threads is taken at its state.
+func exited(fields []string) bool {
+	switch fields[0] {
+	case "X":
+		return true
+	case "Z":
+		if len(fields) > numThreadsField {
+			if n, err := strconv.Atoi(fields[numThreadsField]); err == nil && n > 1 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// readLink reads pid's stat fields and parent, reporting false for a stat
+// that cannot be read or parsed.
+func readLink(pid int, read statReader) (fields []string, ppid int, ok bool) {
 	b, err := read(pid)
 	if err != nil {
-		return "", 0, false
+		return nil, 0, false
 	}
-	fields, err := parseStat(b)
+	fields, err = parseStat(b)
 	if err != nil {
-		return "", 0, false
+		return nil, 0, false
 	}
 	ppid, err = strconv.Atoi(fields[1])
 	if err != nil {
-		return "", 0, false
+		return nil, 0, false
 	}
-	return fields[0], ppid, true
+	return fields, ppid, true
 }
 
 // parseStat returns the fields of a /proc/<pid>/stat line that follow the

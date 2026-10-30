@@ -79,6 +79,36 @@ func TestDescendantsFromSkipsZombiesAndDead(t *testing.T) {
 	}
 }
 
+// statThreads builds a stat line long enough to carry num_threads (field 20).
+func statThreads(pid int, state string, ppid, threads int) string {
+	return fmt.Sprintf("%d (x) %s %d %d %d 0 -1 0 0 0 0 0 0 0 0 0 20 0 %d 0", pid, state, ppid, pid, pid, threads)
+}
+
+func TestDescendantsFromCountsAZombieLeaderWithLiveThreads(t *testing.T) {
+	tests := []struct {
+		name string
+		stat string
+		want []int
+	}{
+		// The leader's main thread exited, two more still run: the group
+		// is alive and must be signalled, or its threads outlive the stop.
+		{"other threads run on", statThreads(102, "Z", 101, 3), []int{101, 102, 103}},
+		{"only the leader is left", statThreads(102, "Z", 101, 1), []int{101, 103}},
+		{"stat too short to say", stat(102, "Z", 101), []int{101, 103}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newTree()
+			p.stat[102] = tc.stat
+			got := descendantsFrom(100, p.pids(), p.read)
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("descendants = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDescendantsFromWalksThroughZombies(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -86,7 +116,11 @@ func TestDescendantsFromWalksThroughZombies(t *testing.T) {
 	}{
 		// A thread-group leader whose main thread exited while other
 		// threads still run shows as Z, and its children are still its
-		// own: they are not reparented until the whole group is gone.
+		// own: they are not reparented until the whole group is gone. Such
+		// a leader counts as live by its thread count
+		// (TestDescendantsFromCountsAZombieLeaderWithLiveThreads); one
+		// whose count is unreadable, or that lost its last thread between
+		// two reads, is left out, and the walk must still find its children.
 		{"zombie thread-group leader", "Z"},
 		{"dead task", "X"},
 	}

@@ -1,7 +1,8 @@
 // The play supervisor's proof in the image (backlog 2.107), for what
 // cancel_test.go does not cover: a cancel without a play uid, a background
-// process a play leaves behind on a run that succeeds, and a failed play's
-// status passing through the supervisor unchanged.
+// process a play leaves behind on a run that succeeds (a zombie leader with
+// live threads among them), and a failed play's status passing through
+// the supervisor unchanged.
 //
 // 2.107 was never about the uid boundary: ansible-runner and ansible-core
 // each move the play into a process group of its own, out of the worker's
@@ -13,6 +14,9 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,6 +164,72 @@ func TestABackgroundProcessDoesNotOutliveItsRun(t *testing.T) {
 	}
 	if leftovers := workDirs(t); len(leftovers) != 0 {
 		t.Errorf("work dirs survived the run: %v", leftovers)
+	}
+}
+
+// zombieLeaderPIDFile is where TestAZombieLeaderWithLiveThreadsDoesNotOutliveItsRun's
+// play writes the pid of its process. /tmp, because the play uid cannot
+// write into the test's own temp dirs.
+const zombieLeaderPIDFile = "/tmp/pulsix-zombie-leader.pid"
+
+// TestAZombieLeaderWithLiveThreadsDoesNotOutliveItsRun is the same
+// guarantee for a process whose main thread has exited while another thread
+// runs on. /proc shows such a thread-group leader as Z, like a zombie, but
+// the group is alive and its threads keep running until it is signalled:
+// the supervisor must count it as live, or it considers the tree drained
+// and the threads outlive the run.
+func TestAZombieLeaderWithLiveThreadsDoesNotOutliveItsRun(t *testing.T) {
+	inImage(t)
+	writeWorkerKey(t)
+	t.Cleanup(func() { reapPlayUIDLeftovers(t) })
+
+	job := localhostJob(t, `
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: start a process whose main thread exits while another runs on
+      ansible.builtin.shell: |
+        nohup python3 -c '
+        import ctypes, os, platform, threading, time
+        open("`+zombieLeaderPIDFile+`", "w").write(str(os.getpid()))
+        threading.Thread(target=time.sleep, args=(306,)).start()
+        # The raw exit syscall ends only the calling thread; exit_group,
+        # which every libc exit uses, would end the whole group.
+        ctypes.CDLL(None).syscall(93 if platform.machine() in ("aarch64", "arm64") else 60, 0)
+        ' >/dev/null 2>&1 &
+      changed_when: false
+    - name: its leader shows as Z while the other thread still runs
+      ansible.builtin.shell: |
+        for i in $(seq 100); do
+          pid=$(cat `+zombieLeaderPIDFile+` 2>/dev/null) &&
+            grep -q '^State:[[:space:]]*Z' /proc/$pid/status &&
+            [ "$(awk '/^Threads:/ {print $2}' /proc/$pid/status)" -gt 1 ] &&
+            exit 0
+          sleep 0.1
+        done
+        exit 1
+      changed_when: false
+`)
+	job.Id = "01900000-0000-7000-8000-0000000000cc"
+
+	result, events, logs := runOneJob(t, job)
+
+	if got := result.GetStatus(); got != "succeeded" {
+		t.Fatalf("status = %q, want succeeded (error: %q):\n%s\n%s", got, result.GetError(), eventDump(events), logs)
+	}
+	b, err := os.ReadFile(zombieLeaderPIDFile)
+	if err != nil {
+		t.Fatalf("read the play's pid file: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatalf("parse the play's pid file %q: %v", b, err)
+	}
+	if !processGone(pid) {
+		t.Errorf("the zombie leader %d and its live thread outlived the run\n%s", pid, debugPlayUIDProcesses(t))
+	}
+	if playUIDEntryExists(t) {
+		t.Errorf("a /proc entry of uid %d outlived the run, live or zombie:\n%s", playUID, debugPlayUIDProcesses(t))
 	}
 }
 
