@@ -88,6 +88,12 @@ services:
       # already has something bound to 8080 — the container always
       # listens on 8080 internally, matching PULSIX_LISTEN's own default.
       - "${PULSIX_HOST_PORT:-8080}:8080"
+    # An init (PID 1) that reaps what its children orphan (backlog 2.111),
+    # for the embedded worker above: with PULSIX_EMBEDDED_WORKER=1 it runs
+    # inside this process and has the same orphan paths as the `worker`
+    # service (see its own init: true). It changes nothing else for the
+    # manager, which starts no other children.
+    init: true
     restart: unless-stopped
     # Traefik reads its routing entirely from labels on the container it
     # routes to. These labels are inert unless the `proxy` profile is

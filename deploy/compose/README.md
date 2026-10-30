@@ -214,6 +214,10 @@ The manager logs a warning at startup whenever it is on. Further limits:
 - Every manager start registers a new worker entry named `embedded`, and
   if enrollment fails after startup it stays stopped until the next
   restart.
+- The manager service runs with `init: true` for the same reason the
+  `worker` service does: nothing the embedded worker leaves behind
+  lingers as a defunct process. Add `--init` if you start the manager
+  image with a plain `docker run` and turn the embedded worker on.
 
 ## TLS with the bundled Traefik (optional)
 
