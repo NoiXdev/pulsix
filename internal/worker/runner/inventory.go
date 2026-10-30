@@ -34,14 +34,16 @@ type connection struct {
 // credential ids whose private key the runner must write to keysDir.
 //
 // bastionPins maps the pinned bastions' ids to their pinned fingerprints
-// (backlog 2.40): a pinned hop's block demands the key — and a PINNED hop
-// whose credential cannot be scripted (password-only, or none) fails the
-// merge closed, because an unaliasable hop could never enforce its pin.
+// (backlog 2.40): a pinned hop's block demands the key — and a route that
+// dials a pinned bastion but cannot be fully aliased (a hop anywhere on it
+// whose credential cannot be scripted, a chain that does not match the
+// claim, or a failed rewrite) fails the merge closed, because the raw chain
+// would reach the pinned hop under "Host *" with accept-new (backlog 7.14).
 //
 // It changes only hostvars the claim fully explains: a jump chain whose
-// hops cannot be resolved (missing credential ids, an UNPINNED password-only
-// bastion, a chain that does not match its rendering) stays exactly as
-// rendered — an operator-facing value is never mangled into something
+// hops cannot be resolved (missing credential ids, a password-only bastion,
+// a chain that does not match its rendering) on a route with no pinned
+// bastion stays exactly as rendered — an operator-facing value is never mangled into something
 // worse. A broken claim (bad connection JSON, unopenable credential) fails
 // the merge before any file is written.
 func mergeInventory(doc map[string]any, connections map[string]string, secrets map[string]string, sshUser, keysDir string, bastionPins map[string]string) (map[string]any, []proxyHost, []string, error) {
@@ -83,7 +85,14 @@ func mergeInventory(doc map[string]any, connections map[string]string, secrets m
 
 		args := varString(vars, "ansible_ssh_common_args")
 		parts, chain, ok := parseProxyJump(args)
-		if !ok || !aligned(conn, len(parts)) {
+		if !ok {
+			continue // the args dial no jump host at all
+		}
+		pinned := pinnedHop(conn, bastionPins)
+		if !aligned(conn, len(parts)) {
+			if pinned != "" {
+				return nil, nil, nil, fmt.Errorf("host %s: the route dials pinned bastion %s but its jump chain does not match the claim, so the pin could never be enforced", name, pinned)
+			}
 			continue
 		}
 		var blocks []proxyHost
@@ -98,10 +107,13 @@ func mergeInventory(doc map[string]any, connections map[string]string, secrets m
 				// A credential-less or password-only hop cannot be
 				// scripted (ssh has no ProxyJump password entry); the
 				// whole chain stays as rendered rather than half-rewritten
-				// — unless the hop is pinned, whose key could then never
-				// be enforced: fail closed (backlog 2.40).
-				if bastionPins[bastionID] != "" {
-					return nil, nil, nil, fmt.Errorf("bastion %s is pinned but its credential cannot be scripted (password-only or none), so the pin could never be enforced: give the hop an ssh_key credential", bastionID)
+				// — unless the route dials a pinned bastion anywhere: the
+				// raw chain reaches every hop by address under "Host *"
+				// with accept-new, so no pin on it could be enforced. Fail
+				// closed (backlog 2.40 for the pinned hop itself, 7.14 for
+				// a pinned hop elsewhere on the route).
+				if pinned != "" {
+					return nil, nil, nil, fmt.Errorf("host %s: the route dials pinned bastion %s but hop %s cannot be scripted (password-only or none), so the chain cannot be aliased and the pin could never be enforced: give every hop of the route an ssh_key credential", name, pinned, bastionID)
 				}
 				blocks = nil
 				break
@@ -115,6 +127,9 @@ func mergeInventory(doc map[string]any, connections map[string]string, secrets m
 		}
 		rewritten, ok := rewriteProxyJump(args, chain, strings.Join(aliases, ","))
 		if !ok {
+			if pinned != "" {
+				return nil, nil, nil, fmt.Errorf("host %s: the route dials pinned bastion %s but its jump chain could not be rewritten to the pinned aliases, so the pin could never be enforced", name, pinned)
+			}
 			continue
 		}
 		vars["ansible_ssh_common_args"] = rewritten
@@ -128,7 +143,18 @@ func mergeInventory(doc map[string]any, connections map[string]string, secrets m
 	return doc, hosts, slices.Sorted(maps.Keys(keySet)), nil
 }
 
-// chainResolves reports whether the connection's hop lists line up with the
+// pinnedHop returns the first pinned bastion the connection's route dials,
+// "" when none is.
+func pinnedHop(conn connection, bastionPins map[string]string) string {
+	for _, id := range conn.Bastions {
+		if bastionPins[id] != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// aligned reports whether the connection's hop lists line up with the
 // rendered chain.
 func aligned(conn connection, hops int) bool {
 	return len(conn.Bastions) == hops && len(conn.BastionCredentialIDs) == hops

@@ -177,3 +177,52 @@ func TestMergeInventoryPinnedHop(t *testing.T) {
 		t.Fatalf("a pinned password-only bastion must fail the merge closed: %v", err)
 	}
 }
+
+// TestMergeInventoryFailsClosedWhenAPinnedRouteCannotBeAliased is backlog
+// 7.14. A pinned hop's key is only enforced through its alias block, and the
+// whole chain falls back to the raw ProxyJump value as soon as one hop cannot
+// be scripted, the chain does not match the claim, or the rewrite fails.
+// That fallback dials every hop by address under "Host *" with accept-new,
+// so a pinned hop elsewhere in the chain silently lost its pin (security
+// audit run 1: an impostor of the pinned bastion was accepted). Any route
+// that dials a pinned bastion and cannot be fully aliased now fails closed.
+func TestMergeInventoryFailsClosedWhenAPinnedRouteCannotBeAliased(t *testing.T) {
+	doc := func(args string) map[string]any {
+		return map[string]any{"all": map[string]any{}, "_meta": map[string]any{"hostvars": map[string]any{
+			"web1": map[string]any{"ansible_host": "10.0.0.10", "ansible_ssh_common_args": args},
+		}}}
+	}
+	secrets := map[string]string{"c1": `{"private_key":"host"}`, "ck": `{"private_key":"hop"}`, "cp": `{"password":"hop"}`}
+	pins := map[string]string{"bpin": "SHA256:AAAA"}
+	for _, tc := range []struct {
+		name, args, conn string
+	}{
+		{"pinned key hop, then unpinned password hop", "-o ProxyJump=jump@10.0.0.9:22,ops@10.0.0.8:22",
+			`{"credential_id":"c1","bastions":["bpin","bpw"],"bastion_credential_ids":["ck","cp"]}`},
+		{"unpinned password hop, then pinned key hop", "-o ProxyJump=ops@10.0.0.8:22,jump@10.0.0.9:22",
+			`{"credential_id":"c1","bastions":["bpw","bpin"],"bastion_credential_ids":["cp","ck"]}`},
+		{"pinned key hop, then credential-less hop", "-o ProxyJump=jump@10.0.0.9:22,ops@10.0.0.8:22",
+			`{"credential_id":"c1","bastions":["bpin","bnone"],"bastion_credential_ids":["ck",""]}`},
+		{"chain that does not match the claim", "-o ProxyJump=jump@10.0.0.9:22",
+			`{"credential_id":"c1","bastions":["bpin","bpw"],"bastion_credential_ids":["ck","cp"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := mergeInventory(doc(tc.args), map[string]string{"web1": tc.conn}, secrets, "", "/w/keys", pins)
+			if err == nil || !strings.Contains(err.Error(), "bpin") {
+				t.Fatalf("a route dialing pinned bastion bpin that cannot be aliased must fail closed, naming it: %v", err)
+			}
+		})
+	}
+
+	// Without any pin on the route the raw chain stays as rendered: there
+	// is nothing to enforce, and an operator-facing value is never mangled.
+	const args = "-o ProxyJump=jump@10.0.0.9:22,ops@10.0.0.8:22"
+	d := doc(args)
+	out, _, _, err := mergeInventory(d, map[string]string{"web1": `{"credential_id":"c1","bastions":["bk","bpw"],"bastion_credential_ids":["ck","cp"]}`}, secrets, "", "/w/keys", pins)
+	if err != nil {
+		t.Fatalf("an unpinned route that cannot be aliased must pass as rendered: %v", err)
+	}
+	if got := out["_meta"].(map[string]any)["hostvars"].(map[string]any)["web1"].(map[string]any)["ansible_ssh_common_args"]; got != args {
+		t.Fatalf("ansible_ssh_common_args = %v, want the rendered chain unchanged", got)
+	}
+}
