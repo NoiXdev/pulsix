@@ -136,6 +136,51 @@ func TestRedactsBase64Spellings(t *testing.T) {
 	}
 }
 
+// TestRedactsPythonJSONSpelling is backlog 7.9. ansible's result display
+// prints module results with Python's json.dumps(ensure_ascii=False), which
+// escapes '"', '\\' and control characters but leaves '&', '<' and '>'
+// literal, while Go's json.Marshal HTML-escapes those three. A secret mixing
+// both kinds therefore matched neither listed spelling and reached viewers.
+// The display line below is ansible-core 2.21.4's own output for such a
+// secret (security audit run 1).
+func TestRedactsPythonJSONSpelling(t *testing.T) {
+	for _, tc := range []struct{ name, secret, display string }{
+		{"quote and ampersand", `Tr&ub4dor"3x`, `ok: [localhost] => {` + "\r\n" + `    "db_password": "Tr&ub4dor\"3x"` + "\r\n" + `}`},
+		{"backslash and angle brackets", `p<a>ss\w0rd`, `"secret": "p<a>ss\\w0rd"`},
+		{"tab and newline", "line1\tpart&x\nline2", `"v": "line1\tpart&x\nline2"`},
+		{"other control character", "ab\x01cd&ef", `"v": "ab\u0001cd&ef"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRedactor(&workerpb.Job{Redact: []string{tc.secret}})
+			got := r.text(tc.display)
+			if !strings.Contains(got, redactedMarker) {
+				t.Fatalf("the display spelling of %q survived: %s", tc.secret, got)
+			}
+		})
+	}
+}
+
+// TestRedactsBase64AtAnyOffset is backlog 7.11. base64 encodes three bytes
+// at a time, so a secret inside a larger buffer (slurp of "pwd=<secret>")
+// encodes differently depending on where it starts; the whole-value
+// spellings only cover a secret at a 3-byte boundary. Every placement must
+// lose the secret, whatever byte follows it.
+func TestRedactsBase64AtAnyOffset(t *testing.T) {
+	const secret = "s3cr3tPassw0rd"
+	r := newRedactor(&workerpb.Job{Redact: []string{secret}})
+	for _, prefix := range []string{"", "a", "ab", "abc", "pwd=", "db_pass=", "password: "} {
+		for _, suffix := range []string{"", "\n", "x", "xy"} {
+			for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+				content := enc.EncodeToString([]byte(prefix + secret + suffix))
+				got := r.text(`{"content": "` + content + `"}`)
+				if strings.Contains(got, content) || !strings.Contains(got, redactedMarker) {
+					t.Fatalf("prefix %q suffix %q: the encoded secret survived: %s", prefix, suffix, got)
+				}
+			}
+		}
+	}
+}
+
 // TestBase64SpellingsStayWithinWhatWeCanName pins the two decisions that
 // bound this list, because both are the kind that quietly erode: every
 // entry is replaced wherever it appears, so an entry added on a hunch
@@ -159,11 +204,12 @@ func TestBase64SpellingsStayWithinWhatWeCanName(t *testing.T) {
 		t.Fatalf("a value below minRedactLen produced %v", short.values)
 	}
 
-	// Every spelling is at least as long as its input, so none of them can
-	// be the short string the threshold exists to keep out.
+	// No spelling is short enough to shred ordinary output: an aligned
+	// core is at least minBase64Core bytes, so its encoding is at least
+	// 8 characters of base64.
 	for _, enc := range base64Spellings(secret) {
-		if len(enc) < len(secret) {
-			t.Fatalf("encoding %q is shorter than the secret it encodes", enc)
+		if len(enc) < 8 {
+			t.Fatalf("encoding %q is shorter than 8 characters", enc)
 		}
 	}
 }
